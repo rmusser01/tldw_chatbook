@@ -156,6 +156,37 @@ def test_compare_and_swap_commits_one_revision_and_reports_stale_conflict(
     assert stale.snapshot == committed.snapshot
 
 
+def test_compare_and_swap_refuses_a_corrupt_current_policy_row(tmp_path: Path) -> None:
+    db = CharactersRAGDB(tmp_path / "cas-corrupt.sqlite", client_id="policy-cas")
+    conversation_id = _add_conversation(db)
+    repository = ConsoleLibraryPolicyRepository(db)
+    repository.insert(conversation_id, _candidate(allowed=False))
+    connection = db.get_connection()
+    connection.execute("PRAGMA ignore_check_constraints = ON")
+    connection.execute(
+        "UPDATE console_conversation_library_policy SET schema_version = ? "
+        "WHERE conversation_id = ?",
+        (2, conversation_id),
+    )
+    connection.commit()
+
+    result = repository.compare_and_swap(
+        conversation_id,
+        1,
+        _candidate(allowed=True),
+    )
+
+    assert result.status is ConsoleLibraryPolicyWriteStatus.UNAVAILABLE
+    assert result.snapshot.source == "unavailable"
+    row = connection.execute(
+        "SELECT schema_version, auto_retrieve_on_send, "
+        "assistant_library_access, policy_revision "
+        "FROM console_conversation_library_policy WHERE conversation_id = ?",
+        (conversation_id,),
+    ).fetchone()
+    assert tuple(row) == (2, 0, 0, 1)
+
+
 def test_insert_integrity_failure_without_a_race_winner_is_unavailable(
     tmp_path: Path,
 ) -> None:
@@ -219,6 +250,12 @@ def test_soft_delete_retains_policy_restore_reuses_it_and_hard_purge_cascades(
     assert committed.status is ConsoleLibraryPolicyWriteStatus.COMMITTED
 
     assert db.soft_delete_conversation(conversation_id, expected_version=1) is True
+    deleted_read = repository.read(conversation_id)
+    assert deleted_read.durable_policy is None
+    assert (
+        deleted_read.snapshot.auto_retrieve,
+        deleted_read.snapshot.assistant_access,
+    ) == (ConsoleAutoRetrieve.NEVER, ConsoleAssistantLibraryAccess.BLOCKED)
     retained = db.get_connection().execute(
         "SELECT policy_revision FROM console_conversation_library_policy "
         "WHERE conversation_id = ?",

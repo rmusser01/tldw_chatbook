@@ -18,6 +18,17 @@ from tldw_chatbook.Chat.console_library_policy import (
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
+_POLICY_SELECT = """
+    SELECT policy.conversation_id, policy.schema_version,
+           policy.auto_retrieve_on_send, policy.assistant_library_access,
+           policy.policy_revision, policy.updated_at,
+           conversation.deleted AS conversation_deleted
+      FROM console_conversation_library_policy AS policy
+      JOIN conversations AS conversation
+        ON conversation.id = policy.conversation_id
+"""
+
+
 class ConsoleLibraryPolicyRepository:
     """Read and conditionally mutate device-local Library authority."""
 
@@ -30,45 +41,12 @@ class ConsoleLibraryPolicyRepository:
             return normalize_policy_read(None)
         try:
             row = self.db.get_connection().execute(
-                """
-                SELECT conversation_id, schema_version, auto_retrieve_on_send,
-                       assistant_library_access, policy_revision, updated_at
-                  FROM console_conversation_library_policy
-                 WHERE conversation_id = ?
-                """,
+                _POLICY_SELECT + " WHERE policy.conversation_id = ?",
                 (conversation_id,),
             ).fetchone()
             if row is None:
                 return normalize_policy_read(None)
-            if (
-                type(row["schema_version"]) is not int
-                or row["schema_version"] != 1
-                or type(row["auto_retrieve_on_send"]) is not int
-                or row["auto_retrieve_on_send"] not in (0, 1)
-                or type(row["assistant_library_access"]) is not int
-                or row["assistant_library_access"] not in (0, 1)
-                or type(row["policy_revision"]) is not int
-                or row["policy_revision"] < 1
-                or not isinstance(row["updated_at"], (str, datetime))
-                or not str(row["updated_at"]).strip()
-            ):
-                return normalize_policy_read(row)
-            policy = ConsoleConversationLibraryPolicy(
-                conversation_id=row["conversation_id"],
-                auto_retrieve=(
-                    ConsoleAutoRetrieve.AUTOMATIC
-                    if row["auto_retrieve_on_send"] == 1
-                    else ConsoleAutoRetrieve.NEVER
-                ),
-                assistant_access=(
-                    ConsoleAssistantLibraryAccess.ALLOWED
-                    if row["assistant_library_access"] == 1
-                    else ConsoleAssistantLibraryAccess.BLOCKED
-                ),
-                policy_revision=row["policy_revision"],
-                updated_at=str(row["updated_at"]),
-            )
-            return normalize_policy_read(policy)
+            return self._result_from_row(row)
         except Exception as exc:
             return normalize_policy_read(exc)
 
@@ -112,10 +90,12 @@ class ConsoleLibraryPolicyRepository:
                     row = self._read_row(cursor, conversation_id)
                     if row is None:
                         raise sqlite3.DatabaseError("Committed policy row unavailable")
-                    snapshot = self._result_from_row(row).snapshot
+                    committed = self._result_from_row(row)
+                    if committed.durable_policy is None:
+                        raise sqlite3.DatabaseError("Committed policy row invalid")
                     return ConsoleLibraryPolicyWriteResult(
                         ConsoleLibraryPolicyWriteStatus.COMMITTED,
-                        snapshot,
+                        committed.snapshot,
                     )
             winner = self.read(conversation_id)
             if winner.durable_policy is None:
@@ -148,6 +128,11 @@ class ConsoleLibraryPolicyRepository:
                 ).fetchone()
                 if conversation is None or conversation["deleted"]:
                     return self._missing_conversation_write()
+                current_row = self._read_row(cursor, conversation_id)
+                if current_row is not None:
+                    current = self._result_from_row(current_row)
+                    if current.durable_policy is None:
+                        return self._unavailable_write()
                 updated = cursor.execute(
                     """
                     UPDATE console_conversation_library_policy
@@ -155,7 +140,10 @@ class ConsoleLibraryPolicyRepository:
                            assistant_library_access = ?,
                            policy_revision = policy_revision + 1,
                            updated_at = CURRENT_TIMESTAMP
-                     WHERE conversation_id = ? AND policy_revision = ?
+                     WHERE conversation_id = ? AND schema_version = 1
+                       AND auto_retrieve_on_send IN (0, 1)
+                       AND assistant_library_access IN (0, 1)
+                       AND policy_revision = ?
                     """,
                     (
                         int(candidate.auto_retrieve is ConsoleAutoRetrieve.AUTOMATIC),
@@ -171,9 +159,12 @@ class ConsoleLibraryPolicyRepository:
                     row = self._read_row(cursor, conversation_id)
                     if row is None:
                         raise sqlite3.DatabaseError("Committed policy row unavailable")
+                    committed = self._result_from_row(row)
+                    if committed.durable_policy is None:
+                        raise sqlite3.DatabaseError("Committed policy row invalid")
                     return ConsoleLibraryPolicyWriteResult(
                         ConsoleLibraryPolicyWriteStatus.COMMITTED,
-                        self._result_from_row(row).snapshot,
+                        committed.snapshot,
                     )
             current = self.read(conversation_id)
             return ConsoleLibraryPolicyWriteResult(
@@ -186,17 +177,29 @@ class ConsoleLibraryPolicyRepository:
     @staticmethod
     def _read_row(cursor: sqlite3.Cursor, conversation_id: str) -> sqlite3.Row | None:
         return cursor.execute(
-            """
-            SELECT conversation_id, schema_version, auto_retrieve_on_send,
-                   assistant_library_access, policy_revision, updated_at
-              FROM console_conversation_library_policy
-             WHERE conversation_id = ?
-            """,
+            _POLICY_SELECT + " WHERE policy.conversation_id = ?",
             (conversation_id,),
         ).fetchone()
 
     @staticmethod
     def _result_from_row(row: sqlite3.Row) -> ConsoleLibraryPolicyReadResult:
+        if row["conversation_deleted"] != 0:
+            return normalize_policy_read(None)
+        if (
+            type(row["conversation_id"]) is not str
+            or not row["conversation_id"].strip()
+            or type(row["schema_version"]) is not int
+            or row["schema_version"] != 1
+            or type(row["auto_retrieve_on_send"]) is not int
+            or row["auto_retrieve_on_send"] not in (0, 1)
+            or type(row["assistant_library_access"]) is not int
+            or row["assistant_library_access"] not in (0, 1)
+            or type(row["policy_revision"]) is not int
+            or row["policy_revision"] < 1
+            or not isinstance(row["updated_at"], (str, datetime))
+            or not str(row["updated_at"]).strip()
+        ):
+            return normalize_policy_read(row)
         return normalize_policy_read(
             ConsoleConversationLibraryPolicy(
                 conversation_id=row["conversation_id"],

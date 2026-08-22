@@ -12,6 +12,7 @@ from tldw_chatbook.Chat.console_library_policy import (
     ConsoleLibraryPolicySnapshot,
     ConsoleLibraryPolicyWriteResult,
     ConsoleLibraryPolicyWriteStatus,
+    normalize_policy_read,
 )
 from tldw_chatbook.Chat.console_library_policy_repository import (
     ConsoleLibraryPolicyRepository,
@@ -22,6 +23,7 @@ from tldw_chatbook.Chat.console_library_policy_repository import (
 class _RegisteredHolder:
     conversation_id: str | None
     holder: ConsoleLibraryPolicyHolder
+    generation: int
 
 
 class ConsoleLibraryPolicyCoordinator:
@@ -30,6 +32,7 @@ class ConsoleLibraryPolicyCoordinator:
     def __init__(self, repository: ConsoleLibraryPolicyRepository) -> None:
         self.repository = repository
         self._holders: dict[str, _RegisteredHolder] = {}
+        self._next_generation = 0
 
     def register_holder(
         self,
@@ -38,7 +41,12 @@ class ConsoleLibraryPolicyCoordinator:
         holder: ConsoleLibraryPolicyHolder,
     ) -> None:
         """Bind one live holder for same-process committed publication."""
-        self._holders[session_id] = _RegisteredHolder(conversation_id, holder)
+        self._next_generation += 1
+        self._holders[session_id] = _RegisteredHolder(
+            conversation_id,
+            holder,
+            self._next_generation,
+        )
 
     def unregister_holder(self, session_id: str) -> None:
         """Remove one closed session holder."""
@@ -50,9 +58,9 @@ class ConsoleLibraryPolicyCoordinator:
         """Read durable policy off-loop and publish its effective result."""
         registered = self._require_session(session_id)
         registered.conversation_id = conversation_id
-        result = await asyncio.to_thread(self.repository.read, conversation_id)
-        self._publish(conversation_id, result.snapshot)
-        return result
+        self._next_generation += 1
+        registered.generation = self._next_generation
+        return await self._read_current_binding(session_id)
 
     async def save(
         self,
@@ -91,12 +99,35 @@ class ConsoleLibraryPolicyCoordinator:
     ) -> ConsoleLibraryPolicySnapshot:
         """Perform the execution-time durable read and return frozen authority."""
         registered = self._require_session(session_id)
-        conversation_id = registered.conversation_id
-        if conversation_id is None:
+        if registered.conversation_id is None:
             return registered.holder.snapshot
-        result = await asyncio.to_thread(self.repository.read, conversation_id)
-        self._publish(conversation_id, result.snapshot)
+        result = await self._read_current_binding(session_id)
         return result.snapshot
+
+    async def _read_current_binding(
+        self,
+        session_id: str,
+    ) -> ConsoleLibraryPolicyReadResult:
+        for _attempt in range(2):
+            registered = self._require_session(session_id)
+            conversation_id = registered.conversation_id
+            generation = registered.generation
+            if conversation_id is None:
+                return normalize_policy_read(None)
+            result = await asyncio.to_thread(self.repository.read, conversation_id)
+            current = self._holders.get(session_id)
+            if (
+                current is registered
+                and current.generation == generation
+                and current.conversation_id == conversation_id
+            ):
+                self._publish(conversation_id, result.snapshot)
+                return result
+        result = normalize_policy_read(RuntimeError("session_binding_changed"))
+        current = self._holders.get(session_id)
+        if current is not None and current.conversation_id is not None:
+            self._publish(current.conversation_id, result.snapshot)
+        return result
 
     def _publish(
         self,

@@ -54,6 +54,36 @@ class RecordingContribution:
             raise RuntimeError("injected contribution failure")
 
 
+@dataclass
+class EarlyCommitContribution:
+    def write(
+        self,
+        *,
+        cursor: sqlite3.Cursor,
+        conversation_id: str,
+        message_ids: Mapping[str, str],
+    ) -> None:
+        cursor.execute(
+            "INSERT INTO contribution_probe(conversation_id, user_id, assistant_id) "
+            "VALUES (?, ?, ?)",
+            (conversation_id, message_ids["user"], message_ids["assistant"]),
+        )
+        cursor.connection.commit()
+
+
+@dataclass
+class AttachDatabaseContribution:
+    def write(
+        self,
+        *,
+        cursor: sqlite3.Cursor,
+        conversation_id: str,
+        message_ids: Mapping[str, str],
+    ) -> None:
+        del conversation_id, message_ids
+        cursor.execute("ATTACH DATABASE ':memory:' AS escaped")
+
+
 def _acceptance(
     conversation_id: str,
     contribution: ConsoleTransactionContribution,
@@ -167,3 +197,31 @@ def test_contribution_protocol_exposes_no_repository_or_publication_capability()
     assert "repository" not in annotations
     assert "holder" not in annotations
     assert "session" not in annotations
+
+
+@pytest.mark.parametrize(
+    "contribution",
+    [EarlyCommitContribution(), AttachDatabaseContribution()],
+    ids=["early_commit", "attach_database"],
+)
+def test_contribution_cannot_escape_the_caller_owned_transaction(
+    tmp_path: Path,
+    contribution: ConsoleTransactionContribution,
+) -> None:
+    service, conversation_id = _service(tmp_path / "transaction-escape.sqlite")
+
+    with pytest.raises(sqlite3.DatabaseError):
+        with service.db.transaction(immediate=True) as cursor:
+            service.console_dispatch_repository.insert_with_messages(
+                cursor,
+                _acceptance(conversation_id, contribution),
+            )
+
+    connection = service.db.get_connection()
+    assert connection.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
+    assert connection.execute(
+        "SELECT COUNT(*) FROM console_dispatch_checkpoints"
+    ).fetchone()[0] == 0
+    assert connection.execute(
+        "SELECT COUNT(*) FROM contribution_probe"
+    ).fetchone()[0] == 0

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
@@ -10,6 +11,7 @@ from typing import Literal, cast
 from urllib.parse import urlsplit
 
 from tldw_chatbook.Chat.console_library_policy import (
+    AUTOMATIC_LIBRARY_SOURCE_TYPES,
     ConsoleAssistantLibraryAccess,
     ConsoleAutoRetrieve,
     ConsoleLibraryPolicySnapshot,
@@ -59,6 +61,9 @@ _POLICY_SOURCES = {
     "temporary",
     "unavailable",
 }
+_IDENTIFIER_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,199}\Z")
+_ERROR_CODE_RE = re.compile(r"[a-z][a-z0-9_]{0,63}\Z")
+_OPAQUE_REFERENCE_RE = re.compile(r"opaque:[A-Za-z0-9][A-Za-z0-9._:-]{0,199}\Z")
 
 
 class ConsoleDispatchCheckpointValidationError(ValueError):
@@ -288,10 +293,37 @@ def _string(value: object, *, optional: bool = False) -> str | None:
     return cast(str, value)
 
 
-def _string_tuple(value: object) -> tuple[str, ...]:
+def _identifier(value: object, *, optional: bool = False) -> str | None:
+    if optional and value is None:
+        return None
+    if type(value) is not str or _IDENTIFIER_RE.fullmatch(cast(str, value)) is None:
+        raise ConsoleDispatchCheckpointValidationError("Invalid checkpoint data.")
+    return cast(str, value)
+
+
+def _error_code(value: object) -> str | None:
+    if value is None:
+        return None
+    if type(value) is not str or _ERROR_CODE_RE.fullmatch(cast(str, value)) is None:
+        raise ConsoleDispatchCheckpointValidationError("Invalid checkpoint data.")
+    return cast(str, value)
+
+
+def _opaque_reference(value: object) -> str | None:
+    if value is None:
+        return None
+    if (
+        type(value) is not str
+        or _OPAQUE_REFERENCE_RE.fullmatch(cast(str, value)) is None
+    ):
+        raise ConsoleDispatchCheckpointValidationError("Invalid checkpoint data.")
+    return cast(str, value)
+
+
+def _identifier_tuple(value: object) -> tuple[str, ...]:
     if type(value) is not list:
         raise ConsoleDispatchCheckpointValidationError("Invalid checkpoint data.")
-    items = tuple(_string(item) for item in cast(list[object], value))
+    items = tuple(_identifier(item) for item in cast(list[object], value))
     if len(set(items)) != len(items):
         raise ConsoleDispatchCheckpointValidationError("Invalid checkpoint data.")
     return cast(tuple[str, ...], items)
@@ -326,19 +358,33 @@ def _bounded_dump(value: Mapping[str, object], cap: int) -> str:
 
 def _authority_value(authority: ConsoleTurnLibraryAuthority) -> dict[str, object]:
     policy = authority.policy
+    valid_source_shape = (
+        policy.source == "durable"
+        and type(policy.policy_revision) is int
+        and policy.policy_revision >= 1
+        and policy.error_code is None
+    ) or (
+        policy.source in {"new_session", "temporary"}
+        and policy.policy_revision is None
+        and policy.error_code is None
+    ) or (
+        policy.source in {"missing", "unavailable"}
+        and policy.policy_revision is None
+        and policy.auto_retrieve is ConsoleAutoRetrieve.NEVER
+        and policy.assistant_access is ConsoleAssistantLibraryAccess.BLOCKED
+        and (policy.source != "missing" or policy.error_code is None)
+    )
     if (
         not isinstance(policy.auto_retrieve, ConsoleAutoRetrieve)
         or not isinstance(policy.assistant_access, ConsoleAssistantLibraryAccess)
-        or (
-            policy.policy_revision is not None
-            and (type(policy.policy_revision) is not int or policy.policy_revision < 1)
-        )
         or policy.source not in _POLICY_SOURCES
-        or (policy.error_code is not None and type(policy.error_code) is not str)
+        or not valid_source_shape
         or type(authority.direct_library_tools) is not bool
         or type(authority.scope_snapshot.conversations_allowed) is not bool
+        or authority.source_types != AUTOMATIC_LIBRARY_SOURCE_TYPES
     ):
         raise ConsoleDispatchCheckpointValidationError("Invalid checkpoint data.")
+    error_code = _error_code(policy.error_code)
     provider = _string(authority.provider_intent.provider)
     model = _string(authority.provider_intent.model, optional=True)
     endpoint = _string(authority.provider_intent.endpoint, optional=True)
@@ -350,14 +396,16 @@ def _authority_value(authority: ConsoleTurnLibraryAuthority) -> dict[str, object
             "assistant_access": policy.assistant_access.value,
             "policy_revision": policy.policy_revision,
             "source": policy.source,
-            "error_code": policy.error_code,
+            "error_code": error_code,
         },
         "direct_library_tools": authority.direct_library_tools,
-        "source_types": list(_validated_string_tuple(authority.source_types)),
+        "source_types": list(_validated_identifier_tuple(authority.source_types)),
         "scope_snapshot": {
-            "note_ids": list(_validated_string_tuple(authority.scope_snapshot.note_ids)),
+            "note_ids": list(
+                _validated_identifier_tuple(authority.scope_snapshot.note_ids)
+            ),
             "media_ids": list(
-                _validated_string_tuple(authority.scope_snapshot.media_ids)
+                _validated_identifier_tuple(authority.scope_snapshot.media_ids)
             ),
             "conversations_allowed": authority.scope_snapshot.conversations_allowed,
         },
@@ -366,14 +414,14 @@ def _authority_value(authority: ConsoleTurnLibraryAuthority) -> dict[str, object
             "model": model,
             "endpoint": endpoint,
         },
-        "attempt_id": _string(authority.attempt_id),
+        "attempt_id": _identifier(authority.attempt_id),
     }
 
 
-def _validated_string_tuple(value: object) -> tuple[str, ...]:
+def _validated_identifier_tuple(value: object) -> tuple[str, ...]:
     if type(value) is not tuple:
         raise ConsoleDispatchCheckpointValidationError("Invalid checkpoint data.")
-    items = tuple(_string(item) for item in cast(tuple[object, ...], value))
+    items = tuple(_identifier(item) for item in cast(tuple[object, ...], value))
     if len(set(items)) != len(items):
         raise ConsoleDispatchCheckpointValidationError("Invalid checkpoint data.")
     return cast(tuple[str, ...], items)
@@ -396,18 +444,39 @@ def parse_console_turn_library_authority_json(value: object) -> ConsoleTurnLibra
     policy = _exact_mapping(data["policy"], _POLICY_KEYS)
     scope = _exact_mapping(data["scope_snapshot"], _SCOPE_KEYS)
     intent = _exact_mapping(data["provider_intent"], _INTENT_KEYS)
+    error_code = _error_code(policy["error_code"])
+    try:
+        auto_retrieve = ConsoleAutoRetrieve(_string(policy["auto_retrieve"]))
+        assistant_access = ConsoleAssistantLibraryAccess(
+            _string(policy["assistant_access"])
+        )
+    except ValueError as exc:
+        raise ConsoleDispatchCheckpointValidationError(
+            "Invalid checkpoint data."
+        ) from exc
+    valid_source_shape = (
+        policy["source"] == "durable"
+        and type(policy["policy_revision"]) is int
+        and cast(int, policy["policy_revision"]) >= 1
+        and error_code is None
+    ) or (
+        policy["source"] in {"new_session", "temporary"}
+        and policy["policy_revision"] is None
+        and error_code is None
+    ) or (
+        policy["source"] in {"missing", "unavailable"}
+        and policy["policy_revision"] is None
+        and auto_retrieve is ConsoleAutoRetrieve.NEVER
+        and assistant_access is ConsoleAssistantLibraryAccess.BLOCKED
+        and (policy["source"] != "missing" or error_code is None)
+    )
+    source_types = _identifier_tuple(data["source_types"])
     if (
         type(data["direct_library_tools"]) is not bool
         or type(scope["conversations_allowed"]) is not bool
-        or (
-            policy["policy_revision"] is not None
-            and (
-                type(policy["policy_revision"]) is not int
-                or cast(int, policy["policy_revision"]) < 1
-            )
-        )
         or policy["source"] not in _POLICY_SOURCES
-        or (policy["error_code"] is not None and type(policy["error_code"]) is not str)
+        or not valid_source_shape
+        or source_types != AUTOMATIC_LIBRARY_SOURCE_TYPES
     ):
         raise ConsoleDispatchCheckpointValidationError("Invalid checkpoint data.")
     endpoint = _string(intent["endpoint"], optional=True)
@@ -416,10 +485,8 @@ def parse_console_turn_library_authority_json(value: object) -> ConsoleTurnLibra
     try:
         authority = ConsoleTurnLibraryAuthority(
             policy=ConsoleLibraryPolicySnapshot(
-                auto_retrieve=ConsoleAutoRetrieve(_string(policy["auto_retrieve"])),
-                assistant_access=ConsoleAssistantLibraryAccess(
-                    _string(policy["assistant_access"])
-                ),
+                auto_retrieve=auto_retrieve,
+                assistant_access=assistant_access,
                 policy_revision=cast(int | None, policy["policy_revision"]),
                 source=cast(
                     Literal[
@@ -431,13 +498,13 @@ def parse_console_turn_library_authority_json(value: object) -> ConsoleTurnLibra
                     ],
                     policy["source"],
                 ),
-                error_code=cast(str | None, policy["error_code"]),
+                error_code=error_code,
             ),
             direct_library_tools=cast(bool, data["direct_library_tools"]),
-            source_types=_string_tuple(data["source_types"]),
+            source_types=source_types,
             scope_snapshot=ConsoleLibraryItemScopeSnapshot(
-                note_ids=_string_tuple(scope["note_ids"]),
-                media_ids=_string_tuple(scope["media_ids"]),
+                note_ids=_identifier_tuple(scope["note_ids"]),
+                media_ids=_identifier_tuple(scope["media_ids"]),
                 conversations_allowed=cast(bool, scope["conversations_allowed"]),
             ),
             provider_intent=ConsoleProviderIntent(
@@ -445,7 +512,7 @@ def parse_console_turn_library_authority_json(value: object) -> ConsoleTurnLibra
                 model=_string(intent["model"], optional=True),
                 endpoint=endpoint,
             ),
-            attempt_id=cast(str, _string(data["attempt_id"])),
+            attempt_id=cast(str, _identifier(data["attempt_id"])),
         )
     except ValueError as exc:
         raise ConsoleDispatchCheckpointValidationError(
@@ -519,9 +586,8 @@ def dump_console_dispatch_reconstructability_json(
             "attachments_reconstructable": reconstructability.attachments_reconstructable,
             "evidence_reconstructable": reconstructability.evidence_reconstructable,
             "prefill_reconstructable": reconstructability.prefill_reconstructable,
-            "opaque_reference": _string(
-                reconstructability.opaque_reference,
-                optional=True,
+            "opaque_reference": _opaque_reference(
+                reconstructability.opaque_reference
             ),
         },
         CHECKPOINT_RECONSTRUCTABILITY_MAX_BYTES,
@@ -547,7 +613,7 @@ def parse_console_dispatch_reconstructability_json(
         attachments_reconstructable=cast(bool, data["attachments_reconstructable"]),
         evidence_reconstructable=cast(bool, data["evidence_reconstructable"]),
         prefill_reconstructable=cast(bool, data["prefill_reconstructable"]),
-        opaque_reference=_string(data["opaque_reference"], optional=True),
+        opaque_reference=_opaque_reference(data["opaque_reference"]),
     )
     if dump_console_dispatch_reconstructability_json(reconstructability) != value:
         raise ConsoleDispatchCheckpointValidationError("Invalid checkpoint data.")

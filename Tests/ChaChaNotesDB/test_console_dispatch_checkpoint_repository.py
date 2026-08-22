@@ -84,7 +84,7 @@ def _reconstructability() -> ConsoleDispatchReconstructability:
         attachments_reconstructable=True,
         evidence_reconstructable=False,
         prefill_reconstructable=True,
-        opaque_reference="opaque-1",
+        opaque_reference="opaque:opaque-1",
     )
 
 
@@ -197,7 +197,7 @@ def test_checkpoint_codecs_pin_exact_json_keys_types_and_order() -> None:
     )
     assert reconstructability_json == (
         '{"attachments_reconstructable":true,"evidence_reconstructable":false,'
-        '"prefill_reconstructable":true,"opaque_reference":"opaque-1"}'
+        '"prefill_reconstructable":true,"opaque_reference":"opaque:opaque-1"}'
     )
     assert parse_console_turn_library_authority_json(authority_json) == _authority()
     assert parse_console_resolved_destination_json(destination_json) == _destination()
@@ -262,7 +262,8 @@ def test_checkpoint_codecs_reject_request_text_source_snippets_and_credentials(
             dump_console_dispatch_reconstructability_json,
             replace(
                 _reconstructability(),
-                opaque_reference="x" * CHECKPOINT_RECONSTRUCTABILITY_MAX_BYTES,
+                opaque_reference="opaque:"
+                + "x" * CHECKPOINT_RECONSTRUCTABILITY_MAX_BYTES,
             ),
             CHECKPOINT_RECONSTRUCTABILITY_MAX_BYTES,
         ),
@@ -274,6 +275,68 @@ def test_checkpoint_codecs_enforce_utf8_byte_caps(
     assert cap in {4096, 2048}
     with pytest.raises(ConsoleDispatchCheckpointValidationError):
         dumper(value)  # type: ignore[operator]
+
+
+@pytest.mark.parametrize(
+    "authority",
+    [
+        replace(
+            _authority(),
+            policy=ConsoleLibraryPolicySnapshot(
+                ConsoleAutoRetrieve.AUTOMATIC,
+                ConsoleAssistantLibraryAccess.ALLOWED,
+                None,
+                "unavailable",
+                "policy_read_error",
+            ),
+        ),
+        replace(
+            _authority(),
+            policy=ConsoleLibraryPolicySnapshot(
+                ConsoleAutoRetrieve.AUTOMATIC,
+                ConsoleAssistantLibraryAccess.ALLOWED,
+                None,
+                "durable",
+            ),
+        ),
+        replace(_authority(), source_types=("notes", "private_source")),
+        replace(
+            _authority(),
+            scope_snapshot=ConsoleLibraryItemScopeSnapshot(
+                note_ids=("private note body with spaces",),
+                media_ids=(),
+                conversations_allowed=False,
+            ),
+        ),
+        replace(
+            _authority(),
+            policy=ConsoleLibraryPolicySnapshot(
+                ConsoleAutoRetrieve.NEVER,
+                ConsoleAssistantLibraryAccess.BLOCKED,
+                None,
+                "unavailable",
+                "API key sk-secret",
+            ),
+        ),
+    ],
+)
+def test_authority_codec_rejects_fail_open_and_free_form_allowed_fields(
+    authority: ConsoleTurnLibraryAuthority,
+) -> None:
+    with pytest.raises(ConsoleDispatchCheckpointValidationError):
+        dump_console_turn_library_authority_json(authority)
+
+
+def test_reconstructability_codec_requires_an_explicit_opaque_reference_format() -> None:
+    with pytest.raises(ConsoleDispatchCheckpointValidationError):
+        dump_console_dispatch_reconstructability_json(
+            ConsoleDispatchReconstructability(
+                attachments_reconstructable=True,
+                evidence_reconstructable=False,
+                prefill_reconstructable=False,
+                opaque_reference="raw source snippet with spaces",
+            )
+        )
 
 
 def test_insert_and_read_validate_roles_conversation_versions_and_state(
@@ -337,14 +400,38 @@ def test_read_quarantines_invalid_ownership(tmp_path: Path, corruption: str) -> 
 def test_read_quarantines_duplicate_active_path_owners(tmp_path: Path) -> None:
     db, conversation_id = _db_and_conversation(tmp_path / "duplicates.sqlite")
     repository = ConsoleDispatchRepository(db)
-    _insert(db, repository, _acceptance(conversation_id, suffix="1"))
-    _insert(db, repository, _acceptance(conversation_id, suffix="2"))
+    first = _insert(db, repository, _acceptance(conversation_id, suffix="1"))
+    second_acceptance = replace(
+        _acceptance(conversation_id, suffix="2"),
+        parent_message_id=first.assistant_message_id,
+    )
+    second = _insert(db, repository, second_acceptance)
+    db.set_conversation_active_leaf(conversation_id, second.assistant_message_id)
 
     result = repository.read_for_session(conversation_id)
 
     assert result.status is ConsoleDispatchResultStatus.QUARANTINED
     assert result.checkpoint is None
     assert result.error_code == "duplicate_active_path_owner"
+
+
+def test_read_considers_only_checkpoint_owners_on_the_selected_active_lineage(
+    tmp_path: Path,
+) -> None:
+    db, conversation_id = _db_and_conversation(tmp_path / "active-lineage.sqlite")
+    repository = ConsoleDispatchRepository(db)
+    first = _insert(db, repository, _acceptance(conversation_id, suffix="1"))
+    second = _insert(db, repository, _acceptance(conversation_id, suffix="2"))
+
+    db.set_conversation_active_leaf(conversation_id, first.assistant_message_id)
+    first_read = repository.read_for_session(conversation_id)
+    db.set_conversation_active_leaf(conversation_id, second.assistant_message_id)
+    second_read = repository.read_for_session(conversation_id)
+
+    assert first_read.status is ConsoleDispatchResultStatus.COMMITTED
+    assert first_read.checkpoint == first
+    assert second_read.status is ConsoleDispatchResultStatus.COMMITTED
+    assert second_read.checkpoint == second
 
 
 def test_insert_is_not_a_generic_upsert(tmp_path: Path) -> None:
@@ -357,10 +444,155 @@ def test_insert_is_not_a_generic_upsert(tmp_path: Path) -> None:
         _insert(
             db,
             repository,
-            replace(acceptance, attempt_id="overwritten-attempt"),
+            replace(
+                acceptance,
+                attempt_id="overwritten-attempt",
+                frozen_authority=replace(
+                    acceptance.frozen_authority,
+                    attempt_id="overwritten-attempt",
+                ),
+            ),
         )
 
     assert repository.read_for_session(conversation_id).checkpoint == original
+
+
+def test_acceptance_requires_the_checkpoint_and_frozen_authority_attempt_to_match(
+    tmp_path: Path,
+) -> None:
+    db, conversation_id = _db_and_conversation(tmp_path / "attempt-mismatch.sqlite")
+    repository = ConsoleDispatchRepository(db)
+    acceptance = replace(_acceptance(conversation_id), attempt_id="other-attempt")
+
+    with pytest.raises(ConsoleDispatchCheckpointValidationError):
+        _insert(db, repository, acceptance)
+
+    assert db.get_connection().execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    ["preparation_id", "attempt_id", "authority_attempt", "assistant_message_id"],
+)
+def test_read_quarantines_malformed_or_mismatched_checkpoint_identity(
+    tmp_path: Path,
+    corruption: str,
+) -> None:
+    db, conversation_id = _db_and_conversation(
+        tmp_path / f"identity-{corruption}.sqlite"
+    )
+    repository = ConsoleDispatchRepository(db)
+    inserted = _insert(db, repository, _acceptance(conversation_id))
+    connection = db.get_connection()
+    db.set_conversation_active_leaf(conversation_id, inserted.assistant_message_id)
+    if corruption == "preparation_id":
+        connection.execute(
+            "UPDATE console_dispatch_checkpoints SET preparation_id = ?",
+            ("private draft text",),
+        )
+    elif corruption == "attempt_id":
+        connection.execute(
+            "UPDATE console_dispatch_checkpoints SET attempt_id = ?",
+            ("",),
+        )
+    elif corruption == "authority_attempt":
+        connection.execute(
+            "UPDATE console_dispatch_checkpoints SET attempt_id = ?",
+            ("other-attempt",),
+        )
+    else:
+        malformed_id = "assistant private body"
+        connection.commit()
+        connection.execute("PRAGMA foreign_keys = OFF")
+        connection.execute(
+            "UPDATE console_dispatch_checkpoints SET assistant_message_id = ?",
+            (malformed_id,),
+        )
+        connection.execute(
+            "UPDATE messages SET id = ? WHERE id = ?",
+            (malformed_id, inserted.assistant_message_id),
+        )
+        connection.execute(
+            "UPDATE conversations SET active_leaf_message_id = ? WHERE id = ?",
+            (malformed_id, conversation_id),
+        )
+    connection.commit()
+
+    result = repository.read_for_session(conversation_id)
+
+    assert result.status is ConsoleDispatchResultStatus.QUARANTINED
+    assert result.checkpoint is None
+
+
+@pytest.mark.parametrize("operation", ["read", "cas", "settle", "handoff"])
+def test_soft_deleted_conversation_cannot_recover_or_mutate_dispatch_ownership(
+    tmp_path: Path,
+    operation: str,
+) -> None:
+    db, conversation_id = _db_and_conversation(
+        tmp_path / f"deleted-{operation}.sqlite"
+    )
+    repository = ConsoleDispatchRepository(db)
+    inserted = _insert(db, repository, _acceptance(conversation_id))
+    owner = (
+        _start_dispatch(repository, inserted) if operation == "handoff" else inserted
+    )
+    assert db.soft_delete_conversation(conversation_id, expected_version=1) is True
+
+    if operation == "read":
+        result = repository.read_for_session(conversation_id)
+        assert result.status is ConsoleDispatchResultStatus.NOT_FOUND
+    elif operation == "cas":
+        result = repository.cas_state(
+            ConsoleDispatchTransition(
+                assistant_message_id=owner.assistant_message_id,
+                expected_state=ConsoleDispatchCheckpointState.ACCEPTED,
+                expected_checkpoint_revision=1,
+                expected_user_message_version=1,
+                expected_assistant_message_version=1,
+                new_state=ConsoleDispatchCheckpointState.DISPATCH_STARTED,
+                new_attempt_id="attempt-after-delete",
+            )
+        )
+        assert result.status is ConsoleDispatchResultStatus.CONFLICT
+    elif operation == "settle":
+        result = repository.settle_with_assistant(
+            ConsoleAssistantSettlement(
+                assistant_message_id=owner.assistant_message_id,
+                expected_checkpoint_state=ConsoleDispatchCheckpointState.ACCEPTED,
+                expected_checkpoint_revision=1,
+                expected_user_message_version=1,
+                expected_assistant_message_version=1,
+                terminal_state="discarded",
+                content="discarded",
+                metadata_json=None,
+            )
+        )
+        assert result.status is ConsoleDispatchResultStatus.CONFLICT
+    else:
+        result = repository.handoff_to_provider_continuation(
+            ConsoleContinuationHandoff(
+                assistant_message_id=owner.assistant_message_id,
+                expected_checkpoint_revision=2,
+                expected_user_message_version=1,
+                expected_assistant_message_version=2,
+                provider_continuation_json=_active_continuation_json(),
+            )
+        )
+        assert result.status is ConsoleDispatchResultStatus.CONFLICT
+
+    assistant = db.get_connection().execute(
+        "SELECT assistant_generation_state, version, deleted FROM messages WHERE id = ?",
+        (owner.assistant_message_id,),
+    ).fetchone()
+    assert tuple(assistant) == (
+        owner.state.value,
+        owner.assistant_message_version,
+        0,
+    )
+    assert db.get_connection().execute(
+        "SELECT COUNT(*) FROM console_dispatch_checkpoints"
+    ).fetchone()[0] == 1
 
 
 @pytest.mark.parametrize("boundary", ["user", "assistant", "checkpoint"])
@@ -394,6 +626,112 @@ def test_insert_failure_at_each_write_boundary_rolls_back(
     assert connection.execute(
         "SELECT COUNT(*) FROM console_dispatch_checkpoints"
     ).fetchone()[0] == 0
+
+
+def test_acceptance_persists_the_full_user_attachment_set_atomically(
+    tmp_path: Path,
+) -> None:
+    db, conversation_id = _db_and_conversation(tmp_path / "attachments.sqlite")
+    repository = ConsoleDispatchRepository(db)
+    acceptance = replace(
+        _acceptance(conversation_id),
+        attachments=(
+            {
+                "position": 0,
+                "data": b"first-image",
+                "mime_type": "image/png",
+                "display_name": "first.png",
+            },
+            {
+                "position": 1,
+                "data": b"second-image",
+                "mime_type": "image/webp",
+                "display_name": "second.webp",
+            },
+        ),
+    )
+
+    checkpoint = _insert(db, repository, acceptance)
+
+    user = db.get_message_by_id(checkpoint.user_message_id)
+    assert user is not None
+    assert (user["image_data"], user["image_mime_type"]) == (
+        b"first-image",
+        "image/png",
+    )
+    extras = db.get_attachments_for_messages([checkpoint.user_message_id])
+    assert extras[checkpoint.user_message_id] == [
+        {
+            "position": 1,
+            "data": b"second-image",
+            "mime_type": "image/webp",
+            "display_name": "second.webp",
+        }
+    ]
+
+
+def test_attachment_sidecar_failure_rolls_back_the_entire_acceptance(
+    tmp_path: Path,
+) -> None:
+    db, conversation_id = _db_and_conversation(tmp_path / "attachment-rollback.sqlite")
+    repository = ConsoleDispatchRepository(db)
+    connection = db.get_connection()
+    connection.execute(
+        """
+        CREATE TRIGGER fail_dispatch_attachment
+        BEFORE INSERT ON message_attachments
+        BEGIN SELECT RAISE(ABORT, 'injected attachment failure'); END
+        """
+    )
+    connection.commit()
+    acceptance = replace(
+        _acceptance(conversation_id),
+        attachments=(
+            {
+                "position": 1,
+                "data": b"second-image",
+                "mime_type": "image/webp",
+                "display_name": "second.webp",
+            },
+        ),
+    )
+
+    with pytest.raises(sqlite3.IntegrityError):
+        _insert(db, repository, acceptance)
+
+    assert connection.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
+    assert connection.execute(
+        "SELECT COUNT(*) FROM message_attachments"
+    ).fetchone()[0] == 0
+    assert connection.execute(
+        "SELECT COUNT(*) FROM console_dispatch_checkpoints"
+    ).fetchone()[0] == 0
+
+
+def test_nonempty_attachments_cannot_claim_unreconstructable_retry_state(
+    tmp_path: Path,
+) -> None:
+    db, conversation_id = _db_and_conversation(tmp_path / "attachment-flags.sqlite")
+    repository = ConsoleDispatchRepository(db)
+    acceptance = replace(
+        _acceptance(conversation_id),
+        attachments=(
+            {
+                "position": 0,
+                "data": b"image",
+                "mime_type": "image/png",
+            },
+        ),
+        reconstructability=replace(
+            _reconstructability(),
+            attachments_reconstructable=False,
+        ),
+    )
+
+    with pytest.raises(ConsoleDispatchCheckpointValidationError):
+        _insert(db, repository, acceptance)
+
+    assert db.get_connection().execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
 
 
 @pytest.mark.parametrize("boundary", ["assistant_state", "checkpoint_state"])

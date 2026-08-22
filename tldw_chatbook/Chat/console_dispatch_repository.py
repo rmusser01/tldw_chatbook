@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from collections.abc import Mapping
 
@@ -29,6 +30,9 @@ from tldw_chatbook.Chat.provider_continuation import (
     dump_provider_continuation_json,
     parse_provider_continuation_json,
 )
+from tldw_chatbook.Chat.console_transaction_contribution import (
+    ConsoleTransactionContribution,
+)
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
 
@@ -42,6 +46,7 @@ _OWNER_SELECT = """
            checkpoint.queue_entry_id, checkpoint.frozen_authority_json,
            checkpoint.resolved_destination_json,
            checkpoint.reconstructability_json,
+           conversation.deleted AS conversation_deleted,
            user_message.conversation_id AS user_conversation_id,
            user_message.role AS user_role,
            user_message.version AS current_user_version,
@@ -54,11 +59,33 @@ _OWNER_SELECT = """
            assistant_message.assistant_generation_state AS assistant_state,
            assistant_message.provider_continuation_json AS provider_continuation_json
       FROM console_dispatch_checkpoints AS checkpoint
+      JOIN conversations AS conversation
+        ON conversation.id = checkpoint.conversation_id
       LEFT JOIN messages AS user_message
         ON user_message.id = checkpoint.user_message_id
       LEFT JOIN messages AS assistant_message
         ON assistant_message.id = checkpoint.assistant_message_id
 """
+
+_ACTIVE_OWNER_SELECT = """
+    WITH RECURSIVE active_path(message_id, parent_message_id) AS (
+        SELECT active_message.id, active_message.parent_message_id
+          FROM conversations AS active_conversation
+          JOIN messages AS active_message
+            ON active_message.id = active_conversation.active_leaf_message_id
+           AND active_message.conversation_id = active_conversation.id
+         WHERE active_conversation.id = ?
+           AND active_conversation.deleted = 0
+        UNION
+        SELECT parent.id, parent.parent_message_id
+          FROM messages AS parent
+          JOIN active_path AS child
+            ON child.parent_message_id = parent.id
+         WHERE parent.conversation_id = ?
+    )
+"""
+
+_IDENTIFIER_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,199}\Z")
 
 
 class ConsoleDispatchRepository:
@@ -95,6 +122,11 @@ class ConsoleDispatchRepository:
                 raise ConsoleDispatchCheckpointValidationError(
                     "Parent message is unavailable."
                 )
+        attachments = self._validated_attachments(acceptance)
+        first_attachment = next(
+            (row for row in attachments if row[0] == 0),
+            None,
+        )
         now = self.db._get_current_utc_timestamp_iso()
 
         cursor.execute(
@@ -105,7 +137,7 @@ class ConsoleDispatchRepository:
                 last_modified, client_id, version, deleted, role,
                 usage_json, metadata_json, provider_continuation_json,
                 assistant_generation_state
-            ) VALUES (?, ?, ?, 'user', ?, NULL, NULL, ?, NULL,
+            ) VALUES (?, ?, ?, 'user', ?, ?, ?, ?, NULL,
                       ?, ?, 1, 0, 'user', NULL, NULL, NULL, NULL)
             """,
             (
@@ -113,10 +145,24 @@ class ConsoleDispatchRepository:
                 acceptance.conversation_id,
                 acceptance.parent_message_id,
                 acceptance.user_content,
+                first_attachment[1] if first_attachment is not None else None,
+                first_attachment[2] if first_attachment is not None else None,
                 now,
                 now,
                 self.db.client_id,
             ),
+        )
+        cursor.executemany(
+            """
+            INSERT INTO message_attachments (
+                message_id, position, data, mime_type, display_name
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            [
+                (acceptance.user_message_id, *row)
+                for row in attachments
+                if row[0] >= 1
+            ],
         )
         cursor.execute(
             """
@@ -139,6 +185,18 @@ class ConsoleDispatchRepository:
                 self.db.client_id,
             ),
         )
+        updated_leaf = cursor.execute(
+            """
+            UPDATE conversations
+               SET active_leaf_message_id = ?
+             WHERE id = ? AND deleted = 0
+            """,
+            (acceptance.assistant_message_id, acceptance.conversation_id),
+        )
+        if updated_leaf.rowcount != 1:
+            raise sqlite3.IntegrityError(
+                "Conversation became unavailable during acceptance."
+            )
         authority_json = dump_console_turn_library_authority_json(
             acceptance.frozen_authority
         )
@@ -178,8 +236,9 @@ class ConsoleDispatchRepository:
             "assistant": acceptance.assistant_message_id,
         }
         for contribution in acceptance.contributions:
-            contribution.write(
-                cursor=cursor,
+            self._write_contribution(
+                cursor,
+                contribution,
                 conversation_id=acceptance.conversation_id,
                 message_ids=message_ids,
             )
@@ -205,8 +264,12 @@ class ConsoleDispatchRepository:
             )
         try:
             rows = self.db.get_connection().execute(
-                _OWNER_SELECT + " WHERE checkpoint.conversation_id = ?",
-                (conversation_id,),
+                _ACTIVE_OWNER_SELECT
+                + _OWNER_SELECT
+                + " JOIN active_path ON active_path.message_id = "
+                "checkpoint.assistant_message_id"
+                " WHERE checkpoint.conversation_id = ?",
+                (conversation_id, conversation_id, conversation_id),
             ).fetchall()
         except sqlite3.Error:
             return ConsoleDispatchReadResult(
@@ -253,7 +316,7 @@ class ConsoleDispatchRepository:
                 transition.expected_assistant_message_version,
             )
             or type(transition.new_attempt_id) is not str
-            or not transition.new_attempt_id.strip()
+            or not self._valid_identifier(transition.new_attempt_id)
         ):
             raise ConsoleDispatchCheckpointValidationError(
                 "Invalid dispatch transition."
@@ -521,7 +584,7 @@ class ConsoleDispatchRepository:
             or (acceptance.origin == "manual" and acceptance.queue_entry_id is not None)
             or (acceptance.origin == "queued" and not acceptance.queue_entry_id)
             or any(
-                type(value) is not str or not value.strip()
+                not ConsoleDispatchRepository._valid_identifier(value)
                 for value in (
                     acceptance.conversation_id,
                     acceptance.user_message_id,
@@ -530,7 +593,20 @@ class ConsoleDispatchRepository:
                     acceptance.attempt_id,
                 )
             )
+            or (
+                acceptance.parent_message_id is not None
+                and not ConsoleDispatchRepository._valid_identifier(
+                    acceptance.parent_message_id
+                )
+            )
+            or (
+                acceptance.queue_entry_id is not None
+                and not ConsoleDispatchRepository._valid_identifier(
+                    acceptance.queue_entry_id
+                )
+            )
             or acceptance.user_message_id == acceptance.assistant_message_id
+            or acceptance.attempt_id != acceptance.frozen_authority.attempt_id
             or type(acceptance.user_content) is not str
             or type(acceptance.attachments) is not tuple
             or type(acceptance.contributions) is not tuple
@@ -538,6 +614,92 @@ class ConsoleDispatchRepository:
             raise ConsoleDispatchCheckpointValidationError(
                 "Invalid durable turn acceptance."
             )
+
+    @staticmethod
+    def _validated_attachments(
+        acceptance: ConsoleDurableTurnAcceptance,
+    ) -> tuple[tuple[int, bytes, str, str], ...]:
+        if (
+            acceptance.attachments
+            and not acceptance.reconstructability.attachments_reconstructable
+        ):
+            raise ConsoleDispatchCheckpointValidationError(
+                "Accepted attachments must be reconstructable."
+            )
+        normalized: list[tuple[int, bytes, str, str]] = []
+        positions: set[int] = set()
+        for attachment in acceptance.attachments:
+            if not isinstance(attachment, Mapping):
+                raise ConsoleDispatchCheckpointValidationError(
+                    "Invalid accepted attachment."
+                )
+            position = attachment.get("position")
+            data = attachment.get("data")
+            mime_type = attachment.get("mime_type")
+            display_name = attachment.get("display_name", "")
+            if (
+                type(position) is not int
+                or position < 0
+                or position in positions
+                or type(data) is not bytes
+                or type(mime_type) is not str
+                or not mime_type.strip()
+                or type(display_name) is not str
+            ):
+                raise ConsoleDispatchCheckpointValidationError(
+                    "Invalid accepted attachment."
+                )
+            positions.add(position)
+            normalized.append((position, data, mime_type, display_name))
+        return tuple(sorted(normalized))
+
+    @staticmethod
+    def _write_contribution(
+        cursor: sqlite3.Cursor,
+        contribution: ConsoleTransactionContribution,
+        *,
+        conversation_id: str,
+        message_ids: Mapping[str, str],
+    ) -> None:
+        connection = cursor.connection
+        if not connection.in_transaction:
+            raise sqlite3.DatabaseError(
+                "A contribution requires the caller-owned transaction."
+            )
+
+        denied_actions = {
+            sqlite3.SQLITE_ATTACH,
+            sqlite3.SQLITE_DETACH,
+            sqlite3.SQLITE_TRANSACTION,
+            sqlite3.SQLITE_SAVEPOINT,
+        }
+
+        def transaction_guard(
+            action: int,
+            _arg1: str | None,
+            _arg2: str | None,
+            _database: str | None,
+            _source: str | None,
+        ) -> int:
+            if action in denied_actions:
+                return sqlite3.SQLITE_DENY
+            return sqlite3.SQLITE_OK
+
+        connection.set_authorizer(transaction_guard)
+        try:
+            contribution.write(
+                cursor=cursor,
+                conversation_id=conversation_id,
+                message_ids=message_ids,
+            )
+        finally:
+            connection.set_authorizer(None)
+        if not connection.in_transaction:
+            raise sqlite3.DatabaseError("Contribution ended the caller transaction.")
+
+    @staticmethod
+    def _valid_identifier(value: object) -> bool:
+        return type(value) is str and _IDENTIFIER_RE.fullmatch(value) is not None
 
     @staticmethod
     def _positive_versions(*values: int) -> bool:
@@ -559,6 +721,7 @@ class ConsoleDispatchRepository:
         try:
             if (
                 row["schema_version"] != 1
+                or row["conversation_deleted"] != 0
                 or row["user_role"] != "user"
                 or row["assistant_role"] != "assistant"
                 or row["user_conversation_id"] != row["conversation_id"]
@@ -580,6 +743,31 @@ class ConsoleDispatchRepository:
                 or (row["origin"] == "queued" and not row["queue_entry_id"])
             ):
                 return None, "invalid_checkpoint_owner"
+            identity_values = (
+                row["assistant_message_id"],
+                row["user_message_id"],
+                row["conversation_id"],
+                row["preparation_id"],
+                row["attempt_id"],
+            )
+            if any(
+                not ConsoleDispatchRepository._valid_identifier(value)
+                for value in identity_values
+            ) or (
+                row["queue_entry_id"] is not None
+                and not ConsoleDispatchRepository._valid_identifier(
+                    row["queue_entry_id"]
+                )
+            ):
+                return None, "invalid_checkpoint_identity"
+            frozen_authority = parse_console_turn_library_authority_json(
+                row["frozen_authority_json"]
+            )
+            if (
+                row["state"] == ConsoleDispatchCheckpointState.ACCEPTED.value
+                and row["attempt_id"] != frozen_authority.attempt_id
+            ):
+                return None, "invalid_checkpoint_identity"
             checkpoint = ConsoleDispatchCheckpoint(
                 assistant_message_id=row["assistant_message_id"],
                 user_message_id=row["user_message_id"],
@@ -592,9 +780,7 @@ class ConsoleDispatchRepository:
                 assistant_message_version=row["assistant_message_version"],
                 origin=row["origin"],
                 queue_entry_id=row["queue_entry_id"],
-                frozen_authority=parse_console_turn_library_authority_json(
-                    row["frozen_authority_json"]
-                ),
+                frozen_authority=frozen_authority,
                 resolved_destination=parse_console_resolved_destination_json(
                     row["resolved_destination_json"]
                 ),
@@ -615,7 +801,8 @@ class ConsoleDispatchRepository:
         assistant_version: int,
     ) -> bool:
         return (
-            row["checkpoint_revision"] == checkpoint_revision
+            row["conversation_deleted"] == 0
+            and row["checkpoint_revision"] == checkpoint_revision
             and row["user_message_version"] == user_version
             and row["assistant_message_version"] == assistant_version
             and row["current_user_version"] == user_version

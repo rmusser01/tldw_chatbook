@@ -234,3 +234,48 @@ async def test_unregister_removes_holder_from_later_publication(tmp_path: Path) 
     assert result.status is ConsoleLibraryPolicyWriteStatus.COMMITTED
     assert first.snapshot == result.snapshot
     assert closed.snapshot.source == "new_session"
+
+
+@pytest.mark.asyncio
+async def test_capture_retries_when_session_is_rebound_during_the_durable_read(
+    tmp_path: Path,
+) -> None:
+    db = CharactersRAGDB(tmp_path / "capture-rebind.sqlite", client_id="coordinator")
+    allowed_id = db.add_conversation({"title": "allowed"})
+    blocked_id = db.add_conversation({"title": "blocked"})
+    assert allowed_id is not None
+    assert blocked_id is not None
+    repository = ConsoleLibraryPolicyRepository(db)
+    assert repository.insert(allowed_id, _candidate(allowed=True)).status is (
+        ConsoleLibraryPolicyWriteStatus.COMMITTED
+    )
+    assert repository.insert(blocked_id, _candidate(allowed=False)).status is (
+        ConsoleLibraryPolicyWriteStatus.COMMITTED
+    )
+    coordinator = ConsoleLibraryPolicyCoordinator(repository)
+    first_holder = _holder(allowed=True)
+    rebound_holder = _holder(allowed=True)
+    coordinator.register_holder("session", allowed_id, first_holder)
+    entered = threading.Event()
+    release = threading.Event()
+    original_read = repository.read
+
+    def blocked_first_read(conversation_id: str):
+        if conversation_id == allowed_id:
+            entered.set()
+            assert release.wait(timeout=5)
+        return original_read(conversation_id)
+
+    repository.read = blocked_first_read  # type: ignore[method-assign]
+    capture = asyncio.create_task(coordinator.capture_for_execution("session"))
+    assert await asyncio.to_thread(entered.wait, 5)
+    coordinator.register_holder("session", blocked_id, rebound_holder)
+    release.set()
+
+    captured = await capture
+
+    assert captured.auto_retrieve is ConsoleAutoRetrieve.NEVER
+    assert captured.assistant_access is ConsoleAssistantLibraryAccess.BLOCKED
+    assert captured.policy_revision == 1
+    assert rebound_holder.snapshot == captured
+    assert first_holder.snapshot.assistant_access is ConsoleAssistantLibraryAccess.ALLOWED
