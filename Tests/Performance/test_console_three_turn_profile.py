@@ -14,6 +14,8 @@ import subprocess
 import sys
 import textwrap
 import tomllib
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.request import Request
@@ -487,6 +489,642 @@ def test_validate_confirmation_rows_validates_every_row_including_burn_in() -> N
 
     assert errors == ("confirmation_sample_contract",)
     assert seen_positions == list(range(108))
+
+
+def _attempt_event(attempt_id: str, state: str, **extra: object) -> dict[str, object]:
+    return {"attempt_id": attempt_id, "state": state, **extra}
+
+
+def test_campaign_attempt_ids_are_sequential_and_staging_roots_are_fresh(
+    tmp_path: Path,
+) -> None:
+    ledger = tmp_path / "attempts.jsonl"
+
+    assert profile.next_attempt_id(()) == "attempt-0001"
+    first_root = profile.create_attempt_root(tmp_path, "attempt-0001")
+    assert first_root == tmp_path / "attempts" / "attempt-0001"
+    assert first_root.is_dir()
+    with pytest.raises(RuntimeError, match="campaign_attempt_root_exists"):
+        profile.create_attempt_root(tmp_path, "attempt-0001")
+
+    profile.append_attempt_state(
+        ledger, _attempt_event("attempt-0001", "running")
+    )
+    profile.append_attempt_state(
+        ledger,
+        _attempt_event(
+            "attempt-0001", "failed", reason_category="acquisition"
+        ),
+    )
+    assert profile.next_attempt_id(profile.attempt_lineage(ledger)) == "attempt-0002"
+    second_root = profile.create_attempt_root(tmp_path, "attempt-0002")
+    assert second_root.is_dir()
+    assert second_root != first_root
+
+
+def test_campaign_ledger_appends_sorted_newline_json_and_syncs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ledger = tmp_path / "attempts.jsonl"
+    modes: list[str] = []
+    synced: list[int] = []
+    real_open = Path.open
+
+    def recording_open(path: Path, mode: str = "r", *args, **kwargs):
+        if path == ledger:
+            modes.append(mode)
+        return real_open(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", recording_open)
+    monkeypatch.setattr(profile.os, "fsync", synced.append)
+    event = _attempt_event("attempt-0001", "running")
+
+    profile.append_attempt_state(ledger, event)
+
+    assert modes == ["a"]
+    assert synced
+    assert ledger.read_text(encoding="utf-8") == json.dumps(
+        event, sort_keys=True
+    ) + "\n"
+
+
+def test_campaign_ledger_never_overwrites_or_truncates(tmp_path: Path) -> None:
+    ledger = tmp_path / "attempts.jsonl"
+    running = _attempt_event("attempt-0001", "running")
+    failed = _attempt_event(
+        "attempt-0001", "failed", reason_category="provider"
+    )
+    profile.append_attempt_state(ledger, running)
+    original = ledger.read_bytes()
+
+    profile.append_attempt_state(ledger, failed)
+
+    assert ledger.read_bytes().startswith(original)
+    assert ledger.read_text(encoding="utf-8").splitlines() == [
+        json.dumps(running, sort_keys=True),
+        json.dumps(failed, sort_keys=True),
+    ]
+
+
+def test_campaign_attempt_states_are_exact() -> None:
+    assert profile.ATTEMPT_STATES == frozenset(
+        {
+            "running",
+            "failed",
+            "invalid",
+            "complete_pending_review",
+            "changes_required",
+        }
+    )
+    assert profile.BLOCKING_ATTEMPT_STATES == frozenset(
+        {"running", "complete_pending_review", "changes_required"}
+    )
+
+
+@pytest.mark.parametrize(
+    "state",
+    ("running", "complete_pending_review", "changes_required"),
+)
+def test_campaign_acquisition_is_blocked_by_current_attempt_state(
+    tmp_path: Path, state: str
+) -> None:
+    ledger = tmp_path / "attempts.jsonl"
+    profile.append_attempt_state(
+        ledger, _attempt_event("attempt-0001", "running")
+    )
+    if state == "complete_pending_review":
+        profile.complete_attempt_measurement(
+            ledger,
+            "attempt-0001",
+            verdict="pass",
+            raw_sha256="1" * 64,
+        )
+    elif state == "changes_required":
+        profile.complete_attempt_measurement(
+            ledger,
+            "attempt-0001",
+            verdict="inconclusive",
+            raw_sha256="1" * 64,
+        )
+        profile.append_attempt_state(
+            ledger,
+            _attempt_event(
+                "attempt-0001",
+                "changes_required",
+                verdict="inconclusive",
+                raw_sha256="1" * 64,
+                reason_category="summary",
+            ),
+        )
+
+    with pytest.raises(RuntimeError, match=f"campaign_acquisition_blocked:{state}"):
+        profile.require_campaign_acquisition(ledger)
+
+
+@pytest.mark.parametrize(
+    ("terminal_state", "reason_category"),
+    (
+        ("failed", "provider"),
+        ("failed", "acquisition"),
+        ("failed", "interrupted"),
+        ("invalid", "raw"),
+        ("invalid", "product"),
+        ("invalid", "completeness"),
+        ("invalid", "isolation"),
+        ("invalid", "privacy"),
+        ("invalid", "ownership"),
+    ),
+)
+def test_campaign_retry_is_allowed_only_after_uncorrectable_terminal_state(
+    tmp_path: Path, terminal_state: str, reason_category: str
+) -> None:
+    ledger = tmp_path / "attempts.jsonl"
+    profile.append_attempt_state(
+        ledger, _attempt_event("attempt-0001", "running")
+    )
+    profile.append_attempt_state(
+        ledger,
+        _attempt_event(
+            "attempt-0001", terminal_state, reason_category=reason_category
+        ),
+    )
+
+    assert profile.require_campaign_acquisition(ledger) == "attempt-0002"
+
+
+@pytest.mark.parametrize("verdict", ("pass", "regression", "inconclusive"))
+def test_campaign_measured_verdict_always_enters_pending_review(
+    tmp_path: Path, verdict: str
+) -> None:
+    ledger = tmp_path / "attempts.jsonl"
+    profile.append_attempt_state(
+        ledger, _attempt_event("attempt-0001", "running")
+    )
+
+    event = profile.complete_attempt_measurement(
+        ledger,
+        "attempt-0001",
+        verdict=verdict,
+        raw_sha256="a" * 64,
+    )
+
+    assert event == {
+        "attempt_id": "attempt-0001",
+        "state": "complete_pending_review",
+        "verdict": verdict,
+        "raw_sha256": "a" * 64,
+    }
+    with pytest.raises(RuntimeError, match="campaign_acquisition_blocked"):
+        profile.require_campaign_acquisition(ledger)
+
+
+def test_campaign_correctable_derived_changes_preserve_raw_hash_and_lineage(
+    tmp_path: Path,
+) -> None:
+    ledger = tmp_path / "attempts.jsonl"
+    raw_sha256 = "b" * 64
+    profile.append_attempt_state(
+        ledger, _attempt_event("attempt-0001", "running")
+    )
+    profile.complete_attempt_measurement(
+        ledger,
+        "attempt-0001",
+        verdict="inconclusive",
+        raw_sha256=raw_sha256,
+    )
+    profile.append_attempt_state(
+        ledger,
+        _attempt_event(
+            "attempt-0001",
+            "changes_required",
+            verdict="inconclusive",
+            raw_sha256=raw_sha256,
+            reason_category="report",
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="campaign_raw_hash_mismatch"):
+        profile.complete_attempt_measurement(
+            ledger,
+            "attempt-0001",
+            verdict="inconclusive",
+            raw_sha256="c" * 64,
+        )
+    corrected = profile.complete_attempt_measurement(
+        ledger,
+        "attempt-0001",
+        verdict="inconclusive",
+        raw_sha256=raw_sha256,
+    )
+
+    assert corrected["state"] == "complete_pending_review"
+    assert [event["state"] for event in profile.attempt_lineage(ledger)] == [
+        "running",
+        "complete_pending_review",
+        "changes_required",
+        "complete_pending_review",
+    ]
+    assert {
+        event["raw_sha256"]
+        for event in profile.attempt_lineage(ledger)
+        if "raw_sha256" in event
+    } == {raw_sha256}
+
+
+@pytest.mark.parametrize(
+    ("event", "code"),
+    [
+        (
+            _attempt_event("attempt-0001", "running", extra="field"),
+            "campaign_event_fields_invalid",
+        ),
+        (
+            _attempt_event("attempt-0001", "complete"),
+            "campaign_attempt_state_invalid",
+        ),
+        (
+            _attempt_event(
+                "attempt-0001", "failed", reason_category="network_flake"
+            ),
+            "campaign_reason_category_invalid",
+        ),
+        (
+            _attempt_event("attempt-1", "running"),
+            "campaign_attempt_id_invalid",
+        ),
+        (
+            _attempt_event(
+                "attempt-0001",
+                "complete_pending_review",
+                verdict="pass",
+                raw_sha256="not-a-hash",
+            ),
+            "campaign_raw_hash_invalid",
+        ),
+        (
+            _attempt_event("attempt-0001", "running", prompt="secret"),
+            "campaign_event_privacy_violation",
+        ),
+        (
+            _attempt_event("attempt-0001", "running", path="/tmp/raw.jsonl"),
+            "campaign_event_privacy_violation",
+        ),
+    ],
+)
+def test_campaign_attempt_event_schema_fails_closed(
+    tmp_path: Path, event: dict[str, object], code: str
+) -> None:
+    with pytest.raises(RuntimeError, match=code):
+        profile.append_attempt_state(tmp_path / "attempts.jsonl", event)
+
+
+def test_campaign_attempt_lineage_rejects_malformed_and_out_of_order_records(
+    tmp_path: Path,
+) -> None:
+    ledger = tmp_path / "attempts.jsonl"
+    ledger.write_text('{"state":"running"}\n', encoding="utf-8")
+    with pytest.raises(RuntimeError, match="campaign_event_fields_invalid"):
+        profile.attempt_lineage(ledger)
+
+    ledger.write_text(
+        json.dumps(_attempt_event("attempt-0002", "running"), sort_keys=True)
+        + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(RuntimeError, match="campaign_attempt_sequence_invalid"):
+        profile.attempt_lineage(ledger)
+
+    ledger.write_text(
+        json.dumps(_attempt_event("attempt-0001", "running"), sort_keys=True),
+        encoding="utf-8",
+    )
+    with pytest.raises(RuntimeError, match="campaign_ledger_malformed"):
+        profile.attempt_lineage(ledger)
+
+    ledger.write_bytes(b"\xff\n")
+    with pytest.raises(RuntimeError, match="campaign_ledger_malformed"):
+        profile.attempt_lineage(ledger)
+
+
+_OWNER_START = "d" * 64
+_OWNER_TOKEN = "e" * 64
+
+
+def _acquire_lock(campaign_root: Path, *, pid: int = 123):
+    return profile.acquire_campaign_lock(
+        campaign_root,
+        pid=pid,
+        process_start_probe=lambda observed_pid: (
+            _OWNER_START if observed_pid == pid else None
+        ),
+        owner_token_factory=lambda: _OWNER_TOKEN,
+    )
+
+
+def _acquire_attempt(campaign_root: Path, *, pid: int = 123):
+    return profile.acquire_campaign_attempt(
+        campaign_root,
+        pid=pid,
+        process_start_probe=lambda observed_pid: (
+            _OWNER_START if observed_pid == pid else None
+        ),
+        owner_token_factory=lambda: _OWNER_TOKEN,
+    )
+
+
+def test_campaign_lock_uses_atomic_mkdir_and_exact_private_owner_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lock_mkdir_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+    real_mkdir = Path.mkdir
+
+    def recording_mkdir(path: Path, *args, **kwargs):
+        if path.name == ".campaign-lock":
+            lock_mkdir_calls.append((args, kwargs))
+        return real_mkdir(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", recording_mkdir)
+
+    owner = _acquire_lock(tmp_path)
+
+    assert lock_mkdir_calls == [((), {})]
+    assert owner.pid == 123
+    assert json.loads((tmp_path / ".campaign-lock" / "owner.json").read_bytes()) == {
+        "owner_token": _OWNER_TOKEN,
+        "pid": 123,
+        "process_start_sha256": _OWNER_START,
+    }
+    owner_bytes = (tmp_path / ".campaign-lock" / "owner.json").read_text(
+        encoding="utf-8"
+    )
+    assert all(
+        forbidden not in owner_bytes
+        for forbidden in ("api_key", "secret", "command", "environment", "environ")
+    )
+
+
+def test_campaign_lock_refuses_second_owner_and_releases_only_exact_token(
+    tmp_path: Path,
+) -> None:
+    owner = _acquire_lock(tmp_path)
+    with pytest.raises(RuntimeError, match="campaign_lock_held"):
+        _acquire_lock(tmp_path, pid=456)
+    wrong = profile.CampaignLockOwner(
+        pid=owner.pid,
+        process_start_sha256=owner.process_start_sha256,
+        owner_token="f" * 64,
+    )
+
+    with pytest.raises(RuntimeError, match="campaign_lock_owner_mismatch"):
+        profile.release_campaign_lock(tmp_path, wrong)
+    assert (tmp_path / ".campaign-lock").is_dir()
+
+    profile.release_campaign_lock(tmp_path, owner)
+    assert not (tmp_path / ".campaign-lock").exists()
+
+
+def test_campaign_attempt_acquisition_leaves_running_lock_and_staging_evidence(
+    tmp_path: Path,
+) -> None:
+    attempt = _acquire_attempt(tmp_path)
+
+    assert attempt.attempt_id == "attempt-0001"
+    assert attempt.root == tmp_path / "attempts" / "attempt-0001"
+    assert attempt.root.is_dir()
+    assert (tmp_path / ".campaign-lock").is_dir()
+    assert profile.attempt_lineage(tmp_path / "attempts.jsonl") == (
+        {"attempt_id": "attempt-0001", "state": "running"},
+    )
+
+
+def test_campaign_live_exact_owner_recovery_refuses_without_mutation(
+    tmp_path: Path,
+) -> None:
+    _acquire_attempt(tmp_path)
+    before = (tmp_path / "attempts.jsonl").read_bytes()
+
+    with pytest.raises(RuntimeError, match="campaign_lock_owner_live"):
+        profile.recover_interrupted_attempt(
+            tmp_path,
+            process_start_probe=lambda pid: _OWNER_START if pid == 123 else None,
+        )
+
+    assert (tmp_path / ".campaign-lock").is_dir()
+    assert (tmp_path / "attempts.jsonl").read_bytes() == before
+
+
+def test_campaign_process_probe_failures_use_stable_codes_and_preserve_lock(
+    tmp_path: Path,
+) -> None:
+    def failing_probe(_pid: int) -> str:
+        raise RuntimeError("arbitrary-sensitive-probe-detail")
+
+    with pytest.raises(RuntimeError, match="^campaign_process_identity_failed$"):
+        profile.acquire_campaign_lock(
+            tmp_path / "new",
+            pid=123,
+            process_start_probe=failing_probe,
+            owner_token_factory=lambda: _OWNER_TOKEN,
+        )
+    assert not (tmp_path / "new" / ".campaign-lock").exists()
+
+    _acquire_attempt(tmp_path / "existing")
+    before = (tmp_path / "existing" / "attempts.jsonl").read_bytes()
+    with pytest.raises(RuntimeError, match="^campaign_process_identity_failed$"):
+        profile.recover_interrupted_attempt(
+            tmp_path / "existing", process_start_probe=failing_probe
+        )
+    assert (tmp_path / "existing" / ".campaign-lock").is_dir()
+    assert (tmp_path / "existing" / "attempts.jsonl").read_bytes() == before
+
+
+def test_campaign_dead_owner_recovery_appends_interrupted_and_preserves_raw(
+    tmp_path: Path,
+) -> None:
+    attempt = _acquire_attempt(tmp_path)
+    raw = attempt.root / "real-provider-three-turn.raw.jsonl"
+    staging = attempt.root / "partial-staging.json"
+    raw.write_bytes(b'{"event":"sample"}\n')
+    staging.write_bytes(b"partial")
+    raw_sha256 = hashlib.sha256(raw.read_bytes()).hexdigest()
+
+    event = profile.recover_interrupted_attempt(
+        tmp_path, process_start_probe=lambda _pid: None
+    )
+
+    assert event == {
+        "attempt_id": "attempt-0001",
+        "state": "failed",
+        "reason_category": "interrupted",
+    }
+    assert hashlib.sha256(raw.read_bytes()).hexdigest() == raw_sha256
+    assert staging.read_bytes() == b"partial"
+    assert attempt.root.is_dir()
+    assert not (tmp_path / ".campaign-lock").exists()
+    assert not (tmp_path / ".campaign-recovery").exists()
+    assert [row["state"] for row in profile.attempt_lineage(tmp_path / "attempts.jsonl")] == [
+        "running",
+        "failed",
+    ]
+
+
+def test_campaign_pid_reuse_is_stale_for_recorded_owner(tmp_path: Path) -> None:
+    _acquire_attempt(tmp_path, pid=321)
+
+    event = profile.recover_interrupted_attempt(
+        tmp_path,
+        process_start_probe=lambda pid: "f" * 64 if pid == 321 else None,
+    )
+
+    assert event["reason_category"] == "interrupted"
+
+
+def test_campaign_concurrent_stale_recovery_has_one_winner(tmp_path: Path) -> None:
+    _acquire_attempt(tmp_path)
+    first_probe = threading.Barrier(2)
+    probe_counts: dict[int, int] = {}
+    probe_lock = threading.Lock()
+
+    def dead_probe(_pid: int) -> None:
+        thread_id = threading.get_ident()
+        with probe_lock:
+            count = probe_counts.get(thread_id, 0)
+            probe_counts[thread_id] = count + 1
+        if count == 0:
+            first_probe.wait(timeout=5)
+        return None
+
+    def recover():
+        return profile.recover_interrupted_attempt(
+            tmp_path, process_start_probe=dead_probe
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(recover) for _ in range(2)]
+        outcomes: list[object] = []
+        for future in futures:
+            try:
+                outcomes.append(future.result(timeout=5))
+            except RuntimeError as exc:
+                outcomes.append(exc)
+
+    assert sum(isinstance(outcome, dict) for outcome in outcomes) == 1
+    assert sum(isinstance(outcome, RuntimeError) for outcome in outcomes) == 1
+    lineage = profile.attempt_lineage(tmp_path / "attempts.jsonl")
+    assert [event["state"] for event in lineage] == ["running", "failed"]
+
+
+def test_campaign_acquisition_cannot_slip_through_recovery_takeover(
+    tmp_path: Path,
+) -> None:
+    _acquire_attempt(tmp_path)
+    takeover_held = threading.Event()
+    allow_recovery = threading.Event()
+    call_count = 0
+
+    def dead_probe(_pid: int) -> None:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 2:
+            takeover_held.set()
+            assert allow_recovery.wait(timeout=5)
+        return None
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(
+            profile.recover_interrupted_attempt,
+            tmp_path,
+            process_start_probe=dead_probe,
+        )
+        assert takeover_held.wait(timeout=5)
+        assert (tmp_path / ".campaign-recovery").is_dir()
+        with pytest.raises(RuntimeError, match="campaign_recovery_in_progress"):
+            _acquire_attempt(tmp_path, pid=456)
+        allow_recovery.set()
+        assert future.result(timeout=5)["reason_category"] == "interrupted"
+
+
+@pytest.mark.parametrize("state", ("complete_pending_review", "changes_required"))
+def test_campaign_recovery_obeys_current_ledger_blocking_state(
+    tmp_path: Path, state: str
+) -> None:
+    _acquire_attempt(tmp_path)
+    profile.complete_attempt_measurement(
+        tmp_path / "attempts.jsonl",
+        "attempt-0001",
+        verdict="pass",
+        raw_sha256="a" * 64,
+    )
+    if state == "changes_required":
+        profile.append_attempt_state(
+            tmp_path / "attempts.jsonl",
+            _attempt_event(
+                "attempt-0001",
+                "changes_required",
+                verdict="pass",
+                raw_sha256="a" * 64,
+                reason_category="digest",
+            ),
+        )
+
+    with pytest.raises(
+        RuntimeError, match=f"campaign_recovery_state_blocked:{state}"
+    ):
+        profile.recover_interrupted_attempt(
+            tmp_path, process_start_probe=lambda _pid: None
+        )
+
+    assert (tmp_path / ".campaign-lock").is_dir()
+    assert profile.attempt_lineage(tmp_path / "attempts.jsonl")[-1]["state"] == state
+
+
+@pytest.mark.parametrize("owner_payload", (None, b"not-json\n", b"{}\n"))
+def test_campaign_recovery_fails_closed_on_missing_or_malformed_owner(
+    tmp_path: Path, owner_payload: bytes | None
+) -> None:
+    lock = tmp_path / ".campaign-lock"
+    lock.mkdir()
+    if owner_payload is not None:
+        (lock / "owner.json").write_bytes(owner_payload)
+
+    with pytest.raises(RuntimeError, match="campaign_lock_owner_invalid"):
+        profile.recover_interrupted_attempt(
+            tmp_path, process_start_probe=lambda _pid: None
+        )
+
+    assert lock.is_dir()
+
+
+def test_campaign_attempt_cleanup_removes_only_owned_target_worktrees(
+    tmp_path: Path,
+) -> None:
+    campaign = tmp_path / "campaign"
+    attempt_root = profile.create_attempt_root(campaign, "attempt-0001")
+    raw = attempt_root / "real-provider-three-turn.raw.jsonl"
+    raw.write_bytes(b"retained\n")
+    commands: list[list[str]] = []
+    for name in ("control", "candidate"):
+        (attempt_root / name).mkdir()
+
+    def run_command(command, **_kwargs):
+        commands.append(command)
+        Path(command[-1]).rmdir()
+        return SimpleNamespace(returncode=0, stdout="")
+
+    profile.cleanup_attempt_worktrees(
+        tmp_path,
+        campaign,
+        "attempt-0001",
+        run_command=run_command,
+    )
+
+    assert [command[:4] for command in commands] == [
+        ["git", "worktree", "remove", "--force"],
+        ["git", "worktree", "remove", "--force"],
+    ]
+    assert {Path(command[-1]).name for command in commands} == {"control", "candidate"}
+    assert raw.read_bytes() == b"retained\n"
+    assert attempt_root.is_dir()
 
 
 def _materialize_original_runner(candidate_root: Path) -> Path:

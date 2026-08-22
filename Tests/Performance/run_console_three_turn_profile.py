@@ -13,6 +13,7 @@ import math
 import random
 import re
 import os
+import secrets
 import signal
 import shutil
 import sqlite3
@@ -92,6 +93,40 @@ ALL_REVIEW_EVENTS = frozenset(
         "review_e_completed",
     }
 )
+ATTEMPT_STATES = frozenset(
+    {
+        "running",
+        "failed",
+        "invalid",
+        "complete_pending_review",
+        "changes_required",
+    }
+)
+BLOCKING_ATTEMPT_STATES = frozenset(
+    {"running", "complete_pending_review", "changes_required"}
+)
+_ATTEMPT_ID = re.compile(r"^attempt-(\d{4})$")
+_MEASURED_VERDICTS = frozenset({"pass", "regression", "inconclusive"})
+_ATTEMPT_REASON_CATEGORIES = {
+    "failed": frozenset({"provider", "acquisition", "interrupted"}),
+    "invalid": frozenset(
+        {"raw", "product", "completeness", "isolation", "privacy", "ownership"}
+    ),
+    "changes_required": frozenset(
+        {"manifest", "summary", "report", "readme", "digest", "receipt", "presentation"}
+    ),
+}
+_ATTEMPT_FIELDS = {
+    "running": frozenset({"attempt_id", "state"}),
+    "failed": frozenset({"attempt_id", "state", "reason_category"}),
+    "invalid": frozenset({"attempt_id", "state", "reason_category"}),
+    "complete_pending_review": frozenset(
+        {"attempt_id", "state", "verdict", "raw_sha256"}
+    ),
+    "changes_required": frozenset(
+        {"attempt_id", "state", "verdict", "raw_sha256", "reason_category"}
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -789,6 +824,24 @@ class ChildResult:
     status: str
     returncode: int | None
     last_event: dict[str, Any] | None
+
+
+@dataclass(frozen=True)
+class CampaignLockOwner:
+    """Private identity required to release one exact campaign lock."""
+
+    pid: int
+    process_start_sha256: str
+    owner_token: str
+
+
+@dataclass(frozen=True)
+class CampaignAttempt:
+    """One running attempt and the exact campaign lock that owns it."""
+
+    attempt_id: str
+    root: Path
+    owner: CampaignLockOwner
 
 
 @dataclass
@@ -1514,6 +1567,375 @@ def privacy_violations(value: Any, *, location: str = "$") -> tuple[str, ...]:
     ):
         violations.append(f"absolute_path:{location}")
     return tuple(violations)
+
+
+def _validate_attempt_event(event: Mapping[str, Any]) -> dict[str, Any]:
+    """Return one exact, content-free campaign event or fail closed."""
+    record = dict(event)
+    if privacy_violations(record):
+        raise RuntimeError("campaign_event_privacy_violation")
+    state = record.get("state")
+    if state not in ATTEMPT_STATES:
+        raise RuntimeError("campaign_attempt_state_invalid")
+    if set(record) != _ATTEMPT_FIELDS[state]:
+        raise RuntimeError("campaign_event_fields_invalid")
+    attempt_id = record.get("attempt_id")
+    if not isinstance(attempt_id, str) or not _ATTEMPT_ID.fullmatch(attempt_id):
+        raise RuntimeError("campaign_attempt_id_invalid")
+    if state in _ATTEMPT_REASON_CATEGORIES:
+        if record.get("reason_category") not in _ATTEMPT_REASON_CATEGORIES[state]:
+            raise RuntimeError("campaign_reason_category_invalid")
+    if state in {"complete_pending_review", "changes_required"}:
+        if record.get("verdict") not in _MEASURED_VERDICTS:
+            raise RuntimeError("campaign_verdict_invalid")
+        raw_sha256 = record.get("raw_sha256")
+        if not isinstance(raw_sha256, str) or not _SHA256.fullmatch(raw_sha256):
+            raise RuntimeError("campaign_raw_hash_invalid")
+    return record
+
+
+def _validate_attempt_lineage(events: Sequence[Mapping[str, Any]]) -> None:
+    current_number = 0
+    current_id: str | None = None
+    current_state: str | None = None
+    raw_sha256: str | None = None
+    transitions = {
+        "running": {"failed", "invalid", "complete_pending_review"},
+        "complete_pending_review": {"changes_required"},
+        "changes_required": {"complete_pending_review"},
+    }
+    for candidate in events:
+        event = _validate_attempt_event(candidate)
+        attempt_id = event["attempt_id"]
+        number = int(attempt_id.removeprefix("attempt-"))
+        if attempt_id != current_id:
+            if (
+                event["state"] != "running"
+                or number != current_number + 1
+                or (current_state is not None and current_state not in {"failed", "invalid"})
+            ):
+                raise RuntimeError("campaign_attempt_sequence_invalid")
+            current_number = number
+            current_id = attempt_id
+            current_state = "running"
+            raw_sha256 = None
+            continue
+        if event["state"] not in transitions.get(str(current_state), set()):
+            raise RuntimeError("campaign_attempt_transition_invalid")
+        event_raw_sha256 = event.get("raw_sha256")
+        if event_raw_sha256 is not None:
+            if raw_sha256 is not None and event_raw_sha256 != raw_sha256:
+                raise RuntimeError("campaign_raw_hash_mismatch")
+            raw_sha256 = event_raw_sha256
+        current_state = event["state"]
+
+
+def attempt_lineage(ledger: Path) -> tuple[dict[str, Any], ...]:
+    """Read and validate the complete ordered append-only campaign lineage."""
+    if not ledger.exists():
+        return ()
+    if not ledger.is_file() or ledger.is_symlink():
+        raise RuntimeError("campaign_ledger_invalid")
+    payload = ledger.read_bytes()
+    if not payload or not payload.endswith(b"\n"):
+        raise RuntimeError("campaign_ledger_malformed")
+    records: list[dict[str, Any]] = []
+    try:
+        encoded_lines = payload.decode("utf-8").splitlines()
+        for line in encoded_lines:
+            parsed = json.loads(line)
+            if not isinstance(parsed, dict):
+                raise RuntimeError("campaign_ledger_malformed")
+            records.append(parsed)
+        _validate_attempt_lineage(records)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("campaign_ledger_malformed") from exc
+    for line, record in zip(encoded_lines, records, strict=True):
+        if line != json.dumps(record, sort_keys=True):
+            raise RuntimeError("campaign_ledger_malformed")
+    return tuple(records)
+
+
+def append_attempt_state(ledger: Path, event: Mapping[str, Any]) -> None:
+    """Validate and durably append one canonical JSONL campaign event."""
+    record = _validate_attempt_event(event)
+    existing = attempt_lineage(ledger)
+    _validate_attempt_lineage((*existing, record))
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    with ledger.open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps(record, sort_keys=True) + "\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
+def next_attempt_id(events: Sequence[Mapping[str, Any]]) -> str:
+    """Return the next four-digit campaign attempt identifier."""
+    _validate_attempt_lineage(events)
+    number = 1 if not events else int(events[-1]["attempt_id"].removeprefix("attempt-")) + 1
+    if number > 9_999:
+        raise RuntimeError("campaign_attempt_id_exhausted")
+    return f"attempt-{number:04d}"
+
+
+def create_attempt_root(campaign_root: Path, attempt_id: str) -> Path:
+    """Create one fresh numbered staging root without removing prior evidence."""
+    if not _ATTEMPT_ID.fullmatch(attempt_id):
+        raise RuntimeError("campaign_attempt_id_invalid")
+    if campaign_root.is_symlink():
+        raise RuntimeError("campaign_root_invalid")
+    campaign_root.mkdir(parents=True, exist_ok=True)
+    attempts_root = campaign_root / "attempts"
+    if attempts_root.is_symlink() or (
+        attempts_root.exists() and not attempts_root.is_dir()
+    ):
+        raise RuntimeError("campaign_attempts_root_invalid")
+    attempts_root.mkdir(exist_ok=True)
+    attempt_root = attempts_root / attempt_id
+    try:
+        attempt_root.mkdir()
+    except FileExistsError as exc:
+        raise RuntimeError("campaign_attempt_root_exists") from exc
+    return attempt_root
+
+
+def require_campaign_acquisition(ledger: Path) -> str:
+    """Return the next attempt ID only when the latest state permits retry."""
+    lineage = attempt_lineage(ledger)
+    if lineage and lineage[-1]["state"] in BLOCKING_ATTEMPT_STATES:
+        raise RuntimeError(f"campaign_acquisition_blocked:{lineage[-1]['state']}")
+    return next_attempt_id(lineage)
+
+
+def complete_attempt_measurement(
+    ledger: Path,
+    attempt_id: str,
+    *,
+    verdict: str,
+    raw_sha256: str,
+) -> dict[str, Any]:
+    """Record any protocol-valid measured verdict as pending independent review."""
+    event = {
+        "attempt_id": attempt_id,
+        "state": "complete_pending_review",
+        "verdict": verdict,
+        "raw_sha256": raw_sha256,
+    }
+    append_attempt_state(ledger, event)
+    return event
+
+
+def process_start_identity(
+    pid: int, *, run_command: Any = subprocess.run
+) -> str | None:
+    """Return a stable content-free fingerprint for one live PID's start time."""
+    completed = run_command(
+        ["ps", "-o", "lstart=", "-p", str(pid)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    started = completed.stdout.strip() if completed.returncode == 0 else ""
+    if not started:
+        return None
+    return hashlib.sha256(started.encode("utf-8")).hexdigest()
+
+
+def _validate_lock_owner(record: Mapping[str, Any]) -> CampaignLockOwner:
+    if set(record) != {"pid", "process_start_sha256", "owner_token"}:
+        raise RuntimeError("campaign_lock_owner_invalid")
+    pid = record.get("pid")
+    process_start_sha256 = record.get("process_start_sha256")
+    owner_token = record.get("owner_token")
+    if (
+        not isinstance(pid, int)
+        or isinstance(pid, bool)
+        or pid < 1
+        or not isinstance(process_start_sha256, str)
+        or not _SHA256.fullmatch(process_start_sha256)
+        or not isinstance(owner_token, str)
+        or not _SHA256.fullmatch(owner_token)
+    ):
+        raise RuntimeError("campaign_lock_owner_invalid")
+    return CampaignLockOwner(pid, process_start_sha256, owner_token)
+
+
+def _read_lock_owner(lock_root: Path) -> CampaignLockOwner:
+    owner_path = lock_root / "owner.json"
+    if (
+        not lock_root.is_dir()
+        or lock_root.is_symlink()
+        or {path.name for path in lock_root.iterdir()} != {"owner.json"}
+        or not owner_path.is_file()
+        or owner_path.is_symlink()
+    ):
+        raise RuntimeError("campaign_lock_owner_invalid")
+    try:
+        payload = owner_path.read_bytes()
+        if not payload.endswith(b"\n"):
+            raise RuntimeError("campaign_lock_owner_invalid")
+        parsed = json.loads(payload)
+        if not isinstance(parsed, dict):
+            raise RuntimeError("campaign_lock_owner_invalid")
+        owner = _validate_lock_owner(parsed)
+        if payload != (json.dumps(parsed, sort_keys=True) + "\n").encode("utf-8"):
+            raise RuntimeError("campaign_lock_owner_invalid")
+        return owner
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("campaign_lock_owner_invalid") from exc
+
+
+def acquire_campaign_lock(
+    campaign_root: Path,
+    *,
+    pid: int | None = None,
+    process_start_probe: Callable[[int], str | None] = process_start_identity,
+    owner_token_factory: Callable[[], str] = lambda: secrets.token_hex(32),
+) -> CampaignLockOwner:
+    """Atomically acquire one campaign lock and write only private owner metadata."""
+    if campaign_root.is_symlink():
+        raise RuntimeError("campaign_root_invalid")
+    campaign_root.mkdir(parents=True, exist_ok=True)
+    lock_root = campaign_root / ".campaign-lock"
+    recovery_root = campaign_root / ".campaign-recovery"
+    if recovery_root.exists() or recovery_root.is_symlink():
+        raise RuntimeError("campaign_recovery_in_progress")
+    owner_pid = os.getpid() if pid is None else pid
+    try:
+        start_identity = process_start_probe(owner_pid)
+        owner_token = owner_token_factory()
+    except BaseException as exc:
+        raise RuntimeError("campaign_process_identity_failed") from exc
+    owner = _validate_lock_owner(
+        {
+            "pid": owner_pid,
+            "process_start_sha256": start_identity,
+            "owner_token": owner_token,
+        }
+    )
+    try:
+        lock_root.mkdir()
+    except FileExistsError as exc:
+        raise RuntimeError("campaign_lock_held") from exc
+    owner_path = lock_root / "owner.json"
+    with owner_path.open("x", encoding="utf-8") as stream:
+        stream.write(
+            json.dumps(
+                {
+                    "pid": owner.pid,
+                    "process_start_sha256": owner.process_start_sha256,
+                    "owner_token": owner.owner_token,
+                },
+                sort_keys=True,
+            )
+            + "\n"
+        )
+        stream.flush()
+        os.fsync(stream.fileno())
+    if recovery_root.exists() or recovery_root.is_symlink():
+        release_campaign_lock(campaign_root, owner)
+        raise RuntimeError("campaign_recovery_in_progress")
+    return owner
+
+
+def release_campaign_lock(campaign_root: Path, owner: CampaignLockOwner) -> None:
+    """Release only the exact lock whose private metadata matches ``owner``."""
+    lock_root = campaign_root / ".campaign-lock"
+    if _read_lock_owner(lock_root) != owner:
+        raise RuntimeError("campaign_lock_owner_mismatch")
+    (lock_root / "owner.json").unlink()
+    lock_root.rmdir()
+
+
+def acquire_campaign_attempt(
+    campaign_root: Path,
+    *,
+    pid: int | None = None,
+    process_start_probe: Callable[[int], str | None] = process_start_identity,
+    owner_token_factory: Callable[[], str] = lambda: secrets.token_hex(32),
+) -> CampaignAttempt:
+    """Acquire the campaign and durably start one fresh numbered attempt."""
+    owner = acquire_campaign_lock(
+        campaign_root,
+        pid=pid,
+        process_start_probe=process_start_probe,
+        owner_token_factory=owner_token_factory,
+    )
+    try:
+        ledger = campaign_root / "attempts.jsonl"
+        attempt_id = require_campaign_acquisition(ledger)
+        root = create_attempt_root(campaign_root, attempt_id)
+        append_attempt_state(
+            ledger, {"attempt_id": attempt_id, "state": "running"}
+        )
+        return CampaignAttempt(attempt_id, root, owner)
+    except BaseException as primary:
+        try:
+            release_campaign_lock(campaign_root, owner)
+        except BaseException as cleanup:
+            raise BaseExceptionGroup(
+                "campaign_acquisition_and_release_failed", [primary, cleanup]
+            ) from None
+        raise
+
+
+def release_campaign_attempt(campaign_root: Path, attempt: CampaignAttempt) -> None:
+    """Release the exact lock held by a normally terminated attempt."""
+    release_campaign_lock(campaign_root, attempt.owner)
+
+
+def recover_interrupted_attempt(
+    campaign_root: Path,
+    *,
+    process_start_probe: Callable[[int], str | None] = process_start_identity,
+) -> dict[str, Any]:
+    """Atomically own a dead running lock and append only ``failed:interrupted``."""
+    lock_root = campaign_root / ".campaign-lock"
+    recovery_root = campaign_root / ".campaign-recovery"
+    if recovery_root.exists() or recovery_root.is_symlink():
+        raise RuntimeError("campaign_recovery_in_progress")
+    owner = _read_lock_owner(lock_root)
+    ledger = campaign_root / "attempts.jsonl"
+    lineage = attempt_lineage(ledger)
+    if not lineage:
+        raise RuntimeError("campaign_recovery_state_invalid")
+    latest = lineage[-1]
+    if latest["state"] != "running":
+        if latest["state"] in BLOCKING_ATTEMPT_STATES:
+            raise RuntimeError(
+                f"campaign_recovery_state_blocked:{latest['state']}"
+            )
+        raise RuntimeError("campaign_recovery_state_invalid")
+    try:
+        observed_start = process_start_probe(owner.pid)
+    except BaseException as exc:
+        raise RuntimeError("campaign_process_identity_failed") from exc
+    if observed_start == owner.process_start_sha256:
+        raise RuntimeError("campaign_lock_owner_live")
+    try:
+        lock_root.rename(recovery_root)
+    except OSError as exc:
+        raise RuntimeError("campaign_recovery_lost") from exc
+    taken_owner = _read_lock_owner(recovery_root)
+    if taken_owner != owner:
+        raise RuntimeError("campaign_lock_owner_mismatch")
+    try:
+        observed_start = process_start_probe(owner.pid)
+    except BaseException as exc:
+        raise RuntimeError("campaign_process_identity_failed") from exc
+    if observed_start == owner.process_start_sha256:
+        raise RuntimeError("campaign_lock_owner_live")
+    current = attempt_lineage(ledger)
+    if current != lineage or current[-1]["state"] != "running":
+        raise RuntimeError("campaign_recovery_state_changed")
+    event = {
+        "attempt_id": latest["attempt_id"],
+        "state": "failed",
+        "reason_category": "interrupted",
+    }
+    append_attempt_state(ledger, event)
+    (recovery_root / "owner.json").unlink()
+    recovery_root.rmdir()
+    return event
 
 
 def normalize_text(text: str, roots: Mapping[str, Path]) -> str:
@@ -3896,6 +4318,27 @@ def _remove_target_worktrees(
         except BaseException as exc:
             failures.append(exc)
     _raise_failures("target_worktree_cleanup_failed", failures)
+
+
+def cleanup_attempt_worktrees(
+    repository_root: Path,
+    campaign_root: Path,
+    attempt_id: str,
+    *,
+    run_command: Any = subprocess.run,
+) -> None:
+    """Remove only the two detached target worktrees owned by one attempt."""
+    if not _ATTEMPT_ID.fullmatch(attempt_id) or campaign_root.is_symlink():
+        raise RuntimeError("campaign_attempt_cleanup_refused")
+    attempt_root = campaign_root / "attempts" / attempt_id
+    if not attempt_root.is_dir() or attempt_root.is_symlink():
+        raise RuntimeError("campaign_attempt_cleanup_refused")
+    _remove_target_worktrees(
+        repository_root,
+        attempt_root,
+        names=("control", "candidate"),
+        run_command=run_command,
+    )
 
 
 def prepare_output_root(path: Path) -> None:
