@@ -32,6 +32,7 @@ break silently:
 """
 
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -186,6 +187,29 @@ def test_fleet_controller_is_constructed_with_late_bound_screen_edges() -> None:
     assert controller._wake_delivering_conversation_id() == "conversation-a"
     assert controller._fleet_has_unsettled_children() is True
     assert wake_calls == [("wire", screen.app_instance), "seed", "retry"]
+
+
+def test_session_first_chat_edges_are_late_bound_and_presentation_only() -> None:
+    screen = _unmounted_console()
+    controller = screen._session
+    screen._console_control_provider = "late-provider"
+    screen._console_control_model = "late-model"
+    focus_token = MagicMock()
+    focus_token.is_mounted = True
+
+    assert controller._screen_mounted_accessor() is False
+    assert controller._first_chat_presentation_snapshot_fn() == (
+        "late-provider",
+        "late-model",
+        None,
+    )
+    controller._apply_first_chat_control_selection_fn("next-provider", "next-model")
+    assert (screen._console_control_provider, screen._console_control_model) == (
+        "next-provider",
+        "next-model",
+    )
+    controller._restore_first_chat_focus_fn(focus_token)
+    focus_token.focus.assert_not_called()
 
 
 def test_retrieval_controller_is_constructed_with_late_bound_screen_edges():

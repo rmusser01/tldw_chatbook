@@ -4,6 +4,7 @@ import json
 from copy import deepcopy
 from dataclasses import fields, replace
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -557,9 +558,9 @@ async def test_voice_late_sample_success_cannot_verify_changed_endpoint(monkeypa
         await pilot.pause()
         step.query_one("#setup-voice-test", Button).press()
         await asyncio.wait_for(started.wait(), timeout=1)
-        step.query_one("#setup-voice-endpoint", Input).value = (
-            "http://127.0.0.1:9999/v1/audio/speech"
-        )
+        step.query_one(
+            "#setup-voice-endpoint", Input
+        ).value = "http://127.0.0.1:9999/v1/audio/speech"
         await pilot.pause()
         release.set()
         await pilot.pause(0.1)
@@ -943,11 +944,7 @@ async def test_official_voice_refreshes_after_configured_environment_key_added(
     [
         {"openai_api": {"api_key": "sk-saved"}},
         {"API": {"openai_api_key": "sk-saved"}},
-        {
-            "COMPREHENSIVE_CONFIG_RAW": {
-                "API": {"openai_api_key": "sk-saved"}
-            }
-        },
+        {"COMPREHENSIVE_CONFIG_RAW": {"API": {"openai_api_key": "sk-saved"}}},
     ],
 )
 @pytest.mark.asyncio
@@ -1686,9 +1683,7 @@ async def test_unchanged_provider_model_backtrack_keeps_live_radio_and_one_write
         counted_persist,
     )
     wizard = _make_wizard()
-    wizard.app_instance.app_config = {
-        "api_settings": {"custom": {"api_url": endpoint}}
-    }
+    wizard.app_instance.app_config = {"api_settings": {"custom": {"api_url": endpoint}}}
     scope_service = MagicMock()
     scope_service.discover_models = AsyncMock(
         return_value=_typed_model_discovery_result("custom", "stable-radio-model")
@@ -2945,10 +2940,13 @@ async def test_credential_rotation_after_provider_handoff_invalidates_before_sav
                     provider_step._effective_provider_draft()
                 )
             )
-            assert model_step._selection_config_precondition is (
-                container._first_run_provider_config_preconditions[
-                    model_step._selection_discovery_key
-                ]
+            assert (
+                model_step._selection_config_precondition
+                is (
+                    container._first_run_provider_config_preconditions[
+                        model_step._selection_discovery_key
+                    ]
+                )
             )
             assert provider_step._sync_live_credential_revision() is False
             await container._advance()
@@ -4810,9 +4808,7 @@ async def test_mounted_openai_builtin_endpoint_handoff_uses_one_exact_env_reques
         assert getattr(row, "_model_id", None) == "gpt-live-exact"
         assert model_step._shown_for_discovery_key == provider_discovery_key
         assert len(requests) == 1
-        assert requests[0]["endpoint"] == (
-            "https://api.openai.com/v1/chat/completions"
-        )
+        assert requests[0]["endpoint"] == ("https://api.openai.com/v1/chat/completions")
         assert requests[0]["api_key"] == environment_canary
         assert shared_cache.snapshot_count == 0
         assert environment_canary not in repr(provider_discovery_key)
@@ -4969,9 +4965,9 @@ async def test_mounted_settings_aware_builtin_discovery_uses_exact_runtime_host_
             )
             assert requests[0].url.host == httpx.URL(expected_models_url).host
             assert shared_cache.snapshot_count == 0
-            assert wizard.app_instance.app_config["api_settings"] == before[
-                "api_settings"
-            ]
+            assert (
+                wizard.app_instance.app_config["api_settings"] == before["api_settings"]
+            )
 
 
 @pytest.mark.asyncio
@@ -5350,8 +5346,7 @@ async def test_mounted_selection_precondition_allows_current_relevant_config(
                 (
                     button
                     for button in model_step.query(RadioButton)
-                    if getattr(button, "_model_id", "")
-                    == "selection-current-model"
+                    if getattr(button, "_model_id", "") == "selection-current-model"
                 ),
                 None,
             )
@@ -5402,9 +5397,7 @@ async def test_mounted_manual_typing_captures_config_once_per_decision(monkeypat
         staticmethod(counted_capture),
     )
     wizard = _make_wizard()
-    wizard.app_instance.app_config = {
-        "api_settings": {"custom": {"api_url": endpoint}}
-    }
+    wizard.app_instance.app_config = {"api_settings": {"custom": {"api_url": endpoint}}}
     wizard.app_instance.llm_provider_catalog_scope_service = MagicMock(
         discover_models=AsyncMock(
             return_value=_typed_model_discovery_result(
@@ -5433,8 +5426,7 @@ async def test_mounted_manual_typing_captures_config_once_per_decision(monkeypat
                 (
                     button
                     for button in model_step.query(RadioButton)
-                    if getattr(button, "_model_id", "")
-                    == "discovered-session-model"
+                    if getattr(button, "_model_id", "") == "discovered-session-model"
                 ),
                 None,
             )
@@ -5465,10 +5457,13 @@ async def test_mounted_manual_typing_captures_config_once_per_decision(monkeypat
         target.value = True
         await pilot.pause()
         assert model_step._model_id_from_custom_input is False
-        assert model_step._selection_config_precondition is (
-            container._first_run_provider_config_preconditions[
-                model_step._selection_discovery_key
-            ]
+        assert (
+            model_step._selection_config_precondition
+            is (
+                container._first_run_provider_config_preconditions[
+                    model_step._selection_discovery_key
+                ]
+            )
         )
 
         manual.value = "retry-manual-model"
@@ -5591,9 +5586,7 @@ async def test_mounted_successful_manual_save_ends_decision_before_back_edit(
         assert len(setup_writes) == 1
         assert len(capture_calls) == first_save_captures
         assert (
-            config_module.get_atomic_config_snapshot().values["general"][
-                "users_name"
-            ]
+            config_module.get_atomic_config_snapshot().values["general"]["users_name"]
             == "manual-resave-unrelated"
         )
 
@@ -5830,9 +5823,7 @@ async def test_mounted_unchanged_manual_next_rejects_relevant_external_change(
                 "api_settings.custom": {"api_key": "manual-idempotent-key-b"}
             }
         else:
-            external_values = {
-                "chat_defaults": {"model": "external-model-change"}
-            }
+            external_values = {"chat_defaults": {"model": "external-model-change"}}
         assert config_module.apply_settings_mutation_to_cli_config(
             external_values
         ).fully_applied
@@ -5868,9 +5859,7 @@ async def test_mounted_unchanged_manual_next_rejects_relevant_external_change(
                 "manual-idempotent-key-b"
             )
         else:
-            assert authoritative["chat_defaults"]["model"] == (
-                "external-model-change"
-            )
+            assert authoritative["chat_defaults"]["model"] == ("external-model-change")
 
 
 @pytest.mark.asyncio
@@ -5939,8 +5928,7 @@ async def test_mounted_manual_reconfirmation_binds_current_authoritative_precond
                 (
                     button
                     for button in model_step.query(RadioButton)
-                    if getattr(button, "_model_id", "")
-                    == "manual-selection-a-model"
+                    if getattr(button, "_model_id", "") == "manual-selection-a-model"
                 ),
                 None,
             )
@@ -5993,9 +5981,7 @@ async def test_mounted_manual_reconfirmation_binds_current_authoritative_precond
         assert authoritative["api_settings"]["custom"]["api_key"] == (
             "manual-selection-key-b"
         )
-        assert authoritative["chat_defaults"]["model"] == (
-            "manual-selection-b-model"
-        )
+        assert authoritative["chat_defaults"]["model"] == ("manual-selection-b-model")
 
 
 @pytest.mark.asyncio
@@ -6067,13 +6053,13 @@ async def test_mounted_model_save_rejects_hidden_provider_identity_change(
         assert old_key is not None
 
         if changed_field == "endpoint":
-            provider_step.query_one("#setup-provider-endpoint", Input).value = (
-                "https://identity-b.example/v1/chat/completions"
-            )
+            provider_step.query_one(
+                "#setup-provider-endpoint", Input
+            ).value = "https://identity-b.example/v1/chat/completions"
         else:
-            provider_step.query_one("#setup-provider-api-key", Input).value = (
-                "replacement-save-boundary-canary"
-            )
+            provider_step.query_one(
+                "#setup-provider-api-key", Input
+            ).value = "replacement-save-boundary-canary"
         await pilot.pause()
         await container._advance()
 
@@ -6167,9 +6153,9 @@ async def test_mounted_save_identity_change_fences_cancellation_resistant_old_re
             sync_live_credential=False,
         )
         await asyncio.wait_for(retry_started.wait(), timeout=2)
-        wizard.app_instance.app_config["api_settings"]["moonshot"][
-            "api_region"
-        ] = "international"
+        wizard.app_instance.app_config["api_settings"]["moonshot"]["api_region"] = (
+            "international"
+        )
         await container._advance()
         release_retry.set()
         await pilot.pause(0.2)
@@ -6281,9 +6267,7 @@ async def test_mounted_save_lease_rechecks_identity_immediately_before_write(
         assert model_step.selected_model_id == ""
         current_key = model_step._current_discovery_key()
         assert current_key is not None and current_key != china_key
-        assert current_key.connection_identity[1].startswith(
-            "https://api.moonshot.ai/"
-        )
+        assert current_key.connection_identity[1].startswith("https://api.moonshot.ai/")
 
 
 @pytest.mark.asyncio
@@ -6363,9 +6347,9 @@ async def test_mounted_builtin_settings_change_fences_prior_discovery_identity()
             assert stale_key is not None
 
             container.show_step(welcome_index)
-            wizard.app_instance.app_config["api_settings"]["moonshot"][
-                "api_region"
-            ] = "international"
+            wizard.app_instance.app_config["api_settings"]["moonshot"]["api_region"] = (
+                "international"
+            )
             container.show_step(provider_index)
             for _ in range(30):
                 if provider_step._selected_provider_models:
@@ -6439,9 +6423,7 @@ async def test_mounted_executor_entry_rejects_stale_provider_identity(
     ).fully_applied
 
     wizard = _make_wizard()
-    wizard.app_instance.app_config = {
-        "api_settings": {provider_key: provider_settings}
-    }
+    wizard.app_instance.app_config = {"api_settings": {provider_key: provider_settings}}
     wizard.app_instance.llm_provider_catalog_scope_service = MagicMock(
         discover_models=AsyncMock(
             return_value=_typed_model_discovery_result(provider_key, "writer-model")
@@ -6504,9 +6486,7 @@ async def test_mounted_executor_entry_rejects_stale_provider_identity(
                 "api_base_url": "https://api-inference.huggingface.co/v1",
             }
         elif identity_change == "custom_endpoint":
-            changed_values = {
-                "api_url": "https://writer-b.example/v1/chat/completions"
-            }
+            changed_values = {"api_url": "https://writer-b.example/v1/chat/completions"}
         else:
             changed_values = {"api_key": "writer-entry-replacement-canary"}
         provider_settings.update(changed_values)
@@ -6553,9 +6533,7 @@ async def test_mounted_executor_entry_unchanged_identity_writes_once(monkeypatch
         {"api_settings.moonshot": provider_settings}
     ).fully_applied
     wizard = _make_wizard()
-    wizard.app_instance.app_config = {
-        "api_settings": {"moonshot": provider_settings}
-    }
+    wizard.app_instance.app_config = {"api_settings": {"moonshot": provider_settings}}
     wizard.app_instance.llm_provider_catalog_scope_service = MagicMock(
         discover_models=AsyncMock(
             return_value=_typed_model_discovery_result("moonshot", "writer-model")
@@ -6865,9 +6843,13 @@ async def test_explicit_keyless_suppresses_later_environment_appearance(monkeypa
         assert first_key is not None
         assert first_key.credential_source == "none"
         first_revision = first_key.credential_revision
-        assert requests and requests[0]["staged_settings"]["api_settings"][
-            "custom"
-        ]["credential_source"] == "none"
+        assert (
+            requests
+            and requests[0]["staged_settings"]["api_settings"]["custom"][
+                "credential_source"
+            ]
+            == "none"
+        )
 
         monkeypatch.setenv("CUSTOM_API_KEY", appeared_canary)
         assert step._sync_live_credential_revision() is False
@@ -8592,9 +8574,12 @@ async def test_model_cache_separates_exact_identity_and_reconfirms_manual_entry(
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause(0.1)
-        assert getattr(
-            step.query_one("#setup-model-option-0", RadioButton), "_model_id", None
-        ) == "model-a"
+        assert (
+            getattr(
+                step.query_one("#setup-model-option-0", RadioButton), "_model_id", None
+            )
+            == "model-a"
+        )
         manual = step.query_one("#setup-model-custom", Input)
         manual.value = "manual-a"
         await pilot.pause()
@@ -8604,16 +8589,22 @@ async def test_model_cache_separates_exact_identity_and_reconfirms_manual_entry(
         await pilot.pause(0.1)
         assert manual.value == ""
         assert step.selected_model_id == ""
-        assert getattr(
-            step.query_one("#setup-model-option-0", RadioButton), "_model_id", None
-        ) == "model-b"
+        assert (
+            getattr(
+                step.query_one("#setup-model-option-0", RadioButton), "_model_id", None
+            )
+            == "model-b"
+        )
 
         wizard.staged_provider_draft = draft_a
         step.on_show()
         await pilot.pause(0.1)
-        assert getattr(
-            step.query_one("#setup-model-option-0", RadioButton), "_model_id", None
-        ) == "model-a"
+        assert (
+            getattr(
+                step.query_one("#setup-model-option-0", RadioButton), "_model_id", None
+            )
+            == "model-a"
+        )
         discover.assert_not_awaited()
         assert "manual-a" not in app.export_screenshot()
 
@@ -8648,9 +8639,7 @@ async def test_model_listing_unavailable_is_disabled_and_manual_entry_remains_en
             recovery_hint="Enter the model manually.",
         ),
     )
-    scope_service = MagicMock(
-        discover_models=AsyncMock(return_value=unavailable)
-    )
+    scope_service = MagicMock(discover_models=AsyncMock(return_value=unavailable))
     wizard = SimpleNamespace(
         app_instance=MagicMock(
             app_config={}, llm_provider_catalog_scope_service=scope_service
@@ -8970,8 +8959,7 @@ async def test_mounted_real_transport_preserves_404_server_and_payload_categorie
                 for request in transport_requests
             )
             assert all(
-                "Authorization" not in request.headers
-                for request in transport_requests
+                "Authorization" not in request.headers for request in transport_requests
             )
             assert shared_cache.snapshot_count == 0
 
@@ -9238,9 +9226,7 @@ async def test_mounted_model_owner_timeout_fences_late_result_and_keeps_manual_r
             release_late_result.set()
             await asyncio.wait_for(late_result_returned.wait(), timeout=2)
             pytest.fail("Model owner timeout did not render bounded failure")
-        status = model_step.query_one(
-            "#setup-model-connection-failed", RadioButton
-        )
+        status = model_step.query_one("#setup-model-connection-failed", RadioButton)
         assert str(status.label) == (
             "Connection failed (timeout). Retry or enter a model ID below."
         )
@@ -9261,9 +9247,7 @@ async def test_mounted_model_owner_timeout_fences_late_result_and_keeps_manual_r
         assert provider_step._selected_provider_outcomes == {}
         assert container._first_run_selected_provider_models == {}
         assert container._first_run_selected_provider_outcomes == {}
-        status = model_step.query_one(
-            "#setup-model-connection-failed", RadioButton
-        )
+        status = model_step.query_one("#setup-model-connection-failed", RadioButton)
         assert "timeout" in str(status.label)
         assert "late-timeout-model" not in app.export_screenshot()
 
@@ -9314,7 +9298,7 @@ async def test_mounted_provider_handoff_is_fenced_after_model_navigation_and_unm
         "providers": {"custom": []},
         "api_settings": {
             "custom": {"api_url": "https://slow.example.test/v1/chat/completions"}
-        }
+        },
     }
     shared_cache = ModelDiscoveryCache()
     local_service = LocalLLMProviderCatalogService(
@@ -10447,11 +10431,12 @@ async def test_finalize_stages_exact_first_chat_after_successful_setup_mutation(
     from tldw_chatbook.Constants import TAB_CHAT
 
     pending = PendingHandoffStore()
-    console = MagicMock()
-    console.eligible_console_first_chat_session_id.return_value = "session-exact"
-    console.prepare_console_first_chat_target.side_effect = AssertionError(
+    session_owner = MagicMock()
+    session_owner.eligible_console_first_chat_session_id.return_value = "session-exact"
+    session_owner.prepare_console_first_chat_target.side_effect = AssertionError(
         "the producer must not prepare or mutate Console"
     )
+    console = SimpleNamespace(_session=session_owner)
     app_instance = MagicMock(
         app_config={},
         pending_handoffs=pending,
@@ -10482,8 +10467,8 @@ async def test_finalize_stages_exact_first_chat_after_successful_setup_mutation(
     await container._finalize(TAB_CHAT)
 
     container._complete_setup_locked.assert_awaited_once()
-    console.prepare_console_first_chat_target.assert_not_called()
-    console.eligible_console_first_chat_session_id.assert_called_once_with()
+    session_owner.prepare_console_first_chat_target.assert_not_called()
+    session_owner.eligible_console_first_chat_session_id.assert_called_once_with()
     claim = pending.claim(HandoffChannel.CONSOLE_FIRST_CHAT)
     assert claim is not None
     assert claim.value == ConsoleFirstChatIntent(
@@ -10659,7 +10644,13 @@ async def test_finalize_reserves_future_target_only_without_console_owner(
     app_instance = MagicMock(
         app_config={},
         pending_handoffs=pending,
-        screen_stack=[],
+        screen_stack=[
+            SimpleNamespace(
+                _session=SimpleNamespace(
+                    eligible_console_first_chat_session_id=None,
+                )
+            )
+        ],
     )
     container = SetupWizardContainer(app_instance)
     container._complete_setup_locked = AsyncMock(return_value=True)
@@ -10671,9 +10662,7 @@ async def test_finalize_reserves_future_target_only_without_console_owner(
             43,
             {
                 "chat_defaults": {"provider": "openai", "model": "model-a"},
-                "api_settings": {
-                    "openai": {"api_key": "test-key", "model": "model-a"}
-                },
+                "api_settings": {"openai": {"api_key": "test-key", "model": "model-a"}},
             },
         ),
     )
@@ -10695,8 +10684,9 @@ async def test_finalize_reserves_future_target_when_mounted_console_is_ineligibl
     from tldw_chatbook.Constants import TAB_CHAT
 
     pending = PendingHandoffStore()
-    console = MagicMock()
-    console.eligible_console_first_chat_session_id.return_value = None
+    session_owner = MagicMock()
+    session_owner.eligible_console_first_chat_session_id.return_value = None
+    console = SimpleNamespace(_session=session_owner)
     app_instance = MagicMock(
         app_config={},
         pending_handoffs=pending,
@@ -10713,9 +10703,7 @@ async def test_finalize_reserves_future_target_when_mounted_console_is_ineligibl
             47,
             {
                 "chat_defaults": {"provider": "openai", "model": "model-a"},
-                "api_settings": {
-                    "openai": {"api_key": "test-key", "model": "model-a"}
-                },
+                "api_settings": {"openai": {"api_key": "test-key", "model": "model-a"}},
             },
         ),
     )
@@ -10728,6 +10716,7 @@ async def test_finalize_reserves_future_target_when_mounted_console_is_ineligibl
     assert claim.value.provider == "openai"
     assert claim.value.model == "model-a"
     assert pending.release(claim) is True
+    session_owner.eligible_console_first_chat_session_id.assert_called_once_with()
     container._show_first_chat_handoff_error.assert_not_called()
     container._dismiss_screen.assert_called_once_with(
         {"completed": True, "exit_route": TAB_CHAT}

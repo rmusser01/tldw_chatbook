@@ -7,8 +7,10 @@ from copy import deepcopy
 from dataclasses import fields, replace
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
+from loguru import logger as loguru_logger
 from textual import events
 
 # Harness apps load the consolidated widget CSS the real app loads
@@ -19,6 +21,7 @@ from textual.containers import Horizontal, ScrollableContainer
 from textual.geometry import Region
 from textual.widgets import Button, Input, OptionList, Select, Static, TextArea
 
+import tldw_chatbook.UI.Console_Modules.session as session_module
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -305,6 +308,10 @@ def _pending_first_chat(app) -> ConsoleFirstChatIntent | None:
     return value if isinstance(value, ConsoleFirstChatIntent) else None
 
 
+def _first_chat_owner(console: ChatScreen) -> ConsoleSessionController:
+    return console._session
+
+
 def _first_chat_session_snapshot(session: ConsoleChatSession) -> dict[str, object]:
     """Capture all session values without comparing holder object identity."""
 
@@ -319,7 +326,7 @@ def _first_chat_session_snapshot(session: ConsoleChatSession) -> dict[str, objec
 
 
 @pytest.fixture(autouse=True)
-def _first_chat_generation_guard_uses_screen_snapshot(monkeypatch):
+def _first_chat_generation_guard_uses_session_snapshot(monkeypatch):
     """Keep synthetic Console snapshots internally consistent in this suite.
 
     The config module's real publication lock is covered in
@@ -330,16 +337,17 @@ def _first_chat_generation_guard_uses_screen_snapshot(monkeypatch):
 
     def guarded(expected_generation: int, action) -> bool:
         if (
-            chat_screen_module.get_runtime_config_snapshot().generation
+            session_module.get_runtime_config_snapshot().generation
             != expected_generation
         ):
             return False
         return action() is True
 
     monkeypatch.setattr(
-        chat_screen_module,
+        session_module,
         "run_if_runtime_config_generation_current",
         guarded,
+        raising=False,
     )
 
 
@@ -431,7 +439,10 @@ def test_first_chat_target_eligibility_query_is_read_only() -> None:
         console._console_chat_controller,
     )
 
-    assert console.eligible_console_first_chat_session_id() == session.id
+    assert (
+        _first_chat_owner(console).eligible_console_first_chat_session_id()
+        == session.id
+    )
     assert store.active_session_id == active_before
     assert _first_chat_session_snapshot(session) == session_before
     assert (
@@ -442,7 +453,7 @@ def test_first_chat_target_eligibility_query_is_read_only() -> None:
 
     store.set_session_draft(session.id, "user draft")
     changed_before = _first_chat_session_snapshot(session)
-    assert console.eligible_console_first_chat_session_id() is None
+    assert _first_chat_owner(console).eligible_console_first_chat_session_id() is None
     assert _first_chat_session_snapshot(session) == changed_before
 
 
@@ -473,15 +484,14 @@ def test_first_chat_eligibility_rejects_empty_user_owned_session_without_mutatio
         store.rename_session(user_session.id, "Chat 1")
     before = _first_chat_session_snapshot(user_session)
 
-    assert console.eligible_console_first_chat_session_id() is None
+    assert _first_chat_owner(console).eligible_console_first_chat_session_id() is None
     assert store.active_session_id == user_session.id
     assert len(store.sessions()) == 1
     preserved = next(item for item in store.sessions() if item.id == user_session.id)
     assert _first_chat_session_snapshot(preserved) == before
 
 
-def test_first_chat_eligibility_rejects_user_created_default_named_session(
-) -> None:
+def test_first_chat_eligibility_rejects_user_created_default_named_session() -> None:
     app = _build_test_app()
     console = ChatScreen(app)
     store = ConsoleChatStore()
@@ -492,14 +502,14 @@ def test_first_chat_eligibility_rejects_user_created_default_named_session(
     user_session = store.create_session(title="Chat 1", settings=user_settings)
     before = _first_chat_session_snapshot(user_session)
 
-    assert console.eligible_console_first_chat_session_id() is None
+    assert _first_chat_owner(console).eligible_console_first_chat_session_id() is None
     assert store.active_session_id == user_session.id
     assert len(store.sessions()) == 1
     preserved = next(item for item in store.sessions() if item.id == user_session.id)
     assert _first_chat_session_snapshot(preserved) == before
 
 
-def test_first_chat_consumer_refuses_session_switch_and_config_generation_races(
+def test_session_owner_refuses_session_switch_and_config_generation_races(
     monkeypatch,
 ) -> None:
     app = _build_test_app()
@@ -508,7 +518,7 @@ def test_first_chat_consumer_refuses_session_switch_and_config_generation_races(
     console._console_chat_store = store
     snapshot = RuntimeConfigSnapshot(23, _first_chat_config())
     monkeypatch.setattr(
-        chat_screen_module,
+        session_module,
         "get_runtime_config_snapshot",
         lambda: snapshot,
         raising=False,
@@ -529,17 +539,22 @@ def test_first_chat_consumer_refuses_session_switch_and_config_generation_races(
         ),
     )
 
-    assert console.consume_pending_console_first_chat_intent() is False
+    assert (
+        _first_chat_owner(console).consume_pending_console_first_chat_intent() is False
+    )
     assert store.active_session_id == competing.id
     assert _pending_first_chat(app) == intent
 
     store.switch_session(target.id)
     monkeypatch.setattr(
-        chat_screen_module,
+        session_module,
         "get_runtime_config_snapshot",
         lambda: RuntimeConfigSnapshot(24, snapshot.values),
+        raising=False,
     )
-    assert console.consume_pending_console_first_chat_intent() is False
+    assert (
+        _first_chat_owner(console).consume_pending_console_first_chat_intent() is False
+    )
     assert store.active_session_id == target.id
     assert _pending_first_chat(app) == intent
 
@@ -553,7 +568,7 @@ def test_first_chat_consumer_activates_once_and_acknowledges_exact_target(
     console._console_chat_store = store
     snapshot = RuntimeConfigSnapshot(31, _first_chat_config("llama_cpp", "local-a"))
     monkeypatch.setattr(
-        chat_screen_module,
+        session_module,
         "get_runtime_config_snapshot",
         lambda: snapshot,
         raising=False,
@@ -570,8 +585,17 @@ def test_first_chat_consumer_activates_once_and_acknowledges_exact_target(
         "first-run-future-session", "llama_cpp", "local-a", snapshot.generation
     )
     app.pending_handoffs.stage_reserved_console_first_chat(intent)
+    owner = _first_chat_owner(console)
+    real_apply = owner._apply_first_chat_control_selection_fn
+    presentation = MagicMock(side_effect=real_apply)
+    restore_focus = MagicMock()
+    owner._apply_first_chat_control_selection_fn = presentation
+    owner._restore_first_chat_focus_fn = restore_focus
 
-    assert console.consume_pending_console_first_chat_intent() is True
+    assert owner._screen_mounted_accessor() is False
+    assert owner.consume_pending_console_first_chat_intent() is True
+    presentation.assert_called_once_with("llama_cpp", "local-a")
+    restore_focus.assert_not_called()
     assert store.active_session_id == "first-run-future-session"
     assert store.session_settings("first-run-future-session").provider == "llama_cpp"
     assert store.session_settings("first-run-future-session").model == "local-a"
@@ -580,7 +604,7 @@ def test_first_chat_consumer_activates_once_and_acknowledges_exact_target(
     assert console._console_control_provider == "llama_cpp"
     assert console._console_control_model == "local-a"
     assert _pending_first_chat(app) is None
-    assert console.consume_pending_console_first_chat_intent() is False
+    assert owner.consume_pending_console_first_chat_intent() is False
 
 
 def test_first_chat_consumer_refuses_absent_nonreserved_target(monkeypatch) -> None:
@@ -590,14 +614,17 @@ def test_first_chat_consumer_refuses_absent_nonreserved_target(monkeypatch) -> N
     console._console_chat_store = store
     snapshot = RuntimeConfigSnapshot(37, _first_chat_config())
     monkeypatch.setattr(
-        chat_screen_module,
+        session_module,
         "get_runtime_config_snapshot",
         lambda: snapshot,
+        raising=False,
     )
     intent = ConsoleFirstChatIntent("deleted-target", "openai", "model-a", 37)
     app.pending_handoffs.stage(HandoffChannel.CONSOLE_FIRST_CHAT, intent)
 
-    assert console.consume_pending_console_first_chat_intent() is False
+    assert (
+        _first_chat_owner(console).consume_pending_console_first_chat_intent() is False
+    )
     assert store.sessions() == []
     assert _pending_first_chat(app) == intent
 
@@ -611,9 +638,10 @@ def test_first_chat_reserved_target_concurrent_id_claim_is_not_overwritten(
     console._console_chat_store = store
     snapshot = RuntimeConfigSnapshot(39, _first_chat_config())
     monkeypatch.setattr(
-        chat_screen_module,
+        session_module,
         "get_runtime_config_snapshot",
         lambda: snapshot,
+        raising=False,
     )
     intent = ConsoleFirstChatIntent("reserved-target", "openai", "model-a", 39)
     app.pending_handoffs.stage_reserved_console_first_chat(intent)
@@ -631,7 +659,9 @@ def test_first_chat_reserved_target_concurrent_id_claim_is_not_overwritten(
 
     monkeypatch.setattr(store, "create_session", create_with_concurrent_claim)
 
-    assert console.consume_pending_console_first_chat_intent() is False
+    assert (
+        _first_chat_owner(console).consume_pending_console_first_chat_intent() is False
+    )
     assert store.session_settings(intent.session_id) == competing
     assert _pending_first_chat(app) == intent
 
@@ -645,9 +675,10 @@ def test_first_chat_reserved_target_never_adopts_preexisting_pristine_id(
     console._console_chat_store = store
     snapshot = RuntimeConfigSnapshot(41, _first_chat_config())
     monkeypatch.setattr(
-        chat_screen_module,
+        session_module,
         "get_runtime_config_snapshot",
         lambda: snapshot,
+        raising=False,
     )
     intent = ConsoleFirstChatIntent("reserved-target", "openai", "model-a", 41)
     competing = build_default_console_session_settings(
@@ -660,7 +691,9 @@ def test_first_chat_reserved_target_never_adopts_preexisting_pristine_id(
     )
     app.pending_handoffs.stage_reserved_console_first_chat(intent)
 
-    assert console.consume_pending_console_first_chat_intent() is False
+    assert (
+        _first_chat_owner(console).consume_pending_console_first_chat_intent() is False
+    )
     assert store.session_settings(intent.session_id) == competing
     assert _pending_first_chat(app) == intent
 
@@ -691,9 +724,10 @@ def test_first_chat_generation_change_during_reserved_create_rolls_back(
     user_before = _first_chat_session_snapshot(user_session)
     current = [RuntimeConfigSnapshot(43, _first_chat_config())]
     monkeypatch.setattr(
-        chat_screen_module,
+        session_module,
         "get_runtime_config_snapshot",
         lambda: current[0],
+        raising=False,
     )
     intent = ConsoleFirstChatIntent("reserved-race", "openai", "model-a", 43)
     app.pending_handoffs.stage_reserved_console_first_chat(intent)
@@ -707,7 +741,9 @@ def test_first_chat_generation_change_during_reserved_create_rolls_back(
 
     monkeypatch.setattr(store, "create_session", create_then_advance_generation)
 
-    assert console.consume_pending_console_first_chat_intent() is False
+    assert (
+        _first_chat_owner(console).consume_pending_console_first_chat_intent() is False
+    )
     assert all(item.id != intent.session_id for item in store.sessions())
     assert store.active_session_id == user_session.id
     preserved = next(item for item in store.sessions() if item.id == user_session.id)
@@ -733,9 +769,10 @@ def test_first_chat_generation_change_during_refresh_restores_exact_target(
     target_before = _first_chat_session_snapshot(target)
     current = [RuntimeConfigSnapshot(47, _first_chat_config())]
     monkeypatch.setattr(
-        chat_screen_module,
+        session_module,
         "get_runtime_config_snapshot",
         lambda: current[0],
+        raising=False,
     )
     intent = ConsoleFirstChatIntent(target.id, "openai", "model-a", 47)
     app.pending_handoffs.stage(HandoffChannel.CONSOLE_FIRST_CHAT, intent)
@@ -752,7 +789,9 @@ def test_first_chat_generation_change_during_refresh_restores_exact_target(
         refresh_then_advance_generation,
     )
 
-    assert console.consume_pending_console_first_chat_intent() is False
+    assert (
+        _first_chat_owner(console).consume_pending_console_first_chat_intent() is False
+    )
     assert store.active_session_id == target.id
     restored = next(item for item in store.sessions() if item.id == target.id)
     assert _first_chat_session_snapshot(restored) == target_before
@@ -775,14 +814,13 @@ def test_first_chat_generation_publish_at_ack_rolls_back_reserved_creation(
         ),
     )
     store.set_session_draft(prior.id, "preserve before ack")
-    sessions_before = [
-        _first_chat_session_snapshot(item) for item in store.sessions()
-    ]
+    sessions_before = [_first_chat_session_snapshot(item) for item in store.sessions()]
     current = [RuntimeConfigSnapshot(67, _first_chat_config())]
     monkeypatch.setattr(
-        chat_screen_module,
+        session_module,
         "get_runtime_config_snapshot",
         lambda: current[0],
+        raising=False,
     )
     intent = ConsoleFirstChatIntent("ack-publish-new", "openai", "model-a", 67)
     app.pending_handoffs.stage_reserved_console_first_chat(intent)
@@ -792,13 +830,15 @@ def test_first_chat_generation_publish_at_ack_rolls_back_reserved_creation(
         return False
 
     monkeypatch.setattr(
-        chat_screen_module,
+        session_module,
         "run_if_runtime_config_generation_current",
         publish_before_guarded_ack,
         raising=False,
     )
 
-    assert console.consume_pending_console_first_chat_intent() is False
+    assert (
+        _first_chat_owner(console).consume_pending_console_first_chat_intent() is False
+    )
     assert store.active_session_id == prior.id
     assert [
         _first_chat_session_snapshot(item) for item in store.sessions()
@@ -823,9 +863,10 @@ def test_first_chat_generation_publish_at_ack_restores_existing_refresh(
     target_before = _first_chat_session_snapshot(target)
     current = [RuntimeConfigSnapshot(69, _first_chat_config())]
     monkeypatch.setattr(
-        chat_screen_module,
+        session_module,
         "get_runtime_config_snapshot",
         lambda: current[0],
+        raising=False,
     )
     intent = ConsoleFirstChatIntent(target.id, "openai", "model-a", 69)
     app.pending_handoffs.stage(HandoffChannel.CONSOLE_FIRST_CHAT, intent)
@@ -835,13 +876,15 @@ def test_first_chat_generation_publish_at_ack_restores_existing_refresh(
         return False
 
     monkeypatch.setattr(
-        chat_screen_module,
+        session_module,
         "run_if_runtime_config_generation_current",
         publish_before_guarded_ack,
         raising=False,
     )
 
-    assert console.consume_pending_console_first_chat_intent() is False
+    assert (
+        _first_chat_owner(console).consume_pending_console_first_chat_intent() is False
+    )
     assert store.active_session_id == target.id
     restored = next(item for item in store.sessions() if item.id == target.id)
     assert _first_chat_session_snapshot(restored) == target_before
@@ -871,9 +914,10 @@ def test_first_chat_replacement_and_session_switch_during_create_roll_back_old_t
     selected_before = _first_chat_session_snapshot(selected)
     snapshot = RuntimeConfigSnapshot(49, _first_chat_config())
     monkeypatch.setattr(
-        chat_screen_module,
+        session_module,
         "get_runtime_config_snapshot",
         lambda: snapshot,
+        raising=False,
     )
     old_intent = ConsoleFirstChatIntent("old-reserved", "openai", "model-a", 49)
     replacement = ConsoleFirstChatIntent(
@@ -894,13 +938,15 @@ def test_first_chat_replacement_and_session_switch_during_create_roll_back_old_t
 
     monkeypatch.setattr(store, "create_session", create_then_replace_and_reselect)
 
-    assert console.consume_pending_console_first_chat_intent() is False
+    assert (
+        _first_chat_owner(console).consume_pending_console_first_chat_intent() is False
+    )
     assert all(item.id != old_intent.session_id for item in store.sessions())
     assert store.active_session_id == selected.id
     assert _first_chat_session_snapshot(selected) == selected_before
     assert _pending_first_chat(app) == replacement
     assert notifications == []
-    assert console._first_chat_handoff_notified_revision is None
+    assert _first_chat_owner(console)._first_chat_handoff_notified_revision is None
 
 
 def test_first_chat_failed_acknowledgement_rolls_back_and_requeues(
@@ -922,19 +968,38 @@ def test_first_chat_failed_acknowledgement_rolls_back_and_requeues(
     prior_before = _first_chat_session_snapshot(prior)
     snapshot = RuntimeConfigSnapshot(51, _first_chat_config())
     monkeypatch.setattr(
-        chat_screen_module,
+        session_module,
         "get_runtime_config_snapshot",
         lambda: snapshot,
+        raising=False,
     )
     intent = ConsoleFirstChatIntent("ack-race", "openai", "model-a", 51)
     app.pending_handoffs.stage_reserved_console_first_chat(intent)
+    events: list[tuple[object, ...]] = []
+    owner = _first_chat_owner(console)
+    real_apply = owner._apply_first_chat_control_selection_fn
+    real_release = app.pending_handoffs.release
+
+    def apply_and_record(provider, model) -> None:
+        events.append(("project", provider, model))
+        real_apply(provider, model)
+
+    def release_and_record(claim) -> bool:
+        events.append(("release", claim.revision))
+        return real_release(claim)
+
+    owner._apply_first_chat_control_selection_fn = apply_and_record
+    monkeypatch.setattr(app.pending_handoffs, "release", release_and_record)
     monkeypatch.setattr(
         app.pending_handoffs,
         "acknowledge_current",
         lambda _claim: False,
     )
 
-    assert console.consume_pending_console_first_chat_intent() is False
+    assert owner.consume_pending_console_first_chat_intent() is False
+    assert [event[0] for event in events[:3]] == ["project", "project", "release"]
+    assert events[0][1:] == ("openai", "model-a")
+    assert events[1][1:] == (None, None)
     assert all(item.id != intent.session_id for item in store.sessions())
     assert store.active_session_id == prior.id
     assert _first_chat_session_snapshot(prior) == prior_before
@@ -960,9 +1025,10 @@ def test_first_chat_ack_exception_rolls_back_create_and_survives_release_error(
     prior_before = _first_chat_session_snapshot(prior)
     snapshot = RuntimeConfigSnapshot(73, _first_chat_config())
     monkeypatch.setattr(
-        chat_screen_module,
+        session_module,
         "get_runtime_config_snapshot",
         lambda: snapshot,
+        raising=False,
     )
     intent = ConsoleFirstChatIntent(
         "ack-exception-create-target",
@@ -976,7 +1042,7 @@ def test_first_chat_ack_exception_rolls_back_create_and_survives_release_error(
     secret = "PRIVATE_ACK_EXCEPTION_TEXT"
     warnings: list[tuple[object, ...]] = []
     monkeypatch.setattr(
-        chat_screen_module.logger,
+        session_module.logger,
         "warning",
         lambda *args, **_kwargs: warnings.append(args),
     )
@@ -990,7 +1056,9 @@ def test_first_chat_ack_exception_rolls_back_create_and_survives_release_error(
     monkeypatch.setattr(app.pending_handoffs, "acknowledge_current", fail_acknowledge)
     monkeypatch.setattr(app.pending_handoffs, "release", fail_release)
 
-    assert console.consume_pending_console_first_chat_intent() is False
+    assert (
+        _first_chat_owner(console).consume_pending_console_first_chat_intent() is False
+    )
     assert all(item.id != intent.session_id for item in store.sessions())
     assert store.active_session_id == prior.id
     assert _first_chat_session_snapshot(prior) == prior_before
@@ -1005,9 +1073,31 @@ def test_first_chat_ack_exception_rolls_back_create_and_survives_release_error(
         real_acknowledge,
     )
     monkeypatch.setattr(app.pending_handoffs, "release", real_release)
-    assert console.consume_pending_console_first_chat_intent() is True
+    assert (
+        _first_chat_owner(console).consume_pending_console_first_chat_intent() is True
+    )
     assert store.active_session_id == intent.session_id
     assert _pending_first_chat(app) is None
+
+
+def test_first_chat_exception_log_is_metadata_only() -> None:
+    records: list[str] = []
+    sink_id = loguru_logger.add(
+        lambda message: records.append(str(message)),
+        level="WARNING",
+    )
+    try:
+        ConsoleSessionController._log_first_chat_handoff_exception(
+            "guarded-acknowledgement",
+            RuntimeError("SECRET-FIRST-CHAT-EXCEPTION"),
+        )
+    finally:
+        loguru_logger.remove(sink_id)
+
+    rendered = "".join(records)
+    assert "guarded-acknowledgement" in rendered
+    assert "RuntimeError" in rendered
+    assert "SECRET-FIRST-CHAT-EXCEPTION" not in rendered
 
 
 def test_first_chat_ack_exception_restores_refresh_and_retries(monkeypatch) -> None:
@@ -1026,9 +1116,10 @@ def test_first_chat_ack_exception_restores_refresh_and_retries(monkeypatch) -> N
     target_before = _first_chat_session_snapshot(target)
     snapshot = RuntimeConfigSnapshot(75, _first_chat_config())
     monkeypatch.setattr(
-        chat_screen_module,
+        session_module,
         "get_runtime_config_snapshot",
         lambda: snapshot,
+        raising=False,
     )
     intent = ConsoleFirstChatIntent(
         target.id,
@@ -1044,7 +1135,9 @@ def test_first_chat_ack_exception_restores_refresh_and_retries(monkeypatch) -> N
         lambda _claim: (_ for _ in ()).throw(RuntimeError("PRIVATE_REFRESH")),
     )
 
-    assert console.consume_pending_console_first_chat_intent() is False
+    assert (
+        _first_chat_owner(console).consume_pending_console_first_chat_intent() is False
+    )
     restored = next(item for item in store.sessions() if item.id == target.id)
     assert _first_chat_session_snapshot(restored) == target_before
 
@@ -1053,7 +1146,9 @@ def test_first_chat_ack_exception_restores_refresh_and_retries(monkeypatch) -> N
         "acknowledge_current",
         real_acknowledge,
     )
-    assert console.consume_pending_console_first_chat_intent() is True
+    assert (
+        _first_chat_owner(console).consume_pending_console_first_chat_intent() is True
+    )
     assert store.session_settings(target.id).model == "model-a"
     assert _pending_first_chat(app) is None
 
@@ -1074,9 +1169,10 @@ def test_first_chat_config_guard_exception_rolls_back_and_retries(monkeypatch) -
     prior_before = _first_chat_session_snapshot(prior)
     snapshot = RuntimeConfigSnapshot(77, _first_chat_config())
     monkeypatch.setattr(
-        chat_screen_module,
+        session_module,
         "get_runtime_config_snapshot",
         lambda: snapshot,
+        raising=False,
     )
     intent = ConsoleFirstChatIntent(
         "config-guard-exception-target",
@@ -1085,24 +1181,30 @@ def test_first_chat_config_guard_exception_rolls_back_and_retries(monkeypatch) -
         snapshot.generation,
     )
     app.pending_handoffs.stage_reserved_console_first_chat(intent)
-    real_guard = chat_screen_module.run_if_runtime_config_generation_current
+    real_guard = session_module.run_if_runtime_config_generation_current
     monkeypatch.setattr(
-        chat_screen_module,
+        session_module,
         "run_if_runtime_config_generation_current",
         lambda *_args: (_ for _ in ()).throw(RuntimeError("PRIVATE_GUARD")),
+        raising=False,
     )
 
-    assert console.consume_pending_console_first_chat_intent() is False
+    assert (
+        _first_chat_owner(console).consume_pending_console_first_chat_intent() is False
+    )
     assert all(item.id != intent.session_id for item in store.sessions())
     assert store.active_session_id == prior.id
     assert _first_chat_session_snapshot(prior) == prior_before
 
     monkeypatch.setattr(
-        chat_screen_module,
+        session_module,
         "run_if_runtime_config_generation_current",
         real_guard,
+        raising=False,
     )
-    assert console.consume_pending_console_first_chat_intent() is True
+    assert (
+        _first_chat_owner(console).consume_pending_console_first_chat_intent() is True
+    )
     assert _pending_first_chat(app) is None
 
 
@@ -1125,9 +1227,10 @@ def test_first_chat_ack_exception_after_replacement_preserves_replacement(
     prior_before = _first_chat_session_snapshot(prior)
     snapshot = RuntimeConfigSnapshot(79, _first_chat_config())
     monkeypatch.setattr(
-        chat_screen_module,
+        session_module,
         "get_runtime_config_snapshot",
         lambda: snapshot,
+        raising=False,
     )
     original = ConsoleFirstChatIntent(
         "ack-exception-old-target",
@@ -1149,7 +1252,9 @@ def test_first_chat_ack_exception_after_replacement_preserves_replacement(
         replace_then_raise,
     )
 
-    assert console.consume_pending_console_first_chat_intent() is False
+    assert (
+        _first_chat_owner(console).consume_pending_console_first_chat_intent() is False
+    )
     assert all(item.id != original.session_id for item in store.sessions())
     assert store.active_session_id == prior.id
     assert _first_chat_session_snapshot(prior) == prior_before
@@ -1160,7 +1265,9 @@ def test_first_chat_ack_exception_after_replacement_preserves_replacement(
         "acknowledge_current",
         real_acknowledge,
     )
-    assert console.consume_pending_console_first_chat_intent() is True
+    assert (
+        _first_chat_owner(console).consume_pending_console_first_chat_intent() is True
+    )
     assert store.active_session_id == replacement.session_id
     assert _pending_first_chat(app) is None
 
@@ -1177,9 +1284,10 @@ def test_first_chat_failed_notification_tracking_is_bounded_to_latest_revision(
     )
     console = ChatScreen(app)
     monkeypatch.setattr(
-        chat_screen_module,
+        session_module,
         "get_runtime_config_snapshot",
         lambda: RuntimeConfigSnapshot(999, _first_chat_config()),
+        raising=False,
     )
     latest_revision = 0
 
@@ -1193,11 +1301,20 @@ def test_first_chat_failed_notification_tracking_is_bounded_to_latest_revision(
                 index + 1,
             ),
         )
-        assert console.consume_pending_console_first_chat_intent() is False
-        assert console.consume_pending_console_first_chat_intent() is False
+        assert (
+            _first_chat_owner(console).consume_pending_console_first_chat_intent()
+            is False
+        )
+        assert (
+            _first_chat_owner(console).consume_pending_console_first_chat_intent()
+            is False
+        )
 
     assert len(notifications) == 128
-    assert console._first_chat_handoff_notified_revision == latest_revision
+    assert (
+        _first_chat_owner(console)._first_chat_handoff_notified_revision
+        == latest_revision
+    )
 
 
 @pytest.mark.asyncio
@@ -1210,9 +1327,10 @@ async def test_mounted_first_chat_preserves_restored_and_concurrent_sessions(
         _first_chat_config("llama_cpp", "mounted-local"),
     )
     monkeypatch.setattr(
-        chat_screen_module,
+        session_module,
         "get_runtime_config_snapshot",
         lambda: snapshot,
+        raising=False,
     )
     host = ConsoleHarness(app)
 
@@ -1254,7 +1372,10 @@ async def test_mounted_first_chat_preserves_restored_and_concurrent_sessions(
         )
         app.pending_handoffs.stage_reserved_console_first_chat(intent)
 
-        assert console.consume_pending_console_first_chat_intent() is True
+        assert (
+            _first_chat_owner(console).consume_pending_console_first_chat_intent()
+            is True
+        )
         await pilot.pause()
         assert store.active_session_id == intent.session_id
         assert [
@@ -1267,7 +1388,10 @@ async def test_mounted_first_chat_preserves_restored_and_concurrent_sessions(
         sessions_after_success = [
             _first_chat_session_snapshot(item) for item in store.sessions()
         ]
-        assert console.consume_pending_console_first_chat_intent() is False
+        assert (
+            _first_chat_owner(console).consume_pending_console_first_chat_intent()
+            is False
+        )
         assert [
             _first_chat_session_snapshot(item) for item in store.sessions()
         ] == sessions_after_success
@@ -1289,9 +1413,10 @@ async def test_mounted_first_chat_replacement_ack_exception_restores_prior_ui(
         _first_chat_config("llama_cpp", "replacement-race-model"),
     )
     monkeypatch.setattr(
-        chat_screen_module,
+        session_module,
         "get_runtime_config_snapshot",
         lambda: snapshot,
+        raising=False,
     )
     host = ConsoleHarness(app)
 
@@ -1345,7 +1470,10 @@ async def test_mounted_first_chat_replacement_ack_exception_restores_prior_ui(
             raising=False,
         )
 
-        assert console.consume_pending_console_first_chat_intent() is False
+        assert (
+            _first_chat_owner(console).consume_pending_console_first_chat_intent()
+            is False
+        )
         await _wait_for_first_chat_projection(console, pilot, mounted_before)
         assert [
             _first_chat_session_snapshot(item) for item in store.sessions()
@@ -1361,7 +1489,10 @@ async def test_mounted_first_chat_replacement_ack_exception_restores_prior_ui(
             "acknowledge_current",
             real_acknowledge_current,
         )
-        assert console.consume_pending_console_first_chat_intent() is True
+        assert (
+            _first_chat_owner(console).consume_pending_console_first_chat_intent()
+            is True
+        )
         await pilot.pause()
         assert store.active_session_id == replacement.session_id
         assert _pending_first_chat(app) is None
@@ -1379,9 +1510,10 @@ async def test_mounted_first_chat_generation_publish_at_ack_restores_reserved_ui
         )
     ]
     monkeypatch.setattr(
-        chat_screen_module,
+        session_module,
         "get_runtime_config_snapshot",
         lambda: current[0],
+        raising=False,
     )
     host = ConsoleHarness(app)
 
@@ -1423,12 +1555,16 @@ async def test_mounted_first_chat_generation_publish_at_ack_restores_reserved_ui
             return False
 
         monkeypatch.setattr(
-            chat_screen_module,
+            session_module,
             "run_if_runtime_config_generation_current",
             publish_at_guarded_ack,
+            raising=False,
         )
 
-        assert console.consume_pending_console_first_chat_intent() is False
+        assert (
+            _first_chat_owner(console).consume_pending_console_first_chat_intent()
+            is False
+        )
         await _wait_for_first_chat_projection(console, pilot, mounted_before)
         assert [
             _first_chat_session_snapshot(item) for item in store.sessions()
@@ -1450,9 +1586,10 @@ async def test_mounted_first_chat_generation_publish_at_ack_restores_refresh_ui(
         )
     ]
     monkeypatch.setattr(
-        chat_screen_module,
+        session_module,
         "get_runtime_config_snapshot",
         lambda: current[0],
+        raising=False,
     )
     host = ConsoleHarness(app)
 
@@ -1490,12 +1627,16 @@ async def test_mounted_first_chat_generation_publish_at_ack_restores_refresh_ui(
             return False
 
         monkeypatch.setattr(
-            chat_screen_module,
+            session_module,
             "run_if_runtime_config_generation_current",
             publish_at_guarded_ack,
+            raising=False,
         )
 
-        assert console.consume_pending_console_first_chat_intent() is False
+        assert (
+            _first_chat_owner(console).consume_pending_console_first_chat_intent()
+            is False
+        )
         await _wait_for_first_chat_projection(console, pilot, mounted_before)
         assert [
             _first_chat_session_snapshot(item) for item in store.sessions()
@@ -1514,9 +1655,10 @@ async def test_mounted_first_chat_ack_exception_during_mount_is_retryable(
         _first_chat_config("llama_cpp", "mount-exception-model"),
     )
     monkeypatch.setattr(
-        chat_screen_module,
+        session_module,
         "get_runtime_config_snapshot",
         lambda: snapshot,
+        raising=False,
     )
     intent = ConsoleFirstChatIntent(
         "mounted-on-mount-exception-target",
@@ -1546,7 +1688,10 @@ async def test_mounted_first_chat_ack_exception_during_mount_is_retryable(
             "acknowledge_current",
             real_acknowledge,
         )
-        assert console.consume_pending_console_first_chat_intent() is True
+        assert (
+            _first_chat_owner(console).consume_pending_console_first_chat_intent()
+            is True
+        )
         await pilot.pause()
         assert store.active_session_id == intent.session_id
         assert _pending_first_chat(app) is None
@@ -1562,9 +1707,10 @@ async def test_mounted_first_chat_ack_exception_during_resume_restores_ui(
         _first_chat_config("llama_cpp", "resume-exception-model"),
     )
     monkeypatch.setattr(
-        chat_screen_module,
+        session_module,
         "get_runtime_config_snapshot",
         lambda: snapshot,
+        raising=False,
     )
     host = ConsoleHarness(app)
 
@@ -1619,7 +1765,10 @@ async def test_mounted_first_chat_ack_exception_during_resume_restores_ui(
             "acknowledge_current",
             real_acknowledge,
         )
-        assert console.consume_pending_console_first_chat_intent() is True
+        assert (
+            _first_chat_owner(console).consume_pending_console_first_chat_intent()
+            is True
+        )
         await pilot.pause()
         assert store.active_session_id == intent.session_id
         assert _pending_first_chat(app) is None
@@ -2303,7 +2452,9 @@ def test_summary_state_renders_character_or_generic_assistant_identity() -> None
     assert generic.identity_row == "Assistant: General"
 
 
-def test_summary_state_projects_character_identity_to_one_line_without_mutating_settings() -> None:
+def test_summary_state_projects_character_identity_to_one_line_without_mutating_settings() -> (
+    None
+):
     raw_name = "Nyx\n\tAdmin\x00[/bold]"
     settings = ConsoleSessionSettings(
         provider="llama_cpp",
@@ -2598,9 +2749,7 @@ def test_local_thinking_provider_detection_covers_execution_key_aliases() -> Non
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_local_provider_marks_no_effect_choices() -> (
-    None
-):
+async def test_console_settings_modal_local_provider_marks_no_effect_choices() -> None:
     app = ModalHarness()
     settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
 
@@ -2642,9 +2791,7 @@ async def test_console_settings_modal_remote_provider_keeps_thinking_hint_plain(
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_provider_switch_refreshes_choice_hints() -> (
-    None
-):
+async def test_console_settings_modal_provider_switch_refreshes_choice_hints() -> None:
     app = ModalHarness()
     settings = ConsoleSessionSettings(provider="openai", model="gpt-4.1")
 
@@ -3761,9 +3908,10 @@ async def test_console_settings_modal_tabs_to_model_picker_after_provider_change
         provider_select.value = "groq"
         await pilot.pause()
 
-        assert app.screen.query_one(
-            "#console-settings-model-legacy-adapter"
-        ).display is False
+        assert (
+            app.screen.query_one("#console-settings-model-legacy-adapter").display
+            is False
+        )
         assert model_select.value == "llama-3.3-70b-versatile"
         assert picker.value == "llama-3.3-70b-versatile"
 
@@ -4182,9 +4330,7 @@ async def test_console_settings_modal_uses_shared_picker_and_saves_search_result
         picker = app.screen.query_one(
             "#console-settings-model-picker", ModelSearchPicker
         )
-        legacy_adapter = app.screen.query_one(
-            "#console-settings-model-legacy-adapter"
-        )
+        legacy_adapter = app.screen.query_one("#console-settings-model-legacy-adapter")
         assert picker.display is True
         assert legacy_adapter.display is False
 
@@ -4452,9 +4598,7 @@ async def test_console_settings_modal_provider_change_to_no_models_allows_freefo
         picker = app.screen.query_one("#console-settings-model-picker")
         picker_input = picker.query_one("#model-search-picker-input", Input)
         picker_status = picker.query_one("#model-search-picker-status", Static)
-        custom_button = app.screen.query_one(
-            "#console-settings-model-custom", Button
-        )
+        custom_button = app.screen.query_one("#console-settings-model-custom", Button)
         assert picker.value is None
         assert "No models reported" in str(picker_status.renderable)
         assert custom_button.display is True
@@ -5635,7 +5779,9 @@ async def test_mounted_console_unmount_times_out_hung_refresh_and_repairs_on_res
 
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"user_display_name": "Alpha"}
-    app.app_config.setdefault("console", {})["roleplay_refresh_teardown_timeout_seconds"] = 0.05
+    app.app_config.setdefault("console", {})[
+        "roleplay_refresh_teardown_timeout_seconds"
+    ] = 0.05
     host = ConsoleHarness(app)
     hung_persistence = HungFirstWritePersistence()
 
@@ -6444,10 +6590,7 @@ async def test_console_missing_model_opens_console_settings_from_summary() -> No
             modal_screen.query_one("#console-settings-provider", Select).value
             == "llama_cpp"
         )
-        assert (
-            modal_screen.query_one(ModelSearchPicker).value
-            == "model-a"
-        )
+        assert modal_screen.query_one(ModelSearchPicker).value == "model-a"
         readiness = modal_screen.query_one("#console-settings-readiness", Static)
         provider_model_section = modal_screen.query_one(
             "#console-settings-provider-model-section"
@@ -8078,6 +8221,4 @@ async def test_discovery_selects_the_model_when_exactly_one_is_found() -> None:
         await pilot.press("o", "n", "l", "y")
         await pilot.pause()
         results = modal.query_one("#model-search-picker-results", OptionList)
-        assert [str(option.prompt) for option in results.options] == [
-            "only-real-model"
-        ]
+        assert [str(option.prompt) for option in results.options] == ["only-real-model"]
