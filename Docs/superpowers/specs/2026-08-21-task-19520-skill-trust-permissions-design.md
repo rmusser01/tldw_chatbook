@@ -4,6 +4,8 @@
 
 **Date:** 2026-08-21
 
+**Review revision:** 2026-08-21 — stale secure-temp collision recovery
+
 **Task:** TASK-19520
 
 **Governing decision:** [ADR-009: Local Skill Trust Boundary](../../../backlog/decisions/009-local-skill-trust-boundary.md)
@@ -82,7 +84,37 @@ When `owner_only` is true, the helper will:
 4. Close the descriptor, invoke the existing path-based writer callback, and atomically replace the target.
 5. Record ownership only after `os.open` succeeds. Failures after successful creation use the existing `BaseException` cleanup path; an `EEXIST` failure before creation does not unlink the unexplained path.
 
-`O_EXCL` deliberately refuses a stale or attacker-precreated temporary path instead of truncating or following it. The existing PID-and-thread writer-unique name makes legitimate collisions exceptional; a collision fails closed and leaves both the target and unexplained temporary path unchanged. The implementation will track whether this invocation created the temp path so the outer cleanup handler unlinks only a path it owns. Default-mode callers retain their current cleanup behavior because their callback remains the creator.
+`O_EXCL` deliberately refuses a stale or attacker-precreated temporary path instead of truncating or following it. The implementation tracks whether this invocation created a temp path so the outer cleanup handler unlinks only a path it owns. Default-mode callers retain their current cleanup behavior because their callback remains the creator.
+
+### Post-review stale-temp recovery
+
+Qodo review identified that the PID-and-thread name is writer-unique only
+across concurrent writers, not across sequential attempts by the same thread.
+Because cleanup is best effort, a failed unlink can leave that deterministic
+name occupied and make every later owner-only write fail at `O_EXCL`.
+
+Three remedies were evaluated:
+
+1. **Bounded alternate-name retry inside `replace_atomically` — selected.** Try
+   the caller-supplied path first. Only when owner-only `os.open` raises
+   `FileExistsError`, try same-directory siblings formed from the supplied name
+   plus a `secrets.token_hex(8)` component, for at most eight total candidates.
+2. Randomize trust-store names at each call site. This would recover current
+   trust writers but leave direct or future `owner_only=True` helper callers
+   vulnerable to the same deterministic retry failure.
+3. Delete a colliding temp judged to be stale. This cannot safely distinguish
+   a leftover from an active same-UID writer and would violate the concurrency
+   ownership rule established by TASK-17963.
+
+The selected retry remains inside the shared owner-only lifecycle. Normal
+writes still use exactly the supplied hidden PID/thread path and incur no
+random-name generation. On collision, every existing candidate is preserved;
+the writer callback and `Path.replace` receive only the candidate this attempt
+successfully created. Cleanup targets only that owned candidate. If all eight
+exclusive creates collide, the last `FileExistsError` is surfaced with the
+target and every unexplained temp unchanged. The bound prevents an unbounded
+loop under a hostile or broken filesystem while 64 random bits per fallback
+make accidental exhaustion negligible.
 
 ### Trust-store integration
 
@@ -106,9 +138,13 @@ On non-POSIX platforms the directory and file writes follow the same atomic code
 ## Error Handling and Recovery
 
 - Failure after this writer creates a POSIX temporary file aborts the write. The target remains unchanged and best-effort cleanup removes this writer's temporary path.
-- An exclusive-create collision before ownership is established leaves the unexplained temporary path untouched and surfaces the error.
+- An exclusive-create collision before ownership is established leaves that
+  unexplained path untouched and moves to the next bounded random sibling.
+- Exhausting all eight owner-only candidates surfaces the last
+  `FileExistsError`; the target and every unowned candidate remain unchanged.
 - Failure to restrict a POSIX trust-owned directory aborts before sensitive file creation.
-- A stale temporary-path collision raises rather than truncating an unexplained file.
+- A stale temporary-path collision never truncates or removes the unexplained
+  file; a fresh exclusively created sibling allows a later attempt to recover.
 - Marker-save rollback continues to restore the previous manifest through `_atomic_write_bytes`; the restored file is therefore tightened to `0o600` as well.
 - Reads remain non-mutating. A permissive legacy file can remain permissive until a trust mutation rewrites it; this is the acceptance criterion's selected migration point.
 
@@ -121,7 +157,14 @@ Add focused tests under `Tests/Skills/` that run on real temporary filesystem pa
 - Intercept `Path.replace` and inspect the source path before delegating, proving the in-flight temporary file is already `0o600` before publication.
 - Exercise both JSON and bytes secure-write paths so manifest rollback bytes are not covered only indirectly.
 - Verify a secure-create or replace failure cleans up its temporary path and preserves the original exception.
-- Pre-create the exact writer-unique temp path, assert an `EEXIST` failure leaves that unexplained file byte-identical, and distinguish it from cleanup after successful creation.
+- Pre-create the exact writer-unique temp path, assert the owner-only write
+  succeeds through an alternate sibling while the unexplained file remains
+  byte-identical, and verify the published target is still `0o600` on POSIX.
+- Force all eight candidate opens to collide and assert the last
+  `FileExistsError` propagates without a writer call, target mutation, or
+  cleanup attempt against an unowned path.
+- Force a failure after an alternate candidate is created and assert cleanup
+  targets that owned alternate only, leaving the original collision intact.
 - Save a snapshot into a missing or permissive trust root before saving a manifest and assert both the trust root and `snapshots/` are `0o700`.
 - Keep existing concurrency and serialization-preservation tests green.
 - Gate POSIX mode assertions with `os.name == "posix"`; retain platform-neutral round-trip tests so Windows exercises the new optional path in CI without asserting advisory Unix bits.
