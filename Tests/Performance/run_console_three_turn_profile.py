@@ -656,6 +656,46 @@ def validate_sample(row: Mapping[str, Any]) -> tuple[str, ...]:
     return tuple(errors)
 
 
+def validate_confirmation_rows(
+    rows: Sequence[Mapping[str, Any]],
+    schedule: Sequence[SamplePlan],
+    *,
+    validate_sample: Callable[[Mapping[str, Any]], tuple[str, ...]],
+) -> tuple[tuple[str, ...], list[Mapping[str, Any]]]:
+    """Validate the full confirmatory sequence before excluding burn-in rows."""
+    expected = [
+        (
+            f"{plan.phase}-{plan.iteration}-{plan.arm}",
+            plan.phase,
+            plan.iteration,
+            plan.arm,
+            position,
+        )
+        for position, plan in enumerate(schedule)
+    ]
+    observed = [
+        (
+            row.get("sample_id"),
+            row.get("phase"),
+            row.get("iteration"),
+            row.get("arm"),
+            row.get("schedule_position"),
+        )
+        for row in rows
+    ]
+    errors: list[str] = []
+    if observed != expected:
+        errors.append("confirmation_schedule_contract")
+    sample_ids = [row.get("sample_id") for row in rows]
+    if len(sample_ids) != len(set(sample_ids)):
+        errors.append("confirmation_sample_id_duplicate")
+    sample_errors = [validate_sample(row) for row in rows]
+    if any(sample_errors):
+        errors.append("confirmation_sample_contract")
+    filtered = [row for row in rows if row.get("phase") != "burn_in"]
+    return tuple(errors), filtered
+
+
 def validate_run(
     rows: Sequence[Mapping[str, Any]], *, expected_iterations: int = 30
 ) -> tuple[str, ...]:
@@ -1309,15 +1349,22 @@ def listener_resource_snapshot(
     return {"listener_count": len(processes), "processes": processes}
 
 
-def sample_schedule(iterations: int) -> tuple[SamplePlan, ...]:
-    """Return fail-fast warmups followed by complete rotated measured blocks."""
-    if iterations < 1:
-        raise ValueError("iterations must be positive")
+def sample_schedule(
+    iterations: int, *, burn_in_blocks: int = 0
+) -> tuple[SamplePlan, ...]:
+    """Return warmups, optional burn-in, and complete rotated measured blocks."""
+    if iterations < 1 or burn_in_blocks < 0:
+        raise ValueError("schedule counts must be nonnegative with measured iterations")
     schedule = [SamplePlan("warmup", arm, -1) for arm in ARMS]
+    for block in range(burn_in_blocks):
+        schedule.extend(
+            SamplePlan("burn_in", arm, block)
+            for arm in balanced_arm_order(block)
+        )
     for iteration in range(iterations):
         schedule.extend(
             SamplePlan("measured", arm, iteration)
-            for arm in balanced_arm_order(iteration)
+            for arm in balanced_arm_order(burn_in_blocks + iteration)
         )
     return tuple(schedule)
 

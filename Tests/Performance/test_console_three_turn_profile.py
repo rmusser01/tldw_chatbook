@@ -329,6 +329,138 @@ def _valid_run(iterations: int = 30) -> list[dict[str, object]]:
     return warmups + measured
 
 
+def _valid_confirmation_rows() -> tuple[
+    tuple[profile.SamplePlan, ...], list[dict[str, object]]
+]:
+    schedule = profile.sample_schedule(30, burn_in_blocks=5)
+    rows = []
+    for schedule_position, plan in enumerate(schedule):
+        row = _valid_sample(plan.arm, iteration=plan.iteration)
+        row.update(
+            {
+                "sample_id": f"{plan.phase}-{plan.iteration}-{plan.arm}",
+                "phase": plan.phase,
+                "schedule_position": schedule_position,
+            }
+        )
+        rows.append(row)
+    return schedule, rows
+
+
+def test_validate_confirmation_rows_accepts_exact_sequence_before_filtering() -> None:
+    schedule, rows = _valid_confirmation_rows()
+    validate_confirmation_rows = getattr(profile, "validate_confirmation_rows", None)
+
+    assert callable(validate_confirmation_rows)
+    errors, filtered = validate_confirmation_rows(
+        rows,
+        schedule,
+        validate_sample=profile.validate_sample,
+    )
+
+    assert len(rows) == 108
+    assert errors == ()
+    assert filtered == [row for row in rows if row["phase"] != "burn_in"]
+    assert len(filtered) == 93
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ("reordered", "missing", "extra", "missing_position", "wrong_position", "unknown_phase"),
+)
+def test_validate_confirmation_rows_rejects_sequence_mutants(mutation: str) -> None:
+    schedule, rows = _valid_confirmation_rows()
+    validate_confirmation_rows = getattr(profile, "validate_confirmation_rows", None)
+
+    if mutation == "reordered":
+        rows[10], rows[11] = rows[11], rows[10]
+    elif mutation == "missing":
+        rows.pop()
+    elif mutation == "extra":
+        extra = copy.deepcopy(rows[-1])
+        extra.update(
+            {
+                "sample_id": "measured-30-control",
+                "iteration": 30,
+                "arm": "control",
+                "schedule_position": len(rows),
+            }
+        )
+        rows.append(extra)
+    elif mutation == "missing_position":
+        rows[10].pop("schedule_position")
+    elif mutation == "wrong_position":
+        rows[10]["schedule_position"] = 11
+    else:
+        rows[10]["phase"] = "unknown"
+
+    assert callable(validate_confirmation_rows)
+    errors, _filtered = validate_confirmation_rows(
+        rows,
+        schedule,
+        validate_sample=profile.validate_sample,
+    )
+
+    assert errors == ("confirmation_schedule_contract",)
+
+
+def test_validate_confirmation_rows_rejects_within_phase_duplicate_sample_ids() -> None:
+    schedule, rows = _valid_confirmation_rows()
+    rows[4]["sample_id"] = rows[3]["sample_id"]
+    validate_confirmation_rows = getattr(profile, "validate_confirmation_rows", None)
+
+    assert callable(validate_confirmation_rows)
+    errors, _filtered = validate_confirmation_rows(
+        rows,
+        schedule,
+        validate_sample=profile.validate_sample,
+    )
+
+    assert errors == (
+        "confirmation_schedule_contract",
+        "confirmation_sample_id_duplicate",
+    )
+
+
+def test_validate_confirmation_rows_rejects_cross_phase_duplicate_sample_ids() -> None:
+    schedule, rows = _valid_confirmation_rows()
+    rows[18]["sample_id"] = rows[3]["sample_id"]
+    validate_confirmation_rows = getattr(profile, "validate_confirmation_rows", None)
+
+    assert callable(validate_confirmation_rows)
+    errors, _filtered = validate_confirmation_rows(
+        rows,
+        schedule,
+        validate_sample=profile.validate_sample,
+    )
+
+    assert errors == (
+        "confirmation_schedule_contract",
+        "confirmation_sample_id_duplicate",
+    )
+
+
+def test_validate_confirmation_rows_validates_every_row_including_burn_in() -> None:
+    schedule, rows = _valid_confirmation_rows()
+    rows[3]["status"] = "failed"
+    seen_positions = []
+    validate_confirmation_rows = getattr(profile, "validate_confirmation_rows", None)
+
+    def original_validate_sample(row: dict[str, object]) -> tuple[str, ...]:
+        seen_positions.append(row["schedule_position"])
+        return profile.validate_sample(row)
+
+    assert callable(validate_confirmation_rows)
+    errors, _filtered = validate_confirmation_rows(
+        rows,
+        schedule,
+        validate_sample=original_validate_sample,
+    )
+
+    assert errors == ("confirmation_sample_contract",)
+    assert seen_positions == list(range(108))
+
+
 def test_validate_run_requires_thirty_complete_unique_rotation_blocks() -> None:
     validate_run = getattr(profile, "validate_run", None)
     rows = _valid_run()
@@ -493,6 +625,39 @@ def test_sample_schedule_has_unmeasured_warmups_then_complete_rotations() -> Non
     assert [item.arm for item in schedule[3:6]] == list(profile.balanced_arm_order(0))
     assert [item.arm for item in schedule[6:9]] == list(profile.balanced_arm_order(1))
     assert sum(item.phase == "measured" for item in schedule) == 12
+
+
+def test_confirmatory_schedule_continues_rotation_after_five_burn_in_blocks() -> None:
+    schedule = profile.sample_schedule(30, burn_in_blocks=5)
+
+    assert [(row.phase, row.arm, row.iteration) for row in schedule[:3]] == [
+        ("warmup", "control", -1),
+        ("warmup", "disabled", -1),
+        ("warmup", "enabled", -1),
+    ]
+    assert len([row for row in schedule if row.phase == "burn_in"]) == 15
+    measured = [row for row in schedule if row.phase == "measured"]
+    assert len(measured) == 90
+    assert [row.arm for row in measured[:3]] == list(profile.balanced_arm_order(5))
+    assert [row.iteration for row in measured[:3]] == [0, 0, 0]
+
+
+def test_zero_burn_in_keeps_the_existing_schedule() -> None:
+    assert profile.sample_schedule(4) == profile.sample_schedule(4, burn_in_blocks=0)
+
+
+@pytest.mark.parametrize(
+    ("iterations", "burn_in_blocks"),
+    ((0, 0), (-1, 0), (1, -1)),
+)
+def test_sample_schedule_rejects_invalid_counts(
+    iterations: int, burn_in_blocks: int
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match="schedule counts must be nonnegative with measured iterations",
+    ):
+        profile.sample_schedule(iterations, burn_in_blocks=burn_in_blocks)
 
 
 def _write_target_package(root: Path, marker: str) -> None:
