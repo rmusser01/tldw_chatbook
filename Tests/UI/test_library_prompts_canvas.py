@@ -11031,7 +11031,7 @@ async def test_prompts_canvas_editor_copy_and_duplicate_relabeled():
         copy_button = pilot.app.query_one("#library-prompt-copy", Button)
         duplicate_button = pilot.app.query_one("#library-prompt-duplicate", Button)
         assert str(copy_button.label) == "Copy Markdown"
-        assert str(duplicate_button.label) == "Duplicate prompt"
+        assert str(duplicate_button.label) == "Duplicate"
 
 
 # ---------------------------------------------------------------------------
@@ -11959,7 +11959,7 @@ async def test_library_prompt_copy_after_compatibility_recipe_conversion_uses_pr
         detached_state = screen._current_library_prompt_editor_state()
         assert detached_state.prompt_id is None
         save = screen.query_one("#library-prompt-save", Button)
-        assert str(save.label) == "Save Prompt"
+        assert str(save.label) == "Save prompt"
         assert save.disabled is False
         assert str(screen.query_one("#library-prompt-meta", Static).renderable) == (
             "New prompt · • Unsaved changes"
@@ -12755,7 +12755,7 @@ async def test_library_shell_create_prompt_save_creates_and_increments_count(tmp
         )
         outer_update = screen.query_one("#library-prompt-save", Button)
         shared_update = screen.query_one("#prompt-editor-update-original", Button)
-        assert str(outer_update.label) == "Update original"
+        assert str(outer_update.label) == "Save changes"
         assert outer_update.disabled is False
         assert shared_update.disabled is False
         assert (
@@ -12926,7 +12926,7 @@ async def test_library_recipe_duplicate_outer_save_is_honest_and_preserves_start
         screen.query_one("#library-prompt-duplicate", Button).press()
         await pilot.pause()
         save = screen.query_one("#library-prompt-save", Button)
-        assert str(save.label) == "Save Recipe"
+        assert str(save.label) == "Save prompt"
         screen.query_one("#library-prompt-recipe-starter", Checkbox).value = True
         save.press()
         assert await _wait_for_prompt_status(screen, pilot) == "Saved."
