@@ -1501,6 +1501,8 @@ class ChangeReviewScreen(Screen):
         #: Banner lines for detection refusals (root inside a repository).
         #: Live truth about the workspace, so they survive turn switches.
         self._git_refusal_banners: list[str] = []
+        #: TASK-19702: the agent-writable root this screen cannot see.
+        self._untracked_writable_banners: list[str] = []
         #: TASK-16801 arc B (spec §5): a git ACTION (the commit preflight or
         #: the commit itself) is in flight. Every git affordance is disabled
         #: while it is True, so nothing can be double-dispatched. Task 8's
@@ -1636,7 +1638,9 @@ class ChangeReviewScreen(Screen):
             # every turn twice -- doubled git work per open).
             select.value = wanted or self._turns[0].run_id
         else:
-            self._show_empty("No file changes recorded for this conversation.")
+            self._show_empty(self._empty_history_copy())
+        self._refresh_untracked_writable_banner()
+        self._update_banner()
         self._refresh_mode_affordances()
         # TASK-16801 arc B: the `current` mode is OFFERED (never opened on)
         # -- so detection runs AFTER the turn view is already up, keeping
@@ -2101,6 +2105,7 @@ class ChangeReviewScreen(Screen):
             *self._turn_banner_lines,
             *self._current_root_errors,
             *self._git_refusal_banners,
+            *self._untracked_writable_banners,
         ):
             if line and line not in seen:
                 seen.add(line)
@@ -3270,6 +3275,87 @@ class ChangeReviewScreen(Screen):
                 "  ⚠ changed outside direct file tools", style="dim"
             )
         return label
+
+    def _refresh_untracked_writable_banner(self) -> None:
+        """Disclose an agent-writable root that change review cannot see.
+
+        TASK-19702 AC #3. `[console] workspace_root` is the CONFINEMENT
+        root for the agent's file tools (`console_chat_controller` reads
+        it, and falls back to the process CWD when it is unset), while
+        change tracking follows the workspace's BOUND folders. Nothing
+        keeps those two in agreement, so an agent can edit files that this
+        screen will never show — a silent gap exactly where the user comes
+        to check what the agent did.
+
+        Rather than paper over it by treating the configured root as
+        reviewable (AC #2 forbids that: it would offer confirmed commit
+        and push against a repository the workspace never bound), the
+        mismatch is stated.
+        """
+        self._untracked_writable_banners = []
+        try:
+            from tldw_chatbook.config import get_cli_setting
+
+            configured = str(
+                get_cli_setting("console", "workspace_root", "") or ""
+            ).strip()
+        except Exception:  # noqa: BLE001 -- a bad config never breaks review
+            return
+        if not configured:
+            return
+        from pathlib import Path as _Path
+
+        try:
+            target = _Path(configured).expanduser().resolve()
+            tracked = {
+                _Path(r).expanduser().resolve() for r in self._workspace_roots
+            }
+        except (OSError, RuntimeError, ValueError):
+            return
+        if any(target == root or root in target.parents for root in tracked):
+            return
+        self._untracked_writable_banners = [
+            f"⚠ agents can write in {target} — it is not tracked here, so "
+            f"changes made there will not appear in this review"
+        ]
+
+    def _empty_history_copy(self) -> str:
+        """What an empty history actually means, distinguished (TASK-19702).
+
+        "No file changes recorded for this conversation." reads as a REPORT
+        that the agent changed nothing. That is only true when this
+        conversation HAS tracked roots. With none, the app simply never
+        watched anything, and asserting the stronger claim is the same
+        dishonest-empty-state class spec §8 forbids elsewhere in this
+        screen (the working-tree pane says "unavailable", not "clean", when
+        every root failed).
+
+        A conversation has no tracked roots whenever its workspace binds no
+        folder -- which the built-in Default workspace can NEVER do:
+        `add_folder_binding` delegates to `save_runtime_binding`, which
+        raises "Default workspace does not allow runtime bindings"
+        (verified against the real registry). Change tracking only records
+        snapshots when it has roots, so both sources this screen reads stay
+        empty and the feature is invisible in Default.
+
+        Deliberately does NOT fall back to `[console] workspace_root` or
+        the process CWD to manufacture a root: that would offer confirmed
+        commit and push against a repository the workspace never bound,
+        which is worse than showing nothing (TASK-16801 whole-branch review
+        ruling, restated in this task's AC #2).
+
+        Returns:
+            The empty-state copy matching what is actually known.
+        """
+        if self._workspace_roots:
+            return "No file changes recorded for this conversation."
+        return (
+            "No folder is bound to this conversation's workspace, so file "
+            "changes are not tracked here — this is not a report that "
+            "nothing changed. Bind a folder in Settings ▸ Workspaces; the "
+            "built-in Default workspace cannot bind folders, so use or "
+            "create another workspace."
+        )
 
     def _show_empty(self, copy: str) -> None:
         self.query_one("#change-review-diff-content", Static).update(copy)
