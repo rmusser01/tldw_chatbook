@@ -21,6 +21,7 @@ import stat
 import statistics
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import traceback
@@ -1769,6 +1770,29 @@ def create_attempt_root(campaign_root: Path, attempt_id: str) -> Path:
     return attempt_root
 
 
+def _legacy_orphan_attempt_id(
+    campaign_root: Path, lineage: Sequence[Mapping[str, Any]]
+) -> str | None:
+    attempts_root = campaign_root / "attempts"
+    if not attempts_root.exists():
+        return None
+    if attempts_root.is_symlink() or not attempts_root.is_dir():
+        raise RuntimeError("campaign_orphan_attempt_invalid")
+    known = {event["attempt_id"] for event in lineage}
+    unknown = [path for path in attempts_root.iterdir() if path.name not in known]
+    if not unknown:
+        return None
+    orphan_id = next_attempt_id(lineage)
+    if (
+        len(unknown) != 1
+        or unknown[0].name != orphan_id
+        or unknown[0].is_symlink()
+        or not unknown[0].is_dir()
+    ):
+        raise RuntimeError("campaign_orphan_attempt_invalid")
+    return orphan_id
+
+
 def require_campaign_acquisition(ledger: Path) -> str:
     """Return the next attempt ID only when the latest state permits retry."""
     lineage = attempt_lineage(ledger)
@@ -1865,6 +1889,12 @@ def _read_lock_owner(lock_root: Path) -> CampaignLockOwner:
         or owner_path.is_symlink()
     ):
         raise RuntimeError("campaign_lock_owner_invalid")
+    return _read_owner_file(owner_path)
+
+
+def _read_owner_file(owner_path: Path) -> CampaignLockOwner:
+    if not owner_path.is_file() or owner_path.is_symlink():
+        raise RuntimeError("campaign_lock_owner_invalid")
     try:
         payload = owner_path.read_bytes()
         if not payload.endswith(b"\n"):
@@ -1881,6 +1911,10 @@ def _read_lock_owner(lock_root: Path) -> CampaignLockOwner:
 
 
 def _campaign_marker_error(campaign_root: Path) -> str | None:
+    if (campaign_root / ".campaign-acquire").exists() or (
+        campaign_root / ".campaign-acquire"
+    ).is_symlink():
+        return "campaign_lock_held"
     if (campaign_root / ".campaign-release").exists() or (
         campaign_root / ".campaign-release"
     ).is_symlink():
@@ -1912,22 +1946,75 @@ def _delete_exact_lock_root(
     _rmdir_namespace(lock_root)
 
 
-def _write_lock_owner(lock_root: Path, owner: CampaignLockOwner) -> None:
-    with (lock_root / "owner.json").open("x", encoding="utf-8") as stream:
-        stream.write(
-            json.dumps(
-                {
-                    "pid": owner.pid,
-                    "process_start_sha256": owner.process_start_sha256,
-                    "owner_token": owner.owner_token,
-                },
-                sort_keys=True,
-            )
-            + "\n"
+def _owner_payload(owner: CampaignLockOwner) -> str:
+    return (
+        json.dumps(
+            {
+                "pid": owner.pid,
+                "process_start_sha256": owner.process_start_sha256,
+                "owner_token": owner.owner_token,
+            },
+            sort_keys=True,
         )
-        stream.flush()
-        os.fsync(stream.fileno())
-    _fsync_directory(lock_root)
+        + "\n"
+    )
+
+
+def _write_acquire_marker(
+    campaign_root: Path, owner: CampaignLockOwner
+) -> Path:
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=".campaign-owner-", dir=campaign_root
+    )
+    temporary = Path(temporary_name)
+    marker = campaign_root / ".campaign-acquire"
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream.write(_owner_payload(owner))
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.link(temporary, marker)
+        _fsync_directory(campaign_root)
+        _unlink_namespace(temporary)
+    except BaseException:
+        try:
+            if temporary.exists():
+                _unlink_namespace(temporary)
+        except BaseException:
+            pass
+        raise
+    return marker
+
+
+def _reclaim_owner_temps(campaign_root: Path) -> None:
+    for path in tuple(campaign_root.iterdir()):
+        if (
+            path.name.startswith(".campaign-owner-")
+            and path.is_file()
+            and not path.is_symlink()
+        ):
+            try:
+                _unlink_namespace(path)
+            except OSError:
+                pass
+
+
+def _finish_acquire_marker(campaign_root: Path) -> CampaignLockOwner:
+    marker = campaign_root / ".campaign-acquire"
+    owner = _read_owner_file(marker)
+    lock_root = campaign_root / ".campaign-lock"
+    if lock_root.exists() or lock_root.is_symlink():
+        if not _is_empty_private_directory(lock_root):
+            if _read_lock_owner(lock_root) != owner:
+                raise RuntimeError("campaign_lock_owner_mismatch")
+            _unlink_namespace(marker)
+            _reclaim_owner_temps(campaign_root)
+            return owner
+    else:
+        _mkdir_namespace(lock_root)
+    _rename_namespace(marker, lock_root / "owner.json")
+    _reclaim_owner_temps(campaign_root)
+    return owner
 
 
 def _restore_marker_to_canonical(
@@ -1942,23 +2029,27 @@ def _restore_marker_to_canonical(
             return False
     except RuntimeError:
         return False
-    try:
-        _mkdir_namespace(lock_root)
-    except FileExistsError:
-        return False
+    if lock_root.exists() or lock_root.is_symlink():
+        try:
+            if _is_empty_private_directory(lock_root):
+                if not (campaign_root / ".campaign-acquire").exists():
+                    return False
+                if _finish_acquire_marker(campaign_root) != owner:
+                    return False
+            elif _read_lock_owner(lock_root) != owner:
+                return False
+            _delete_exact_lock_root(marker_root, owner)
+        except BaseException:
+            return False
+        return True
     try:
         if _read_lock_owner(marker_root) != owner:
             raise RuntimeError("campaign_lock_owner_mismatch")
-        _write_lock_owner(lock_root, owner)
+        _write_acquire_marker(campaign_root, owner)
+        if _finish_acquire_marker(campaign_root) != owner:
+            raise RuntimeError("campaign_lock_owner_mismatch")
         _delete_exact_lock_root(marker_root, owner)
     except BaseException:
-        try:
-            if not any(lock_root.iterdir()):
-                _rmdir_namespace(lock_root)
-            elif _read_lock_owner(lock_root) == owner:
-                _delete_exact_lock_root(lock_root, owner)
-        except BaseException:
-            pass
         return False
     return True
 
@@ -1970,6 +2061,13 @@ def _preserve_recovery_rollback(
 ) -> None:
     """Restore the owner, or preserve its marker when another lock won."""
     if _restore_marker_to_canonical(campaign_root, recovery_root, owner):
+        return
+    acquire_root = campaign_root / ".campaign-acquire"
+    if (
+        acquire_root.exists()
+        or acquire_root.is_symlink()
+        or _is_empty_private_directory(campaign_root / ".campaign-lock")
+    ):
         return
     try:
         _rename_namespace(recovery_root, campaign_root / ".campaign-rollback")
@@ -2006,8 +2104,11 @@ def acquire_campaign_lock(
         raise RuntimeError("campaign_root_invalid")
     _mkdir_namespace(campaign_root, parents=True, exist_ok=True)
     lock_root = campaign_root / ".campaign-lock"
+    acquire_root = campaign_root / ".campaign-acquire"
     release_root = campaign_root / ".campaign-release"
     recovery_root = campaign_root / ".campaign-recovery"
+    if acquire_root.exists() or acquire_root.is_symlink():
+        raise RuntimeError("campaign_lock_held")
     if _is_empty_private_directory(release_root) and not lock_root.exists():
         _rmdir_namespace(release_root)
     if _is_empty_private_directory(recovery_root) and not lock_root.exists():
@@ -2043,6 +2144,8 @@ def acquire_campaign_lock(
     marker_error = _campaign_marker_error(campaign_root)
     if marker_error is not None:
         raise RuntimeError(marker_error)
+    if lock_root.exists() or lock_root.is_symlink():
+        raise RuntimeError("campaign_lock_held")
     owner_pid = os.getpid() if pid is None else pid
     start_identity = _probe_process_start_identity(
         process_start_probe, owner_pid, allow_dead=False
@@ -2059,14 +2162,20 @@ def acquire_campaign_lock(
         }
     )
     try:
-        _mkdir_namespace(lock_root)
+        _write_acquire_marker(campaign_root, owner)
     except FileExistsError as exc:
         raise RuntimeError("campaign_lock_held") from exc
-    marker_error = _campaign_marker_error(campaign_root)
-    if marker_error is not None:
-        _rmdir_namespace(lock_root)
-        raise RuntimeError(marker_error)
-    _write_lock_owner(lock_root, owner)
+    try:
+        _finish_acquire_marker(campaign_root)
+    except RuntimeError as exc:
+        if str(exc) == "campaign_lock_owner_mismatch":
+            try:
+                if _read_owner_file(acquire_root) == owner:
+                    _unlink_namespace(acquire_root)
+            except BaseException:
+                pass
+            raise RuntimeError("campaign_lock_held") from exc
+        raise
     marker_error = _campaign_marker_error(campaign_root)
     if marker_error is not None:
         _delete_exact_lock_root(lock_root, owner)
@@ -2128,10 +2237,27 @@ def acquire_campaign_attempt(
     try:
         ledger = campaign_root / "attempts.jsonl"
         attempt_id = require_campaign_acquisition(ledger)
-        root = create_attempt_root(campaign_root, attempt_id)
         append_attempt_state(
             ledger, {"attempt_id": attempt_id, "state": "running"}
         )
+        try:
+            root = create_attempt_root(campaign_root, attempt_id)
+        except BaseException as primary:
+            try:
+                append_attempt_state(
+                    ledger,
+                    {
+                        "attempt_id": attempt_id,
+                        "state": "failed",
+                        "reason_category": "acquisition",
+                    },
+                )
+            except BaseException as terminal:
+                raise BaseExceptionGroup(
+                    "campaign_staging_and_terminal_state_failed",
+                    [primary, terminal],
+                ) from None
+            raise
         return CampaignAttempt(attempt_id, root, owner)
     except BaseException as primary:
         try:
@@ -2168,6 +2294,10 @@ def recover_interrupted_attempt(
     ledger = campaign_root / "attempts.jsonl"
     lineage = attempt_lineage(ledger)
     latest = lineage[-1] if lineage else None
+    orphan_id = _legacy_orphan_attempt_id(campaign_root, lineage)
+    acquire_root = campaign_root / ".campaign-acquire"
+    if acquire_root.exists() or acquire_root.is_symlink():
+        _finish_acquire_marker(campaign_root)
     owner: CampaignLockOwner | None = None
     if recovery_root.exists() or recovery_root.is_symlink():
         if lineage and lineage[-1] == {
@@ -2184,7 +2314,7 @@ def recover_interrupted_attempt(
         if _is_empty_private_directory(recovery_root) and not lineage:
             _rmdir_namespace(recovery_root)
             return {"state": "failed", "reason_category": "interrupted"}
-        if latest is None or latest["state"] != "running":
+        if (latest is None or latest["state"] != "running") and orphan_id is None:
             raise RuntimeError("campaign_recovery_in_progress")
         owner = _read_lock_owner(recovery_root)
         observed_start = _probe_process_start_identity(
@@ -2198,7 +2328,7 @@ def recover_interrupted_attempt(
         if marker_error is not None:
             raise RuntimeError(marker_error)
         owner = _read_lock_owner(lock_root)
-    if latest is not None and latest["state"] != "running":
+    if latest is not None and latest["state"] != "running" and orphan_id is None:
         if latest["state"] in BLOCKING_ATTEMPT_STATES:
             raise RuntimeError(
                 f"campaign_recovery_state_blocked:{latest['state']}"
@@ -2222,11 +2352,11 @@ def recover_interrupted_attempt(
             raise RuntimeError("campaign_lock_owner_mismatch")
     event = (
         {
-            "attempt_id": latest["attempt_id"],
+            "attempt_id": orphan_id or latest["attempt_id"],
             "state": "failed",
             "reason_category": "interrupted",
         }
-        if latest is not None
+        if latest is not None or orphan_id is not None
         else {"state": "failed", "reason_category": "interrupted"}
     )
     try:
@@ -2237,17 +2367,36 @@ def recover_interrupted_attempt(
             raise RuntimeError("campaign_lock_owner_live")
         current = attempt_lineage(ledger)
         if current != lineage or (
-            latest is not None and current[-1]["state"] != "running"
+            orphan_id is None
+            and latest is not None
+            and current[-1]["state"] != "running"
         ):
             raise RuntimeError("campaign_recovery_state_changed")
-        if latest is not None:
+        if orphan_id is not None:
+            append_attempt_state(
+                ledger, {"attempt_id": orphan_id, "state": "running"}
+            )
+            append_attempt_state(ledger, event)
+        elif latest is not None:
             append_attempt_state(ledger, event)
     except BaseException:
         try:
-            appended = latest is not None and attempt_lineage(ledger) == (
+            committed_lineage = (
                 *lineage,
-                event,
+                *(
+                    ({"attempt_id": orphan_id, "state": "running"},)
+                    if orphan_id is not None
+                    else ()
+                ),
+                *(
+                    (event,)
+                    if latest is not None or orphan_id is not None
+                    else ()
+                ),
             )
+            appended = (
+                latest is not None or orphan_id is not None
+            ) and attempt_lineage(ledger) == committed_lineage
         except BaseException:
             appended = False
         if appended:
@@ -3092,6 +3241,16 @@ def _target_worktree_registered(
     *,
     run_command: Any = subprocess.run,
 ) -> bool:
+    registrations = _worktree_registrations(
+        repository_root, run_command=run_command
+    )
+    expected = str(target) if target.is_absolute() else str(target.resolve())
+    return expected in registrations
+
+
+def _worktree_registrations(
+    repository_root: Path, *, run_command: Any = subprocess.run
+) -> frozenset[str]:
     completed = run_command(
         ["git", "worktree", "list", "--porcelain"],
         cwd=repository_root,
@@ -3101,9 +3260,8 @@ def _target_worktree_registered(
     )
     if completed.returncode != 0:
         raise RuntimeError("target_worktree_registration_check_failed")
-    expected = str(target.resolve())
-    return any(
-        line.removeprefix("worktree ") == expected
+    return frozenset(
+        line.removeprefix("worktree ")
         for line in completed.stdout.splitlines()
         if line.startswith("worktree ")
     )
@@ -4602,6 +4760,62 @@ def _strict_owned_directory(
     return resolved, identity
 
 
+def _directory_open_flags() -> int:
+    return (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+    )
+
+
+def _remove_directory_contents_fd(descriptor: int) -> None:
+    for entry in os.scandir(descriptor):
+        if entry.is_dir(follow_symlinks=False):
+            child = os.open(
+                entry.name, _directory_open_flags(), dir_fd=descriptor
+            )
+            try:
+                _remove_directory_contents_fd(child)
+            finally:
+                os.close(child)
+            os.rmdir(entry.name, dir_fd=descriptor)
+        else:
+            os.unlink(entry.name, dir_fd=descriptor)
+    os.fsync(descriptor)
+
+
+def _refuse_unrelated_prunable_registrations(
+    registrations: frozenset[str], target: str
+) -> None:
+    if any(path != target and not Path(path).exists() for path in registrations):
+        raise RuntimeError("target_worktree_prune_refused")
+
+
+def _prune_exact_missing_registration(
+    repository_root: Path,
+    target: str,
+    registrations: frozenset[str],
+    *,
+    run_command: Any,
+) -> None:
+    if target not in registrations:
+        return
+    _refuse_unrelated_prunable_registrations(registrations, target)
+    completed = run_command(
+        ["git", "worktree", "prune", "--expire", "now"],
+        cwd=repository_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError("target_worktree_unregister_failed")
+    after = _worktree_registrations(repository_root, run_command=run_command)
+    if registrations - after != {target} or after - registrations:
+        raise RuntimeError("target_worktree_unregister_failed")
+
+
 def _remove_target_worktree(
     repository_root: Path,
     run_root: Path,
@@ -4625,48 +4839,115 @@ def _remove_target_worktree(
         )
     ):
         raise RuntimeError(confinement_error)
-    target, target_identity = _strict_owned_directory(
-        run_root / name, parent=root, error_code=confinement_error
-    )
-    checked_root, checked_root_identity = _strict_owned_directory(
-        run_root, parent=None, error_code=confinement_error
-    )
-    checked_target, checked_target_identity = _strict_owned_directory(
-        run_root / name, parent=checked_root, error_code=confinement_error
-    )
-    if (
-        checked_root != root
-        or checked_root_identity != root_identity
-        or checked_target != target
-        or checked_target_identity != target_identity
+    target_path = root / name
+    quarantine_name = f".{name}-cleanup"
+    quarantine_path = root / quarantine_name
+    if (target_path.exists() or target_path.is_symlink()) and (
+        quarantine_path.exists() or quarantine_path.is_symlink()
     ):
         raise RuntimeError(confinement_error)
-    completed = run_command(
-        ["git", "worktree", "remove", "--force", str(target)],
-        cwd=repository_root,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if completed.returncode != 0:
-        try:
-            registered = _target_worktree_registered(
-                repository_root, target, run_command=run_command
-            )
-        except RuntimeError as registration_failure:
-            raise BaseExceptionGroup(
-                "target_worktree_cleanup_failed",
-                [
-                    RuntimeError(f"target_worktree_remove_failed:{name}"),
-                    registration_failure,
-                ],
-            ) from None
-        code = (
-            "target_worktree_unregister_failed"
-            if registered
-            else "target_worktree_remove_failed"
+    owned_name: str | None = None
+    owned_identity: tuple[int, int] | None = None
+    if target_path.exists() or target_path.is_symlink():
+        _target, owned_identity = _strict_owned_directory(
+            target_path, parent=root, error_code=confinement_error
         )
-        raise RuntimeError(f"{code}:{name}")
+        owned_name = name
+    elif quarantine_path.exists() or quarantine_path.is_symlink():
+        _quarantine, owned_identity = _strict_owned_directory(
+            quarantine_path, parent=root, error_code=confinement_error
+        )
+        owned_name = quarantine_name
+    target_text = str(target_path)
+    try:
+        registrations = _worktree_registrations(
+            repository_root, run_command=run_command
+        )
+    except RuntimeError as registration_failure:
+        raise BaseExceptionGroup(
+            "target_worktree_cleanup_failed",
+            [
+                RuntimeError(f"target_worktree_remove_failed:{name}"),
+                registration_failure,
+            ],
+        ) from None
+    if target_text not in registrations:
+        if owned_name is None:
+            return
+        raise RuntimeError(f"target_worktree_remove_failed:{name}")
+    _refuse_unrelated_prunable_registrations(registrations, target_text)
+    if owned_name is None:
+        try:
+            _prune_exact_missing_registration(
+                repository_root,
+                target_text,
+                registrations,
+                run_command=run_command,
+            )
+        except RuntimeError as exc:
+            if str(exc) == "target_worktree_unregister_failed":
+                raise RuntimeError(
+                    f"target_worktree_unregister_failed:{name}"
+                ) from exc
+            raise
+        return
+    root_descriptor = os.open(root, _directory_open_flags())
+    owned_descriptor: int | None = None
+    quarantined = owned_name == quarantine_name
+    try:
+        observed_root = os.fstat(root_descriptor)
+        if (observed_root.st_dev, observed_root.st_ino) != root_identity:
+            raise RuntimeError(confinement_error)
+        owned_descriptor = os.open(
+            owned_name,
+            _directory_open_flags(),
+            dir_fd=root_descriptor,
+        )
+        observed_owned = os.fstat(owned_descriptor)
+        if (observed_owned.st_dev, observed_owned.st_ino) != owned_identity:
+            raise RuntimeError(confinement_error)
+        if not quarantined:
+            os.rename(
+                name,
+                quarantine_name,
+                src_dir_fd=root_descriptor,
+                dst_dir_fd=root_descriptor,
+            )
+            os.fsync(root_descriptor)
+            quarantined = True
+        try:
+            _prune_exact_missing_registration(
+                repository_root,
+                target_text,
+                registrations,
+                run_command=run_command,
+            )
+        except RuntimeError as exc:
+            try:
+                os.rename(
+                    quarantine_name,
+                    name,
+                    src_dir_fd=root_descriptor,
+                    dst_dir_fd=root_descriptor,
+                )
+                os.fsync(root_descriptor)
+                quarantined = False
+            except OSError:
+                pass
+            if str(exc) == "target_worktree_unregister_failed":
+                raise RuntimeError(
+                    f"target_worktree_unregister_failed:{name}"
+                ) from exc
+            raise
+        _remove_directory_contents_fd(owned_descriptor)
+        os.close(owned_descriptor)
+        owned_descriptor = None
+        os.rmdir(quarantine_name, dir_fd=root_descriptor)
+        os.fsync(root_descriptor)
+    finally:
+        if owned_descriptor is not None:
+            os.close(owned_descriptor)
+        os.close(root_descriptor)
 
 
 def _remove_target_worktrees(

@@ -593,6 +593,9 @@ def test_campaign_state_bearing_namespace_mutations_fsync_parents_in_order(
         campaign,
         campaign / "attempts",
         campaign,
+        campaign,
+        campaign,
+        campaign,
         campaign / ".campaign-lock",
         campaign,
         campaign,
@@ -998,6 +1001,23 @@ def _acquire_attempt(campaign_root: Path, *, pid: int = 123):
     )
 
 
+def _write_campaign_acquire_marker(
+    campaign_root: Path, owner: profile.CampaignLockOwner
+) -> None:
+    (campaign_root / ".campaign-acquire").write_text(
+        json.dumps(
+            {
+                "owner_token": owner.owner_token,
+                "pid": owner.pid,
+                "process_start_sha256": owner.process_start_sha256,
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def test_campaign_lock_uses_atomic_mkdir_and_exact_private_owner_record(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1027,6 +1047,61 @@ def test_campaign_lock_uses_atomic_mkdir_and_exact_private_owner_record(
         forbidden not in owner_bytes
         for forbidden in ("api_key", "secret", "command", "environment", "environ")
     )
+
+
+def test_campaign_fixed_acquire_marker_blocks_competing_owner(tmp_path: Path) -> None:
+    owner = profile.CampaignLockOwner(123, _OWNER_START, _OWNER_TOKEN)
+    _write_campaign_acquire_marker(tmp_path, owner)
+
+    with pytest.raises(RuntimeError, match="^campaign_lock_held$"):
+        _acquire_lock(tmp_path, pid=456)
+
+    assert not (tmp_path / ".campaign-lock").exists()
+    assert (tmp_path / ".campaign-acquire").is_file()
+
+
+def test_campaign_recovery_resumes_complete_acquire_marker_and_empty_lock(
+    tmp_path: Path,
+) -> None:
+    owner = profile.CampaignLockOwner(123, _OWNER_START, _OWNER_TOKEN)
+    _write_campaign_acquire_marker(tmp_path, owner)
+    (tmp_path / ".campaign-lock").mkdir()
+
+    event = profile.recover_interrupted_attempt(
+        tmp_path, process_start_probe=lambda _pid: None
+    )
+
+    assert event == {"state": "failed", "reason_category": "interrupted"}
+    assert not (tmp_path / ".campaign-acquire").exists()
+    assert not (tmp_path / ".campaign-lock").exists()
+    assert not (tmp_path / "attempts.jsonl").exists()
+
+
+def test_campaign_owner_publish_link_failure_never_exposes_canonical_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail_link(_source: Path, _target: Path) -> None:
+        raise OSError("injected owner publication failure")
+
+    monkeypatch.setattr(profile.os, "link", fail_link)
+
+    with pytest.raises(OSError, match="injected owner publication failure"):
+        _acquire_lock(tmp_path)
+
+    assert not (tmp_path / ".campaign-lock").exists()
+    assert not (tmp_path / ".campaign-acquire").exists()
+
+
+def test_campaign_partial_owner_temp_is_reclaimed_after_canonical_publish(
+    tmp_path: Path,
+) -> None:
+    abandoned = tmp_path / ".campaign-owner-abandoned"
+    abandoned.write_bytes(b'{"pid":')
+
+    owner = _acquire_lock(tmp_path)
+
+    assert profile._read_lock_owner(tmp_path / ".campaign-lock") == owner
+    assert not abandoned.exists()
 
 
 def test_campaign_lock_refuses_second_owner_and_releases_only_exact_token(
@@ -1269,6 +1344,73 @@ def test_campaign_attempt_acquisition_leaves_running_lock_and_staging_evidence(
     assert profile.attempt_lineage(tmp_path / "attempts.jsonl") == (
         {"attempt_id": "attempt-0001", "state": "running"},
     )
+
+
+def test_campaign_attempt_records_running_before_staging_root_creation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ledger = tmp_path / "attempts.jsonl"
+
+    def fail_after_running(_campaign_root: Path, attempt_id: str) -> Path:
+        assert attempt_id == "attempt-0001"
+        assert profile.attempt_lineage(ledger) == (
+            {"attempt_id": "attempt-0001", "state": "running"},
+        )
+        raise OSError("injected staging creation failure")
+
+    monkeypatch.setattr(profile, "create_attempt_root", fail_after_running)
+
+    with pytest.raises(OSError, match="injected staging creation failure"):
+        _acquire_attempt(tmp_path)
+
+    assert profile.attempt_lineage(ledger) == (
+        {"attempt_id": "attempt-0001", "state": "running"},
+        {
+            "attempt_id": "attempt-0001",
+            "state": "failed",
+            "reason_category": "acquisition",
+        },
+    )
+    assert not (tmp_path / ".campaign-lock").exists()
+
+
+def test_campaign_recovery_records_legacy_single_orphan_attempt(
+    tmp_path: Path,
+) -> None:
+    _acquire_lock(tmp_path)
+    orphan = profile.create_attempt_root(tmp_path, "attempt-0001")
+
+    event = profile.recover_interrupted_attempt(
+        tmp_path, process_start_probe=lambda _pid: None
+    )
+
+    assert event == _attempt_event(
+        "attempt-0001", "failed", reason_category="interrupted"
+    )
+    assert profile.attempt_lineage(tmp_path / "attempts.jsonl") == (
+        {"attempt_id": "attempt-0001", "state": "running"},
+        event,
+    )
+    assert orphan.is_dir()
+    assert _acquire_attempt(tmp_path).attempt_id == "attempt-0002"
+
+
+def test_campaign_recovery_rejects_multiple_legacy_orphan_roots(
+    tmp_path: Path,
+) -> None:
+    _acquire_lock(tmp_path)
+    first = profile.create_attempt_root(tmp_path, "attempt-0001")
+    second = profile.create_attempt_root(tmp_path, "attempt-0002")
+
+    with pytest.raises(RuntimeError, match="^campaign_orphan_attempt_invalid$"):
+        profile.recover_interrupted_attempt(
+            tmp_path, process_start_probe=lambda _pid: None
+        )
+
+    assert first.is_dir()
+    assert second.is_dir()
+    assert (tmp_path / ".campaign-lock").is_dir()
+    assert not (tmp_path / "attempts.jsonl").exists()
 
 
 def test_campaign_ledger_creation_fsync_failure_retains_running_lock(
@@ -1677,6 +1819,49 @@ def test_campaign_recovery_rolls_back_after_second_probe_failure(
     assert (tmp_path / "attempts.jsonl").read_bytes() == before
 
 
+def test_campaign_recovery_rollback_owner_publication_is_resumable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    attempt = _acquire_attempt(tmp_path)
+    before = (tmp_path / "attempts.jsonl").read_bytes()
+    calls = 0
+    original_rename = profile._rename_namespace
+    interrupted = False
+
+    def probe(_pid: int) -> str | None:
+        nonlocal calls
+        calls += 1
+        return None if calls == 1 else _OWNER_START
+
+    def interrupted_owner_publish(source: Path, target: Path) -> None:
+        nonlocal interrupted
+        if source.name == ".campaign-acquire" and not interrupted:
+            interrupted = True
+            raise OSError("simulated owner publication interruption")
+        original_rename(source, target)
+
+    monkeypatch.setattr(profile, "_rename_namespace", interrupted_owner_publish)
+
+    with pytest.raises(RuntimeError, match="^campaign_lock_owner_live$"):
+        profile.recover_interrupted_attempt(tmp_path, process_start_probe=probe)
+
+    canonical = tmp_path / ".campaign-lock"
+    assert profile._is_empty_private_directory(canonical)
+    assert profile._read_owner_file(tmp_path / ".campaign-acquire") == attempt.owner
+    assert profile._read_lock_owner(tmp_path / ".campaign-recovery") == attempt.owner
+    assert (tmp_path / "attempts.jsonl").read_bytes() == before
+
+    with pytest.raises(RuntimeError, match="^campaign_lock_owner_live$"):
+        profile.recover_interrupted_attempt(
+            tmp_path, process_start_probe=lambda _pid: _OWNER_START
+        )
+
+    assert profile._read_lock_owner(canonical) == attempt.owner
+    assert not (tmp_path / ".campaign-acquire").exists()
+    assert not (tmp_path / ".campaign-recovery").exists()
+    assert not (tmp_path / ".campaign-rollback").exists()
+
+
 def test_campaign_recovery_rollback_conflict_preserves_both_locked_owners(
     tmp_path: Path,
 ) -> None:
@@ -1926,10 +2111,18 @@ def test_campaign_attempt_cleanup_removes_only_owned_target_worktrees(
     commands: list[list[str]] = []
     for name in ("control", "candidate"):
         (attempt_root / name).mkdir()
+    registered = {
+        str((attempt_root / name).resolve()) for name in ("control", "candidate")
+    }
 
     def run_command(command, **_kwargs):
         commands.append(command)
-        Path(command[-1]).rmdir()
+        if command == ["git", "worktree", "list", "--porcelain"]:
+            stdout = "".join(f"worktree {path}\n\n" for path in sorted(registered))
+            return SimpleNamespace(returncode=0, stdout=stdout)
+        registered.difference_update(
+            {path for path in registered if not Path(path).exists()}
+        )
         return SimpleNamespace(returncode=0, stdout="")
 
     profile.cleanup_attempt_worktrees(
@@ -1939,11 +2132,8 @@ def test_campaign_attempt_cleanup_removes_only_owned_target_worktrees(
         run_command=run_command,
     )
 
-    assert [command[:4] for command in commands] == [
-        ["git", "worktree", "remove", "--force"],
-        ["git", "worktree", "remove", "--force"],
-    ]
-    assert {Path(command[-1]).name for command in commands} == {"control", "candidate"}
+    assert commands.count(["git", "worktree", "prune", "--expire", "now"]) == 2
+    assert registered == set()
     assert raw.read_bytes() == b"retained\n"
     assert attempt_root.is_dir()
 
@@ -4512,9 +4702,14 @@ def test_remove_target_worktree_only_removes_owned_fixed_target(tmp_path: Path) 
     target = run_root / "candidate"
     target.mkdir(parents=True)
     calls = []
+    registered = {str(target.resolve())}
 
     def fake_run(command, **kwargs):
         calls.append((command, kwargs))
+        if command == ["git", "worktree", "list", "--porcelain"]:
+            stdout = "".join(f"worktree {path}\n\n" for path in registered)
+            return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+        registered.clear()
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
     assert callable(remove_target_worktree)
@@ -4524,13 +4719,10 @@ def test_remove_target_worktree_only_removes_owned_fixed_target(tmp_path: Path) 
         name="candidate",
         run_command=fake_run,
     )
-    assert calls[0][0] == [
-        "git",
-        "worktree",
-        "remove",
-        "--force",
-        str(target.resolve()),
+    assert ["git", "worktree", "prune", "--expire", "now"] in [
+        command for command, _kwargs in calls
     ]
+    assert not target.exists()
     with pytest.raises(RuntimeError, match="target_worktree_invalid"):
         remove_target_worktree(
             tmp_path / "repository",
@@ -4564,18 +4756,62 @@ def test_remove_target_worktree_preserves_remove_and_registration_failures(
     assert (run_root / "candidate").is_dir()
 
 
-def test_remove_target_worktree_rejects_missing_target_before_git(
+def test_remove_target_worktree_unregisters_exact_registered_missing_target(
     tmp_path: Path,
 ) -> None:
     run_root = tmp_path / "run"
     run_root.mkdir()
+    target = run_root / "candidate"
+    registered = {str(target.resolve())}
     calls: list[list[str]] = []
 
     def fake_run(command, **_kwargs):
         calls.append(command)
+        if command == ["git", "worktree", "list", "--porcelain"]:
+            stdout = "".join(f"worktree {path}\n\n" for path in sorted(registered))
+            return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+        if command == ["git", "worktree", "prune", "--expire", "now"]:
+            registered.clear()
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
-    with pytest.raises(RuntimeError, match="^target_worktree_invalid$"):
+    profile._remove_target_worktree(
+        tmp_path / "repository",
+        run_root,
+        name="candidate",
+        run_command=fake_run,
+    )
+
+    assert ["git", "worktree", "prune", "--expire", "now"] in calls
+    assert registered == set()
+
+
+def test_remove_target_worktree_parent_swap_cannot_redirect_deletion(
+    tmp_path: Path,
+) -> None:
+    attempts = tmp_path / "attempts"
+    run_root = attempts / "attempt-0001"
+    target = run_root / "candidate"
+    target.mkdir(parents=True)
+    outside = tmp_path / "outside" / "attempt-0001" / "candidate"
+    outside.mkdir(parents=True)
+    registered = {str(target.resolve())}
+    swapped = False
+
+    def fake_run(command, **_kwargs):
+        nonlocal swapped
+        if command == ["git", "worktree", "list", "--porcelain"]:
+            stdout = "".join(f"worktree {path}\n\n" for path in sorted(registered))
+            return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+        if not swapped:
+            swapped = True
+            attempts.rename(tmp_path / "original-attempts")
+            attempts.symlink_to(tmp_path / "outside", target_is_directory=True)
+        if command[:4] == ["git", "worktree", "remove", "--force"]:
+            Path(command[-1]).rmdir()
+            registered.clear()
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    with pytest.raises(RuntimeError, match="target_worktree_unregister_failed"):
         profile._remove_target_worktree(
             tmp_path / "repository",
             run_root,
@@ -4583,7 +4819,62 @@ def test_remove_target_worktree_rejects_missing_target_before_git(
             run_command=fake_run,
         )
 
-    assert calls == []
+    assert outside.is_dir()
+    assert (tmp_path / "original-attempts" / "attempt-0001" / "candidate").is_dir()
+
+
+def test_remove_target_worktree_refuses_prune_with_unrelated_stale_registration(
+    tmp_path: Path,
+) -> None:
+    run_root = tmp_path / "run"
+    target = run_root / "candidate"
+    target.mkdir(parents=True)
+    registered = {str(target.resolve()), str(tmp_path / "missing-unrelated")}
+    calls: list[list[str]] = []
+
+    def fake_run(command, **_kwargs):
+        calls.append(command)
+        stdout = "".join(f"worktree {path}\n\n" for path in sorted(registered))
+        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+
+    with pytest.raises(RuntimeError, match="^target_worktree_prune_refused$"):
+        profile._remove_target_worktree(
+            tmp_path / "repository",
+            run_root,
+            name="candidate",
+            run_command=fake_run,
+        )
+
+    assert ["git", "worktree", "prune", "--expire", "now"] not in calls
+    assert target.is_dir()
+
+
+def test_remove_target_worktree_resumes_inode_bound_quarantine(
+    tmp_path: Path,
+) -> None:
+    run_root = tmp_path / "run"
+    quarantine = run_root / ".candidate-cleanup"
+    (quarantine / "nested").mkdir(parents=True)
+    (quarantine / "nested" / "evidence").write_bytes(b"retained until cleanup")
+    target = run_root / "candidate"
+    registered = {str(target.resolve())}
+
+    def fake_run(command, **_kwargs):
+        if command == ["git", "worktree", "list", "--porcelain"]:
+            stdout = "".join(f"worktree {path}\n\n" for path in registered)
+            return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+        registered.clear()
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    profile._remove_target_worktree(
+        tmp_path / "repository",
+        run_root,
+        name="candidate",
+        run_command=fake_run,
+    )
+
+    assert registered == set()
+    assert not quarantine.exists()
 
 
 def test_remove_target_worktrees_attempts_both_when_first_cleanup_fails(
@@ -4593,21 +4884,29 @@ def test_remove_target_worktrees_attempts_both_when_first_cleanup_fails(
     for name in ("control", "candidate"):
         (run_root / name).mkdir(parents=True)
     calls = []
+    registered = {
+        str((run_root / name).resolve()) for name in ("control", "candidate")
+    }
 
     def fake_run(command, **_kwargs):
         calls.append(command)
         if command == ["git", "worktree", "list", "--porcelain"]:
+            stdout = "".join(f"worktree {path}\n\n" for path in sorted(registered))
             return subprocess.CompletedProcess(
                 command,
                 0,
-                stdout=f"worktree {(run_root / 'candidate').resolve()}\n\n",
+                stdout=stdout,
                 stderr="",
             )
+        missing = {path for path in registered if not Path(path).exists()}
+        if any(path.endswith("candidate") for path in missing):
+            return subprocess.CompletedProcess(command, 1, stdout="", stderr="busy")
+        registered.difference_update(missing)
         return subprocess.CompletedProcess(
             command,
-            1 if command[-1].endswith("candidate") else 0,
+            0,
             stdout="",
-            stderr="busy",
+            stderr="",
         )
 
     with pytest.raises(RuntimeError, match="target_worktree_unregister_failed:candidate"):
@@ -4618,8 +4917,9 @@ def test_remove_target_worktrees_attempts_both_when_first_cleanup_fails(
             run_command=fake_run,
         )
 
-    removed_names = [Path(command[-1]).name for command in calls if command[2] == "remove"]
-    assert removed_names == ["candidate", "control"]
+    assert calls.count(["git", "worktree", "prune", "--expire", "now"]) == 2
+    assert (run_root / "candidate").is_dir()
+    assert not (run_root / "control").exists()
 
 
 def _write_fingerprint_tree(root: Path, *, candidate: bool) -> None:
