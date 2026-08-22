@@ -46,8 +46,6 @@ from typing import Any
 
 from loguru import logger
 
-from .library_rechunk_service import rechunk_one_item
-
 from tldw_chatbook.Library.library_tool_contract import (
     DEFAULT_MAX_NODES,
     DISPLAY_NAME_MAX_BYTES,
@@ -73,6 +71,8 @@ from tldw_chatbook.Library.library_tool_contract import (
     validate_page_args,
 )
 from tldw_chatbook.runtime_policy.types import PolicyDeniedError
+
+from .library_rechunk_service import rechunk_one_item
 
 #: The NULL chunk family's wire label (Task 2's backend uses the same
 #: rendering; the string round-trips back as the ``chunk_type`` filter).
