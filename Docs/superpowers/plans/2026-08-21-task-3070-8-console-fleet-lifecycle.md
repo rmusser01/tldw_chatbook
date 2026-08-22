@@ -21,7 +21,7 @@
 - Work only in `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/task-3070-8-console-fleet-lifecycle` on `codex/task-3070-8-console-fleet-lifecycle`.
 - Treat `Docs/superpowers/specs/2026-08-21-task-3070-8-console-fleet-lifecycle-design.md` as the approved contract.
 - Do not add a screen handle, sibling controller object, generic dependency bag, base class, event bus, method shim, compatibility descriptor, setting, DOM id, CSS rule, or user-visible copy.
-- Preserve the historical Wave 6 `raw_lines=401` oracle at its recorded `POST_IMAGE_IMPLEMENTATION_BASE`; add a separate current-base oracle for 421 definition lines, 20,349 total screen lines, 652 direct methods, and post-extraction ceilings of 19,928/636.
+- Preserve the historical Wave 6 `raw_lines=401` oracle at its recorded `POST_IMAGE_IMPLEMENTATION_BASE` and the initial reviewed `0a8e288` oracle at 421 definition lines / 20,349 screen lines / 652 direct methods / 19,928 and 636 projections. Use the rebased current implementation-base oracle for the same 421 definition lines, 20,428 total screen lines, 653 direct methods, and post-extraction ceilings of 20,007/637.
 - The two controller state fields are private controller details: `_console_fleet_survivor_timer` and `_console_fleet_unseen_cache`. Tests that inspect them move to `screen._fleet`; no screen shadow/proxy is allowed.
 - Preserve exact callback late binding. A test monkeypatch after construction must affect the next controller call.
 - Keep first-chat consumption before teardown notice and synchronous wake claiming; keep wake claiming before every timer/worker/view-clear.
@@ -32,14 +32,15 @@
 
 ## Recorded starting point
 
-- Planning base and current `origin/dev`: `0a8e2882588fdad5a99aca6e2215735c43927528`.
-- Design HEAD before this plan: `4404283f021623ecbff14dd07e3f15e4c93946d5`.
-- `ChatScreen`: 20,349 physical lines / 652 direct methods.
+- Initial reviewed planning oracle: `0a8e2882588fdad5a99aca6e2215735c43927528` at 20,349 physical lines / 652 direct methods and projected ceilings 19,928 / 636.
+- Rebased implementation base and Task 0 `origin/dev`: `d4f3f97763ddf3fa46eeb35ae9473827e72695bc`.
+- Design HEAD before this plan after rebase: `0c9bdc92a94542054228decfa4dbbd56d1cb598d` (pre-rebase `4404283f021623ecbff14dd07e3f15e4c93946d5`).
+- Rebased `ChatScreen`: 20,428 physical lines / 653 direct methods; projected ceilings 20,007 / 637.
 - Current-base fleet family: 421 physical definition lines / 16 direct methods.
 - Historical Wave 6 fleet family at `POST_IMAGE_IMPLEMENTATION_BASE`: 401 lines / 16 methods.
-- Focused fleet baseline: 17 passed, 4 warnings in 39.19 seconds.
-- Metadata-only registry baseline: 1 passed, 1 dependency warning.
-- Generated diagnostic inventory non-write baseline: inherited RED before production edits. Record and attribute the latest-dev owner delta independently; do not claim the fleet move is its sole cause and do not run `--write` before reviewing that baseline.
+- Rebased focused fleet baseline: 17 passed, 4 warnings in 39.63 seconds.
+- Rebased metadata-only registry baseline: 1 passed, 1 dependency warning in 1.80 seconds.
+- Generated diagnostic inventory non-write baseline: green after the mandatory latest-dev rebase at 521 owners / 1,221 TASK-492 calls / 7,208 TASK-494 calls / 7 sink files. The pre-rebase 0a8 branch was inherited RED; upstream reconciled that delta. No Task 0 manifest write occurred.
 
 ## File map
 
@@ -58,8 +59,9 @@
 
 **Files:**
 
+- Modify: `Docs/superpowers/specs/2026-08-21-task-3070-8-console-fleet-lifecycle-design.md`
 - Modify: `backlog/tasks/task-3070.8 - Extract-Console-fleet-and-wake-lifecycle-controller.md`
-- Create: `Docs/superpowers/plans/2026-08-21-task-3070-8-console-fleet-lifecycle.md`
+- Modify: `Docs/superpowers/plans/2026-08-21-task-3070-8-console-fleet-lifecycle.md`
 
 - [x] **Step 1: Confirm branch/base cleanliness and current source counts**
 
@@ -73,7 +75,7 @@ git merge-base HEAD origin/dev
 wc -l tldw_chatbook/UI/Screens/chat_screen.py
 ```
 
-Expected: clean status before plan edits, merge base equals current `origin/dev`, and the recorded counts remain explainable. If `origin/dev` advanced, rebase the documentation commits and inspect the upstream screen delta. Preserve the immutable 0a8e/421/20,349/652/19,928/636 task oracle and historical 401-line oracle. If upstream changes make the approved projection inapplicable, stop and amend/re-review the design rather than silently rewriting its constants.
+Expected: clean status before plan edits and, after any required rebase, merge base equals current `origin/dev`. Preserve both immutable earlier evidence sets: the initial 0a8e/421/20,349/652/19,928/636 planning oracle and the historical 401-line oracle. Use the rebased latest-dev source for the current implementation-base ratchet. If upstream changes the reviewed 16-method family or makes its projection inapplicable, stop and amend/re-review the design rather than silently rewriting constants.
 
 - [x] **Step 2: Re-run the focused baseline**
 
@@ -95,41 +97,40 @@ Expected on the recorded base: 17 passed; only the recorded dependency/runtime w
   Tests/Architecture/test_persistent_diagnostic_inventory.py::test_reviewed_diagnostic_changes_are_metadata_only
 ```
 
-Expected: generated-inventory check is inherited RED and the metadata-only registry node is green. Capture the exact latest-dev owner delta separately during Task 5; do not regenerate here.
+Expected: preserve the pre-rebase inherited RED result, then record the actual non-write result after the mandatory latest-dev rebase. The metadata-only registry node must be green. Do not regenerate the manifest here; any later owner redistribution remains a Task 5 review boundary.
 
 - [x] **Step 4: Commit only plan/task metadata**
 
 ```bash
 git add \
+  Docs/superpowers/specs/2026-08-21-task-3070-8-console-fleet-lifecycle-design.md \
   'backlog/tasks/task-3070.8 - Extract-Console-fleet-and-wake-lifecycle-controller.md' \
   Docs/superpowers/plans/2026-08-21-task-3070-8-console-fleet-lifecycle.md
-git commit -m "docs(console): plan fleet lifecycle extraction"
+git commit -m "docs(console): rebase fleet lifecycle baseline"
 ```
 
 **Task 0 evidence (2026-08-21):**
 
-- The worktree was clean on `codex/task-3070-8-console-fleet-lifecycle` at
-  `ba497c1419f3e8410afb779daee3ca0c44364197`. The fetched `origin/dev` was
-  `af52deeb6aafbd4c5e1564ec52ba792815f47343`, then advanced during the focused
-  run to `d4f3f97763ddf3fa46eeb35ae9473827e72695bc`; the merge base remained the
-  immutable implementation base `0a8e2882588fdad5a99aca6e2215735c43927528`.
-  Per the Task 0 execution boundary, no rebase was performed; final latest-dev
-  reconciliation remains Task 5 Step 6.
-- Direct AST/source measurement at both the immutable base and Task 0 HEAD found
-  `ChatScreen` at 20,349 physical lines / 652 direct method definitions and the
-  exact reviewed 16-method family at 421 definition lines. The earned ceilings
-  remain 19,928 / 636. The historical oracle at
-  `8d806b71d9c5ae7ed333ccb42780f6b2ea68acd0` remains 16 methods /
-  `raw_lines=401`.
-- The approved focused pytest command passed 17 tests with 3 warnings in 35.86s:
-  the existing Requests dependency warning, pydub `audioop` deprecation warning,
-  and the survivor final-settle unawaited-coroutine runtime warning. There were
-  no failures.
-- The generated diagnostic checker was run without `--write` and exited 1 with
-  `production diagnostic owners or persistent-sink topology changed; review the diff before running --write`.
-  This is the inherited RED baseline; the manifest was not regenerated. The
-  metadata-only registry node passed 1 test with 1 Requests dependency warning
-  in 1.71s.
+- The clean six-commit documentation branch was fetched and rebased onto
+  `d4f3f97763ddf3fa46eeb35ae9473827e72695bc`; the post-rebase merge base equals
+  that exact `origin/dev`. The final Task 5 latest-dev rebase remains required
+  because `dev` may advance again during implementation.
+- The initial `0a8e2882588fdad5a99aca6e2215735c43927528` planning oracle remains
+  20,349 lines / 652 direct methods / 421 fleet-family lines / 16 fleet methods,
+  projecting to 19,928 / 636. On the rebased implementation base, `ChatScreen`
+  is 20,428 lines / 653 direct methods; the same exact 16-method family is
+  AST-identical, still spans 421 lines, and now projects to 20,007 / 637.
+  Upstream added `_console_change_review_workspace_roots` outside the family.
+  The separate historical `8d806b71d9c5ae7ed333ccb42780f6b2ea68acd0`
+  oracle remains 16 methods / `raw_lines=401`.
+- The post-rebase focused command passed 17 tests with 4 existing warnings in
+  39.63s; there were no failures. The pre-rebase run remains recorded as 17
+  passed / 3 warnings / 35.86s.
+- The post-rebase non-write diagnostic checker exited 0 with 521 owners / 1,221
+  TASK-492 calls / 7,208 TASK-494 calls / 7 sink files. This supersedes the
+  characterized pre-rebase inherited RED because upstream reconciled the
+  inventory; no manifest write occurred. The metadata-only registry node passed
+  1 test with 1 Requests dependency warning in 1.80s.
 
 ### Task 1: Lock ownership, dependency, and behavior contracts with RED tests
 
@@ -173,12 +174,12 @@ fixture error, skip, or xfail is not acceptable RED evidence.
 Keep the historical fleet `Wave6Group(raw_lines=401, source_revision=POST_IMAGE_IMPLEMENTATION_BASE)` unchanged. Add task-local constants and assertions for:
 
 ```python
-FLEET_TASK_IMPLEMENTATION_BASE = "0a8e2882588fdad5a99aca6e2215735c43927528"
-FLEET_TASK_BASE_SCREEN_LINES = 20_349
-FLEET_TASK_BASE_METHODS = 652
+FLEET_TASK_IMPLEMENTATION_BASE = "d4f3f97763ddf3fa46eeb35ae9473827e72695bc"
+FLEET_TASK_BASE_SCREEN_LINES = 20_428
+FLEET_TASK_BASE_METHODS = 653
 FLEET_TASK_DEFINITION_LINES = 421
-FLEET_TASK_MAX_SCREEN_LINES = 19_928
-FLEET_TASK_MAX_METHODS = 636
+FLEET_TASK_MAX_SCREEN_LINES = 20_007
+FLEET_TASK_MAX_METHODS = 637
 ```
 
 Assert all 16 moved names exist only on `ConsoleFleetLifecycleController`; every controller method is free of `query`/`query_one`; no method accesses `screen`, `_workspace`, `_session`, `_agent`, or a sibling controller field; the constructor is keyword-only with the exact reviewed callback names; `ChatScreen` gains no replacement fleet definition; and current screen counts meet the task-local ceilings after extraction.
@@ -347,7 +348,7 @@ Leave `Pending sidebar-state write failed` under `chat_screen.py`.
 
 - [ ] **Step 7: Run the core GREEN set**
 
-Run the exact Task 1 command. Expected: all selected nodes pass, screen is at most 19,928 lines/636 methods, and the historical 401-line oracle remains green.
+Run the exact Task 1 command. Expected: all selected nodes pass, screen is at most 20,007 lines/637 methods, and both immutable earlier oracles remain green.
 
 - [ ] **Step 8: Commit the production move**
 
@@ -713,10 +714,11 @@ git fetch origin dev
 git rebase origin/dev
 ```
 
-Preserve the immutable 0a8e task oracle and its 421-line/16-method earned reduction.
-Record separately named final-rebase screen measurements. If upstream screen changes
-make the approved absolute projection inapplicable, stop and amend/re-review the design
-instead of rewriting the immutable constants.
+Preserve the historical 401-line oracle, the initial immutable 0a8e planning evidence,
+and the Task 0 `d4f3f977` implementation-base ratchet with its exact 421-line/16-method
+earned reduction. Record separately named final-rebase screen measurements. If
+upstream screen changes make the approved absolute projection inapplicable, stop and
+amend/re-review the design instead of rewriting any immutable evidence.
 
 After the rebase, rerun Task 5 Step 3's three-way preview against the new exact
 `origin/dev` SHA. Only if every inherited delta is independently classified and the

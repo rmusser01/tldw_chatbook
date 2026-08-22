@@ -17,18 +17,24 @@ format, setting, dependency, or public command.
 
 TASK-3070.8 implements the already-approved fleet/wake boundary in
 `Docs/superpowers/specs/2026-08-13-console-decomposition-wave6-design.md` and
-`DESIGN.md` section 7. The immutable planning base is
-`0a8e2882588fdad5a99aca6e2215735c43927528` (`origin/dev` on 2026-08-21).
-The historical Wave 6 manifest recorded this family as 401 physical definition lines.
-On the immutable current base, the same 16 direct `ChatScreen` method definitions span
-421 physical lines. The implementation-base screen is 20,349 physical lines and
-652 direct methods, so this child must leave it at no more than 19,928 lines and
-636 direct methods; there is no replacement-screen-line budget. The existing Wave 6 architecture manifest already names
+`DESIGN.md` section 7. The initial reviewed planning oracle is
+`0a8e2882588fdad5a99aca6e2215735c43927528` (`origin/dev` earlier on 2026-08-21):
+20,349 physical lines / 652 direct methods, with this exact 16-method family spanning
+421 definition lines and projecting to 19,928 / 636. That immutable evidence remains
+recorded separately from the rebased implementation ratchet.
+
+Task 0 rebased the documentation commits onto current `origin/dev` at
+`d4f3f97763ddf3fa46eeb35ae9473827e72695bc`. The same 16 methods are AST-identical
+to the initial oracle and still span 421 physical lines. The rebased
+implementation-base screen is 20,428 physical lines and 653 direct methods, so this
+child must leave it at no more than 20,007 lines and 637 direct methods; there is no
+replacement-screen-line budget. The historical Wave 6 manifest remains a third,
+separate oracle at 401 physical definition lines. The existing Wave 6 architecture manifest already names
 `fleet.py`, `ConsoleFleetLifecycleController`, and screen owner slot `_fleet`.
 
 Focused baseline evidence is green: 17 tests passed across the Wave 6 compatibility
-gate, survivor-tick behavior, restart staging, and wake wiring. Four existing
-dependency/runtime warnings were emitted; no test failed.
+gate, survivor-tick behavior, restart staging, and wake wiring in 39.63 seconds. Four
+existing dependency/runtime warnings were emitted; no test failed.
 
 The controller must:
 
@@ -292,8 +298,8 @@ Implementation follows focused TDD; no local full-suite run is authorized.
 2. Extend the Wave 6 architecture test to require all 16 methods solely on
    `ConsoleFleetLifecycleController`, zero DOM calls across every controller method,
    no sibling-controller/screen reach-through, exact named keyword-only wiring, no new
-   fleet replacement definition on `ChatScreen`, and task-local ceilings of 19,928
-   screen lines and 636 direct methods.
+   fleet replacement definition on `ChatScreen`, and task-local ceilings of 20,007
+   screen lines and 637 direct methods.
 3. Add mutation-sensitive checks for claim release/acknowledge, durable-mark deferral,
    late-bound composer/controller access, teardown leave gating, and final settle paint.
 4. Update only focused callers/fixtures that still invoke the moved screen methods.
@@ -309,7 +315,7 @@ Implementation follows focused TDD; no local full-suite run is authorized.
 
 The implementation is complete only when the screen contains none of the 16 moved
 definitions, no production caller targets those names on `ChatScreen`, Workspace is
-wired directly to `_fleet`, the task-local 19,928-line/636-method ceilings pass, and
+wired directly to `_fleet`, the task-local 20,007-line/637-method ceilings pass, and
 the focused behavior remains green.
 
 ## Scope Exclusions
