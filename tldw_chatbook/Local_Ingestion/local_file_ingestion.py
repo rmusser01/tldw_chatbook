@@ -6,10 +6,11 @@ This module provides functions to process and store various file types (PDFs, do
 e-books, etc.) without going through the UI, leveraging existing processing capabilities.
 """
 
+import json
 import math
 import time
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import datetime, timezone
 from numbers import Real
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Union
@@ -575,7 +576,11 @@ def _decode_ingest_text(
 
 
 def _chunk_text_for_ingest(
-    content: str, method: Any, max_size: Any, overlap: Any
+    content: str,
+    method: Any,
+    max_size: Any,
+    overlap: Any,
+    template: Any = None,
 ) -> tuple[list[Dict[str, Any]], list[str]]:
     """Chunk extracted text with the repo's shared chunking service.
 
@@ -588,6 +593,11 @@ def _chunk_text_for_ingest(
         method: Chunking method name (``sentences``, ``words``, ...).
         max_size: Target chunk size (display strings are coerced).
         overlap: Chunk overlap (display strings are coerced).
+        template: Optional pre-resolved template dict (spec §9.2 -- this
+            fresh three-key dict used to be the fourth seam that dropped
+            it). Unresolvable/invalid templates never reach here: the
+            Library builder refuses them with named errors at option-build
+            time (AC 37).
 
     Returns:
         ``(chunks, warnings)`` -- chunks in the ``{"text", "metadata"}``
@@ -604,14 +614,16 @@ def _chunk_text_for_ingest(
     try:
         from ..RAG_Search.chunking_service import improved_chunking_process
 
-        chunks = improved_chunking_process(
-            content,
-            {
-                "method": str(method or "sentences"),
-                "max_size": _as_int(max_size, 500),
-                "overlap": _as_int(overlap, 100),
-            },
-        )
+        chunk_options: Dict[str, Any] = {
+            "method": str(method or "sentences"),
+            "max_size": _as_int(max_size, 500),
+            "overlap": _as_int(overlap, 100),
+        }
+        if template is not None:
+            # The wrapper pops this key and forwards it as the Chunker
+            # keyword -- the same pop-and-forward the pdf path relies on.
+            chunk_options["template"] = template
+        chunks = improved_chunking_process(content, chunk_options)
     except Exception as chunk_err:
         logger.opt(exception=True).error(f"Text chunking failed: {chunk_err}")
         warnings.append(f"Chunking failed: {chunk_err}")
@@ -945,6 +957,38 @@ def parse_local_file_for_ingest(
     if chunk_options is None:
         chunk_options = {}
 
+    # (task 10, spec §9.1/§9.2) A resolved template travelling in
+    # ``chunk_options["template"]`` (placed there by the Library job-option
+    # builder) is materialized HERE, once, as this parse's chunk-stage
+    # DEFAULTS. Every downstream seam re-injects its own defaults via
+    # ``setdefault`` -- process_pdf (sentences/500/100), process_epub/
+    # process_fb2 (ebook_chapters/1500/200), the audio/video key-by-key
+    # re-projection, the shared text tail's fresh three-key dict -- and
+    # those would arrive at the Chunker as EXPLICIT options that beat the
+    # template (its merge order is defaults <- template <- explicit):
+    # the inert-picker trap. Occupying the keys here makes each of those
+    # re-injections a no-op; ``setdefault`` preserves any user-changed
+    # value the builder kept, which is the other half of the ruling.
+    ingest_template = chunk_options.get("template")
+    # (task 11, spec §9.2 tail / AC 38) The template NAME is captured here
+    # -- before any branch can consume the dict -- because the persist seam
+    # needs it to fill the ``chunking_template``/``chunking_params`` columns
+    # and ``Media.chunking_config``. It cannot read it back off
+    # ``payload["chunk_options"]`` there: the pdf/document/ebook branches
+    # hand the dict to ``improved_chunking_process``, which POPS the
+    # ``template`` key (its documented contract), so by persist time the
+    # key's presence depends on which branch ran. The resolved dict's
+    # ``name`` is authoritative (``resolve_template`` sets it from the row's
+    # UNIQUE column).
+    ingest_template_name = ""
+    if isinstance(ingest_template, dict):
+        from ..Chunking.template_runtime import materialize_template_chunk_options
+
+        materialize_template_chunk_options(chunk_options, ingest_template)
+        template_name_value = ingest_template.get("name")
+        if isinstance(template_name_value, str):
+            ingest_template_name = template_name_value.strip()
+
     # Prepare common parameters
     common_params = {
         "title": title,
@@ -1127,7 +1171,10 @@ def parse_local_file_for_ingest(
                 # "chunk ON with nothing typed" arrives as ``{}``, so the
                 # OCR text persisted as one whole-text blob whatever size
                 # the form asked for. Two chunking layers is how that
-                # happened; there is now one.
+                # happened; there is now one. (task 10, spec §9.2) The
+                # image branch is therefore template-unaffected BY DESIGN:
+                # a resolved template governs the OCR text through the
+                # shared tail's widened call, not through process_image.
                 chunk_options=None,
                 perform_analysis=False,
             )
@@ -1190,6 +1237,13 @@ def parse_local_file_for_ingest(
                 use_adaptive_chunking=chunk_options.get("adaptive", False),
                 use_multi_level_chunking=chunk_options.get("multi_level", False),
                 chunk_language=chunk_options.get("language", "en"),
+                # (task 10, spec §9.2) The key-by-key re-projection used to
+                # drop any key it did not name -- a template travelling in
+                # chunk_options died here. The scalars above now carry the
+                # materialized template options; the template dict itself
+                # rides this explicit kwarg so the chunk site's Chunker
+                # template path is genuinely engaged.
+                chunk_template=ingest_template,
                 diarize=options.get("diarization", chunk_options.get("diarize", False)),
                 # (task-3303) The panel's VAD toggle travels as its own
                 # option; the chunk-options spelling stays as a fallback for
@@ -1313,6 +1367,11 @@ def parse_local_file_for_ingest(
                 use_adaptive_chunking=chunk_options.get("adaptive", False),
                 use_multi_level_chunking=chunk_options.get("multi_level", False),
                 chunk_language=chunk_options.get("language", "en"),
+                # (task 10, spec §9.2) Same widened re-projection as the
+                # audio branch: the template rides an explicit kwarg
+                # (video's ``process_videos(**kwargs)`` forwards it into
+                # the shared audio chunk site).
+                chunk_template=ingest_template,
                 diarize=options.get("diarization", chunk_options.get("diarize", False)),
                 # (task-3303) The panel's VAD toggle travels as its own
                 # option; the chunk-options spelling stays as a fallback for
@@ -1536,6 +1595,7 @@ def parse_local_file_for_ingest(
                 chunk_options.get("method") or "words",
                 chunk_options.get("max_size", chunk_options.get("size", 500)),
                 chunk_options.get("overlap", 100),
+                template=ingest_template,
             )
             warnings = list(warnings) + chunk_warnings
 
@@ -1618,6 +1678,12 @@ def parse_local_file_for_ingest(
             "transcription_model": result.get("transcription_model"),
             "transcription_provenance": result.get("transcription_provenance"),
         }
+        # (task 11, AC 38) Travel ticket for the persist seam: which named
+        # template governed this parse (empty/absent = plain options). See
+        # the capture comment at the materialization site for why this is a
+        # dedicated key rather than re-reading chunk_options["template"].
+        if ingest_template_name:
+            payload["chunking_template"] = ingest_template_name
         # (task-3301) Analysis was requested but the job-option builder
         # found no callable provider: carry the reason through so the
         # queue's done row can say "analysis skipped: ..." instead of the
@@ -1711,6 +1777,102 @@ def _reject_empty_extraction(payload: Dict[str, Any], file_type: str) -> None:
     )
 
 
+def _effective_chunk_params(chunk_options: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """The flat chunk-stage parameters a template/persist run was governed by.
+
+    Draws ``method`` / ``size`` / ``overlap`` out of the (post-materialization)
+    chunk options, preferring the ``max_size`` spelling the template contract
+    uses but storing the ``size`` spelling the flat chunk contract carries.
+    Absent keys are omitted, never ``None`` -- the same present-but-``None``
+    rule the template chunk contract itself follows.
+    """
+    opts = chunk_options if isinstance(chunk_options, dict) else {}
+    params: Dict[str, Any] = {}
+    if isinstance(opts.get("method"), str) and opts["method"]:
+        params["method"] = opts["method"]
+    size = opts.get("max_size", opts.get("size"))
+    if size is not None:
+        params["size"] = size
+    if opts.get("overlap") is not None:
+        params["overlap"] = opts["overlap"]
+    return params
+
+
+def _persist_chunking_template_columns(
+    media_db: MediaDatabase,
+    media_id: int,
+    template_name: str,
+    chunk_options: Optional[Dict[str, Any]],
+) -> None:
+    """Record which template chunked ``media_id`` (task 11, spec §9.2 / AC 38).
+
+    Fills, in ONE transaction at the single Library ingest writer seam:
+
+    * ``UnvectorizedMediaChunks.chunking_template`` / ``chunking_params`` --
+      the columns migration v1->v2 added and nothing had ever written,
+      alongside the ``chunk_engine_version`` stamp; and
+    * ``Media.chunking_config`` -- the per-media stored choice the re-chunk
+      resolution order (§9.1) reads first.
+
+    The ``chunking_config`` JSON shape is dictated by BOTH existing readers
+    and must round-trip them:
+
+    * ``ChunkingTemplateLibrary.get_documents_using_template`` matches
+      ``chunking_config LIKE '%"template": "<name>"%'`` -- so the JSON MUST
+      keep ``json.dumps``' DEFAULT separators (``", "`` / ``": "``). A
+      compact-separator dump would satisfy the ``json_extract`` reader while
+      silently never matching the LIKE (a name that queries as unused).
+    * ``ChunkingTemplateLibrary.get_template_statistics`` groups by
+      ``json_extract(chunking_config, '$.template')`` -- so ``template`` must
+      be a TOP-LEVEL string key.
+
+    The column shape mirrors the dead ``MediaDetailsWidget`` writer's
+    (``template`` / ``chunk_size`` / ``chunk_overlap`` / ``method``) for
+    continuity with the only writer the JSON column has ever had.
+    """
+    params = _effective_chunk_params(chunk_options)
+    # Key order matters for the chunking_params string only in that tests
+    # pin the canonical spelling; the column is read as JSON, not matched.
+    chunking_params_json = json.dumps(params)
+    config: Dict[str, Any] = {"template": template_name}
+    if "method" in params:
+        config["method"] = params["method"]
+    if "size" in params:
+        config["chunk_size"] = params["size"]
+    if "overlap" in params:
+        config["chunk_overlap"] = params["overlap"]
+    # DEFAULT separators are load-bearing (see docstring) -- never pass
+    # ``separators=`` here. ``ensure_ascii=False`` is load-bearing the same
+    # way: with the default escaping, a non-ASCII template name would be
+    # stored as ``\uXXXX`` escapes, which the LIKE reader (matching the
+    # literal name) silently never matches -- the name would query as
+    # unused (task-14 carried minor from the task-11 review).
+    chunking_config_json = json.dumps(config, ensure_ascii=False)
+    # Sync-validation triggers on both tables require version to increment
+    # by exactly 1 on UPDATE (and client_id/uuid to survive unchanged);
+    # ``version = version + 1`` satisfies that without reading the rows
+    # first. ``last_modified`` mirrors the DB layer's own UTC-ISO spelling.
+    # No sync-log event is written for this bump: the rows were INSERTed
+    # moments ago by this same writer thread with the template fields
+    # already riding the insert-time sync payloads (the chunk dicts are
+    # stamped before ``add_media_with_keywords``); the UPDATE fills the
+    # local columns the INSERT statement does not carry.
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+    with media_db.transaction() as conn:
+        conn.execute(
+            "UPDATE UnvectorizedMediaChunks "
+            "SET chunking_template = ?, chunking_params = ?, "
+            "last_modified = ?, version = version + 1 "
+            "WHERE media_id = ? AND deleted = 0",
+            (template_name, chunking_params_json, now, media_id),
+        )
+        conn.execute(
+            "UPDATE Media SET chunking_config = ?, last_modified = ?, "
+            "version = version + 1 WHERE id = ?",
+            (chunking_config_json, now, media_id),
+        )
+
+
 def persist_parsed_media(
     payload: Dict[str, Any],
     media_db: MediaDatabase,
@@ -1773,6 +1935,7 @@ def persist_parsed_media(
     """
     file_type = payload["file_type"]
     _reject_empty_extraction(payload, file_type)
+    template_name = str(payload.get("chunking_template") or "").strip()
     try:
         logger.debug(f"Storing {file_type} content in database...")
         # task-12 (spec §8): stamp every chunk with the chunking engine
@@ -1783,9 +1946,20 @@ def persist_parsed_media(
         # consumers); non-dict entries are skipped defensively -- the DB
         # writer already skips them, and pre-stamped chunks are not
         # overwritten (a future engine bump changes the value, not the rule).
+        # (task 11, spec §9.2 / AC 38) The template stamp rides the same
+        # setdefault pattern so the sync-event payload (which spreads the
+        # whole chunk dict) carries the same truth the columns do; the DB
+        # writer has no ``chunking_template``/``chunking_params`` columns in
+        # its INSERT, so the actual column fill is the UPDATE below.
+        chunking_params_json = json.dumps(
+            _effective_chunk_params(payload.get("chunk_options"))
+        )
         for chunk in payload.get("chunks") or []:
             if isinstance(chunk, dict):
                 chunk.setdefault("chunk_engine_version", ENGINE_VERSION)
+                if template_name:
+                    chunk.setdefault("chunking_template", template_name)
+                    chunk.setdefault("chunking_params", chunking_params_json)
         # Note: add_media_with_keywords returns tuple: (media_id, media_uuid, message)
         def _persist() -> tuple[Optional[int], Optional[str], str]:
             return media_db.add_media_with_keywords(
@@ -1810,6 +1984,15 @@ def persist_parsed_media(
         else:
             with suppress_ingestion_indexing():
                 media_id, media_uuid, message = _persist()
+        # (task 11, spec §9.2 tail / AC 38) Persisted chunks carry the
+        # template columns alongside the engine-version stamp, and the
+        # Media row records the per-media stored choice for the re-chunk
+        # resolution order. Only when a template was actually used: the
+        # no-template path writes nothing (byte-identical to today).
+        if template_name and media_id is not None:
+            _persist_chunking_template_columns(
+                media_db, media_id, template_name, payload.get("chunk_options")
+            )
         logger.info(f"Successfully ingested {file_type} file with media_id: {media_id}")
         return media_id, media_uuid, message
     except Exception as e:

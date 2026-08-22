@@ -481,7 +481,6 @@ include = ["tldw_chatbook*"]
 exclude = [
     "Tests*",
     ".venv*",
-    "tldw_chatbook.Chunking.templates*",
 ]
 
 [tool.setuptools.package-data]
@@ -498,8 +497,8 @@ exclude = [
 "tldw_chatbook.css.Themes" = ["*.tcss"]
 # Include JSON configuration, guides, and the RAG pipeline defaults
 "tldw_chatbook.Config_Files" = ["*.json", "*.md", "rag_pipelines.toml"]
-# Include runtime chunking templates and evaluator defaults
-"tldw_chatbook.Chunking" = ["templates/*.json"]
+# Runtime chunking templates are DB rows now (spec §8.1.2): the deleted
+# Chunking/templates/ file store ships in neither artifact.
 "tldw_chatbook.Evals" = ["config/*.yaml"]
 "tldw_chatbook.Image_Generation" = ["workflows/*.json"]
 "tldw_chatbook.Video_Generation" = ["workflows/*.json"]

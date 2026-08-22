@@ -200,6 +200,52 @@ fails) filtering is suspended, so rows are never wrongly hidden before
 real counts arrive — the toggle strip and the run gate read the same
 either way.
 
+### Older-engine chunks: the report line and Re-chunk
+
+Under the source toggles, the panel reports how much of your Library was
+chunked by the pre-parity engine: **"Chunked by an older engine: N items."**
+The line (and everything in this section) appears only when such items
+actually exist — a fully migrated Library shows nothing at all, rather
+than a zero. Beside the line sits **"Re-chunk older-engine items"**,
+which re-chunks exactly those items through the current template-aware
+path: each item is re-chunked honoring **its own stored template choice**
+(the one picked at import, or the `[chunking] default_template` config
+fallback, or plain options), the old chunk rows are replaced in one
+transaction, and the item is force-reindexed into the semantic index —
+the stale vector document is deleted by its deterministic id first, so
+search serves the new chunk text, and the owning service's query cache is
+cleared. When the run lands, a summary line states the outcome honestly:
+**"N re-chunked, M skipped, K failed"** plus any notes (for example "…
+re-index skipped (semantic index unavailable)" when no embeddings index is
+configured) — never a bare "done". The reported count drops by exactly
+the number re-chunked; skipped and failed items keep their older-engine
+chunks.
+
+Details worth knowing before you press:
+
+- **Skips are honest, not silent.** An item whose source text is empty or
+  whose stored template no longer resolves is *skipped* and counted —
+  never silently re-chunked with different settings. Genuine errors (a
+  chunker crash, a database failure) are per-item *failures* that never
+  abort the rest of the batch.
+- **Re-chunk and index backfill refuse to overlap.** While a RAG index
+  backfill (Settings ▸ RAG) is running, the press is refused with a
+  notice — and a backfill is likewise refused while a re-chunk runs.
+  Neither cancels the other; wait for one to finish, then run the other.
+- **An interrupted run loses nothing.** The re-index step marks the item
+  as needing re-indexing *before* adding the new vector document, so a
+  crash in between leaves the item re-indexable — the next backfill
+  restores it to search rather than leaving it permanently absent.
+- **Offset-basis caveat for re-chunked items.** When the governing
+  template runs a preprocessing step (normalizing whitespace, cleaning
+  markdown), the re-chunked rows' start/end offsets count into that
+  *transformed* text, not necessarily the stored source — the same caveat
+  as template imports (see [Import &
+  export](import-and-export.md)). Each chunk's metadata names the basis
+  it used (`offset_basis`: "source" when nothing rewrote the text,
+  otherwise the preprocessing operation), so navigation and citation
+  consumers can check that one key instead of guessing.
+
 ### The generated answer
 
 RAG Answer mode doesn't stop at retrieval. Once results land, a second
@@ -744,3 +790,19 @@ play; the keyword-only Search run had its full list on screen at the first
 capture after Enter, in both arms. Hybrid and semantic profiles are untouched
 by the change rather than merely unexercised: their retrieval never enters this
 merge.*
+
+*Verified against feat/chunking-template-parity — 2026-08-21
+(chunking-template-parity tasks 12-13: the Sources block gains the
+"Chunked by an older engine: N items" report line and the "Re-chunk
+older-engine items" action documented above. The line is fetched off the
+mount path via the RAG admin scope service's diagnostics payload and is
+omitted when empty; the re-chunk worker runs in its own worker group
+behind a shared in-flight guard with the Settings backfill (a refusal
+notice, never worker cancellation), replaces chunk rows in one
+transaction honoring each item's stored template choice, force-reindexes
+by deterministic vector id with the pre-add needs-reindexing mark, and
+clears the query cache. Pinned by
+`Tests/UI/test_library_rag_legacy_chunk_report.py`,
+`Tests/Library/test_library_rechunk_service.py`,
+`Tests/UI/test_library_rag_rechunk_action.py`, and
+`Tests/RuntimePolicy/test_rechunk_policy_pin.py`.)*

@@ -27,21 +27,10 @@ from Tests.reactive_ownership_contract import (
 pytestmark = pytest.mark.integration
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-TEMPLATE_NAMES = {
-    "academic_paper",
-    "code_documentation",
-    "conversation",
-    "ebook_chapters",
-    "json",
-    "legal_document",
-    "paragraphs",
-    "rolling_summarize",
-    "semantic",
-    "sentences",
-    "tokens",
-    "words",
-    "xml",
-}
+# The file template store (13 JSON + README.md + example_usage.py) was
+# deleted (spec §8.1.2): no tldw_chatbook/Chunking/templates/ path may ship
+# in either artifact, and the installed tree must not carry the directory.
+CHUNKING_TEMPLATES_PREFIX = "tldw_chatbook/Chunking/templates/"
 CITATION_MIGRATION_PATH = (
     "tldw_chatbook/DB/migrations/chachanotes_v26_to_v27_citation_provenance.sql"
 )
@@ -279,6 +268,7 @@ for retired_module in (
     "tldw_chatbook.Audio.transcription_history",
     "tldw_chatbook.Widgets.transcription_history_viewer",
     "tldw_chatbook.UI.Dictation_Window",
+    "tldw_chatbook.Chunking.chunking_templates",
 ):
     assert importlib.util.find_spec(retired_module) is None
 
@@ -287,7 +277,23 @@ from tldw_chatbook.config import get_cli_config_path, get_user_data_dir
 assert get_cli_config_path().is_relative_to(Path(os.environ["HOME"]))
 assert get_user_data_dir().is_relative_to(Path(os.environ["HOME"]))
 
-from tldw_chatbook.Chunking.chunking_templates import ChunkingTemplateManager
+# The file template store is deleted (spec §8.1.1): the module is gone AND
+# the package root no longer re-exports its names (the vendored engine's
+# ChunkingTemplate -- same public name, different class -- is deliberately
+# NOT re-exported either; nothing outside the service layer resolves
+# templates, spec §8.2).
+import tldw_chatbook.Chunking as _installed_chunking
+
+for _retired_chunking_export in (
+    "ChunkingTemplateManager",
+    "ChunkingPipeline",
+    "ChunkingStage",
+    "ChunkingOperation",
+    "ChunkingTemplate",
+):
+    assert not hasattr(_installed_chunking, _retired_chunking_export), (
+        f"installed tldw_chatbook.Chunking still exports {_retired_chunking_export!r}"
+    )
 from tldw_chatbook.Constants import TAB_CHAT, TAB_HOME
 from tldw_chatbook.Evals.config_loader import EvalConfigLoader
 from tldw_chatbook.RAG_Search.pipeline_loader import PipelineLoader
@@ -315,7 +321,6 @@ from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.home_screen import HomeScreen
 
 package_root = Path(tldw_chatbook.__file__).resolve().parent
-expected_templates = set(json.loads(os.environ["EXPECTED_TEMPLATES"]))
 assert package_root.is_relative_to(expected_target)
 assert (package_root / "css" / "tldw_cli_modular.tcss").is_file()
 
@@ -325,7 +330,9 @@ with (package_root / "Config_Files" / "rag_pipelines.toml").open("rb") as stream
 loader = PipelineLoader(config_dir=package_root / "Config_Files")
 loader.load_pipeline_config()
 assert "plain" in loader.pipelines
-assert set(ChunkingTemplateManager().get_available_templates()) == expected_templates
+assert not (package_root / "Chunking" / "templates").exists(), (
+    "the deleted file template store must not be installed"
+)
 assert "code_execution" in EvalConfigLoader().get_task_types()
 assert (package_root / "Third_Party" / "aider" / "LICENSE.txt").is_file()
 assert (
@@ -1340,7 +1347,6 @@ def _private_child_env(
             "BUILD_SOURCE_ROOT": str(build_source_root),
             "EXPECTED_REACTIVES": json.dumps(sorted(RETAINED_TLDW_REACTIVES)),
             "RETIRED_REACTIVES": json.dumps(sorted(RETIRED_TLDW_REACTIVES)),
-            "EXPECTED_TEMPLATES": json.dumps(sorted(TEMPLATE_NAMES)),
         }
     )
     return env
@@ -1474,20 +1480,23 @@ def test_built_artifacts_match_distribution_contract(
     assert retired_modules.isdisjoint(sdist_members)
     assert retired_modules.isdisjoint(wheel_members)
 
-    wheel_templates = {
-        Path(name).stem
-        for name in wheel_members
-        if name.startswith("tldw_chatbook/Chunking/templates/")
-        and name.endswith(".json")
+    # The file template store is deleted (spec §8.1.2): neither artifact may
+    # carry any tldw_chatbook/Chunking/templates/ path -- the JSONs, the
+    # README, and example_usage.py all die with the store.
+    shipped_template_store = {
+        name
+        for name in sdist_members | wheel_members
+        if name.startswith(CHUNKING_TEMPLATES_PREFIX)
     }
-    assert wheel_templates == TEMPLATE_NAMES
+    assert shipped_template_store == set(), (
+        "the deleted file template store must not ship: "
+        f"{sorted(shipped_template_store)}"
+    )
 
     forbidden_wheel = {
         "tldw_chatbook/css/components/stats_screen.css",
         "tldw_chatbook/Config_Files/embedding_configs_examples.toml",
         "tldw_chatbook/Config_Files/pipeline_configs/custom_pipelines_example.toml",
-        "tldw_chatbook/Chunking/templates/README.md",
-        "tldw_chatbook/Chunking/templates/example_usage.py",
         "tldw_chatbook/Evals/DEVELOPER_GUIDE.md",
     }
     assert forbidden_wheel.isdisjoint(wheel_members)

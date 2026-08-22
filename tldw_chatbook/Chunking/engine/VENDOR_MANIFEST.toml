@@ -9,7 +9,7 @@ commit = "385afa951922c8a9dc2002c675bb6cad65e4ac23"
 vendored = [
     "base.py", "chunker.py", "constants.py", "exceptions.py", "error_policy.py",
     "option_utils.py", "regex_safety.py", "security_logger.py",
-    "multilingual.py", "llm_context.py",
+    "multilingual.py", "llm_context.py", "templates.py",
     "process_text/__init__.py", "process_text/models.py", "process_text/options.py",
     "process_text/preparation.py", "process_text/dispatch.py",
     "process_text/pipeline.py", "process_text/metadata.py",
@@ -23,9 +23,9 @@ vendored = [
     "utils/metrics.py",
 ]
 extra = ["LICENSE", "LICENSES/GPL-3.0-only.txt"]  # scope map + GPLv3 §4 licence text, shipped verbatim
-excluded = ["__init__.py", "README.md", "SECURITY.md", "templates.py",
-            "template_initialization.py", "template_library/", "auto_planner.py",
-            "async_chunker.py", "auto_boundary_assistant.py",
+excluded = ["__init__.py", "README.md", "SECURITY.md",
+            "template_initialization.py", "template_library/",
+            "auto_planner.py", "async_chunker.py", "auto_boundary_assistant.py",
             "strategies/propositions.py", "utils/proposition_eval.py"]
 
 [patches]

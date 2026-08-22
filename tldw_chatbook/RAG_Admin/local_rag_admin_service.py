@@ -118,21 +118,52 @@ class LocalRAGAdminService:
             decorated.get("template") or decorated.get("template_json")
         )
         decorated["tags"] = self._extract_template_tags(decorated, template_config)
+        # (task 10, AC-24a) The listing surface carries validity DATA: a
+        # stored-invalid template is listed WITH a flag rather than hidden
+        # or silently applied. The flag is computed here (the data half);
+        # where it renders is the UI task's. The validator never raises
+        # (Task 6 contract: ``{valid, errors, warnings}``), so decoration
+        # cannot break a listing.
+        validated = {
+            key: value
+            for key, value in template_config.items()
+            if key not in ("name", "description")
+        }
+        result = self._validate_template_body(validated)
+        decorated["template_valid"] = bool(result["valid"])
+        issues = [
+            f"{issue['field']}: {issue['message']}"
+            for issue in result["errors"]
+        ]
+        if issues:
+            decorated["template_validation_errors"] = issues
         return decorated
 
     @staticmethod
-    def _with_template_tags(
-        template: Mapping[str, Any], tags: Sequence[str] | None
-    ) -> dict[str, Any]:
-        payload = dict(template)
-        if tags is None:
-            return payload
-        normalized_tags = LocalRAGAdminService._normalize_tags(tags)
-        metadata = dict(payload.get("metadata") or {})
-        metadata["tags"] = normalized_tags
-        payload["metadata"] = metadata
-        payload["tags"] = normalized_tags
-        return payload
+    def _validate_template_body(body: Mapping[str, Any]) -> dict[str, Any]:
+        """Run the server-parity validator on a template body.
+
+        Never raises (the validator's own contract, Task 6): returns
+        ``{"valid": bool, "errors": [...], "warnings": [...]}`` so callers
+        can flag rather than crash. An un-runnable body (not a mapping)
+        reports invalid instead of blowing up the listing/apply surface.
+        """
+        # Lazy: module scope would be circular (RAG_Admin imports this
+        # module's package through the scope service).
+        from .template_validation import validate_template
+
+        if not isinstance(body, Mapping):
+            return {
+                "valid": False,
+                "errors": [
+                    {
+                        "field": "template",
+                        "message": "template body is not an object",
+                    }
+                ],
+                "warnings": [],
+            }
+        return validate_template(dict(body))
 
     def _get_collection(self, collection_name: str) -> Any:
         return self._require_chroma_client().get_collection(name=collection_name)
@@ -178,7 +209,7 @@ class LocalRAGAdminService:
         templates = [
             self._decorate_template_record(template)
             for template in list(
-                self._require_chunking_service().get_all_templates(include_system=True)
+                self._require_chunking_service().get_all_templates(include_builtin=True)
                 or []
             )
         ]
@@ -186,13 +217,13 @@ class LocalRAGAdminService:
             templates = [
                 template
                 for template in templates
-                if not bool(template.get("is_system", False))
+                if not bool(template.get("is_builtin", False))
             ]
         if not include_custom:
             templates = [
                 template
                 for template in templates
-                if bool(template.get("is_system", False))
+                if bool(template.get("is_builtin", False))
             ]
         if tags:
             requested_tags = {str(tag) for tag in tags if str(tag).strip()}
@@ -219,10 +250,13 @@ class LocalRAGAdminService:
         user_id: Optional[str] = None,
     ) -> dict[str, Any]:
         service = self._require_chunking_service()
+        # task-8: tags persist in the v7 ``tags`` column (the interop also
+        # moves any body tags there), not embedded in the JSON body.
         template_id = service.create_template(
             name=name,
             description=description,
-            template_json=self._with_template_tags(template, tags),
+            template_json=dict(template),
+            tags=self._normalize_tags(tags) if tags is not None else None,
         )
         return self._decorate_template_record(
             service.get_template_by_id(int(template_id))
@@ -238,20 +272,11 @@ class LocalRAGAdminService:
     ) -> dict[str, Any]:
         service = self._require_chunking_service()
         existing = self.get_template(template_name)
-        template_payload: dict[str, Any] | None = None
-        if template is not None:
-            template_payload = self._with_template_tags(
-                template, tags if tags is not None else existing.get("tags")
-            )
-        elif tags is not None:
-            template_payload = self._with_template_tags(
-                self._parse_template_config(existing.get("template_json")),
-                tags,
-            )
         service.update_template(
             int(existing["id"]),
             description=description,
-            template_json=template_payload,
+            template_json=dict(template) if template is not None else None,
+            tags=self._normalize_tags(tags) if tags is not None else None,
         )
         return self._decorate_template_record(
             service.get_template_by_id(int(existing["id"]))
@@ -319,8 +344,36 @@ class LocalRAGAdminService:
         override_options: Optional[Mapping[str, Any]] = None,
         include_metadata: bool = False,
     ) -> dict[str, Any]:
+        """Apply a stored template to text.
+
+        (task 10, AC-24b) A stored-invalid template body is REFUSED here
+        with the named :class:`InvalidTemplateError` -- never an unnamed
+        engine error surfacing mid-chunk. The apply path cannot rely on
+        validate-on-write alone: stored-invalid rows exist (v6→v7
+        conversion can mint them; rows written before the gate existed),
+        and they remain deliberately editable (update validates the NEW
+        body only) -- so apply is the last line of defense.
+        """
         record = self.get_template(template_name)
         template_config = self._parse_template_config(record.get("template_json"))
+        validation = self._validate_template_body(
+            {
+                key: value
+                for key, value in template_config.items()
+                if key not in ("name", "description")
+            }
+        )
+        if not validation["valid"]:
+            from ..Chunking.chunking_interop_library import InvalidTemplateError
+
+            summary = "; ".join(
+                f"{issue['field']}: {issue['message']}"
+                for issue in validation["errors"][:3]
+            )
+            raise InvalidTemplateError(
+                f"Template '{template_name}' failed validation and was "
+                f"refused: {summary}"
+            )
         method, options = self._chunking_options_from_template(template_config)
         options.update(dict(override_options or {}))
 
@@ -473,6 +526,31 @@ class LocalRAGAdminService:
         if not callable(method):
             raise ValueError("Local media reprocess backend is unavailable.")
         return method(media_id, **options)
+
+    async def rechunk_legacy_media(
+        self,
+        *,
+        rag_service: Any = None,
+        indexing_db: Any = None,
+        progress_callback: Any = None,
+    ) -> dict[str, Any]:
+        """Re-chunk every older-engine item (task-13, spec §10.2-§10.2.1).
+
+        Thin delegate to the Library re-chunk service (the owner of the
+        per-item flow, the hard-delete replacement ruling, and the forced
+        re-index); reached through the scope service's ``rag.admin.launch``
+        action.
+        """
+        if self.media_db is None:
+            raise ValueError("Local re-chunk backend is unavailable (no media DB).")
+        from ..Library.library_rechunk_service import rechunk_legacy_items
+
+        return await rechunk_legacy_items(
+            self.media_db,
+            rag_service=rag_service,
+            indexing_db=indexing_db,
+            progress_callback=progress_callback,
+        )
 
     def count_chunks_by_engine_version(self, db: Any) -> dict[str, int]:
         """Count media items per chunking-engine version (read-only).

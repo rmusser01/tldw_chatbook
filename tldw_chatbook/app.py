@@ -1971,6 +1971,22 @@ def _stream_fileno(stream: Any) -> int:
 # heavy-lane cap limits how many of these parse concurrently.
 _INGEST_HEAVY_TYPES = frozenset({"audio", "video"})
 
+# (task 10, spec §9.1 AC 37/AC-24b) The named template errors the ingest
+# dispatch fails an item on: an unresolvable choice (deleted/renamed) and a
+# stored-invalid body refused by the validator. Aliased with leading
+# underscores to keep them off the module's public surface.
+from tldw_chatbook.Chunking.chunking_interop_library import (  # noqa: E402
+    InvalidTemplateError as _InvalidTemplateError,
+)
+from tldw_chatbook.Chunking.template_runtime import (  # noqa: E402
+    TemplateResolutionError as _TemplateResolutionError,
+)
+
+_TEMPLATE_RESOLUTION_ERRORS: tuple[type[Exception], ...] = (
+    _TemplateResolutionError,
+    _InvalidTemplateError,
+)
+
 _INGEST_LOCAL_STT_PHASE_MESSAGES: dict[WorkerPhase, str] = {
     WorkerPhase.PREPARING: "Preparing import",
     WorkerPhase.LOADING: "Loading source",
@@ -2894,6 +2910,76 @@ class LibraryIngestQueueMixin:
         chunk_size = _as_int(
             flat_opts.get("chunk_size", job.chunk_size), job.chunk_size
         )
+        chunk_enabled = bool(flat_opts.get("chunk", job.chunk_enabled))
+
+        # (task 10, spec §9.1 AC 34) Template resolution -- ingest order:
+        # picker/batch choice -> config [chunking] default_template -> plain
+        # options. Resolution happens HERE (the app process owns the media
+        # DB) and the resolved DICT travels inside chunk_options: the parse
+        # worker must stay DB-free. An unresolvable or stored-invalid choice
+        # raises a NAMED error (TemplateResolutionError /
+        # InvalidTemplateError, AC 37 / AC-24b) -- the ingest dispatch
+        # catches both and fails THIS item; there is never a silent
+        # fallback to plain chunking.
+        ingest_template: dict[str, Any] | None = None
+        if chunk_enabled:
+            from .Chunking.template_runtime import resolve_ingest_template
+
+            ingest_template = resolve_ingest_template(
+                getattr(self, "media_db", None),
+                str(flat_opts.get("chunk_template") or "").strip() or None,
+            )
+
+        if ingest_template is not None:
+            # (task 10, spec §9.1 AC 35 -- the precedence ruling) A resolved
+            # template's chunk-stage options beat the builder's DEFAULTS;
+            # only a value the user explicitly CHANGED in the ingest form
+            # beats the template. Left as-is, the builder's always-on
+            # size/overlap (+ per-group method injection) would arrive at
+            # the Chunker as explicit options that override the template on
+            # every path -- the picker would be inert.
+            #
+            # Mechanism: the form snapshot ALWAYS carries explicit values
+            # (``_build_ingest_options_snapshot`` seeds every schema
+            # default), so "differs from the schema default" is the only
+            # user-changed signal available at this seam. Values equal to
+            # the schema default are dropped here and re-derived from the
+            # template by the parse seam's materialization
+            # (``materialize_template_chunk_options``); values that differ
+            # ride along and win at the Chunker's explicit-beats-template
+            # merge. A snapshot WITHOUT the key (pre-field legacy jobs) has
+            # no user signal at all and defaults to the template winning.
+            size_schema_default = _as_int(
+                generic_option_default("chunk_size", DEFAULT_CHUNK_SIZE),
+                DEFAULT_CHUNK_SIZE,
+            )
+            overlap_schema_default = overlap_default
+            chunk_options: dict[str, Any] = {"template": ingest_template}
+            if "chunk_size" in flat_opts and chunk_size != size_schema_default:
+                chunk_options["size"] = chunk_size
+                chunk_options["max_size"] = chunk_size
+            if (
+                "chunk_overlap" in flat_opts
+                and _as_int(flat_opts.get("chunk_overlap"), overlap_default)
+                != overlap_schema_default
+            ):
+                chunk_options["overlap"] = _as_int(
+                    flat_opts.get("chunk_overlap"), overlap_default
+                )
+        else:
+            chunk_options = (
+                {
+                    "size": chunk_size,
+                    "max_size": chunk_size,
+                    "overlap": _as_int(
+                        flat_opts.get("chunk_overlap", overlap_default),
+                        overlap_default,
+                    ),
+                }
+                if chunk_enabled
+                else None
+            )
+
         options: dict[str, Any] = {
             "title": job.title or None,
             "author": job.author or None,
@@ -2916,19 +3002,16 @@ class LibraryIngestQueueMixin:
                 )
             ),
             "encoding": flat_opts.get("encoding"),
-            "chunk_options": (
-                {
-                    "size": chunk_size,
-                    "max_size": chunk_size,
-                    "overlap": _as_int(
-                        flat_opts.get("chunk_overlap", overlap_default),
-                        overlap_default,
-                    ),
-                }
-                if flat_opts.get("chunk", job.chunk_enabled)
-                else None
-            ),
+            "chunk_options": chunk_options,
         }
+        # ``template_active`` gates the per-group METHOD injection below:
+        # the pdf/audio-video/image "words" and the ebook group mapping are
+        # builder DEFAULTS (the user cannot type a method in those panels),
+        # so under a resolved template they must not be injected -- the
+        # template's method wins via materialization. A user-changed ebook
+        # chunk_method (differs from the select's schema default) still
+        # travels.
+        template_active = ingest_template is not None
 
         if perform_analysis:
             # Prompts remain in the persisted generic snapshot while analysis
@@ -2971,11 +3054,13 @@ class LibraryIngestQueueMixin:
                 options["analysis_skipped_reason"] = resolution.short_reason
 
         if group == "pdf":
-            if options["chunk_options"] is not None:
+            if options["chunk_options"] is not None and not template_active:
                 # (F12) ``process_pdf`` setdefaults method='sentences',
                 # under which the form's "words · 100-5000" size hint is a
                 # ~10-30x unit lie (500 SENTENCES ~= one chunk per
-                # document). Words is what the hint promises.
+                # document). Words is what the hint promises. (task 10)
+                # Under a resolved template this injection is a builder
+                # DEFAULT and is skipped -- the template's method wins.
                 options["chunk_options"]["method"] = "words"
             options["pdf_engine"] = flat_opts.get("engine") or flat_opts.get(
                 "pdf_engine"
@@ -3002,9 +3087,11 @@ class LibraryIngestQueueMixin:
             )
             options["ocr_language"] = flat_opts.get("ocr_language") or "en"
         elif group == "audio_video":
-            if options["chunk_options"] is not None:
+            if options["chunk_options"] is not None and not template_active:
                 # (F12) The audio/video branch defaults chunk_method to
                 # sentences too -- same unit-lie fix as the pdf branch.
+                # (task 10) Skipped under a resolved template (a builder
+                # default, not a user choice).
                 options["chunk_options"]["method"] = "words"
             provider = flat_opts.get("transcription_provider")
             if provider is None:
@@ -3128,11 +3215,11 @@ class LibraryIngestQueueMixin:
             # ``process_image``'s own declared defaults. OCR defaults ON:
             # the extracted text IS the imported content, and a no-text
             # parse fails honestly at the persist seam.
-            if options["chunk_options"] is not None:
+            if options["chunk_options"] is not None and not template_active:
                 # (F12 parity) ``process_image`` chunks the OCR text via
                 # ``improved_chunking_process``; an explicit words method
                 # keeps the generic "words · 100-5000" size hint true here
-                # too.
+                # too. (task 10) Skipped under a resolved template.
                 options["chunk_options"]["method"] = "words"
             options["ocr"] = flat_opts.get("ocr", flat_opts.get("enable_ocr", True))
             options["ocr_language"] = flat_opts.get("ocr_language") or "en"
@@ -3153,7 +3240,18 @@ class LibraryIngestQueueMixin:
             # chunking is on.
             ebook_chunk_method = str(flat_opts.get("chunk_method") or "").strip()
             if options["chunk_options"] is not None:
-                if ebook_chunk_method:
+                if template_active and ebook_chunk_method in (
+                    "",
+                    "chapters",  # the ebook select's schema default
+                ):
+                    # (task 10, AC 35) The select's schema default
+                    # ("chapters") is a builder default: under a resolved
+                    # template the template's method wins and nothing is
+                    # injected. An ABSENT value under a template also lets
+                    # the template win (the template IS the scheme the
+                    # user picked; there is no legacy scheme to preserve).
+                    pass
+                elif ebook_chunk_method:
                     options["chunk_options"]["method"] = (
                         "ebook_chapters"
                         if ebook_chunk_method == "chapters"
@@ -3855,6 +3953,28 @@ class LibraryIngestQueueMixin:
                 failure_text = error_text or "Batch transcription routing failed."
                 logger.warning(
                     "Library ingest batch STT routing failed "
+                    f"(job_id={job.job_id}, "
+                    f"detected_type={job.detected_type}, "
+                    f"error={failure_text})."
+                )
+                self.library_ingest_jobs.mark_failed(
+                    job.job_id,
+                    error=failure_text,
+                    permanent=False,
+                )
+                continue
+            except _TEMPLATE_RESOLUTION_ERRORS as exc:
+                # (task 10, AC 37/AC-24b) A template choice that no longer
+                # resolves (or a stored-invalid body) FAILS THIS ITEM with
+                # the named error -- never a silent fallback to plain
+                # chunking, which is how a library gets chunked two ways
+                # without the user knowing. Not permanent: re-creating or
+                # re-naming the template makes a retry succeed.
+                failure_text = _sanitize_library_ingest_error_text(str(exc)) or (
+                    "Chunking template resolution failed."
+                )
+                logger.warning(
+                    "Library ingest template resolution failed "
                     f"(job_id={job.job_id}, "
                     f"detected_type={job.detected_type}, "
                     f"error={failure_text})."

@@ -113,6 +113,18 @@ class FakeServerService:
             "pagination": {"count": 1},
         }
 
+    async def validate_template_config(self, template_config):
+        self.calls.append(("validate_template_config", template_config))
+        return {"valid": True, "errors": [], "warnings": []}
+
+    async def match_templates(self, **kwargs):
+        self.calls.append(("match_templates", kwargs))
+        return {"matches": []}
+
+    async def learn_template(self, **kwargs):
+        self.calls.append(("learn_template", kwargs))
+        return {"learned": True}
+
 
 class FakePolicyEnforcer:
     def __init__(self, denied_reason: str | None = None):
@@ -142,10 +154,11 @@ async def test_scope_service_routes_template_list_by_backend():
         templates=[
             {
                 "id": 7,
+                "uuid": "e59c1f2a-08c4-4b7e-9d3a-2f4a5b6c7d81",
                 "name": "local-demo",
                 "description": "Local demo",
                 "template_json": '{"chunking": {"method": "words", "config": {"max_size": 100}}}',
-                "is_system": 0,
+                "is_builtin": 0,
             }
         ]
     )
@@ -423,4 +436,37 @@ def test_scope_service_reports_known_rag_admin_capability_gaps():
             "user_message": "The current server embedding admin contract does not expose embedding collection export.",
             "affected_action_ids": ["rag.admin.observe.server"],
         },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_mode_policy_enforcement_never_typeerrors():
+    """task-8 regression: the server-mode ``_enforce_policy`` calls used the
+    dead 3-arg form (``(mode, "admin", "configure")``) against the surviving
+    1-arg def, so ``validate_template_config`` / ``match_templates`` /
+    ``learn_template`` raised TypeError whenever a policy enforcer was set.
+    They must enforce the same ``rag.admin.<action>.server`` ids the local
+    branch uses."""
+    server = FakeServerService()
+    policy_enforcer = FakePolicyEnforcer()
+    scope = RAGAdminScopeService(
+        local_service=FakeLocalService(),
+        server_service=server,
+        policy_enforcer=policy_enforcer,
+    )
+
+    config = {"chunking": {"method": "words", "config": {}}}
+    validated = await scope.validate_template_config(
+        mode="server", template_config=config
+    )
+    matched = await scope.match_templates(mode="server", media_type="article")
+    learned = await scope.learn_template(mode="server", name="learned")
+
+    assert validated["valid"] is True
+    assert matched == {"matches": []}
+    assert learned == {"learned": True}
+    assert policy_enforcer.calls == [
+        "rag.admin.configure.server",
+        "rag.admin.list.server",
+        "rag.admin.configure.server",
     ]

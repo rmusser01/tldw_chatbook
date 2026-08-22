@@ -10,10 +10,10 @@ import pytest
 
 # --- Ported (chunking-engine-parity Task 4) ---------------------------------
 # Upstream file: tldw_Server_API/tests/Chunking/test_chunking_templates.py
-# Skipped: templates + template endpoints/DB fixtures are server-side, deferred to #2 (spec §10.1). Remove this block when the module is vendored in
+# Skipped: engine/templates.py is vendored (PR A) but this suite also imports the server repo's FastAPI router/schemas (tldw_Server_API), the deliberately-not-vendored template_initialization (spec §13 decision 5), and _shims/DB_Management + _shims/AuthNZ fixtures chatbook does not carry — the §11 item-8 residue; chatbook-side parity is pinned by test_template_runtime/test_chunking_interop_v7. Remove this block when the module is vendored in
 # its own sub-project and re-sync the test from upstream.
 pytest.importorskip("tldw_chatbook.NoSuchDeferredModule",
-                    reason="skipped: templates + template endpoints/DB fixtures are server-side, deferred to #2 (spec §10.1)")
+                    reason="skipped: engine/templates.py is vendored (PR A) but this suite also imports the server repo's FastAPI router/schemas (tldw_Server_API), the deliberately-not-vendored template_initialization (spec §13 decision 5), and _shims/DB_Management + _shims/AuthNZ fixtures chatbook does not carry — the §11 item-8 residue; chatbook-side parity is pinned by test_template_runtime/test_chunking_interop_v7")
 from pathlib import Path
 from typing import Dict, Any, List
 from unittest.mock import patch, MagicMock

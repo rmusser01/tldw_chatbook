@@ -347,6 +347,22 @@ def _generic_default(name: str, fallback: Any) -> Any:
     return generic_option_default(name, fallback)
 
 
+#: Local-only option names that must never reach a server submission.
+
+#: (task 10, spec §9.2) Chunking templates are a LOCAL capability: the
+#: resolved template dict is meaningless to the server (and a bare name
+#: even less so), and the ingest picker is HIDDEN in server mode (Task 11)
+#: rather than accepted-and-ignored. This strip is the defensive half: a
+#: stale/restored snapshot that still carries a choice is dropped here
+#: instead of being forwarded as an undeclared multipart field the server
+#: would silently discard -- the exact silence task-3309 documented for
+#: every other unsupported option. Only the local job-option builder
+#: (``app._ingest_job_options``) resolves and forwards templates.
+_SERVER_STRIPPED_TEMPLATE_OPTIONS: frozenset[str] = frozenset(
+    {"chunk_template", "chunking_template", "template"}
+)
+
+
 def build_server_ingest_kwargs(
     source: str,
     *,
@@ -460,6 +476,12 @@ def build_server_ingest_kwargs(
         }:
             # Local verifier authority never crosses the server boundary.
             continue
+        if name in _SERVER_STRIPPED_TEMPLATE_OPTIONS:
+            # (task 10, spec §9.2) Local-only chunking-template choice --
+            # the picker is hidden in server mode; a stale value in a
+            # restored snapshot is dropped, not forwarded (the server would
+            # silently discard an undeclared field).
+            continue
         if group == "generic" and name in {
             "analyze",
             "overwrite_existing",
@@ -470,7 +492,7 @@ def build_server_ingest_kwargs(
             "chunk",
             "chunk_size",
             "chunk_overlap",
-        }:
+        } | _SERVER_STRIPPED_TEMPLATE_OPTIONS:
             continue
         # task-3309: the endpoint binds its form fields explicitly and never
         # reads the raw form, so anything it does not declare is dropped in

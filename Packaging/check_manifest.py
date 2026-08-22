@@ -12,21 +12,9 @@ import tarfile
 import zipfile
 
 
-TEMPLATE_NAMES = {
-    "academic_paper",
-    "code_documentation",
-    "conversation",
-    "ebook_chapters",
-    "json",
-    "legal_document",
-    "paragraphs",
-    "rolling_summarize",
-    "semantic",
-    "sentences",
-    "tokens",
-    "words",
-    "xml",
-}
+# The file template store (tldw_chatbook/Chunking/templates/) is deleted
+# (spec §8.1.2): no path under it may appear in either artifact.
+CHUNKING_TEMPLATES_PREFIX = "tldw_chatbook/Chunking/templates/"
 
 SAMIRA_RESOURCE_ROOT = "tldw_chatbook/assets/characters/samira"
 SAMIRA_REACTION_LABELS = (
@@ -133,7 +121,6 @@ REQUIRED_SDIST_GLOBS = {
     "tldw_chatbook/css/layout/*.tcss",
     "tldw_chatbook/Config_Files/*.json",
     "tldw_chatbook/Config_Files/*.md",
-    "tldw_chatbook/Chunking/templates/*.json",
     "tldw_chatbook/Evals/config/*.yaml",
 }
 
@@ -145,7 +132,6 @@ REQUIRED_WHEEL_GLOBS = {
     "tldw_chatbook/css/layout/*.tcss",
     "tldw_chatbook/Config_Files/*.json",
     "tldw_chatbook/Config_Files/*.md",
-    "tldw_chatbook/Chunking/templates/*.json",
     "tldw_chatbook/Evals/config/*.yaml",
 }
 
@@ -153,8 +139,6 @@ FORBIDDEN_WHEEL_PATHS = {
     "tldw_chatbook/css/components/stats_screen.css",
     "tldw_chatbook/Config_Files/embedding_configs_examples.toml",
     "tldw_chatbook/Config_Files/pipeline_configs/custom_pipelines_example.toml",
-    "tldw_chatbook/Chunking/templates/README.md",
-    "tldw_chatbook/Chunking/templates/example_usage.py",
     "tldw_chatbook/Evals/DEVELOPER_GUIDE.md",
 }
 
@@ -238,18 +222,13 @@ def _validate_content(
             f"unexpected={sorted(samira_members - SAMIRA_RESOURCE_PATHS)}"
         )
 
-    template_names = {
-        PurePosixPath(name).stem
-        for name in members
-        if name.startswith("tldw_chatbook/Chunking/templates/")
-        and name.endswith(".json")
+    template_store_paths = {
+        name for name in members if name.startswith(CHUNKING_TEMPLATES_PREFIX)
     }
-    if template_names != TEMPLATE_NAMES:
-        missing = sorted(TEMPLATE_NAMES - template_names)
-        unexpected = sorted(template_names - TEMPLATE_NAMES)
+    if template_store_paths:
         errors.append(
-            f"{label}: chunking templates differ; "
-            f"missing={missing}, unexpected={unexpected}"
+            f"{label}: the file template store is deleted (spec §8.1.2) "
+            f"but shipped: {sorted(template_store_paths)}"
         )
     return errors
 

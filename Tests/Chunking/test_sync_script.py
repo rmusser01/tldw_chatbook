@@ -1,5 +1,6 @@
 # Tests/Chunking/test_sync_script.py
 """Contract tests for the vendoring sync script (spec §5.2, §0 wrong-tree hazard)."""
+import importlib
 import os, subprocess, sys, tomllib
 from pathlib import Path
 
@@ -34,7 +35,21 @@ def test_manifest_pins_upstream():
     assert manifest["licence"]["spdx"] == "GPL-3.0-only"
 
 
+def test_manifest_templates_vendored_not_excluded():
+    """Spec §6.1: vendoring templates.py is a MOVE from `excluded` to
+    `vendored` — the name left in both lists would make a sync run ambiguous."""
+    vendored = manifest_vendored()
+    excluded = manifest_excluded()
+    assert "templates.py" in vendored
+    assert "templates.py" not in excluded
+    # the spec's ambiguity warning, enforced generally: no file in both lists
+    assert not (set(vendored) & set(excluded)), \
+        f"files in both vendored and excluded: {sorted(set(vendored) & set(excluded))}"
+
+
 def test_engine_tree_complete():
+    # template parity task 4 (spec §6.1): the tree goes 35 -> 36 files
+    assert len(manifest_vendored()) == 36
     for rel in manifest_vendored():
         assert (ENGINE / rel).exists(), f"missing vendored file {rel}"
     for rel in manifest_extra():
@@ -43,13 +58,30 @@ def test_engine_tree_complete():
     gpl = (ENGINE / "LICENSES" / "GPL-3.0-only.txt").read_text(errors="ignore")
     assert "GNU GENERAL PUBLIC LICENSE" in gpl
     assert "Version 3, 29 June 2007" in gpl
+    # templates.py is vendored (spec §6.1) and importable (see below)
+    assert (ENGINE / "templates.py").exists()
     # excluded-by-design files must NOT exist
-    for rel in ("templates.py", "template_initialization.py", "auto_planner.py",
+    for rel in ("template_initialization.py", "auto_planner.py",
                 "async_chunker.py", "auto_boundary_assistant.py",
                 "strategies/propositions.py", "utils/proposition_eval.py"):
         assert not (ENGINE / rel).exists(), f"deferred file vendored: {rel}"
     # upstream's own __init__ must not be vendored (chatbook-authored instead)
     assert "load_and_log_configs" not in (ENGINE / "__init__.py").read_text()
+
+
+def test_templates_importable_zero_new_shims():
+    """Spec §6.1 import table: templates.py resolves with ZERO new shims.
+    Its only server import (is_truthy) lands on #1's `_shims.testing` via the
+    sync script's second rewrite rule; everything else is stdlib, loguru, or
+    already-vendored relative imports."""
+    mod = importlib.import_module("tldw_chatbook.Chunking.engine.templates")
+    # the surface chatbook consumes (spec §6.2/§6.3): processor + 2 dataclasses
+    assert hasattr(mod, "TemplateProcessor")
+    assert hasattr(mod, "TemplateStage")
+    assert hasattr(mod, "ChunkingTemplate")
+    # proof the rewritten import binds to the existing shim, not a new one
+    from tldw_chatbook.Chunking._shims.testing import is_truthy
+    assert mod.is_truthy is is_truthy
 
 
 def manifest_vendored():
@@ -58,6 +90,10 @@ def manifest_vendored():
 
 def manifest_extra():
     return tomllib.loads((ENGINE / "VENDOR_MANIFEST.toml").read_text())["files"]["extra"]
+
+
+def manifest_excluded():
+    return tomllib.loads((ENGINE / "VENDOR_MANIFEST.toml").read_text())["files"]["excluded"]
 
 
 def test_no_server_imports_remain():

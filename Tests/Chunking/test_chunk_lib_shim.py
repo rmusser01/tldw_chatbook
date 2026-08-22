@@ -175,16 +175,119 @@ def test_rolling_summarize_payload_dict_via_improved_chunking_process():
     assert chunks[0]["metadata"]["chunk_index"] == 1
 
 
+# ---------------------------------------------------------------------------
+# Task 2 (spec §8.3): rolling-summarize fails closed through the shim's
+# legacy port. The three marker-append branches ("[Summarization failed
+# for this part: ...]" x2, "[Summarization error for this part
+# (unexpected type): ...]" x1) become raises; the payload-dict SUCCESS
+# contract pinned above is unchanged.
+# ---------------------------------------------------------------------------
+
+_ROLLING_FAIL_TEXT = "Sentence one two three. Sentence four five six. " * 8
+_ROLLING_FAIL_OPTS = {
+    "method": "rolling_summarize",
+    "summarize_min_chunk_tokens": 10,
+    "summarization_detail": 1.0,
+}
+
+
+def test_rolling_summarize_provider_exception_raises():
+    # The except branch: the callback itself raised. Must surface as
+    # ChunkingError naming the failed part, with the cause chained.
+    def failing_llm(payload):
+        raise RuntimeError("provider down")
+
+    with pytest.raises(
+        Chunk_Lib.ChunkingError, match=r"failed for part 1"
+    ) as excinfo:
+        Chunk_Lib.improved_chunking_process(
+            _ROLLING_FAIL_TEXT,
+            dict(_ROLLING_FAIL_OPTS),
+            llm_call_function_for_chunker=failing_llm,
+            llm_api_config_for_chunker={},
+        )
+    assert "provider down" in str(excinfo.value)
+    assert isinstance(excinfo.value.__cause__, RuntimeError), (
+        "original provider exception must stay chained as __cause__"
+    )
+
+
+def test_rolling_summarize_error_string_result_raises():
+    # The 'Error:'-prefix branch: the callback returned an error string
+    # (the legacy Summarization_General_Lib failure convention).
+    def error_string_llm(payload):
+        return "Error: summarization provider exploded"
+
+    with pytest.raises(
+        Chunk_Lib.ChunkingError, match=r"failed for part 1"
+    ) as excinfo:
+        Chunk_Lib.improved_chunking_process(
+            _ROLLING_FAIL_TEXT,
+            dict(_ROLLING_FAIL_OPTS),
+            llm_call_function_for_chunker=error_string_llm,
+            llm_api_config_for_chunker={},
+        )
+    assert "provider exploded" in str(excinfo.value)
+
+
+def test_rolling_summarize_non_string_result_raises():
+    # The unexpected-type branch: a well-behaved callback returns str; a
+    # non-str return must not be silently persisted as document text.
+    def non_string_llm(payload):
+        return 123
+
+    with pytest.raises(
+        Chunk_Lib.ChunkingError, match=r"failed for part 1"
+    ) as excinfo:
+        Chunk_Lib.improved_chunking_process(
+            _ROLLING_FAIL_TEXT,
+            dict(_ROLLING_FAIL_OPTS),
+            llm_call_function_for_chunker=non_string_llm,
+            llm_api_config_for_chunker={},
+        )
+    assert "unexpected type" in str(excinfo.value)
+    assert "int" in str(excinfo.value)
+
+
+def _chunk_lib_runtime_source() -> str:
+    import inspect
+    import sys
+
+    module = sys.modules["tldw_chatbook.Chunking.Chunk_Lib"]
+    return inspect.getsource(module)
+
+
+def test_rolling_summarize_marker_prefixes_absent_from_source():
+    # AC 2: BOTH f-string prefixes are pinned -- they are two different
+    # strings, so pinning one leaves the other free to regress. Neither
+    # may survive anywhere in the shim module's source (docstrings
+    # included): the markers were data corruption with a friendly face.
+    src = _chunk_lib_runtime_source()
+    assert "Summarization failed for this part" not in src, (
+        "marker prefix 1 ('[Summarization failed for this part: ...]') "
+        "still present in Chunk_Lib.py source"
+    )
+    assert "Summarization error for this part" not in src, (
+        "marker prefix 2 ('[Summarization error for this part (unexpected "
+        "type): ...]') still present in Chunk_Lib.py source"
+    )
+
+
 def test_improved_chunking_process_honors_template_kwarg():
-    # C2: template=/template_manager= kwargs previously accepted but ignored
-    # (the body never read them). The 'conversation' template's chunk stage
-    # pins method='sentences'; without the template the default is 'words'.
-    # Assert the template path is actually taken.
+    # C2: template=/template_manager= kwargs remain in the signature. Since
+    # the file store was deleted (spec §8.2) template= accepts a
+    # PRE-RESOLVED dict: this template's chunk stage pins method='sentences'
+    # where the options default would be 'words'. Assert the template's
+    # chunk-stage options are actually applied.
+    conversation = {
+        "name": "conversation",
+        "chunking": {"method": "sentences", "config": {}},
+    }
     chunks = Chunk_Lib.improved_chunking_process(
         "Introduction sentence one. Methods sentence here. Results are shown. "
         "Discussion follows. " * 6,
         {"max_size": 8, "overlap": 0},
-        template="conversation",
+        template=conversation,
     )
     assert chunks, "template chunking produced no chunks"
     assert all(c["metadata"]["chunk_method"] == "sentences" for c in chunks), (

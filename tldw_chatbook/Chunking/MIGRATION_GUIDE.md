@@ -1,189 +1,110 @@
 # Chunking Template System Migration Guide
 
-This guide helps you migrate from the traditional chunking approach to the new template-based system.
+This guide helps you migrate from plain chunking options to the template
+system. It was rewritten for the template-parity work (2026-08-21): the
+system this guide used to describe — a JSON **file store** under
+`~/.config/tldw_cli/chunking_templates/`, a `ChunkingTemplateManager`, and
+bare-name `Chunker(template="words")` calls — was **deleted**. Templates are
+now database rows resolved at the service layer, and `Chunker` accepts only
+pre-resolved template **dicts**.
 
-## What's New
+## What exists now
 
-The chunking module now supports:
-- **Template-based configuration** - Define chunking strategies in JSON files
-- **Multi-stage pipelines** - Preprocessing, chunking, and postprocessing stages
-- **Extensible operations** - Add custom operations for specialized needs
-- **Template inheritance** - Build on existing templates
-- **Domain-specific templates** - Pre-built templates for common use cases
+- **Templates are DB rows** in the media database's `ChunkingTemplates`
+  table (schema v7): soft-deleted, validate-on-write, with the server's six
+  built-ins seeded. Manage them through RAG Admin (Library → RAG controls)
+  or the interop service (`Chunking.chunking_interop_library`).
+- **One resolution path**: `tldw_chatbook.Chunking.template_runtime.resolve_template(db, name)`
+  turns a name into the flat template dict. Nothing else resolves names.
+- **Ingest picks a template in the Library import form** ("Chunking
+  template", defaulting to "None (manual settings)") or via config
+  (`[chunking] default_template`); the choice is stored per imported item in
+  `Media.chunking_config`.
 
-## Backward Compatibility
+## Migration examples
 
-**All existing code continues to work without changes.** The template system is optional and additive.
+### Before (plain options — still works, unchanged)
 
-## Migration Examples
-
-### Before (Traditional Approach)
 ```python
 from tldw_chatbook.Chunking.Chunk_Lib import Chunker
 
-# Basic chunking
 chunker = Chunker(options={
     'method': 'words',
     'max_size': 500,
-    'overlap': 100
+    'overlap': 100,
 })
 chunks = chunker.chunk_text(text)
 ```
 
-### After (Template Approach)
-```python
-from tldw_chatbook.Chunking import Chunker
+### After (template)
 
-# Use a template
-chunker = Chunker(template="words")
+```python
+from tldw_chatbook.Chunking.Chunk_Lib import Chunker
+from tldw_chatbook.Chunking.template_runtime import resolve_template
+
+template = resolve_template(media_db, "academic_paper")  # -> dict | None
+if template is None:
+    raise SystemExit("no such live template")
+
+chunker = Chunker(template=template)
 chunks = chunker.chunk_text(text)
 
-# Or override template options
+# Or override template options (explicit options win):
 chunker = Chunker(
-    template="words",
-    options={'max_size': 500, 'overlap': 100}
+    template=template,
+    options={'max_size': 500, 'overlap': 100},
 )
-chunks = chunker.chunk_text(text)
 ```
 
-## Benefits of Templates
+A bare name string **raises** (`TemplateError`): the file store that used to
+resolve names is gone, and guessing it back would silently chunk differently
+than the DB row says.
 
-### 1. Reusability
-Define once, use everywhere:
+### Pipelines
+
+`Chunker(template=...)` applies the template's chunk-stage options only.
+Executing a template's full pre/chunk/post pipeline — with the synthesized
+flat chunk contract (offsets, indices, word counts, `metadata.offset_basis`)
+— is `template_runtime.apply_template`'s job:
+
 ```python
-# In config.toml
-[chunking_config]
-template = "academic_paper"
+from tldw_chatbook.Chunking.template_runtime import apply_template
 
-# In code - automatically uses the configured template
-chunker = Chunker()
+chunks = apply_template(template, text, options={"overlap": 0})
 ```
 
-### 2. Complex Pipelines
-Templates support multi-stage processing:
-```json
-{
-  "pipeline": [
-    {"stage": "preprocess", "operations": [...]},
-    {"stage": "chunk", "method": "semantic"},
-    {"stage": "postprocess", "operations": [...]}
-  ]
-}
-```
+## What was deleted (do not carry forward)
 
-### 3. Domain Optimization
-Use specialized templates:
-```python
-# For code documentation
-chunker = Chunker(template="code_documentation")
+| Old spelling | Replacement |
+|---|---|
+| `Chunker(template="words")` (bare name) | `Chunker(template=resolve_template(db, "words"))` |
+| `from tldw_chatbook.Chunking import ChunkingTemplateManager` | RAG Admin / `chunking_interop_library` CRUD |
+| `~/.config/tldw_cli/chunking_templates/*.json` | `ChunkingTemplates` DB rows |
+| `[chunking_config] template = "..."` in config.toml | `[chunking] default_template = "..."` |
+| `templates/example_usage.py` | the examples in this guide |
 
-# For legal documents
-chunker = Chunker(template="legal_document")
+## Precedence
 
-# For conversations
-chunker = Chunker(template="conversation")
-```
-
-## Creating Custom Templates
-
-### Option 1: JSON File
-Create `~/.config/tldw_cli/chunking_templates/my_template.json`:
-```json
-{
-  "name": "my_template",
-  "base_method": "sentences",
-  "pipeline": [
-    {
-      "stage": "chunk",
-      "method": "sentences",
-      "options": {"max_size": 5}
-    }
-  ]
-}
-```
-
-### Option 2: Programmatically
-```python
-from tldw_chatbook.Chunking import ChunkingTemplate, ChunkingTemplateManager
-
-template = ChunkingTemplate(
-    name="my_template",
-    base_method="sentences",
-    pipeline=[...]
-)
-
-manager = ChunkingTemplateManager()
-manager.save_template(template)
-```
-
-## Common Patterns
-
-### Adding Preprocessing
-```json
-{
-  "pipeline": [
-    {
-      "stage": "preprocess",
-      "operations": [
-        {"type": "normalize_whitespace"},
-        {"type": "extract_metadata", "params": {"patterns": ["title", "author"]}}
-      ]
-    },
-    {"stage": "chunk", "method": "semantic"}
-  ]
-}
-```
-
-### Adding Context
-```json
-{
-  "pipeline": [
-    {"stage": "chunk", "method": "words"},
-    {
-      "stage": "postprocess",
-      "operations": [
-        {"type": "add_context", "params": {"context_size": 2}}
-      ]
-    }
-  ]
-}
-```
-
-## Gradual Migration
-
-You don't need to migrate everything at once:
-
-1. **Start with built-in templates** - Try existing templates that match your use case
-2. **Customize as needed** - Override specific options while using templates
-3. **Create custom templates** - For repeated patterns in your codebase
-4. **Share templates** - Export templates for team use
-
-## Performance Notes
-
-- Templates add minimal overhead (template loading is cached)
-- Pipeline operations are optimized
-- Same chunking performance as before
-
-## Getting Help
-
-- See `templates/README.md` for template documentation
-- Run `templates/example_usage.py` for working examples
-- Check existing templates in `templates/` directory
-- Use `ChunkingTemplateManager.get_available_templates()` to list templates
+`Chunker` merges `defaults <- template <- explicit options`: a template's
+options beat the built-in defaults, and only an explicitly passed option
+beats the template. On the Library import form the same ruling applies —
+a picked template beats the form's untouched defaults, and only a value you
+changed in the form overrides the template.
 
 ## FAQ
 
 **Q: Do I have to use templates?**
-A: No, all existing code works without modification.
+A: No. Plain options behave exactly as before; the import form's default is
+"None (manual settings)".
 
-**Q: Can I mix approaches?**
-A: Yes, you can use templates with option overrides.
+**Q: What happens if a template name stops resolving (deleted/renamed)?**
+A: The import fails that item with a named error (`TemplateResolutionError`)
+instead of silently falling back to different chunking. Re-chunk (PR E)
+skips and counts such items.
 
 **Q: Are templates slower?**
-A: No, template loading is cached and adds negligible overhead.
+A: No — resolution is one indexed DB read, cached by the caller if needed.
 
-**Q: Can I convert existing options to a template?**
-A: Yes, create a template with your current options in the chunk stage.
-
-**Q: What about custom chunking methods?**
-A: Custom methods still work. Templates organize how methods are applied.
+**Q: Where is the per-item choice stored?**
+A: `Media.chunking_config` (`{"template": "<name>", ...}`), plus the
+`chunking_template` / `chunking_params` columns on the stored chunk rows.
