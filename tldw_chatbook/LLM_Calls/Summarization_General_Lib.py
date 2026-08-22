@@ -1148,6 +1148,14 @@ def summarize_with_anthropic(
                     # "API Key Not Provided"/"Network error" convention of
                     # reporting failure via a returned string rather than a
                     # log line or a raised exception.
+                    #
+                    # task-19557 Qodo round 2: this branch returns without
+                    # consuming the body, so -- same as the chat_with_google
+                    # and chat_with_anthropic refusal sites -- the
+                    # connection must be explicitly released via close()
+                    # rather than left for GC to reclaim on an unconsumed
+                    # requests.Response.
+                    response.close()
                     return (
                         "Anthropic: API endpoint redirected unexpectedly -- "
                         "refusing to follow with credentials."

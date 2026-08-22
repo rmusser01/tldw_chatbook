@@ -17,6 +17,24 @@ Born-red: reverting either ``allow_redirects=False`` guard (and the
 explicit 3xx check that follows it) makes the corresponding test below fail
 by showing the sentinel key delivered to the cross-origin host.
 
+Qodo round 2 finding: ``summarize_with_anthropic``'s refusal branch
+returned an error string on a 3xx WITHOUT calling ``response.close()`` --
+a leaked ``requests`` connection on every refused redirect (the redirect
+this task's own fix makes reachable). Fixed by closing before returning,
+same as the other two refusal sites (``chat_with_anthropic``,
+``chat_with_google``).
+
+Both tests below assert an explicit-close count of exactly 2, not merely
+that SOME close happened: ``requests.Session.send()`` calls
+``resolve_redirects(..., yield_requests=True)`` to populate
+``Response._next`` even under ``allow_redirects=False``, and that
+generator's own bookkeeping closes any response with a redirect
+``Location`` regardless of what the calling code does -- so a plain
+``>= 1``/``is_closed`` check would have passed even with
+``summarize_with_anthropic``'s ``response.close()`` call missing (this
+was verified directly, not assumed, before the assertion was written this
+way -- see ``_fake_response``'s docstring).
+
 Transport is faked at ``requests.adapters.HTTPAdapter.send`` -- the layer
 just above the real socket -- so ``requests``' own redirect/session
 machinery (``Session.resolve_redirects``, ``rebuild_auth``,
@@ -41,13 +59,59 @@ _SENTINEL_KEY = "sentinel-test-x-api-key-must-never-leak"
 
 
 def _fake_response(
-    status_code: int, headers: dict[str, str], body: bytes = b""
+    status_code: int,
+    headers: dict[str, str],
+    body: bytes = b"",
+    *,
+    close_calls: list[int] | None = None,
 ) -> requests.Response:
+    """Build a bare ``requests.Response`` double that ``close()`` safely.
+
+    ``_content_consumed = True`` matters, not just cosmetically: a bare
+    ``requests.Response()`` defaults ``raw = None`` and
+    ``_content_consumed = False``, so an unpatched ``.close()`` call hits
+    ``self.raw.close()`` -> ``AttributeError`` on ``None``. That crash was
+    getting silently absorbed by the production code's own outer
+    ``except Exception`` and re-wrapped as the SAME ``ChatProviderError``
+    the earlier version of this test asserted on -- so the test passed
+    whether or not the refusal path's ``close()`` call actually worked,
+    catching neither the missing call (Summarization) nor a broken one.
+    Marking the body already-consumed (true to how this double is built --
+    directly assigning ``_content``, not via a real stream) makes
+    ``close()`` a safe, meaningful no-op instead.
+
+    When ``close_calls`` is given, ``.close`` is wrapped so every call is
+    recorded there -- the actual signal these tests check, since "an
+    exception of the right type came back" does not prove the connection
+    was released.
+
+    Verified (not assumed): ``requests.Session.send()`` calls
+    ``next(self.resolve_redirects(r, request, yield_requests=True, ...))``
+    even when ``allow_redirects=False`` -- to populate ``Response._next``
+    for a caller who wants ``response.next()`` -- and that generator's
+    first iteration ALREADY calls ``resp.close()`` on any response that
+    has a redirect ``Location``, regardless of ``allow_redirects``. So a
+    genuine redirect response gets exactly one ``close()`` call from
+    ``requests`` itself no matter what the calling code does -- an
+    ``is``-it-closed check, or an ``>= 1`` count, cannot tell "the
+    refusal site's own explicit close ran" from "requests closed it
+    anyway". With the fix, the count is 2 (library + the refusal site's
+    own call); without it, 1.
+    """
     resp = requests.Response()
     resp.status_code = status_code
     resp.headers = requests.structures.CaseInsensitiveDict(headers or {})
     resp._content = body
+    resp._content_consumed = True
     resp.encoding = "utf-8"
+    if close_calls is not None:
+        original_close = resp.close
+
+        def _counting_close() -> None:
+            close_calls.append(1)
+            original_close()
+
+        resp.close = _counting_close
     return resp
 
 
@@ -57,7 +121,7 @@ def _install_redirecting_adapter(
     *,
     good_host: str,
     ok_body: bytes,
-) -> None:
+) -> list[int]:
     """Patch ``HTTPAdapter.send`` so ``good_host`` 302s to ``evil.example``.
 
     Both fixed call sites build their own ``requests.Session`` (or, for
@@ -66,7 +130,14 @@ def _install_redirecting_adapter(
     HTTPAdapter`` instance either way -- a custom-mounted one or the
     library's own default. Patching the class method intercepts both
     without needing to know which path a given call takes.
+
+    Returns:
+        A list that accumulates one entry per ``.close()`` call on the
+        302 response from ``good_host`` -- the caller asserts against
+        this to confirm the refusal path actually released the
+        connection, not merely that it returned/raised.
     """
+    redirect_close_calls: list[int] = []
 
     def _fake_send(self, request, **kwargs):
         host = urlsplit(request.url).netloc
@@ -75,20 +146,33 @@ def _install_redirecting_adapter(
         }
         if host == good_host:
             return _fake_response(
-                302, {"Location": "https://evil.example/steal"}
+                302,
+                {"Location": "https://evil.example/steal"},
+                close_calls=redirect_close_calls,
             )
         if host == "evil.example":
             return _fake_response(200, {"Content-Type": "application/json"}, ok_body)
         raise AssertionError(f"unexpected host in test transport: {host}")
 
     monkeypatch.setattr(requests.adapters.HTTPAdapter, "send", _fake_send)
+    return redirect_close_calls
 
 
 def test_chat_with_anthropic_refuses_cross_origin_redirect(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """``chat_with_anthropic`` must not forward ``x-api-key`` to a redirect target.
+
+    At base (``allow_redirects`` unset, ``requests``' own default ``True``),
+    ``requests`` follows the 302 and re-sends every header -- including
+    ``x-api-key``, which neither ``requests`` nor httpx strips on a
+    cross-host hop -- to ``evil.example`` verbatim. Also pins that the
+    refusal path closes the redirect response rather than leaking the
+    connection (verified correct here; see ``summarize_with_anthropic``'s
+    sibling test for the refusal site that Qodo round 2 found did NOT).
+    """
     seen_headers_by_host: dict[str, dict[str, str]] = {}
-    _install_redirecting_adapter(
+    redirect_close_calls = _install_redirecting_adapter(
         monkeypatch,
         seen_headers_by_host,
         good_host="good.example",
@@ -122,16 +206,43 @@ def test_chat_with_anthropic_refuses_cross_origin_redirect(
     # credential incidentally dropped by some other mechanism.
     assert raised is not None, "expected ChatProviderError on redirect refusal"
 
+    # Qodo round 2: the refusal path must EXPLICITLY release the
+    # connection, not merely rely on requests' own incidental close.
+    # requests.Session.send() always calls resolve_redirects() once (even
+    # under allow_redirects=False, to populate Response._next), and that
+    # generator's own bookkeeping closes a genuine redirect response
+    # regardless of what chat_with_anthropic does -- so a redirect
+    # response is closed exactly ONCE by the library alone. Two calls
+    # means the refusal site's own `response.close()` also ran.
+    assert len(redirect_close_calls) == 2, (
+        f"expected the refusal site's own response.close() call in "
+        f"addition to requests' own resolve_redirects() close; observed "
+        f"{len(redirect_close_calls)} close() call(s)"
+    )
+
 
 def test_summarize_with_anthropic_refuses_cross_origin_redirect(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """``summarize_with_anthropic`` must not forward ``x-api-key`` either.
+
+    Same defect as ``chat_with_anthropic``, different failure convention:
+    this function reports a redirect refusal by RETURNING an error string
+    rather than raising, so the credential-leak assertion is checked
+    independently of that return value.
+
+    Also pins the Qodo round 2 finding: this refusal branch returned
+    WITHOUT calling ``response.close()`` -- a real leaked ``requests``
+    connection on every refused redirect, undetected by the original
+    version of this test (which asserted only on headers and the returned
+    string, never on whether the response was released).
+    """
     seen_headers_by_host: dict[str, dict[str, str]] = {}
     # summarize_with_anthropic's endpoint is a hardcoded literal
     # ("https://api.anthropic.com/v1/messages"), not configurable, so the
     # "good" host for this test is that literal host rather than a
     # caller-chosen one.
-    _install_redirecting_adapter(
+    redirect_close_calls = _install_redirecting_adapter(
         monkeypatch,
         seen_headers_by_host,
         good_host="api.anthropic.com",
@@ -165,3 +276,20 @@ def test_summarize_with_anthropic_refuses_cross_origin_redirect(
     # a successful summary would not mention a redirect.
     assert isinstance(result, str)
     assert "redirect" in result.lower()
+
+    # Qodo round 2 -- the load-bearing addition: the refusal path must
+    # EXPLICITLY release the connection, not merely rely on requests' own
+    # incidental close. Same mechanism as chat_with_anthropic's sibling
+    # assertion above: requests' own resolve_redirects() peek-ahead
+    # closes a genuine redirect response once regardless of what this
+    # function does, so >= 1 would pass even with the response.close()
+    # call removed (verified: it did, before this assertion was
+    # tightened to == 2). Two calls means summarize_with_anthropic's own
+    # close ran too.
+    assert len(redirect_close_calls) == 2, (
+        f"expected summarize_with_anthropic's own response.close() call "
+        f"in addition to requests' own resolve_redirects() close; "
+        f"observed {len(redirect_close_calls)} close() call(s) -- this "
+        f"is the exact Qodo round 2 finding: the refusal branch returned "
+        f"without closing the response"
+    )
