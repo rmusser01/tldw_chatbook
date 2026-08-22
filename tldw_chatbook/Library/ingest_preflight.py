@@ -12,10 +12,11 @@ import ssl
 from pathlib import Path
 from typing import Any, NamedTuple
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from loguru import logger
 
+from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.Library.ingest_capabilities import (
     UNSUPPORTED_GROUP,
     get_tooling_warnings,
@@ -23,6 +24,8 @@ from tldw_chatbook.Library.ingest_capabilities import (
 )
 from tldw_chatbook.Library.ingest_types import PreflightResult
 from tldw_chatbook.Local_Ingestion.local_file_ingestion import is_http_url
+from tldw_chatbook.Utils.egress import EgressBlockedError, check_url_or_raise
+from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.Utils.path_validation import validate_path_simple
 
 
@@ -151,6 +154,74 @@ def _collect_files(p: Path, scan_limit: int) -> tuple[list[Path], bool, int]:
 #: refusing to start.
 _ABSENT_STATUSES = frozenset({404, 410})
 
+#: Seconds allowed for the (opt-in) URL probe.
+_PROBE_TIMEOUT_SECONDS = 5
+
+#: Config gate for the URL probe. OFF by default (TASK-19556).
+#:
+#: The probe used to fire from ``library_screen``'s 0.8 s typing debounce,
+#: which meant a link pasted into the ingest field became an HTTP request
+#: before the user had asked for anything to be imported. That is the wrong
+#: default even for hosts the egress policy allows: the user has not chosen
+#: to contact them yet, and repeated pauses mid-typing hit them repeatedly.
+#: With the gate off the pre-flight for a URL is pure classification --
+#: exactly what the local-path arm does with ``stat`` -- and a URL that
+#: cannot actually be fetched is reported by the ingest job, where the
+#: failure carries a real reason (``_probe_url``'s own docstring already
+#: said so).
+_PROBE_ENABLED_SECTION = "library"
+_PROBE_ENABLED_KEY = "ingest_url_preflight_probe"
+
+#: The single note returned for EVERY URL the egress policy declines.
+#:
+#: Collapsing the vocabulary is the point (TASK-19556). The old probe
+#: returned three differentiable outcomes -- an ``error`` for a refused
+#: connection, a ``warning`` naming the status code for an answered one, and
+#: a clean type-group echo for a 2xx -- so a pasted link read out the state
+#: of an internal host+port. Every declined reason (private, loopback,
+#: link-local, CGNAT, multicast, cloud metadata, bad scheme, DNS failure)
+#: now produces this one string, so there is nothing left to difference.
+_UNVERIFIABLE_NOTE = (
+    "The link could not be checked ahead of time. The import will still be "
+    "attempted."
+)
+
+
+def url_probe_enabled() -> bool:
+    """Whether the pre-flight may issue a network request for a URL.
+
+    Returns:
+        ``True`` only when ``[library] ingest_url_preflight_probe`` is
+        explicitly enabled. Defaults to ``False``; see
+        :data:`_PROBE_ENABLED_KEY` for why.
+    """
+    value = get_cli_setting(_PROBE_ENABLED_SECTION, _PROBE_ENABLED_KEY, False)
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "1", "yes", "on")
+    return bool(value)
+
+
+class _NoRedirectHandler(HTTPRedirectHandler):
+    """Refuse to follow redirects during the probe.
+
+    ``urlopen``'s default opener follows them, so a public URL answering
+    ``302 Location: http://10.0.0.5:8080/`` walked the probe into the
+    internal network *after* the egress check had already passed on the
+    original target. Returning ``None`` here makes urllib surface the 3xx as
+    an ``HTTPError``, which the probe reports as "the site answered {code}"
+    -- an outcome about the public host the user typed, and nothing else.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D102
+        return None
+
+
+def _open_probe(request: Request):
+    """Issue the probe request with redirects disabled (test seam)."""
+    return build_opener(_NoRedirectHandler).open(
+        request, timeout=_PROBE_TIMEOUT_SECONDS
+    )
+
 
 class UrlProbe(NamedTuple):
     """The outcome of probing a URL before ingest.
@@ -210,15 +281,37 @@ def _probe_url(url: str) -> UrlProbe:
     there, so refusing is right. A failure to *fetch* during ingest is reported
     as a failed job, where it carries a real reason.
 
+    (TASK-19556) The egress policy is consulted BEFORE any transport call,
+    with **no** trusted origins. An automatic probe is not a user asking to
+    contact a host, so it may not seed trust from its own input URL -- the
+    rule ``Utils/egress.py`` states for all shared pipeline code. That is
+    also what makes the collapse below meaningful: with self-trust the check
+    would be a no-op for exactly the private hosts at issue. The deliberate
+    ingest that follows is a different matter and keeps its own trust
+    (``[web_security]``: URLs you explicitly configure may be private).
+
     Args:
-        url: URL to probe.
+        url: URL to probe. Must already have passed ``validate_url``.
 
     Returns:
         A ``UrlProbe``. An empty one means the URL verified cleanly.
     """
     try:
+        check_url_or_raise(url)
+    except EgressBlockedError as exc:
+        # ONE outcome for every declined reason. `exc.reason` is deliberately
+        # not read: "private" vs "dns_failure" vs "metadata" is precisely the
+        # difference an internal scan wants, and the user cannot act on it
+        # here anyway.
+        logger.debug(f"URL probe declined by egress policy: {exc}")
+        return UrlProbe(note=_UNVERIFIABLE_NOTE)
+    except Exception as exc:  # policy evaluation itself failed
+        logger.debug(f"URL probe policy check failed for {url}: {exc!r}")
+        return UrlProbe(note=_UNVERIFIABLE_NOTE)
+
+    try:
         request = Request(url, method="HEAD")
-        with urlopen(request, timeout=5):
+        with _open_probe(request):
             return UrlProbe()
     except TimeoutError:
         return UrlProbe(error="URL probe timed out after 5 seconds")
@@ -252,13 +345,22 @@ def _probe_url(url: str) -> UrlProbe:
         )
 
 
-def analyze_path(path_or_url: str, scan_limit: int = 1000) -> PreflightResult:
+def analyze_path(
+    path_or_url: str, scan_limit: int = 1000, *, probe_url: bool | None = None
+) -> PreflightResult:
     """Analyze a local path or URL before ingestion.
 
     Args:
         path_or_url: Local file path, directory path, or HTTP(S) URL.
         scan_limit: Maximum number of files to enumerate for directories.
             Must be greater than zero.
+        probe_url: Whether a URL source may be probed over the network.
+            ``None`` (the default) consults :func:`url_probe_enabled`;
+            ``False`` forbids it outright. The while-typing caller in
+            ``library_screen`` passes ``False`` so that even a user who has
+            opted the probe in is not made to contact a host on every
+            keystroke pause -- the probe then runs from the deliberate
+            triggers (blur, Enter, Browse…, the retry button) instead.
 
     Returns:
         A ``PreflightResult`` describing the discovered source.
@@ -281,16 +383,32 @@ def analyze_path(path_or_url: str, scan_limit: int = 1000) -> PreflightResult:
     source_is_url = is_http_url(path_or_url)
 
     if source_is_url:
-        probe = _probe_url(path_or_url)
-        if probe.error:
-            errors.append(probe.error)
+        if not validate_url(path_or_url):
+            # (TASK-19556) Validation precedes every network request. At the
+            # base of that task the probe fired first, so a malformed URL --
+            # including one carrying embedded credentials
+            # (``http://user:pass@host/``, which ``validate_url`` refuses
+            # exactly because they end up in logs and forwarded URLs) -- was
+            # put on the wire before anything looked at it.
+            errors.append(
+                "Invalid URL — check the address (it must be a plain http(s) "
+                "link with no spaces or embedded credentials)."
+            )
+            path_invalid = True
         else:
-            group = get_type_group(path_or_url)
-            type_groups.setdefault(group, []).append(path_or_url)
-            total_files = 1
-            if probe.note:
-                warnings.append({"label": "Could not check the link", "hint": probe.note})
-            warnings.extend(get_tooling_warnings(group))
+            may_probe = url_probe_enabled() if probe_url is None else probe_url
+            probe = _probe_url(path_or_url) if may_probe else UrlProbe()
+            if probe.error:
+                errors.append(probe.error)
+            else:
+                group = get_type_group(path_or_url)
+                type_groups.setdefault(group, []).append(path_or_url)
+                total_files = 1
+                if probe.note:
+                    warnings.append(
+                        {"label": "Could not check the link", "hint": probe.note}
+                    )
+                warnings.extend(get_tooling_warnings(group))
     else:
         try:
             p = validate_path_simple(path_or_url, require_exists=False)

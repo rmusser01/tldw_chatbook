@@ -2744,6 +2744,12 @@ def _load_settings_uncached(force_reload: bool = False) -> Dict:
                 1000,
                 minimum=1,
             ),
+            # (TASK-19556) Opt-in, OFF by default: see the [library] block in
+            # the default TOML below for why a link check is not free.
+            "ingest_url_preflight_probe": coerce_bool_setting(
+                library_section.get("ingest_url_preflight_probe", False),
+                False,
+            ),
             "ingest_options": library_section.get("ingest_options", {})
             if isinstance(library_section.get("ingest_options"), dict)
             else {},
@@ -3095,6 +3101,18 @@ auth_token = "default-secret-key-for-single-user"
 [library]
 # Maximum files scanned when analysing a directory for Library ingestion.
 ingest_directory_scan_limit = 1000
+# Check a staged ingest URL by fetching its headers before the import runs.
+# OFF by default (TASK-19556). A link check is not free: it contacts the host
+# before you have asked for anything to be imported, and it used to run from
+# the ingest field's typing debounce, which turned a pasted link into a probe
+# of whatever the address pointed at -- including hosts on your own network.
+# With this on, the check runs only from the deliberate triggers (leaving the
+# field, pressing Enter, Browse..., the retry button), never while you type;
+# it is routed through the [web_security] egress policy, follows no
+# redirects, and reports one identical "could not be checked" note for every
+# address the policy declines. A link that cannot actually be fetched is
+# still reported by the import job itself, with a real reason.
+ingest_url_preflight_probe = false
 # Parallel ingest parse workers. Default: min(3, cpu-1). Uncomment to override.
 # ingest_parse_workers = 3
 # Max concurrent heavy (audio/video transcription) parses; document parses fan
