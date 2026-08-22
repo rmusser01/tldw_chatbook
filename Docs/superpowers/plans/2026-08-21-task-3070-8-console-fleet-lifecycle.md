@@ -140,6 +140,12 @@ git commit -m "docs(console): rebase fleet lifecycle baseline"
 
 ### Task 1: Lock ownership, dependency, and behavior contracts with RED tests
 
+> **Historical pre-final-rebase execution evidence:** This section records the RED
+> contract created and exercised against immutable Task 0 base `d4f3f977`. Its
+> 20,007-line / 637-method projection remains historical evidence, not an active
+> delivery ceiling. The active final gate is Task 5 Step 6 against frozen `02cd80b3`
+> at 20,065 lines / 640 methods.
+
 **Files:**
 
 - Create: `tldw_chatbook/UI/Console_Modules/fleet.py` (importable no-caller RED shell only)
@@ -175,7 +181,7 @@ each behavior test reach its own assertion. Record the contract-specific failure
 every node; a shared file-exists assertion, `NotImplementedError`, collection/import/
 fixture error, skip, or xfail is not acceptable RED evidence.
 
-- [ ] **Step 2: Add exact structural tests**
+- [ ] **Step 2: Add the historical Task 0 structural ratchet**
 
 Keep the historical fleet `Wave6Group(raw_lines=401, source_revision=POST_IMAGE_IMPLEMENTATION_BASE)` unchanged. Add task-local constants and assertions for:
 
@@ -188,7 +194,14 @@ FLEET_TASK_MAX_SCREEN_LINES = 20_007
 FLEET_TASK_MAX_METHODS = 637
 ```
 
-Assert all 16 moved names exist only on `ConsoleFleetLifecycleController`; every controller method is free of `query`/`query_one`; no method accesses `screen`, `_workspace`, `_session`, `_agent`, or a sibling controller field; the constructor is keyword-only with the exact reviewed callback names; `ChatScreen` gains no replacement fleet definition; and current screen counts meet the task-local ceilings after extraction.
+The pre-final-rebase execution asserted all 16 moved names existed only on
+`ConsoleFleetLifecycleController`; every controller method was free of
+`query`/`query_one`; no method accessed `screen`, `_workspace`, `_session`, `_agent`,
+or a sibling controller field; the constructor was keyword-only with the exact
+reviewed callback names; `ChatScreen` gained no replacement fleet definition; and the
+then-current screen met the historical Task 0 ceilings after extraction. Those d4f3
+constants remain immutable source evidence; current delivery counts are evaluated only
+by Task 5's frozen-final-base gate.
 
 - [ ] **Step 3: Add synthetic non-vacuity oracles**
 
@@ -259,6 +272,11 @@ git commit -m "test(console): lock fleet lifecycle extraction"
 ```
 
 ### Task 2: Implement the controller and move production ownership
+
+> **Historical pre-final-rebase execution evidence:** Task 2 was implemented and its
+> GREEN contract was exercised before the frozen final rebase. References below to
+> 20,007 / 637 describe that d4f3 execution; they do not supersede Task 5's active
+> `02cd80b3` 20,065 / 640 delivery gate.
 
 **Files:**
 
@@ -354,7 +372,10 @@ Leave `Pending sidebar-state write failed` under `chat_screen.py`.
 
 - [ ] **Step 7: Run the core GREEN set**
 
-Run the exact Task 1 command. Expected: all selected nodes pass, screen is at most 20,007 lines/637 methods, and both immutable earlier oracles remain green.
+Historical result: the exact Task 1 command passed against the pre-final-rebase
+candidate, which met the d4f3 20,007-line / 637-method projection while both immutable
+earlier oracles remained green. Do not use that historical absolute projection as a
+current candidate gate; run Task 5 Step 6 against frozen `02cd80b3` instead.
 
 - [ ] **Step 8: Commit the production move**
 

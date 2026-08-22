@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import ast
-import hashlib
 import subprocess
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -557,18 +557,27 @@ def _source_at_revision(revision: str, path: Path) -> str:
 
 
 def _methods_from_class(class_node: ast.ClassDef) -> dict[str, ast.AST]:
-    return {
-        node.name: node
+    return {node.name: node for node in _method_definitions(class_node)}
+
+
+def _method_definitions(
+    class_node: ast.ClassDef,
+) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
+    """Return every direct method definition in source order."""
+    return [
+        node
         for node in class_node.body
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-    }
+    ]
+
+
+def _method_name_counts(class_node: ast.ClassDef) -> Counter[str]:
+    """Count direct method definitions without collapsing duplicate names."""
+    return Counter(node.name for node in _method_definitions(class_node))
 
 
 def _method_count(class_node: ast.ClassDef) -> int:
-    return sum(
-        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-        for node in class_node.body
-    )
+    return len(_method_definitions(class_node))
 
 
 def _methods(path: Path, class_name: str) -> dict[str, ast.AST]:
@@ -578,16 +587,6 @@ def _methods(path: Path, class_name: str) -> dict[str, ast.AST]:
 
 def _span(node: ast.AST) -> int:
     return node.end_lineno - node.lineno + 1  # type: ignore[attr-defined]
-
-
-def _method_family_ast_digest(
-    methods: dict[str, ast.AST], names: frozenset[str]
-) -> str:
-    """Return a stable digest for one exact reviewed method family."""
-    payload = "\n".join(
-        ast.dump(methods[name], include_attributes=False) for name in sorted(names)
-    )
-    return hashlib.sha256(payload.encode()).hexdigest()
 
 
 def _is_property(node: ast.AST) -> bool:
@@ -1778,6 +1777,28 @@ def _assert_fleet_ownership_contract(
     )
 
 
+def _assert_fleet_ownership_multiplicity(
+    screen_class: ast.ClassDef,
+    target_class: ast.ClassDef,
+) -> None:
+    """Require zero screen and exactly one controller definition per fleet name."""
+    group = WAVE6_GROUPS["fleet"]
+    screen_counts = _method_name_counts(screen_class)
+    target_counts = _method_name_counts(target_class)
+    screen_duplicates = {
+        name: screen_counts[name] for name in group.moved if screen_counts[name]
+    }
+    target_multiplicity = {
+        name: target_counts[name] for name in group.moved if target_counts[name] != 1
+    }
+    assert not screen_duplicates, (
+        f"fleet methods still owned by ChatScreen: {screen_duplicates}"
+    )
+    assert not target_multiplicity, (
+        f"fleet controller methods must occur exactly once: {target_multiplicity}"
+    )
+
+
 def _assert_fleet_method_boundaries(methods: dict[str, ast.AST]) -> None:
     """Reject DOM access and direct screen/sibling handles."""
     dom_offenders = {
@@ -1846,6 +1867,9 @@ def _assert_fleet_controller_boundary(controller: ast.ClassDef) -> None:
     methods = _methods_from_class(controller)
     group = WAVE6_GROUPS["fleet"]
     expected_methods = group.moved | {"prepare_session_run_markers"}
+    assert _method_name_counts(controller) == Counter(
+        {name: 1 for name in expected_methods | {"__init__"}}
+    )
 
     init = methods["__init__"]
     assert isinstance(init, ast.FunctionDef)
@@ -1891,11 +1915,14 @@ def test_fleet_family_has_completed_controller_ownership() -> None:
     """Require all 16 fleet lifecycle methods solely on the controller."""
     group = WAVE6_GROUPS["fleet"]
     target_path = _REPO_ROOT / group.target_path
-    screen_methods = _methods(_SCREEN_PATH, "ChatScreen")
 
     assert target_path.exists(), "ConsoleFleetLifecycleController module is missing"
-    target_methods = _methods(target_path, group.target_class)
+    _, screen_class = _class_node(_SCREEN_PATH, "ChatScreen")
+    _, target_class = _class_node(target_path, group.target_class)
+    screen_methods = _methods_from_class(screen_class)
+    target_methods = _methods_from_class(target_class)
     _assert_fleet_ownership_contract(screen_methods, target_methods)
+    _assert_fleet_ownership_multiplicity(screen_class, target_class)
 
     replacement_helpers = {
         "_displayed_console_composer_draft",
@@ -1923,11 +1950,13 @@ def test_fleet_task_ratchet_is_earned() -> None:
     task0_source = _source_at_revision(FLEET_TASK0_IMPLEMENTATION_BASE, _SCREEN_PATH)
     task0_class = _class_node_from_source(task0_source, "ChatScreen", _SCREEN_PATH)
     task0_methods = _methods_from_class(task0_class)
+    task0_counts = _method_name_counts(task0_class)
     final_source = _source_at_revision(FLEET_FINAL_REBASE_BASE, _SCREEN_PATH)
     final_class = _class_node_from_source(final_source, "ChatScreen", _SCREEN_PATH)
     final_methods = _methods_from_class(final_class)
+    final_counts = _method_name_counts(final_class)
     current_source, current_class = _class_node(_SCREEN_PATH, "ChatScreen")
-    current_methods = _methods_from_class(current_class)
+    current_counts = _method_name_counts(current_class)
 
     assert len(task0_source.splitlines()) == FLEET_TASK0_BASE_SCREEN_LINES
     assert _method_count(task0_class) == FLEET_TASK0_BASE_METHODS
@@ -1943,13 +1972,22 @@ def test_fleet_task_ratchet_is_earned() -> None:
     assert sum(_span(final_methods[name]) for name in group.moved) == (
         FLEET_FINAL_REBASE_DEFINITION_LINES
     )
-    assert final_methods.keys() - task0_methods.keys() == (
-        FLEET_FINAL_REBASE_ADDED_SCREEN_METHODS
-    )
-    assert not (task0_methods.keys() - final_methods.keys())
-    assert _method_family_ast_digest(
-        task0_methods, group.moved
-    ) == _method_family_ast_digest(final_methods, group.moved)
+    assert all(task0_counts[name] == final_counts[name] == 1 for name in group.moved)
+    multiplicity_delta = {
+        name: final_counts[name] - task0_counts[name]
+        for name in task0_counts.keys() | final_counts.keys()
+        if final_counts[name] != task0_counts[name]
+    }
+    assert multiplicity_delta == {
+        name: 1 for name in FLEET_FINAL_REBASE_ADDED_SCREEN_METHODS
+    }
+    assert [
+        ast.dump(task0_methods[name], include_attributes=False)
+        for name in sorted(group.moved)
+    ] == [
+        ast.dump(final_methods[name], include_attributes=False)
+        for name in sorted(group.moved)
+    ]
 
     assert FLEET_TASK0_MAX_SCREEN_LINES == (
         FLEET_TASK0_BASE_SCREEN_LINES - FLEET_TASK0_DEFINITION_LINES
@@ -1961,9 +1999,9 @@ def test_fleet_task_ratchet_is_earned() -> None:
     assert FLEET_FINAL_REBASE_MAX_METHODS == (
         FLEET_FINAL_REBASE_BASE_METHODS - len(group.moved)
     )
-    assert not (group.moved & current_methods.keys()), (
+    assert not any(current_counts[name] for name in group.moved), (
         "fleet task methods returned to ChatScreen: "
-        f"{sorted(group.moved & current_methods.keys())}"
+        f"{sorted(name for name in group.moved if current_counts[name])}"
     )
     assert len(current_source.splitlines()) <= FLEET_FINAL_REBASE_MAX_SCREEN_LINES, (
         "fleet task screen-line ratchet remains RED: "
@@ -1993,6 +2031,23 @@ def test_fleet_move_oracles_are_non_vacuous() -> None:
         _assert_fleet_ownership_contract(
             _methods_from_class(screen_mutant),
             target_methods,
+        )
+
+    duplicate_name = "_console_fleet_survivors_live"
+    controller_duplicate_mutant = ast.parse(
+        "class ConsoleFleetLifecycleController:\n"
+        + "".join(
+            f"    def {name}(self): return None\n" for name in sorted(group.moved)
+        )
+        + f"    def {duplicate_name}(self): return True\n"
+    ).body[0]
+    assert isinstance(controller_duplicate_mutant, ast.ClassDef)
+    empty_screen_mutant = ast.parse("class ChatScreen:\n    pass\n").body[0]
+    assert isinstance(empty_screen_mutant, ast.ClassDef)
+    with pytest.raises(AssertionError, match="exactly once"):
+        _assert_fleet_ownership_multiplicity(
+            empty_screen_mutant,
+            controller_duplicate_mutant,
         )
 
     controller_mutant = ast.parse(
