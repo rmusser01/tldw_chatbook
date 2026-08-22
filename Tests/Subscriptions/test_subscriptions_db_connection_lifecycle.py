@@ -338,6 +338,58 @@ def test_close_all_connections_settles_the_file_and_reports_the_rest(db, tmp_pat
         assert threading.get_ident() not in db._connections
 
 
+def test_shutdown_diagnostics_do_not_include_database_paths_or_exceptions(
+    tmp_path, monkeypatch
+):
+    """Shutdown diagnostics stay fixed-category at the persistent boundary."""
+    from tldw_chatbook.DB import Subscriptions_DB as module
+
+    database = SubscriptionsDB(tmp_path / "private-subscriptions.db", "test")
+    database.close()
+    warnings: list[tuple[object, tuple[object, ...], dict[str, object]]] = []
+
+    def fail_connection():
+        raise RuntimeError("private-checkpoint-detail")
+
+    monkeypatch.setattr(database, "_get_connection", fail_connection)
+    monkeypatch.setattr(
+        module.logger,
+        "warning",
+        lambda message, *args, **kwargs: warnings.append((message, args, kwargs)),
+    )
+
+    assert database.checkpoint_wal() is False
+    assert warnings == [
+        ("SubscriptionsDB WAL checkpoint failed during shutdown", (), {})
+    ]
+
+
+def test_live_connection_diagnostic_does_not_include_count_or_database_path(
+    db, monkeypatch
+):
+    """The live-worker notice reports a category, not private DB identity."""
+    from tldw_chatbook.DB import Subscriptions_DB as module
+
+    diagnostics: list[tuple[object, tuple[object, ...], dict[str, object]]] = []
+    monkeypatch.setattr(
+        module.logger,
+        "debug",
+        lambda message, *args, **kwargs: diagnostics.append((message, args, kwargs)),
+    )
+
+    with _worker_holding_a_connection(db):
+        assert db.close_all_connections() == 1
+
+    assert diagnostics == [
+        (
+            "SubscriptionsDB connections remain open on other threads after "
+            "WAL checkpoint",
+            (),
+            {},
+        )
+    ]
+
+
 def test_a_cross_thread_close_is_refused_by_sqlite(db):
     """Why `close_all_connections` reports instead of closing.
 
