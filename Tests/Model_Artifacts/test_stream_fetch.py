@@ -382,3 +382,51 @@ async def test_https_redirect_downgrade_stops_before_second_request(tmp_path, mo
             )
 
     assert requests == ["https://catalog.example/model.gguf"]
+
+
+@pytest.mark.asyncio
+async def test_client_level_auth_not_applied_on_cross_origin_hop(
+    tmp_path, monkeypatch
+):
+    """A client-level ``auth=`` must not follow the catalog -> CDN hop.
+
+    Independent review of task-19733: header stripping cannot reach this
+    route because httpx applies a client-level ``auth`` inside ``send()``,
+    after ``build_request`` produced the request the guard filtered. The
+    same-origin first hop must still authenticate.
+    """
+    seen: list[httpx.Request] = []
+    body = b"cdn-bytes"
+
+    async def allow_egress(_url: str, *, trusted_origins: frozenset[str]) -> None:
+        """Keep this transport-only test independent of DNS/egress policy."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.host == "catalog.example":
+            return httpx.Response(
+                302,
+                headers={"Location": "https://cdn.example/model.gguf"},
+                request=request,
+            )
+        return httpx.Response(200, content=body, request=request)
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Model_Artifacts.fetch.check_url_or_raise_async", allow_egress
+    )
+    dest = tmp_path / "model.gguf"
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        auth=("alice", "sentinel-not-a-real-key-19733"),
+    ) as client:
+        await stream_fetch(
+            "https://catalog.example/model.gguf",
+            dest,
+            client=client,
+            max_bytes=len(body),
+        )
+
+    assert len(seen) == 2
+    assert "authorization" in seen[0].headers
+    assert "authorization" not in seen[1].headers
+    assert dest.read_bytes() == body

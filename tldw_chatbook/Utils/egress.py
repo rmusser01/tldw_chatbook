@@ -650,7 +650,16 @@ def guarded_fetch_httpx(
             # client-default header named by the user leaks identically to a
             # per-call one.
             strip_cross_origin_request_headers(request.headers)
-        response = client.send(request, stream=True, follow_redirects=False)
+        send_kwargs = {"stream": True, "follow_redirects": False}
+        if not is_same_origin:
+            # httpx applies a CLIENT-level ``auth=`` inside ``send()``, AFTER
+            # build_request -- so header stripping above cannot see it and an
+            # ``httpx.Client(auth=("u", "p"))`` re-attached ``Authorization``
+            # on the very hop this guard exists to protect. Passing an
+            # explicit ``auth=None`` (rather than the USE_CLIENT_DEFAULT
+            # sentinel) suppresses it for this hop only.
+            send_kwargs["auth"] = None
+        response = client.send(request, **send_kwargs)
         try:
             if response.is_redirect and response.status_code != 304:
                 location = response.headers.get("location")
@@ -691,12 +700,13 @@ async def guarded_fetch_httpx_async(
 
     ``auth`` is applied on same-origin hops only (credential-stripping rule).
     Cross-origin hops carry only :data:`CROSS_ORIGIN_SAFE_HEADERS`, whether the
-    header came from the ``headers`` argument or from the client object's own
-    defaults (e.g. an ``httpx.AsyncClient(headers=...)``). A
-    client-level ``auth=`` CALLABLE (set on the ``httpx.Client``/``AsyncClient``
-    itself, as opposed to the ``auth`` parameter of this function) is NOT
-    suppressed by this guard — no live caller uses that flow today; this is a
-    documented residual risk.
+    header came from the ``headers`` argument, from the client object's own
+    default headers (e.g. an ``httpx.AsyncClient(headers=...)``), or from a
+    client-level ``auth=`` (set on the ``httpx.Client``/``AsyncClient`` itself,
+    as opposed to the ``auth`` parameter of this function) — the last of those
+    is applied by httpx inside ``send()``, so it is suppressed by passing an
+    explicit ``auth=None`` on the cross-origin hop rather than by header
+    stripping.
     """
     current = url
     for hop in range(MAX_REDIRECT_HOPS + 1):
@@ -713,7 +723,13 @@ async def guarded_fetch_httpx_async(
             # level — see guarded_fetch_httpx for the rationale.
             strip_cross_origin_request_headers(request.headers)
         send_kwargs = {"stream": True, "follow_redirects": False}
-        if auth is not None and is_same_origin:
+        if not is_same_origin:
+            # Explicit None, not "omit": omitting leaves httpx's
+            # USE_CLIENT_DEFAULT sentinel in play, which re-applies a
+            # CLIENT-level ``auth=`` inside send() -- after the header strip
+            # above. See guarded_fetch_httpx for the full rationale.
+            send_kwargs["auth"] = None
+        elif auth is not None:
             send_kwargs["auth"] = auth
         response = await client.send(request, **send_kwargs)
         try:

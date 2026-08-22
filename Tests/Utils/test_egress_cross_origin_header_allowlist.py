@@ -444,3 +444,82 @@ async def test_site_config_scraper_headers_do_not_survive_cross_origin_redirect(
         )
     assert CUSTOM_HEADER.lower() not in seen[1].headers
     assert seen[1].headers.get("user-agent") == "tldw-chatbook/1.0"
+
+
+# ---------------------------------------------------------------------------
+# The other route a credential reaches the wire: a CLIENT-level auth=
+# ---------------------------------------------------------------------------
+
+
+def test_sync_client_level_auth_not_applied_cross_origin():
+    """``httpx.Client(auth=...)`` must not re-attach on a cross-origin hop.
+
+    Header stripping cannot reach this one: httpx applies a client-level
+    ``auth`` inside ``send()``, AFTER ``build_request`` produced the request
+    the guard filtered. Found by independent review of task-19733 -- the
+    allowlist closed the ``headers=``/client-default-header routes and this
+    third route still put ``Authorization: Basic ...`` on the wire to the
+    second origin.
+    """
+    seen = []
+    with httpx.Client(
+        transport=_transport(CROSS_ORIGIN_ROUTES, seen),
+        auth=("alice", SENTINEL),
+    ) as client:
+        resp = guarded_fetch_httpx(
+            "https://feed.example/start", client=client, max_bytes=1024
+        )
+    assert resp.content == b"done"
+    assert len(seen) == 2
+    assert "authorization" in seen[0].headers  # same-origin hop still authenticates
+    assert "authorization" not in seen[1].headers
+    assert SENTINEL not in "".join(seen[1].headers.values())
+
+
+@pytest.mark.asyncio
+async def test_async_client_level_auth_not_applied_cross_origin():
+    seen = []
+    async with httpx.AsyncClient(
+        transport=_transport(CROSS_ORIGIN_ROUTES, seen),
+        auth=("alice", SENTINEL),
+    ) as client:
+        resp = await guarded_fetch_httpx_async(
+            "https://feed.example/start", client=client, max_bytes=1024
+        )
+    assert resp.content == b"done"
+    assert len(seen) == 2
+    assert "authorization" in seen[0].headers
+    assert "authorization" not in seen[1].headers
+
+
+@pytest.mark.asyncio
+async def test_async_same_origin_redirect_still_applies_client_level_auth():
+    """The suppression is per-hop, not permanent: same-origin still authenticates."""
+    seen = []
+    async with httpx.AsyncClient(
+        transport=_transport(SAME_ORIGIN_ROUTES, seen),
+        auth=("alice", SENTINEL),
+    ) as client:
+        resp = await guarded_fetch_httpx_async(
+            "https://feed.example/start", client=client, max_bytes=1024
+        )
+    assert resp.content == b"done"
+    assert len(seen) == 2
+    assert all("authorization" in r.headers for r in seen)
+
+
+@pytest.mark.asyncio
+async def test_async_explicit_auth_argument_still_applies_same_origin():
+    """The function's own ``auth=`` parameter keeps working on same-origin hops."""
+    seen = []
+    async with httpx.AsyncClient(
+        transport=_transport(SAME_ORIGIN_ROUTES, seen)
+    ) as client:
+        await guarded_fetch_httpx_async(
+            "https://feed.example/start",
+            client=client,
+            max_bytes=1024,
+            auth=httpx.BasicAuth("alice", SENTINEL),
+        )
+    assert len(seen) == 2
+    assert all("authorization" in r.headers for r in seen)

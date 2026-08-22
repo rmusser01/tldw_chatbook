@@ -5958,3 +5958,25 @@ deleting the mirror and importing the one object; the guard became an
 identity assertion plus `assert not hasattr(fetch, "_STRIP_HEADERS")`, so a
 re-introduced mirror fails. **A test that pins a duplicated constant is
 evidence the duplication should not exist, not evidence that it is safe.**
+
+**Third half, found by the independent review of the same task.** The fix
+above filtered the *built request object* — `request.headers` after
+`client.build_request(...)` — and its docstring then claimed cross-origin hops
+carry nothing but the allowlist "whether the header came from the `headers`
+argument or from the client object's own defaults". A probe with
+`httpx.Client(auth=("alice", <sentinel>))` put `Authorization: Basic …` on the
+wire to the second origin anyway. `httpx` applies a client-level `auth` inside
+`send()`, *after* `build_request` returns — so it is structurally invisible to
+anything that inspects the request object. (The docstring did carry a residual
+note, but scoped to an auth *callable*; a plain tuple leaked the same way.)
+
+**Generalises to:** "I filtered the request" is not the same as "I filtered
+what goes on the wire". Before trusting a strip, ask what the client library
+adds *between* the object you hold and the socket — auth flows, cookie jars,
+proxy headers, retry/redirect middleware. Prove it by constructing the
+credential through each injection route the API offers (per-call arg, client
+default header, cookie jar, `auth=`), not just the one the code under review
+happens to use. Three of those four routes were already closed here; the
+fourth was the one no test had ever expressed. The fix was
+`send(..., auth=None)` — explicit `None`, because *omitting* the argument
+leaves httpx's `USE_CLIENT_DEFAULT` sentinel in play and changes nothing.

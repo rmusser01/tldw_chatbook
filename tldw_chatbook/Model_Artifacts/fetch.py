@@ -191,8 +191,15 @@ async def stream_fetch(
         request = client.build_request("GET", current, headers=send_headers)
         if not is_same_origin:
             strip_cross_origin_request_headers(request.headers)
+        send_kwargs: dict[str, object] = {"stream": True, "follow_redirects": False}
+        if not is_same_origin:
+            # httpx applies a CLIENT-level ``auth=`` inside send(), after
+            # build_request -- invisible to the header strip above. Explicit
+            # None (not omission, which leaves USE_CLIENT_DEFAULT in play)
+            # suppresses it for this hop. Mirrors egress.guarded_fetch_httpx.
+            send_kwargs["auth"] = None
         try:
-            response = await client.send(request, stream=True, follow_redirects=False)
+            response = await client.send(request, **send_kwargs)
         except httpx.HTTPError as exc:
             raise FetchTransportError(type(exc).__name__) from exc
         try:

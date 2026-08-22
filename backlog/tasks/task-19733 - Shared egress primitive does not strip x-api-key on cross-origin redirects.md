@@ -197,12 +197,22 @@ metadata, being wrong in the other direction hands a user's API key to whoever
 bought the domain. Concretely reviewed against every live caller: the
 subscriptions/watchlists header build (`User-Agent`, `Accept`,
 `Accept-Encoding`, `If-None-Match`, `If-Modified-Since`) is entirely
-allowlisted; `github_api_client` (`Accept: application/vnd.github.v3+json`,
-`User-Agent`) is allowlisted, which matters because release-asset downloads
-redirect to `objects.githubusercontent.com`; `Model_Artifacts` resume
-(`Range`, `If-Range`) is allowlisted, which matters because catalog→CDN is the
-normal artifact download; `Confluence`'s `Content-Type: application/json` is in
-`_TRANSPORT_HEADERS`. Same-origin redirects are untouched — the same-origin
+allowlisted; `github_api_client`'s client-DEFAULT headers
+(`Accept: application/vnd.github.v3+json`, `User-Agent`) are allowlisted, so
+its calls keep working across a redirect off `api.github.com` (independent
+review drove `GitHubAPIClient.get_file_content` through a real
+`api.github.com` → `objects.githubusercontent.com` 302 on a MockTransport:
+both headers arrive on hop 2, `Authorization: token …` does not — note the
+earlier claim that this client downloads *release assets* was wrong, all four
+of its guarded call sites are `api.github.com` JSON endpoints);
+`Model_Artifacts` resume (`Range`, `If-Range`) is allowlisted, which matters
+because catalog→CDN is the normal artifact download. `Confluence` passes
+`Content-Type: application/json` as a CALLER header, and caller headers are
+filtered by `filter_cross_origin_headers`, which does **not** consult
+`_TRANSPORT_HEADERS` — so it is dropped off-origin, not preserved as first
+claimed. Harmless (these are bodyless GETs), but the two layers are
+deliberately asymmetric and the note was wrong about which one applies.
+Same-origin redirects are untouched — the same-origin
 branch returns the caller's headers verbatim, so authenticated feeds that
 redirect within their own origin keep authenticating (pinned by two tests).
 
@@ -220,8 +230,14 @@ Divergence is now not expressible rather than merely detected late.
 
 **Born-red evidence.** `Tests/Utils/test_egress_cross_origin_header_allowlist.py`
 was written and run FIRST against unmodified `origin/dev` (`3193816e7`):
-**9 failed, 4 passed**. The failures show the sentinel arriving at the second
-origin, e.g.
+**9 failed, 4 passed** on the behaviour tests. (Independent review re-ran the
+committed file at that same base and measured **11 failed, 4 passed** — the
+two extra reds are `test_allowlist_never_admits_a_credential_shaped_name` and
+`test_transport_headers_are_disjoint_from_the_allowlist`, which fail at base
+with `AttributeError: module … has no attribute 'CROSS_ORIGIN_SAFE_HEADERS'`,
+i.e. an introspection failure rather than the defect signature. The 9/4 split
+is the right count of *behavioural* born-red evidence.) The failures show the
+sentinel arriving at the second origin, e.g.
 
 ```
 assert 'x-feed-token' not in Headers({'host': 'evil.example', ...,
@@ -279,6 +295,67 @@ having named them, not having fixed them.**
 
 Kagi (`:3672`) and Yandex (`:4228`) use `Authorization` and are clean, as the
 filing said.
+
+## Independent review addendum
+
+Adversarial review re-ran every claim above (born-red at `3193816e7`, the
+mutation of the real `CROSS_ORIGIN_SAFE_HEADERS` literal, both suites) and
+probed four escape routes the branch had not covered. Three were already
+closed: a `requests.Session`'s `auth=`, its cookie jar, and its default
+`headers` are all applied by `prepare_request` and therefore reached by
+`strip_cross_origin_request_headers`; an `httpx.Client(cookies=…)` jar
+likewise. The fourth was open, and is fixed here.
+
+**Found and fixed: a client-level `httpx` `auth=` still crossed the origin
+boundary.** `httpx` applies a client-level `auth` inside `send()` — *after*
+`build_request` produced the object the guard filters — so no amount of header
+stripping could see it. An `httpx.Client(auth=("alice", <secret>))` put
+`Authorization: Basic …` on the wire to `evil.example` on the redirect hop.
+The pre-existing docstring described this residual as applying only to a
+client-level auth *callable*; a plain tuple leaked identically, and the
+sibling paragraph simultaneously claimed cross-origin hops carry "only
+`CROSS_ORIGIN_SAFE_HEADERS` … or the client object's own defaults", which was
+not true of this route. Fix: pass an explicit `auth=None` (not omission, which
+leaves httpx's `USE_CLIENT_DEFAULT` sentinel in play) on the cross-origin hop
+in `guarded_fetch_httpx`, `guarded_fetch_httpx_async` and
+`Model_Artifacts.fetch.stream_fetch`. Four born-red tests
+(`test_{sync,async}_client_level_auth_not_applied_cross_origin` plus a
+`Model_Artifacts` one); mutation-checked — reverting the three lines turns
+exactly those red with `authorization` present at `host: evil.example`, while
+`test_async_same_origin_redirect_still_applies_client_level_auth` and
+`test_async_explicit_auth_argument_still_applies_same_origin` stay green, so
+the fix is not "never authenticate".
+
+No live caller constructs a client that way today, so this is hardening rather
+than a shipped leak — but it sat on the one code path this task exists to make
+trustworthy, and the surrounding docstring asserted it was already covered.
+
+**Two residuals recorded, not fixed (need their own task):**
+
+1. *The strip is not sticky.* `same_origin(url, current)` compares each hop to
+   the ORIGINAL url, so a chain `feed → evil → feed` re-attaches the
+   credential on hop 3 — measured, with the attacker choosing the return
+   path/query (`https://feed.example/logs?leak=1` received the sentinel). The
+   Fetch spec removes the header permanently once an origin boundary is
+   crossed. The recipient here is still the credential's own origin, so this
+   is hardening, not disclosure to a third party; low severity.
+2. *`content-type` is exempt on the BUILT-request layer.* It is the only
+   exempted header that can carry arbitrary caller text, and a client-default
+   `Content-Type: application/json; boundary=<secret>` was measured arriving
+   cross-origin. Every guarded helper is GET-only, so nothing needs it today;
+   the code comment keeps it for a hypothetical future body-carrying helper.
+   Low severity, no live exposure — but it is the answer to "construct a leak
+   using only exempted headers".
+
+**Verified independently:** born-red at base reproduces with the defect
+signature; `4012 passed / 4 skipped / 0 failed` across the eight suites and
+`54178 collected` repo-wide both reproduce exactly; the five siblings are real
+at the lines named (Kobold's header is `LLM_API_Calls_Local.py:1011`, call
+`:1061`; Bing `:2711`/`:2728` with `search_url` genuinely user-configurable
+from `search_engines.bing_search_api_url` at `:2672`; Brave `:2964`/`:2980`;
+Serper `:3985`/`:3992`; Exa `:4055`/`:4062`), and Kagi (`:3672`/`:3678`) and
+Yandex (`:4228`/`:4235`) are genuinely clean because `requests` strips
+`Authorization` on a host change.
 
 **Modified files.** `tldw_chatbook/Utils/egress.py`,
 `tldw_chatbook/Model_Artifacts/fetch.py`,
