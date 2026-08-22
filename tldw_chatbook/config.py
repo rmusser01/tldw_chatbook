@@ -1810,6 +1810,7 @@ def _load_settings_uncached(
         "image_generation": final_image_generation_settings_cli,  # For Image_Generation/config.py loader
         "video_generation": final_video_generation_settings_cli,  # For Video_Generation/config.py loader
         "mcp": final_mcp_settings_cli,  # For MCP server settings
+        "persona_buddy": copy.deepcopy(toml_config_data.get("persona_buddy", {})),
         # Single User
         "SINGLE_USER_FIXED_ID": single_user_fixed_id,
         # Auth
