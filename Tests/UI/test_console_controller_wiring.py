@@ -36,6 +36,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.UI.test_destination_shells import _build_test_app
 from tldw_chatbook.UI.Console_Modules.agent import ConsoleAgentController
 from tldw_chatbook.UI.Console_Modules.character import ConsoleCharacterController
@@ -189,7 +190,10 @@ def test_fleet_controller_is_constructed_with_late_bound_screen_edges() -> None:
     assert wake_calls == [("wire", screen.app_instance), "seed", "retry"]
 
 
-def test_session_first_chat_edges_are_late_bound_and_presentation_only() -> None:
+@pytest.mark.asyncio
+async def test_session_first_chat_edges_are_late_bound_and_presentation_only(
+    monkeypatch,
+) -> None:
     screen = _unmounted_console()
     controller = screen._session
     screen._console_control_provider = "late-provider"
@@ -210,6 +214,24 @@ def test_session_first_chat_edges_are_late_bound_and_presentation_only() -> None
     )
     controller._restore_first_chat_focus_fn(focus_token)
     focus_token.focus.assert_not_called()
+
+    host = ConsolidatedCSSApp()
+    async with host.run_test(size=(120, 40)) as pilot:
+        await host.push_screen(screen)
+        await pilot.pause()
+        assert screen.is_attached is True
+        assert controller._screen_mounted_accessor() is True
+
+        mounted_focus_token = screen.query_one("#console-native-composer")
+        focus_spy = MagicMock(wraps=mounted_focus_token.focus)
+        monkeypatch.setattr(mounted_focus_token, "focus", focus_spy)
+        controller._restore_first_chat_focus_fn(mounted_focus_token)
+        focus_spy.assert_called_once_with()
+
+        await host.pop_screen()
+        await pilot.pause()
+        assert screen.is_attached is False
+        assert controller._screen_mounted_accessor() is False
 
 
 def test_retrieval_controller_is_constructed_with_late_bound_screen_edges():

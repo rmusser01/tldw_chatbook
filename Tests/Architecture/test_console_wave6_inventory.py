@@ -71,6 +71,14 @@ FIRST_CHAT_CONTROLLER_CALLBACKS = frozenset(
         "restore_first_chat_focus",
     }
 )
+FIRST_CHAT_PRESENTATION_ATTRIBUTES = frozenset(
+    {
+        "_screen_mounted_accessor",
+        "_first_chat_presentation_snapshot_fn",
+        "_apply_first_chat_control_selection_fn",
+        "_restore_first_chat_focus_fn",
+    }
+)
 FLEET_CONTROLLER_CALLBACKS = frozenset(
     {
         "pending_handoffs_accessor",
@@ -1813,6 +1821,58 @@ def _assert_first_chat_ownership_multiplicity(
     )
 
 
+def _assert_first_chat_revision_state_ownership(
+    screen_class: ast.ClassDef,
+    target_class: ast.ClassDef,
+) -> None:
+    """Reject every screen-side revision-state shim, including class proxies."""
+    state_name = "_first_chat_handoff_notified_revision"
+
+    def assigned_names(target: ast.AST) -> set[str]:
+        if isinstance(target, ast.Name):
+            return {target.id}
+        if isinstance(target, (ast.List, ast.Tuple)):
+            return set().union(*(assigned_names(item) for item in target.elts))
+        if isinstance(target, ast.Starred):
+            return assigned_names(target.value)
+        return set()
+
+    screen_class_members: set[str] = set()
+    for node in screen_class.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            screen_class_members.add(node.name)
+        elif isinstance(node, ast.Assign):
+            screen_class_members.update(
+                set().union(*(assigned_names(target) for target in node.targets))
+            )
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            screen_class_members.add(node.target.id)
+
+    assert state_name not in screen_class_members, (
+        f"first-chat revision-state shim remains on ChatScreen: {state_name}"
+    )
+    assert state_name not in _self_assignments(screen_class), (
+        f"first-chat revision state remains on ChatScreen: {state_name}"
+    )
+    assert state_name in _self_assignments(target_class), (
+        f"first-chat revision state missing from controller: {state_name}"
+    )
+
+
+def _assert_first_chat_presentation_callback_usage(
+    methods: dict[str, ast.AST],
+) -> None:
+    """Require the moved policy family to consume every presentation edge."""
+    used = set().union(
+        *(
+            _self_owner_accesses(method, FIRST_CHAT_PRESENTATION_ATTRIBUTES)
+            for method in methods.values()
+        )
+    )
+    missing = FIRST_CHAT_PRESENTATION_ATTRIBUTES - used
+    assert not missing, f"first-chat presentation callbacks unused: {sorted(missing)}"
+
+
 def _assert_first_chat_method_boundaries(
     methods: dict[str, ast.AST],
 ) -> None:
@@ -1852,6 +1912,33 @@ def _assert_first_chat_method_boundaries(
         f"{sibling_offenders}"
     )
 
+    presentation_names = frozenset({"focus", "focused", "is_attached", "is_mounted"})
+
+    def direct_presentation_accesses(method: ast.AST) -> set[str]:
+        return {
+            node.attr
+            for node in ast.walk(method)
+            if isinstance(node, ast.Attribute)
+            and (
+                node.attr in presentation_names
+                or (
+                    node.attr == "app"
+                    and isinstance(node.value, ast.Name)
+                    and node.value.id == "self"
+                )
+            )
+        }
+
+    presentation_offenders = {
+        name: sorted(direct_presentation_accesses(method))
+        for name, method in methods.items()
+        if direct_presentation_accesses(method)
+    }
+    assert not presentation_offenders, (
+        "first-chat controller methods access presentation directly: "
+        f"{presentation_offenders}"
+    )
+
 
 def _assert_no_first_chat_compatibility_delegates(
     screen_methods: dict[str, ast.AST],
@@ -1888,10 +1975,7 @@ def test_first_chat_family_has_completed_controller_ownership() -> None:
     screen_methods = _methods_from_class(screen_class)
     _assert_first_chat_ownership_multiplicity(screen_class, target_class)
     _assert_no_first_chat_compatibility_delegates(screen_methods)
-    assert "_first_chat_handoff_notified_revision" not in _self_assignments(
-        screen_class
-    )
-    assert "_first_chat_handoff_notified_revision" in _self_assignments(target_class)
+    _assert_first_chat_revision_state_ownership(screen_class, target_class)
 
 
 @pytest.mark.unit
@@ -1905,7 +1989,9 @@ def test_first_chat_controller_has_only_named_non_dom_dependencies() -> None:
     methods = _methods_from_class(controller)
     missing = group.moved - methods.keys()
     assert not missing, f"first-chat controller methods missing: {sorted(missing)}"
-    _assert_first_chat_method_boundaries({name: methods[name] for name in group.moved})
+    moved_methods = {name: methods[name] for name in group.moved}
+    _assert_first_chat_method_boundaries(moved_methods)
+    _assert_first_chat_presentation_callback_usage(moved_methods)
 
     init = methods["__init__"]
     assert isinstance(init, ast.FunctionDef)
@@ -2060,6 +2146,38 @@ def test_first_chat_move_oracles_are_non_vacuous() -> None:
     with pytest.raises(AssertionError, match="screen/sibling owners"):
         _assert_first_chat_method_boundaries(sibling_mutant)
 
+    callback_complete = dict(target_methods)
+    callback_complete["_current_first_chat_defaults"] = ast.parse(
+        "def _current_first_chat_defaults(self):\n"
+        "    return (\n"
+        "        self._screen_mounted_accessor,\n"
+        "        self._first_chat_presentation_snapshot_fn,\n"
+        "        self._apply_first_chat_control_selection_fn,\n"
+        "        self._restore_first_chat_focus_fn,\n"
+        "    )\n"
+    ).body[0]
+    _assert_first_chat_presentation_callback_usage(callback_complete)
+    callback_omission_mutant = dict(callback_complete)
+    callback_omission_mutant["_current_first_chat_defaults"] = ast.parse(
+        "def _current_first_chat_defaults(self):\n"
+        "    return (\n"
+        "        self._screen_mounted_accessor,\n"
+        "        self._first_chat_presentation_snapshot_fn,\n"
+        "        self._apply_first_chat_control_selection_fn,\n"
+        "    )\n"
+    ).body[0]
+    with pytest.raises(AssertionError, match="presentation callbacks unused"):
+        _assert_first_chat_presentation_callback_usage(callback_omission_mutant)
+
+    direct_focus_mutant = dict(target_methods)
+    direct_focus_mutant["_resync_console_after_first_chat_rollback"] = ast.parse(
+        "def _resync_console_after_first_chat_rollback(self, token):\n"
+        "    if token.is_mounted:\n"
+        "        token.focus()\n"
+    ).body[0]
+    with pytest.raises(AssertionError, match="access presentation directly"):
+        _assert_first_chat_method_boundaries(direct_focus_mutant)
+
     duplicate_target = ast.parse(
         target_source
         + "    def consume_pending_console_first_chat_intent(self): return True\n"
@@ -2069,6 +2187,25 @@ def test_first_chat_move_oracles_are_non_vacuous() -> None:
     assert isinstance(empty_screen, ast.ClassDef)
     with pytest.raises(AssertionError, match="exactly once"):
         _assert_first_chat_ownership_multiplicity(empty_screen, duplicate_target)
+
+    target_with_revision_state = ast.parse(
+        "class ConsoleSessionController:\n"
+        "    def __init__(self):\n"
+        "        self._first_chat_handoff_notified_revision = None\n"
+    ).body[0]
+    revision_property_mutant = ast.parse(
+        "class ChatScreen:\n"
+        "    @property\n"
+        "    def _first_chat_handoff_notified_revision(self):\n"
+        "        return self._session._first_chat_handoff_notified_revision\n"
+    ).body[0]
+    assert isinstance(target_with_revision_state, ast.ClassDef)
+    assert isinstance(revision_property_mutant, ast.ClassDef)
+    with pytest.raises(AssertionError, match="revision-state shim"):
+        _assert_first_chat_revision_state_ownership(
+            revision_property_mutant,
+            target_with_revision_state,
+        )
 
     compatibility_mutant = ast.parse(
         "class ChatScreen:\n"

@@ -978,17 +978,27 @@ def test_first_chat_failed_acknowledgement_rolls_back_and_requeues(
     events: list[tuple[object, ...]] = []
     owner = _first_chat_owner(console)
     real_apply = owner._apply_first_chat_control_selection_fn
+    real_rollback = store.rollback_created_pristine_session
     real_release = app.pending_handoffs.release
 
     def apply_and_record(provider, model) -> None:
         events.append(("project", provider, model))
         real_apply(provider, model)
 
+    def rollback_and_record(session_id, **kwargs) -> bool:
+        events.append(("store-rollback", session_id))
+        return real_rollback(session_id, **kwargs)
+
     def release_and_record(claim) -> bool:
         events.append(("release", claim.revision))
         return real_release(claim)
 
     owner._apply_first_chat_control_selection_fn = apply_and_record
+    monkeypatch.setattr(
+        store,
+        "rollback_created_pristine_session",
+        rollback_and_record,
+    )
     monkeypatch.setattr(app.pending_handoffs, "release", release_and_record)
     monkeypatch.setattr(
         app.pending_handoffs,
@@ -997,9 +1007,15 @@ def test_first_chat_failed_acknowledgement_rolls_back_and_requeues(
     )
 
     assert owner.consume_pending_console_first_chat_intent() is False
-    assert [event[0] for event in events[:3]] == ["project", "project", "release"]
+    assert [event[0] for event in events] == [
+        "project",
+        "store-rollback",
+        "project",
+        "release",
+    ]
     assert events[0][1:] == ("openai", "model-a")
-    assert events[1][1:] == (None, None)
+    assert events[1][1] == intent.session_id
+    assert events[2][1:] == (None, None)
     assert all(item.id != intent.session_id for item in store.sessions())
     assert store.active_session_id == prior.id
     assert _first_chat_session_snapshot(prior) == prior_before
