@@ -112,6 +112,44 @@ def _offloaded_call_nodes(tree: ast.AST) -> set[int]:
     return exempt
 
 
+def _loop_body_nodes(function: ast.AST) -> list[ast.AST]:
+    """Every node that actually runs on the event loop for this `async def`.
+
+    Descends the body but STOPS at a nested `def`/`async def`/`lambda`: a
+    synchronous closure defined inside an `async def` is an offload body --
+    the shape `run_db_off_loop` is handed -- so sqlite is exactly what it is
+    supposed to contain, and only the thread it lands on matters.
+
+    Review note (task-19562): this replaced an `ast.walk` loop that
+    `continue`d on a nested `FunctionDef`. `ast.walk` yields descendants
+    regardless, so that skipped the `def` node and then walked its body
+    anyway -- the guard rejected the correct offload shape:
+
+        async def list_sources(self):
+            db = self._db()
+            def work():
+                return db.get_all_subscriptions()   # <- was flagged
+            return await run_db_off_loop(db, work)
+
+    A guard that fails on correct code gets weakened by the next person, so
+    the exclusion is done by descent rather than by a `continue` that cannot
+    perform it.
+    """
+    collected: list[ast.AST] = []
+
+    def descend(node: ast.AST) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(
+                child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
+            ):
+                continue
+            collected.append(child)
+            descend(child)
+
+    descend(function)
+    return collected
+
+
 def _blocking_db_calls_in_async_defs(source: str) -> list[str]:
     """Every direct database call reachable from an `async def` body."""
     tree = ast.parse(source)
@@ -121,11 +159,7 @@ def _blocking_db_calls_in_async_defs(source: str) -> list[str]:
     for node in ast.walk(tree):
         if not isinstance(node, ast.AsyncFunctionDef):
             continue
-        for inner in ast.walk(node):
-            # A nested `def` inside an `async def` is an offload body, not
-            # loop code; skip its subtree.
-            if isinstance(inner, ast.FunctionDef) and inner is not node:
-                continue
+        for inner in _loop_body_nodes(node):
             if not isinstance(inner, ast.Call) or id(inner) in exempt:
                 continue
             if _db_rooted(inner.func):
@@ -174,6 +208,41 @@ def test_the_guard_accepts_the_offloaded_shape():
         "        return await run_db_off_loop(db, db.get_all_subscriptions)\n"
     )
     assert _blocking_db_calls_in_async_defs(accepted) == []
+
+
+def test_the_guard_accepts_a_nested_synchronous_offload_body():
+    """The other correct shape: a sync closure handed to the helper.
+
+    Review of task-19562. The guard used to flag this -- its walker
+    `continue`d on the nested `def` but `ast.walk` had already queued that
+    def's children, so the closure's sqlite was reported as loop code. A
+    guard that rejects the correct pattern is worse than no guard: it gets
+    deleted or loosened the first time someone writes the pattern.
+    """
+    accepted = (
+        "class S:\n"
+        "    async def list_sources(self):\n"
+        "        db = self._db()\n"
+        "        def work():\n"
+        "            return db.get_all_subscriptions()\n"
+        "        return await run_db_off_loop(db, work)\n"
+    )
+    assert _blocking_db_calls_in_async_defs(accepted) == []
+
+
+def test_the_guard_still_flags_an_inline_call_beside_a_nested_def():
+    """Excluding nested bodies must not blind the guard to its own scope."""
+    offending = (
+        "class S:\n"
+        "    async def list_sources(self):\n"
+        "        db = self._db()\n"
+        "        def work():\n"
+        "            return db.get_all_subscriptions()\n"
+        "        db.mark_all_read(1)\n"
+        "        return await run_db_off_loop(db, work)\n"
+    )
+    findings = _blocking_db_calls_in_async_defs(offending)
+    assert findings == ["list_sources (line 6): db.mark_all_read(...)"], findings
 
 
 def test_the_guard_sees_through_a_bare_connection_read():
