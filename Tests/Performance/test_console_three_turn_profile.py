@@ -778,28 +778,61 @@ def test_campaign_attempt_event_schema_fails_closed(
         profile.append_attempt_state(tmp_path / "attempts.jsonl", event)
 
 
-@pytest.mark.parametrize("state", ([], {}, 0, None, True))
-def test_campaign_non_string_state_fails_stably_across_boundaries(
-    tmp_path: Path, state: object
+@pytest.mark.parametrize("value", (None, False, 7, [], {}))
+@pytest.mark.parametrize(
+    ("field", "event", "code"),
+    (
+        (
+            "state",
+            {"attempt_id": "attempt-0001", "state": "running"},
+            "campaign_attempt_state_invalid",
+        ),
+        (
+            "reason_category",
+            {
+                "attempt_id": "attempt-0001",
+                "state": "failed",
+                "reason_category": "provider",
+            },
+            "campaign_reason_category_invalid",
+        ),
+        (
+            "verdict",
+            {
+                "attempt_id": "attempt-0001",
+                "state": "complete_pending_review",
+                "verdict": "pass",
+                "raw_sha256": "a" * 64,
+            },
+            "campaign_verdict_invalid",
+        ),
+    ),
+)
+def test_campaign_enum_fields_reject_non_strings_stably(
+    tmp_path: Path,
+    value: object,
+    field: str,
+    event: dict[str, object],
+    code: str,
 ) -> None:
+    malformed = {**event, field: value}
     transition_ledger = tmp_path / "transition.jsonl"
     profile.append_attempt_state(
         transition_ledger, _attempt_event("attempt-0001", "running")
     )
-    malformed = {"attempt_id": "attempt-0001", "state": state}
 
-    with pytest.raises(RuntimeError, match="^campaign_attempt_state_invalid$"):
+    with pytest.raises(RuntimeError, match=f"^{code}$"):
         profile.append_attempt_state(transition_ledger, malformed)
 
     payload = json.dumps(malformed, sort_keys=True) + "\n"
     loaded_ledger = tmp_path / "loaded.jsonl"
     loaded_ledger.write_text(payload, encoding="utf-8")
-    with pytest.raises(RuntimeError, match="^campaign_attempt_state_invalid$"):
+    with pytest.raises(RuntimeError, match=f"^{code}$"):
         profile.attempt_lineage(loaded_ledger)
 
     admission_ledger = tmp_path / "admission.jsonl"
     admission_ledger.write_text(payload, encoding="utf-8")
-    with pytest.raises(RuntimeError, match="^campaign_attempt_state_invalid$"):
+    with pytest.raises(RuntimeError, match=f"^{code}$"):
         profile.require_campaign_acquisition(admission_ledger)
 
 

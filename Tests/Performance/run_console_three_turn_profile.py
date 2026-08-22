@@ -1569,25 +1569,39 @@ def privacy_violations(value: Any, *, location: str = "$") -> tuple[str, ...]:
     return tuple(violations)
 
 
+def _require_campaign_enum(
+    value: Any, allowed: frozenset[str], error_code: str
+) -> str:
+    if not isinstance(value, str) or value not in allowed:
+        raise RuntimeError(error_code)
+    return value
+
+
 def _validate_attempt_event(event: Mapping[str, Any]) -> dict[str, Any]:
     """Return one exact, content-free campaign event or fail closed."""
     record = dict(event)
     if privacy_violations(record):
         raise RuntimeError("campaign_event_privacy_violation")
-    state = record.get("state")
-    if not isinstance(state, str) or state not in ATTEMPT_STATES:
-        raise RuntimeError("campaign_attempt_state_invalid")
+    state = _require_campaign_enum(
+        record.get("state"), ATTEMPT_STATES, "campaign_attempt_state_invalid"
+    )
     if set(record) != _ATTEMPT_FIELDS[state]:
         raise RuntimeError("campaign_event_fields_invalid")
     attempt_id = record.get("attempt_id")
     if not isinstance(attempt_id, str) or not _ATTEMPT_ID.fullmatch(attempt_id):
         raise RuntimeError("campaign_attempt_id_invalid")
     if state in _ATTEMPT_REASON_CATEGORIES:
-        if record.get("reason_category") not in _ATTEMPT_REASON_CATEGORIES[state]:
-            raise RuntimeError("campaign_reason_category_invalid")
+        _require_campaign_enum(
+            record.get("reason_category"),
+            _ATTEMPT_REASON_CATEGORIES[state],
+            "campaign_reason_category_invalid",
+        )
     if state in {"complete_pending_review", "changes_required"}:
-        if record.get("verdict") not in _MEASURED_VERDICTS:
-            raise RuntimeError("campaign_verdict_invalid")
+        _require_campaign_enum(
+            record.get("verdict"),
+            _MEASURED_VERDICTS,
+            "campaign_verdict_invalid",
+        )
         raw_sha256 = record.get("raw_sha256")
         if not isinstance(raw_sha256, str) or not _SHA256.fullmatch(raw_sha256):
             raise RuntimeError("campaign_raw_hash_invalid")
