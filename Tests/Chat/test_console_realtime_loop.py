@@ -475,6 +475,35 @@ def test_mode_changed_full_cycle_payloads():
     ]
 
 
+def test_persona_buddy_voice_adapter_consumes_the_real_fsm_cycle():
+    """The headless FSM's emitted states are the adapter's trusted input."""
+    from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
+    from tldw_chatbook.Persona_Buddy.controller import PersonaBuddyController
+
+    buddy = PersonaBuddyController()
+    adapter = PersonaBuddyConsoleAdapter(buddy)
+
+    def emit(intent):
+        if isinstance(intent, ModeChanged):
+            adapter.voice_state("session-a", 7, intent.state)
+        elif isinstance(intent, ExitLoop):
+            adapter.release_voice("session-a", 7)
+
+    controller = RealtimeLoopController(
+        emit, acoustic_barge_in=False, idle_timeout_seconds=10.0
+    )
+    controller.enter()
+    assert buddy.snapshot().state == "offline"
+    controller.on_session_ready()
+    assert buddy.snapshot().state == "listening"
+    controller.on_turn_committed(now=0.0)
+    assert buddy.snapshot().state == "thinking"
+    controller.on_first_audio()
+    assert buddy.snapshot().state == "speaking"
+    controller.on_exit_request()
+    assert buddy.snapshot().state == "idle"
+
+
 def test_exit_request_reason_defaults_to_none():
     c, ev = _make()
     c.enter()

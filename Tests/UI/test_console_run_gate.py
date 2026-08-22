@@ -84,6 +84,50 @@ def _start_fake_run(screen) -> None:
     )
 
 
+@pytest.mark.unit
+def test_persona_buddy_run_and_approval_states_drive_real_controller_producers():
+    """The real controller callbacks publish and settle exact Buddy owners."""
+    app, screen = _build_screen()
+    controller = screen._ensure_console_chat_controller()
+    buddy = app.persona_buddy_controller
+
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.VALIDATING), session_id="session-a"
+    )
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.STREAMING), session_id="session-a"
+    )
+    assert buddy.snapshot().state == "speaking"
+
+    controller.add_pending_round("session-a", "round-1")
+    controller.add_pending_round("session-a", "round-2")
+    assert buddy.snapshot().state == "approval_needed"
+    controller.discard_pending_round("session-a", "round-1")
+    assert buddy.snapshot().state == "approval_needed"
+
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.COMPLETED), session_id="session-a"
+    )
+    assert buddy.snapshot().state == "idle"
+
+
+@pytest.mark.unit
+def test_persona_buddy_missing_controller_sink_is_noop():
+    """Controller-only construction remains valid when no Buddy sink exists."""
+    _app, screen = _build_screen()
+    controller = screen._ensure_console_chat_controller()
+    controller._buddy_sink = None
+
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.VALIDATING), session_id="session-a"
+    )
+    controller.add_pending_round("session-a", "round-1")
+    controller.discard_pending_round("session-a", "round-1")
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.COMPLETED), session_id="session-a"
+    )
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "action_id,target",

@@ -299,6 +299,7 @@ class ConsoleFleetWakeCoordinator:
 
     def __init__(self, controller: "ConsoleChatController"):
         self._controller = controller
+        self.buddy_sink = getattr(controller, "_buddy_sink", None)
         self._app: Any | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._registry_lock = threading.Lock()
@@ -442,6 +443,11 @@ class ConsoleFleetWakeCoordinator:
                 for child in survivors:
                     bucket[str(child.run_id)] = str(
                         getattr(child, "status", "") or "done"
+                    )
+            if self.buddy_sink is not None:
+                for child in survivors:
+                    self.buddy_sink.wake(
+                        conversation_id, str(child.run_id), active=True
                     )
             self.retry_soon()
         except Exception as exc:  # noqa: BLE001 -- never raise into the fan-out
@@ -665,6 +671,9 @@ class ConsoleFleetWakeCoordinator:
                     if not bucket:
                         self._pending.pop(conversation_id, None)
                 nothing_undelivered = conversation_id not in self._pending
+            if self.buddy_sink is not None:
+                for run_id in delivered_run_ids:
+                    self.buddy_sink.wake(conversation_id, run_id, active=False)
             if nothing_undelivered and self._app is not None:
                 # task-15971 (the coordinator's design ruling): the mark's
                 # fate at commit depends on whether the user WATCHED the
@@ -780,8 +789,18 @@ class ConsoleFleetWakeCoordinator:
                     bucket.setdefault(
                         str(row.get("id")), str(row.get("status") or "done")
                     )
+            if self.buddy_sink is not None:
+                for row in rows:
+                    self.buddy_sink.wake(
+                        conversation_id, str(row.get("id")), active=True
+                    )
             seeded += 1
         return seeded
+
+    def dispose(self) -> None:
+        """Release all wake-owned Buddy state at permanent teardown."""
+        if self.buddy_sink is not None:
+            self.buddy_sink.clear_wakes()
 
     # -- internals ------------------------------------------------------------
 
@@ -871,5 +890,8 @@ class ConsoleFleetWakeCoordinator:
                         pending_bucket.pop(run_id, None)
                     if not pending_bucket:
                         self._pending.pop(conversation_id, None)
+            if self.buddy_sink is not None:
+                for run_id in stale:
+                    self.buddy_sink.wake(conversation_id, run_id, active=False)
         rows.sort(key=lambda r: str(r.get("updated_at") or ""))
         return rows

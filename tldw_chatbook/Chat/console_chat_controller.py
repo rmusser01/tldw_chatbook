@@ -181,6 +181,9 @@ from tldw_chatbook.Chat.console_skill_resolver import (
 )
 from tldw_chatbook.Chat.prompt_history import PromptHistory
 
+if TYPE_CHECKING:
+    from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
+
 from tldw_chatbook.Agents.builtin_tool_gate import (
     LOCAL_TOOLS_DEFAULT_ENABLED,
     build_builtin_gate,
@@ -1697,6 +1700,7 @@ class ConsoleChatController:
             Awaitable[tuple[Literal["select", "disable", "cancel"], str | None]],
         ]
         | None = None,
+        buddy_sink: "PersonaBuddyConsoleAdapter | None" = None,
     ) -> None:
         self.store = store
         self.provider_gateway = provider_gateway
@@ -1720,6 +1724,7 @@ class ConsoleChatController:
         self.streaming = streaming
         self.system_prompt = system_prompt
         self._agent_bridge = agent_bridge
+        self._buddy_sink = buddy_sink
         self._agent_runtime_enabled = agent_runtime_enabled
         self._skills_service = skills_service
         self._skill_substitution_enabled = skill_substitution_enabled
@@ -2621,6 +2626,8 @@ class ConsoleChatController:
             changed = round_id not in rounds
             rounds.add(round_id)
         if changed:
+            if self._buddy_sink is not None:
+                self._buddy_sink.approval_round(session_id, round_id, pending=True)
             self._advance_lifecycle_revision(session_id)
 
     def discard_pending_round(self, session_id: str, round_id: str) -> None:
@@ -2650,6 +2657,8 @@ class ConsoleChatController:
             if not rounds:
                 self._pending_approvals.pop(session_id, None)
         if changed:
+            if self._buddy_sink is not None:
+                self._buddy_sink.approval_round(session_id, round_id, pending=False)
             self._advance_lifecycle_revision(session_id)
 
     def has_pending_approval_round(self, session_id: str) -> bool:
@@ -6610,6 +6619,7 @@ class ConsoleChatController:
 
         self._disposed = True
         self._visit_open = False
+        self._fleet_wake.dispose()
         # The queue tombstone keeps its contract of running BEFORE any
         # teardown cancellation -- but it must never be able to SKIP that
         # cancellation. Its shutdown asserts queue-owner-thread affinity
@@ -13120,6 +13130,8 @@ class ConsoleChatController:
         previous_status = self.run_state_for(target).status
         self._run_states[target] = run_state
         self.run_state_history_for(target).append(run_state.status)
+        if self._buddy_sink is not None:
+            self._buddy_sink.run_state(target, run_state.status)
         self._advance_lifecycle_revision(target)
         terminal_notification_eligible = self.activity_for(
             target
@@ -13153,6 +13165,8 @@ class ConsoleChatController:
             # stays correct if a future caller ever moves this off-thread).
             with self._approval_state_lock:
                 self._pending_approvals.pop(target, None)
+            if self._buddy_sink is not None:
+                self._buddy_sink.release_session(target, sources={"approval"})
             # PR3a-2 Task 5: a terminal transition frees send capacity
             # (this session's own slot, possibly the global cap) -- retry
             # any deferred wake. Scheduled via the coordinator's loop hop,

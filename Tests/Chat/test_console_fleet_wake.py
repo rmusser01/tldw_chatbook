@@ -78,6 +78,8 @@ from tldw_chatbook.Chat.conversation_local_marks_service import (
 )
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
+from tldw_chatbook.Persona_Buddy.controller import PersonaBuddyController
 
 
 async def _settle(predicate, seconds: float = 5.0) -> bool:
@@ -219,6 +221,34 @@ def _controller_rig(tmp_path, *, session_title="Research"):
     )
     controller.fleet_wake.wire(app=app)
     return chacha, app, runs_db, store, session, gateway, bridge, controller
+
+
+@pytest.mark.asyncio
+async def test_persona_buddy_wake_tracks_pending_delivery_and_exact_settlement(
+    tmp_path,
+):
+    """The real wake coordinator mirrors membership until delivery settles."""
+    chacha, _app, runs_db, _store, session, gateway, _bridge, controller = (
+        _controller_rig(tmp_path)
+    )
+    buddy = PersonaBuddyController()
+    sink = PersonaBuddyConsoleAdapter(buddy)
+    controller.fleet_wake.buddy_sink = sink
+    try:
+        _parent, run_id = _terminal_subagent_run(runs_db, session.id)
+        gate = asyncio.Event()
+        gateway.stream_gate = gate
+        controller.fleet_wake.on_fleet_drained(
+            _drain(session.id, _survivor(run_id, session_id=session.id))
+        )
+        assert await _settle(lambda: bool(gateway.payloads))
+        assert buddy.snapshot().state == "wake_armed"
+
+        gate.set()
+        assert await _settle(lambda: not controller.fleet_wake.has_pending(session.id))
+        assert buddy.snapshot().state == "idle"
+    finally:
+        chacha.close()
 
 
 # ---------------------------------------------------------------------------

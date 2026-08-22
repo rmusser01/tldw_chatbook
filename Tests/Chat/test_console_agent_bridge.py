@@ -95,6 +95,8 @@ from tldw_chatbook.Agents.tool_catalog import (
 from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider, _default_specs
 from tldw_chatbook.Agents.project_instruction_resolver import ProjectInstructionResolver
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
+from tldw_chatbook.Persona_Buddy.controller import PersonaBuddyController
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 from tldw_chatbook.Workspaces.change_turn_tracker import TurnChangeRecord
 
@@ -1455,6 +1457,54 @@ def test_unsafe_model_summary_emits_detail_free_thinking_with_resume_parity(
     assert _activity_marker_signature(resumed) == _activity_marker_signature(live)
     assert "PRIVATE_REASONING_CANARY" not in repr(_activity_marker_signature(live))
     assert "PRIVATE_REASONING_CANARY" not in repr(_activity_marker_signature(resumed))
+
+
+def test_persona_buddy_tool_step_uses_real_on_step_and_releases_result(tmp_path):
+    """The bridge's real step callback brackets tool execution exactly."""
+    buddy = PersonaBuddyController()
+
+    class RecordingAdapter(PersonaBuddyConsoleAdapter):
+        def __init__(self):
+            super().__init__(buddy)
+            self.observed: list[tuple[str, int]] = []
+            self.released_runs: list[str] = []
+
+        def tool_step(self, run_id, sequence, kind):
+            result = super().tool_step(run_id, sequence, kind)
+            if kind in {"tool_call", "tool_result", "error"}:
+                self.observed.append((kind, self.active_owner_count("tool")))
+            return result
+
+        def release_run(self, run_id):
+            self.released_runs.append(run_id)
+            super().release_run(run_id)
+
+    sink = RecordingAdapter()
+    gateway = _ChunkGateway(
+        [[_native_calls("get_current_datetime", {})], ["It is now."]]
+    )
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db,
+        store=store,
+        provider_gateway=gateway,
+        buddy_sink=sink,
+    )
+
+    outcome = _run(
+        bridge, store, session, assistant.id, resolution=_native_resolution()
+    )
+
+    assert outcome.status == "done"
+    assert sink.observed[:2] == [("tool_call", 1), ("tool_result", 0)]
+    assert sink.released_runs
+    assert sink.active_owner_count("tool") == 0
 
 
 def test_native_leaked_prose_is_reset_before_final_answer(tmp_path):

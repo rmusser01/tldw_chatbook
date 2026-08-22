@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any, Callable, Sequence
 from uuid import uuid4
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
     from tldw_chatbook.UI.Screens.change_review_screen import (
         AgentRunsChangeReviewProvider,
     )
@@ -3205,12 +3206,14 @@ class ConsoleAgentBridge:
         skills_service: Any | None = None,
         native_tools_enabled: Callable[[], bool] | None = None,
         change_tracker: Any | None = None,
+        buddy_sink: "PersonaBuddyConsoleAdapter | None" = None,
     ) -> None:
         self._db = agent_runs_db
         # TASK-1971: optional Agent Change Review turn tracker. None (the
         # default, and every pre-existing construction site) disables
         # tracking entirely.
         self._change_tracker = change_tracker
+        self._buddy_sink = buddy_sink
         self._store = store
         self._gateway = provider_gateway
         self._clock = clock
@@ -4063,6 +4066,8 @@ class ConsoleAgentBridge:
         #: `live_steps` itself, so every existing reader of that local is
         #: unchanged.
         run_live_steps: dict[str, _LiveStepFeed] = {primary_live_key: live_steps}
+        buddy_tool_sequences: dict[str, deque[int]] = {}
+        primary_buddy_run_ids: set[str] = set()
         self._publish_live(
             conversation_id,
             primary_live_key,
@@ -4101,6 +4106,24 @@ class ConsoleAgentBridge:
                 # regresses for a step that cannot be attributed.
                 else (run_id or primary_live_key)
             )
+            buddy_run_id = run_id or live_key
+            buddy_sink = self._buddy_sink
+            if buddy_sink is not None:
+                if agent_kind == AGENT_KIND_PRIMARY:
+                    primary_buddy_run_ids.add(buddy_run_id)
+                if step.kind == STEP_TOOL_CALL:
+                    buddy_tool_sequences.setdefault(buddy_run_id, deque()).append(
+                        step.index
+                    )
+                    buddy_sink.tool_step(buddy_run_id, step.index, step.kind)
+                elif step.kind == STEP_TOOL_RESULT:
+                    sequences = buddy_tool_sequences.get(buddy_run_id)
+                    sequence = sequences.popleft() if sequences else step.index
+                    buddy_sink.tool_step(buddy_run_id, sequence, step.kind)
+                    if sequences is not None and not sequences:
+                        buddy_tool_sequences.pop(buddy_run_id, None)
+                elif step.kind == STEP_ERROR:
+                    buddy_sink.release_run(buddy_run_id)
             key_steps = run_live_steps.setdefault(live_key, _LiveStepFeed())
             key_steps.append(
                 # `time.monotonic()` HERE is the step's real start: this hook
@@ -4494,6 +4517,9 @@ class ConsoleAgentBridge:
             # `run_turn` raised, before any teardown below can block.
             with self._change_window_lock:
                 self._inflight_turn_message_ids.discard(assistant_message_id)
+            if self._buddy_sink is not None:
+                for buddy_run_id in primary_buddy_run_ids:
+                    self._buddy_sink.release_run(buddy_run_id)
             # PR2b Task 1: clear the published service in the SAME
             # teardown path that already tears this run down -- not a
             # second one. From this point `fleet_snapshot` reverts to `[]`
@@ -4909,6 +4935,8 @@ class ConsoleAgentBridge:
             run_id: The child's run row id, ``None`` if it never got one.
             status: The child's terminal status.
         """
+        if run_id is not None and self._buddy_sink is not None:
+            self._buddy_sink.release_run(run_id)
         with self._change_window_lock:
             # PR3a-2 Task 4: classify AT SETTLE TIME, per child, under the
             # same lock the window open/close uses -- a drain can carry a

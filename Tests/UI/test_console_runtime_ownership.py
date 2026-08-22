@@ -36,6 +36,8 @@ from tldw_chatbook.Chat.console_runtime import (
     CONSOLE_VIEW_HOOK_SLOTS,
     ConsoleRuntime,
 )
+from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
+from tldw_chatbook.Persona_Buddy.controller import PersonaBuddyController
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
@@ -47,6 +49,18 @@ _RUNTIME_OWNED_CONSTRUCTIONS = ("ConsoleChatStore", "ConsoleChatController")
 
 _PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "tldw_chatbook"
 _RUNTIME_MODULE = "tldw_chatbook/Chat/console_runtime.py"
+
+
+@pytest.mark.unit
+def test_console_runtime_owns_one_screen_free_persona_buddy_sink():
+    """The app-owned runtime, not a screen, retains the trusted sink."""
+    app = type("App", (), {})()
+    app.persona_buddy_controller = PersonaBuddyController()
+    runtime = ConsoleRuntime(app)
+
+    assert isinstance(runtime.persona_buddy_sink, PersonaBuddyConsoleAdapter)
+    assert runtime.persona_buddy_sink is runtime.persona_buddy_sink
+    assert "view" not in vars(runtime.persona_buddy_sink)
 
 
 def _construction_sites(class_name: str) -> list[str]:

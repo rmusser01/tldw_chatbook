@@ -1041,6 +1041,8 @@ class ConsoleRealtimeSession:
             a tab switch mid-conversation must not scatter half a spoken
             exchange across two transcripts (the same discipline V3's
             `pending_session_id` enforces for its own send).
+        buddy_generation: Monotonic screen-local loop generation used only
+            to fence trusted Buddy lifecycle state from replaced loops.
         idle_timeout_seconds: The configured idle ceiling, kept here so the
             exit toast can name it without re-reading config at exit time.
         tap: The `RealtimeMicTap` streaming microphone PCM into the session.
@@ -1122,6 +1124,7 @@ class ConsoleRealtimeSession:
     controller: RealtimeLoopController
     console_session_id: str
     idle_timeout_seconds: float
+    buddy_generation: int = 0
     tap: Any = None
     session: Any = None
     sink: Any = None
@@ -3736,6 +3739,7 @@ class ChatScreen(BaseAppScreen):
         #: session is set. See `ConsoleRealtimeSession` and
         #: `_enter_console_realtime_loop`/`_release_console_realtime_state`.
         self._console_realtime: ConsoleRealtimeSession | None = None
+        self._console_realtime_generation = 0
         #: The worker releasing a just-exited realtime loop's tap/session/
         #: sink, or None. Retained only so `on_unmount` can wait for it --
         #: see `_teardown_console_realtime_loop`.
@@ -6819,6 +6823,7 @@ class ChatScreen(BaseAppScreen):
             return
 
         idle_timeout = realtime_idle_timeout_seconds()
+        self._console_realtime_generation += 1
         controller = RealtimeLoopController(
             self._handle_console_realtime_intent,
             acoustic_barge_in=acoustic_barge_in_enabled(),
@@ -6828,6 +6833,7 @@ class ChatScreen(BaseAppScreen):
             controller=controller,
             console_session_id=console_session_id,
             idle_timeout_seconds=idle_timeout,
+            buddy_generation=self._console_realtime_generation,
         )
         self._console_realtime = session
         session.tick_timer = self.set_interval(0.1, self._tick_console_realtime)
@@ -8392,6 +8398,11 @@ class ChatScreen(BaseAppScreen):
         session = self._console_realtime
         if session is None:
             return
+        self._console_runtime().persona_buddy_sink.voice_state(
+            session.console_session_id,
+            session.buddy_generation,
+            state,
+        )
         gated = session.controller.mic_gated
         session.mic_gated = gated
         tap = session.tap
@@ -8722,6 +8733,10 @@ class ChatScreen(BaseAppScreen):
         session = self._console_realtime
         if session is None:
             return None
+        self._console_runtime().persona_buddy_sink.release_voice(
+            session.console_session_id,
+            session.buddy_generation,
+        )
         self._console_realtime = None
         # Exiting mid-reply IS an interruption: close the row that way
         # rather than leaving a `pending` assistant message that nothing
