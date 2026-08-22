@@ -1863,13 +1863,17 @@ def _assert_first_chat_presentation_callback_usage(
     methods: dict[str, ast.AST],
 ) -> None:
     """Require the moved policy family to consume every presentation edge."""
-    used = set().union(
-        *(
-            _self_owner_accesses(method, FIRST_CHAT_PRESENTATION_ATTRIBUTES)
-            for method in methods.values()
-        )
-    )
-    missing = FIRST_CHAT_PRESENTATION_ATTRIBUTES - used
+    called = {
+        node.func.attr
+        for method in methods.values()
+        for node in ast.walk(method)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "self"
+        and node.func.attr in FIRST_CHAT_PRESENTATION_ATTRIBUTES
+    }
+    missing = FIRST_CHAT_PRESENTATION_ATTRIBUTES - called
     assert not missing, f"first-chat presentation callbacks unused: {sorted(missing)}"
 
 
@@ -2150,10 +2154,10 @@ def test_first_chat_move_oracles_are_non_vacuous() -> None:
     callback_complete["_current_first_chat_defaults"] = ast.parse(
         "def _current_first_chat_defaults(self):\n"
         "    return (\n"
-        "        self._screen_mounted_accessor,\n"
-        "        self._first_chat_presentation_snapshot_fn,\n"
-        "        self._apply_first_chat_control_selection_fn,\n"
-        "        self._restore_first_chat_focus_fn,\n"
+        "        self._screen_mounted_accessor(),\n"
+        "        self._first_chat_presentation_snapshot_fn(),\n"
+        "        self._apply_first_chat_control_selection_fn(None, None),\n"
+        "        self._restore_first_chat_focus_fn(None),\n"
         "    )\n"
     ).body[0]
     _assert_first_chat_presentation_callback_usage(callback_complete)
@@ -2161,9 +2165,9 @@ def test_first_chat_move_oracles_are_non_vacuous() -> None:
     callback_omission_mutant["_current_first_chat_defaults"] = ast.parse(
         "def _current_first_chat_defaults(self):\n"
         "    return (\n"
-        "        self._screen_mounted_accessor,\n"
-        "        self._first_chat_presentation_snapshot_fn,\n"
-        "        self._apply_first_chat_control_selection_fn,\n"
+        "        self._screen_mounted_accessor(),\n"
+        "        self._first_chat_presentation_snapshot_fn(),\n"
+        "        self._apply_first_chat_control_selection_fn(None, None),\n"
         "    )\n"
     ).body[0]
     with pytest.raises(AssertionError, match="presentation callbacks unused"):

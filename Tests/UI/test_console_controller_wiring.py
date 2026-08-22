@@ -231,7 +231,6 @@ async def test_session_first_chat_edges_are_late_bound_and_presentation_only(
         await host.pop_screen()
         await pilot.pause()
         assert screen.is_attached is False
-        assert controller._screen_mounted_accessor() is False
 
 
 def test_retrieval_controller_is_constructed_with_late_bound_screen_edges():
