@@ -37,6 +37,7 @@ from ..model_capabilities import moonshot_model_returns_reasoning_content
 from ..DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..DB.Prompts_DB import PromptsDatabase
+from ..config import load_console_library_migration_seed
 from ..Prompt_Management.prompt_chatbook_record import (
     PromptChatbookRecordError,
     decode_chatbook_prompt_record,
@@ -758,7 +759,11 @@ class ChatbookImporter:
             status.add_error("ChaChaNotes database path not configured")
             return
 
-        db = CharactersRAGDB(db_path, "chatbook_importer")
+        db = CharactersRAGDB(
+            db_path,
+            "chatbook_importer",
+            console_library_migration_seed=load_console_library_migration_seed(),
+        )
         conversation_service, _, _ = build_local_citation_conversation_service(
             db,
             sidecar_path=get_user_data_dir()
@@ -1423,7 +1428,11 @@ class ChatbookImporter:
             status.add_error("ChaChaNotes database path not configured")
             return
 
-        db = CharactersRAGDB(db_path, "chatbook_importer")
+        db = CharactersRAGDB(
+            db_path,
+            "chatbook_importer",
+            console_library_migration_seed=load_console_library_migration_seed(),
+        )
         notes_dir = extract_dir / "content" / "notes"
         logger.info(f"ChatbookImporter._import_notes: Looking for notes in {notes_dir}")
 
@@ -1540,7 +1549,11 @@ class ChatbookImporter:
             status.add_error("ChaChaNotes database path not configured")
             return
 
-        db = CharactersRAGDB(db_path, "chatbook_importer")
+        db = CharactersRAGDB(
+            db_path,
+            "chatbook_importer",
+            console_library_migration_seed=load_console_library_migration_seed(),
+        )
         chars_dir = extract_dir / "content" / "characters"
         logger.info(
             f"ChatbookImporter._import_characters: Looking for characters in {chars_dir}"
@@ -2059,7 +2072,11 @@ class ChatbookImporter:
             status.add_error("ChaChaNotes database path not configured")
             return
 
-        db = CharactersRAGDB(db_path, "chatbook_importer")
+        db = CharactersRAGDB(
+            db_path,
+            "chatbook_importer",
+            console_library_migration_seed=load_console_library_migration_seed(),
+        )
         kept_dir = extract_dir / "content" / "kept_briefings"
 
         for kept_id in kept_briefing_ids:

@@ -50,6 +50,7 @@ import logging
 from typing import List, Dict, Optional, Any, Union, Set, Tuple, Sequence, TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryMigrationSeed
     from tldw_chatbook.Sync_Interop.chat_outbox_producer import (
         ChatSyncDeleteIntentRecord,
         ChatSyncIntentRecord,
@@ -2942,6 +2943,7 @@ UPDATE db_schema_version
         db_path: Union[str, Path],
         client_id: str,
         check_integrity_on_startup: bool = False,
+        console_library_migration_seed: "ConsoleLibraryMigrationSeed | None" = None,
     ):
         """
         Initializes the CharactersRAGDB instance.
@@ -2955,6 +2957,8 @@ UPDATE db_schema_version
             client_id: A unique identifier for this client instance. Used for
                        tracking changes in the sync log and records. Must not be empty.
             check_integrity_on_startup: Whether to run integrity check on startup.
+            console_library_migration_seed: Sanitized legacy library policy needed
+                only when migrating a pre-existing v44 database.
 
         Raises:
             ValueError: If `client_id` is empty or None.
@@ -2976,6 +2980,7 @@ UPDATE db_schema_version
         if not client_id:
             raise ValueError("Client ID cannot be empty or None.")
         self.client_id = client_id
+        self.console_library_migration_seed = console_library_migration_seed
 
         logger.info(
             f"Initializing CharactersRAGDB for path: {self.db_path_str} [Client ID: {self.client_id}]"
@@ -6240,6 +6245,22 @@ UPDATE db_schema_version
                 logger.info(
                     f"Checking DB schema '{self._SCHEMA_NAME}'. Current version: {current_db_version}. Code supports: {target_version}"
                 )
+
+                if (
+                    current_db_version == 44
+                    and target_version > 44
+                ):
+                    from tldw_chatbook.Chat.console_library_policy import (
+                        ConsoleLibraryMigrationSeed,
+                    )
+
+                    if not isinstance(
+                        self.console_library_migration_seed,
+                        ConsoleLibraryMigrationSeed,
+                    ):
+                        raise SchemaError(
+                            "Console library migration seed is required for v44 upgrade."
+                        )
 
                 if current_db_version == target_version:
                     self._ensure_notes_fts_update_trigger_handles_undelete(conn)

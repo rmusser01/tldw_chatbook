@@ -7223,7 +7223,9 @@ def initialize_all_databases():
     logger.info(f"Attempting to initialize ChaChaNotes_DB at: {chachanotes_path}")
     try:
         chachanotes_db = CharactersRAGDB(
-            db_path=chachanotes_path, client_id=CLI_APP_CLIENT_ID
+            db_path=chachanotes_path,
+            client_id=CLI_APP_CLIENT_ID,
+            console_library_migration_seed=load_console_library_migration_seed(),
         )
         seed_builtin_content(chachanotes_db)
         logger.success(f"ChaChaNotes_DB initialized successfully at {chachanotes_path}")
@@ -7275,6 +7277,7 @@ def get_chachanotes_db_lazy() -> Optional[CharactersRAGDB]:
                 db_path=chachanotes_path,
                 client_id=CLI_APP_CLIENT_ID,
                 check_integrity_on_startup=check_integrity,
+                console_library_migration_seed=load_console_library_migration_seed(),
             )
             seed_builtin_content(chachanotes_db)
             logger.success(

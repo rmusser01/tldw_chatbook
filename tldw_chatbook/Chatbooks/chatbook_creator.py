@@ -41,6 +41,7 @@ from ..Chat.provider_continuation import (
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..DB.Prompts_DB import PromptsDatabase
+from ..config import load_console_library_migration_seed
 from ..Prompt_Management.prompt_chatbook_record import encode_chatbook_prompt_record
 from ..STT.persistence import load_transcription_provenance_document
 from ..Utils.input_validation import sanitize_string
@@ -495,7 +496,11 @@ class ChatbookCreator:
             )
             return
 
-        db = CharactersRAGDB(db_path, "chatbook_creator")
+        db = CharactersRAGDB(
+            db_path,
+            "chatbook_creator",
+            console_library_migration_seed=load_console_library_migration_seed(),
+        )
         conversation_service, _, _ = build_local_citation_conversation_service(
             db,
             sidecar_path=get_user_data_dir()
@@ -1143,7 +1148,11 @@ class ChatbookCreator:
         if not db_path:
             return
 
-        db = CharactersRAGDB(db_path, "chatbook_creator")
+        db = CharactersRAGDB(
+            db_path,
+            "chatbook_creator",
+            console_library_migration_seed=load_console_library_migration_seed(),
+        )
         notes_dir = work_dir / "content" / "notes"
         notes_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1225,7 +1234,11 @@ class ChatbookCreator:
         if not db_path:
             return
 
-        db = CharactersRAGDB(db_path, "chatbook_creator")
+        db = CharactersRAGDB(
+            db_path,
+            "chatbook_creator",
+            console_library_migration_seed=load_console_library_migration_seed(),
+        )
         chars_dir = work_dir / "content" / "characters"
         chars_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1521,7 +1534,11 @@ class ChatbookCreator:
             )
             return
 
-        db = CharactersRAGDB(db_path, "chatbook_creator")
+        db = CharactersRAGDB(
+            db_path,
+            "chatbook_creator",
+            console_library_migration_seed=load_console_library_migration_seed(),
+        )
         kept_dir = work_dir / "content" / "kept_briefings"
         kept_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1708,7 +1725,11 @@ class ChatbookCreator:
                 )
                 return
 
-            db = CharactersRAGDB(db_path, "chatbook_creator")
+            db = CharactersRAGDB(
+                db_path,
+                "chatbook_creator",
+                console_library_migration_seed=load_console_library_migration_seed(),
+            )
 
             try:
                 # Get character card (which includes all details)

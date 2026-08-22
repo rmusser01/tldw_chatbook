@@ -20,7 +20,7 @@ import pyperclip
 from loguru import logger
 
 # Local imports
-from ..config import get_cli_setting
+from ..config import get_cli_setting, load_console_library_migration_seed
 from ..Metrics.metrics_logger import log_counter, log_histogram
 from ..LLM_Calls.LLM_API_Calls import (
     chat_with_openai,
@@ -65,7 +65,11 @@ class DocumentGenerator:
             db_path: Path to the ChaChaNotes database
             client_id: Client identifier for database operations
         """
-        self.db = CharactersRAGDB(db_path, client_id)
+        self.db = CharactersRAGDB(
+            db_path,
+            client_id,
+            console_library_migration_seed=load_console_library_migration_seed(),
+        )
 
         # Load prompt configurations
         self.timeline_config = get_cli_setting(
