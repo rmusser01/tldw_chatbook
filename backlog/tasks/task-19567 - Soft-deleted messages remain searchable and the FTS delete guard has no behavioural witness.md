@@ -198,9 +198,13 @@ the two census tests here.
 
 * `tldw_chatbook/DB/ChaChaNotes_DB.py` — `search_messages_by_content` joins
   `conversations`
-* `tldw_chatbook/DB/migrations/chachanotes_v44_to_v45_sync_log_retention.sql` —
+* `tldw_chatbook/DB/migrations/chachanotes_v45_to_v46_sync_log_retention.sql` —
   `messages_au` / `keyword_collections_au` redefinition + index reset
 * `Tests/DB/test_fts_soft_delete_index_witness.py` (new)
 * `Tests/ChaChaNotesDB/test_chachanotes_db.py` — the unscoped pin
 * `Tests/DB/test_chachanotes_sync_log_retention_migration.py` — the FTS reset
   assertion
+
+Note: this step shipped as v44→v45 and was renumbered to **v45→v46** when
+TASK-19057 merged to dev claiming v45 first; the FTS trigger repairs moved
+with it and are unchanged. See task-19564's notes for the renumber.

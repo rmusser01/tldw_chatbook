@@ -197,9 +197,17 @@ def test_a_failure_mid_step_rewinds_to_v44_with_nothing_applied(
     """This step must be atomic and re-enterable (task-19553's rule).
 
     The purge here DELETEs user rows, so a step that could commit half of
-    itself would destroy content while leaving the stamp at 44 and the
+    itself would destroy content while leaving the stamp behind and the
     retention triggers absent -- the database would then re-enter the step
     forever. Poison a statement in the middle and require a full rewind.
+
+    Derived, not assumed, after this step was renumbered to run AFTER the
+    Actor Packs step (TASK-19057): the rewind target is still **44**, not 45,
+    because `_initialize_schema` runs the whole chain inside one outer
+    transaction and each step's `self.transaction()` nests into it rather than
+    committing on its own. So poisoning V45->V46 also unwinds the v44->v45
+    Actor Packs work -- asserted below on `actor_*`, which is the first pin
+    this repo has on the whole chain being atomic rather than each link.
     """
     db_path = tmp_path / "poisoned.db"
     needle = "zqxpoisonneedle"
@@ -243,6 +251,13 @@ def test_a_failure_mid_step_rewinds_to_v44_with_nothing_applied(
             connection.execute("SELECT COUNT(*) FROM sync_log").fetchone()[0]
             == rows_before
         ), "no row may be purged by a step that did not complete"
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' "
+                "AND name LIKE 'actor\\_%' ESCAPE '\\'"
+            ).fetchone()[0]
+            == 0
+        ), "the EARLIER step in the same chain must rewind with this one"
     finally:
         connection.close()
 
@@ -257,6 +272,11 @@ def test_a_failure_mid_step_rewinds_to_v44_with_nothing_applied(
         assert migrated.execute_query(
             "SELECT COUNT(*) FROM sync_log WHERE payload LIKE ?", (f"%{needle}%",)
         ).fetchone()[0] == 0
+        # ...and the step it now runs after landed too, in the same replay.
+        assert migrated.execute_query(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' "
+            "AND name LIKE 'actor\\_%' ESCAPE '\\'"
+        ).fetchone()[0] == 2
     finally:
         migrated.close_connection()
 

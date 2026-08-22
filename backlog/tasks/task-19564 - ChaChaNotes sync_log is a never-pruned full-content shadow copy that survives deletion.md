@@ -127,8 +127,8 @@ row on `entity_id` AND `version`:
 
 ### What shipped
 
-* **Schema v45** (`_CURRENT_SCHEMA_VERSION` 44 → 45) +
-  `DB/migrations/chachanotes_v44_to_v45_sync_log_retention.sql`, run through
+* **Schema v46** (`_CURRENT_SCHEMA_VERSION` 45 → 46) +
+  `DB/migrations/chachanotes_v45_to_v46_sync_log_retention.sql`, run through
   `_execute_migration_statements` inside `self.transaction()` per task-19553's
   atomicity convention. Bare `CREATE TRIGGER` statements so
   `_drop_superseded_trigger` makes the step re-enterable.
@@ -220,7 +220,7 @@ documented gap; **Qodo's review of PR #1974 reached the same finding
 independently**, which is a strong signal it should not ship as a gap at all.
 It does not: the rule is extended here rather than deferred.
 
-Reproduced at v45 before the fix, through the shipped public APIs:
+Reproduced before the fix, through the shipped public APIs:
 
 | sequence (public API path) | result |
 | --- | --- |
@@ -230,7 +230,7 @@ Reproduced at v45 before the fix, through the shipped public APIs:
 | 4 edits of a world-book entry | 4/4 old bodies retained (unbounded growth continues) |
 
 **Why the six's rule does not extend to them.** Two findings from probing a
-live v45 database, both of which invalidate a naive `version < NEW.version`
+live database, both of which invalidate a naive `version < NEW.version`
 trigger:
 
 * `world_book_entries` has **no `version` column and no `deleted` column**.
@@ -321,7 +321,7 @@ book (`delete_world_book` is a soft delete), and retention neither causes nor
 worsens it. Recorded rather than fixed inside a retention change.
 
 Also worth recording: `get_sync_log_entries(since_change_id=…)` has **no**
-version filter — it is a change-feed API, and after v45 it returns a frontier
+version filter — it is a change-feed API, and after this change it returns a frontier
 snapshot rather than a complete log. It has zero ChaChaNotes production callers
 today (the production hits belong to the Prompts DB's same-named method), so
 nothing breaks; but anything built on it later must be written knowing the feed
@@ -341,17 +341,20 @@ which is also the honest name: retention is a different concern from emission.
 
 ### Modified/added files
 
-* `tldw_chatbook/DB/ChaChaNotes_DB.py` — version bump, `_migrate_from_v44_to_v45`,
+* `tldw_chatbook/DB/ChaChaNotes_DB.py` — version bump, `_migrate_from_v45_to_v46`,
   `_SYNC_LOG_RETENTION_SCOPES`, `_SYNC_LOG_LATEST_ONLY_SCOPES`,
   `_sync_log_scope_identifiers`, `prune_sync_log`, `delete_sync_log_entries`,
   `delete_sync_log_entries_before`
-* `tldw_chatbook/DB/migrations/chachanotes_v44_to_v45_sync_log_retention.sql` (new)
+* `tldw_chatbook/DB/migrations/chachanotes_v45_to_v46_sync_log_retention.sql` (new)
 * `tldw_chatbook/DB/sql_validation.py` — `VALID_COLUMNS` entries for
   `chat_dictionaries` / `world_books` / `world_book_entries`, without which
   `validate_column_name` fails closed for the retention sweep
 * `Tests/DB/test_chachanotes_sync_log_retention.py` (new)
 * `Tests/DB/test_chachanotes_sync_log_retention_migration.py` (new — carries the
-  repo's exact schema-version pin, moved on from the v43→v44 file)
+  repo's exact schema-version pin, moved on from the Actor Packs v45 file)
+* `Tests/ChaChaNotesDB/test_actor_pack_migration.py` — its three exact `== 45`
+  pins relaxed to `>= 45` / the dynamic constant, because this step is now the
+  newest migration and owns the exact pin (TASK-19554's convention)
 * `Tests/DB/test_sql_validation.py` — the three new column sets pinned against a
   live migrated database
 * `Tests/DB/test_chachanotes_sync_conflict_preservation_migration.py` — pin
@@ -361,14 +364,80 @@ which is also the honest name: retention is a different concern from emission.
   `Tests/Notes/test_note_import_executor.py` — three assertions that counted
   superseded `sync_log` history, rewritten to assert the frontier directly
 
+### Renumbered v44→v45 ⇒ v45→v46 (schema collision, 2026-08-22)
+
+TASK-19057 (portable Actor Pack identity + Persona intents) merged to dev
+claiming v44→v45 while this branch was in review, so both migrations asserted
+the same version. Renumbered here rather than hand-merged, because a migration
+number is not a mechanical conflict resolution:
+
+* `chachanotes_v44_to_v45_sync_log_retention.sql` →
+  `chachanotes_v45_to_v46_sync_log_retention.sql`; runner renamed to
+  `_migrate_from_v45_to_v46`, entry guard `_require_migration_entry_version(
+  conn, 45, "V45→V46")`, dispatch row `45: self._migrate_from_v45_to_v46`, so
+  this step now runs AFTER Actor Packs. Their method is byte-untouched.
+* `_CURRENT_SCHEMA_VERSION = 46`. The comment convention on dev is a **single
+  one-line description of the newest step, replaced on each bump** — checked
+  across the last eight bumps (v38→v45), none of which kept a list — so it now
+  reads `# \`sync_log\` bounded to its reachable frontier (task-19564).`
+  Actor Packs' attribution lives where it is durable: the migration filename,
+  the runner, and its own test module.
+* The exact `==` pin moved to this step's own test file (`== 46`), and the
+  Actor Packs test's three `== 45` pins were relaxed — TASK-19554's convention
+  as repaired by TASK-19568. Leaving a literal `== 45` there would have red on
+  version arithmetic and short-circuited its real column assertions.
+
+Re-derived rather than assumed, on a live v46 database:
+
+* **Actor Packs adds no `sync_log` writer** — 2 tables, 1 index, zero triggers.
+  Writers stay at nine and the census is green, which is the correct outcome
+  rather than a missed one; the guard's teeth were re-proved by removing
+  `world_book_entries` from the covered set (red with the right message) and
+  Edit-restoring.
+* **The order-independence experiment was re-run at v46** — 7 permutations,
+  all identical, with the control still showing `update@cid3, delete@cid4`
+  versus `delete@cid3, update@cid4` when retention is off.
+* **Atomicity at the new position is STRONGER than before, and the number is
+  derived.** Poisoning `V45→V46` on a real v44 database rewinds the stamp to
+  **44, not 45**: `_initialize_schema` wraps the whole chain in one outer
+  transaction and each step's `self.transaction()` nests into it rather than
+  committing independently, so the Actor Packs step unwinds too. Measured:
+  stamp 44, 0 prune triggers, `sync_log` rows unchanged, and **0 `actor_*`
+  tables**. That last assertion is new — it is the first pin in this repo on
+  the whole chain being atomic rather than each link — and with the poison
+  removed the same file replays to 46 with 18 prune triggers and 2 `actor_*`
+  tables.
+
 ### Verification (final state)
 
-`Tests/DB` + `Tests/ChaChaNotesDB` + `Tests/Sync_Interop`: **1723 passed, 1
-skipped** (1710 → +13 new). `Tests/Notes`: **2847 passed, 5 skipped**.
-`Tests/Character_Chat` + `Tests/Architecture`: 1162 passed, 1 skipped, 4 failed
-— all four in `Tests/Architecture` and about `UI/Screens/chat_screen.py`, a
-file this branch does not touch (pre-existing dev reds). Repo-wide
-`--collect-only -q`: **56182 tests collected**, with
-`Tests/UI/test_library_file_notes_workspace.py` ignored — it errors at
-collection (`function uses no argument 'push_phase'`) on a file identical to
-the merge base, last touched 2026-08-20 by an unrelated commit.
+After the renumber, rebased onto dev `684c6aba4`:
+
+`Tests/DB` + `Tests/ChaChaNotesDB` + `Tests/Sync_Interop`: **1733 passed, 1
+skipped, 1 failed** — 1723 (this branch's previous green) + 10 tests dev's own
+`test_actor_pack_migration.py` brings into the same gate. `Tests/Notes`:
+**2847 passed, 5 skipped**. `ruff`: clean.
+
+The one red is **not this branch's**:
+`test_sql_validation.py::test_no_missing_tables` fails with *"Live schema has
+tables not in VALID_TABLES['chachanotes']: ['actor_pack_persona_intents',
+'actor_portable_identities']"*. TASK-19057 created those two tables and did not
+register them. Proved not-ours three ways: the `VALID_TABLES` block is
+**byte-identical to dev's**, dev's copy already lacks both names, and this
+migration contains **zero** `CREATE TABLE`. Reported, deliberately not fixed
+inside this PR. (Their index census WAS updated —
+`idx_actor_pack_persona_intents_state` is pinned in
+`Tests/ChaChaNotesDB/test_index_census.py` — so only the table allow-list
+drifted.)
+
+Repo-wide `--collect-only -q`: **56521 collected, 4 errors**, all four new with
+dev and all four in `Tests/UI/test_settings_*`. Root cause is inside TASK-19057
+too: `TldwCli.__init__` → `_wire_character_persona_services` calls
+`persona_actor_pack_coordinator.recover()` guarded by `except
+PersonaActorPackCoordinatorError`, but with no DB the repository raises
+`AttributeError: 'NoneType' object has no attribute 'execute_query'`, which
+escapes the guard and breaks app construction for any test that builds the app
+without a ChaChaNotes DB. `tldw_chatbook/Actor_Packs/` did not exist at this
+branch's merge base and is untouched here. Also still red and unrelated:
+`Tests/UI/test_library_file_notes_workspace.py` (collection, `function uses no
+argument 'push_phase'`) and four `Tests/Architecture` failures about
+`UI/Screens/chat_screen.py`.

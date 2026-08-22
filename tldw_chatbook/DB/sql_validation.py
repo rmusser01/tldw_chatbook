@@ -251,7 +251,7 @@ VALID_COLUMNS = {
     },
     # task-19564: registered so ``CharactersRAGDB.prune_sync_log()`` can route
     # its retention-scope identifiers through ``validate_column_name`` for the
-    # three ``sync_log`` writers v45 covers with the latest-only rule. Without
+    # three ``sync_log`` writers v46 covers with the latest-only rule. Without
     # an entry here that call fails CLOSED (see this function's TASK-864 note),
     # so these three sets are load-bearing, not decorative. Columns verified
     # against ``PRAGMA table_info`` on a live fully-migrated database and
