@@ -461,9 +461,20 @@ def test_a_partially_failed_type_is_not_reported_like_a_successful_one():
 @pytest.mark.parametrize("successful", [0, 1, 3])
 @pytest.mark.parametrize("skipped", [0, 1, 3])
 @pytest.mark.parametrize("failed", [0, 1, 3])
-def test_headline_never_contradicts_the_summary_counts(successful, skipped, failed):
-    """AC#3 over every combination of imported / skipped / failed."""
-    total = successful + skipped + failed
+@pytest.mark.parametrize("unaccounted", [0, 2])
+def test_headline_never_contradicts_the_summary_counts(
+    successful, skipped, failed, unaccounted
+):
+    """AC#3 over every combination of imported / skipped / failed.
+
+    ``unaccounted`` is the fourth dimension the summary panel can show and
+    the one no counter names: a content type that bails out before recording
+    anything is counted in Total but appears in none of Imported / Skipped /
+    Failed. Without this axis the sweep only ever built statuses where
+    ``total == imported + skipped + failed``, so it could not see the case
+    where the panel reads "Total 5 / Imported 1 / Skipped 0 / Failed 0".
+    """
+    total = successful + skipped + failed + unaccounted
     status = _status(total=total, successful=successful, skipped=skipped, failed=failed)
 
     title, banner, state = describe_import_outcome(status)
@@ -478,11 +489,21 @@ def test_headline_never_contradicts_the_summary_counts(successful, skipped, fail
         assert not claims_nothing, (banner, status.to_dict())
         assert str(successful) in banner, banner
 
-    if skipped or failed:
+    if skipped or failed or unaccounted:
         assert state != "outcome-imported", (state, banner)
         assert "✅" not in title, (title, banner)
-    if successful and not skipped and not failed:
+    if successful and not skipped and not failed and not unaccounted:
         assert state == "outcome-imported", (state, banner)
+
+    # Every item the run was asked to import is accounted for on screen: the
+    # banner may not report a Total the Imported/Skipped/Failed counters do
+    # not add up to without naming the difference.
+    assert status.unaccounted_items == unaccounted, status.to_dict()
+    if unaccounted:
+        assert "unaccounted for" in banner, (banner, status.to_dict())
+        assert str(unaccounted) in banner, (banner, status.to_dict())
+    else:
+        assert "unaccounted for" not in banner, banner
 
 
 def test_an_empty_chatbook_reports_nothing_rather_than_success():
@@ -523,20 +544,26 @@ def test_an_all_skipped_import_says_in_words_that_nothing_was_imported(
     assert status.successful_items == 0
 
 
+def _assert_ledger_sums_to_the_aggregates(status: ImportStatus) -> None:
+    """Every aggregate counter is the sum of its per-type column."""
+    assert status.successful_items == sum(
+        result.successful for result in status.by_type.values()
+    ), status.to_dict()
+    assert status.skipped_items == sum(
+        result.skipped for result in status.by_type.values()
+    ), status.to_dict()
+    assert status.failed_items == sum(
+        result.failed for result in status.by_type.values()
+    ), status.to_dict()
+
+
 def test_per_type_results_sum_to_the_aggregate_counts(chatbook_zip, destination_paths):
     """The per-type ledger and the totals are two views of one run; a row that
     forgot to record its type would show up here."""
     status = _import_once(chatbook_zip, destination_paths)
 
-    assert status.successful_items == sum(
-        result.successful for result in status.by_type.values()
-    )
-    assert status.skipped_items == sum(
-        result.skipped for result in status.by_type.values()
-    )
-    assert status.failed_items == sum(
-        result.failed for result in status.by_type.values()
-    )
+    _assert_ledger_sums_to_the_aggregates(status)
+    assert status.successful_items > 0, status.to_dict()
     assert status.total_items == status.planned_items
     assert {content_type for content_type in status.by_type} == {
         ContentType.CONVERSATION,
@@ -544,6 +571,34 @@ def test_per_type_results_sum_to_the_aggregate_counts(chatbook_zip, destination_
         ContentType.CHARACTER,
         ContentType.MEDIA,
     }
+
+
+def test_the_ledger_also_sums_when_items_skip_and_fail(
+    chatbook_zip, destination_paths, monkeypatch
+):
+    """The all-success run above asserts ``0 == 0`` for the skipped and failed
+    columns, so a recorder that dropped its ledger write on either of those
+    paths passed it. This run produces all three outcomes at once.
+
+    One note is already present (skip), every character write raises (fail),
+    and the rest lands (success).
+    """
+    seeded = CharactersRAGDB(destination_paths["ChaChaNotes"], "test_client")
+    seeded.add_note(title="[Imported] Packing list", content="already here")
+
+    def _refuse(self, *args, **kwargs):
+        raise RuntimeError("character table is locked")
+
+    monkeypatch.setattr(CharactersRAGDB, "add_character_card", _refuse)
+
+    status = _import_once(chatbook_zip, destination_paths)
+
+    assert status.successful_items > 0, status.to_dict()
+    assert status.skipped_items > 0, status.to_dict()
+    assert status.failed_items > 0, status.to_dict()
+    _assert_ledger_sums_to_the_aggregates(status)
+    assert status.result_snapshot(ContentType.NOTE).skipped > 0, status.to_dict()
+    assert status.result_snapshot(ContentType.CHARACTER).failed > 0, status.to_dict()
 
 
 def test_status_dict_carries_the_per_type_breakdown(chatbook_zip, destination_paths):

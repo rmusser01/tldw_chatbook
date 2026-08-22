@@ -208,14 +208,34 @@ class ImportStatus:
         return sum(result.attempted for result in self.by_type.values())
 
     @property
+    def accounted_items(self) -> int:
+        """Items whose fate this run actually recorded."""
+        return self.successful_items + self.skipped_items + self.failed_items
+
+    @property
+    def attempted_items(self) -> int:
+        """Items this run was asked to import, however it found out."""
+        return max(self.planned_items, self.total_items, self.accounted_items)
+
+    @property
+    def unaccounted_items(self) -> int:
+        """Attempted items whose fate was never recorded.
+
+        Non-zero when a content type bails out before recording anything (a
+        missing database path, say). The completion panel has to say so:
+        otherwise Total silently exceeds Imported + Skipped + Failed and the
+        summary reads "0 failed" for items that never landed (task-19734).
+        """
+        return self.attempted_items - self.accounted_items
+
+    @property
     def outcome(self) -> str:
         """What actually happened across the whole import.
 
         Mirrors :attr:`ImportTypeResult.outcome`, so a run and each of its
         types are described in the same vocabulary.
         """
-        accounted = self.successful_items + self.skipped_items + self.failed_items
-        attempted = max(self.planned_items, self.total_items, accounted)
+        attempted = self.attempted_items
         if attempted <= 0:
             return IMPORT_OUTCOME_EMPTY
         if self.successful_items <= 0:

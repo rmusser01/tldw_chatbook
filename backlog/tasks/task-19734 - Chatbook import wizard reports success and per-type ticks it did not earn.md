@@ -204,6 +204,33 @@ Completed Successfully!` — over `IMPORTED STAT: 0` — and lists the options
 `['import_tags', 'merge_tags', 'preserve_timestamps', ...]`. On this branch
 the same probe passes.
 
+**Independent review fixes (2 commits on top).** Two claims in these notes
+did not survive being probed:
+
+1. *"a test asserts they sum"* was true only for the successful column.
+   `test_per_type_results_sum_to_the_aggregate_counts` ran a clean import, so
+   its skipped and failed assertions were `0 == 0`: deleting
+   `record_failure`'s ledger write reddened **nothing** in the whole
+   `Tests/Chatbooks/` suite, and deleting `record_skipped`'s reddened only
+   the end-to-end re-import test. Added
+   `test_the_ledger_also_sums_when_items_skip_and_fail`, which drives one
+   import producing all three outcomes at once (a pre-seeded note skips,
+   every character write raises, the rest lands). Both recorder mutations now
+   redden it.
+
+2. *"the headline and the summary can never contradict each other"* (AC#3)
+   was swept only over statuses built as `total = imported + skipped +
+   failed`, which excludes the one case the new pre-dispatch `plan()` call
+   creates. A type that bails out before recording anything rendered
+   `⚠️ Import finished — 1 of 5 item(s) imported.` over **Total 5 / Imported 1
+   / Skipped 0 / Failed 0** — four items missing and "0 failed" on screen.
+   `ImportStatus` now exposes `accounted_items` / `attempted_items` /
+   `unaccounted_items`, the partial, skipped and failed banners name the
+   shortfall ("… (4 unaccounted for)", the same phrase the per-type rows
+   already used), and the AC#3 sweep gained an `unaccounted` axis plus an
+   assertion that the banner must name any difference between Total and the
+   three counters.
+
 **Modified/added files.** `tldw_chatbook/Chatbooks/chatbook_importer.py`,
 `tldw_chatbook/UI/Wizards/ChatbookImportWizard.py`,
 `tldw_chatbook/css/features/_wizards.tcss` (+ regenerated bundle),

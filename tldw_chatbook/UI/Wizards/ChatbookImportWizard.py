@@ -129,10 +129,11 @@ def describe_type_result(result: ImportTypeResult, noun: str) -> Tuple[str, str]
         return "warning", text
 
     if outcome == IMPORT_OUTCOME_SKIPPED:
-        return (
-            "warning",
-            f"⊘ Skipped {result.skipped} {noun} — already present, nothing imported",
-        )
+        detail = _count_detail((result.attempted - result.accounted, "unaccounted for"))
+        text = f"⊘ Skipped {result.skipped} {noun} — already present, nothing imported"
+        if detail:
+            text += f" ({detail})"
+        return "warning", text
 
     detail = _count_detail(
         (result.failed, "failed"),
@@ -164,6 +165,7 @@ def describe_import_outcome(status: ImportStatus) -> Tuple[str, str, str]:
         detail = _count_detail(
             (status.skipped_items, "skipped"),
             (status.failed_items, "failed"),
+            (status.unaccounted_items, "unaccounted for"),
         )
         banner = (
             f"⚠️ Import finished — {status.successful_items} of "
@@ -171,16 +173,20 @@ def describe_import_outcome(status: ImportStatus) -> Tuple[str, str, str]:
         )
         banner += f" ({detail})." if detail else "."
     elif outcome == IMPORT_OUTCOME_SKIPPED:
+        detail = _count_detail((status.unaccounted_items, "unaccounted for"))
         banner = (
-            f"⊘ Nothing was imported — all {status.skipped_items} item(s) were "
-            "already present and were skipped."
+            f"⊘ Nothing was imported — {status.skipped_items} of "
+            f"{status.attempted_items} item(s) were already present and were "
+            "skipped"
         )
+        banner += f" ({detail})." if detail else "."
     elif outcome == IMPORT_OUTCOME_EMPTY:
         banner = "⊘ Nothing was imported — this chatbook contained no items."
     else:
         detail = _count_detail(
             (status.failed_items, "failed"),
             (status.skipped_items, "skipped"),
+            (status.unaccounted_items, "unaccounted for"),
         )
         banner = "❌ Nothing was imported"
         banner += f" — {detail}." if detail else " and the import reported no results."
