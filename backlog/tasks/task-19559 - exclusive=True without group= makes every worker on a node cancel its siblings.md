@@ -257,3 +257,135 @@ test_article_search_hides_a_day_header_whose_whole_group_is_filtered_out` is a
 `TZ=UTC` and fails under `America/Los_Angeles`. The other two residual
 failures (`test_persistent_diagnostic_inventory`, `test_screen_size_ratchet
 [chat_screen.py]`) were confirmed pre-existing at that same base.
+
+## Qodo review response (PR #1951)
+
+Three findings, all accepted. Baselines below are the PR head `738bd6179`.
+
+**Q1 (High) — a cancelled rating locked the card out permanently. Real, and
+the independent review of this branch missed it.** The review checked the
+re-enable paths and cleared them, but it read the generic `except Exception:`
+branch, which *does* reset `_reviewed_presentation` before re-enabling. The
+`except asyncio.CancelledError:` branch is separate — it exists precisely
+because `CancelledError` is a `BaseException` that `except Exception` cannot
+observe, which is this task's own headline — and it never got the same
+treatment. The branch's signature mechanism created the gap.
+
+Probe at `738bd6179`, real Textual workers + real ChaChaNotes DB, cancelling
+the in-flight rating with `app.workers.cancel_group(window,
+"study-flashcard-rating")` (exactly what an ungrouped exclusive sibling did):
+
+```
+panel_live=True  buttons_enabled=False  _reviewed_presentation=3
+_review_presentation=3  submissions=[]  repetitions=0  interval=0
+```
+
+The panel is still mounted, every rating button is disabled, the presentation
+is marked reviewed forever, and nothing was ever written — a direct
+`submit_rating()` bypass is refused too. The user's review is gone with no way
+to make it again.
+
+**Fix — Qodo's option B, not option A.** The marker is no longer claimed before
+the await; it is claimed the instant the write *returns*, before the arrival
+guard can return early. That costs nothing, because the lock is held across the
+await: a queued second submission cannot reach the duplicate check until the
+first has either recorded its marker or failed. So cancellation has nothing to
+roll back — it only hands the buttons back (guarded by `_review_panel_is_live()`
+and by its own `try/except`, so a restore failure can never replace the
+`CancelledError` on its way out) and re-raises.
+
+**The unknown, and which way it is erred.** A cancellation cannot say whether
+the write landed. For the *local* backend it can:
+`StudyScopeService.submit_flashcard_review` reaches `LocalStudyService` through
+`_maybe_await`, which never suspends for a synchronous result, so a
+`CancelledError` delivered at that await must have arrived before the DB call —
+nothing was written. For the *server* backend the await is a real HTTP
+round-trip and a cancellation can lose the response to a review the server
+already applied. The code does **not** branch on the backend for this (that
+reasoning depends on a collaborator's internal await structure, which is not
+ours to pin). It errs toward **retryable**: the marker is not claimed, so the
+user can rate the card again. Erring this way risks one re-application of SM-2
+in server mode; erring the other way guarantees a frozen panel holding a review
+that was never written and can never be written. The retry is made an informed
+one — the status line and a toast say the save may not have landed, instead of
+leaving the panel looking untouched.
+
+**Born red** (`test_cancelled_rating_leaves_the_card_retryable`): at
+`738bd6179` it fails on `_rating_buttons_enabled(window)` — the buttons are
+still disabled, so the second press cannot even fire (`Button.press()` is a
+no-op on a disabled button) — and the DB still reads `repetitions=0`. After the
+fix the retry lands exactly once: `repetitions=1, interval=1`.
+
+**The three review properties, re-verified and mutation-tested** (each drives
+real Textual workers against a real DB and reads persisted state):
+
+| property | test | mutation | result under mutation |
+|---|---|---|---|
+| two rapid presses ⇒ one SM-2 | `..._double_press_on_one_card_applies_sm2_once` | delete the UI disable | still **passes** — the durable gate alone holds it |
+| bypassing the buttons ⇒ one SM-2 | `..._direct_submit_rating_call_cannot_double_apply_sm2` (new) | `if False and self._reviewed_presentation == presentation` | **fails**: `repetitions=2 interval=6` |
+| re-dealt card ⇒ each re-review recorded | `..._re_dealt_card_records_every_genuine_re_review` (new) | `presentation = 0` (per-card, not per-presentation) | **fails**: `repetitions=1 interval=1`, one review lost |
+
+The middle row is the one that matters for this change: moving the marker to
+after the write could have opened a double-apply window for a programmatic
+caller, and it does not — the lock, not the ordering, is what closes it. The
+top row shows the two defences are genuinely independent.
+
+**Q2 (Medium) — the new error log had no context.** `submit_rating` now binds
+`operation="study.flashcard.submit_review"`, `card_id`, `deck_id`, `mode`,
+`rating`, `scope_type`, `presentation` (the repo's established
+`logger.bind(...).opt(exception=True)` idiom, as in
+`personas_preview_controller`), and additionally spells `card_id`/`deck_id`/
+`mode` into the message text — the shipped loguru sink format in
+`Logging_Config.py` renders `{message}` and not `{extra}`, so bound-only fields
+would not reach the log file a human actually greps. **Metadata only.**
+`card_id`/`deck_id` are `CharactersRAGDB._generate_uuid()` values, not anything
+the user typed. **Rejected as user content:** the card's `front` and `back`
+(the user's own study material), the deck *name*, and the review status text —
+TASK-19864 is open on diagnostics that interpolate user content and paths into
+log text, and none of them are needed to correlate a failure.
+
+**Q3 (Moderate) — "worker guard test too heavy". Accepted, and fixed without
+narrowing anything.** The guard still walks the whole package, still catches
+decorators, calls, multi-line and positional forms, and still fails closed on
+`**kwargs` spreads and non-literal `exclusive=`. Three cost changes, none of
+them a coverage change:
+
+1. **One cached pass.** `_scan_package()` is `@lru_cache(maxsize=1)`;
+   `test_no_ungrouped_exclusive_workers` and the allowlist-staleness check both
+   read it, where they used to walk and parse all ~1,780 modules independently.
+2. **Lazy owner index.** `_owner_index` — attributing every line to its owning
+   function — is the most expensive step and was run for every file. It is now
+   built only once a file actually has a violation to attribute.
+3. **Text prefilter before parse.** `\b(?:work|run_worker)\b` admits 311 of
+   1,779 files. Sound by construction: `_call_name` only ever returns an
+   `ast.Name.id` or `ast.Attribute.attr`, both of which must appear verbatim as
+   a token in the source, so a file without either token cannot contain a call
+   this guard would flag. (`\b` means `workspace`/`workflow` do not match.)
+
+Proven equivalent, not argued: an A/B in-process run of the prefiltered scan
+against a no-prefilter scan of every file returned **`IDENTICAL: True`**, and
+`test_prefilter_only_skips_files_with_no_scheduler_token` re-parses the 1,468
+*skipped* files every run and asserts the AST finds nothing there either.
+`test_prefilter_admits_every_flagged_form` pins the prefilter against all seven
+flagged shapes.
+
+| | before | after |
+|---|---|---|
+| `test_no_ungrouped_exclusive_workers` | 6.23s | 2.55s |
+| `test_allowlist_has_no_stale_entries` | 5.97s | <1s (cache hit) |
+| both guard suites, wall clock | 14.97s / 16 passed | 7.32s / 19 passed |
+
+**Census unchanged after the optimisation:** 1,779 package files, **1 flagged
+site** (`Third_Party/textual_fspicker/.../DirectoryNavigation._load`), 1
+allowlist entry, **0 violations**, 0 stale allowlist rows.
+
+**Counts at this commit:** branch-touched test files + `Tests/Study_Interop`
+**654 passed / 0 failed**; the architecture guard **15 passed**;
+`Tests/UI/test_chat_screen_worker_groups.py` **4 passed**. Reconciling with the
+prior 663: 654 − 3 new Study tests = 651, and 651 + the guard file's former 12
+= 663. The two guard suites go 16 → 19. Repo-wide `--collect-only -q`:
+**54,905 tests collected, 0 collection errors**.
+
+**Modified by this response:** `UI/Study_Modules/flashcards_handler.py`,
+`Tests/UI/test_study_flashcards_screen.py`,
+`Tests/Architecture/test_worker_exclusive_group_inventory.py`.

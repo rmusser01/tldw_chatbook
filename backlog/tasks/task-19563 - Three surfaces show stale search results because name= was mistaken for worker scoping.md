@@ -155,3 +155,24 @@ inventory test failed with `('stale',) == ()`.
 `UI/CCP_Modules/ccp_dictionary_handler.py`,
 `UI/Screens/model_installed_view.py`, `Tests/UI/test_ccp_handlers.py`,
 `Tests/UI/test_model_installed_view.py`.
+
+## Qodo review response (PR #1951)
+
+Qodo returned three findings on the shared PR; **none of them landed on this
+task's surfaces** (CCP conversation search, Personas character load, Model
+install view). All three are recorded in full in task-19559's notes:
+
+1. **High — cancelled rating locks the card out** (`Study_Modules/
+   flashcards_handler.py`). The arrival-guard *pattern* this task established
+   is unaffected; the defect was in the once-per-presentation write gate that
+   sits beside it, where the presentation marker was claimed before the await
+   and never given back on `CancelledError`. Fixed by claiming the marker only
+   once the write returns.
+2. **Medium — error log without context**, same file.
+3. **Moderate — the worker-group guard test is too heavy.** Made ~4.8× cheaper
+   on the scan (6.23s → 2.55s) with no reduction in what it checks; proven
+   output-identical against an unfiltered scan.
+
+`Tests/UI/test_ccp_handlers.py` and `Tests/UI/test_model_installed_view.py` —
+this task's evidence — were re-run at the fix commit and are green inside the
+**654 passed / 0 failed** branch-touched battery.

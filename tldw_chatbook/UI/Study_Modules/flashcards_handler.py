@@ -946,6 +946,16 @@ class StudyFlashcardsController:
           destroys the widgets every `_set_review_*` helper queries, and the
           tail below would otherwise resurrect a review session that teardown
           had just ended. The presentation token is re-checked after the await.
+
+        Qodo review of PR #1951 caught the corollary of rule two: the marker
+        used to be claimed *before* the await, and the `CancelledError` branch
+        re-raised without giving it back, so a cancelled save froze the panel
+        for good -- buttons disabled, presentation marked reviewed, nothing
+        written. The marker is now claimed only once the write has *returned*,
+        which costs nothing: the lock is held across the await, so a queued
+        second submission cannot reach the check until the first has either
+        recorded its marker or failed. Cancellation therefore needs no rollback
+        at all -- it only has to hand the buttons back (see below).
         """
         service = self._scope_service()
         card = self.current_review_card
@@ -956,14 +966,37 @@ class StudyFlashcardsController:
         # press is judged against the card the user was actually looking at.
         presentation = self._review_presentation
 
+        card_id = str(card.get("backing_id") or "")
+        mode = self._current_mode()
+        deck_id = self._selected_deck_id()
+        # Qodo review of PR #1951: an error line with no context cannot be
+        # correlated with anything. Ids and enum-ish values ONLY -- never the
+        # card's `front`/`back`, which are the user's own study material, and
+        # never a path (TASK-19864 is open on diagnostics that interpolate user
+        # content into log text). `card_id`/`deck_id` are generated UUIDs
+        # (`CharactersRAGDB._generate_uuid`), not anything the user typed.
+        # The bound fields are the structured record; the same two ids are also
+        # spelled into the message text below, because the shipped loguru sink
+        # format (`Logging_Config.py`) renders `{message}` and not `{extra}`.
+        log = logger.bind(
+            operation="study.flashcard.submit_review",
+            card_id=card_id,
+            deck_id=deck_id,
+            mode=mode,
+            rating=rating,
+            scope_type=self._scope_type(),
+            presentation=presentation,
+        )
+        log_subject = f"card_id={card_id!r} deck_id={deck_id!r} mode={mode}"
+
         async with self._review_submit_lock:
             if self._reviewed_presentation == presentation:
-                logger.info(
+                log.info(
                     "Ignoring a duplicate flashcard rating: this card has "
-                    "already been reviewed once and SM-2 would compound it."
+                    "already been reviewed once and SM-2 would compound it "
+                    f"({log_subject})."
                 )
                 return
-            self._reviewed_presentation = presentation
 
             # Stop the UI producing a second press for this same card.
             if self._review_panel_is_live():
@@ -973,9 +1006,9 @@ class StudyFlashcardsController:
 
             try:
                 outcome = await service.submit_flashcard_review(
-                    mode=self._current_mode(),
+                    mode=mode,
                     **self._scope_arguments(),
-                    card_id=str(card.get("backing_id") or ""),
+                    card_id=card_id,
                     rating=rating,
                     current_card=card,
                 )
@@ -984,22 +1017,70 @@ class StudyFlashcardsController:
                 # Exception` below can never see it. Log it explicitly rather
                 # than letting a lost review vanish silently, then re-raise so
                 # the worker still unwinds (TASK-19559).
-                logger.warning(
+                #
+                # The write's fate here is only knowable for the local backend:
+                # `StudyScopeService.submit_flashcard_review` reaches
+                # `LocalStudyService` through `_maybe_await`, which never
+                # suspends for a synchronous result, so a cancellation cannot
+                # be delivered between the SM-2 write and the return -- it must
+                # have arrived before the call. The server backend awaits a
+                # real HTTP round-trip, and a cancellation there can lose a
+                # response for a review the server has already applied.
+                #
+                # We do not branch on the backend for that (the reasoning
+                # depends on a collaborator's internal await structure, which
+                # is not ours to pin). We err instead toward *retryable*: the
+                # marker is not claimed, so the user can rate the card again.
+                # The cost of erring this way is one possible re-application of
+                # SM-2 in server mode; the cost of erring the other way is a
+                # frozen panel holding a review that was never written and can
+                # never be written. The retry is also made an informed one --
+                # the status line and a toast say the save may not have landed
+                # rather than letting the panel look untouched.
+                log.warning(
                     "Flashcard review submission was cancelled before it "
-                    "completed; the rating may not have been saved."
+                    "completed; the rating may not have been saved "
+                    f"({log_subject})."
                 )
+                try:
+                    if self._review_panel_is_live():
+                        self._set_review_status(
+                            "Review save was interrupted -- it may not have "
+                            "been saved. Rate the card again to be sure."
+                        )
+                        self._set_review_controls(
+                            show_answer_enabled=False, ratings_enabled=True
+                        )
+                        self._notify("Review save was interrupted.", severity="warning")
+                except Exception:
+                    # A cancellation usually means the app is going away, and
+                    # nothing here may replace the CancelledError on its way
+                    # out -- swallowing it would leave the worker looking like
+                    # it finished normally.
+                    log.opt(exception=True).warning(
+                        "Could not restore the review panel after a cancelled "
+                        f"rating ({log_subject})"
+                    )
                 raise
             except Exception:
-                logger.opt(exception=True).error("Failed to submit flashcard review")
+                log.opt(exception=True).error(
+                    f"Failed to submit flashcard review ({log_subject})"
+                )
                 self._notify("Failed to save review.", severity="error")
-                # The write did not land, so this presentation is reviewable
-                # again and the user needs the buttons back to retry.
-                self._reviewed_presentation = None
+                # The write did not land, so the marker below was never
+                # claimed and this presentation is still reviewable -- the user
+                # just needs the buttons back to retry.
                 if self._review_panel_is_live():
                     self._set_review_controls(
                         show_answer_enabled=False, ratings_enabled=True
                     )
                 return
+
+            # The write has returned, so SM-2 has been applied exactly once for
+            # this presentation. Claim the marker BEFORE the arrival guard
+            # below can return early, or a panel that moved on mid-save would
+            # leave the presentation submittable a second time.
+            self._reviewed_presentation = presentation
 
             # ARRIVAL GUARD. The write has landed; everything below only
             # touches UI and session state, and both are wrong to touch if the
@@ -1008,7 +1089,7 @@ class StudyFlashcardsController:
                 presentation != self._review_presentation
                 or not self._review_panel_is_live()
             ):
-                logger.info(
+                log.info(
                     "Flashcard review saved, but the review panel moved on "
                     "before the result arrived; leaving the current view alone."
                 )

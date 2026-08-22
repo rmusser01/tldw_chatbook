@@ -1721,3 +1721,203 @@ async def test_double_press_on_one_card_applies_sm2_once(tmp_path):
         "SM-2 was applied more than once for a single card presentation: "
         f"repetitions={row['repetitions']} interval={row['interval']}"
     )
+
+
+class RealDbReviewScopeService(FakeStudyScopeService):
+    """Deals one real flashcard repeatedly and writes real SM-2 through it.
+
+    The `gate` is a genuine suspension point *in front of* the SM-2 write. It
+    stands in for the server backend, which is the only one where a rating can
+    be cancelled with the write's fate unknown: the local backend reaches
+    `ChaChaNotes_DB.update_flashcard_review` through `_maybe_await` without ever
+    yielding to the loop, so a `CancelledError` delivered at that await means
+    the write had not begun. Holding this gate open lets a test cancel the
+    rating worker at a point where nothing has been written yet -- the case a
+    retry must be able to recover.
+    """
+
+    def __init__(self, local, *, card_id: str, deck_id: str, deals: int = 4):
+        super().__init__()
+        self.local = local
+        self.gate = asyncio.Event()
+        self.submissions: list[tuple[str, int]] = []
+        self.candidates = [
+            {
+                "card": {
+                    "record_id": f"local:study_flashcard:{card_id}",
+                    "backing_id": card_id,
+                    "deck_record_id": f"local:study_deck:{deck_id}",
+                    "front": "Q",
+                    "back": "A",
+                    "queue_state": "new",
+                },
+                "selection_reason": "relearn",
+                "next_intervals": {"again": "10m", "good": "1d"},
+                "review_session": {"review_session_id": 41},
+                "detail_available": True,
+            }
+            for _ in range(deals)
+        ]
+
+    async def submit_flashcard_review(
+        self,
+        *,
+        mode=None,
+        scope_type=None,
+        workspace_id=None,
+        card_id=None,
+        rating,
+        current_card=None,
+        answer_time_ms=None,
+    ):
+        await self.gate.wait()
+        self.submissions.append((card_id, rating))
+        outcome = self.local.submit_flashcard_review(card_id, rating=rating)
+        return {
+            "card": outcome["card"],
+            "rating": rating,
+            "next_intervals": {"good": "3d"},
+            "review_session": {"review_session_id": 41},
+            "detail_available": True,
+        }
+
+
+def _real_db_review_fixture(tmp_path, name: str):
+    """A real ChaChaNotes DB holding one deck with one brand-new card."""
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.Study_Interop.local_study_service import LocalStudyService
+
+    db = CharactersRAGDB(str(tmp_path / f"{name}.db"), f"study-{name}")
+    deck_id = db.create_deck(f"{name} deck")
+    card_id = db.create_flashcard({"deck_id": deck_id, "front": "Q", "back": "A"})
+    return db, LocalStudyService(db), deck_id, card_id
+
+
+def _rating_buttons_enabled(window) -> bool:
+    return not any(
+        window.query_one(f"#review-rating-{rating}", Button).disabled
+        for rating in range(6)
+    )
+
+
+@pytest.mark.asyncio
+async def test_cancelled_rating_leaves_the_card_retryable(tmp_path):
+    """Qodo #1 on PR #1951: a cancelled rating locked the card out for good.
+
+    `submit_rating` used to claim `_reviewed_presentation` and disable the
+    rating buttons *before* awaiting the save. The `except asyncio.CancelledError:`
+    branch -- added by this very branch, because `CancelledError` is a
+    `BaseException` the `except Exception:` cannot see -- re-raised without
+    undoing either. So a cancelled save left the panel frozen: buttons disabled,
+    the presentation permanently marked reviewed, and no way to retry.
+
+    Born red at 738bd6179: after the cancellation the rating buttons are still
+    disabled, so the second press cannot even fire (`Button.press()` is a no-op
+    on a disabled button) and the DB still shows `repetitions=0` -- the review
+    the user made vanished with no way to make it again.
+    """
+    db, local, deck_id, card_id = _real_db_review_fixture(tmp_path, "cancel-retry")
+    scope = RealDbReviewScopeService(local, card_id=card_id, deck_id=deck_id)
+    app = _study_app_for(scope)
+
+    async with app.run_test(size=(180, 60)) as pilot:
+        window, controller = await _enter_review(pilot, app)
+
+        window.query_one("#review-rating-3", Button).press()
+        await pilot.pause(0.2)
+        assert scope.submissions == [], "the gate should still hold the save"
+
+        # Cancel the in-flight rating exactly as an exclusive sibling would.
+        app.workers.cancel_group(window, "study-flashcard-rating")
+        await pilot.pause(0.3)
+
+        assert _rating_buttons_enabled(window), (
+            "a cancelled rating left the panel frozen: the rating buttons are "
+            "still disabled while the review panel is mounted, so the user "
+            "cannot retry the save that was just thrown away"
+        )
+
+        # The user rates the same card again. It must land exactly once.
+        scope.gate.set()
+        window.query_one("#review-rating-3", Button).press()
+        await pilot.pause(0.6)
+
+    row = db.get_flashcard(card_id)
+    assert (row["repetitions"], row["interval"]) == (1, 1), (
+        "the retry after a cancelled rating did not apply SM-2 exactly once: "
+        f"repetitions={row['repetitions']} interval={row['interval']} "
+        f"submissions={scope.submissions}"
+    )
+    assert scope.submissions == [(card_id, 3)], f"submissions={scope.submissions}"
+
+
+@pytest.mark.asyncio
+async def test_direct_submit_rating_call_cannot_double_apply_sm2(tmp_path):
+    """Review property 2: the durable gate holds for callers that skip the UI.
+
+    Disabling the rating buttons stops a second *press*, but the once-per-
+    presentation check is the backstop that has to hold when something calls
+    `submit_rating` directly. Here a real button press is in flight at the gate
+    and a direct call queues behind it on the same presentation; SM-2 must
+    still be applied once.
+    """
+    db, local, deck_id, card_id = _real_db_review_fixture(tmp_path, "direct-call")
+    scope = RealDbReviewScopeService(local, card_id=card_id, deck_id=deck_id)
+    app = _study_app_for(scope)
+
+    async with app.run_test(size=(180, 60)) as pilot:
+        window, controller = await _enter_review(pilot, app)
+
+        window.query_one("#review-rating-3", Button).press()
+        await pilot.pause(0.2)
+        # Bypass the (now disabled) buttons entirely.
+        bypass = asyncio.ensure_future(controller.submit_rating(5))
+        await pilot.pause(0.1)
+
+        scope.gate.set()
+        await pilot.pause(0.6)
+        await bypass
+
+    row = db.get_flashcard(card_id)
+    assert (row["repetitions"], row["interval"]) == (1, 1), (
+        "a direct submit_rating() call compounded SM-2 for one presentation: "
+        f"repetitions={row['repetitions']} interval={row['interval']} "
+        f"submissions={scope.submissions}"
+    )
+    assert scope.submissions == [(card_id, 3)], f"submissions={scope.submissions}"
+
+
+@pytest.mark.asyncio
+async def test_re_dealt_card_records_every_genuine_re_review(tmp_path):
+    """Review property 3: the gate is per-*presentation*, never per-card.
+
+    A relearn queue deals the same card again a few minutes later, and that
+    second showing is a real recall event that must reach SM-2. Two sequential
+    reviews of one re-dealt card therefore have to move it 0 -> 1 -> 2
+    repetitions (interval 1d -> 6d) -- the exact state the double-press test
+    forbids for a single presentation.
+    """
+    db, local, deck_id, card_id = _real_db_review_fixture(tmp_path, "re-deal")
+    scope = RealDbReviewScopeService(local, card_id=card_id, deck_id=deck_id)
+    scope.gate.set()  # saves complete immediately; the user never waits
+    app = _study_app_for(scope)
+
+    async with app.run_test(size=(180, 60)) as pilot:
+        window, controller = await _enter_review(pilot, app)
+
+        for _ in range(2):
+            assert controller.current_review_card is not None
+            window.query_one("#review-rating-3", Button).press()
+            await pilot.pause(0.4)
+            controller.show_answer()
+            await pilot.pause(0.05)
+
+    row = db.get_flashcard(card_id)
+    assert (row["repetitions"], row["interval"]) == (2, 6), (
+        "a re-dealt card lost one of its two genuine re-reviews: "
+        f"repetitions={row['repetitions']} interval={row['interval']} "
+        f"submissions={scope.submissions}"
+    )
+    assert scope.submissions == [(card_id, 3), (card_id, 3)], (
+        f"submissions={scope.submissions}"
+    )

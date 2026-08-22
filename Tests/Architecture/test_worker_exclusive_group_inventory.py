@@ -63,6 +63,8 @@ pins the decorator form.
 from __future__ import annotations
 
 import ast
+import functools
+import re
 from pathlib import Path
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "tldw_chatbook"
@@ -70,6 +72,20 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "tldw_chatbook"
 #: Callables that schedule a Textual worker. ``work`` is the decorator factory
 #: (``@work(...)``); ``run_worker`` is ``DOMNode.run_worker``.
 SCHEDULER_NAMES = {"work", "run_worker"}
+
+#: Qodo review of PR #1951: the sweep parsed all ~1,780 package modules twice.
+#: It is now a single cached pass over the files that could possibly contain a
+#: scheduler call, which is a cost fix and NOT a coverage fix -- the set of
+#: sites reported is byte-identical (``test_prefilter_admits_every_flagged_form``
+#: pins that, and ``test_scan_is_a_single_cached_pass`` pins that the cache does
+#: not quietly re-read).
+#:
+#: The prefilter is sound because ``_call_name`` only ever returns an
+#: ``ast.Name.id`` or an ``ast.Attribute.attr``: both are identifiers that must
+#: appear verbatim as a token in the source. A file with neither token cannot
+#: contain a call this guard would flag. (``\b`` boundaries mean ``workspace``
+#: and ``workflow`` do not match, while ``x.work()`` and ``run_worker`` do.)
+_SCHEDULER_TOKEN = re.compile(r"\b(?:work|run_worker)\b")
 
 #: ``DOMNode.run_worker``'s positional parameter order, so a ``group`` or
 #: ``exclusive`` passed positionally is still seen. ``work()`` takes everything
@@ -164,7 +180,7 @@ def _violations_in_tree(tree: ast.Module) -> list[tuple[int, str, str]]:
     Path-free, so tests can drive it with synthetic source rather than only
     with real package files.
     """
-    owners = _owner_index(tree)
+    owners: dict[int, str] | None = None
     violations: list[tuple[int, str, str]] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -225,6 +241,12 @@ def _violations_in_tree(tree: ast.Module) -> list[tuple[int, str, str]]:
                 f"{scheduler}(exclusive={shown}, group={ast.unparse(group)}) "
                 "-- that is not a group name"
             )
+        # Built only once a violation exists. Attributing every line in the
+        # package to its owning function is the single most expensive step in
+        # the sweep, and the overwhelming majority of files have nothing to
+        # attribute.
+        if owners is None:
+            owners = _owner_index(tree)
         violations.append(
             (
                 node.lineno,
@@ -235,33 +257,37 @@ def _violations_in_tree(tree: ast.Module) -> list[tuple[int, str, str]]:
     return violations
 
 
-def _violations_in_file(path: Path) -> list[str]:
-    tree = ast.parse(path.read_text(encoding="utf-8"))
-    relative = path.relative_to(PACKAGE_ROOT.parent)
-    reported: list[str] = []
-    for lineno, owner, detail in _violations_in_tree(tree):
-        if f"{relative}::{owner}" in DEFAULT_GROUP_ALLOWLIST:
+@functools.lru_cache(maxsize=1)
+def _scan_package() -> tuple[tuple[Path, int, str, str], ...]:
+    """Every flagged site in the package, found in one cached pass.
+
+    Returns ``(relative_path, lineno, owner_qualname, detail)`` rows *before*
+    the allowlist is applied, so both the guard and the allowlist-staleness
+    check can be answered from the same scan.
+    """
+    rows: list[tuple[Path, int, str, str]] = []
+    for path in sorted(PACKAGE_ROOT.rglob("*.py")):
+        source = path.read_text(encoding="utf-8")
+        if not _SCHEDULER_TOKEN.search(source):
             continue
-        reported.append(f"{relative}:{lineno} ({owner}): {detail}")
-    return reported
+        relative = path.relative_to(PACKAGE_ROOT.parent)
+        for lineno, owner, detail in _violations_in_tree(ast.parse(source)):
+            rows.append((relative, lineno, owner, detail))
+    return tuple(rows)
 
 
 def _all_site_keys() -> set[str]:
-    keys: set[str] = set()
-    for path in sorted(PACKAGE_ROOT.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        relative = path.relative_to(PACKAGE_ROOT.parent)
-        for _lineno, owner, _detail in _violations_in_tree(tree):
-            keys.add(f"{relative}::{owner}")
-    return keys
+    return {f"{relative}::{owner}" for relative, _l, owner, _d in _scan_package()}
 
 
 def test_no_ungrouped_exclusive_workers() -> None:
     """Every exclusive worker in the package names the group it may cancel."""
     assert PACKAGE_ROOT.is_dir(), f"package root not found: {PACKAGE_ROOT}"
-    violations: list[str] = []
-    for path in sorted(PACKAGE_ROOT.rglob("*.py")):
-        violations.extend(_violations_in_file(path))
+    violations = [
+        f"{relative}:{lineno} ({owner}): {detail}"
+        for relative, lineno, owner, detail in _scan_package()
+        if f"{relative}::{owner}" not in DEFAULT_GROUP_ALLOWLIST
+    ]
     assert not violations, (
         "exclusive=True scheduled without an explicit group= lands in the "
         'shared "default" group, where it cancels every other ungrouped '
@@ -465,3 +491,87 @@ def test_allowlist_entries_state_a_reason() -> None:
     """An allowlist row without reasoning is folklore; require prose."""
     for key, reason in DEFAULT_GROUP_ALLOWLIST.items():
         assert len(reason.split()) >= 10, f"{key}: reason is too thin to review"
+
+
+def test_prefilter_admits_every_flagged_form() -> None:
+    """The cheap text prefilter must never hide a form the AST would flag.
+
+    Qodo's third finding on PR #1951 asked for a speed-up. Making a guard fast
+    by making it blind is the failure mode, so the prefilter is pinned here
+    against every shape the other tests in this file assert on -- decorator,
+    multi-line, positional, ``name=``-only, ``group="default"``, falsy group,
+    and the ``**kwargs`` spread the guard fails closed on. Each source is
+    checked twice: the AST must flag it, and the prefilter must admit it for
+    parsing in the first place.
+    """
+    flagged_sources = [
+        # decorator form
+        "from textual import work\n"
+        "class W:\n"
+        "    @work(exclusive=True, thread=True)\n"
+        "    def _save(self): ...\n",
+        # multi-line call form
+        "class W:\n"
+        "    def _s(self):\n"
+        "        self.run_worker(\n"
+        "            self._f(),\n"
+        "            exclusive=True,\n"
+        "        )\n",
+        # name= mistaken for scoping
+        "class W:\n"
+        "    def _s(self):\n"
+        "        self.run_worker(self._f, exclusive=True, name='search')\n",
+        # group='default' is the shared bucket
+        "class W:\n"
+        "    def _s(self):\n"
+        "        self.run_worker(self._f, exclusive=True, group='default')\n",
+        # falsy group silently disables exclusivity
+        "class W:\n"
+        "    def _s(self):\n"
+        "        self.run_worker(self._f, exclusive=True, group=None)\n",
+        # **kwargs spread: unprovable, so failed closed
+        "class W:\n    def _s(self, **kw):\n        self.run_worker(self._f, **kw)\n",
+        # positional exclusive, no group
+        "class W:\n"
+        "    def _s(self):\n"
+        "        self.run_worker(self._f, 'nm', None, 'desc', True, True, True)\n",
+    ]
+    for source in flagged_sources:
+        assert _violations_in_tree(ast.parse(source)), f"AST missed:\n{source}"
+        assert _SCHEDULER_TOKEN.search(source), (
+            "the prefilter would have skipped a file the AST flags:\n" + source
+        )
+
+
+def test_prefilter_only_skips_files_with_no_scheduler_token() -> None:
+    """Every package file the prefilter skips really has no scheduler call.
+
+    Re-parses the *skipped* files -- the ones the fast path never looks at --
+    and asserts the AST finds nothing there either. This is the check that
+    would catch a prefilter regex that got too clever.
+    """
+    skipped_with_violations: list[str] = []
+    for path in sorted(PACKAGE_ROOT.rglob("*.py")):
+        source = path.read_text(encoding="utf-8")
+        if _SCHEDULER_TOKEN.search(source):
+            continue
+        if _violations_in_tree(ast.parse(source)):
+            skipped_with_violations.append(str(path))
+    assert not skipped_with_violations, (
+        "the prefilter skipped files that do contain flagged worker sites:\n"
+        + "\n".join(skipped_with_violations)
+    )
+
+
+def test_scan_is_a_single_cached_pass() -> None:
+    """The package is read once per session, not once per assertion.
+
+    The sweep used to walk and parse all of ``tldw_chatbook/`` twice -- once in
+    ``test_no_ungrouped_exclusive_workers`` and again in ``_all_site_keys()``
+    for the allowlist-staleness check. Both now answer from one cached scan.
+    """
+    first = _scan_package()
+    assert _scan_package() is first, "the scan is being recomputed per call"
+    # Deliberately no `cache_clear()`: forcing a rebuild here would spend the
+    # very seconds this change exists to save.
+    assert _scan_package.cache_info().misses <= 1, _scan_package.cache_info()
