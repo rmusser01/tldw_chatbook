@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -400,6 +401,33 @@ async def test_persona_preview_stale_after_resolve_does_not_paint(
 
 
 @pytest.mark.asyncio
+async def test_old_persona_editor_generation_cannot_mutate_replacement_session(
+    monkeypatch, mock_app_instance, stub_characters, local_scope
+) -> None:
+    monkeypatch.setattr(
+        personas_screen_module, "PersonaVisualRepository", _PersonaVisualRepository
+    )
+    monkeypatch.setattr(
+        personas_screen_module, "VisualIdentityRepository", _BoundSharedRepository
+    )
+    app = PersonasTestApp(mock_app_instance)
+
+    async with app.run_test() as pilot:
+        screen = await _open_persona_editor(pilot)
+        snapshot = screen._persona_shared_visual_identity_author_snapshot()
+        assert snapshot is not None
+        assert screen._persona_shared_visual_identity_author_snapshot_is_current(
+            snapshot
+        )
+
+        screen._persona_visual_generation += 1
+
+        assert not screen._persona_shared_visual_identity_author_snapshot_is_current(
+            snapshot
+        )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("size", ((100, 40), (80, 24)))
 async def test_normal_and_80x24_compact_layout_paints_labelled_focusable_actions(
     size: tuple[int, int],
@@ -548,6 +576,58 @@ async def test_successful_persona_save_invalidates_only_exact_actor_result(
 
 
 @pytest.mark.asyncio
+async def test_duplicate_persona_save_is_rejected_until_first_publish_drains(
+    monkeypatch, mock_app_instance, stub_characters, local_scope
+) -> None:
+    monkeypatch.setattr(
+        personas_screen_module, "PersonaVisualRepository", _PersonaVisualRepository
+    )
+    monkeypatch.setattr(
+        personas_screen_module, "VisualIdentityRepository", _SharedRepository
+    )
+    candidate = _Candidate()
+    monkeypatch.setattr(
+        personas_screen_module,
+        "create_visual_identity_candidate",
+        lambda *_args, **_kwargs: candidate,
+    )
+    result = VisualIdentityPublicationResult(
+        actor_kind="persona",
+        actor_id="p-1",
+        old_pack_id=None,
+        old_version_id=None,
+        new_pack_id=10,
+        new_version_id=20,
+        version_directory=Path("unused"),
+    )
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def blocked_publish(*_args, **_kwargs):
+        started.set()
+        await release.wait()
+        return personas_screen_module._DrainedTaskResult(completed=True, value=result)
+
+    monkeypatch.setattr(personas_screen_module, "_drain_to_thread", blocked_publish)
+    app = PersonasTestApp(mock_app_instance)
+
+    async with app.run_test() as pilot:
+        screen = await _open_persona_editor(pilot)
+        browser = screen.query_one(PersonasVisualIdentityPackWidget)
+        assert await screen._stage_persona_shared_visual_identity_replacement(
+            browser.pack.assets[0], b"image"
+        )
+        screen._invalidate_visual_identity_publication = AsyncMock()
+        screen._configure_persona_shared_visual_identity = AsyncMock()
+
+        first = asyncio.create_task(screen._save_persona_shared_visual_identity_pack())
+        await started.wait()
+        assert await screen._save_persona_shared_visual_identity_pack() is False
+        release.set()
+        assert await first is True
+
+
+@pytest.mark.asyncio
 async def test_dirty_navigation_decline_preserves_persona_reaction_draft_and_accept_drains(
     monkeypatch, mock_app_instance, stub_characters, local_scope
 ) -> None:
@@ -584,3 +664,33 @@ async def test_dirty_navigation_decline_preserves_persona_reaction_draft_and_acc
         continuation.assert_awaited_once()
         assert candidate.cancelled is True
         assert screen._persona_shared_visual_identity_authoring is None
+
+
+@pytest.mark.asyncio
+async def test_repeated_outer_cancellation_drains_persona_reaction_work() -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def critical_work() -> str:
+        started.set()
+        await release.wait()
+        return "committed"
+
+    operation = asyncio.create_task(
+        personas_screen_module._drain_async(
+            critical_work(), task_name="persona-reaction-repeated-cancel"
+        )
+    )
+    await started.wait()
+    operation.cancel()
+    await asyncio.sleep(0)
+    operation.cancel()
+    await asyncio.sleep(0)
+    assert not operation.done()
+
+    release.set()
+    outcome = await operation
+
+    assert outcome.completed is True
+    assert outcome.value == "committed"
+    assert isinstance(outcome.cancellation, asyncio.CancelledError)

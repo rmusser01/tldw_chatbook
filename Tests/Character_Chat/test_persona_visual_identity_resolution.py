@@ -355,6 +355,41 @@ def test_persona_unavailable_or_changed_authority_returns_actor_unavailable(
     assert stale.image_bytes is None
 
 
+def test_persona_delete_source_change_and_restore_reuse_exact_binding(
+    db: CharactersRAGDB,
+    service: _LocalPersonaService,
+    tmp_path: Path,
+) -> None:
+    graph = _activate(db, tmp_path, ("neutral",))
+    binding_id = graph["binding"]["id"]
+
+    service.personas["p-1"]["deleted"] = True
+    deleted = resolve_persona_visual_identity(
+        db, service, persona_id="p-1", requested_state="idle", user_data_dir=tmp_path
+    )
+    service.personas["p-1"].update(
+        {"deleted": False, "backend": "server", "version": 5}
+    )
+    server = resolve_persona_visual_identity(
+        db, service, persona_id="p-1", requested_state="idle", user_data_dir=tmp_path
+    )
+
+    dormant = VisualIdentityRepository(db).get_active_actor_pack("persona", "p-1")
+    assert deleted.fallback_reason == "actor_unavailable"
+    assert server.fallback_reason == "actor_unavailable"
+    assert dormant is not None
+    assert dormant["binding"]["id"] == binding_id
+
+    service.personas["p-1"].update({"backend": "local", "version": 6})
+    restored = resolve_persona_visual_identity(
+        db, service, persona_id="p-1", requested_state="idle", user_data_dir=tmp_path
+    )
+
+    assert restored.resolved_expression_key == "neutral"
+    assert f"binding_id={binding_id}" in restored.cache_identity
+    assert "persona_revision=6" in restored.cache_identity
+
+
 def test_persona_authority_change_during_portrait_decode_fails_closed(
     db: CharactersRAGDB,
     service: _LocalPersonaService,
