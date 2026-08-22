@@ -1069,6 +1069,31 @@ Web-tool results are ephemeral. To persist a page in Library, use **Library →
 Import…** and submit its URL; Console does not advertise the retired
 `ingest_media` placeholder.
 
+### Library media chunk tools
+
+Console agents get five `library_*` tools for reading ingested media by its
+stored chunks — the difference between an agent that walks a book in blind
+8,000-character windows and one that asks "where are the chapters?", fetches
+Chapter 7 by address, and writes notes from it. `library_get_media_structure`
+returns a book's heading tree with per-chapter chunk addresses;
+`library_get_media_chunk` fetches one unit **from the chunks already stored
+at ingestion** — deterministic and version-stamped; nothing is silently
+re-chunked on a read. `library_list_chunk_specs` lists the saved chunking
+specs. Items imported with "Chunk content" off degrade honestly: the
+structure still shows the chapters, and the fetch error names the way out.
+
+Two of the five write, and only when you opt in from the agent's side:
+`library_save_chunk_spec` saves a custom chunking spec, and
+`library_rechunk_media` re-chunks one item (an explicit tool call with a
+spec — never a side effect of a read). Both run under runtime-policy actions
+(`library.templates.save`, `library.media.rechunk`) that can be denied, they
+write only your local Library database, and re-indexing the item into the
+semantic index is a separate `reindex: true` opt-in. They advertise
+themselves as writing tools in the approval card's tool description. Full
+contracts: [Local Library Tools](../../Development/Agent-Tools/local-library-tools.md).
+The tools ride the same `[console].direct_library_tools` setting as the
+other Library tools.
+
 ### Watchlists evidence tools
 
 The same local-tools group provides `watchlists_search_items` and
@@ -1674,3 +1699,13 @@ here.)*
 *Git-actions placement corrected @ TASK-19703 — 2026-08-22: the mid-merge/rebase/cherry-pick refusal was documented here as happening "before the dialog even opens", which is true of the active-run refusal but not of this one — it fires when you confirm. Not driven live; corrected by reading the shipped code (`commit_selected`'s `in-progress-check` step) against this page's claim, and the design spec was amended to match rather than the code changed (a pre-modal check could only be advisory, since the repository can enter a merge while the dialog is open).*
 
 *Push-destination disclosure added @ TASK-19701 — 2026-08-22: the confirm dialog now names the remote's effective push URL. Not driven live; verified against real repositories in tests configured with `remote.<name>.pushurl` and with `url.<other>.pushInsteadOf`, plus a control with no redirect.*
+
+*"Library media chunk tools" section added @ `1a392f1c4` — 2026-08-21
+(chunking-agent-tools Task 6). Not driven live in tmux: the section
+documents tool contracts, and every claim is verified against the
+descriptor table (`Library/library_tool_contract.py`), the service
+(`Library/local_media_chunk_tool_service.py`), and the end-to-end story
+test (`Tests/Library/test_agent_chunk_student_story.py`, which ingests a
+real fixture book through the real parse → persist → chunk-rows pipeline
+and reads Chapter 7 back from the stored chunks). The rest of this page
+is unchanged from the prior stamp.*

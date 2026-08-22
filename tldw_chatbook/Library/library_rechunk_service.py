@@ -1,7 +1,10 @@
 """Task 13 (PR E): the re-chunk worker service (spec §10.2-§10.4).
 
 The business logic behind the Library surface's "Re-chunk older-engine
-items" action. Per item (§10.2):
+items" action. The per-item flow lives in :func:`rechunk_one_item` (the
+agent-tools extraction -- ``library_rechunk_media`` reuses the SAME
+function); :func:`rechunk_legacy_items` is resolution + a loop over it.
+Per item (§10.2):
 
 1. re-chunk the source text through the template-aware path (§9.1 re-chunk
    resolution: stored per-media template -> config default -> plain
@@ -39,8 +42,10 @@ from loguru import logger
 from ..Chunking.Chunk_Lib import ENGINE_VERSION
 from ..Chunking.auto_selection import AutoDecision
 from ..Chunking.template_runtime import (
+    TemplateResolutionError,
     materialize_template_chunk_options,
     resolve_for_rechunk,
+    resolve_template,
 )
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..RAG_Search.chunking_service import improved_chunking_process
@@ -448,6 +453,277 @@ def format_rechunk_summary(summary: Dict[str, Any]) -> str:
     return line
 
 
+async def rechunk_one_item(
+    media_db: MediaDatabase,
+    media_row: Optional[Dict[str, Any]],
+    *,
+    spec: Optional[Dict[str, Any]] = None,
+    rag_service: Any = None,
+    indexing_db: Any = None,
+    reindex: bool = False,
+) -> Dict[str, Any]:
+    """Re-chunk ONE media item -- the per-item body of the batch, extracted
+    (agent-tools spec §4.4) so ``library_rechunk_media`` reuses the SAME
+    machinery instead of reimplementing it.
+
+    Exactly the flow the batch loop ran per item (spec §10.2): resolution →
+    chunk → REPLACE the ``UnvectorizedMediaChunks`` rows in ONE transaction
+    (with the auto-path config re-stamp inside that same transaction, the
+    #2/Qodo-hardened atomic pattern) → optional forced re-index (§10.2.1).
+
+    Resolution:
+
+    * ``spec=None`` -- the stored per-media config (``resolve_for_rechunk``
+      re-resolution, exactly the batch's behavior: a stored ``mode:"auto"``
+      re-decides, a stored explicit name re-runs, an unresolvable stored
+      name is a named-refusal SKIP).
+    * ``spec`` given -- a PRE-RESOLVED chunking dict (``{"method": ...,
+      "max_size": ..., "overlap": ..., "template": name?}``) that REPLACES
+      the stored-config resolution entirely. Callers resolve their own
+      choice down to this shape; the one name→dict hop left is a ``template``
+      NAME, resolved here through ``resolve_template`` (an unresolvable name
+      FAILS the item with the named :class:`TemplateResolutionError` message
+      -- #3 semantics, never a silent fallback). A spec's template governs
+      its own options (the explicit-template path); a template-less spec's
+      ``method``/``max_size``/``overlap`` keys govern as plain options (the
+      engine defaults whatever the spec omits; an omitted ``overlap``
+      defaults to 0 -- the never-invalid identity -- because the engine's
+      own 100 default can exceed a small spec ``max_size`` and refuse a
+      legitimate spec). The spec path never re-stamps the stored config
+      (no ``AutoDecision`` is involved).
+
+    Args:
+        media_db: The Media DB holding the chunk rows (and templates).
+        media_row: The item's FULL media row (the batch's own
+            ``get_media_by_id`` shape). ``None`` → ``skipped`` ("source
+            row unavailable"), the batch's own outcome for a missing row.
+        spec: Pre-resolved chunking override, or ``None`` for the stored
+            per-media config (see above).
+        rag_service: The OWNING RAG service for the forced re-index; when
+            ``None`` the re-index step never runs.
+        indexing_db: The RAG indexing-state DB; when ``None`` the state
+            marks are skipped (the add still runs).
+        reindex: OPT-IN forced re-index (agent-tools spec §4.4 ruling: the
+            default call touches chunk rows only). The batch passes ``True``
+            -- §10.2.1 makes the re-index part of the batch's contract
+            whenever the index is present.
+
+    Returns:
+        ``{"status": "rechunked"|"skipped"|"failed", "notes": [str, ...]}``
+        plus ``chunk_summary`` (``chunk_count`` / ``engine_version`` /
+        ``template`` name-or-None / ``spans_present``) on a re-chunk, and
+        ``reindexed`` (the forced path's own outcome dict) when it ran.
+        Never raises for per-item conditions -- the caller decides how to
+        count; the notes carry the reason/error strings.
+    """
+    if media_row is None:
+        return {"status": "skipped", "notes": ["source row unavailable"]}
+    try:
+        media_id = int(media_row.get("id"))
+    except (TypeError, ValueError):
+        media_id = None
+    content = str(media_row.get("content") or "")
+    if not content.strip():
+        # Spec §10.2: empty-source items are skipped and counted.
+        return {"status": "skipped", "notes": ["source content is empty"]}
+
+    try:
+        chunker_template_arg: Optional[Dict[str, Any]]
+        options: Dict[str, Any]
+        resolved: Any = None
+        if spec is not None:
+            # The agent-tool override: the stored-config resolution is
+            # REPLACED (even an unresolvable stored template is bypassed).
+            template_name = str(spec.get("template") or "").strip() or None
+            if template_name is not None:
+                resolved_template = resolve_template(media_db, template_name)
+                if resolved_template is None:
+                    # Spec §4.4 / #3: a NAMED refusal, never a silent
+                    # fallback to different chunking. Raised here so the
+                    # per-item handler below turns it into a failed
+                    # outcome carrying this exact message.
+                    raise TemplateResolutionError(
+                        f"Template '{template_name}' (from spec override) no "
+                        "longer resolves (deleted or renamed); it was refused "
+                        "instead of silently falling back to different "
+                        "chunking."
+                    )
+                chunker_template_arg = resolved_template
+                options = {}
+            else:
+                chunker_template_arg = None
+                options = {
+                    key: spec[key]
+                    for key in ("method", "max_size", "overlap")
+                    if key in spec
+                }
+                # A pre-resolved spec that names no overlap is "no overlap
+                # instructed": 0 is the never-invalid default (the
+                # engine's own 100 default can EXCEED a small spec
+                # max_size -- e.g. ``{"method": "sentences", "max_size":
+                # 3}`` -- and would refuse a legitimate spec at the
+                # wrapper's ``overlap >= max_size`` gate).
+                options.setdefault("overlap", 0)
+        else:
+            try:
+                # (task 4, auto-selection spec §4.3 / AC 10)
+                # RE-RESOLUTION, never replay: a stored ``mode:"auto"``
+                # runs resolve_auto again against the CURRENT store (a
+                # classifier block added since ingest flips the tier); a
+                # stored explicit name keeps #2's behavior exactly
+                # (per-media name -> config default -> named refusal).
+                # The media row's own metadata feeds the decision
+                # (``Media.type`` / ``title`` / ``url``; the table has
+                # no filename column).
+                resolved = resolve_for_rechunk(
+                    media_db,
+                    _stored_chunking_config(media_row),
+                    media_type=str(
+                        media_row.get("type")
+                        or media_row.get("media_type")
+                        or ""
+                    ).strip()
+                    or None,
+                    title=str(media_row.get("title") or "").strip() or None,
+                    filename=None,
+                    url=str(media_row.get("url") or "").strip() or None,
+                )
+            except Exception as exc:
+                # Spec §9.1: an unresolvable/invalid per-media or config
+                # template is SKIPPED and counted by re-chunk -- never a
+                # silent fallback to different chunking.
+                logger.warning(f"Re-chunk skipped media {media_id}: {exc}")
+                return {"status": "skipped", "notes": [str(exc)]}
+            if isinstance(resolved, AutoDecision):
+                if (
+                    resolved.tier == "template"
+                    and isinstance(resolved.template, dict)
+                ):
+                    chunker_template_arg = resolved.template
+                    options = {}
+                elif (
+                    resolved.tier == "plan"
+                    and isinstance(resolved.chunk_options, dict)
+                ):
+                    # The planner's options govern this run.
+                    chunker_template_arg = None
+                    options = dict(resolved.chunk_options)
+                else:
+                    # Plain tier: Auto declined -- today's defaults.
+                    chunker_template_arg = None
+                    options = dict(PLAIN_RECHUNK_OPTIONS)
+            elif resolved is not None:
+                chunker_template_arg = resolved
+                options = {}
+            else:
+                chunker_template_arg = None
+                options = dict(PLAIN_RECHUNK_OPTIONS)
+
+        chunks = improved_chunking_process(
+            content, options, template=chunker_template_arg
+        )
+        rows_template_name: Optional[str] = (
+            str((chunker_template_arg or {}).get("name") or "").strip() or None
+            if chunker_template_arg is not None
+            else None
+        )
+        rows_template_params: Optional[str] = (
+            _effective_template_params(chunker_template_arg)
+            if chunker_template_arg is not None
+            else None
+        )
+        # (TASK-19902, Qodo #3) ONE outer transaction over the row
+        # replacement AND the auto re-stamp: the DB's ``transaction()``
+        # nests (only the outermost commit/rollback matters), so a raise in
+        # the re-stamp after the rows were replaced rolls BOTH back -- the
+        # item then fails below with NO partial state (never
+        # replaced-rows-without-config).
+        with media_db.transaction():
+            _replace_chunk_rows(
+                media_db,
+                media_id,
+                chunks,
+                template_name=rows_template_name,
+                template_params=rows_template_params,
+            )
+            if isinstance(resolved, AutoDecision):
+                # (task 5, the Task-4-review carry) Re-stamp the stored
+                # choice with the FRESH outcome, in the SAME transaction as
+                # the replacement: the rows tell the new truth and the
+                # config must agree with them. The governed params are the
+                # very dict the rows' ``chunking_params`` string was built
+                # from (json round-trip keeps row/config agreement by
+                # construction); the lazy import mirrors
+                # ``_effective_template_params``'s.
+                if rows_template_params is not None:
+                    governed_params: Dict[str, Any] = json.loads(
+                        rows_template_params
+                    )
+                else:
+                    from ..Local_Ingestion.local_file_ingestion import (
+                        _effective_chunk_params,
+                    )
+
+                    governed_params = _effective_chunk_params(options)
+                _restamp_auto_chunking_config(
+                    media_db,
+                    media_id,
+                    resolved,
+                    template_name=rows_template_name,
+                    governed_params=governed_params,
+                )
+        # The summary counts rows the way ``_replace_chunk_rows`` writes
+        # them (its own skip-invalid predicate, mirrored).
+        written = [
+            chunk
+            for chunk in chunks
+            if isinstance(chunk, dict) and chunk.get("text") is not None
+        ]
+        chunk_summary: Dict[str, Any] = {
+            "chunk_count": len(written),
+            "engine_version": ENGINE_VERSION,
+            "template": rows_template_name,
+            "spans_present": all(
+                chunk.get("start_char") is not None
+                and chunk.get("end_char") is not None
+                for chunk in written
+            ),
+        }
+    except Exception as exc:
+        # Per-item failure: counted by the caller, never raised past it
+        # (spec §10.2 -- one bad item never aborts a batch; the one-item
+        # caller gets the same posture as a dict, not an exception).
+        logger.error(f"Re-chunk failed for media {media_id}: {exc}")
+        return {"status": "failed", "notes": [str(exc)]}
+
+    outcome: Dict[str, Any] = {
+        "status": "rechunked",
+        "notes": [],
+        "chunk_summary": chunk_summary,
+    }
+
+    # Step 3 (§10.2.1): the forced re-index -- post-commit and best-effort
+    # (ADR-030: the source write above committed first). Only a re-chunked
+    # item reaches here, and only when the caller opted in AND the owning
+    # service exists (the batch always opts in; the agent tool defaults
+    # off, spec §4.4 ruling §8.4). (task-14 carried minor, structural
+    # safety: wrapped in its own try so a raise here -- or a non-dict
+    # outcome from a differently-typed indexing result -- is reported, not
+    # propagated.)
+    if reindex and rag_service is not None:
+        try:
+            reindex_outcome = await forced_reindex_media_item(
+                rag_service, indexing_db, media_row
+            )
+        except Exception as exc:
+            logger.error(f"Re-chunk re-index raised for media {media_id}: {exc}")
+            outcome["reindexed"] = {"status": "failed", "error": str(exc)}
+        else:
+            if isinstance(reindex_outcome, dict):
+                outcome["reindexed"] = dict(reindex_outcome)
+    return outcome
+
+
 async def rechunk_legacy_items(
     media_db: MediaDatabase,
     *,
@@ -456,6 +732,10 @@ async def rechunk_legacy_items(
     progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
 ) -> Dict[str, Any]:
     """Re-chunk every legacy-engine item in the media DB (spec §10.2).
+
+    Resolution + a loop over :func:`rechunk_one_item` (the per-item body
+    this batch used to inline), translating each per-item outcome dict
+    into the batch counters -- behavior-identical to the inlined loop.
 
     Args:
         media_db: The Media DB holding the chunk rows (and templates).
@@ -489,172 +769,55 @@ async def rechunk_legacy_items(
     logger.info(f"Re-chunk: {len(media_ids)} legacy-engine item(s) to process")
 
     for position, media_id in enumerate(media_ids):
-        media: Optional[Dict[str, Any]] = None
-        item_rechunked = False
+        outcome: Optional[Dict[str, Any]] = None
         try:
             media = media_db.get_media_by_id(media_id)
-            content = str((media or {}).get("content") or "")
-            if media is None:
-                summary["skipped"] += 1
-                summary["skipped_reasons"][str(media_id)] = "source row unavailable"
-            elif not content.strip():
-                # Spec §10.2: empty-source items are skipped and counted.
-                summary["skipped"] += 1
-                summary["skipped_reasons"][str(media_id)] = "source content is empty"
-            else:
-                template: Optional[Dict[str, Any]] = None
-                try:
-                    # (task 4, auto-selection spec §4.3 / AC 10)
-                    # RE-RESOLUTION, never replay: a stored ``mode:"auto"``
-                    # runs resolve_auto again against the CURRENT store (a
-                    # classifier block added since ingest flips the tier);
-                    # a stored explicit name keeps #2's behavior exactly
-                    # (per-media name -> config default -> named refusal).
-                    # The media row's own metadata feeds the decision
-                    # (``Media.type`` / ``title`` / ``url``; the table has
-                    # no filename column).
-                    resolved = resolve_for_rechunk(
-                        media_db,
-                        _stored_chunking_config(media),
-                        media_type=str(
-                            media.get("type") or media.get("media_type") or ""
-                        ).strip()
-                        or None,
-                        title=str(media.get("title") or "").strip() or None,
-                        filename=None,
-                        url=str(media.get("url") or "").strip() or None,
-                    )
-                except Exception as exc:
-                    # Spec §9.1: an unresolvable/invalid per-media or
-                    # config template is SKIPPED and counted by re-chunk --
-                    # never a silent fallback to different chunking.
-                    summary["skipped"] += 1
-                    summary["skipped_reasons"][str(media_id)] = str(exc)
-                    logger.warning(f"Re-chunk skipped media {media_id}: {exc}")
-                else:
-                    options: Dict[str, Any]
-                    chunker_template_arg: Optional[Dict[str, Any]]
-                    if isinstance(resolved, AutoDecision):
-                        if (
-                            resolved.tier == "template"
-                            and isinstance(resolved.template, dict)
-                        ):
-                            chunker_template_arg = resolved.template
-                            options = {}
-                        elif (
-                            resolved.tier == "plan"
-                            and isinstance(resolved.chunk_options, dict)
-                        ):
-                            # The planner's options govern this run.
-                            chunker_template_arg = None
-                            options = dict(resolved.chunk_options)
-                        else:
-                            # Plain tier: Auto declined -- today's defaults.
-                            chunker_template_arg = None
-                            options = dict(PLAIN_RECHUNK_OPTIONS)
-                    elif resolved is not None:
-                        chunker_template_arg = resolved
-                        options = {}
-                    else:
-                        chunker_template_arg = None
-                        options = dict(PLAIN_RECHUNK_OPTIONS)
-                    chunks = improved_chunking_process(
-                        content, options, template=chunker_template_arg
-                    )
-                    rows_template_name: Optional[str] = (
-                        str(
-                            (chunker_template_arg or {}).get("name") or ""
-                        ).strip()
-                        or None
-                        if chunker_template_arg is not None
-                        else None
-                    )
-                    rows_template_params: Optional[str] = (
-                        _effective_template_params(chunker_template_arg)
-                        if chunker_template_arg is not None
-                        else None
-                    )
-                    # (TASK-19902, Qodo #3) ONE outer transaction over the
-                    # row replacement AND the auto re-stamp: the DB's
-                    # ``transaction()`` nests (only the outermost
-                    # commit/rollback matters), so a raise in the re-stamp
-                    # after the rows were replaced rolls BOTH back -- the
-                    # item then fails the per-item handler below with NO
-                    # partial state (never replaced-rows-without-config).
-                    with media_db.transaction():
-                        _replace_chunk_rows(
-                            media_db,
-                            media_id,
-                            chunks,
-                            template_name=rows_template_name,
-                            template_params=rows_template_params,
-                        )
-                        if isinstance(resolved, AutoDecision):
-                            # (task 5, the Task-4-review carry) Re-stamp the
-                            # stored choice with the FRESH outcome, in the
-                            # SAME transaction as the replacement: the rows
-                            # tell the new truth and the config must agree
-                            # with them. The governed params are the very
-                            # dict the rows' ``chunking_params`` string was
-                            # built from (json round-trip keeps row/config
-                            # agreement by construction); the lazy import
-                            # mirrors ``_effective_template_params``'s.
-                            if rows_template_params is not None:
-                                governed_params: Dict[str, Any] = json.loads(
-                                    rows_template_params
-                                )
-                            else:
-                                from ..Local_Ingestion.local_file_ingestion import (
-                                    _effective_chunk_params,
-                                )
-
-                                governed_params = _effective_chunk_params(options)
-                            _restamp_auto_chunking_config(
-                                media_db,
-                                media_id,
-                                resolved,
-                                template_name=rows_template_name,
-                                governed_params=governed_params,
-                            )
-                    summary["rechunked"] += 1
-                    item_rechunked = True
+            # The SAME per-item body this loop used to inline, now the
+            # shared one-item function (agent-tools spec §4.4 reuses it).
+            # The batch ALWAYS opts into the forced re-index (§10.2.1 --
+            # its contract whenever the index is present); the one-item
+            # default-off is the agent tool's posture, not the batch's.
+            outcome = await rechunk_one_item(
+                media_db,
+                media,
+                rag_service=rag_service,
+                indexing_db=indexing_db,
+                reindex=True,
+            )
         except Exception as exc:
-            # Per-item failures never abort the batch (spec §10.2).
+            # Per-item failures never abort the batch (spec §10.2) -- and
+            # that now covers the row load itself, exactly as it did when
+            # the load sat inside the per-item try.
             summary["failed"] += 1
             summary["errors"].append(f"media {media_id}: {exc}")
             logger.error(f"Re-chunk failed for media {media_id}: {exc}")
 
-        # Step 3 (§10.2.1): the forced re-index -- post-commit and
-        # best-effort (ADR-030: the source write above committed first).
-        # Only an item whose chunk rows were actually replaced goes on to
-        # the re-index; skipped/failed items keep their legacy rows.
-        # (task-14 carried minor, structural safety: this block sits
-        # OUTSIDE the per-item try above, so an unexpected raise here --
-        # or a non-dict outcome from a differently-typed indexing result
-        # -- would abort the whole batch. Wrapped in its own try so the
-        # batch-abort invariant does not depend on outcome typing.)
-        if item_rechunked and media is not None and rag_service is not None:
-            try:
-                outcome = await forced_reindex_media_item(
-                    rag_service, indexing_db, media
-                )
-            except Exception as exc:
-                summary["reindex_failed"] += 1
-                summary["errors"].append(f"media {media_id} re-index: {exc}")
-                logger.error(
-                    f"Re-chunk re-index raised for media {media_id}: {exc}"
-                )
+        if outcome is not None:
+            status = outcome.get("status")
+            raw_notes = [str(note) for note in outcome.get("notes") or []]
+            notes = "; ".join(raw_notes) if raw_notes else "unspecified"
+            if status == "rechunked":
+                summary["rechunked"] += 1
+            elif status == "skipped":
+                summary["skipped"] += 1
+                summary["skipped_reasons"][str(media_id)] = notes
             else:
-                try:
-                    status = outcome.get("status")
-                except AttributeError:
-                    status = None
-                if status == "reindexed":
+                summary["failed"] += 1
+                summary["errors"].append(f"media {media_id}: {notes}")
+
+            # Step 3 (§10.2.1): only a re-chunked item carries a re-index
+            # outcome; skipped/failed items keep their legacy rows and are
+            # never re-indexed (the one-item function enforces the same
+            # gate before running the forced path).
+            reindexed = outcome.get("reindexed")
+            if isinstance(reindexed, dict):
+                reindex_status = reindexed.get("status")
+                if reindex_status == "reindexed":
                     summary["reindexed"] += 1
-                elif status == "failed":
+                elif reindex_status == "failed":
                     summary["reindex_failed"] += 1
                     summary["errors"].append(
-                        f"media {media_id} re-index: {outcome.get('error')}"
+                        f"media {media_id} re-index: {reindexed.get('error')}"
                     )
 
         if progress_callback is not None:
@@ -695,6 +858,7 @@ __all__ = [
     "format_rechunk_summary",
     "list_legacy_media_ids",
     "rechunk_legacy_items",
+    "rechunk_one_item",
     "release_bulk_rag_slot",
     "reset_bulk_rag_slots_for_tests",
 ]

@@ -131,6 +131,66 @@ def test_factory_assembles_service_only_from_local_app_attributes(monkeypatch):
     assert service._collections is app.local_library_collections_service
 
 
+def test_factory_wires_the_policy_enforcer_into_the_chunk_tool_service(monkeypatch):
+    """Task 5 (chunking-agent-tools, spec §6): the Console-direct chunk tool
+    service receives the APP's policy enforcer -- the writing chunk tools
+    (`library_save_chunk_spec`, `library_rechunk_media`) are service-level
+    gated on the Console path, closing the ungated Console-direct gap."""
+    from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
+    from tldw_chatbook.runtime_policy.enforcement import ServicePolicyEnforcer
+
+    _patch_cli_config(monkeypatch, {"console": {"direct_library_tools": True}})
+    app, screen = _build_screen()
+    app.local_media_reading_service = SimpleNamespace(marker="media")
+
+    provider = screen._console_library_provider_factory()
+
+    assert isinstance(provider, LibraryToolProvider)
+    chunk_service = provider._service._media_chunk
+    assert chunk_service is not None
+    # Identity with the app's own enforcer -- a REAL enforcer, not None and
+    # not a reconstruction (the Console gate is closed).
+    assert isinstance(app.service_policy_enforcer, ServicePolicyEnforcer)
+    assert chunk_service._policy_enforcer is app.service_policy_enforcer
+
+
+def test_factory_chunk_read_tools_degrade_when_one_media_handle_is_missing(
+    monkeypatch, tmp_path
+):
+    """Qodo review (PR #1976): the factory constructs the chunk service when
+    EITHER media handle resolves, so the one-present/one-absent shape must
+    degrade the read tools to the NAMED feature_unavailable payload -- not
+    scrub an AttributeError on the missing handle to storage_error."""
+    from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
+    from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+
+    _patch_cli_config(monkeypatch, {"console": {"direct_library_tools": True}})
+    app, screen = _build_screen()
+    # Media DB present, reading service absent: the service IS constructed
+    # (the factory's either-handle guard), with a None reading handle.
+    app.media_db = MediaDatabase(
+        tmp_path / "console-degrade.db", client_id="console-degrade-tests"
+    )
+    app.local_media_reading_service = None
+
+    provider = screen._console_library_provider_factory()
+
+    assert isinstance(provider, LibraryToolProvider)
+    assert provider._service._media_chunk is not None
+    degrade_cases = (
+        ("library:library_get_media_structure", {"id": "media:irrelevant"}),
+        (
+            "library:library_get_media_chunk",
+            {"id": "media:irrelevant", "chunk_index": 0},
+        ),
+    )
+    for tool_id, args in degrade_cases:
+        result = provider.invoke(tool_id, args)
+        assert result.ok is False
+        payload = json.loads(result.error)
+        assert payload["error"]["code"] == ERROR_FEATURE_UNAVAILABLE
+
+
 def test_factory_missing_backend_yields_per_tool_feature_unavailable(monkeypatch):
     """A backend that is None must degrade that backend's tools to
     ``feature_unavailable`` -- never fail the whole provider."""
@@ -149,7 +209,7 @@ def test_factory_missing_backend_yields_per_tool_feature_unavailable(monkeypatch
 
     assert isinstance(provider, LibraryToolProvider)
     # Catalog still exposes the full descriptor set (no total failure).
-    assert len(provider.list_catalog()) == 18
+    assert len(provider.list_catalog()) == 23
     for tool_id in ("library:library_list_notes", "library:library_list_media"):
         result = provider.invoke(tool_id, {})
         assert result.ok is False

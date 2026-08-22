@@ -1,14 +1,15 @@
-"""task-1337 (plan Task 9): the 18 direct Library tools on the local MCP surface.
+"""task-1337 (plan Task 9): the descriptor-backed direct Library tools on the
+local MCP surface.
 
-The Console gained the descriptor-backed ``library_*`` tools in Tasks 1-8; this
-file pins their local MCP exposure, which is deliberately FastMCP-free (owner
-directive, 2026-08-07) -- the in-app surface is the manifest plus the direct
-runtime delegate:
+The Console gained the descriptor-backed ``library_*`` tools in Tasks 1-8;
+this file pins their local MCP exposure, which is deliberately FastMCP-free
+(owner directive, 2026-08-07) -- the in-app surface is the manifest plus the
+direct runtime delegate:
 
-- manifest: ``describe_local_mcp_capabilities()`` keeps the 9 implemented AST-derived
-  legacy tools unchanged and appends exactly the 18 descriptor tools, with
-  names/descriptions/``inputSchema`` taken from ``LIBRARY_TOOL_DESCRIPTORS``
-  (never hand-duplicated literals);
+- manifest: ``describe_local_mcp_capabilities()`` keeps the 9 implemented
+  AST-derived legacy tools unchanged and appends exactly the descriptor
+  tools, with names/descriptions/``inputSchema`` taken from
+  ``LIBRARY_TOOL_DESCRIPTORS`` (never hand-duplicated literals);
 - direct runtime: ``LocalMCPRuntimeDelegate.execute_tool`` dispatches
   descriptor names to the shared synchronous ``LocalLibraryToolService`` via
   ``asyncio.to_thread``, returns the service payload unchanged, keeps the
@@ -16,8 +17,9 @@ runtime delegate:
   ``implemented`` (not ``missing``) in protocol diagnostics;
 - bootstrap: ``build_local_library_tool_service`` composes all six local
   backends with their real constructor signatures into one shared service,
-  degrading any failing backend to ``feature_unavailable``, and the delegate
-  builds it lazily exactly once.
+  degrading any failing backend to ``feature_unavailable``, threads the
+  runtime-policy enforcer into the chunk tool service (chunking-agent-tools
+  Task 5), and the delegate builds it lazily exactly once.
 """
 
 from __future__ import annotations
@@ -66,7 +68,7 @@ class FakeLibraryToolService:
 # -- Manifest -----------------------------------------------------------------
 
 
-def test_manifest_keeps_legacy_tools_then_appends_the_18_descriptor_tools():
+def test_manifest_keeps_legacy_tools_then_appends_the_23_descriptor_tools():
     manifest = describe_local_mcp_capabilities()
     tools = manifest["tools"]
     names = [entry["name"] for entry in tools]
@@ -74,7 +76,7 @@ def test_manifest_keeps_legacy_tools_then_appends_the_18_descriptor_tools():
     assert names[: len(LEGACY_TOOL_NAMES)] == LEGACY_TOOL_NAMES
     library_entries = tools[len(LEGACY_TOOL_NAMES) :]
     assert [entry["name"] for entry in library_entries] == LIBRARY_TOOL_NAMES
-    assert len(tools) == len(LEGACY_TOOL_NAMES) + 18
+    assert len(tools) == len(LEGACY_TOOL_NAMES) + 23
 
 
 def test_manifest_does_not_advertise_unimplemented_ingest_media():
@@ -220,11 +222,40 @@ async def test_delegate_lazily_constructs_one_shared_service(monkeypatch):
     await delegate.execute_tool("library_list_notes", {})
 
     assert len(factory_calls) == 1  # built once, then cached
-    assert set(factory_calls[0]) == {"chachanotes_db", "media_db"}
+    assert set(factory_calls[0]) == {"chachanotes_db", "media_db", "policy_enforcer"}
     assert [call[0] for call in fake_service.calls] == [
         "library_list_media",
         "library_list_notes",
     ]
+
+
+@pytest.mark.asyncio
+async def test_delegate_forwards_its_policy_enforcer_to_the_factory(monkeypatch):
+    """Task 5 (spec §6): the delegate carries the enforcer handle into the
+    shared-service factory so the chunk tools' writing operations are
+    service-level gated on the local MCP surface too."""
+    import tldw_chatbook.MCP.local_runtime_delegate as delegate_module
+    import tldw_chatbook.MCP.server as server_module
+
+    enforcer = object()
+    seen = {}
+
+    def fake_factory(**kwargs):
+        seen.update(kwargs)
+        return FakeLibraryToolService()
+
+    monkeypatch.setattr(
+        server_module, "build_local_library_tool_service", fake_factory, raising=False
+    )
+    monkeypatch.setattr(
+        delegate_module, "get_chachanotes_db_lazy", lambda: object()
+    )
+    monkeypatch.setattr(delegate_module, "get_media_db_lazy", lambda: object())
+
+    delegate = LocalMCPRuntimeDelegate(policy_enforcer=enforcer)
+    await delegate.execute_tool("library_list_media", {})
+
+    assert seen["policy_enforcer"] is enforcer
 
 
 # -- Shared-service factory (bootstrap) -----------------------------------------
@@ -366,3 +397,33 @@ def test_factory_reuses_a_caller_supplied_notes_service(monkeypatch, tmp_path):
 
     assert records.notes == []  # not rebuilt
     assert service._notes is supplied_notes
+
+
+def test_factory_wires_the_policy_enforcer_into_the_chunk_tool_service(
+    monkeypatch, tmp_path
+):
+    """Task 5 (spec §6): the MCP construction site passes the runtime-policy
+    enforcer into the chunk tool service, so the writing chunk tools
+    (`library_save_chunk_spec`, `library_rechunk_media`) are service-level
+    gated on the local MCP surface -- not only under the Console."""
+    import tldw_chatbook.Library.local_media_chunk_tool_service as chunk_module
+    import tldw_chatbook.MCP.server as server_module
+
+    _patch_factory_backends(monkeypatch, tmp_path)
+    built = []
+    real_ctor = chunk_module.LocalMediaChunkToolService
+
+    class _RecordingChunkService(real_ctor):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            built.append(self)
+
+    monkeypatch.setattr(chunk_module, "LocalMediaChunkToolService", _RecordingChunkService)
+    enforcer = object()
+
+    service = server_module.build_local_library_tool_service(
+        chachanotes_db=object(), media_db=object(), policy_enforcer=enforcer
+    )
+
+    assert service._media_chunk is built[0]
+    assert built[0]._policy_enforcer is enforcer

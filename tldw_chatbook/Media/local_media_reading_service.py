@@ -23,6 +23,22 @@ from tldw_chatbook.STT.persistence import (
     load_transcription_provenance_document,
 )
 
+# Sentinel for ``get_library_media_chunks``'s ``chunk_type`` filter: the
+# primary (flat / NULL ``chunk_type``) family -- the family flat ingest
+# writes. Distinct from both ``None`` (also accepted as primary, so callers
+# can build filters from nullable state) and from any real ``chunk_type``
+# string an ECS parent/child run writes ("paragraph", "section", ...). The
+# literal string ``"primary"`` is accepted as an alias for the same family
+# so the strings reported back in ``families`` round-trip as filters.
+PRIMARY_CHUNK_FAMILY: Any = object()
+
+# Renderings of NULL in the item-level signals (both documented in
+# ``get_library_media_chunks``): the NULL chunk family is reported as
+# "primary", and a NULL engine stamp (pre-v6 rows) as "legacy" -- the same
+# key ``LocalRAGAdminService.count_chunks_by_engine_version`` reports.
+_PRIMARY_FAMILY_LABEL = "primary"
+_LEGACY_ENGINE_LABEL = "legacy"
+
 
 class LocalMediaReadingService:
     """Thin wrapper around the local media DB methods used by the media seam."""
@@ -171,6 +187,167 @@ class LocalMediaReadingService:
         """
         db = self._require_db()
         return db.get_library_media_text(media_uuid, start=start, max_chars=max_chars)
+
+    def get_library_media_chunks(
+        self,
+        media_id: Any,
+        *,
+        chunk_index: int,
+        chunk_type: Any = PRIMARY_CHUNK_FAMILY,
+        context: int = 0,
+        budget: int,
+    ) -> Optional[dict[str, Any]]:
+        """Read one stored chunk plus budget-bounded neighbors for one item.
+
+        The backend read seam for the chunk-fetch agent tool (spec §4.2):
+        reads ``UnvectorizedMediaChunks`` verbatim -- nothing is re-chunked
+        or synthesized. Family-aware (spec §8.10): the unique key is
+        ``(media_id, chunk_index, chunk_type)``; flat ingest rows carry NULL
+        ``chunk_type`` (the primary family) while ECS parent/child rows
+        carry type values.
+
+        Args:
+            media_id: Numeric media id (coerced via ``int``).
+            chunk_index: Zero-based chunk index within the family.
+            chunk_type: Family filter. The default sentinel
+                ``PRIMARY_CHUNK_FAMILY`` (also ``None`` and the literal
+                string ``"primary"``) selects the primary (NULL) family; any
+                other string selects that family verbatim.
+            context: Neighbor rows to consider on EACH side of the requested
+                chunk (nearest-first). Missing indices (item edges) are not
+                counted as dropped.
+            budget: Maximum UTF-8 bytes of NEIGHBOR text. The requested
+                chunk is always returned; neighbors are added nearest-first
+                until the budget would be exceeded, and each existing
+                neighbor left out counts toward ``dropped_neighbors``
+                (spec §8.12 -- budget wins over context).
+
+        Returns:
+            ``None`` when the item has no live stored chunk rows (or no
+            active media row) -- the no-chunks degradation signal (§8.13).
+            Otherwise ``{chunks, families, engine_versions,
+            dropped_neighbors, media_version}`` where ``chunks`` is ordered
+            by ``chunk_index`` with the requested chunk centered, each entry
+            carrying ``{chunk_index, chunk_type, text, start_char,
+            end_char, word_count, metadata}`` (metadata JSON parsed
+            defensively, unparseable → ``{}``). ``families`` (NULL →
+            ``"primary"``) and ``engine_versions`` (NULL stamp →
+            ``"legacy"``, pre-v6) are DISTINCT over ALL the item's live
+            rows regardless of the filter -- the disambiguation and
+            staleness signals. An out-of-range index or missing family is
+            reported by the requested chunk being ABSENT from ``chunks``
+            (never a raise); the tool layer maps that to its named errors.
+
+        Raises:
+            ValueError: If no local media database is configured.
+            DatabaseError: If the local media database cannot be read.
+        """
+        db = self._require_db()
+        normalized_media_id = self._coerce_media_id(media_id)
+        requested_index = int(chunk_index)
+        normalized_context = max(int(context or 0), 0)
+        normalized_budget = int(budget)
+        # Family filter: sentinel / None / the "primary" alias -> the NULL
+        # family (``family_value is None`` matches SQL NULL below); any other
+        # string filters to that family verbatim.
+        if chunk_type is PRIMARY_CHUNK_FAMILY or chunk_type is None:
+            family_value: Optional[str] = None
+        else:
+            family_value = str(chunk_type)
+            if family_value == _PRIMARY_FAMILY_LABEL:
+                family_value = None
+
+        conn = db.get_connection()
+        media_row = conn.execute(
+            "SELECT version FROM Media WHERE id = ? AND deleted = 0 AND is_trash = 0",
+            (normalized_media_id,),
+        ).fetchone()
+        if media_row is None:
+            return None
+
+        rows = conn.execute(
+            """
+            SELECT chunk_index, chunk_type, chunk_text, start_char, end_char,
+                   metadata, chunk_engine_version
+            FROM UnvectorizedMediaChunks
+            WHERE media_id = ? AND deleted = 0
+            ORDER BY chunk_index, chunk_type
+            """,
+            (normalized_media_id,),
+        ).fetchall()
+        if not rows:
+            return None
+
+        families = sorted(
+            {
+                row["chunk_type"] if row["chunk_type"] is not None else _PRIMARY_FAMILY_LABEL
+                for row in rows
+            }
+        )
+        engine_versions = sorted(
+            {
+                str(row["chunk_engine_version"])
+                if row["chunk_engine_version"] is not None
+                else _LEGACY_ENGINE_LABEL
+                for row in rows
+            }
+        )
+
+        family_rows = [row for row in rows if row["chunk_type"] == family_value]
+        by_index = {int(row["chunk_index"]): row for row in family_rows}
+
+        def _payload(row: Any) -> dict[str, Any]:
+            text = str(row["chunk_text"] or "")
+            try:
+                metadata = json.loads(row["metadata"]) if row["metadata"] else {}
+            except (TypeError, ValueError):
+                metadata = {}
+            if not isinstance(metadata, dict):
+                metadata = {}
+            return {
+                "chunk_index": int(row["chunk_index"]),
+                "chunk_type": row["chunk_type"] if row["chunk_type"] is not None else _PRIMARY_FAMILY_LABEL,
+                "text": text,
+                "start_char": row["start_char"],
+                "end_char": row["end_char"],
+                "word_count": len(text.split()),
+                "metadata": metadata,
+            }
+
+        requested_row = by_index.get(requested_index)
+        if requested_row is None:
+            # Absent, not an error: the tool layer owns the named errors.
+            return {
+                "chunks": [],
+                "families": families,
+                "engine_versions": engine_versions,
+                "dropped_neighbors": 0,
+                "media_version": int(media_row["version"]),
+            }
+
+        selected = [requested_row]
+        used_neighbor_bytes = 0
+        dropped_neighbors = 0
+        for distance in range(1, normalized_context + 1):
+            for offset in (-distance, distance):
+                candidate = by_index.get(requested_index + offset)
+                if candidate is None:
+                    continue
+                cost = len(str(candidate["chunk_text"] or "").encode("utf-8"))
+                if used_neighbor_bytes + cost <= normalized_budget:
+                    selected.append(candidate)
+                    used_neighbor_bytes += cost
+                else:
+                    dropped_neighbors += 1
+        selected.sort(key=lambda row: int(row["chunk_index"]))
+
+        return {
+            "chunks": [_payload(row) for row in selected],
+            "families": families,
+            "engine_versions": engine_versions,
+            "dropped_neighbors": dropped_neighbors,
+            "media_version": int(media_row["version"]),
+        }
 
     def search_media(
         self,

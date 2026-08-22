@@ -55,15 +55,38 @@ _LIBRARY_ITEM_TYPE_ACTION_NAMESPACE = {
     "collection": "library.collections",
 }
 
+# chunking-agent-tools (Tasks 4-5, spec §6): writing operations map to
+# their OWN registered action instead of the type-owned read. ``spec_save``
+# resolves to the dedicated ``library.templates/save`` verb and ``rechunk``
+# to ``library.media/rechunk`` -- the Task-3 provisional derived READ
+# mapping had to stop the moment the save handler went live (a live write
+# resolving to a read action under policy would be wrong even though the
+# v7 CRUD validator still guards the write itself).
+_LIBRARY_TOOL_ACTION_OVERRIDES = {
+    "spec_save": "library.templates.save.local",
+    "rechunk": "library.media.rechunk.local",
+}
+
+
+# chunking-agent-tools (Qodo review, PR #1976): the two media chunk READ
+# tools are single-item detail reads (by id, exactly like ``get``), so their
+# operations derive the DETAIL action -- not the browse-level list the
+# provisional non-get fallback resolved them to.
+_DETAIL_READ_OPERATIONS = frozenset({"get", "structure", "chunk"})
+
 
 def _library_tool_action_id(descriptor: LibraryToolDescriptor) -> str:
-    """Map one Library descriptor to its type-owned local read action id.
+    """Map one Library descriptor to its policy action id.
 
-    list/search are browse-level reads; get is a detail-level read. Derived
-    from the descriptor table so the policy surface can never drift from the
-    tool contract.
+    list/search/spec_list are browse-level reads; get and the single-item
+    chunk reads (structure, chunk) are detail-level reads; writing
+    operations carry an explicit override above. Derived from the descriptor
+    table so the policy surface can never drift from the tool contract.
     """
-    action = "detail" if descriptor.operation == "get" else "list"
+    override = _LIBRARY_TOOL_ACTION_OVERRIDES.get(descriptor.operation)
+    if override is not None:
+        return override
+    action = "detail" if descriptor.operation in _DETAIL_READ_OPERATIONS else "list"
     namespace = _LIBRARY_ITEM_TYPE_ACTION_NAMESPACE[descriptor.item_type]
     return f"{namespace}.{action}.local"
 
@@ -140,8 +163,13 @@ class LocalMCPControlService:
         self.client = client
         self.manifest_provider = manifest_provider or _default_manifest_provider
         self.policy_enforcer = policy_enforcer
+        # chunking-agent-tools (Task 5, spec §6): the default delegate rides
+        # the SAME enforcer so the lazily composed shared Library service
+        # (and through it the writing chunk tools) is service-level gated --
+        # exactly the handle the runtime-gate methods below enforce with.
         self.runtime_delegate = runtime_delegate or LocalMCPRuntimeDelegate(
             manifest_provider=self.manifest_provider,
+            policy_enforcer=self.policy_enforcer,
         )
         self._runtime_activity_limit = 50
 

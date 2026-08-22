@@ -1,10 +1,11 @@
-"""Shared synchronous core for the 18 direct Library tools (task-1337, ADR-030).
+"""Shared synchronous core for the direct Library tools (task-1337, ADR-030).
 
 One ``LocalLibraryToolService`` owns the public operation contract and
 delegates storage work to the six existing local backend services (media,
-notes, prompts, skills, conversations, collections). Both runtimes -- the
-Console provider and local MCP registration -- call this core; the descriptor
-table, ID/cursor codecs, validation, and byte fitting all live in
+notes, prompts, skills, conversations, collections) plus the dedicated
+media chunk-tool service (structure/fetch/spec operations). Both runtimes --
+the Console provider and local MCP registration -- call this core; the
+descriptor table, ID/cursor codecs, validation, and byte fitting all live in
 ``library_tool_contract`` so the two surfaces cannot drift.
 
 Pure synchronous core: no Textual, MCP, or agent imports. Local backends whose
@@ -72,6 +73,12 @@ _SEARCH_METHODS = {
 }
 
 _PROMPT_SECTIONS = ("details", "system_prompt", "user_prompt", "prompt_definition")
+
+#: The media chunking operations (chunking-agent-tools spec §4) routed to
+#: ``LocalMediaChunkToolService`` rather than the six item-type backends.
+_MEDIA_CHUNK_OPERATIONS = frozenset(
+    {"structure", "chunk", "spec_list", "spec_save", "rechunk"}
+)
 
 
 def _invalid(message: str) -> LibraryToolError:
@@ -310,6 +317,7 @@ class LocalLibraryToolService:
         skills_service: Any = None,
         conversation_service: Any = None,
         collections_service: Any = None,
+        media_chunk_service: Any = None,
         notes_user_id: str = "local_library",
     ) -> None:
         self._media = media_service
@@ -318,6 +326,7 @@ class LocalLibraryToolService:
         self._skills = skills_service
         self._conversations = conversation_service
         self._collections = collections_service
+        self._media_chunk = media_chunk_service
         self._notes_user_id = notes_user_id
 
     # -- Entry point ---------------------------------------------------------
@@ -346,12 +355,35 @@ class LocalLibraryToolService:
         if not isinstance(arguments, Mapping):
             raise _invalid("arguments must be a JSON object")
         self._validate_argument_keys(descriptor, arguments)
+        if descriptor.operation in _MEDIA_CHUNK_OPERATIONS:
+            return self._media_chunk_tool(descriptor, tool_name, arguments)
         backend = self._backend(descriptor.item_type)
         if descriptor.operation == "list":
             return self._list(descriptor, backend, arguments)
         if descriptor.operation == "search":
             return self._search(descriptor, backend, arguments)
         return self._get(descriptor, backend, arguments)
+
+    def _media_chunk_tool(
+        self,
+        descriptor: LibraryToolDescriptor,
+        tool_name: str,
+        arguments: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Route one media chunking operation to its dedicated service.
+
+        The chunk tools own their backend handles (media DB, reading
+        service, template interop), so they do NOT resolve through the six
+        item-type backends; a missing chunk service degrades its tools to
+        the same structured ``feature_unavailable`` as any missing backend.
+        """
+        if self._media_chunk is None:
+            raise LibraryToolError(
+                ERROR_FEATURE_UNAVAILABLE,
+                "The local media chunk tool backend is not available in this"
+                " deployment.",
+            )
+        return self._media_chunk.invoke(tool_name, arguments)
 
     @staticmethod
     def _validate_argument_keys(

@@ -127,7 +127,7 @@ EXPECTED_AUDITED_CAPABILITIES = {
     "library_collections": {
         "expected_domain_ids": {"library_collections"},
         "expected_action_kinds_by_source": {
-            "local": _action_kinds("browse", "detail"),
+            "local": _action_kinds("browse", "detail", "update", "launch"),
         },
     },
     "watchlists": {
@@ -576,6 +576,8 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
     "library_collections": _action_ids("""
         library.collections.detail.local
         library.collections.list.local
+        library.media.rechunk.local
+        library.templates.save.local
     """),
     "external_connectors": _action_ids("""
         connectors.accounts.delete.server
