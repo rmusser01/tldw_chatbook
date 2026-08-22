@@ -648,7 +648,9 @@ async def test_nested_selected_boundary_uses_actual_sibling_header_coordinates()
 
 
 @pytest.mark.asyncio
-async def test_newer_navigation_prevents_stale_delayed_header_reveal():
+async def test_newer_navigation_prevents_stale_delayed_header_reveal(
+    monkeypatch: pytest.MonkeyPatch,
+):
     async with make_console_pilot(size=(160, 30)) as pilot:
         rail = await _open_inspector(pilot)
         outer = rail.query_one("#console-inspector-rail-body")
@@ -667,6 +669,10 @@ async def test_newer_navigation_prevents_stale_delayed_header_reveal():
         offset_spacer = Static("", id="stale-run-offset-spacer")
         offset_spacer.styles.height = 20
         await outer.mount(offset_spacer, before=run_wrapper)
+        successor_header = _external_boundary_header(successor)
+        boundary_gap = Static("", id="stale-boundary-gap")
+        boundary_gap.styles.height = 8
+        await successor.parent.mount(boundary_gap, before=successor_header)
         selected.set_allocation(1)
         await _overflow(successor)
         await _wait_for_right_rail_condition(
@@ -678,19 +684,108 @@ async def test_newer_navigation_prevents_stale_delayed_header_reveal():
         previous_header = boundaries[selected_index - 1][1]
         previous_header.can_focus = True
         previous_header.focus()
-        await pilot.press("n", "n")
-        successor_header = _external_boundary_header(successor)
+        await pilot.pause()
+
+        held_reveals = []
+        original_call_after_refresh = rail.call_after_refresh
+
+        def hold_boundary_reveal(callback, *args, **kwargs):
+            if getattr(callback, "__name__", None) == "_reveal_boundary_header":
+                held_reveals.append((callback, args, kwargs))
+                return True
+            return original_call_after_refresh(callback, *args, **kwargs)
+
+        monkeypatch.setattr(rail, "call_after_refresh", hold_boundary_reveal)
+        starting_generation = rail._navigation_generation
+        assert rail.post_message(events.Key("n", "n"))
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: (
+                rail._navigation_generation == starting_generation + 1
+                and pilot.app.focused is selected.viewport
+                and len(held_reveals) == 1
+            ),
+            description="first navigation held before its reveal drains",
+        )
+        assert rail.post_message(events.Key("n", "n"))
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: (
+                rail._navigation_generation == starting_generation + 2
+                and pilot.app.focused is successor.viewport
+                and len(held_reveals) == 2
+            ),
+            description="second navigation overtaking the held first reveal",
+        )
+
+        stale_reveal = held_reveals[0]
+        latest_reveal = held_reveals[1]
+        monkeypatch.setattr(rail, "call_after_refresh", original_call_after_refresh)
+        latest_reveal[0](*latest_reveal[1], **latest_reveal[2])
         await _wait_for_right_rail_condition(
             pilot,
             lambda: (
                 pilot.app.focused is successor.viewport
                 and _fully_inside_outer(successor_header, outer)
             ),
-            description="newer nested reveal settling before stale callback",
+            description="latest nested reveal settling before stale callback",
         )
         settled_scroll_y = outer.scroll_y
         await pilot.pause()
         await pilot.pause()
+
+        scroll_calls = []
+
+        def record_scroll_to(*args, **kwargs):
+            scroll_calls.append((args, kwargs))
+
+        settled_state = (
+            pilot.app.focused,
+            outer.scroll_y,
+            rail._navigation_generation,
+        )
+        with monkeypatch.context() as scroll_probe:
+            scroll_probe.setattr(outer, "scroll_to", record_scroll_to)
+            stale_reveal[0](*stale_reveal[1], **stale_reveal[2])
+
+            assert scroll_calls == []
+            assert (
+                pilot.app.focused,
+                outer.scroll_y,
+                rail._navigation_generation,
+            ) == settled_state
+
+            captured_follow_ons = []
+
+            def capture_follow_on(callback, *args, **kwargs):
+                captured_follow_ons.append((callback, args, kwargs))
+                return True
+
+            with monkeypatch.context() as counterfactual:
+                counterfactual.setattr(
+                    rail,
+                    "_header_reveal_is_current",
+                    lambda *_args, **_kwargs: True,
+                )
+                counterfactual.setattr(
+                    rail,
+                    "call_after_refresh",
+                    capture_follow_on,
+                )
+                stale_reveal[0](*stale_reveal[1], **stale_reveal[2])
+
+                assert len(scroll_calls) == 1
+                assert len(captured_follow_ons) == 1
+                assert (
+                    getattr(captured_follow_ons[0][0], "__name__", None)
+                    == "_finish_boundary_header_reveal"
+                )
+
+            assert (
+                pilot.app.focused,
+                outer.scroll_y,
+                rail._navigation_generation,
+            ) == settled_state
 
         assert pilot.app.focused is successor.viewport
         assert outer.scroll_y == settled_scroll_y
