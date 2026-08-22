@@ -1,7 +1,7 @@
 ---
 id: TASK-19520
 title: Skill trust material is written with default filesystem permissions
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-08-21 17:00'
@@ -64,6 +64,10 @@ and defence-in-depth argues for owner-only bits regardless.
    full repository suites plus static checks, obtain independent code review,
    then record evidence and close this five-digit task by editing its source file
    directly.
+6. Address the post-review stale deterministic-temp finding with a bounded
+   owner-only alternate-name retry, regression tests for recovery, exhaustion,
+   and cleanup ownership, and only the focused verification requested by the
+   user before returning the task to Done.
 
 Detailed plan:
 `Docs/superpowers/plans/2026-08-21-task-19520-skill-trust-permissions.md`.

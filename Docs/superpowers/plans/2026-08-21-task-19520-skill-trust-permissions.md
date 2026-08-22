@@ -4,7 +4,7 @@
 
 **Goal:** Persist local-skill trust manifests, encrypted snapshots, and file-backed generation markers with owner-only POSIX permissions from initial temp-file creation through atomic publication.
 
-**Architecture:** Add an explicit `owner_only` opt-in to the shared atomic replace primitive, leaving its default behavior unchanged. The trust store opts into that path for JSON and bytes writes and secures both trust-owned directory levels before writing; focused tests prove pre-replace modes, legacy tightening, collision ownership, cleanup, and non-trust compatibility.
+**Architecture:** Add an explicit `owner_only` opt-in to the shared atomic replace primitive, leaving its default behavior unchanged. The trust store opts into that path for JSON and bytes writes and secures both trust-owned directory levels before writing; focused tests prove pre-replace modes, legacy tightening, collision ownership, cleanup, and non-trust compatibility. A post-review hardening amendment makes owner-only writes recover from a stale deterministic temp by trying a bounded set of random same-directory siblings while preserving every path the current call did not create.
 
 **Tech Stack:** Python 3.11+, `os.open`/`os.fchmod`, `pathlib`, pytest, existing `Skills_Interop.atomic_write` and `SkillTrustStore` APIs
 
@@ -27,6 +27,10 @@ this document before any test or production-code edit. TASK-19520 has five
 digits, so all remaining task updates must edit the source Markdown directly;
 the repository's Backlog CLI 1.44.0 can silently target a bogus task for
 five-digit IDs.
+
+Tasks 1–5 below are the completed historical implementation. Only Task 6 is
+executable for the post-review amendment; its focused verification supersedes
+the historical broad-suite commands at the user's explicit direction.
 
 ### Task 1: Characterize Owner-Only Atomic Temp Creation
 
@@ -812,3 +816,224 @@ ADR required: no
 ADR path: `backlog/decisions/009-local-skill-trust-boundary.md`
 
 Reason: the plan hardens the file-permission implementation of ADR-009's existing trust boundary without changing storage ownership, trust policy, cryptography, authentication, or platform ACL contracts.
+
+### Task 6: Recover Owner-Only Writes from Stale Temp Collisions
+
+**Post-review amendment:** Qodo review identified that a failed cleanup can leave
+the deterministic PID/thread temp occupied, causing every later write from the
+same thread to fail at `O_EXCL`. This task implements the approved design
+revision without broadening the default atomic-write path.
+
+**Files:**
+- Modify: `Tests/Skills/test_atomic_write_concurrency.py:229-360`
+- Modify: `tldw_chatbook/Skills_Interop/atomic_write.py:34-135`
+
+- [ ] **Step 1: Replace the collision-fails test with a failing recovery test**
+
+Pre-create the supplied deterministic temp with sentinel bytes, patch
+`secrets.token_hex` to return a known token, and record the path passed to the
+writer:
+
+```python
+def test_owner_only_collision_uses_fresh_sibling_and_preserves_existing_temp(
+    self, tmp_path, monkeypatch
+):
+    target = tmp_path / "trust.json"
+    temp = aw.unique_temp_path(target, hidden=True)
+    alternate = temp.with_name(f"{temp.name}.0123456789abcdef")
+    sentinel = b"do-not-overwrite-this-temp"
+    temp.write_bytes(sentinel)
+    written_paths: list[Path] = []
+
+    monkeypatch.setattr(secrets, "token_hex", lambda size: "0123456789abcdef")
+
+    def write(path: Path) -> None:
+        written_paths.append(path)
+        path.write_bytes(b"replacement")
+
+    aw.replace_atomically(temp, target, write, owner_only=True)
+
+    assert written_paths == [alternate]
+    assert temp.read_bytes() == sentinel
+    assert target.read_bytes() == b"replacement"
+    assert not alternate.exists()
+    if os.name == "posix":
+        assert _mode(target) == 0o600
+```
+
+- [ ] **Step 2: Add a failing bounded-exhaustion test**
+
+Patch `os.open` to raise a distinct `FileExistsError` on each call, record the
+writer and cleanup seams, and assert exactly eight candidates are attempted:
+
+```python
+def test_owner_only_collision_retry_is_bounded_and_preserves_unowned_paths(
+    self, tmp_path, monkeypatch
+):
+    target = tmp_path / "trust.json"
+    temp = aw.unique_temp_path(target, hidden=True)
+    collisions: list[FileExistsError] = []
+    opened: list[Path] = []
+    writer_calls: list[Path] = []
+    cleanup_calls: list[Path] = []
+
+    monkeypatch.setattr(secrets, "token_hex", lambda size: f"{len(opened):016x}")
+
+    def collide(path, flags, mode):
+        del flags, mode
+        opened.append(Path(path))
+        error = FileExistsError(errno.EEXIST, f"collision-{len(opened)}", path)
+        collisions.append(error)
+        raise error
+
+    def record_unlink(self, *, missing_ok=False):
+        del missing_ok
+        cleanup_calls.append(self)
+
+    monkeypatch.setattr(aw.os, "open", collide)
+    monkeypatch.setattr(Path, "unlink", record_unlink)
+
+    with pytest.raises(FileExistsError) as exc_info:
+        aw.replace_atomically(
+            temp, target, writer_calls.append, owner_only=True
+        )
+
+    assert exc_info.value is collisions[-1]
+    assert len(opened) == 8
+    assert len(set(opened)) == 8
+    assert opened[0] == temp
+    assert writer_calls == []
+    assert cleanup_calls == []
+    assert not target.exists()
+```
+
+- [ ] **Step 3: Add a failing alternate-ownership cleanup test**
+
+Pre-create the supplied temp, force the writer to fail after writing the fresh
+alternate, and prove only the owned alternate is removed:
+
+```python
+def test_owner_only_alternate_writer_failure_cleans_only_owned_sibling(
+    self, tmp_path, monkeypatch
+):
+    target = tmp_path / "trust.json"
+    temp = aw.unique_temp_path(target, hidden=True)
+    alternate = temp.with_name(f"{temp.name}.fedcba9876543210")
+    sentinel = b"unowned"
+    temp.write_bytes(sentinel)
+    monkeypatch.setattr(secrets, "token_hex", lambda size: "fedcba9876543210")
+
+    def fail(path: Path) -> None:
+        assert path == alternate
+        path.write_bytes(b"partial")
+        raise RuntimeError("alternate writer failed")
+
+    with pytest.raises(RuntimeError, match="alternate writer failed"):
+        aw.replace_atomically(temp, target, fail, owner_only=True)
+
+    assert temp.read_bytes() == sentinel
+    assert not alternate.exists()
+    assert not target.exists()
+```
+
+- [ ] **Step 4: Run the three new tests and verify RED**
+
+Run:
+
+```bash
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest \
+  Tests/Skills/test_atomic_write_concurrency.py::TestOwnerOnlyTempCreation::test_owner_only_collision_uses_fresh_sibling_and_preserves_existing_temp \
+  Tests/Skills/test_atomic_write_concurrency.py::TestOwnerOnlyTempCreation::test_owner_only_collision_retry_is_bounded_and_preserves_unowned_paths \
+  Tests/Skills/test_atomic_write_concurrency.py::TestOwnerOnlyTempCreation::test_owner_only_alternate_writer_failure_cleans_only_owned_sibling \
+  -q
+```
+
+Expected: all three fail because `replace_atomically` still surfaces the first
+deterministic collision rather than selecting a fresh sibling. Add `secrets`
+to the test module's standard-library imports before these tests so the RED
+failures exercise production behavior rather than test setup.
+
+- [ ] **Step 5: Implement bounded owner-only candidate selection**
+
+Import `secrets`, add `_OWNER_ONLY_TEMP_CANDIDATES = 8`, and add a private
+iterator that yields the supplied path followed by seven random siblings:
+
+```python
+def _owner_only_temp_paths(temp_path: Path):
+    yield temp_path
+    for _ in range(_OWNER_ONLY_TEMP_CANDIDATES - 1):
+        yield temp_path.with_name(f"{temp_path.name}.{secrets.token_hex(8)}")
+```
+
+In the `owner_only` branch, retry only `FileExistsError`. Store the candidate
+in `owned_temp_path` only after `os.open` succeeds. Invoke `write_fn` and
+`replace` with `owned_temp_path`, and make the exception handler unlink only
+that path. If all candidates collide, re-raise the final `FileExistsError`
+without cleanup. Do not catch other setup errors and do not alter the default
+branch.
+
+- [ ] **Step 6: Run the owner-only class and verify GREEN**
+
+Run:
+
+```bash
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest \
+  Tests/Skills/test_atomic_write_concurrency.py::TestOwnerOnlyTempCreation -q
+```
+
+Expected: all owner-only tests pass.
+
+- [ ] **Step 7: Run only the focused TASK-19520 verification**
+
+Run:
+
+```bash
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest \
+  Tests/Skills/test_atomic_write_concurrency.py \
+  Tests/Skills/test_skill_trust_store.py \
+  Tests/Skills/test_skill_trust_store_reset.py \
+  Tests/Skills/test_skill_trust_permissions.py -q
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff check \
+  tldw_chatbook/Skills_Interop/atomic_write.py \
+  tldw_chatbook/Skills_Interop/skill_trust_store.py \
+  Tests/Skills/test_atomic_write_concurrency.py \
+  Tests/Skills/test_skill_trust_permissions.py
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff format --check \
+  tldw_chatbook/Skills_Interop/atomic_write.py \
+  tldw_chatbook/Skills_Interop/skill_trust_store.py \
+  Tests/Skills/test_atomic_write_concurrency.py \
+  Tests/Skills/test_skill_trust_permissions.py
+git diff --check
+```
+
+Expected: focused tests, lint, formatting, and whitespace checks pass. Do not
+run the broad Skills or repository suite; the user explicitly limited this
+review fix to tests related to the modified functionality.
+
+- [ ] **Step 8: Commit the production fix**
+
+```bash
+git add \
+  tldw_chatbook/Skills_Interop/atomic_write.py \
+  Tests/Skills/test_atomic_write_concurrency.py
+git commit -m "fix(skills): recover from stale secure temps"
+```
+
+- [ ] **Step 9: Close the post-review task amendment**
+
+Update the TASK-19520 source Markdown directly: add the bounded stale-temp
+recovery to its implementation-plan and implementation-notes sections, record
+the exact focused-test/static evidence, and return frontmatter status from
+`In Progress` to `Done`. Do not use the Backlog CLI for this five-digit ID.
+
+- [ ] **Step 10: Commit documentation and address the Qodo thread**
+
+```bash
+git add \
+  Docs/superpowers/plans/2026-08-21-task-19520-skill-trust-permissions.md \
+  'backlog/tasks/task-19520 - Skill-trust-material-is-written-with-default-filesystem-permissions.md'
+git commit -m "docs: record TASK-19520 review amendment"
+```
+
+Push the branch, reply inline with the bounded-retry and focused-test evidence,
+and resolve the review thread only after GitHub reflects the fix.
