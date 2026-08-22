@@ -14,10 +14,14 @@ the 25,000-step budget AC#1 names for a single run.
 from __future__ import annotations
 
 import json
+import sqlite3
+import tempfile
 import time
+from pathlib import Path
 
 import pytest
 
+from tldw_chatbook.DB import AgentRuns_DB as agent_runs_db
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
@@ -201,3 +205,69 @@ def test_latest_primary_run_metadata_omits_steps(db):
 def test_append_steps_unknown_run_id_raises(db):
     with pytest.raises(KeyError):
         db.append_steps("nope", [{"index": 0, "kind": "model"}])
+
+
+# --- Chunking: SQLite's host-parameter ceiling ------------------------
+
+
+def test_batch_hydrate_survives_more_run_ids_than_the_old_param_ceiling(db):
+    """Hydrating many runs at once must not hit SQLite's variable limit.
+
+    ``_batch_hydrate_steps`` binds one parameter per run id, and no
+    caller bounds the list -- ``ConsoleAgentController.subagent_runs``
+    asks for every run in a conversation. The ceiling is BUILD-dependent:
+    32766 on SQLite >= 3.32 but 999 on older builds, and this project's
+    floor is Python 3.11, which can ship either. So this test lowers the
+    connection's own limit to the old value rather than trusting the
+    local build -- otherwise it would pass unchunked on a modern SQLite
+    and prove nothing about the machines that actually break.
+    """
+    run_ids = [
+        db.create_run(conversation_id="c", agent_kind="primary")
+        for _ in range(5)
+    ]
+    for i, rid in enumerate(run_ids):
+        db.append_steps(rid, [{"index": 0, "kind": "model", "summary": str(i)}])
+
+    # Pad to well past the old ceiling with ids that have no rows: the
+    # bound-parameter count is what overflows, not the row count.
+    padded = [f"absent-{n}" for n in range(1200)] + run_ids
+
+    with db.transaction() as conn:
+        conn.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 999)
+        grouped = db._batch_hydrate_steps(conn, padded)
+
+    assert set(grouped) == set(run_ids), "every run with rows must hydrate"
+    for i, rid in enumerate(run_ids):
+        assert [s["summary"] for s in grouped[rid]] == [str(i)]
+
+
+def test_batch_hydrate_groups_correctly_across_chunk_boundaries(monkeypatch):
+    """Splitting the read into chunks must not drop or mis-group rows.
+
+    Run ids are grouped per chunk and merged; a boundary bug (last chunk
+    overwriting instead of extending, or a run's rows split across two
+    chunks) is invisible at the real chunk size, so shrink it to 2.
+    """
+    monkeypatch.setattr(agent_runs_db, "_IN_CLAUSE_CHUNK", 2)
+    with tempfile.TemporaryDirectory() as tmp:
+        db = AgentRunsDB(Path(tmp) / "chunks.db", client_id="test")
+        run_ids = [
+            db.create_run(conversation_id="c", agent_kind="primary")
+            for _ in range(7)
+        ]
+        for i, rid in enumerate(run_ids):
+            db.append_steps(
+                rid,
+                [
+                    {"index": 0, "kind": "model", "summary": f"{i}-a"},
+                    {"index": 1, "kind": "model", "summary": f"{i}-b"},
+                ],
+            )
+
+        with db.transaction() as conn:
+            grouped = db._batch_hydrate_steps(conn, run_ids)
+
+        assert set(grouped) == set(run_ids)
+        for i, rid in enumerate(run_ids):
+            assert [s["summary"] for s in grouped[rid]] == [f"{i}-a", f"{i}-b"]

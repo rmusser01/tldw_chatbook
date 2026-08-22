@@ -32,6 +32,13 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
+# SQLite caps host parameters per statement. The ceiling is build-dependent:
+# 32766 on SQLite >= 3.32, but 999 on older builds, and this project's floor
+# is Python 3.11, which can ship either. 900 is under the OLD ceiling, so the
+# chunked read is correct on every build rather than on the newest one.
+_IN_CLAUSE_CHUNK = 900
+
+
 class AgentRunsDB(BaseDB):
     """Run records for the agent runtime (vertical-slice spec data model).
 
@@ -260,8 +267,6 @@ class AgentRunsDB(BaseDB):
                     created_at TEXT NOT NULL,
                     PRIMARY KEY (run_id, seq)
                 );
-                CREATE INDEX IF NOT EXISTS idx_agent_run_steps_run
-                    ON agent_run_steps(run_id);
 
                 -- v3 (TASK-1971, Agent Change Review): one row per
                 -- (run, root) pair recording that turn's shadow-repo
@@ -1085,19 +1090,30 @@ class AgentRunsDB(BaseDB):
             ``{run_id: [step_dict, ...]}`` in ``seq`` order, for every
             run_id that has at least one row. A run_id with zero rows is
             simply absent (not present with an empty list).
+
+        Note:
+            Issued in chunks of ``_IN_CLAUSE_CHUNK`` ids, because a bound
+            parameter per id runs into SQLite's host-parameter ceiling and
+            no caller bounds the list (``ConsoleAgentController.
+            subagent_runs`` asks for every run in a conversation). Chunking
+            keeps the no-N+1 property -- one query per 900 runs, not per run.
         """
         ids = list(dict.fromkeys(run_ids))
         if not ids:
             return {}
-        placeholders = ",".join("?" for _ in ids)
-        rows = conn.execute(
-            f"SELECT run_id, payload FROM agent_run_steps "
-            f"WHERE run_id IN ({placeholders}) ORDER BY run_id, seq",
-            ids,
-        ).fetchall()
         grouped: dict[str, list[dict]] = {}
-        for row in rows:
-            grouped.setdefault(row["run_id"], []).append(json.loads(row["payload"]))
+        for start in range(0, len(ids), _IN_CLAUSE_CHUNK):
+            chunk = ids[start : start + _IN_CLAUSE_CHUNK]
+            placeholders = ",".join("?" for _ in chunk)
+            rows = conn.execute(
+                f"SELECT run_id, payload FROM agent_run_steps "
+                f"WHERE run_id IN ({placeholders}) ORDER BY run_id, seq",
+                chunk,
+            ).fetchall()
+            for row in rows:
+                grouped.setdefault(row["run_id"], []).append(
+                    json.loads(row["payload"])
+                )
         return grouped
 
     def _rows_to_dicts(
@@ -1636,6 +1652,17 @@ class AgentRunsDB(BaseDB):
         non-terminal path, which previously called ``get_run_fresh`` for
         a result it only ever inspects ``status``/``wake_delivered_at``
         on.
+
+        Args:
+            run_id: The run to read.
+
+        Returns:
+            The same metadata-only dict ``get_run_metadata`` returns (no
+            ``steps`` key), or ``None`` if no run has that id.
+
+        Raises:
+            sqlite3.Error: Propagated unchanged from the read. The private
+                connection is closed either way.
         """
         if self.is_memory_db:
             return self.get_run_metadata(run_id)
