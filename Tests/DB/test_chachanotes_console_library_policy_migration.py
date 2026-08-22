@@ -70,6 +70,29 @@ def _schema_snapshot(path: Path) -> tuple[int, tuple[tuple[object, ...], ...]]:
     return schema_cookie, objects
 
 
+def _rollback_state(
+    path: Path,
+) -> tuple[int, tuple[int, tuple[tuple[object, ...], ...]], tuple[tuple[object, ...], ...]]:
+    """Return version, complete schema, and policy rows for rollback assertions."""
+    with sqlite3.connect(path) as connection:
+        version = _version(connection)
+        policy_table_exists = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+            ("console_conversation_library_policy",),
+        ).fetchone()
+        policy_rows = (
+            tuple(
+                connection.execute(
+                    "SELECT * FROM console_conversation_library_policy "
+                    "ORDER BY conversation_id"
+                ).fetchall()
+            )
+            if policy_table_exists is not None
+            else ()
+        )
+    return version, _schema_snapshot(path), policy_rows
+
+
 def _insert_conversation(
     connection: sqlite3.Connection,
     conversation_id: str,
@@ -459,6 +482,87 @@ def test_failure_after_each_v48_ddl_statement_rolls_back_everything(
         assert "assistant_generation_state" not in {
             row[1] for row in connection.execute("PRAGMA table_info(messages)")
         }
+
+
+def test_failure_after_policy_seed_insert_rolls_back_schema_rows_and_version(
+    tmp_path: Path,
+    v47_template: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "failure-after-policy-seed.sqlite"
+    _copy_template(v47_template, path)
+    before = _rollback_state(path)
+    assert before[0] == 47
+    assert before[2] == ()
+    original_seed = getattr(
+        CharactersRAGDB,
+        "_seed_console_library_policy_rows",
+        None,
+    )
+
+    def fail_after_seed(
+        self: CharactersRAGDB,
+        cursor: sqlite3.Cursor,
+        auto_retrieve_on_send: int,
+    ) -> None:
+        if original_seed is not None:
+            original_seed(self, cursor, auto_retrieve_on_send)
+        raise sqlite3.OperationalError("injected-after-policy-seed")
+
+    monkeypatch.setattr(
+        CharactersRAGDB,
+        "_seed_console_library_policy_rows",
+        fail_after_seed,
+        raising=False,
+    )
+    with pytest.raises(SchemaError, match="injected-after-policy-seed"):
+        CharactersRAGDB(
+            path,
+            client_id="rollback-after-seed",
+            console_library_migration_seed=TRUE_SEED,
+        )
+
+    assert _rollback_state(path) == before
+
+
+def test_failure_after_guarded_version_update_rolls_back_schema_rows_and_version(
+    tmp_path: Path,
+    v47_template: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "failure-after-version-update.sqlite"
+    _copy_template(v47_template, path)
+    before = _rollback_state(path)
+    assert before[0] == 47
+    assert before[2] == ()
+    original_update = getattr(
+        CharactersRAGDB,
+        "_update_console_library_policy_schema_version",
+        None,
+    )
+
+    def fail_after_version_update(
+        self: CharactersRAGDB,
+        cursor: sqlite3.Cursor,
+    ) -> None:
+        if original_update is not None:
+            original_update(self, cursor)
+        raise sqlite3.OperationalError("injected-after-v48-version-update")
+
+    monkeypatch.setattr(
+        CharactersRAGDB,
+        "_update_console_library_policy_schema_version",
+        fail_after_version_update,
+        raising=False,
+    )
+    with pytest.raises(SchemaError, match="injected-after-v48-version-update"):
+        CharactersRAGDB(
+            path,
+            client_id="rollback-after-version",
+            console_library_migration_seed=TRUE_SEED,
+        )
+
+    assert _rollback_state(path) == before
 
 
 def test_failed_migration_retries_with_a_different_seed(

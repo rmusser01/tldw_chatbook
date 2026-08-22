@@ -5898,6 +5898,44 @@ UPDATE db_schema_version
                 f"Migration from V43 to V44 failed for '{self._SCHEMA_NAME}': {exc}"
             ) from exc
 
+    def _seed_console_library_policy_rows(
+        self,
+        cursor: sqlite3.Cursor,
+        auto_retrieve_on_send: int,
+    ) -> None:
+        """Seed the final policy for every conversation present at v47."""
+        cursor.execute(
+            """
+            INSERT INTO console_conversation_library_policy(
+                conversation_id,
+                auto_retrieve_on_send,
+                assistant_library_access
+            )
+            SELECT id, ?, 1
+              FROM conversations
+            """,
+            (auto_retrieve_on_send,),
+        )
+
+    def _update_console_library_policy_schema_version(
+        self,
+        cursor: sqlite3.Cursor,
+    ) -> None:
+        """Advance v47 to v48 only after its DDL and policy seed succeed."""
+        version_cursor = cursor.execute(
+            """
+            UPDATE db_schema_version
+               SET version = 48
+             WHERE schema_name = ?
+               AND version = 47
+            """,
+            (self._SCHEMA_NAME,),
+        )
+        if version_cursor.rowcount != 1:
+            raise SchemaError(
+                f"[{self._SCHEMA_NAME} V47→V48] Migration version update was not applied"
+            )
+
     def _migrate_from_v44_to_v45(self, conn: sqlite3.Connection) -> None:
         """Install portable Actor Pack identity and bounded Persona intents."""
 
@@ -6162,31 +6200,11 @@ UPDATE db_schema_version
                     migration_path.read_text(encoding="utf-8"),
                     "V47→V48",
                 )
-                cursor.execute(
-                    """
-                    INSERT INTO console_conversation_library_policy(
-                        conversation_id,
-                        auto_retrieve_on_send,
-                        assistant_library_access
-                    )
-                    SELECT id, ?, 1
-                      FROM conversations
-                    """,
-                    (auto_retrieve_on_send,),
+                self._seed_console_library_policy_rows(
+                    cursor,
+                    auto_retrieve_on_send,
                 )
-                version_cursor = cursor.execute(
-                    """
-                    UPDATE db_schema_version
-                       SET version = 48
-                     WHERE schema_name = ?
-                       AND version = 47
-                    """,
-                    (self._SCHEMA_NAME,),
-                )
-                if version_cursor.rowcount != 1:
-                    raise SchemaError(
-                        f"[{self._SCHEMA_NAME} V47→V48] Migration version update was not applied"
-                    )
+                self._update_console_library_policy_schema_version(cursor)
 
             final_version = self._get_db_version(conn)
             if final_version != 48:
