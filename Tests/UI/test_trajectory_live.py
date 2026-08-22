@@ -583,6 +583,7 @@ def test_retrieval_failures_are_distinct_and_message_owned():
     assert {record.message_id for record in failures} == {"a1", "a2"}
     assert len({record.event_id for record in failures}) == 2
     assert all("SECRET" not in record.content_preview for record in failures)
+    assert all(record.field_states["message_id"] == "observed" for record in failures)
 
 
 async def test_trajectory_launch_action_presents_screen():

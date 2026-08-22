@@ -1219,7 +1219,10 @@ def _build_trajectory_snapshot(
                 "event_kind": "capture_failed",
                 "status": "capture_failed",
                 "summary": f"{source} capture failed",
-                "field_states": {"source": "capture_failed"},
+                "field_states": {
+                    "source": "capture_failed",
+                    **({"message_id": "observed"} if message_id else {}),
+                },
                 "sensitivity": "diagnostic",
             }
         )
