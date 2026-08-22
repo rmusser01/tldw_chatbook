@@ -760,7 +760,7 @@ test scope, but keep the task `In Progress` and final AC/plan closeout boxes ope
 the post-rebase evidence satisfies the amended completion contract and final
 specification/quality re-review approves it.
 
-- [ ] **Step 6: Finalize the frozen-base completion evidence after re-review**
+- [x] **Step 6: Finalize the frozen-base completion evidence after re-review**
 
 The 2026-08-22 ratchet amendment reviewed and approved
 `02cd80b33004305765b5cd91b3d264aa3664596e` as the frozen final-rebase source.
@@ -807,17 +807,21 @@ through Backlog CLI, and commit truthful closeout metadata. Any task-caused fail
 blocks `Done`. PR/Qodo/CI/merge delivery is a separate user-authorized action after
 task completion.
 
-### Task 5 evidence pending amended-contract re-review (2026-08-22)
+### Task 5 final evidence (2026-08-22)
 
 - Task 1 RED was rechecked from the exact reviewed shell commit `3365a9c3c` in
   an owner-validated `/private/tmp` archive: 18 failed / 2 passed / 2 warnings in
   6.79s, with collection succeeding and the intended behavior/ownership/wiring
-  contracts reaching their assertions. The frozen-candidate GREEN command passed
-  21 / 21 with 2 dependency warnings in 3.35s. The structural subset, including
+  contracts reaching their assertions. The pre-order-fix frozen-candidate GREEN
+  command passed 21 / 21 with 2 dependency warnings in 3.35s. The final post-fix
+  exact core passed 22 / 22 with 2 warnings in 3.08s, and the complete wiring file
+  passed 22 / 22 with 2 warnings in 4.61s. The structural subset, including
   multiplicity and non-vacuity mutation oracles, passed 6 / 6 with 2 warnings in
   2.23s.
-- Task 3's exact 16-file affected matrix completed with 155 passed / 2 failed /
-  1 skipped / 10 warnings in 175.17s. The two failures are unrelated frozen-base
+- The pre-order-fix Task 3 matrix was 155 passed / 2 failed / 1 skipped /
+  10 warnings in 175.17s. Its final exact 16-file affected matrix completed with
+  156 passed / 2 failed / 1 skipped / 10 warnings in 155.20s. The two failures are
+  unrelated frozen-base
   deviations:
   `Tests/UI/test_probe_headless_wake_p2_p3_p4.py::test_probe_p2_post_unmount_fanout`
   opens the project-instruction modal outside a Textual worker, and
@@ -829,8 +833,9 @@ task completion.
   `Tests/UI/test_probe_headless_wake_p2_p3_p4.py::test_probe_p4_headless_approval_cost`:
   it intentionally requires `--run-slow`, is outside the user-authorized default
   affected matrix, and is not claimed as passed or executed coverage.
-- The remaining Task 5 selection completed with 6 passed / 1 failed / 2 warnings
-  in 22.58s. Its failure,
+- The pre-order-fix remaining Task 5 selection was 6 passed / 1 failed / 2 warnings
+  in 22.58s. The final selection completed with the same 6 passed / 1 failed /
+  2 warnings in 20.29s. Its failure,
   `Tests/UI/test_console_sync_outlives_screen.py::test_a_real_navigation_arriving_mid_tick_is_absorbed`,
   is the changed-files worker losing its active app; that exact node also fails on
   archived `02cd80b3` by the same mechanism. The fourth deviation,
@@ -861,8 +866,10 @@ task completion.
   this completion-contract amendment.
 - Final specification review found the prior all-selected-tests-pass wording
   inconsistent with the unchanged four-failure/one-skip evidence. The contract and
-  expected/closeout wording are now amended without changing any raw result. Task 5
-  closeout, AC #3, and `Done` remain pending final specification/quality re-review.
+  expected/closeout wording were amended without relabeling any raw result. Final
+  post-fix verification and specification/quality re-review approved the completion
+  evidence under that contract: all task-owned/new/modified functionality tests are
+  green and no task-caused regression remains.
 
 ### Final-quality completion-order review (2026-08-22)
 
@@ -872,10 +879,13 @@ task completion.
   accessor for the late-bound `ensure_chat_controller` edge and freezes the order as
   ensure → activate → switch through the current controller → schedule sync.
 - The new node is green at 1 passed / 1 warning. The exact Task 1 lifecycle plus four
-  architecture and two wiring nodes are green at 22 passed / 2 warnings; the complete
-  wiring file is green at 22 passed / 2 warnings. The screen remains 19,996 lines /
-  640 direct methods against the frozen 20,065 / 640 ceilings.
+  architecture and two wiring nodes are green at 22 passed / 2 warnings in 3.08s; the
+  complete wiring file is green at 22 passed / 2 warnings in 4.61s. The screen remains
+  19,996 lines / 640 direct methods against the frozen 20,065 / 640 ceilings.
 - Every fleet constructor callback now has explicit arity and its truthful return
   shape; no `Callable[..., Any]` or other ellipsis callable remains. Targeted Ruff
-  check/format-check, `py_compile` for `fleet.py` and `wiring.py`, and diff checks pass.
-  This review does not close Task 5, AC #3, or the task status.
+  check/format-check passed all 14 changed Python paths; `fleet.py`, `wiring.py`,
+  `chat_screen.py`, and `workspace.py` compiled; ownership is 0 moved definitions on
+  the screen and 16 on the controller; scope/privacy/diff checks are clean. Final
+  specification and quality review approved the fix and the amended no-task-regression
+  completion contract, with no new failures.
