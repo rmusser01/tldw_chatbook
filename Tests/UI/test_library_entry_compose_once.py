@@ -55,6 +55,8 @@ from tldw_chatbook.Widgets.Library import (
     LibraryExportCanvas,
     LibraryLandingCanvas,
     LibraryLandingCanvasState,
+    LibraryLandingAttentionAction,
+    LibraryLandingContinueAction,
     LibraryLandingRecentItem,
     LibraryMediaCanvas,
     LibraryMediaTrashCanvas,
@@ -160,18 +162,177 @@ def _landing_state(
     status: str = "",
     show_retry: bool = False,
     show_explore: bool = False,
+    continue_action: LibraryLandingContinueAction | None = None,
+    attention_action: LibraryLandingAttentionAction | None = None,
     recent_items: tuple[LibraryLandingRecentItem, ...] = (),
 ) -> LibraryLandingCanvasState:
     """Build one explicit lifecycle presentation state for retained-owner tests."""
     return LibraryLandingCanvasState(
         purpose="Add something useful, then use it in Console or Study.",
         counts_line="Notes (3) · Media (2) · Conversations (1)",
+        continue_action=continue_action,
+        attention_action=attention_action,
         recent_items=recent_items,
         lifecycle=lifecycle,
         lifecycle_status=status,
         show_retry=show_retry,
         show_explore=show_explore,
     )
+
+
+@pytest.mark.asyncio
+async def test_library_returning_landing_orders_continue_attention_from_library_and_quick_actions():
+    continue_action = LibraryLandingContinueAction(
+        label="Media · <audio> · page 2 · 音声 🧪 e\u0301 \u2067مرحبا\u2069",
+        row_id=LIBRARY_ROW_BROWSE_MEDIA,
+        adjustment="Item views resume at the source list.",
+    )
+    attention_action = LibraryLandingAttentionAction(
+        message="Media list may be out of date.",
+        action_label="Retry",
+        action_kind="media-retry",
+    )
+    recent = LibraryLandingRecentItem(
+        "notes",
+        "note-1",
+        "<Reading> list · 読書 🗂️ e\u0301 \u2067مرحبا\u2069",
+        "Note",
+    )
+    app = _LandingCanvasHarness(
+        _landing_state(
+            LibraryLifecycle.GRADUATED,
+            continue_action=continue_action,
+            attention_action=attention_action,
+            recent_items=(recent,),
+        )
+    )
+
+    async with app.run_test():
+        landing = app.query_one("#library-landing-canvas", LibraryLandingCanvas)
+        ordered_ids = [
+            widget.id for widget in landing.walk_children() if widget.id is not None
+        ]
+        assert ordered_ids.index("library-hub-continue-heading") < ordered_ids.index(
+            "library-hub-continue"
+        )
+        assert ordered_ids.index("library-hub-continue") < ordered_ids.index(
+            "library-hub-attention-heading"
+        )
+        assert ordered_ids.index("library-hub-attention-action") < ordered_ids.index(
+            "library-hub-from-library-heading"
+        )
+        assert ordered_ids.index("library-hub-recent-notes") < ordered_ids.index(
+            "library-hub-quick-actions-heading"
+        )
+        quick_ids = [
+            widget.id
+            for widget in app.query(".library-hub-action")
+        ]
+        assert quick_ids == [
+            "library-hub-action-import",
+            "library-hub-action-new-note",
+            "library-hub-action-search",
+        ]
+        continue_button = app.query_one("#library-hub-continue", Button)
+        attention_button = app.query_one("#library-hub-attention-action", Button)
+        assert str(continue_button.label) == continue_action.label
+        assert getattr(continue_button, "row_id", "") == LIBRARY_ROW_BROWSE_MEDIA
+        assert getattr(attention_button, "action_kind", "") == "media-retry"
+        assert str(
+            app.query_one("#library-hub-continue-adjustment", Static).renderable
+        ) == "Item views resume at the source list."
+        assert str(app.query_one("#library-hub-attention-copy", Static).renderable) == (
+            "Media list may be out of date."
+        )
+        assert "<Reading> list" in str(
+            app.query_one("#library-hub-recent-notes", Button).label
+        )
+
+
+@pytest.mark.asyncio
+async def test_library_returning_landing_omits_absent_optional_sections():
+    app = _LandingCanvasHarness(_landing_state(LibraryLifecycle.EXPANDED))
+
+    async with app.run_test():
+        assert not app.query("#library-hub-continue-heading")
+        assert not app.query("#library-hub-continue")
+        assert not app.query("#library-hub-attention-heading")
+        assert not app.query("#library-hub-attention-action")
+        assert not app.query("#library-hub-from-library-heading")
+        assert not app.query("#library-hub-recents")
+        assert len(app.query("#library-hub-quick-actions-heading")) == 1
+        assert len(app.query("#library-hub-action-import")) == 1
+        assert len(app.query("#library-hub-action-new-note")) == 1
+        assert len(app.query("#library-hub-action-search")) == 1
+
+
+@pytest.mark.asyncio
+async def test_library_returning_landing_sync_retains_actions_focus_and_updates_copy():
+    initial_continue = LibraryLandingContinueAction(
+        label="Media · type: audio · page 2",
+        row_id=LIBRARY_ROW_BROWSE_MEDIA,
+        adjustment="Item views resume at the source list.",
+    )
+    initial_attention = LibraryLandingAttentionAction(
+        message="Media list may be out of date.",
+        action_label="Retry",
+        action_kind="media-retry",
+    )
+    app = _LandingCanvasHarness(
+        _landing_state(
+            LibraryLifecycle.EXPANDED,
+            continue_action=initial_continue,
+            attention_action=initial_attention,
+            recent_items=(
+                LibraryLandingRecentItem("notes", "note-1", "Reading list", "Note"),
+            ),
+        )
+    )
+
+    async with app.run_test() as pilot:
+        landing = app.query_one("#library-landing-canvas", LibraryLandingCanvas)
+        continue_button = app.query_one("#library-hub-continue", Button)
+        attention_button = app.query_one("#library-hub-attention-action", Button)
+        import_button = app.query_one("#library-hub-action-import", Button)
+        continue_button.focus()
+        await pilot.pause()
+
+        landing.sync_state(
+            _landing_state(
+                LibraryLifecycle.EXPANDED,
+                continue_action=dataclasses.replace(
+                    initial_continue,
+                    label="Media · type: document · page 3",
+                    adjustment="",
+                ),
+                attention_action=dataclasses.replace(
+                    initial_attention,
+                    message="Prompt results may be out of date.",
+                    action_kind="prompts-retry",
+                ),
+                recent_items=(
+                    LibraryLandingRecentItem(
+                        "notes", "note-2", "Updated reading list", "Note"
+                    ),
+                ),
+            )
+        )
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app.query_one("#library-hub-continue", Button) is continue_button
+        assert app.query_one("#library-hub-attention-action", Button) is attention_button
+        assert app.query_one("#library-hub-action-import", Button) is import_button
+        assert app.focused is continue_button
+        assert str(continue_button.label) == "Media · type: document · page 3"
+        assert not app.query_one("#library-hub-continue-adjustment", Static).display
+        assert str(app.query_one("#library-hub-attention-copy", Static).renderable) == (
+            "Prompt results may be out of date."
+        )
+        assert getattr(attention_button, "action_kind", "") == "prompts-retry"
+        assert getattr(
+            app.query_one("#library-hub-recent-notes", Button), "record_id", ""
+        ) == "note-2"
 
 
 @pytest.mark.asyncio

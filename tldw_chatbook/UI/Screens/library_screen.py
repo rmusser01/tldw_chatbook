@@ -404,6 +404,8 @@ from ...Widgets.Library import (
     LibraryIngestQueuePanel,
     LibraryLandingCanvas,
     LibraryLandingCanvasState,
+    LibraryLandingAttentionAction,
+    LibraryLandingContinueAction,
     LibraryLandingRecentItem,
     LibraryMediaCanvas,
     LibraryMediaTrashCanvas,
@@ -2070,7 +2072,15 @@ class LibraryScreen(BaseAppScreen):
             # landing, so the canvas pane target was landing-only and F6
             # skipped the Ingest canvas entirely; the path field is the
             # canvas target there (candidates are tried in order).
-            ("library-hub-action-import", "library-ingest-path"),
+            (
+                "library-hub-continue",
+                "library-hub-attention-action",
+                "library-hub-recent-notes",
+                "library-hub-recent-media",
+                "library-hub-recent-conversations",
+                "library-hub-action-import",
+                "library-ingest-path",
+            ),
         ),
     )
     #: task-4023 AC#5: the Notes workflow's footer sets used to be a second
@@ -3047,6 +3057,10 @@ class LibraryScreen(BaseAppScreen):
         self._pending_library_source_open: tuple[str, str] | None = None
         self._selected_conversation_id = ""
         self._library_selected_row_id: str = ""
+        self._library_continue_receipt: dict[str, Any] | None = None
+        self._library_landing_attention_signature: (
+            LibraryLandingAttentionAction | None
+        ) = None
         self._library_navigation_context_generation: int = 0
         self._library_conversation_query: str = ""
         self._library_conversation_requested_page = 1
@@ -3457,6 +3471,7 @@ class LibraryScreen(BaseAppScreen):
             None
         )
         self._library_notes_pre_resize_focus: LibraryNotesFocusIdentity | None = None
+        self._library_landing_responsive_focus_id: str = ""
         self._library_notes_interaction_focus: LibraryNotesFocusIdentity | None = None
         self._library_notes_resize_epoch = 0
         self._library_notes_resize_settling = False
@@ -4263,6 +4278,9 @@ class LibraryScreen(BaseAppScreen):
         """Map one mounted control to its stable Notes semantic identity."""
         if focused is None:
             return ""
+        landing_control_id = self._library_landing_focus_control_id(focused)
+        if landing_control_id:
+            return f"landing-control:{landing_control_id}"
         row_id = str(getattr(focused, "row_id", "") or "")
         if row_id and focused.has_class("library-rail-row"):
             return f"library-row:{row_id}"
@@ -4338,6 +4356,52 @@ class LibraryScreen(BaseAppScreen):
         if widget_id.startswith(conflict):
             return f"sync-conflict-policy:{widget_id.removeprefix(conflict)}"
         return ""
+
+    def _library_landing_focus_control_id(self, focused: Widget | None) -> str:
+        """Return the stable id of a focused returning-landing action."""
+        if focused is None or not focused.id:
+            return ""
+        try:
+            landing = self.query_one("#library-landing-canvas", Widget)
+        except (NoMatches, QueryError):
+            return ""
+        if not self._library_notes_widget_is_within(focused, landing):
+            return ""
+        if focused.id == "library-hub-continue" or focused.has_class(
+            "library-hub-attention-action"
+        ):
+            return focused.id
+        if focused.has_class("library-hub-recent") or focused.has_class(
+            "library-hub-action"
+        ):
+            return focused.id
+        return ""
+
+    def _library_landing_control_row_id(self, control_id: str) -> str:
+        """Map one landing action to its compact-rail destination."""
+        if not control_id:
+            return ""
+        try:
+            control = self.query_one(f"#{control_id}", Widget)
+        except (NoMatches, QueryError):
+            return ""
+        row_id = str(getattr(control, "row_id", "") or "")
+        if row_id:
+            return row_id
+        action_kind = str(getattr(control, "action_kind", "") or "")
+        if action_kind:
+            return {
+                "ingest-review": LIBRARY_ROW_INGEST_MEDIA,
+                "media-retry": LIBRARY_ROW_BROWSE_MEDIA,
+                "prompts-retry": LIBRARY_ROW_BROWSE_PROMPTS,
+                "conversations-retry": LIBRARY_ROW_BROWSE_CONVERSATIONS,
+            }.get(action_kind, "")
+        source_type = str(getattr(control, "source_type", "") or "")
+        return {
+            "notes": LIBRARY_ROW_BROWSE_NOTES,
+            "media": LIBRARY_ROW_BROWSE_MEDIA,
+            "conversations": LIBRARY_ROW_BROWSE_CONVERSATIONS,
+        }.get(source_type, "")
 
     def _library_notes_scroll_owner(self, region: str) -> Widget | None:
         """Resolve the one named scroll/content owner for a Notes region."""
@@ -4561,6 +4625,10 @@ class LibraryScreen(BaseAppScreen):
                 "create": "#library-notes-create-back",
                 "sync": "#library-notes-sync-back",
             }.get(role.removeprefix("region-back:"), "#library-note-back")
+        elif role.startswith("landing-control:"):
+            control_id = role.removeprefix("landing-control:")
+            if control_id:
+                selector = f"#{control_id}"
         elif role.startswith("file-notes:"):
             widget_id = role.removeprefix("file-notes:")
             workspace = self._library_file_notes_workspace
@@ -5020,6 +5088,28 @@ class LibraryScreen(BaseAppScreen):
         identity: LibraryNotesFocusIdentity,
     ) -> None:
         """Cross the one measured compact/wide boundary losslessly."""
+        landing_prefix = "landing-control:"
+        if compact and identity.semantic_role.startswith(landing_prefix):
+            control_id = identity.semantic_role.removeprefix(landing_prefix)
+            row_id = self._library_landing_control_row_id(control_id)
+            if row_id:
+                self._library_landing_responsive_focus_id = control_id
+                identity = dataclasses.replace(
+                    identity,
+                    stage="rail",
+                    semantic_role=f"library-row:{row_id}",
+                )
+        elif not compact and self._library_landing_responsive_focus_id:
+            control_id = self._library_landing_responsive_focus_id
+            row_id = self._library_landing_control_row_id(control_id)
+            if identity.semantic_role == f"library-row:{row_id}":
+                identity = dataclasses.replace(
+                    identity,
+                    stage="notes",
+                    semantic_role=f"{landing_prefix}{control_id}",
+                )
+            else:
+                self._library_landing_responsive_focus_id = ""
         self._library_notes_compact = compact
         if compact:
             self._library_notes_stage = self._compact_library_notes_stage(identity)
@@ -5329,7 +5419,12 @@ class LibraryScreen(BaseAppScreen):
                 and cached.note_id == current.note_id
                 and (
                     not current.semantic_role.startswith(
-                        ("media-row:", "media-preview-open:")
+                        (
+                            "media-row:",
+                            "media-preview-open:",
+                            "landing-control:",
+                            "library-row:",
+                        )
                     )
                     or cached.semantic_role == current.semantic_role
                 )
@@ -5348,7 +5443,12 @@ class LibraryScreen(BaseAppScreen):
             and user_scroll.note_id == current.note_id
             and (
                 not current.semantic_role.startswith(
-                    ("media-row:", "media-preview-open:")
+                    (
+                        "media-row:",
+                        "media-preview-open:",
+                        "landing-control:",
+                        "library-row:",
+                    )
                 )
                 or user_scroll.semantic_role == current.semantic_role
             )
@@ -6159,6 +6259,12 @@ class LibraryScreen(BaseAppScreen):
         it is a derived/bulk snapshot recomputed from the saved notes filter.
         """
         state = super().save_state()
+        continue_receipt = self._library_continue_receipt_for_current_route()
+        if continue_receipt is not None:
+            self._library_continue_receipt = continue_receipt
+        state["library_continue_receipt"] = self._copy_library_continue_receipt(
+            self._library_continue_receipt
+        )
         state["library_selected_row_id"] = self._library_selected_row_id
         state["selected_conversation_id"] = self._selected_conversation_id
         state["selected_note_id"] = self._selected_note_id
@@ -6207,6 +6313,232 @@ class LibraryScreen(BaseAppScreen):
         state["library_export_last_at"] = self._library_export_last_at
         return state
 
+    @staticmethod
+    def _copy_library_continue_receipt(
+        receipt: Mapping[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        """Detach the small primitive returning-Library receipt."""
+
+        if receipt is None:
+            return None
+        scope = dict(receipt["scope"])
+        deselected = scope.get("scope_deselected")
+        if isinstance(deselected, list):
+            scope["scope_deselected"] = list(deselected)
+        return {
+            "version": receipt["version"],
+            "row_id": receipt["row_id"],
+            "scope": scope,
+            "source_list_adjusted": receipt["source_list_adjusted"],
+        }
+
+    def _library_continue_receipt_for_current_route(self) -> dict[str, Any] | None:
+        """Return an authoritative, content-free receipt for the active source."""
+
+        row_id = self._library_selected_row_id
+        scope: dict[str, Any]
+        source_list_adjusted = False
+
+        if row_id == LIBRARY_ROW_BROWSE_MEDIA:
+            if self._library_media_view == "trash":
+                return None
+            applied = self._library_media_browse_controller.applied_result
+            if applied is None:
+                return None
+            media_scope = applied.scope
+            scope = {
+                "query": media_scope.query,
+                "media_type": media_scope.media_type,
+                "sort_by": media_scope.sort_by,
+                "page": media_scope.page,
+            }
+            source_list_adjusted = self._library_media_view != "list"
+        elif row_id == LIBRARY_ROW_BROWSE_PROMPTS:
+            applied = self._library_prompt_browse_controller.applied_result
+            if applied is None:
+                return None
+            prompt_scope = applied.scope
+            scope = {
+                "query": prompt_scope.query,
+                "collection_id": prompt_scope.collection_id,
+                "sort_by": prompt_scope.sort_by,
+                "sort_order": prompt_scope.sort_order,
+                "page": prompt_scope.page,
+            }
+            source_list_adjusted = self._library_prompts_view != "list"
+        elif row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS:
+            if (
+                not self._library_conversation_page_loaded
+                or self._library_conversation_freshness not in {"fresh", "stale"}
+            ):
+                return None
+            scope = {
+                "page": self._library_conversation_page,
+                "query": self._library_conversation_query,
+            }
+        elif row_id == LIBRARY_ROW_BROWSE_NOTES:
+            if (
+                self._library_notes_source != LIBRARY_NOTES_SOURCE_DATABASE
+                or not self._library_loaded
+                or self._library_lookup_error
+            ):
+                return None
+            scope = {
+                "sort": self._library_notes_sort,
+                "filter": self._library_notes_filter,
+            }
+            source_list_adjusted = self._library_notes_view != "list"
+        elif row_id == LIBRARY_ROW_BROWSE_SKILLS:
+            if not self._library_loaded or self._library_lookup_error:
+                return None
+            scope = {
+                "sort": self._library_skills_sort,
+                "filter": self._library_skills_filter,
+            }
+            source_list_adjusted = self._library_skills_view != "list"
+        elif row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
+            if not self._library_collections_loaded or self._library_collections_error:
+                return None
+            scope = {}
+        elif row_id == LIBRARY_ROW_BROWSE_SEARCH:
+            if self._library_rag_retrieval_status not in {"ready", "empty"}:
+                return None
+            scope = {
+                "query": self._library_rag_searched_query,
+                "mode": self._library_rag_mode,
+                "scope_deselected": sorted(self._library_rag_scope_deselected),
+            }
+        else:
+            return None
+
+        return {
+            "version": 1,
+            "row_id": row_id,
+            "scope": scope,
+            "source_list_adjusted": source_list_adjusted,
+        }
+
+    @classmethod
+    def _restore_library_continue_receipt(
+        cls,
+        value: object,
+    ) -> dict[str, Any] | None:
+        """Validate one versioned receipt without recovering private row data."""
+
+        if type(value) is not dict or set(value) != {
+            "version",
+            "row_id",
+            "scope",
+            "source_list_adjusted",
+        }:
+            return None
+        if type(value["version"]) is not int or value["version"] != 1:
+            return None
+        if type(value["source_list_adjusted"]) is not bool:
+            return None
+        row_id = value["row_id"]
+        raw_scope = value["scope"]
+        if type(row_id) is not str or type(raw_scope) is not dict:
+            return None
+
+        try:
+            if row_id == LIBRARY_ROW_BROWSE_MEDIA:
+                if set(raw_scope) != {"query", "media_type", "sort_by", "page"}:
+                    return None
+                normalized = MediaBrowseScope(**raw_scope)
+                scope = {
+                    "query": normalized.query,
+                    "media_type": normalized.media_type,
+                    "sort_by": normalized.sort_by,
+                    "page": normalized.page,
+                }
+            elif row_id == LIBRARY_ROW_BROWSE_PROMPTS:
+                if set(raw_scope) != {
+                    "query",
+                    "collection_id",
+                    "sort_by",
+                    "sort_order",
+                    "page",
+                }:
+                    return None
+                normalized_prompt = PromptBrowseScope(**raw_scope)
+                scope = {
+                    "query": normalized_prompt.query,
+                    "collection_id": normalized_prompt.collection_id,
+                    "sort_by": normalized_prompt.sort_by,
+                    "sort_order": normalized_prompt.sort_order,
+                    "page": normalized_prompt.page,
+                }
+            elif row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS:
+                if set(raw_scope) != {"page", "query"}:
+                    return None
+                page = raw_scope["page"]
+                query = raw_scope["query"]
+                if (
+                    type(page) is not int
+                    or cls._normalize_library_conversation_page(page) != page
+                    or type(query) is not str
+                ):
+                    return None
+                scope = {"page": page, "query": query.strip()[:200]}
+            elif row_id == LIBRARY_ROW_BROWSE_NOTES:
+                if set(raw_scope) != {"sort", "filter"}:
+                    return None
+                sort = raw_scope["sort"]
+                filter_value = raw_scope["filter"]
+                if sort not in {"newest", "oldest", "title"} or type(
+                    filter_value
+                ) is not str:
+                    return None
+                scope = {"sort": sort, "filter": filter_value}
+            elif row_id == LIBRARY_ROW_BROWSE_SKILLS:
+                if set(raw_scope) != {"sort", "filter"}:
+                    return None
+                sort = raw_scope["sort"]
+                filter_value = raw_scope["filter"]
+                if sort not in _LIBRARY_SKILLS_SORT_MODES or type(
+                    filter_value
+                ) is not str:
+                    return None
+                scope = {"sort": sort, "filter": filter_value}
+            elif row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
+                if raw_scope:
+                    return None
+                scope = {}
+            elif row_id == LIBRARY_ROW_BROWSE_SEARCH:
+                if set(raw_scope) != {"query", "mode", "scope_deselected"}:
+                    return None
+                query = raw_scope["query"]
+                mode = raw_scope["mode"]
+                deselected = raw_scope["scope_deselected"]
+                if (
+                    type(query) is not str
+                    or mode not in {"search", "rag"}
+                    or type(deselected) is not list
+                    or any(type(item) is not str for item in deselected)
+                    or len(set(deselected)) != len(deselected)
+                    or not set(deselected).issubset(
+                        LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES
+                    )
+                ):
+                    return None
+                scope = {
+                    "query": query,
+                    "mode": mode,
+                    "scope_deselected": sorted(deselected),
+                }
+            else:
+                return None
+        except (TypeError, ValueError):
+            return None
+
+        return {
+            "version": 1,
+            "row_id": row_id,
+            "scope": scope,
+            "source_list_adjusted": value["source_list_adjusted"],
+        }
+
     def restore_state(self, state: dict[str, Any]) -> None:
         """Restore Library selection/view state saved by ``save_state``.
 
@@ -6246,7 +6578,16 @@ class LibraryScreen(BaseAppScreen):
         if not isinstance(state, dict):
             return
 
-        self._library_selected_row_id = str(state.get("library_selected_row_id") or "")
+        has_continue_receipt = "library_continue_receipt" in state
+        continue_receipt = self._restore_library_continue_receipt(
+            state.get("library_continue_receipt")
+        )
+        self._library_continue_receipt = continue_receipt
+        self._library_selected_row_id = (
+            ""
+            if has_continue_receipt
+            else str(state.get("library_selected_row_id") or "")
+        )
         self._selected_conversation_id = str(
             state.get("selected_conversation_id") or ""
         )
@@ -6367,6 +6708,43 @@ class LibraryScreen(BaseAppScreen):
                 state.get("library_conversation_page")
             )
         )
+        if continue_receipt is not None:
+            scope = continue_receipt["scope"]
+            row_id = continue_receipt["row_id"]
+            if row_id == LIBRARY_ROW_BROWSE_MEDIA:
+                receipt_media_scope = MediaBrowseScope(**scope)
+                self._library_media_browse_controller.invalidate(receipt_media_scope)
+                self._library_media_type_filter = receipt_media_scope.media_type
+                self._library_media_view = "list"
+                self._selected_media_id = ""
+            elif row_id == LIBRARY_ROW_BROWSE_PROMPTS:
+                receipt_prompt_scope = PromptBrowseScope(**scope)
+                self._library_prompt_browse_controller.invalidate(
+                    receipt_prompt_scope
+                )
+                self._library_prompts_view = "list"
+                self._selected_prompt_id = None
+            elif row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS:
+                self._library_conversation_requested_page = scope["page"]
+                self._library_conversation_requested_query = scope["query"]
+                self._selected_conversation_id = ""
+            elif row_id == LIBRARY_ROW_BROWSE_NOTES:
+                self._library_notes_source = LIBRARY_NOTES_SOURCE_DATABASE
+                self._library_notes_sort = scope["sort"]
+                self._library_notes_filter = scope["filter"]
+                self._library_notes_view = "list"
+                self._selected_note_id = ""
+            elif row_id == LIBRARY_ROW_BROWSE_SKILLS:
+                self._library_skills_sort = scope["sort"]
+                self._library_skills_filter = scope["filter"]
+                self._library_skills_view = "list"
+                self._selected_skill_name = ""
+            elif row_id == LIBRARY_ROW_BROWSE_SEARCH:
+                self._library_rag_query = scope["query"]
+                self._library_rag_mode = scope["mode"]
+                self._library_rag_scope_deselected = set(
+                    scope["scope_deselected"]
+                )
         # task-2858 AC#3 (LIB-12): restore the durable export receipt
         # (see the field's ``__init__`` comment) -- a foreign/corrupted
         # dict degrades to "no receipt yet" rather than raising.
@@ -8495,7 +8873,11 @@ class LibraryScreen(BaseAppScreen):
         return None
 
     @classmethod
-    def _source_title(cls, source_type: str, record: Mapping[str, Any]) -> str:
+    def _source_optional_title(
+        cls, source_type: str, record: Mapping[str, Any]
+    ) -> str | None:
+        """Return a trustworthy raw source title without a display fallback."""
+
         title_keys_by_source = {
             "notes": ("title", "name", "note_title", "note_name"),
             "media": ("title", "name", "media_title", "file_name", "url"),
@@ -8505,7 +8887,11 @@ class LibraryScreen(BaseAppScreen):
             title = cls._safe_text(record.get(key))
             if title:
                 return title
-        return "Untitled source"
+        return None
+
+    @classmethod
+    def _source_title(cls, source_type: str, record: Mapping[str, Any]) -> str:
+        return cls._source_optional_title(source_type, record) or "Untitled source"
 
     @staticmethod
     def _response_records_and_count(
@@ -9174,6 +9560,8 @@ class LibraryScreen(BaseAppScreen):
             id -- empty sources are skipped, so a fresh library yields an
             empty list (the old line's None-when-empty contract).
         """
+        if self._library_lookup_error is not None:
+            return []
         items: list[tuple[str, str, str, str]] = []
         for source_type, label in (
             ("notes", "Notes"),
@@ -9181,13 +9569,15 @@ class LibraryScreen(BaseAppScreen):
             ("conversations", "Conversations"),
         ):
             records = self._local_source_records.get(source_type) or ()
-            if not records:
-                continue
-            record_id = self._source_record_id(records[0])
-            if not record_id:
-                continue
-            title = self._hub_table_cell(self._source_title(source_type, records[0]))
-            items.append((source_type, record_id, title, label))
+            for record in records:
+                record_id = self._source_record_id(record)
+                title = self._source_optional_title(source_type, record)
+                if not record_id or title is None:
+                    continue
+                items.append(
+                    (source_type, record_id, self._hub_table_cell(title), label)
+                )
+                break
         return items
 
     def _hub_counts_line(self) -> str:
@@ -9225,6 +9615,12 @@ class LibraryScreen(BaseAppScreen):
         lifecycle_status = (
             self._library_onboarding_status_copy if get_started else ""
         )
+        attention_action = (
+            self._library_landing_attention_action()
+            if not get_started and not self._library_notes_compact
+            else None
+        )
+        self._library_landing_attention_signature = attention_action
         return LibraryLandingCanvasState(
             purpose=(
                 "Add something useful, then use it in Console or Study."
@@ -9251,6 +9647,139 @@ class LibraryScreen(BaseAppScreen):
                 is LibraryEvidenceStatus.PARTIAL_FAILURE
             ),
             show_explore=get_started and self._library_rail_collapsed,
+            continue_action=(
+                self._library_landing_continue_action()
+                if not get_started and not self._library_notes_compact
+                else None
+            ),
+            attention_action=attention_action,
+        )
+
+    def _library_landing_attention_action(
+        self,
+    ) -> LibraryLandingAttentionAction | None:
+        """Return one bounded recovery derived only from current live state."""
+
+        registry = self._library_ingest_registry()
+        jobs_fn = getattr(registry, "jobs", None)
+        if callable(jobs_fn):
+            for job in jobs_fn():
+                if (
+                    job.state is IngestJobState.FAILED
+                    and not job.permanent
+                    and not job.dismissed
+                    and not job.superseded
+                ):
+                    return LibraryLandingAttentionAction(
+                        message="An import needs review.",
+                        action_label="Review",
+                        action_kind="ingest-review",
+                    )
+
+        if (
+            self._library_media_browse_controller.freshness == "stale"
+            and self._library_media_browse_controller.stale_copy
+        ):
+            return LibraryLandingAttentionAction(
+                message="Media may be out of date.",
+                action_label="Retry",
+                action_kind="media-retry",
+            )
+        if (
+            self._library_prompt_browse_controller.freshness == "stale"
+            and self._library_prompt_browse_controller.stale_copy
+        ):
+            return LibraryLandingAttentionAction(
+                message="Prompts may be out of date.",
+                action_label="Retry",
+                action_kind="prompts-retry",
+            )
+        if (
+            self._library_conversation_freshness == "stale"
+            and self._library_conversation_stale_copy
+        ):
+            return LibraryLandingAttentionAction(
+                message="Conversations may be out of date.",
+                action_label="Retry",
+                action_kind="conversations-retry",
+            )
+        return None
+
+    def _library_landing_continue_action(
+        self,
+    ) -> LibraryLandingContinueAction | None:
+        """Describe the validated receipt without exposing record or query text."""
+
+        receipt = self._library_continue_receipt
+        if receipt is None:
+            return None
+        row_id = receipt["row_id"]
+        scope = receipt["scope"]
+        parts = [_LIBRARY_HELP_SURFACE_LABELS[row_id]]
+
+        if scope.get("query"):
+            parts.append("search applied")
+        if row_id == LIBRARY_ROW_BROWSE_MEDIA:
+            if scope["media_type"] is not None:
+                parts.append(f"type: {scope['media_type']}")
+            sort_labels = {
+                "last_modified_desc": "recent first",
+                "last_modified_asc": "oldest first",
+                "date_desc": "newest date",
+                "date_asc": "oldest date",
+                "title_asc": "title A–Z",
+                "title_desc": "title Z–A",
+                "relevance": "relevance",
+            }
+            parts.append(sort_labels[scope["sort_by"]])
+            if scope["page"] > 1:
+                parts.append(f"page {scope['page']}")
+        elif row_id == LIBRARY_ROW_BROWSE_PROMPTS:
+            if scope["collection_id"] is not None:
+                parts.append("collection applied")
+            parts.append(
+                "name A–Z"
+                if scope["sort_by"] == "name" and scope["sort_order"] == "asc"
+                else "name Z–A"
+                if scope["sort_by"] == "name"
+                else "recent first"
+                if scope["sort_order"] == "desc"
+                else "oldest first"
+            )
+            if scope["page"] > 1:
+                parts.append(f"page {scope['page']}")
+        elif row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS:
+            if scope["page"] > 1:
+                parts.append(f"page {scope['page']}")
+        elif row_id == LIBRARY_ROW_BROWSE_NOTES:
+            if scope["filter"]:
+                parts.append("filter applied")
+            parts.append(
+                {
+                    "newest": "recent first",
+                    "oldest": "oldest first",
+                    "title": "title A–Z",
+                }[scope["sort"]]
+            )
+        elif row_id == LIBRARY_ROW_BROWSE_SKILLS:
+            if scope["filter"]:
+                parts.append("filter applied")
+            parts.append(
+                "status order" if scope["sort"] == "status" else "name A–Z"
+            )
+        elif row_id == LIBRARY_ROW_BROWSE_SEARCH:
+            parts.append("RAG" if scope["mode"] == "rag" else "search")
+            if scope["scope_deselected"]:
+                parts.append("sources adjusted")
+
+        return LibraryLandingContinueAction(
+            label=" · ".join(parts),
+            row_id=row_id,
+            adjustment=(
+                "Item views resume at the source list."
+                if receipt["source_list_adjusted"]
+                else ""
+            ),
         )
 
     def _library_study_handoff_canvas_state(
@@ -14019,6 +14548,11 @@ class LibraryScreen(BaseAppScreen):
             self._library_ingest_last_done_count = done_count
             if grew:
                 self._refresh_local_source_snapshot()
+        attention = self._library_landing_attention_action()
+        if attention != self._library_landing_attention_signature:
+            self._library_landing_attention_signature = attention
+            if not self._library_selected_row_id:
+                self._sync_library_landing_lifecycle_presentation()
 
     def _handle_library_ingest_progress_changed(
         self,
@@ -16250,6 +16784,72 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         if self._library_onboarding_status is LibraryEvidenceStatus.PARTIAL_FAILURE:
             self._refresh_library_onboarding_evidence()
+
+    @on(Button.Pressed, "#library-hub-continue")
+    async def _continue_library_landing(self, event: Button.Pressed) -> None:
+        """Resume the receipt through the existing guarded source route."""
+
+        event.stop()
+        receipt = self._copy_library_continue_receipt(
+            self._library_continue_receipt
+        )
+        if receipt is None:
+            return
+        row_id = receipt["row_id"]
+        scope = receipt["scope"]
+        await self._select_library_rail_row(row_id)
+        if self._library_selected_row_id != row_id:
+            return
+
+        if row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS:
+            self._start_library_conversation_page_request(
+                scope["page"],
+                scope["query"],
+            )
+        elif row_id == LIBRARY_ROW_BROWSE_NOTES:
+            # Generic rail admission intentionally clears the Notes filter.
+            # Continue is the sole route that carries an applied Notes scope,
+            # so reapply it only after every ordinary leave guard has passed.
+            self._library_notes_sort = scope["sort"]
+            self._library_notes_filter = scope["filter"]
+            self._library_notes_filter_records = None
+            if self._library_notes_filter:
+                await self._run_library_notes_filter(
+                    self._library_notes_filter
+                )
+            else:
+                _sync_library_canvas(self, "notes")
+
+    @on(Button.Pressed, "#library-hub-attention-action")
+    async def _recover_library_landing_attention(
+        self, event: Button.Pressed
+    ) -> None:
+        """Open the existing owner recovery for the current live attention."""
+
+        event.stop()
+        action = self._library_landing_attention_action()
+        action_kind = str(getattr(event.button, "action_kind", "") or "")
+        if action is None or action.action_kind != action_kind:
+            return
+        row_id = {
+            "ingest-review": LIBRARY_ROW_INGEST_MEDIA,
+            "media-retry": LIBRARY_ROW_BROWSE_MEDIA,
+            "prompts-retry": LIBRARY_ROW_BROWSE_PROMPTS,
+            "conversations-retry": LIBRARY_ROW_BROWSE_CONVERSATIONS,
+        }.get(action_kind)
+        if row_id is None:
+            return
+        await self._select_library_rail_row(row_id)
+        if (
+            action_kind == "conversations-retry"
+            and self._library_selected_row_id == row_id
+            and not self._library_conversation_loading
+        ):
+            self._start_library_conversation_page_request(
+                self._library_conversation_requested_page,
+                self._library_conversation_requested_query,
+                focus_after_apply="#library-conversations-retry",
+            )
 
     @on(Button.Pressed, "#library-rail-back-to-starter")
     async def _return_library_rail_to_starter(self, event: Button.Pressed) -> None:

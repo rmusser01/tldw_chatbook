@@ -4,8 +4,10 @@ from .library_collections_panel import LibraryCollectionsPanel
 from .library_conversations_canvas import LibraryConversationsCanvas
 from .library_export_canvas import LibraryExportCanvas
 from .library_entry_canvases import (
+    LibraryLandingAttentionAction,
     LibraryLandingCanvas,
     LibraryLandingCanvasState,
+    LibraryLandingContinueAction,
     LibraryLandingRecentItem,
     LibraryStudyHandoffCanvas,
     LibraryStudyHandoffCanvasState,
@@ -80,8 +82,10 @@ __all__ = [
     "LibraryCollectionsPanel",
     "LibraryConversationsCanvas",
     "LibraryExportCanvas",
+    "LibraryLandingAttentionAction",
     "LibraryLandingCanvas",
     "LibraryLandingCanvasState",
+    "LibraryLandingContinueAction",
     "LibraryLandingRecentItem",
     "LibraryIngestCanvas",
     "LibraryIngestPreflightSummary",

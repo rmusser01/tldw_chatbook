@@ -81,10 +81,13 @@ from tldw_chatbook.Library.library_notes_state import LibraryNotesFocusIdentity
 from tldw_chatbook.Library.library_media_state import (
     MediaBrowseResult,
     MediaBrowseScope,
+    build_media_browse_result,
 )
 from tldw_chatbook.Library.library_prompts_state import (
+    PromptBrowseScope,
     PromptSelectionBasket,
     PromptSelectionEntry,
+    build_prompt_browse_result,
 )
 from tldw_chatbook.Widgets.Library.library_search_rag_panel import (
     results_heading_text,
@@ -113,9 +116,11 @@ from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_SEARCH,
     LIBRARY_ROW_BROWSE_SKILLS,
     LIBRARY_ROW_CREATE_NOTE,
+    LIBRARY_ROW_CREATE_PROMPT,
+    LIBRARY_ROW_CREATE_SKILL,
+    LIBRARY_ROW_CREATE_STUDY,
     LIBRARY_ROW_INGEST_EXPORT,
     LIBRARY_ROW_INGEST_MEDIA,
-    LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP,
 )
 from tldw_chatbook.Media.local_media_reading_service import LocalMediaReadingService
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
@@ -23677,6 +23682,734 @@ async def test_library_shell_ingest_canvas_different_canvas_isolation(tmp_path):
 # These tests exercise ``LibraryScreen``'s real overrides directly (unit
 # style) plus the on_mount interaction the restored viewer/editor state
 # depends on (pilot style, via ``LibraryHarness``).
+
+
+def _apply_continue_media_scope(
+    screen: LibraryScreen,
+    scope: MediaBrowseScope,
+) -> None:
+    """Install one exact applied Media page for Continue receipt tests."""
+    offset = scope.offset
+    result = build_media_browse_result(
+        scope,
+        {
+            "items": [
+                {
+                    "id": f"local:media:{offset + 1}",
+                    "backing_media_id": offset + 1,
+                    "title": "PRIVATE MEDIA TITLE",
+                    "media_type": scope.media_type or "audio",
+                    "updated_at": "2026-08-21T00:00:00+00:00",
+                }
+            ],
+            "total": offset + 1,
+            "limit": scope.page_size,
+            "offset": offset,
+        },
+    )
+    controller = screen._library_media_browse_controller
+    controller.applied_result = result
+    controller.retained_items = result.items
+    controller.freshness = "fresh"
+
+
+def _apply_continue_prompt_scope(
+    screen: LibraryScreen,
+    scope: PromptBrowseScope,
+) -> None:
+    """Install one exact applied Prompt page for Continue receipt tests."""
+    local_id = (scope.page - 1) * scope.page_size + 1
+    result = build_prompt_browse_result(
+        scope,
+        {
+            "items": [
+                {
+                    "id": f"local:prompt:{local_id}",
+                    "local_id": local_id,
+                    "name": "PRIVATE PROMPT NAME",
+                    "backend": "local",
+                }
+            ],
+            "total_items": local_id,
+            "total_pages": scope.page,
+            "current_page": scope.page,
+            "page": scope.page,
+            "per_page": scope.page_size,
+        },
+    )
+    controller = screen._library_prompt_browse_controller
+    controller.scope = scope
+    controller.result = result
+    controller.applied_result = result
+    controller.retained_items = result.items
+    controller.freshness = "fresh"
+
+
+def test_library_landing_continue_receipt_round_trips_media_scope_separately_from_route():
+    app = _build_test_app()
+    scope = MediaBrowseScope(
+        query="needle",
+        media_type="audio",
+        sort_by="title_asc",
+        page=2,
+    )
+    original = LibraryScreen(app)
+    original._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+    original._library_media_view = "viewer"
+    original._selected_media_id = "local:media:21"
+    _apply_continue_media_scope(original, scope)
+
+    state = original.save_state()
+
+    assert state["library_continue_receipt"] == {
+        "version": 1,
+        "row_id": LIBRARY_ROW_BROWSE_MEDIA,
+        "scope": {
+            "query": "needle",
+            "media_type": "audio",
+            "sort_by": "title_asc",
+            "page": 2,
+        },
+        "source_list_adjusted": True,
+    }
+    receipt_text = repr(state["library_continue_receipt"])
+    assert "PRIVATE MEDIA TITLE" not in receipt_text
+    assert "local:media:21" not in receipt_text
+
+    restored = LibraryScreen(app)
+    restored.restore_state(state)
+
+    assert restored._library_selected_row_id == ""
+    assert restored._library_continue_receipt == state["library_continue_receipt"]
+    assert restored._library_media_browse_controller.requested_scope == scope
+    assert restored._library_media_view == "list"
+    assert restored._selected_media_id == ""
+
+
+@pytest.mark.parametrize(
+    ("row_id", "expected_scope"),
+    (
+        (
+            LIBRARY_ROW_BROWSE_CONVERSATIONS,
+            {"page": 3, "query": "quarterly"},
+        ),
+        (
+            LIBRARY_ROW_BROWSE_NOTES,
+            {"sort": "oldest", "filter": "retro"},
+        ),
+        (
+            LIBRARY_ROW_BROWSE_PROMPTS,
+            {
+                "query": "review",
+                "collection_id": 7,
+                "sort_by": "name",
+                "sort_order": "asc",
+                "page": 2,
+            },
+        ),
+        (
+            LIBRARY_ROW_BROWSE_SKILLS,
+            {"sort": "status", "filter": "python"},
+        ),
+        (LIBRARY_ROW_BROWSE_COLLECTIONS, {}),
+        (
+            LIBRARY_ROW_BROWSE_SEARCH,
+            {
+                "query": "retrieval",
+                "mode": "rag",
+                "scope_deselected": ["media"],
+            },
+        ),
+    ),
+)
+def test_library_landing_continue_receipt_accepts_only_authoritative_source_scopes(
+    row_id: str,
+    expected_scope: dict[str, object],
+) -> None:
+    screen = LibraryScreen(_build_test_app())
+    screen._library_selected_row_id = row_id
+    if row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS:
+        screen._library_conversation_page = 3
+        screen._library_conversation_query = "quarterly"
+        screen._library_conversation_page_loaded = True
+        screen._library_conversation_freshness = "fresh"
+    elif row_id == LIBRARY_ROW_BROWSE_NOTES:
+        screen._library_loaded = True
+        screen._library_lookup_error = None
+        screen._library_notes_source = "database"
+        screen._library_notes_sort = "oldest"
+        screen._library_notes_filter = "retro"
+    elif row_id == LIBRARY_ROW_BROWSE_PROMPTS:
+        _apply_continue_prompt_scope(
+            screen,
+            PromptBrowseScope(
+                query="review",
+                collection_id=7,
+                sort_by="name",
+                sort_order="asc",
+                page=2,
+            ),
+        )
+    elif row_id == LIBRARY_ROW_BROWSE_SKILLS:
+        screen._library_loaded = True
+        screen._library_lookup_error = None
+        screen._library_skills_sort = "status"
+        screen._library_skills_filter = "python"
+    elif row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
+        screen._library_collections_loaded = True
+        screen._library_collections_error = ""
+        screen._library_collections_selected_id = "PRIVATE-COLLECTION-ID"
+    else:
+        screen._library_rag_query = "retrieval"
+        screen._library_rag_searched_query = "retrieval"
+        screen._library_rag_mode = "rag"
+        screen._library_rag_scope_deselected = {"media"}
+        screen._library_rag_retrieval_status = "ready"
+        screen._library_rag_results = ({"private": "PRIVATE SEARCH ROW"},)
+
+    state = screen.save_state()
+
+    assert state["library_continue_receipt"] == {
+        "version": 1,
+        "row_id": row_id,
+        "scope": expected_scope,
+        "source_list_adjusted": False,
+    }
+    assert "PRIVATE" not in repr(state["library_continue_receipt"])
+
+
+@pytest.mark.parametrize(
+    "row_id",
+    (
+        LIBRARY_ROW_CREATE_NOTE,
+        LIBRARY_ROW_CREATE_PROMPT,
+        LIBRARY_ROW_CREATE_SKILL,
+        LIBRARY_ROW_INGEST_MEDIA,
+        LIBRARY_ROW_INGEST_EXPORT,
+        LIBRARY_ROW_CREATE_STUDY,
+    ),
+)
+def test_library_landing_continue_receipt_rejects_nonresumable_routes(
+    row_id: str,
+) -> None:
+    screen = LibraryScreen(_build_test_app())
+    screen._library_selected_row_id = row_id
+
+    assert screen.save_state()["library_continue_receipt"] is None
+
+
+def test_library_landing_continue_receipt_rejects_file_notes_and_media_trash():
+    app = _build_test_app()
+    file_notes = LibraryScreen(app)
+    file_notes._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
+    file_notes._library_loaded = True
+    file_notes._library_notes_source = "files"
+
+    media_trash = LibraryScreen(app)
+    media_trash._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+    media_trash._library_media_view = "trash"
+    _apply_continue_media_scope(media_trash, MediaBrowseScope())
+
+    assert file_notes.save_state()["library_continue_receipt"] is None
+    assert media_trash.save_state()["library_continue_receipt"] is None
+
+
+def test_library_landing_continue_receipt_uses_current_admitted_route_not_late_success():
+    screen = LibraryScreen(_build_test_app())
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+    _apply_continue_media_scope(screen, MediaBrowseScope(page=2))
+    media_receipt = screen.save_state()["library_continue_receipt"]
+
+    screen._library_selected_row_id = LIBRARY_ROW_BROWSE_PROMPTS
+    assert screen.save_state()["library_continue_receipt"] == media_receipt
+
+    prompt_scope = PromptBrowseScope(query="current", sort_by="name", page=2)
+    _apply_continue_prompt_scope(screen, prompt_scope)
+    prompt_receipt = screen.save_state()["library_continue_receipt"]
+    assert prompt_receipt["row_id"] == LIBRARY_ROW_BROWSE_PROMPTS
+
+    _apply_continue_media_scope(screen, MediaBrowseScope(page=3))
+    assert screen.save_state()["library_continue_receipt"] == prompt_receipt
+
+
+def test_library_landing_continue_receipt_restore_fails_closed_and_legacy_still_routes():
+    app = _build_test_app()
+    malformed = LibraryScreen(app)
+    malformed.restore_state(
+        {
+            "library_selected_row_id": LIBRARY_ROW_BROWSE_MEDIA,
+            "library_continue_receipt": {
+                "version": True,
+                "row_id": LIBRARY_ROW_BROWSE_MEDIA,
+                "scope": {"page": True, "query": "PRIVATE QUERY"},
+                "source_list_adjusted": "yes",
+            },
+        }
+    )
+    assert malformed._library_selected_row_id == ""
+    assert malformed._library_continue_receipt is None
+
+    legacy = LibraryScreen(app)
+    legacy.restore_state({"library_selected_row_id": LIBRARY_ROW_BROWSE_MEDIA})
+    assert legacy._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+
+
+def test_library_landing_continue_projects_scope_without_private_query_copy() -> None:
+    screen = LibraryScreen(_build_test_app())
+    screen._library_lifecycle = LibraryLifecycle.GRADUATED
+    screen._library_continue_receipt = {
+        "version": 1,
+        "row_id": LIBRARY_ROW_BROWSE_MEDIA,
+        "scope": {
+            "query": "PRIVATE NEEDLE",
+            "media_type": "audio",
+            "sort_by": "title_asc",
+            "page": 2,
+        },
+        "source_list_adjusted": True,
+    }
+
+    action = screen._library_landing_canvas_state().continue_action
+
+    assert action is not None
+    assert action.row_id == LIBRARY_ROW_BROWSE_MEDIA
+    assert action.label == "Media · search applied · type: audio · title A–Z · page 2"
+    assert action.adjustment == "Item views resume at the source list."
+    assert "PRIVATE NEEDLE" not in repr(action)
+
+    screen._library_notes_compact = True
+    assert screen._library_landing_canvas_state().continue_action is None
+
+
+def test_library_landing_attention_prefers_recoverable_import_and_never_persists() -> None:
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    screen._library_lifecycle = LibraryLifecycle.GRADUATED
+    screen._library_media_browse_controller.freshness = "stale"
+    screen._library_media_browse_controller.stale_copy = "PRIVATE MEDIA COPY"
+    job = app.library_ingest_jobs.submit(source_path="/PRIVATE/path/report.pdf")
+    app.library_ingest_jobs.mark_failed(
+        job.job_id,
+        error="PRIVATE stack and token",
+        permanent=False,
+    )
+
+    action = screen._library_landing_canvas_state().attention_action
+
+    assert action is not None
+    assert action.action_kind == "ingest-review"
+    assert action.action_label == "Review"
+    assert action.message == "An import needs review."
+    assert "PRIVATE" not in repr(action)
+    persisted = screen.save_state()
+    persisted_text = repr(persisted)
+    assert "attention" not in persisted_text.casefold()
+    assert "PRIVATE" not in persisted_text
+
+    app.library_ingest_jobs.requeue(job.job_id)
+    fallback = screen._library_landing_canvas_state().attention_action
+    assert fallback is not None
+    assert fallback.action_kind == "media-retry"
+    assert fallback.message == "Media may be out of date."
+
+
+def test_library_landing_attention_omits_nonrecoverable_and_unsettled_state() -> None:
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    screen._library_lifecycle = LibraryLifecycle.EXPANDED
+    permanent = app.library_ingest_jobs.submit(source_path="/tmp/missing.pdf")
+    app.library_ingest_jobs.mark_failed(
+        permanent.job_id,
+        error="unsupported",
+        permanent=True,
+    )
+
+    assert screen._library_landing_canvas_state().attention_action is None
+
+    screen._library_prompt_browse_controller.freshness = "stale"
+    screen._library_prompt_browse_controller.stale_copy = "raw prompt failure"
+    action = screen._library_landing_canvas_state().attention_action
+    assert action is not None
+    assert action.action_kind == "prompts-retry"
+    assert action.message == "Prompts may be out of date."
+
+    screen._library_prompt_browse_controller.freshness = "fresh"
+    screen._library_conversation_freshness = "stale"
+    screen._library_conversation_stale_copy = "raw conversation failure"
+    action = screen._library_landing_canvas_state().attention_action
+    assert action is not None
+    assert action.action_kind == "conversations-retry"
+    assert action.message == "Conversations may be out of date."
+
+    screen._library_conversation_freshness = "uninitialized"
+    assert screen._library_landing_canvas_state().attention_action is None
+
+
+@pytest.mark.asyncio
+async def test_library_landing_attention_tracks_failed_import_and_opens_review() -> None:
+    app = _build_test_app()
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        job = app.library_ingest_jobs.submit(source_path="/tmp/flaky.pdf")
+        app.library_ingest_jobs.mark_failed(
+            job.job_id,
+            error="private failure",
+            permanent=False,
+        )
+        await _wait_for_selector(screen, pilot, "#library-hub-attention-action")
+        button = screen.query_one("#library-hub-attention-action", Button)
+        assert str(button.label) == "Review"
+        assert "An import needs review." in _visible_text(screen)
+
+        app.library_ingest_jobs.requeue(job.job_id)
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query("#library-hub-attention-action"),
+            message="Retrying the failed import did not clear attention.",
+        )
+
+        replacement = app.library_ingest_jobs.submit(source_path="/tmp/review.pdf")
+        app.library_ingest_jobs.mark_failed(
+            replacement.job_id,
+            error="review me",
+            permanent=False,
+        )
+        await _wait_for_selector(screen, pilot, "#library-hub-attention-action")
+        app.library_ingest_jobs.dismiss(replacement.job_id)
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen.query("#library-hub-attention-action"),
+            message="Dismissing the failed import did not clear attention.",
+        )
+
+        review = app.library_ingest_jobs.submit(source_path="/tmp/review-again.pdf")
+        app.library_ingest_jobs.mark_failed(
+            review.job_id,
+            error="review again",
+            permanent=False,
+        )
+        await _wait_for_selector(screen, pilot, "#library-hub-attention-action")
+        screen.query_one("#library-hub-attention-action", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA,
+            message="Review did not open the existing Import recovery surface.",
+        )
+        assert screen.query("#library-ingest-canvas")
+
+
+@pytest.mark.asyncio
+async def test_library_landing_attention_retries_stale_media_through_source_owner() -> None:
+    app = _build_test_app()
+    _seed_conversations(app, [], media=_two_media_items())
+    screen = LibraryScreen(app)
+    screen._library_media_browse_controller.freshness = "stale"
+    screen._library_media_browse_controller.stale_copy = "private stale detail"
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-hub-attention-action")
+        button = screen.query_one("#library-hub-attention-action", Button)
+        assert str(button.label) == "Retry"
+        assert "private stale detail" not in _visible_text(screen)
+        button.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+                and screen._library_media_browse_controller.freshness == "fresh"
+            ),
+            message="Landing Retry did not use the existing Media refresh path.",
+        )
+
+        service = app.media_reading_scope_service
+        assert len(service.search_calls) == 1
+        assert service.search_calls[0]["offset"] == 0
+
+
+def test_library_landing_from_library_uses_only_trustworthy_cached_summaries() -> None:
+    screen = LibraryScreen(_build_test_app())
+    screen._library_lifecycle = LibraryLifecycle.GRADUATED
+    screen._library_loaded = True
+    screen._library_lookup_error = None
+    screen._library_notes_source = "files"
+    screen._local_source_records = {
+        "notes": (
+            {"note_id": "missing-title", "title": "   "},
+            {"note_id": "note-2", "title": "Database note"},
+        ),
+        "media": (
+            {"media_id": "", "title": "Missing identity"},
+            {"media_id": "media-2", "title": "Field recording"},
+        ),
+        "conversations": (
+            {"conversation_id": "chat-1", "title": "Planning session"},
+        ),
+    }
+
+    items = screen._library_landing_canvas_state().recent_items
+
+    assert [(item.source_type, item.record_id, item.title) for item in items] == [
+        ("notes", "note-2", "Database note"),
+        ("media", "media-2", "Field recording"),
+        ("conversations", "chat-1", "Planning session"),
+    ]
+    assert screen._library_notes_source == "files"
+
+    screen._library_lookup_error = "Source snapshot unavailable."
+    assert screen._library_landing_canvas_state().recent_items == ()
+
+
+def test_library_landing_projection_and_retained_sync_add_no_source_io() -> None:
+    app = _build_test_app()
+    screen = LibraryScreen(app)
+    screen._library_lifecycle = LibraryLifecycle.EXPANDED
+    screen._library_loaded = True
+    screen._local_source_records = {
+        "notes": ({"note_id": "n1", "title": "Cached note"},),
+        "media": (),
+        "conversations": (),
+    }
+    refresh = Mock(side_effect=AssertionError("landing projection started a read"))
+    screen._refresh_local_source_snapshot = refresh
+    owner_reads = [
+        Mock(side_effect=AssertionError("landing projection called an owner"))
+        for _ in range(4)
+    ]
+    app.notes_scope_service = SimpleNamespace(list_notes=owner_reads[0])
+    app.media_reading_scope_service = SimpleNamespace(search_media=owner_reads[1])
+    app.chat_conversation_scope_service = SimpleNamespace(
+        list_conversations=owner_reads[2]
+    )
+    app.prompt_scope_service = SimpleNamespace(browse_prompts=owner_reads[3])
+
+    first = screen._library_landing_canvas_state()
+    second = screen._library_landing_canvas_state()
+
+    assert first.recent_items == second.recent_items
+    assert first.recent_items[0].title == "Cached note"
+    refresh.assert_not_called()
+    for read in owner_reads:
+        read.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_library_returning_landing_geometry_keyboard_and_compact_focus_transfer() -> None:
+    app = _build_test_app()
+    _seed_conversations(
+        app,
+        _two_conversations(),
+        notes=[
+            {
+                "note_id": "note-1",
+                "title": "<読書> 🗂️ e\u0301 \u2067مرحبا\u2069 field notes",
+            }
+        ],
+        media=[
+            {
+                "media_id": "media-1",
+                "title": "Recording 🧪",
+                "type": "audio",
+            }
+        ],
+    )
+    failed = app.library_ingest_jobs.submit(source_path="/tmp/recover.pdf")
+    app.library_ingest_jobs.mark_failed(
+        failed.job_id,
+        error="private failure",
+        permanent=False,
+    )
+    screen = LibraryScreen(app)
+    screen._library_lifecycle = LibraryLifecycle.GRADUATED
+    screen._library_continue_receipt = {
+        "version": 1,
+        "row_id": LIBRARY_ROW_BROWSE_MEDIA,
+        "scope": {
+            "query": "",
+            "media_type": "audio",
+            "sort_by": "last_modified_desc",
+            "page": 1,
+        },
+        "source_list_adjusted": False,
+    }
+    host = LibraryProductionCSSHarness(app, screen=screen)
+
+    async with host.run_test(size=(170, 48)) as pilot:
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-hub-recent-notes")
+        expected_canvas_order = [
+            "library-hub-continue",
+            "library-hub-attention-action",
+            "library-hub-recent-notes",
+            "library-hub-recent-media",
+            "library-hub-recent-conversations",
+            "library-hub-action-import",
+            "library-hub-action-new-note",
+            "library-hub-action-search",
+        ]
+        canvas = screen.query_one("#library-landing-canvas")
+        visible = screen._compositor.visible_widgets
+        for widget_id in expected_canvas_order:
+            widget = screen.query_one(f"#{widget_id}", Button)
+            assert widget in visible, (widget_id, widget.region, canvas.region)
+            assert canvas.region.contains_region(widget.region)
+        assert screen.query_one("#library-hub-continue", Button).has_class(
+            "console-action-primary"
+        )
+        filtered_focus = [
+            widget.id
+            for widget in screen.focus_chain
+            if widget.id in expected_canvas_order
+        ]
+        assert filtered_focus == expected_canvas_order
+
+        continue_button = screen.query_one("#library-hub-continue", Button)
+        continue_button.focus()
+        await pilot.pause()
+        for expected_id in expected_canvas_order[1:]:
+            await pilot.press("tab")
+            await pilot.pause()
+            assert screen.focused is not None
+            assert screen.focused.id == expected_id
+
+        screen.query_one("#library-search-input", Input).focus()
+        await pilot.pause()
+        screen.action_focus_next_workbench_pane()
+        await pilot.pause()
+        assert continue_button.has_focus, getattr(screen.focused, "id", None)
+
+        receipt = dict(screen._library_continue_receipt or {})
+        await pilot.resize_terminal(100, 30)
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_notes_compact
+                and screen.focused is not None
+                and screen.focused.id
+                == f"library-row-{LIBRARY_ROW_BROWSE_MEDIA}"
+            ),
+            message="Compact transition did not transfer Continue to Media rail.",
+        )
+        assert screen.query_one("#library-rail").display is True
+        assert screen.query_one("#library-canvas").display is False
+        assert screen._library_continue_receipt == receipt
+        assert screen._library_landing_attention_action() is not None
+
+        await pilot.resize_terminal(170, 48)
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen._library_notes_compact and continue_button.has_focus,
+            message="Wide transition did not restore the prior landing identity.",
+        )
+
+        await pilot.resize_terminal(100, 30)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_notes_compact,
+            message="Second compact transition did not settle.",
+        )
+        newer = screen.query_one(
+            f"#library-row-{LIBRARY_ROW_BROWSE_PROMPTS}", Button
+        )
+        newer.focus()
+        await pilot.pause()
+        await pilot.resize_terminal(170, 48)
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen._library_notes_compact,
+            message="Second wide transition did not settle.",
+        )
+        assert newer.has_focus
+
+
+@pytest.mark.asyncio
+async def test_library_landing_continue_dispatches_full_media_page_scope() -> None:
+    app = _build_test_app()
+    media = [
+        {
+            "id": f"media-{index}",
+            "title": f"Needle {index:02d}",
+            "type": "audio",
+            "last_modified": f"2026-08-{index:02d}T00:00:00Z",
+        }
+        for index in range(1, 46)
+    ]
+    _seed_conversations(app, [], media=media)
+    service = app.media_reading_scope_service
+    original = LibraryScreen(app)
+    original._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+    original._library_media_view = "viewer"
+    original._selected_media_id = "local:media:21"
+    scope = MediaBrowseScope(
+        query="needle",
+        media_type="audio",
+        sort_by="title_asc",
+        page=2,
+    )
+    _apply_continue_media_scope(original, scope)
+    restored = LibraryScreen(app)
+    restored.restore_state(original.save_state())
+    host = LibraryHarness(app, screen=restored)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-hub-continue")
+        assert screen._library_selected_row_id == ""
+        assert "deleted" not in _visible_text(screen).casefold()
+        screen.query_one("#library-hub-continue", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: any(call.get("offset") == 20 for call in service.search_calls),
+            message="Continue did not dispatch the restored Media page.",
+        )
+
+        call = next(call for call in service.search_calls if call.get("offset") == 20)
+        assert call["query"] == "needle"
+        assert call["media_types"] == ["audio"]
+        assert call["sort_by"] == "title_asc"
+        assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+        assert screen._library_media_view == "list"
+
+
+@pytest.mark.asyncio
+async def test_library_landing_continue_reapplies_database_notes_scope_after_admission() -> None:
+    app = _build_test_app()
+    _seed_conversations(app, [], notes=_two_notes())
+    original = LibraryScreen(app)
+    original._library_selected_row_id = LIBRARY_ROW_BROWSE_NOTES
+    original._library_loaded = True
+    original._library_lookup_error = None
+    original._library_notes_source = "database"
+    original._library_notes_sort = "oldest"
+    original._library_notes_filter = "retro"
+    restored = LibraryScreen(app)
+    restored.restore_state(original.save_state())
+    host = LibraryHarness(app, screen=restored)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_selector(screen, pilot, "#library-hub-continue")
+        screen.query_one("#library-hub-continue", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+                and screen._library_notes_filter == "retro"
+                and bool(screen.query("#library-notes-row-0"))
+                and "Reading list" not in _visible_text(screen)
+            ),
+            message="Continue did not restore the Database Notes filter.",
+        )
+
+        assert screen._library_notes_sort == "oldest"
+        assert "Q3 retro" in _visible_text(screen)
+        assert "Reading list" not in _visible_text(screen)
 
 
 @pytest.mark.asyncio

@@ -110,6 +110,26 @@ def test_existing_snapshot_outer_copy_behavior_is_unchanged() -> None:
     assert store.restore("chat", identity)["selected"] == "row-1"
 
 
+def test_library_screen_state_runtime_mismatch_rejects_continue_before_restore() -> None:
+    store = ScreenStateStore()
+    server_a = RuntimeIdentity("server", "server-a")
+    server_b = RuntimeIdentity("server", "server-b")
+    receipt = {
+        "version": 1,
+        "row_id": "browse-media",
+        "scope": {"query": "", "media_type": None, "sort_by": "title_asc", "page": 2},
+        "source_list_adjusted": False,
+    }
+    store.save(
+        "library",
+        {"library_selected_row_id": "", "library_continue_receipt": receipt},
+        server_a,
+    )
+
+    assert store.restore("library", server_b) is None
+    assert store.restore("library", server_a) is None
+
+
 def test_publish_and_restore_return_detached_console_target_projections() -> None:
     store = ScreenStateStore()
     identity = _local_identity()

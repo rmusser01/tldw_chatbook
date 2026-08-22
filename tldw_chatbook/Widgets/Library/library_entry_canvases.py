@@ -31,11 +31,31 @@ class LibraryLandingRecentItem:
 
 
 @dataclass(frozen=True)
+class LibraryLandingContinueAction:
+    """Display copy and fixed route identity for the landing Continue action."""
+
+    label: str
+    row_id: str
+    adjustment: str = ""
+
+
+@dataclass(frozen=True)
+class LibraryLandingAttentionAction:
+    """Display copy and fixed recovery identity for one current issue."""
+
+    message: str
+    action_label: str
+    action_kind: str
+
+
+@dataclass(frozen=True)
 class LibraryLandingCanvasState:
     """Complete display snapshot for the retained Library landing canvas."""
 
     purpose: str
     counts_line: str
+    continue_action: LibraryLandingContinueAction | None = None
+    attention_action: LibraryLandingAttentionAction | None = None
     recent_items: tuple[LibraryLandingRecentItem, ...] = ()
     lifecycle: LibraryLifecycle = LibraryLifecycle.EXPANDED
     lifecycle_status: str = ""
@@ -133,6 +153,30 @@ class LibraryLandingCanvas(_RetainedSyncCallback, Vertical):
         return recent
 
     @staticmethod
+    def _continue_button(action: LibraryLandingContinueAction) -> Button:
+        button = Button(
+            escape_markup(action.label),
+            id="library-hub-continue",
+            classes="library-hub-continue console-action-primary",
+            compact=True,
+            tooltip="Resume this Library view.",
+        )
+        button.row_id = action.row_id
+        return button
+
+    @staticmethod
+    def _attention_button(action: LibraryLandingAttentionAction) -> Button:
+        button = Button(
+            escape_markup(action.action_label),
+            id="library-hub-attention-action",
+            classes="library-hub-attention-action console-action-subdued",
+            compact=True,
+            tooltip=f"{action.action_label}: {action.message}",
+        )
+        button.action_kind = action.action_kind
+        return button
+
+    @staticmethod
     def _is_get_started(state: LibraryLandingCanvasState) -> bool:
         return state.lifecycle in (
             LibraryLifecycle.UNKNOWN,
@@ -140,8 +184,15 @@ class LibraryLandingCanvas(_RetainedSyncCallback, Vertical):
         )
 
     @classmethod
-    def _widget_set_key(cls, state: LibraryLandingCanvasState) -> tuple[bool, bool, bool]:
-        return (cls._is_get_started(state), state.show_retry, state.show_explore)
+    def _widget_set_key(cls, state: LibraryLandingCanvasState) -> tuple[bool, ...]:
+        return (
+            cls._is_get_started(state),
+            state.show_retry,
+            state.show_explore,
+            state.continue_action is not None,
+            state.attention_action is not None,
+            bool(state.recent_items),
+        )
 
     @staticmethod
     def _status(value: str, widget_id: str) -> Static:
@@ -184,6 +235,55 @@ class LibraryLandingCanvas(_RetainedSyncCallback, Vertical):
                 classes="library-hub-meta",
                 markup=False,
             )
+        if not get_started and self.state.continue_action is not None:
+            yield Static(
+                "Continue",
+                id="library-hub-continue-heading",
+                classes="destination-section",
+                markup=False,
+            )
+            yield self._continue_button(self.state.continue_action)
+            adjustment = self._status(
+                self.state.continue_action.adjustment,
+                "library-hub-continue-adjustment",
+            )
+            yield adjustment
+        if not get_started and self.state.attention_action is not None:
+            yield Static(
+                "Needs attention",
+                id="library-hub-attention-heading",
+                classes="destination-section",
+                markup=False,
+            )
+            with Horizontal(
+                id="library-hub-attention",
+                classes="ds-recovery-callout",
+            ):
+                yield Static(
+                    self.state.attention_action.message,
+                    id="library-hub-attention-copy",
+                    markup=False,
+                )
+                yield self._attention_button(self.state.attention_action)
+        if not get_started and self.state.recent_items:
+            yield Static(
+                "From your Library",
+                id="library-hub-from-library-heading",
+                classes="destination-section",
+                markup=False,
+            )
+            recents = Vertical(id="library-hub-recents")
+            recents.styles.height = "auto"
+            with recents:
+                for item in self.state.recent_items:
+                    yield self._recent_button(item)
+        if not get_started:
+            yield Static(
+                "Quick actions",
+                id="library-hub-quick-actions-heading",
+                classes="destination-section",
+                markup=False,
+            )
         with Horizontal(id="library-hub-actions", classes="ds-toolbar"):
             yield self._action_button(
                 "Import…",
@@ -191,6 +291,13 @@ class LibraryLandingCanvas(_RetainedSyncCallback, Vertical):
                 LIBRARY_ROW_INGEST_MEDIA,
                 "ingest-media",
                 "library-hub-action-import",
+            )
+            yield self._action_button(
+                "New note",
+                "Create a new note.",
+                LIBRARY_ROW_CREATE_NOTE,
+                LIBRARY_CANVAS_KIND_NOTES_CREATE,
+                "library-hub-action-new-note",
             )
             if not get_started:
                 yield self._action_button(
@@ -200,23 +307,10 @@ class LibraryLandingCanvas(_RetainedSyncCallback, Vertical):
                     "search",
                     "library-hub-action-search",
                 )
-            yield self._action_button(
-                "New note",
-                "Create a new note.",
-                LIBRARY_ROW_CREATE_NOTE,
-                LIBRARY_CANVAS_KIND_NOTES_CREATE,
-                "library-hub-action-new-note",
-            )
             if self.state.show_explore:
                 yield Button("Explore all tools", id="library-hub-explore-all")
         if self.state.show_retry:
             yield Button("Retry source check", id="library-hub-retry-evidence")
-        if not get_started:
-            recents = Vertical(id="library-hub-recents")
-            recents.styles.height = "auto"
-            with recents:
-                for item in self.state.recent_items:
-                    yield self._recent_button(item)
 
     def sync_state(self, state: LibraryLandingCanvasState) -> None:
         """Patch stable fields, recomposing only when the widget set changes."""
@@ -237,7 +331,31 @@ class LibraryLandingCanvas(_RetainedSyncCallback, Vertical):
             self._complete_targeted_sync()
             return
         self.query_one("#library-hub-counts", Static).update(state.counts_line)
-        self.call_later(self._replace_recent_rows, self._deferred_sync_serial)
+        if state.continue_action is not None:
+            continue_button = self.query_one("#library-hub-continue", Button)
+            continue_button.label = escape_markup(state.continue_action.label)
+            continue_button.row_id = state.continue_action.row_id
+            adjustment = self.query_one(
+                "#library-hub-continue-adjustment", Static
+            )
+            adjustment.update(state.continue_action.adjustment)
+            adjustment.display = bool(state.continue_action.adjustment)
+        if state.attention_action is not None:
+            attention_copy = self.query_one("#library-hub-attention-copy", Static)
+            attention_copy.update(state.attention_action.message)
+            attention_button = self.query_one(
+                "#library-hub-attention-action", Button
+            )
+            attention_button.label = escape_markup(state.attention_action.action_label)
+            attention_button.tooltip = (
+                f"{state.attention_action.action_label}: "
+                f"{state.attention_action.message}"
+            )
+            attention_button.action_kind = state.attention_action.action_kind
+        if state.recent_items:
+            self.call_later(self._replace_recent_rows, self._deferred_sync_serial)
+            return
+        self._complete_targeted_sync()
 
     async def _replace_recent_rows(self, serial: int | None = None) -> None:
         """Converge queued replacements on the latest state after each await."""
