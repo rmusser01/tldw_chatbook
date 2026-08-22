@@ -75,20 +75,23 @@ TEST_RENAMES = {"test_chunking_templates.py": "test_upstream_chunking_templates.
 # ---------------------------------------------------------------------------
 
 # whole-module skips: file -> reason
+# (task-14: the four template-class suites below were REVIVED when PR A
+# vendored engine/templates.py — test_template_classifier, test_template_
+# hierarchical_options, test_template_learner, test_auto_apply_selection
+# import only the vendored classes and pass un-skipped, so their entries
+# are gone from this table. The two §11-item-8 files stay skipped: their
+# reasons are corrected to what actually blocks them — the server repo's
+# HTTP surface and the initialization half, NOT the vendored processor.)
 TESTS_MODULE_SKIPPED = {
-    "test_auto_apply_selection.py": "templates (TemplateClassifier) is deferred to sub-project #2; not in the Phase-A vendored set",
     "test_auto_boundary_assistant.py": "auto_boundary_assistant + server Chat/AuthNZ deps deferred to #6",
     "test_auto_chunking_planner.py": "auto_planner is deferred to sub-project #3; not in the Phase-A vendored set",
     "test_auto_chunking_resolver.py": "Ingestion_Media_Processing.chunking_options is server-side; deferred to #3",
     "test_chunker_process_metrics.py": "server Metrics registry not vendored; engine degrades gracefully to no-op metrics",
     "test_chunking_runtime_lifecycle.py": "exercises FastAPI endpoint + AuthNZ/DB fixtures (spec §10.1 endpoint class); only its rolling_summarize module constants are vendored",
-    "test_chunking_templates.py": "templates + template endpoints/DB fixtures are server-side, deferred to #2 (spec §10.1)",
-    "test_chunking_templates_validate_schema.py": "FastAPI TestClient endpoint fixture (spec §10.1 endpoint class); lands with #2",
+    "test_chunking_templates.py": "engine/templates.py is vendored (PR A) but this suite also imports the server repo's FastAPI router/schemas (tldw_Server_API), the deliberately-not-vendored template_initialization (spec §13 decision 5), and _shims/DB_Management + _shims/AuthNZ fixtures chatbook does not carry — the §11 item-8 residue; chatbook-side parity is pinned by test_template_runtime/test_chunking_interop_v7",
+    "test_chunking_templates_validate_schema.py": "the /validate HTTP endpoint stays server-side; chatbook ships local validation parity (Chunking/template_validation.py) pinned by its own fixture-table suite — no router to mount a TestClient against",
     "test_phase3_3_sanitizers.py": "FastAPI endpoint module tldw_Server_API.app.api.v1.endpoints.chunking is server-side (spec §10.1 endpoint class)",
     "test_propositions_strategy.py": "strategies/propositions.py is deferred to sub-project #6; not in the Phase-A vendored set",
-    "test_template_classifier.py": "templates is deferred to sub-project #2; not in the Phase-A vendored set",
-    "test_template_hierarchical_options.py": "templates is deferred to sub-project #2; not in the Phase-A vendored set",
-    "test_template_learner.py": "templates is deferred to sub-project #2; not in the Phase-A vendored set",
     "test_hierarchical_rewrite_offsets.py": "strategies/propositions.py deferred to #6; not in the Phase-A vendored set",
 }
 

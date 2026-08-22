@@ -1842,8 +1842,12 @@ def _persist_chunking_template_columns(
     if "overlap" in params:
         config["chunk_overlap"] = params["overlap"]
     # DEFAULT separators are load-bearing (see docstring) -- never pass
-    # ``separators=`` here.
-    chunking_config_json = json.dumps(config)
+    # ``separators=`` here. ``ensure_ascii=False`` is load-bearing the same
+    # way: with the default escaping, a non-ASCII template name would be
+    # stored as ``\uXXXX`` escapes, which the LIKE reader (matching the
+    # literal name) silently never matches -- the name would query as
+    # unused (task-14 carried minor from the task-11 review).
+    chunking_config_json = json.dumps(config, ensure_ascii=False)
     # Sync-validation triggers on both tables require version to increment
     # by exactly 1 on UPDATE (and client_id/uuid to survive unchanged);
     # ``version = version + 1`` satisfies that without reading the rows

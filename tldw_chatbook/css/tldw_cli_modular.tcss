@@ -9391,6 +9391,48 @@ ListItem.personas-library-row.is-active.-highlight {
     text-style: bold;
 }
 
+/* task-14 / spec AC 47 (chunking-template parity): the recovery-action
+ * class gained a second consumer -- the re-chunk control
+ * (#library-rag-rechunk-legacy), which is DISABLED mid-run by the panel
+ * -- and its state set is completed here so both buttons define
+ * rest/hover/focus/disabled from $ds-* tokens. Hover deepens the warning
+ * tint rather than letting the generic `Button:hover` swap in
+ * `$surface-lighten-1` (which would erase the "this is a recovery
+ * action" colour); (0,2,0) beats `Button:hover`'s (0,1,1) per property. */
+.library-rag-recovery-action:hover {
+    background: $ds-status-warning 45%;
+}
+
+/* Structural focus cue, the task-3302 side-rail recipe
+ * (`Button.library-canvas-action:focus` above): typed selector so
+ * (0,2,1) plus later-in-bundle position beats both `Button:focus`
+ * (0,1,1) and `Button:hover:focus` (0,2,1, earlier module), keeping the
+ * rails visible while hovered too. Rails land on the button's own edge
+ * cells, so dimensions never change on focus/blur (the non-obscuring
+ * focus contract). */
+Button.library-rag-recovery-action:focus {
+    outline-left: heavy $ds-focus-accent;
+    outline-right: heavy $ds-focus-accent;
+}
+
+/* Legible Disabled (TASK-1801/DESIGN.md), the task-4023 RC-07 Library
+ * recipe: three dimmers compound on a disabled Button (the theme's
+ * `text-disabled: auto 38%`, Textual's own `bold dim` + `color:
+ * auto 50%`, and _buttons.tcss's `Button:disabled { opacity: 50% }`).
+ * The re-chunk run disables this button for its whole batch, so the
+ * label must stay readable next to the live "Re-chunking…" summary
+ * line. Neutralise every layer, state a colour, let the darkened
+ * surface carry "inert" -- same selectors/specificity as the
+ * `Button.library-canvas-action:disabled` escape. */
+Button.library-rag-recovery-action:disabled,
+Button.library-rag-recovery-action:disabled:hover {
+    opacity: 100%;
+    text-opacity: 100%;
+    text-style: none;
+    color: $ds-text-muted;
+    background: $surface-darken-1;
+}
+
 .library-rag-console-action {
     width: 18;
     min-width: 16;

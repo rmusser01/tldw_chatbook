@@ -26,6 +26,28 @@ and this project adheres to Some kind of Versioning
   text-labeled status badge) on the Console (now visible), Search, Media, Study, Writing,
   Research, Models, Speech, Logs, Stats, Evals, and Personas screens. Stats also gained the
   standard nav/footer/status chrome and a live Loading/Error/Ready/Empty header badge.
+- Chunking-template picker on Library ▸ Import media (chunking-template-parity): a
+  "Chunking template" select listing the DB's templates (default "None (manual
+  settings)"), hidden in server mode, disabled with a why-label until "Chunk content"
+  is on, populated from the media DB via the RAG admin scope service off the mount
+  path. The chosen template governs that item's parse and is persisted on the Media
+  row (`chunking_config`) and its chunk rows. A new `[chunking]` config section
+  (`default_template`) names the fallback template for ingests that did not pick
+  one; template resolution order is the picker's stored choice → config default →
+  plain options, and an unresolvable template name fails with a named error
+  instead of silently chunking with defaults.
+- Library ▸ Search / RAG legacy-chunk report + re-chunk action
+  (chunking-template-parity): the panel shows "Chunked by an older engine: N items"
+  when pre-parity chunks exist and offers "Re-chunk older-engine items", which
+  re-chunks exactly those items through the template-aware path (honoring each
+  item's stored template choice), replaces their chunk rows in one transaction,
+  force-reindexes them into the semantic index (deleting the stale vector document
+  by deterministic id first), clears the owning service's query cache, and surfaces
+  a per-run summary ("N re-chunked, M skipped, K failed" plus notes — never a bare
+  "done"). A re-chunk and a RAG index backfill refuse to overlap via a shared
+  in-flight guard (a notice, never worker cancellation), and an interrupted
+  re-index leaves the item re-indexable on the next backfill rather than
+  permanently absent from search.
 
 ### Removed
 - **BREAKING — file template store deleted (chunking-template-parity, spec §8.1).**
@@ -94,6 +116,33 @@ and this project adheres to Some kind of Versioning
     Admin diagnostics gained a read-only legacy-chunk report counting chunks
     persisted before the version stamp ("Chunked by an older engine: N
     items").
+- **Behaviour change — rolling-summarize fails closed
+  (chunking-template-parity).** When the `rolling_summarize` method's per-part
+  LLM callback raises, returns the legacy `"Error: …"` failure string, or
+  returns a non-string, chunking now raises `ChunkingError` (original cause
+  chained) instead of embedding `[Summarization failed for this part: …]`
+  marker text into the chunk stream. The markers were silently persisted as
+  if they were content — corruption that search, citations, and exports would
+  then faithfully reproduce — and nothing depends on them; a failed
+  summarization now stops at the failure instead of shipping marker rows.
+- **ChunkingTemplates storage rebuilt on media-DB schema v7 — a one-way door
+  (chunking-template-parity).** The chunking-template table is now the
+  server's shape: rows carry uuid/version and a soft-delete flag, the six
+  server built-ins are seeded as the only built-ins, the old chatbook seeds
+  are converted to the flat dict contract (three retired seeds survive as
+  editable non-builtin rows), unconvertible rows are quarantined under
+  "<name> (needs review)" with their original body preserved, and every
+  create/update validates the template body (stored-invalid rows stay listed
+  with a flag and editable, but are refused at apply with a named error).
+  **Once a media DB has been migrated to v7, downgrade is impossible** — v7
+  voids ADR-073's revert net for the chunking store. Back up the media DB
+  before updating if you may need to return to an older build.
+- **Chunking templates govern local ingestion (chunking-template-parity).**
+  A resolved template's chunk-stage options now take precedence over the
+  ingest form's unchanged defaults on every local ingest seam; only
+  explicitly changed form values beat the template (unchanged fields equal
+  to the schema default defer to it). Re-chunking honors each item's stored
+  template choice with the same resolution order.
 - **Behaviour change — reranking now really calls the provider, and really spends
   (TASK-17065).** Reranking has silently no-opped since the feature existed: the
   reranker resolved credentials from a `settings["API"]` table `load_settings()`

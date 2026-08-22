@@ -16,6 +16,7 @@ real DB work (§10.5: scratch data only).
 from __future__ import annotations
 
 import asyncio
+import re
 
 import pytest
 from textual.app import ComposeResult
@@ -141,12 +142,42 @@ def _seed_legacy_item(db: MediaDatabase, content: str) -> int:
     return int(media_id)
 
 
-async def _wait_for(predicate, *, attempts: int = 120, what: str = "condition"):
+async def _wait_for(
+    predicate,
+    *,
+    attempts: int = 120,
+    interval: float = 0.0,
+    what: str = "condition",
+):
     for _ in range(attempts):
         if predicate():
             return
-        await asyncio.sleep(0)
+        await asyncio.sleep(interval)
     raise AssertionError(f"timed out waiting for {what}")
+
+
+async def _wait_for_run_summary(app, *, what: str = "the run's summary line"):
+    """Wait for the run to LAND -- not merely for the row to display.
+
+    The summary row is displayed from LAUNCH (it carries the live
+    ``"Re-chunking…"`` interim line), so waiting on ``display`` alone
+    returns while the worker -- and its guard slot -- is still in flight.
+    Completion is the interim line being replaced by the formatted
+    counts, which the worker only posts AFTER releasing the slot. Waits
+    on real time (5 ms interval): the run happens on a WORKER thread, so
+    zero-sleep polling can exhaust its attempts before the worker's
+    own sleep/DB work finishes.
+    (task-14: the AC-47 focus-outline CSS shifted pause timings enough to
+    expose this race in the second-press test; waiting on the interim
+    line's replacement makes completion deterministic.)
+    """
+    summary = app.query_one(f"#{RECHUNK_SUMMARY_ID}", Static)
+
+    def _landed() -> bool:
+        return summary.display and str(summary.renderable) != "Re-chunking…"
+
+    await _wait_for(_landed, attempts=400, interval=0.005, what=what)
+    return summary
 
 
 @pytest.fixture(autouse=True)
@@ -193,10 +224,7 @@ async def test_press_runs_through_scope_service_and_surfaces_summary(tmp_path):
         await _wait_for(
             lambda: service.rechunk_calls, what="the scope service launch"
         )
-        await _wait_for(
-            lambda: app.query_one(f"#{RECHUNK_SUMMARY_ID}", Static).display,
-            what="the summary line",
-        )
+        await _wait_for_run_summary(app)
         await pilot.pause()
 
         # Launched through the scope service (the policy seam, §10.4).
@@ -308,9 +336,8 @@ async def test_second_rechunk_press_refused_first_run_survives():
         )
 
         # The first run SURVIVES the second press and completes.
-        await _wait_for(
-            lambda: app.query_one(f"#{RECHUNK_SUMMARY_ID}", Static).display,
-            what="the surviving first run's summary",
+        await _wait_for_run_summary(
+            app, what="the surviving first run's summary"
         )
         assert not bulk_rag_slot_in_flight(RECHUNK_SLOT)
 
@@ -356,3 +383,82 @@ async def test_backfill_trigger_refuses_while_rechunk_runs(monkeypatch):
     screen._trigger_library_rag_index_backfill()
     assert worker_calls == [True]
     release_bulk_rag_slot(BACKFILL_SLOT)
+
+
+# --- task-14 / spec AC 47: the control's design-token state contract -----
+
+def _rule_bodies(bundle_text: str, selector: str) -> list[str]:
+    """Minimal CSS block reader (the guard-test idiom, e.g.
+    test_non_obscuring_focus_contract.css_blocks)."""
+    uncommented = re.sub(r"/\*.*?\*/", "", bundle_text, flags=re.DOTALL)
+    bodies = []
+    for match in re.finditer(r"\{(?P<body>[^{}]*)\}", uncommented):
+        prefix = uncommented[: match.start()]
+        start = max(prefix.rfind("}"), prefix.rfind(";")) + 1
+        if selector in [item.strip() for item in prefix[start:].split(",")]:
+            bodies.append(match.group("body"))
+    return bodies
+
+
+def test_rechunk_control_class_defines_all_states_with_ds_tokens():
+    """AC 47: `.library-rag-recovery-action` (both the re-chunk button and
+    the pre-existing Open-Import button) defines rest/hover/focus/disabled
+    from ``$ds-*`` design tokens with no raw hex. The button is DISABLED
+    for a whole re-chunk batch, so its disabled legibility matters (the
+    Legible Disabled / TASK-1801 escape). Checked against the BUILT bundle
+    so a missing ``build_css.py`` run fails here too."""
+    from pathlib import Path
+
+    bundle = Path(__file__).resolve().parents[2] / (
+        "tldw_chatbook/css/tldw_cli_modular.tcss"
+    )
+    text = bundle.read_text(encoding="utf-8")
+
+    rules = {
+        "rest": _rule_bodies(text, ".library-rag-recovery-action"),
+        "hover": _rule_bodies(text, ".library-rag-recovery-action:hover"),
+        "focus": _rule_bodies(text, "Button.library-rag-recovery-action:focus"),
+        "disabled": _rule_bodies(
+            text, "Button.library-rag-recovery-action:disabled"
+        ),
+    }
+    for state, bodies in rules.items():
+        assert bodies, f"missing {state} rule for .library-rag-recovery-action"
+
+    for state, bodies in rules.items():
+        for body in bodies:
+            assert "$ds-" in body, f"{state} rule must use $ds-* tokens: {body!r}"
+            assert not re.search(r"#[0-9a-fA-F]{3,8}\b", body), (
+                f"{state} rule must carry no raw hex: {body!r}"
+            )
+
+    # The disabled legibility escape must neutralise the generic
+    # `Button:disabled { opacity: 50% }` dimmer (task-4023 RC-07 recipe).
+    disabled = rules["disabled"][0]
+    assert "opacity: 100%" in disabled
+    assert "$ds-text-muted" in disabled or "$ds-text-primary" in disabled
+
+
+def test_rechunk_summary_and_report_lines_use_the_styled_quiet_line_class():
+    """AC 47 for the two Static controls: they compose the existing,
+    bundle-styled `.library-rag-quiet-line` class (rest-only is the
+    complete state set for a non-focusable Static) and introduce no new
+    unstyled class token."""
+    from pathlib import Path
+
+    source = Path(__file__).resolve().parents[2] / (
+        "tldw_chatbook/Widgets/Library/library_search_rag_panel.py"
+    )
+    text = source.read_text(encoding="utf-8")
+    quiet = re.findall(r'classes="([^"{}]+)"', text)
+    assert "library-rag-quiet-line" in quiet
+    # Every class token composed by the panel is styled in the bundle.
+    bundle = (
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook/css/tldw_cli_modular.tcss"
+    ).read_text(encoding="utf-8")
+    for attr in quiet:
+        for token in attr.split():
+            assert f".{token}" in bundle or f"#{token}" in bundle, (
+                f"panel composes unstyled class token {token!r}"
+            )

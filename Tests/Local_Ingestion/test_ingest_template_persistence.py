@@ -170,6 +170,44 @@ def test_chunking_config_satisfies_json_extract_reader(
     assert stats["configured_documents"] == 1
 
 
+def test_non_ascii_template_name_still_satisfies_both_readers(
+    media_db: MediaDatabase, tmp_path: Path
+) -> None:
+    """task-14 carried minor: ``ensure_ascii=False`` on the writer.
+
+    With default ``json.dumps`` escaping, a non-ASCII template name would be
+    stored as ``\\uXXXX`` escapes -- the LIKE reader (matching the LITERAL
+    name) silently never matches, so the document queries as "not using the
+    template" while ``json_extract`` still sees it. The raw name must be
+    stored for both readers to agree."""
+    from tldw_chatbook.Chunking.chunking_interop_library import (
+        get_chunking_service,
+    )
+
+    name = "Übersicht-Wörter"
+    template = dict(TEMPLATE_TINY, name=name)
+    source = tmp_path / "fixture.txt"
+    source.write_text(_FIXTURE_TEXT, encoding="utf-8")
+    media_id = _ingest(media_db, source, {"template": template})
+
+    config_json = _media_chunking_config(media_db, media_id)
+    assert config_json is not None
+    assert name in config_json, "stored JSON must carry the raw name, not \\u escapes"
+
+    # Reader 1 (LIKE): the reader's own SQL spelling with the literal name.
+    cursor = media_db.execute_query(
+        "SELECT id FROM Media WHERE chunking_config LIKE ? AND deleted = 0",
+        (f'%"template": "{name}"%',),
+    )
+    assert [row["id"] for row in cursor.fetchall()] == [media_id]
+
+    # The real readers agree.
+    documents = get_chunking_service(media_db).get_documents_using_template(name)
+    assert [doc["id"] for doc in documents] == [media_id]
+    stats = get_chunking_service(media_db).get_template_statistics()
+    assert {"template": name, "count": 1} in stats["most_used_templates"]
+
+
 def test_rechunk_resolution_reads_back_stored_choice(
     media_db: MediaDatabase, tmp_path: Path
 ) -> None:

@@ -485,15 +485,34 @@ async def rechunk_legacy_items(
         # best-effort (ADR-030: the source write above committed first).
         # Only an item whose chunk rows were actually replaced goes on to
         # the re-index; skipped/failed items keep their legacy rows.
+        # (task-14 carried minor, structural safety: this block sits
+        # OUTSIDE the per-item try above, so an unexpected raise here --
+        # or a non-dict outcome from a differently-typed indexing result
+        # -- would abort the whole batch. Wrapped in its own try so the
+        # batch-abort invariant does not depend on outcome typing.)
         if item_rechunked and media is not None and rag_service is not None:
-            outcome = await forced_reindex_media_item(rag_service, indexing_db, media)
-            if outcome.get("status") == "reindexed":
-                summary["reindexed"] += 1
-            elif outcome.get("status") == "failed":
-                summary["reindex_failed"] += 1
-                summary["errors"].append(
-                    f"media {media_id} re-index: {outcome.get('error')}"
+            try:
+                outcome = await forced_reindex_media_item(
+                    rag_service, indexing_db, media
                 )
+            except Exception as exc:
+                summary["reindex_failed"] += 1
+                summary["errors"].append(f"media {media_id} re-index: {exc}")
+                logger.error(
+                    f"Re-chunk re-index raised for media {media_id}: {exc}"
+                )
+            else:
+                try:
+                    status = outcome.get("status")
+                except AttributeError:
+                    status = None
+                if status == "reindexed":
+                    summary["reindexed"] += 1
+                elif status == "failed":
+                    summary["reindex_failed"] += 1
+                    summary["errors"].append(
+                        f"media {media_id} re-index: {outcome.get('error')}"
+                    )
 
         if progress_callback is not None:
             try:

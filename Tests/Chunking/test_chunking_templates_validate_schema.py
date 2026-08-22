@@ -3,10 +3,10 @@ import pytest
 
 # --- Ported (chunking-engine-parity Task 4) ---------------------------------
 # Upstream file: tldw_Server_API/tests/Chunking/test_chunking_templates_validate_schema.py
-# Skipped: FastAPI TestClient endpoint fixture (spec §10.1 endpoint class); lands with #2. Remove this block when the module is vendored in
+# Skipped: the /validate HTTP endpoint stays server-side; chatbook ships local validation parity (Chunking/template_validation.py) pinned by its own fixture-table suite — no router to mount a TestClient against. Remove this block when the module is vendored in
 # its own sub-project and re-sync the test from upstream.
 pytest.importorskip("tldw_chatbook.NoSuchDeferredModule",
-                    reason="skipped: FastAPI TestClient endpoint fixture (spec §10.1 endpoint class); lands with #2")
+                    reason="skipped: the /validate HTTP endpoint stays server-side; chatbook ships local validation parity (Chunking/template_validation.py) pinned by its own fixture-table suite — no router to mount a TestClient against")
 from fastapi.testclient import TestClient
 
 
