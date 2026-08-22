@@ -42,7 +42,7 @@ def capture_actor_pack_destination(destination: Path) -> ActorPackDestinationCon
             not isinstance(destination, Path)
             or not destination.is_absolute()
             or destination.name in {"", ".", ".."}
-            or destination.suffix != ".tldw-actor-pack"
+            or destination.suffix.lower() != ".tldw-actor-pack"
         ):
             raise ValueError
         parent = destination.parent

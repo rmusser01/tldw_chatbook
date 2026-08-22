@@ -7,6 +7,7 @@ from collections.abc import Coroutine, Mapping
 import dataclasses
 import hashlib
 import json
+import os
 import re
 import sqlite3
 import threading
@@ -74,10 +75,16 @@ from ...Character_Chat.world_book_import import normalize_world_book_import
 from ...Character_Chat.world_book_manager import CHARACTER_WORLD_BOOKS_KEY
 from ...Actor_Packs.contracts import ActorPackValidationError, validate_actor_portrait
 from ...Actor_Packs.controller import (
+    ActorPackExportControllerError,
     ActorPackExportOutcome,
     ActorPackExportRequest,
 )
 from ...Actor_Packs.creation import ActorPackCreationError, ActorPackCreationResult
+from ...Actor_Packs.export import ActorPackExportError
+from ...Actor_Packs.publication import (
+    ActorPackPublicationError,
+    capture_actor_pack_destination,
+)
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Utils.fts5_match_forms import quote_fts5_prefix
 from ...Chat.console_expression_state import EXPRESSION_IMAGE_STATES
@@ -216,6 +223,7 @@ from ...Widgets.Persona_Widgets.personas_library_pane import (
     PersonasLibraryPane,
 )
 from ...Widgets.Persona_Widgets.personas_messages import (
+    ActorPackExportRequested,
     PersonaActionRequested,
     PersonaBuddyActionRequested,
     PersonaEntitySelected,
@@ -460,9 +468,11 @@ class _ActorPackExportUIAuthority:
     source: str
     actor_kind: str
     local_actor_id: str
+    actor_revision: int
     session_generation: int
     screen: object = dataclasses.field(repr=False, compare=False)
     controller: object = dataclasses.field(repr=False, compare=False)
+    service: object = dataclasses.field(repr=False, compare=False)
 
 
 class _CharacterTTSAuthorityUnavailable(RuntimeError):
@@ -784,6 +794,26 @@ def _actor_pack_portrait_name(data: bytes) -> str:
     if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
         return "portrait.webp"
     raise ValueError("actor_pack_portrait_invalid")
+
+
+def _normalize_actor_pack_destination(value: object) -> Path:
+    """Append the Actor Pack suffix exactly once without resolving authority."""
+
+    if not isinstance(value, (str, Path)):
+        raise ValueError("actor_pack_export_destination_invalid")
+    destination = Path(value)
+    if destination.name in {"", ".", ".."}:
+        raise ValueError("actor_pack_export_destination_invalid")
+    if destination.suffix.lower() != ".tldw-actor-pack":
+        destination = destination.with_name(destination.name + ".tldw-actor-pack")
+    return destination
+
+
+def _actor_pack_export_filename(name: str) -> str:
+    """Return a portable, non-empty default archive filename."""
+
+    safe = "".join(char for char in name if char.isalnum() or char in " -_").strip()
+    return f"{safe or 'actor'}.tldw-actor-pack"
 
 
 async def _join_task(task: asyncio.Task[Any]) -> Any:
@@ -3936,22 +3966,83 @@ class PersonasScreen(BaseAppScreen):
         self._persona_buddy_session_generation += 1
         return self._persona_buddy_session_generation
 
+    def _capture_actor_pack_export_ui_authority(
+        self,
+        *,
+        source: str,
+        actor_kind: str,
+        local_actor_id: str,
+        actor_revision: int,
+    ) -> _ActorPackExportUIAuthority | None:
+        """Capture exact pre-picker Workbench, service, and controller authority."""
+
+        service = getattr(self.app_instance, "actor_pack_export_service", None)
+        controller = getattr(self.app_instance, "actor_pack_export_controller", None)
+        if (
+            source != "local"
+            or actor_kind not in {"character", "persona"}
+            or type(local_actor_id) is not str
+            or not local_actor_id
+            or type(actor_revision) is not int
+            or actor_revision < 1
+            or self.state.runtime_source != source
+            or self.state.selected_entity_kind != actor_kind
+            or self.state.selected_entity_id != local_actor_id
+            or service is None
+            or controller is None
+            or self._edit_mode != "view"
+        ):
+            return None
+        return _ActorPackExportUIAuthority(
+            source=source,
+            actor_kind=actor_kind,
+            local_actor_id=local_actor_id,
+            actor_revision=actor_revision,
+            session_generation=self._persona_buddy_session_generation,
+            screen=self,
+            controller=controller,
+            service=service,
+        )
+
+    def _actor_pack_export_preflight_is_current(
+        self, authority: _ActorPackExportUIAuthority
+    ) -> bool:
+        """Reject navigation, ABA selection, profile, or owner replacement."""
+
+        return (
+            authority.screen is self
+            and getattr(self.app_instance, "actor_pack_export_controller", None)
+            is authority.controller
+            and getattr(self.app_instance, "actor_pack_export_service", None)
+            is authority.service
+            and self.state.runtime_source == authority.source
+            and self.state.selected_entity_kind == authority.actor_kind
+            and self.state.selected_entity_id == authority.local_actor_id
+            and self._persona_buddy_session_generation == authority.session_generation
+            and self._edit_mode == "view"
+        )
+
     def _start_actor_pack_export(
-        self, request: ActorPackExportRequest
+        self,
+        request: ActorPackExportRequest,
+        authority: _ActorPackExportUIAuthority | None = None,
     ) -> tuple[int, _ActorPackExportUIAuthority]:
         """Submit one immutable request while the app retains task ownership."""
 
         if self._actor_pack_export_operation is not None:
             raise ValueError("actor_pack_export_busy")
         controller = self.app_instance.actor_pack_export_controller
-        authority = _ActorPackExportUIAuthority(
-            source=self.state.runtime_source,
-            actor_kind=self.state.selected_entity_kind,
-            local_actor_id=self.state.selected_entity_id,
-            session_generation=self._persona_buddy_session_generation,
-            screen=self,
-            controller=controller,
-        )
+        if authority is None:
+            authority = self._capture_actor_pack_export_ui_authority(
+                source=self.state.runtime_source,
+                actor_kind=self.state.selected_entity_kind,
+                local_actor_id=self.state.selected_entity_id,
+                actor_revision=getattr(self.state, "selected_entity_revision", 1),
+            )
+        if authority is None or not self._actor_pack_export_preflight_is_current(
+            authority
+        ):
+            raise ValueError("actor_pack_export_authority_changed")
         operation = controller.start_export(request)
         self._actor_pack_export_operation = operation
         self._actor_pack_export_authority = authority
@@ -3981,15 +4072,75 @@ class PersonasScreen(BaseAppScreen):
         """Check screen identity, exact selection, source, and ABA generation."""
 
         return (
-            authority.screen is self
+            self._actor_pack_export_preflight_is_current(authority)
             and self._actor_pack_export_authority is authority
-            and self.app_instance.actor_pack_export_controller
-            is authority.controller
-            and self.state.runtime_source == authority.source
-            and self.state.selected_entity_kind == authority.actor_kind
-            and self.state.selected_entity_id == authority.local_actor_id
-            and self._persona_buddy_session_generation
-            == authority.session_generation
+        )
+
+    async def _refresh_actor_pack_export_eligibility(
+        self,
+        *,
+        source: str,
+        actor_kind: str,
+        local_actor_id: str,
+        session_generation: int,
+    ) -> None:
+        """Resolve export eligibility off-loop and publish only to exact selection."""
+
+        inspector = self.query_one(PersonasInspectorPane)
+        if source != "local":
+            inspector.set_actor_pack_export_state(
+                source=source,
+                actor_kind=actor_kind,
+                local_actor_id=local_actor_id,
+                actor_revision=1,
+                eligible=False,
+                reason="Save a local copy first",
+            )
+            return
+        service = getattr(self.app_instance, "actor_pack_export_service", None)
+        if service is None:
+            inspector.set_actor_pack_export_state(
+                source=source,
+                actor_kind=actor_kind,
+                local_actor_id=local_actor_id,
+                actor_revision=1,
+                eligible=False,
+                reason="Actor or portrait is unavailable. Refresh and try again.",
+            )
+            return
+        try:
+            eligibility = await asyncio.to_thread(
+                service.capture_eligibility,
+                actor_kind,
+                local_actor_id,
+                source=source,
+            )
+        except (ActorPackExportError, OSError, ValueError):
+            eligibility = None
+        if (
+            service is not getattr(self.app_instance, "actor_pack_export_service", None)
+            or session_generation != self._persona_buddy_session_generation
+            or self.state.runtime_source != source
+            or self.state.selected_entity_kind != actor_kind
+            or self.state.selected_entity_id != local_actor_id
+        ):
+            return
+        if eligibility is None:
+            inspector.set_actor_pack_export_state(
+                source=source,
+                actor_kind=actor_kind,
+                local_actor_id=local_actor_id,
+                actor_revision=1,
+                eligible=False,
+                reason="Actor or portrait is unavailable. Refresh and try again.",
+            )
+            return
+        inspector.set_actor_pack_export_state(
+            source=source,
+            actor_kind=actor_kind,
+            local_actor_id=local_actor_id,
+            actor_revision=eligibility.actor_revision,
+            eligible=True,
         )
 
     def _cancel_actor_pack_export(self) -> None:
@@ -4001,6 +4152,142 @@ class PersonasScreen(BaseAppScreen):
         self._actor_pack_export_authority = None
         if operation is not None and authority is not None:
             authority.controller.cancel(operation)
+
+    @on(ActorPackExportRequested)
+    async def _handle_actor_pack_export(
+        self, message: ActorPackExportRequested
+    ) -> None:
+        """Open one fenced save flow for the explicitly selected actor."""
+
+        message.stop()
+        if self._io_dialog_active or self._actor_pack_export_operation is not None:
+            return
+        authority = self._capture_actor_pack_export_ui_authority(
+            source=message.source,
+            actor_kind=message.actor_kind,
+            local_actor_id=message.local_actor_id,
+            actor_revision=message.actor_revision,
+        )
+        if authority is None:
+            return
+        self._io_dialog_active = True
+        self.run_worker(
+            self._actor_pack_export_dialog_worker(authority),
+            group="personas-io",
+        )
+
+    async def _actor_pack_export_dialog_worker(
+        self, authority: _ActorPackExportUIAuthority
+    ) -> None:
+        """Choose, confirm, attest, export, and report without retaining paths."""
+
+        from ...Widgets.enhanced_file_picker import EnhancedFileSave, Filters
+
+        try:
+            if not self._actor_pack_export_preflight_is_current(authority):
+                return
+            picker = EnhancedFileSave(
+                title="Export Actor Pack",
+                default_filename=_actor_pack_export_filename(
+                    str(self.state.selected_entity_name or "actor")
+                ),
+                filters=Filters(
+                    (
+                        "Actor Packs",
+                        lambda path: path.suffix.lower() == ".tldw-actor-pack",
+                    ),
+                    ("All Files", lambda path: True),
+                ),
+                context="actor_pack_export",
+            )
+            selected = await self.app.push_screen_wait(picker)
+            if not selected or not self._actor_pack_export_preflight_is_current(
+                authority
+            ):
+                return
+            try:
+                destination = _normalize_actor_pack_destination(selected)
+                exists = await asyncio.to_thread(os.path.lexists, destination)
+            except (OSError, TypeError, ValueError):
+                self._notify("Actor Pack export destination is unavailable.", "error")
+                return
+            if exists:
+                confirmed = await self.app.push_screen_wait(
+                    ConfirmationDialog(
+                        title="Replace Actor Pack?",
+                        message="Replace the existing Actor Pack archive?",
+                        confirm_label="Replace",
+                    )
+                )
+                if confirmed is not True:
+                    return
+            if not self._actor_pack_export_preflight_is_current(authority):
+                return
+            try:
+                eligibility = await asyncio.to_thread(
+                    authority.service.capture_eligibility,
+                    authority.actor_kind,
+                    authority.local_actor_id,
+                    source=authority.source,
+                )
+                if (
+                    eligibility.actor_revision != authority.actor_revision
+                    or not self._actor_pack_export_preflight_is_current(authority)
+                ):
+                    return
+                destination_contract = await asyncio.to_thread(
+                    capture_actor_pack_destination, destination
+                )
+                if not self._actor_pack_export_preflight_is_current(authority):
+                    return
+                request = authority.controller.create_request(
+                    actor_kind=authority.actor_kind,
+                    local_actor_id=authority.local_actor_id,
+                    source=authority.source,
+                    destination=destination_contract,
+                )
+                operation, active_authority = self._start_actor_pack_export(
+                    request, authority
+                )
+                outcome = await self._wait_actor_pack_export(
+                    operation, active_authority
+                )
+            except asyncio.CancelledError:
+                raise
+            except (
+                ActorPackExportControllerError,
+                ActorPackExportError,
+                ActorPackPublicationError,
+                OSError,
+                ValueError,
+            ):
+                self._notify("Actor Pack export failed.", "error")
+                return
+            if outcome is None:
+                return
+            if outcome.result is not None and outcome.result.committed:
+                if (
+                    outcome.result.durability
+                    == "actor_pack_export_durability_uncertain"
+                ):
+                    self._notify(
+                        "Actor Pack exported, but durability confirmation is unavailable.",
+                        "warning",
+                    )
+                else:
+                    self._notify(f"Exported {destination.name}.", "information")
+                return
+            if outcome.error_category == "actor_pack_export_cancelled":
+                return
+            if outcome.error_category == "actor_pack_export_authority_changed":
+                self._notify(
+                    "Actor Pack export stopped because the actor changed. Try again.",
+                    "warning",
+                )
+                return
+            self._notify("Actor Pack export failed.", "error")
+        finally:
+            self._io_dialog_active = False
 
     @on(PersonaEntitySelected)
     async def _handle_entity_selected(self, message: PersonaEntitySelected) -> None:
@@ -4078,7 +4365,7 @@ class PersonasScreen(BaseAppScreen):
     async def _select_character(
         self, entity_id: str, entity_name: str, *, restore_preview: dict | None = None
     ) -> None:
-        self._advance_persona_buddy_session()
+        session_generation = self._advance_persona_buddy_session()
         server_record: dict | None = None
         if self.state.runtime_source == "server":
             fetched = await self._fetch_server_character(entity_id)
@@ -4151,6 +4438,12 @@ class PersonasScreen(BaseAppScreen):
             await self._refresh_character_dictionaries()
             await self._refresh_character_worldbooks()
         self._sync_local_character_actions()
+        await self._refresh_actor_pack_export_eligibility(
+            source=self.state.runtime_source,
+            actor_kind="character",
+            local_actor_id=entity_id,
+            session_generation=session_generation,
+        )
 
     async def _select_profile(self, entity_id: str, entity_name: str) -> None:
         session_generation = self._advance_persona_buddy_session()
@@ -4205,6 +4498,12 @@ class PersonasScreen(BaseAppScreen):
         await inspector.show_conversations(())
         # Profiles have no first_message concept; start the preview empty.
         await self.preview.reset("")
+        await self._refresh_actor_pack_export_eligibility(
+            source=source,
+            actor_kind="persona",
+            local_actor_id=entity_id,
+            session_generation=session_generation,
+        )
 
     async def _select_dictionary(self, entity_id: str, entity_name: str) -> None:
         """Load one dictionary into the center detail; inspector shows the selection."""

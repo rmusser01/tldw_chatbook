@@ -52,6 +52,18 @@ def test_publish_absent_destination_atomically(tmp_path: Path) -> None:
     assert str(tmp_path) not in repr(contract)
 
 
+def test_existing_case_insensitive_suffix_is_accepted_without_rewriting(
+    tmp_path: Path,
+) -> None:
+    destination = tmp_path / "guide.TLDW-ACTOR-PACK"
+
+    contract = capture_actor_pack_destination(destination)
+    result = publish_actor_pack(_snapshot(), contract)
+
+    assert result.committed is True
+    assert destination.is_file()
+
+
 def test_publish_replaces_only_the_exact_confirmed_destination(tmp_path: Path) -> None:
     destination = tmp_path / "confirmed.tldw-actor-pack"
     destination.write_bytes(b"confirmed incumbent")

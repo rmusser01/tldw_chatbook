@@ -17,6 +17,7 @@ from .creation import (
     ActorPackCreationService,
 )
 from .export import (
+    ActorPackExportEligibility,
     ActorPackExportError,
     ActorPackExportResult,
     ActorPackExportService,
@@ -38,6 +39,7 @@ __all__ = [
     "ActorPackExportController",
     "ActorPackExportControllerError",
     "ActorPackValidationError",
+    "ActorPackExportEligibility",
     "ActorPackExportError",
     "ActorPackExportResult",
     "ActorPackExportOutcome",

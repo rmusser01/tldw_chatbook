@@ -70,6 +70,15 @@ class ActorPackExportError(ValueError):
 
 
 @dataclass(frozen=True, slots=True)
+class ActorPackExportEligibility:
+    """Validated local actor identity before any portable UUID assignment."""
+
+    actor_kind: str
+    actor_revision: int
+    local_actor_id: str = field(repr=False)
+
+
+@dataclass(frozen=True, slots=True)
 class ActorPackExportSnapshot:
     """Immutable actor/portrait/portable-identity export authority."""
 
@@ -136,6 +145,32 @@ class ActorPackExportService:
         self.persona_visual_repository = persona_visual_repository
         self.visual_identity_repository = visual_identity_repository
         self.profile_root = profile_root
+
+    def capture_eligibility(
+        self,
+        actor_kind: str,
+        local_actor_id: str,
+        *,
+        source: str,
+    ) -> ActorPackExportEligibility:
+        """Validate actor and portrait without assigning a portable identity."""
+
+        if type(source) is not str or source != "local":
+            raise ActorPackExportError(
+                "actor_pack_source_not_local",
+                user_message="Save a local copy first",
+            )
+        actor_id = _actor_id(actor_kind, local_actor_id)
+        actor, portrait = self._read_candidate(actor_kind, actor_id)
+        self._validate_candidate(actor_kind, actor, portrait)
+        revision = actor.get("version")
+        if type(revision) is not int or revision < 1:
+            raise ActorPackExportError("actor_pack_actor_invalid")
+        return ActorPackExportEligibility(
+            actor_kind=actor_kind,
+            local_actor_id=str(local_actor_id),
+            actor_revision=revision,
+        )
 
     def capture_snapshot(
         self,

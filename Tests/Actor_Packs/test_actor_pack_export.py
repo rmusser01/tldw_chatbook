@@ -160,6 +160,38 @@ def test_unregistered_local_character_gets_durable_identity_and_snapshot(
     assert "image" not in snapshot.actor_payload.decode("utf-8")
 
 
+def test_eligibility_validates_without_assigning_portable_identity(
+    export_components,
+) -> None:
+    export, repository, _local_service, database = export_components
+    character_id = database.add_character_card(
+        {"name": "Eligible", "description": "Local", "image": _png()}
+    )
+
+    eligibility = export.capture_eligibility(
+        "character", str(character_id), source="local"
+    )
+
+    assert eligibility.actor_kind == "character"
+    assert eligibility.local_actor_id == str(character_id)
+    assert eligibility.actor_revision >= 1
+    assert repository.get_identity("character", character_id) is None
+
+
+def test_invalid_eligibility_does_not_assign_portable_identity(
+    export_components,
+) -> None:
+    export, repository, _local_service, database = export_components
+    character_id = database.add_character_card(
+        {"name": "Broken", "image": b"not-an-image"}
+    )
+
+    with pytest.raises(ActorPackExportError, match="actor_pack_portrait_invalid"):
+        export.capture_eligibility("character", str(character_id), source="local")
+
+    assert repository.get_identity("character", character_id) is None
+
+
 def test_server_source_is_rejected_before_identity_assignment(
     export_components,
 ) -> None:
