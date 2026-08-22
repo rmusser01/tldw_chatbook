@@ -14,6 +14,7 @@ chunker the re-chunk itself runs), stores the chunk texts, and its
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -529,3 +530,390 @@ def test_all_exports_resolve_to_real_module_attributes():
     # the previously-broken export, pinned by its real name
     assert "REINDEX_PENDING_SENTINEL" in svc_module.__all__
     assert hasattr(svc_module, "REINDEX_PENDING_SENTINEL")
+
+
+# Task 4 (auto-selection spec §4.3, AC 10): re-chunk RE-RESOLVES a stored
+# mode:"auto" -- the decision is re-derived from the current store, never
+# replayed from the stored tier
+# ---------------------------------------------------------------------------
+
+
+AUTO_PLAN_CONFIG = '{"mode": "auto", "auto_tier": "plan", "auto_rationale": ["The auto planner produced options."]}'
+
+
+def _seed_classifier_template(
+    db: MediaDatabase, name: str, media_types: list[str]
+) -> int:
+    from tldw_chatbook.Chunking.chunking_interop_library import (
+        get_chunking_service,
+    )
+
+    return get_chunking_service(db).create_template(
+        name=name,
+        description="classifier fixture",
+        template_json={
+            "chunking": {"method": "words", "config": {"max_size": 3, "overlap": 0}},
+            "classifier": {"media_types": media_types, "min_score": 0.4},
+        },
+        tags=None,
+    )
+
+
+def test_rechunk_stored_auto_without_candidates_uses_plan_tier(media_db):
+    """mode:"auto" re-resolves: no classifier candidates -> the planner's
+    options govern (NOT the stored plan-tier label, NOT plain replay)."""
+    media_id = _seed_legacy_item(
+        media_db,
+        "one two three four five six seven eight nine ten. " * 6,
+        chunking_config=AUTO_PLAN_CONFIG,
+    )
+    summary = _run(
+        rechunk_legacy_items(media_db, rag_service=None, indexing_db=None)
+    )
+    assert summary["rechunked"] == 1
+    rows = _live_chunk_rows(media_db, media_id)
+    assert rows
+    assert all(row["chunk_engine_version"] == ENGINE_VERSION for row in rows)
+    assert all("OLD legacy" not in row["chunk_text"] for row in rows)
+    # Plan tier: no template columns (template-tier-only record, spec §4.4).
+    assert all(row["chunking_template"] is None for row in rows)
+
+
+def test_rechunk_stored_auto_classifier_flip_changes_the_tier(media_db):
+    """The decision was plan-tier at ingest; a classifier block has since
+    opted in -> re-chunk RE-resolves to the template tier and honors it."""
+    from tldw_chatbook.Chunking.auto_selection import AutoDecision
+    from tldw_chatbook.Chunking.template_runtime import resolve_for_rechunk
+
+    _seed_classifier_template(media_db, "plaint-tiny", ["plaintext"])
+    media_id = _seed_legacy_item(
+        media_db,
+        " ".join(f"w{i:02d}" for i in range(1, 25)),
+        chunking_config=AUTO_PLAN_CONFIG,
+    )
+
+    # The re-resolution itself: mode:"auto" now lands on the template tier.
+    media = media_db.get_media_by_id(media_id)
+    decision = resolve_for_rechunk(
+        media_db,
+        json.loads(media["chunking_config"]),
+        media_type=media.get("type"),
+        title=media.get("title"),
+        url=media.get("url"),
+    )
+    assert isinstance(decision, AutoDecision)
+    assert decision.tier == "template"
+    assert decision.template["name"] == "plaint-tiny"
+
+    summary = _run(
+        rechunk_legacy_items(media_db, rag_service=None, indexing_db=None)
+    )
+    assert summary["rechunked"] == 1
+    rows = _live_chunk_rows(media_db, media_id)
+    assert rows
+    # The classifier template's 3-word scheme chunked the item...
+    assert [row["chunk_text"] for row in rows] == [
+        " ".join(f"w{i:02d}" for i in range(start, start + 3))
+        for start in range(1, 25, 3)
+    ]
+    # ...and the rows carry the winning template's name (AC 38 shape).
+    assert all(row["chunking_template"] == "plaint-tiny" for row in rows)
+
+
+def test_rechunk_stored_auto_json_string_config_re_resolves(media_db):
+    """The worker hands the stored JSON string through; both spellings work."""
+    media_id = _seed_legacy_item(
+        media_db, "alpha beta gamma. " * 20, chunking_config=AUTO_PLAN_CONFIG
+    )
+    summary = _run(
+        rechunk_legacy_items(media_db, rag_service=None, indexing_db=None)
+    )
+    assert summary["rechunked"] == 1
+    assert _live_chunk_rows(media_db, media_id)
+
+
+# ---------------------------------------------------------------------------
+# Task 5 (Task 4 review carry): after an auto re-chunk, Media.chunking_config
+# is RE-STAMPED with the re-resolved outcome -- the stale-template-key bug.
+# Template tier at ingest -> store changes -> re-chunk lands plan/plain ->
+# the OLD "template" key would linger while the rows carry NULL, and both
+# #2 readers (get_documents_using_template's LIKE, get_template_statistics's
+# json_extract) keep counting the item under a template it no longer uses.
+# ---------------------------------------------------------------------------
+
+
+AUTO_TEMPLATE_WIN_CONFIG = (
+    '{"mode": "auto", "auto_tier": "template", '
+    '"auto_rationale": ["Selected template \'stale-winner\' (score=0.500)."], '
+    '"template": "stale-winner", "method": "words", "chunk_size": 3, '
+    '"chunk_overlap": 0}'
+)
+
+
+def _stored_config(db: MediaDatabase, media_id: int) -> dict:
+    row = db.get_connection().execute(
+        "SELECT chunking_config FROM Media WHERE id = ?", (media_id,)
+    ).fetchone()
+    return json.loads(row["chunking_config"])
+
+
+def _template_ids_in_use(db: MediaDatabase) -> dict[str, int]:
+    """get_template_statistics' most_used map: name -> usage count."""
+    from tldw_chatbook.Chunking.chunking_interop_library import (
+        get_chunking_service,
+    )
+
+    stats = get_chunking_service(db).get_template_statistics()
+    return {entry["template"]: entry["count"] for entry in stats["most_used_templates"]}
+
+
+def test_rechunk_auto_template_flip_to_plan_restamps_config_without_template_key(
+    media_db,
+):
+    """THE carry scenario end-to-end: template tier at ingest, the winner is
+    since soft-deleted -> re-chunk lands the plan tier -> the stored config
+    must drop the stale ``template`` key (both readers stop counting it)."""
+    from tldw_chatbook.Chunking.chunking_interop_library import (
+        get_chunking_service,
+    )
+
+    winner_id = _seed_classifier_template(media_db, "stale-winner", ["plaintext"])
+    media_id = _seed_legacy_item(
+        media_db,
+        " ".join(f"w{i:02d}" for i in range(1, 25)),
+        chunking_config=AUTO_TEMPLATE_WIN_CONFIG,
+    )
+    chunking = get_chunking_service(media_db)
+
+    # Pre-state: the stored (ingest-time) claim counts under both readers.
+    assert [doc["id"] for doc in chunking.get_documents_using_template("stale-winner")] == [
+        media_id
+    ]
+    assert _template_ids_in_use(media_db).get("stale-winner") == 1
+
+    # The store changes: the winning template is soft-deleted after ingest.
+    chunking.delete_template(winner_id)
+
+    # The fresh decision the re-chunk must re-stamp (plan tier now).
+    from tldw_chatbook.Chunking.auto_selection import AutoDecision
+    from tldw_chatbook.Chunking.template_runtime import resolve_for_rechunk
+
+    media = media_db.get_media_by_id(media_id)
+    decision = resolve_for_rechunk(
+        media_db,
+        _stored_config(media_db, media_id),
+        media_type=media.get("type"),
+        title=media.get("title"),
+        url=media.get("url"),
+    )
+    assert isinstance(decision, AutoDecision)
+    assert decision.tier == "plan"
+
+    summary = _run(
+        rechunk_legacy_items(media_db, rag_service=None, indexing_db=None)
+    )
+    assert summary["rechunked"] == 1
+
+    # The rows: stamped, plan tier -> NO template columns.
+    rows = _live_chunk_rows(media_db, media_id)
+    assert rows
+    assert all(row["chunk_engine_version"] == ENGINE_VERSION for row in rows)
+    assert all(row["chunking_template"] is None for row in rows)
+
+    # The re-stamp: mode stays "auto", tier/rationale refreshed, NO template
+    # key -- the stored choice now tells the truth the rows tell.
+    config = _stored_config(media_db, media_id)
+    assert config["mode"] == "auto"
+    assert config["auto_tier"] == "plan"
+    assert config["auto_rationale"] == list(decision.rationale)
+    assert "template" not in config
+
+    # Both #2 readers stop counting the item under the dead template.
+    assert chunking.get_documents_using_template("stale-winner") == []
+    assert "stale-winner" not in _template_ids_in_use(media_db)
+
+
+def test_rechunk_auto_template_flip_to_plain_restamps_config(media_db, monkeypatch):
+    """The plain-tier flip: auto declines everything on re-resolution -> the
+    config must say ``auto_tier: "plain"`` with no template key and the plain
+    options' continuity params."""
+    import tldw_chatbook.Chunking.auto_selection as auto_selection_module
+    from tldw_chatbook.Chunking.auto_selection import AutoDecision
+
+    media_id = _seed_legacy_item(
+        media_db,
+        " ".join(f"w{i:02d}" for i in range(1, 25)),
+        chunking_config=AUTO_TEMPLATE_WIN_CONFIG,
+    )
+
+    def _declining_resolve_auto(db, *, media_type, title, filename, url, goal="balanced"):
+        return AutoDecision(tier="plain", rationale=["Auto declined: nothing selected."])
+
+    monkeypatch.setattr(auto_selection_module, "resolve_auto", _declining_resolve_auto)
+
+    summary = _run(
+        rechunk_legacy_items(media_db, rag_service=None, indexing_db=None)
+    )
+    assert summary["rechunked"] == 1
+    rows = _live_chunk_rows(media_db, media_id)
+    assert rows
+    assert all(row["chunking_template"] is None for row in rows)
+
+    config = _stored_config(media_db, media_id)
+    assert config["mode"] == "auto"
+    assert config["auto_tier"] == "plain"
+    assert config["auto_rationale"] == ["Auto declined: nothing selected."]
+    assert "template" not in config
+    # The plain options that actually governed (PLAIN_RECHUNK_OPTIONS ->
+    # method absent, size 500, overlap 100).
+    assert "method" not in config
+    assert config["chunk_size"] == 500
+    assert config["chunk_overlap"] == 100
+
+
+def test_rechunk_auto_template_still_wins_restamps_the_new_winner(media_db):
+    """Template tier at ingest AND on re-chunk, but a DIFFERENT template wins
+    now (a higher-scoring classifier block appeared) -> the re-stamp carries
+    the new winner's name, and the old winner stops counting."""
+    from tldw_chatbook.Chunking.chunking_interop_library import (
+        get_chunking_service,
+    )
+
+    _seed_classifier_template(media_db, "old-winner", ["plaintext"])
+    chunking = get_chunking_service(media_db)
+    # Beats old-winner strictly: media-type match (0.5) + a title-regex hit
+    # (0.5/3) vs old-winner's media-type match alone. The seeded item's
+    # title is derived from its content ("w01 w02 ..."), so "w0[12]" hits.
+    chunking.create_template(
+        name="new-winner",
+        description="higher-scoring fixture",
+        template_json={
+            "chunking": {"method": "words", "config": {"max_size": 4, "overlap": 0}},
+            "classifier": {
+                "media_types": ["plaintext"],
+                "title_regex": "w0[12]",
+                "min_score": 0.4,
+            },
+        },
+        tags=None,
+    )
+    stored = AUTO_TEMPLATE_WIN_CONFIG.replace("stale-winner", "old-winner")
+    media_id = _seed_legacy_item(
+        media_db,
+        " ".join(f"w{i:02d}" for i in range(1, 25)),
+        chunking_config=stored,
+    )
+
+    # Pre-state: the stale claim counts the item under old-winner.
+    assert [doc["id"] for doc in chunking.get_documents_using_template("old-winner")] == [
+        media_id
+    ]
+
+    summary = _run(
+        rechunk_legacy_items(media_db, rag_service=None, indexing_db=None)
+    )
+    assert summary["rechunked"] == 1
+    # The new winner's 4-word scheme chunked the item...
+    rows = _live_chunk_rows(media_db, media_id)
+    assert [row["chunk_text"] for row in rows] == [
+        " ".join(f"w{i:02d}" for i in range(start, start + 4))
+        for start in range(1, 25, 4)
+    ]
+    assert all(row["chunking_template"] == "new-winner" for row in rows)
+
+    # ...and the re-stamp carries the new winner (readers move with it).
+    config = _stored_config(media_db, media_id)
+    assert config["mode"] == "auto"
+    assert config["auto_tier"] == "template"
+    assert config["template"] == "new-winner"
+    assert config["method"] == "words"
+    assert config["chunk_size"] == 4
+    assert config["chunk_overlap"] == 0
+    assert chunking.get_documents_using_template("old-winner") == []
+    assert [
+        doc["id"] for doc in chunking.get_documents_using_template("new-winner")
+    ] == [media_id]
+    in_use = _template_ids_in_use(media_db)
+    assert "old-winner" not in in_use
+    assert in_use.get("new-winner") == 1
+
+
+def test_rechunk_restamp_failure_rolls_back_row_replacement(media_db, monkeypatch):
+    """TASK-19902 (Qodo #3): a raise between row replacement and the config
+    re-stamp leaves NO partial state -- one outer transaction means the old
+    rows AND the old config both survive, and the item is counted failed
+    (never rows-replaced-but-counted-failed)."""
+    import tldw_chatbook.Library.library_rechunk_service as rechunk_module
+
+    _seed_classifier_template(media_db, "still-winner", ["plaintext"])
+    stored = AUTO_TEMPLATE_WIN_CONFIG.replace("stale-winner", "still-winner")
+    media_id = _seed_legacy_item(
+        media_db,
+        " ".join(f"w{i:02d}" for i in range(1, 25)),
+        chunking_config=stored,
+    )
+
+    def _restamp_whose_update_raises(
+        db, item_id, decision, *, template_name, governed_params
+    ):
+        # The forced failure: the re-stamp's OWN UPDATE raises mid-write
+        # (an unbindable parameter), AFTER the chunk rows were replaced.
+        with db.transaction() as conn:
+            conn.execute(
+                "UPDATE Media SET chunking_config = ? WHERE id = ?",
+                (object(), item_id),
+            )
+
+    monkeypatch.setattr(
+        rechunk_module, "_restamp_auto_chunking_config", _restamp_whose_update_raises
+    )
+
+    summary = _run(
+        rechunk_legacy_items(media_db, rag_service=None, indexing_db=None)
+    )
+
+    # The item is counted failed, never rechunked...
+    assert summary["failed"] == 1
+    assert summary["rechunked"] == 0
+    assert summary["errors"]
+
+    # ...and the OLD state is fully intact: the legacy rows survive...
+    rows = _live_chunk_rows(media_db, media_id)
+    assert [row["chunk_text"] for row in rows] == [
+        "OLD legacy chunk one",
+        "OLD legacy chunk two",
+    ]
+    assert all(row["chunk_engine_version"] is None for row in rows)
+
+    # ...and the stored config still says what ingest stamped (no half-flip:
+    # no replaced-rows-without-config, no config-without-rows).
+    config = _stored_config(media_db, media_id)
+    assert config["mode"] == "auto"
+    assert config["auto_tier"] == "template"
+    assert config["template"] == "still-winner"
+
+
+def test_rechunk_stored_explicit_name_leaves_config_untouched(media_db):
+    """The pinned NO: a stored EXPLICIT name re-runs the same name and the
+    config stays truthful by construction -- re-chunk must NOT rewrite it."""
+    _seed_classifier_template(media_db, "named-probe", ["plaintext"])
+    stored = '{"template": "named-probe"}'
+    media_id = _seed_legacy_item(
+        media_db,
+        " ".join(f"w{i:02d}" for i in range(1, 25)),
+        chunking_config=stored,
+    )
+
+    summary = _run(
+        rechunk_legacy_items(media_db, rag_service=None, indexing_db=None)
+    )
+    assert summary["rechunked"] == 1
+    assert all(
+        row["chunking_template"] == "named-probe"
+        for row in _live_chunk_rows(media_db, media_id)
+    )
+    # Byte-identical stored choice: no mode key invented, no rewrite.
+    row = media_db.get_connection().execute(
+        "SELECT chunking_config FROM Media WHERE id = ?", (media_id,)
+    ).fetchone()
+    assert row["chunking_config"] == stored

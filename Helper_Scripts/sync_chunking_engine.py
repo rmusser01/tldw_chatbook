@@ -12,12 +12,13 @@ BRANCH = "dev"
 PIN = "385afa951922c8a9dc2002c675bb6cad65e4ac23"
 
 # Phase-1 file set (spec §5.1) plus templates.py (template-parity task 4,
-# spec §6.1); excludes the still-deferred #2/#3/#6 modules and
-# upstream's own __init__.py (chatbook-authored instead, §5.1).
+# spec §6.1) and auto_planner.py (auto-selection task 1, spec §4.1); excludes
+# the still-deferred #2/#6 modules and upstream's own __init__.py
+# (chatbook-authored instead, §5.1).
 VENDORED = [
     "base.py", "chunker.py", "constants.py", "exceptions.py", "error_policy.py",
     "option_utils.py", "regex_safety.py", "security_logger.py",
-    "multilingual.py", "llm_context.py", "templates.py",
+    "multilingual.py", "llm_context.py", "templates.py", "auto_planner.py",
     "process_text/__init__.py", "process_text/models.py", "process_text/options.py",
     "process_text/preparation.py", "process_text/dispatch.py",
     "process_text/pipeline.py", "process_text/metadata.py",
@@ -63,11 +64,13 @@ TEST_RENAMES = {"test_chunking_templates.py": "test_upstream_chunking_templates.
 # ---------------------------------------------------------------------------
 # Chatbook-side test patches (spec §10.1/§10.2).
 #
-# The ported tests need skips/guards for surfaces that are NOT vendored in
-# Phase A: #2/#3/#6-deferred modules (templates, auto_planner,
-# auto_boundary_assistant, propositions, async_chunker), server-only fixtures
-# (FastAPI endpoints, AuthNZ, Metrics registry), and the HF-hub tokenizer
-# download that chatbook's network guard blocks. Applying these patches here —
+# The ported tests need skips/guards for surfaces that are NOT vendored:
+# still-deferred modules (auto_boundary_assistant, propositions,
+# async_chunker), server-only fixtures (FastAPI endpoints, AuthNZ, Metrics
+# registry), and the HF-hub tokenizer download that chatbook's network
+# guard blocks. (templates.py and auto_planner.py were vendored by later
+# sub-projects; their suites' skip entries are gone — see the revival note
+# on TESTS_MODULE_SKIPPED.) Applying these patches here —
 # rather than as one-time manual edits — keeps `sync_chunking_engine.py`
 # idempotent: a re-sync reproduces the exact ported tree, and an upstream
 # drift that breaks an anchor fails loudly instead of silently dropping a
@@ -79,12 +82,15 @@ TEST_RENAMES = {"test_chunking_templates.py": "test_upstream_chunking_templates.
 # vendored engine/templates.py — test_template_classifier, test_template_
 # hierarchical_options, test_template_learner, test_auto_apply_selection
 # import only the vendored classes and pass un-skipped, so their entries
-# are gone from this table. The two §11-item-8 files stay skipped: their
-# reasons are corrected to what actually blocks them — the server repo's
-# HTTP surface and the initialization half, NOT the vendored processor.)
+# are gone from this table. The auto-selection task (sub-project #3,
+# Task 1) likewise revived test_auto_chunking_planner.py when it vendored
+# engine/auto_planner.py — that suite imports only the vendored planner
+# symbols and passes 9/9 un-skipped. The §11-item-8 files below stay
+# skipped: their reasons are corrected to what actually blocks them — the
+# server repo's HTTP surface and the initialization half, NOT the vendored
+# processor.)
 TESTS_MODULE_SKIPPED = {
     "test_auto_boundary_assistant.py": "auto_boundary_assistant + server Chat/AuthNZ deps deferred to #6",
-    "test_auto_chunking_planner.py": "auto_planner is deferred to sub-project #3; not in the Phase-A vendored set",
     "test_auto_chunking_resolver.py": "Ingestion_Media_Processing.chunking_options is server-side; deferred to #3",
     "test_chunker_process_metrics.py": "server Metrics registry not vendored; engine degrades gracefully to no-op metrics",
     "test_chunking_runtime_lifecycle.py": "exercises FastAPI endpoint + AuthNZ/DB fixtures (spec §10.1 endpoint class); only its rolling_summarize module constants are vendored",

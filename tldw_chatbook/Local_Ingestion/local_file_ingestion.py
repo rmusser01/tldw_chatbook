@@ -970,6 +970,23 @@ def parse_local_file_for_ingest(
     # re-injections a no-op; ``setdefault`` preserves any user-changed
     # value the builder kept, which is the other half of the ruling.
     ingest_template = chunk_options.get("template")
+    # (task 4, auto-selection spec §4.3/§4.4) The Auto decision's travel
+    # ticket (``{"tier": ..., "rationale": [...]}``, placed by the Library
+    # job-option builder when the picker sentinel resolved) is extracted
+    # HERE -- before any branch dispatch -- so no processor and never the
+    # Chunker sees a non-chunking key, and the persist seam can record
+    # ``mode``/``auto_tier``/``auto_rationale`` in ``Media.chunking_config``.
+    auto_ticket = chunk_options.pop("auto", None)
+    ingest_auto: Optional[Dict[str, Any]] = None
+    if isinstance(auto_ticket, dict):
+        ingest_auto = {
+            "tier": str(auto_ticket.get("tier") or "").strip(),
+            "rationale": [
+                str(line)
+                for line in (auto_ticket.get("rationale") or [])
+                if str(line).strip()
+            ],
+        }
     # (task 11, spec §9.2 tail / AC 38) The template NAME is captured here
     # -- before any branch can consume the dict -- because the persist seam
     # needs it to fill the ``chunking_template``/``chunking_params`` columns
@@ -1684,6 +1701,12 @@ def parse_local_file_for_ingest(
         # dedicated key rather than re-reading chunk_options["template"].
         if ingest_template_name:
             payload["chunking_template"] = ingest_template_name
+        # (task 4, auto-selection spec §4.4) The Auto decision's ticket:
+        # present exactly when the picker sentinel resolved for this parse
+        # (any tier); the persist seam turns it into ``mode``/``auto_tier``/
+        # ``auto_rationale`` on ``Media.chunking_config``.
+        if ingest_auto is not None:
+            payload["chunking_auto"] = ingest_auto
         # (task-3301) Analysis was requested but the job-option builder
         # found no callable provider: carry the reason through so the
         # queue's done row can say "analysis skipped: ..." instead of the
@@ -1803,14 +1826,19 @@ def _persist_chunking_template_columns(
     media_id: int,
     template_name: str,
     chunk_options: Optional[Dict[str, Any]],
+    auto_decision: Optional[Dict[str, Any]] = None,
 ) -> None:
-    """Record which template chunked ``media_id`` (task 11, spec §9.2 / AC 38).
+    """Record which template chunked ``media_id`` (task 11, spec §9.2 / AC
+    38) -- and, when the Auto sentinel resolved the parse, the decision
+    itself (task 4, auto-selection spec §4.4).
 
     Fills, in ONE transaction at the single Library ingest writer seam:
 
     * ``UnvectorizedMediaChunks.chunking_template`` / ``chunking_params`` --
       the columns migration v1->v2 added and nothing had ever written,
-      alongside the ``chunk_engine_version`` stamp; and
+      alongside the ``chunk_engine_version`` stamp (template-tier ONLY,
+      including a template-tier Auto win -- the winning template's
+      name/params, exactly as a manual pick); and
     * ``Media.chunking_config`` -- the per-media stored choice the re-chunk
       resolution order (§9.1) reads first.
 
@@ -1826,6 +1854,15 @@ def _persist_chunking_template_columns(
       ``json_extract(chunking_config, '$.template')`` -- so ``template`` must
       be a TOP-LEVEL string key.
 
+    (task 4, auto-selection spec §4.4) When ``auto_decision`` is present
+    (``{"tier": ..., "rationale": [...]}`` -- the parse seam's ticket), the
+    config gains ``mode: "auto"``, ``auto_tier`` and ``auto_rationale``
+    BEFORE the template key; the ``template`` key itself appears only on a
+    template-tier win, so both #2 readers keep matching template-tier rows
+    and never match plan/plain-tier rows. No schema change -- everything
+    rides the existing JSON column. The method/chunk_size/chunk_overlap
+    continuity keys ride for every recorded row (what actually governed).
+
     The column shape mirrors the dead ``MediaDetailsWidget`` writer's
     (``template`` / ``chunk_size`` / ``chunk_overlap`` / ``method``) for
     continuity with the only writer the JSON column has ever had.
@@ -1834,7 +1871,15 @@ def _persist_chunking_template_columns(
     # Key order matters for the chunking_params string only in that tests
     # pin the canonical spelling; the column is read as JSON, not matched.
     chunking_params_json = json.dumps(params)
-    config: Dict[str, Any] = {"template": template_name}
+    config: Dict[str, Any] = {}
+    if auto_decision is not None:
+        config["mode"] = "auto"
+        config["auto_tier"] = str(auto_decision.get("tier") or "").strip()
+        config["auto_rationale"] = list(
+            auto_decision.get("rationale") or []
+        )
+    if template_name:
+        config["template"] = template_name
     if "method" in params:
         config["method"] = params["method"]
     if "size" in params:
@@ -1859,13 +1904,16 @@ def _persist_chunking_template_columns(
     # local columns the INSERT statement does not carry.
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
     with media_db.transaction() as conn:
-        conn.execute(
-            "UPDATE UnvectorizedMediaChunks "
-            "SET chunking_template = ?, chunking_params = ?, "
-            "last_modified = ?, version = version + 1 "
-            "WHERE media_id = ? AND deleted = 0",
-            (template_name, chunking_params_json, now, media_id),
-        )
+        if template_name:
+            # Template-tier only (spec §4.4): the winning template's
+            # name/params on the chunk rows, exactly as #2 wrote them.
+            conn.execute(
+                "UPDATE UnvectorizedMediaChunks "
+                "SET chunking_template = ?, chunking_params = ?, "
+                "last_modified = ?, version = version + 1 "
+                "WHERE media_id = ? AND deleted = 0",
+                (template_name, chunking_params_json, now, media_id),
+            )
         conn.execute(
             "UPDATE Media SET chunking_config = ?, last_modified = ?, "
             "version = version + 1 WHERE id = ?",
@@ -1989,9 +2037,21 @@ def persist_parsed_media(
         # Media row records the per-media stored choice for the re-chunk
         # resolution order. Only when a template was actually used: the
         # no-template path writes nothing (byte-identical to today).
-        if template_name and media_id is not None:
+        # (task 4, auto-selection spec §4.4) An Auto-resolved parse records
+        # its decision on EVERY tier -- template rows additionally carry
+        # the winning template's name/params (the readers' shape), plan and
+        # plain rows carry mode/auto_tier/auto_rationale with NO template
+        # key. Still nothing when Auto was never chosen.
+        auto_decision = payload.get("chunking_auto")
+        if not isinstance(auto_decision, dict):
+            auto_decision = None
+        if (template_name or auto_decision) and media_id is not None:
             _persist_chunking_template_columns(
-                media_db, media_id, template_name, payload.get("chunk_options")
+                media_db,
+                media_id,
+                template_name,
+                payload.get("chunk_options"),
+                auto_decision=auto_decision,
             )
         logger.info(f"Successfully ingested {file_type} file with media_id: {media_id}")
         return media_id, media_uuid, message

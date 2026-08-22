@@ -36,6 +36,26 @@ and this project adheres to Some kind of Versioning
   one; template resolution order is the picker's stored choice → config default →
   plain options, and an unresolvable template name fails with a named error
   instead of silently chunking with defaults.
+- Chunking Auto-selection (chunking-auto-selection): the "Chunking template" picker
+  gains an "Auto" option (None stays the default; the name `auto` is reserved —
+  template create/rename refuse it). Auto decides per item in three always-terminating
+  tiers: a template whose `classifier` block matches the item's media type /
+  filename / title / URL and clears its `min_score` wins and runs in full
+  (indistinguishable from a manual pick); otherwise the vendored server auto
+  planner (`Chunking/engine/auto_planner.py`, moved excluded → vendored) derives
+  media-type-aware chunk options (goal hardcoded "balanced", LLM features off);
+  otherwise today's plain defaults — Auto never fails an import. Templates
+  without a classifier block are never auto-selected (the six built-ins included),
+  so nothing changes until a template opts in. The decision is persisted per item
+  (`mode: "auto"` + tier/rationale in `Media.chunking_config`; the `template` key
+  only on a template-tier win, keeping both existing readers — the usage LIKE and
+  the statistics `json_extract` — truthful) and re-resolved, not replayed, on
+  re-chunk: changing the template store changes the re-chunk outcome, and the
+  stored record is re-stamped to match what the re-chunk actually used. The
+  `[chunking] default_template` config key never triggers Auto (picker-only,
+  stripped from server-mode ingest). Planner decisions are frozen by byte-pinned
+  parity fixtures and a media-type vocabulary test; classifier scoring,
+  tie-breaks, and the built-ins-never-auto-selected pin are standing tests.
 - Library ▸ Search / RAG legacy-chunk report + re-chunk action
   (chunking-template-parity): the panel shows "Chunked by an older engine: N items"
   when pre-parity chunks exist and offers "Re-chunk older-engine items", which

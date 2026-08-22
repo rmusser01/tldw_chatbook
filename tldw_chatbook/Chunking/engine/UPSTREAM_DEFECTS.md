@@ -139,3 +139,30 @@ Line numbers are as-read at the pin; re-verify before filing upstream.
   chatbook's behavior already matches and only the fixture note changes.
 - **Discovered:** sub-project #2, PR A task 6 (implementation review).
 - **Filed upstream:** no — <link>
+
+## 16. Auto/explicit template paths apply only the hierarchical block (all other template stages silently dropped)
+
+- **Where:**
+  `tldw_Server_API/app/core/Ingestion_Media_Processing/chunking_options.py:519-648`
+  (`apply_chunking_template_if_any`, the shared helper every process-*
+  endpoint calls; explicit-by-name branch :543-579, auto-apply branch
+  :586-643).
+- **Defect:** after picking a winner (auto loop, `score <= 0: continue`,
+  best `(score, priority)` strictly-greater) or loading an explicit
+  template by name, the helper extracts ONLY
+  `chunking.config.hierarchical_template` + `chunking.method` +
+  `chunking.config.{max_size, overlap}` into the options dict. A winning
+  or explicitly-named template whose hierarchical block is absent (or not
+  a dict) is **silently ignored** — nothing of it is applied — and the
+  template's preprocessing/postprocessing stages never run on either
+  path: templates with non-hierarchical bodies are inert on ingestion no
+  matter how they were chosen.
+- **chatbook impact:** chatbook deliberately diverges (auto-selection
+  spec `2026-08-22-chunking-auto-selection-design.md` §0.2 divergence 1,
+  ruling §8.6): a winning template runs IN FULL — preprocessing,
+  chunking, postprocessing — through sub-project #2's template engine,
+  indistinguishable from a manual pick; `Chunking/auto_selection.py`'s
+  tier 1 returns the whole resolved template for exactly that reason.
+- **Discovered:** 2026-08-22, spec review of sub-project #3 (read at the
+  pin via the local `tldw_server2` checkout).
+- **Filed upstream:** no — <link>

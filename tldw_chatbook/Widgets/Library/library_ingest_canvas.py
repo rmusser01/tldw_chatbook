@@ -102,6 +102,18 @@ INGEST_CHUNK_TEMPLATE_PICKER_ID = "opt-generic-chunk_template"
 INGEST_CHUNK_TEMPLATE_NONE_VALUE = ""
 #: The default choice's LABEL (spec §9.3's exact wording).
 INGEST_CHUNK_TEMPLATE_NONE_LABEL = "None (manual settings)"
+#: (task 4, auto-selection spec §4.3, AC 7) The "Auto" option's value --
+#: the RESERVED sentinel name ``auto_selection.AUTO_SENTINEL`` (the string
+#: is duplicated here rather than imported so the canvas keeps its
+#: import-light, Chunking-free import graph; ``Tests/UI/
+#: test_library_ingest_template_picker.py`` pins the equality). No user
+#: template can hold the name -- create/rename refuse it case-insensitively
+#: on the whole word (Qodo #4), and the populate filter drops any legacy
+#: cased row -- so the sentinel can never shadow a real row. None stays
+#: the DEFAULT (ruling §8.3).
+INGEST_CHUNK_TEMPLATE_AUTO_VALUE = "auto"
+#: The Auto option's LABEL -- plain "Auto" (no markup, no suffix).
+INGEST_CHUNK_TEMPLATE_AUTO_LABEL = "Auto"
 #: What the picker's label line says (it is not a capability-schema field,
 #: so it carries no schema hint).
 INGEST_CHUNK_TEMPLATE_LABEL = "Chunking template"
@@ -1343,14 +1355,17 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
             # (``capabilities_for_backend`` above): a server-mode snapshot
             # never carries a template, and Task 10's ``build_server_ingest_
             # kwargs`` strip is the defensive half for stale snapshots.
-            # Options come from the canvas-level cache, so a recompose
-            # re-renders the populated list without re-querying the DB.
-            # escape_markup: template names are user-authored free text and
-            # ``Select`` parses its labels as markup (the bench_editor
-            # precedent) -- an unescaped ``[red]`` in a name would be eaten
-            # as a style tag.
+            # (task 4, auto-selection §4.3) The static "Auto" option rides
+            # beside None with the reserved sentinel value; None stays the
+            # default. Options come from the canvas-level cache, so a
+            # recompose re-renders the populated list without re-querying
+            # the DB. escape_markup: template names are user-authored free
+            # text and ``Select`` parses its labels as markup (the
+            # bench_editor precedent) -- an unescaped ``[red]`` in a name
+            # would be eaten as a style tag.
             available = [
                 INGEST_CHUNK_TEMPLATE_NONE_VALUE,
+                INGEST_CHUNK_TEMPLATE_AUTO_VALUE,
                 *self._chunk_template_names,
             ]
             picker_value = values.get(
@@ -1375,7 +1390,14 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
             children.append(
                 Select(
                     [
-                        (INGEST_CHUNK_TEMPLATE_NONE_LABEL, INGEST_CHUNK_TEMPLATE_NONE_VALUE),
+                        (
+                            INGEST_CHUNK_TEMPLATE_NONE_LABEL,
+                            INGEST_CHUNK_TEMPLATE_NONE_VALUE,
+                        ),
+                        (
+                            INGEST_CHUNK_TEMPLATE_AUTO_LABEL,
+                            INGEST_CHUNK_TEMPLATE_AUTO_VALUE,
+                        ),
                         *[
                             (escape_markup(name), name)
                             for name in self._chunk_template_names
@@ -1782,7 +1804,19 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
         names: list[str] = []
         for record in records or []:
             name = str((record or {}).get("name") or "").strip()
-            if name and name not in names:
+            # (task 4, auto-selection §4.3/AC 14; Qodo #4) A legacy row
+            # holding the reserved sentinel name (created before the
+            # reservation) is flagged shadowed by the listing and must NOT
+            # appear as a second option with the Auto sentinel's value.
+            # The match is case-insensitive on the whole word AND honors
+            # the listing's ``name_reserved`` decoration: "Auto"/"AUTO"
+            # render indistinguishably from the built-in Auto option.
+            if (
+                name
+                and name.lower() != INGEST_CHUNK_TEMPLATE_AUTO_VALUE
+                and (record or {}).get("name_reserved") is not True
+                and name not in names
+            ):
                 names.append(name)
         self._chunk_template_names = names
         try:
@@ -1791,6 +1825,7 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
             return  # server mode (or mid-recompose): the cache has it
         options = [
             (INGEST_CHUNK_TEMPLATE_NONE_LABEL, INGEST_CHUNK_TEMPLATE_NONE_VALUE),
+            (INGEST_CHUNK_TEMPLATE_AUTO_LABEL, INGEST_CHUNK_TEMPLATE_AUTO_VALUE),
             *[(escape_markup(name), name) for name in names],
         ]
         # Preserve the current choice; ``set_options`` resets the value only

@@ -348,7 +348,12 @@ PKG_ROOT = Path(tr.__file__).resolve().parents[1]  # .../tldw_chatbook (the pack
 VENDORED_DIR_PARTS = ("Chunking", "engine")
 VENDORED_SHIM_PARTS = ("Chunking", "_shims")
 
-MAPPER_GUARD_ALLOWED = {"Chunking/template_runtime.py"}
+MAPPER_GUARD_ALLOWED = {"Chunking/template_runtime.py", "Chunking/auto_selection.py"}
+# Auto-selection task 2 (spec §4.1/§4.2): Chunking/auto_selection.py joins
+# the allowed set for ONE symbol — TemplateClassifier (its first consumer;
+# construction is separately fenced to that file below). It maps no flat
+# records and constructs no ChunkingTemplate; template_runtime remains the
+# only mapper.
 # task-8 shrank this to template_runtime + the migration's liveness check:
 # the task-8 CRUD rewrite removed the interop's legacy entry — its
 # name-keyed access is now a full-record CRUD fetch shaped
@@ -370,9 +375,19 @@ _RE_VENDORED_TEMPLATES_IMPORT = re.compile(r"engine\.templates")
 _RE_NAME_RESOLUTION = re.compile(
     r"FROM\s+ChunkingTemplates\s+WHERE\s+name", re.IGNORECASE
 )
+# Auto-selection task 1 (spec §4.1): TemplateManager/TemplateLearner stay
+# fully fenced (zero construction homes anywhere). TemplateClassifier gains
+# exactly ONE permitted home — Chunking/auto_selection.py, the module this
+# sub-project builds next — so it gets its own pattern + allowed set; the
+# home file does not exist yet, so its scan is empty today and the guard
+# stays green by construction while pinning the classifier's placement.
 _RE_FENCED_CONSTRUCTION = re.compile(
-    r"(?<![A-Za-z0-9_])Template(?:Manager|Classifier|Learner)\s*\("
+    r"(?<![A-Za-z0-9_])Template(?:Manager|Learner)\s*\("
 )
+_RE_CLASSIFIER_CONSTRUCTION = re.compile(
+    r"(?<![A-Za-z0-9_])TemplateClassifier\s*\("
+)
+CLASSIFIER_CONSTRUCTION_ALLOWED = {"Chunking/auto_selection.py"}
 
 
 def _production_py_files():
@@ -451,10 +466,17 @@ class TestEnumerationGuards:
             probe.unlink(missing_ok=True)
 
     def test_no_production_module_constructs_fenced_classes(self):
-        # AC 9 (source half): TemplateManager/TemplateClassifier/TemplateLearner
-        # are vendored-but-unused. The lookbehind excludes the legacy
+        # AC 9 (source half): TemplateManager/TemplateLearner are
+        # vendored-but-unused. The lookbehind excludes the legacy
         # pydantic ChunkingTemplateManager (deleted wholesale in PR C).
         assert _scan(_RE_FENCED_CONSTRUCTION) == []
+        # Auto-selection (spec §4.1): TemplateClassifier's single allowed
+        # construction home is Chunking/auto_selection.py — zero constructors
+        # may appear anywhere else. The home module does not exist yet, so
+        # the scan is empty today and this stays green by construction.
+        hits = _scan(_RE_CLASSIFIER_CONSTRUCTION)
+        assert set(hits) <= CLASSIFIER_CONSTRUCTION_ALLOWED, \
+            f"TemplateClassifier constructed outside its home: {sorted(hits)}"
 
 
 # ---------------------------------------------------------------------------

@@ -47,9 +47,32 @@ def test_manifest_templates_vendored_not_excluded():
         f"files in both vendored and excluded: {sorted(set(vendored) & set(excluded))}"
 
 
+def test_manifest_auto_planner_vendored_not_excluded():
+    """Spec §4.1: vendoring auto_planner.py is the same MOVE pattern — never
+    in both lists (a sync run would be ambiguous about which list wins)."""
+    manifest = tomllib.loads((ENGINE / "VENDOR_MANIFEST.toml").read_text())
+    vendored = set(manifest["files"]["vendored"])
+    excluded = set(manifest["files"]["excluded"])
+    assert "auto_planner.py" in vendored and "auto_planner.py" not in excluded
+    assert not (vendored & excluded)  # spec §0.2: never both lists
+
+
+def test_auto_planner_importable_zero_new_shims():
+    """Spec §4.1: auto_planner.py is stdlib-only at the pin, so the synced
+    file must carry no _shims reference at all — zero rewritten lines."""
+    from tldw_chatbook.Chunking.engine import auto_planner
+    from tldw_chatbook.Chunking.engine.auto_planner import plan_auto_chunking
+    assert callable(plan_auto_chunking)
+    # stdlib-only at the pin — the module must not import _shims at all
+    import inspect
+    assert "_shims" not in inspect.getsource(auto_planner)
+
+
 def test_engine_tree_complete():
-    # template parity task 4 (spec §6.1): the tree goes 35 -> 36 files
-    assert len(manifest_vendored()) == 36
+    # auto-selection task 1 (spec §4.1): vendoring auto_planner.py takes the
+    # manifest 36 -> 37 entries (the engine tree goes 37 -> 38 .py files
+    # counting the chatbook-authored __init__.py).
+    assert len(manifest_vendored()) == 37
     for rel in manifest_vendored():
         assert (ENGINE / rel).exists(), f"missing vendored file {rel}"
     for rel in manifest_extra():
@@ -60,8 +83,10 @@ def test_engine_tree_complete():
     assert "Version 3, 29 June 2007" in gpl
     # templates.py is vendored (spec §6.1) and importable (see below)
     assert (ENGINE / "templates.py").exists()
+    # auto_planner.py is vendored (spec §4.1) and importable (see below)
+    assert (ENGINE / "auto_planner.py").exists()
     # excluded-by-design files must NOT exist
-    for rel in ("template_initialization.py", "auto_planner.py",
+    for rel in ("template_initialization.py",
                 "async_chunker.py", "auto_boundary_assistant.py",
                 "strategies/propositions.py", "utils/proposition_eval.py"):
         assert not (ENGINE / rel).exists(), f"deferred file vendored: {rel}"

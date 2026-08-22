@@ -375,6 +375,52 @@ class TestUpdate:
 
 
 # ---------------------------------------------------------------------------
+# AC 14 (auto-selection spec) — the reserved sentinel name "auto"
+# ---------------------------------------------------------------------------
+
+
+class TestReservedSentinelName:
+    """The picker's Auto choice rides the ``chunk_template`` slot with the
+    reserved name ``"auto"`` (auto-selection spec §4.3/§0.2 divergence 2),
+    so no user template may take it — create and rename both refuse it
+    with the NAMED error; a legacy row that already holds it (created
+    before this gate) is never deleted, just flagged by the listing
+    decoration and skipped by tier 1."""
+
+    def test_create_refuses_reserved_auto_name(self, svc):
+        with pytest.raises(InvalidTemplateError, match="reserv"):
+            svc.create_template(name="auto", description="d", template_json=VALID_BODY)
+
+    def test_reservation_matches_the_stripped_case_folded_sentinel(self, svc):
+        # (Qodo #4) The sentinel comparison is on the stripped name,
+        # case-folded: every whole-word casing -- "AUTO", "Auto",
+        # " auto " -- renders indistinguishably from the picker's built-in
+        # Auto option, so all are refused. Only non-sentinel names stay
+        # legal (the contains-case is pinned below).
+        with pytest.raises(InvalidTemplateError, match="reserv"):
+            svc.create_template(name=" auto ", description="d", template_json=VALID_BODY)
+        with pytest.raises(InvalidTemplateError, match="reserv"):
+            svc.create_template(name="AUTO", description="d", template_json=VALID_BODY)
+        with pytest.raises(InvalidTemplateError, match="reserv"):
+            svc.create_template(name="Auto", description="d", template_json=VALID_BODY)
+
+    def test_update_refuses_rename_to_reserved_auto_name(self, svc):
+        template_id = svc.create_template("renamable", "d", VALID_BODY)
+        with pytest.raises(InvalidTemplateError, match="reserv"):
+            svc.update_template(template_id, name="auto")
+        # (Qodo #4) The cased whole-word variants are refused too.
+        with pytest.raises(InvalidTemplateError, match="reserv"):
+            svc.update_template(template_id, name="AUTO")
+        # The row keeps its old name — the refusals left it untouched.
+        assert svc.get_template_by_id(template_id)["name"] == "renamable"
+
+    def test_non_sentinel_names_still_accepted(self, svc):
+        # Names that merely CONTAIN the sentinel stay legal.
+        template_id = svc.create_template("automation", "d", VALID_BODY)
+        assert svc.get_template_by_id(template_id)["name"] == "automation"
+
+
+# ---------------------------------------------------------------------------
 # AC 25 — soft delete end to end
 # ---------------------------------------------------------------------------
 
