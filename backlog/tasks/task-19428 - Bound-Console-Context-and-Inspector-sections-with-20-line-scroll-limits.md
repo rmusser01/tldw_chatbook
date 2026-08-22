@@ -82,16 +82,22 @@ preference writes, production-path reconciliation without test-only manual settl
 source/bundle CSS integrity, the 235x52, 160x45, 120x30, and 80x24 matrices, and focus
 recovery/collapse/reopen/resize lifecycle coverage.
 
-Verification at `453e28219ce18733bca5a6e2c8b4042352fa92d3`:
+Verification after rebasing the feature implementation through
+`ca760b4a39f58758ed5861d9fdb2539088032373` onto `origin/dev` at
+`fc5c9b57e2e7dfbb13ab95f5eb6d0735aa874c9d`:
 
-- Focused 18-file changed-functionality suite: 537 passed, 2 warnings in 610.42s.
+- Focused 18-file changed-functionality suite: 537 passed, 2 warnings in 594.68s.
+- Post-rebase Agent/Context reconciliation subset: 94 passed, 3 warnings in
+  107.01s.
 - Scoped Ruff check: `All checks passed!`.
-- Scoped Ruff format check: 7 files already formatted.
+- Scoped Ruff format check: 8 files already formatted.
 - `git diff --check`: clean.
 
 The two warnings are unchanged environment/dependency warnings: Requests reports an
 unsupported urllib3/chardet/charset-normalizer combination, and pydub imports the
-deprecated Python `audioop` module. No new testing lesson was added because the
+deprecated Python `audioop` module. The post-rebase Agent subset also exposes an
+existing unawaited-coroutine warning in `console_chat_controller.py`; its tests pass
+and that incoming Agent-runtime path is outside this task. No new testing lesson was added because the
 reusable production-CSS bundle and detached-focus/recompose traps are already recorded
 in `backlog/docs/lessons-testing-evidence.md`.
 <!-- SECTION:NOTES:END -->
