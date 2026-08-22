@@ -189,6 +189,108 @@ def test_report_always_ends_with_the_next_command():
     assert inventory.NEXT_STEPS in _diff(committed, rebuilt)
 
 
+def test_the_changed_row_note_admits_re_indentation():
+    """The row note used to offer only "reworded / re-levelled / new args".
+
+    A count-preserving digest change also happens when a call merely shifts
+    nesting level, and sending a reviewer looking for a rewording that is not
+    there is how a gate loses its credibility.
+    """
+    committed = _inventory()
+    rebuilt = copy.deepcopy(committed)
+    rebuilt["owners"][0]["diagnostic_digest"] = "eeeeeeeeeeeeeeeeeeee"
+
+    report = _diff(committed, rebuilt)
+
+    assert "same count, content changed" in report
+    assert "re-indented" in report
+    assert "--statements" in report
+
+
+def test_next_steps_sends_the_reader_to_statements_not_git_diff():
+    """`git diff` is the wrong recovery tool for this artifact and the trailer
+    must not recommend it: the digest covers indentation, so a moved call reads
+    as changed and a line diff buries it in unrelated edits."""
+    assert "--statements" in inventory.NEXT_STEPS
+    assert "--since" in inventory.NEXT_STEPS
+    assert "git diff" not in inventory.NEXT_STEPS.replace("Do NOT reach for `git diff`", "")
+
+
+_MOVED_BEFORE = """
+import logging
+logger = logging.getLogger(__name__)
+
+def handler(exc):
+    if exc:
+        logger.warning(
+            "wake delivery ledger stamp failed (exception_type={})",
+            type(exc).__name__,
+        )
+"""
+
+_MOVED_AFTER = """
+import logging
+logger = logging.getLogger(__name__)
+
+def handler(exc):
+    logger.warning(
+        "wake delivery ledger stamp failed (exception_type={})",
+        type(exc).__name__,
+    )
+"""
+
+
+def test_a_re_indented_statement_is_reported_as_needing_no_review():
+    """The incident this mode was built for: TASK-19572's pre-merge review found
+    console_fleet_wake.py's row changed inside a 328-line diff in which not one
+    diagnostic statement had actually changed -- only two had been re-indented
+    when the surrounding code was refenced."""
+    report = inventory.render_statement_diff(_MOVED_BEFORE, _MOVED_AFTER, "m.py")
+
+    assert "moved/re-indented only: 1" in report
+    assert "removed: 0" in report
+    assert "added: 0" in report
+    assert "NO review needed" in report
+
+
+def test_an_added_statement_is_printed_in_full_for_reading():
+    """The whole point: the pin cannot carry statement text, and the
+    interpolation check needs it."""
+    after = _MOVED_AFTER + """
+def other(path):
+    logger.error(f"export failed for {path}")
+"""
+    report = inventory.render_statement_diff(_MOVED_AFTER, after, "m.py")
+
+    assert "added: 1" in report
+    assert 'logger.error(f"export failed for {path}")' in report
+    assert "interpolate user content, a secret, a path, or a URL" in report
+
+
+def test_a_removed_statement_is_shown_too():
+    report = inventory.render_statement_diff(_MOVED_AFTER, "x = 1\n", "m.py")
+
+    assert "removed: 1" in report
+    assert "wake delivery ledger stamp failed" in report
+
+
+def test_no_statement_change_says_the_pin_was_already_stale():
+    """A listed row with nothing to show means the drift predates the base --
+    the TASK-19572 finding that two rows rode into a pin unexamined."""
+    report = inventory.render_statement_diff(_MOVED_AFTER, _MOVED_AFTER, "m.py")
+
+    assert "no diagnostic statement changed" in report
+    assert "widen the base revision" in report
+
+
+def test_statement_digests_match_the_ones_the_pin_moves():
+    """The report is only trustworthy if its keys are the gate's keys."""
+    entries = inventory._statement_entries(_MOVED_AFTER, "m.py")
+    diagnostics, _ = inventory.scan_source(_MOVED_AFTER, filename="m.py")
+
+    assert [e["digest"] for e in entries] == [d["digest"] for d in diagnostics]
+
+
 def test_duplicate_task_ids_are_caught_in_both_namespaces(tmp_path):
     """A hand-edited rename can leave the filename unique and the frontmatter
     colliding, which is what the backlog CLI actually resolves on."""

@@ -19,8 +19,15 @@ anything.
 
 The pin stores an aggregate per-file digest and no statement text, so the report
 is at the maximum resolution the artifact allows: it names which files drifted
-and by how much, and ``NEXT_STEPS`` tells the reader how to recover the
-statements themselves.
+and by how much, and ``--statements <path> --since <rev>`` recovers the
+statements themselves. That mode exists because the obvious alternative is
+wrong: the per-call digest is taken over the statement's raw source segment,
+indentation included, so a call that merely shifted nesting level moves the
+file's digest, and a line diff shows it as removed+added inside whatever else
+changed. Measured during the TASK-19572 pre-merge review:
+``Chat/console_fleet_wake.py`` drifted inside a 328-line diff in which not one
+diagnostic statement had actually changed. ``--statements`` pairs those off and
+prints only the text that really needs reading.
 """
 
 from __future__ import annotations
@@ -342,16 +349,25 @@ NEXT_STEPS = (
     "Next: read every row above and confirm each change is one you intended.\n"
     "  - a call_count delta means a diagnostic was added or deleted;\n"
     "  - an unchanged count with a changed digest means one was reworded,\n"
-    "    re-levelled, or given different arguments -- check it does not now\n"
-    "    interpolate user content, secrets, or paths into a persistent sink;\n"
+    "    re-levelled, given different arguments, or merely RE-INDENTED -- check\n"
+    "    it does not now interpolate user content, secrets, or paths into a\n"
+    "    persistent sink;\n"
     "  - a sink-topology row means a new file/handler destination appeared.\n"
     "The pin stores only an aggregate per-file digest, so the rows above can name\n"
     "WHICH files changed and by how much, never the statement text -- and the\n"
-    "interpolation check just above needs that text. Read it with:\n"
+    "interpolation check just above needs that text. Recover it with:\n"
     "  base=$(git log -1 --format=%H -- "
     "Docs/security/production-diagnostic-inventory.json)\n"
-    "  git diff $base -- <each path listed above>\n"
-    "Treat that revision as a LOWER BOUND, not the truth: the pin has been\n"
+    "  python scripts/check_persistent_diagnostic_inventory.py \\\n"
+    "      --statements <each path listed above> --since $base\n"
+    "That prints the added and removed STATEMENTS themselves, and separates the\n"
+    "ones that only moved or re-indented from the ones whose text really changed.\n"
+    "Do NOT reach for `git diff` here: the digest covers a statement's own source\n"
+    "text, indentation included, so a call that merely shifted nesting level\n"
+    "reports as changed, and a line diff buries it in unrelated edits -- measured\n"
+    "on tldw_chatbook/Chat/console_fleet_wake.py, whose row changed inside a\n"
+    "328-line diff in which not one statement had actually changed.\n"
+    "Treat that base revision as a LOWER BOUND, not the truth: the pin has been\n"
     "committed stale before (TASK-19572 review found two rows whose drift predated\n"
     "the pin's own commit), so if a listed file shows no logger change in that\n"
     "range, widen it rather than assuming the row is noise.\n"
@@ -428,7 +444,11 @@ def _owner_lines(committed: dict[str, Any], rebuilt: dict[str, Any]) -> list[str
         old_digest = before.get("diagnostic_digest")
         new_digest = after.get("diagnostic_digest")
         if old_count == new_count:
-            note = "same count, content changed (reworded / re-levelled / new args)"
+            note = (
+                "same count, content changed "
+                "(reworded / re-levelled / new args / re-indented) "
+                "-- use --statements to see which"
+            )
         else:
             delta = (new_count or 0) - (old_count or 0)
             note = f"{delta:+d} diagnostic call(s)"
@@ -540,6 +560,205 @@ def render_diff(committed_text: str, rebuilt: dict[str, Any]) -> str:
     return "\n".join(body) + "\n" + NEXT_STEPS
 
 
+def _statement_entries(source: str, path: str) -> list[dict[str, Any]]:
+    """Every diagnostic statement in one module, with its text and line.
+
+    Uses the same scanner and the same per-call digest as the pin, so a key
+    printed here is the key that moved the file's aggregate digest.
+    """
+    tree = ast.parse(source, filename=path)
+    symbols = _logger_symbols(tree)
+    entries: list[dict[str, Any]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not _is_diagnostic_call(node, symbols):
+            continue
+        entry = _call_entry(source, node)
+        entry["text"] = ast.get_source_segment(source, node) or ""
+        entry["line"] = node.lineno
+        entry["col"] = node.col_offset
+        entries.append(entry)
+    entries.sort(key=lambda item: item["line"])
+    return entries
+
+
+def _normalized(entry: dict[str, Any]) -> tuple[str, str]:
+    """Key a statement by level + whitespace-collapsed text.
+
+    Two statements sharing this key differ only in layout, which the module
+    docstring says is explicitly NOT a review event -- but the per-call digest
+    is taken over the raw source segment, continuation-line indentation
+    included, so re-indenting a call still moves the file's digest. Separating
+    those out is the difference between a report that teaches and one that
+    trains people to regenerate without reading (task-3750).
+    """
+    return (str(entry["method"]), " ".join(str(entry["text"]).split()))
+
+
+def _indent_block(entry: dict[str, Any], prefix: str = "      | ") -> str:
+    """Render a statement's source under a gutter, at its original shape.
+
+    ``ast.get_source_segment`` returns the first line already stripped of its
+    leading indentation while continuation lines keep their absolute column,
+    so printing it verbatim renders a multi-line call as a staircase. Restoring
+    the first line's column and then dedenting the whole block puts the call
+    back the shape it has in the file, which is how a reviewer reads it.
+    """
+    import textwrap
+
+    text = str(entry.get("text", ""))
+    restored = " " * int(entry.get("col", 0)) + text
+    body = textwrap.dedent(restored)
+    return "\n".join(prefix + line for line in body.splitlines())
+
+
+def render_statement_diff(old_source: str, new_source: str, path: str) -> str:
+    """Report which diagnostic STATEMENTS changed between two revisions of a file.
+
+    Args:
+        old_source: The module's source at the base revision.
+        new_source: The module's source now.
+        path: Repo-relative path, used only for the heading.
+
+    Returns:
+        str: A report separating statements that merely moved or were
+            re-indented -- which need no privacy review -- from those actually
+            added, removed, or reworded, printing the full text of each of the
+            latter so the interpolation check can be made on real text.
+    """
+    old = _statement_entries(old_source, path)
+    new = _statement_entries(new_source, path)
+    old_keys: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    new_keys: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for entry in old:
+        old_keys.setdefault((entry["method"], entry["digest"]), []).append(entry)
+    for entry in new:
+        new_keys.setdefault((entry["method"], entry["digest"]), []).append(entry)
+
+    removed: list[dict[str, Any]] = []
+    added: list[dict[str, Any]] = []
+    for key, entries in old_keys.items():
+        removed.extend(entries[len(new_keys.get(key, [])) :])
+    for key, entries in new_keys.items():
+        added.extend(entries[len(old_keys.get(key, [])) :])
+
+    # Pair off statements whose only difference is layout, so they stop
+    # competing for the reviewer's attention with real content changes.
+    layout_only: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    pending = list(added)
+    still_removed: list[dict[str, Any]] = []
+    for gone in removed:
+        match = next((e for e in pending if _normalized(e) == _normalized(gone)), None)
+        if match is None:
+            still_removed.append(gone)
+            continue
+        pending.remove(match)
+        layout_only.append((gone, match))
+
+    lines = [
+        f"{path}: {len(old)} -> {len(new)} diagnostic call(s)",
+        f"  moved/re-indented only: {len(layout_only)}   "
+        f"removed: {len(still_removed)}   added: {len(pending)}",
+    ]
+    if layout_only:
+        lines.append(
+            "\n= moved or re-indented -- statement text is unchanged, NO review needed:"
+        )
+        for gone, match in layout_only:
+            lines.append(
+                f"  = {gone['method']} {gone['digest']} -> {match['digest']}  "
+                f"(line {gone['line']} -> {match['line']})"
+            )
+    if still_removed:
+        lines.append("\n- REMOVED -- these statements no longer exist:")
+        for entry in still_removed:
+            lines.append(
+                f"  - {entry['method']} {entry['digest']} (was line {entry['line']})"
+            )
+            lines.append(_indent_block(entry))
+    if pending:
+        lines.append(
+            "\n+ ADDED -- read each one: does it interpolate user content, a "
+            "secret, a path, or a URL?"
+        )
+        for entry in pending:
+            lines.append(
+                f"  + {entry['method']} {entry['digest']} (now line {entry['line']})"
+            )
+            lines.append(_indent_block(entry))
+    if not layout_only and not still_removed and not pending:
+        lines.append(
+            "\nno diagnostic statement changed in this file between the two "
+            "revisions. If the pin still lists it, the pin was already stale "
+            "when it was committed -- widen the base revision."
+        )
+    return "\n".join(lines) + "\n"
+
+
+def _source_at(revision: str, path: str) -> str | None:
+    """Read one path's source at a git revision.
+
+    Uses ``git show`` via stdlib ``subprocess`` so the checker stays
+    install-free; this is a review aid, never part of the gate's own verdict.
+
+    Returns:
+        str | None: The source, or ``None`` when the path did not exist at that
+            revision -- the ordinary case for an "only in rebuild" row, which
+            must not be mistaken for a broken revision argument.
+    """
+    import subprocess
+
+    result = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "show", f"{revision}:{path}"],
+        capture_output=True,
+    )
+    if result.returncode == 0:
+        return result.stdout.decode("utf-8", errors="replace")
+    resolved = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "rev-parse", "--quiet", "--verify",
+         f"{revision}^{{commit}}"],
+        capture_output=True,
+    )
+    if resolved.returncode == 0:
+        return None
+    raise SystemExit(
+        f"cannot resolve revision {revision!r}: "
+        f"{result.stderr.decode('utf-8', 'replace').strip()}"
+    )
+
+
+def _run_statements(paths: list[str], since: str | None) -> int:
+    reports: list[str] = []
+    for raw in paths:
+        path = Path(raw)
+        if path.is_absolute():
+            path = path.relative_to(REPO_ROOT)
+        text = path.as_posix()
+        try:
+            current = (REPO_ROOT / path).read_text(encoding="utf-8")
+        except OSError as exc:
+            print(f"cannot read {text}: {exc}", file=sys.stderr)
+            return 1
+        if since is None:
+            entries = _statement_entries(current, text)
+            body = [f"{text}: {len(entries)} diagnostic call(s)"]
+            for entry in entries:
+                body.append(
+                    f"  {entry['method']} {entry['digest']} (line {entry['line']})"
+                )
+                body.append(_indent_block(entry))
+            reports.append("\n".join(body) + "\n")
+            continue
+        before = _source_at(since, text)
+        if before is None:
+            reports.append(
+                f"{text}: did not exist at {since}; every statement below is new.\n"
+            )
+            before = ""
+        reports.append(render_statement_diff(before, current, text))
+    print("\n".join(reports), end="")
+    return 0
+
+
 def _emit_failure(message: str, detail: str) -> None:
     """Print the failure headline and its full diff report.
 
@@ -569,7 +788,26 @@ def main() -> int:
             "without this flag"
         ),
     )
+    parser.add_argument(
+        "--statements",
+        nargs="+",
+        metavar="PATH",
+        help=(
+            "print the diagnostic statements in these files; with --since, "
+            "print only what changed, separating pure movement/re-indentation "
+            "from real content changes. This is the review the report asks for."
+        ),
+    )
+    parser.add_argument(
+        "--since",
+        metavar="REV",
+        help="git revision to compare --statements against (e.g. the pin's commit)",
+    )
     args = parser.parse_args()
+    if args.statements:
+        return _run_statements(args.statements, args.since)
+    if args.since:
+        parser.error("--since is only meaningful with --statements")
     inventory = build_inventory()
     actual = _encoded(inventory)
     if args.write:

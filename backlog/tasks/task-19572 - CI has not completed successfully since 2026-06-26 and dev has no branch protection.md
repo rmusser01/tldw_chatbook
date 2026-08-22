@@ -238,6 +238,91 @@ tests, but nothing here proves it is green on a GitHub runner, and the ~90 s
 figure is local work plus an estimate for checkout/setup — see the queue-time
 finding below, which makes *wall* time a different question entirely.
 
+## Pre-merge re-review at the final base (2026-08-22)
+
+Rebased onto `origin/dev` `d4f3f9776`; the one conflict
+(`Docs/security/production-diagnostic-inventory.json`) was resolved by taking
+**dev's** copy wholesale, discarding this branch's own regeneration.
+
+**The gate arrives green, and no `--write` was run.** Dev's copy reproduces from
+dev's tree byte-for-byte — verified twice, once by the checker itself
+(`--diff` → *"no drift: the committed inventory matches the rebuild exactly"*,
+521 owners / 1221 TASK-492 / 7208 TASK-494 / 7 sink files) and once
+independently by rebuilding every owner row from `HEAD`'s git blobs with the
+checker's own scanner. This branch changes no file under `tldw_chatbook/`, so it
+contributes no drift of its own. Regenerating here would have been the exact
+"regenerate without reading" failure the artifact exists to prevent.
+
+**The three drifted rows were still reviewed statement-by-statement**, because
+they are unreviewed *by this branch*: the reviewed baseline is the pre-rebase
+tip `ee7464d54` (whose pin also reproduces from its own tree — checked, unlike
+the `0b112ab1e` pin in Owner-gate item 6). Delta `ee7464d54` → `d4f3f9776`,
+recovered with the AST scanner across both revisions, never a line diff:
+
+| row | delta | statements | verdict |
+|---|---|---|---|
+| `Chat/console_fleet_wake.py` | 11→11, digest changed | 2 calls **re-indented only**; whitespace-normalized text identical on both sides | benign — pure layout |
+| `Persona_Buddy/preferences.py` | new row, 0→1 | `logger.bind(exception_type=exception_type).error("persona_buddy_preferences_save_failed")`, where `exception_type` is `type(error).__name__` *regex-validated* before binding | benign — metadata only |
+| `UI/Screens/personas_screen.py` | 180→186 | 6 × `logger.warning` with fully static messages (`"Persona Buddy … failed (category=…)"`), no interpolation | benign |
+
+Multiset-checked: raw counts match the pin exactly (180→186, 11→11, 0→1) with
+zero multiplicity-only changes, so those 9 statements are the *complete* delta.
+**No new exposure found** — nothing interpolates user content, a secret, a path,
+or a URL. Nothing was absorbed.
+
+### The report was not sufficient, and has been fixed
+
+Judged in anger, the `--diff` report failed on the one row that mattered. It
+labelled `console_fleet_wake.py` *"reworded / re-levelled / new args"* — all
+three wrong. The calls had only been **re-indented** when the surrounding code
+was refenced. The per-call digest is taken over `ast.get_source_segment`, which
+keeps continuation-line indentation, so shifting a call's nesting level moves the
+file's digest even though the module docstring says movement is explicitly *not*
+a review event. That is task-3750's failure mode reappearing one level down.
+
+Worse, the trailer's recovery recipe was `git diff <base> -- <path>`. Following
+it on that row yields a **328-line diff containing zero statement changes** — the
+reviewer's job becomes finding two re-indented calls inside an unrelated
+248-insertion refactor, which is exactly how "it was probably fine" gets written.
+
+Fixed in this commit:
+
+- **`--statements <path> ... [--since REV]`** — a real recovery mode. It scans
+  both revisions with the *same* scanner and the *same* per-call digest the pin
+  uses (pinned by a test), pairs off statements whose only difference is layout,
+  and prints the full source text of everything genuinely added or removed under
+  a `|` gutter at its original shape. On the incident row it answers in one
+  line: `moved/re-indented only: 2   removed: 0   added: 0`.
+  A path absent at the base revision (an "only in rebuild" row) is reported as
+  *"did not exist at REV"*, not as a broken revision argument.
+- The changed-row note now reads *"reworded / re-levelled / new args /
+  re-indented — use --statements to see which"*.
+- `NEXT_STEPS` now hands over the `--statements` command and says plainly not to
+  reach for `git diff` here, with the measured reason.
+- 8 tests added (`Tests/Architecture/test_derived_artifact_checkers.py`),
+  including one that reproduces the re-indentation incident and one asserting the
+  recovery mode's digests are the same keys the pin moves.
+
+### Verified at the final base
+
+- `scripts/preflight.sh` — **all four checkers pass in 33 s**: CSS bundle +
+  4 generated stylesheets; profile-owned path census (48 occurrences / 18 files /
+  46 approved exceptions); diagnostic inventory; backlog ids (2375 task files, no
+  duplicates). No other checker is red at this base.
+- Mutation proof of the whole loop under `GITHUB_ACTIONS=true`: a planted
+  `logger.warning(f"TEMPORARY_MUTATION_PROBE wrote {preferences!r}")` produced
+  exit 1, the `::error::` annotation on stdout, the report on stderr naming
+  `Persona_Buddy/preferences.py 1/3053… -> 2/b733… (+1 diagnostic call(s))`, and
+  the report's own recommended command then printed the offending statement
+  verbatim. Restored via Edit; `git status` on `tldw_chatbook/` clean afterwards.
+- Suites: `test_derived_artifact_checkers.py` **18**, `test_derived_artifacts_workflow.py`
+  **7**, `test_persistent_diagnostic_inventory.py` **65**,
+  `test_profile_owned_path_inventory.py` **15**, `test_css_bundle_sync_guard.py`
+  **4**, `test_github_actions_test_workflow.py` **15** — **124 passed**
+  (the prior 116 plus the 8 new tests).
+- Repo-wide `pytest --collect-only -q`: **54,651 tests collected, no collection
+  errors**.
+
 ## Owner gate — what an implementer cannot ship in a PR
 
 **1. Branch protection + the required check (ACs 2, 3).** Requires repo-admin
@@ -334,7 +419,7 @@ the argument for the gate this task ships.
 
 **7. The pin must be regenerated against the FINAL base immediately before
 merge.** The inventory is a whole-tree artifact and `dev` moves 23–50 times a
-day. Measured 2026-08-22: this branch's freshly regenerated pin is *already* red
+day. Measured 2026-08-22: this branch's freshly regenerated pin was *already* red
 against `origin/dev` `cbb11633f` — three rows drift
 (`Chat/console_fleet_wake.py` digest, `Persona_Buddy/preferences.py` new row,
 `UI/Screens/personas_screen.py` 180→186). Since a `pull_request` check runs on
@@ -343,3 +428,9 @@ wrong. Two consequences the owner should price in before flipping the switch:
 any PR that adds a logger call must regenerate, and two such PRs racing will
 both conflict textually on the same sorted JSON. Neither is a defect in this
 branch; both are costs of making *this* artifact the required gate.
+
+**Resolved at the final base — see "Pre-merge re-review" below.** The rebase onto
+`origin/dev` `d4f3f9776` took *dev's* copy of the inventory, and dev's copy
+reproduces from dev's tree exactly, so the gate arrives **green** with no
+regeneration by this branch at all. The three predicted rows were reviewed
+statement-by-statement anyway, because they are unreviewed *by this branch*.
