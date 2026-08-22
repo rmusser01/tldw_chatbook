@@ -335,6 +335,29 @@ class TestUpdate:
         row = _raw_row(db, template_id)
         assert json.loads(row["tags"]) == ["new"]
 
+    def test_update_explicit_empty_tags_clear_the_column(self, db, svc):
+        # Qodo on PR #1938 (deferred SDD Minor): an explicit empty list is a
+        # CLEAR, not an absence — both the ``tags`` argument and a body
+        # carrying ``"tags": []`` must write ``[]``, leaving no stale tags.
+        template_id = svc.create_template("clearme", "d", VALID_BODY, tags=["stale"])
+        svc.update_template(template_id, tags=[])
+        assert json.loads(_raw_row(db, template_id)["tags"]) == []
+
+        svc.update_template(template_id, tags=["stale-again"])
+        svc.update_template(template_id, template_json={**VALID_BODY, "tags": []})
+        row = _raw_row(db, template_id)
+        assert json.loads(row["tags"]) == []
+        # the empty list is moved out of the body, like any other body tags
+        assert "tags" not in json.loads(row["template_json"])
+
+    def test_update_without_tags_leaves_column_alone(self, db, svc):
+        template_id = svc.create_template("keep", "d", VALID_BODY, tags=["keep"])
+        svc.update_template(template_id, description="d2")
+        assert json.loads(_raw_row(db, template_id)["tags"]) == ["keep"]
+        # a body with no tags key at all is equally silent about the column
+        svc.update_template(template_id, template_json=VALID_BODY)
+        assert json.loads(_raw_row(db, template_id)["tags"]) == ["keep"]
+
     def test_update_rejects_name_collision(self, svc):
         first = svc.create_template("first", "d", VALID_BODY)
         second = svc.create_template("second", "d", VALID_BODY)

@@ -315,7 +315,10 @@ class ChunkingInteropService:
             self._validate_body(template["name"], body)
             updates.append("template_json = ?")
             params.append(json.dumps(body))
-            if body_tags:
+            if body_tags is not None:
+                # An explicit empty list CLEARS the column (Qodo on PR
+                # #1938); None means the body carries no tags key and the
+                # column is left untouched.
                 column_tags = body_tags
         if tags is not None:
             column_tags = list(tags)

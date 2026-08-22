@@ -509,3 +509,23 @@ def test_list_legacy_media_ids_targets_null_stamped_live_rows(media_db):
     assert list_legacy_media_ids(media_db) == [legacy]
     _run(rechunk_legacy_items(media_db, rag_service=None, indexing_db=None))
     assert list_legacy_media_ids(media_db) == []
+
+
+# ---------------------------------------------------------------------------
+# Module surface -- ``__all__`` integrity (Qodo on PR #1938: it exported
+# ``RECHUNK_PENDING_SENTINEL`` while the constant is ``REINDEX_PENDING_SENTINEL``,
+# so ``from ... import *`` / any consumer of the broken name blew up)
+# ---------------------------------------------------------------------------
+
+
+def test_all_exports_resolve_to_real_module_attributes():
+    import tldw_chatbook.Library.library_rechunk_service as svc_module
+
+    assert svc_module.__all__, "expected a non-empty __all__"
+    missing = [
+        name for name in svc_module.__all__ if not hasattr(svc_module, name)
+    ]
+    assert missing == []
+    # the previously-broken export, pinned by its real name
+    assert "REINDEX_PENDING_SENTINEL" in svc_module.__all__
+    assert hasattr(svc_module, "REINDEX_PENDING_SENTINEL")

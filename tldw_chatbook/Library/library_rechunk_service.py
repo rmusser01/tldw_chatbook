@@ -543,7 +543,7 @@ async def rechunk_legacy_items(
 __all__ = [
     "BACKFILL_SLOT",
     "PLAIN_RECHUNK_OPTIONS",
-    "RECHUNK_PENDING_SENTINEL",
+    "REINDEX_PENDING_SENTINEL",
     "RECHUNK_SLOT",
     "RECHUNK_WORKER_GROUP",
     "acquire_bulk_rag_slot",

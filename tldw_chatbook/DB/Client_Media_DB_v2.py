@@ -51,7 +51,11 @@ from loguru import logger
 # Local Imports
 from ..Metrics.metrics_logger import log_counter, log_histogram
 from ..STT.persistence import dump_transcription_provenance_document
-from .sql_validation import validate_table_name, validate_column_name
+from .sql_validation import (
+    validate_column_name,
+    validate_identifier,
+    validate_table_name,
+)
 from .sql_logging import preview_params
 from .private_sqlite import backup_connection_to_private, connect_private_sqlite
 from tldw_chatbook.Utils.private_paths import PrivatePathError, lexical_path
@@ -1090,15 +1094,22 @@ class MediaDatabase:
             )
             raise TypeError(f"Parameter list format error: {te}") from te
 
-    # --- Transaction Context (Unchanged) ---
+    # --- Transaction Context ---
     @contextmanager
-    def transaction(self):
+    def transaction(self, immediate: bool = False):
         """
         Provides a context manager for database transactions.
 
         Ensures that a block of operations is executed atomically. Commits
         on successful exit, rolls back on any exception. Handles nested
         transactions gracefully (only outermost commit/rollback matters).
+
+        Args:
+            immediate: When True, the outermost transaction opens with
+                ``BEGIN IMMEDIATE`` (reserving SQLite's writer slot before
+                any work runs) instead of the deferred ``BEGIN``. Nested
+                calls always join the already-open outer transaction,
+                exactly like the deferred path.
 
         Yields:
             sqlite3.Connection: The current thread's database connection.
@@ -1111,7 +1122,7 @@ class MediaDatabase:
         in_outer = conn.in_transaction
         try:
             if not in_outer:
-                conn.execute("BEGIN")
+                conn.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
                 logging.debug("Started transaction.")
             # Yield the connection
             yield conn
@@ -1674,8 +1685,7 @@ class MediaDatabase:
                     "Migration v6->v7 requires an idle connection to open "
                     "its own BEGIN IMMEDIATE transaction"
                 )
-            conn.execute("BEGIN IMMEDIATE")
-            try:
+            with self.transaction(immediate=True):
                 self._execute_transactional_script(
                     conn, self._CHUNKING_TEMPLATES_V7_CREATE_SQL
                 )
@@ -1729,10 +1739,6 @@ class MediaDatabase:
                 )
 
                 self._seed_server_builtin_chunking_templates(conn, builtin_names)
-                conn.commit()
-            except Exception:
-                conn.rollback()
-                raise
 
             logging.info(
                 "[Migration v6->v7] ChunkingTemplates rebuild applied "
@@ -1766,8 +1772,17 @@ class MediaDatabase:
         ).fetchall()
         for row in tables:
             other = row["name"]
-            if '"' in other:
-                continue
+            # sqlite_master names are still untrusted input: validate
+            # through the central ``sql_validation`` module before
+            # interpolating into the PRAGMA. This guard protects a DROP,
+            # so a rejected name fails LOUD — a silently skipped table
+            # would be a table whose foreign keys were never checked.
+            if not validate_identifier(other, "table name"):
+                raise SchemaError(
+                    f"sqlite_master table name {other!r} failed SQL "
+                    "identifier validation; cannot safely inspect its "
+                    f"foreign keys for references to {table}"
+                )
             for fk in conn.execute(f'PRAGMA foreign_key_list("{other}")'):
                 if fk["table"] == table:
                     offenders.append(other)

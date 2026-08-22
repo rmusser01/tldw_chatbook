@@ -18,7 +18,11 @@ from pathlib import Path
 
 import pytest
 
-from tldw_chatbook.DB.Client_Media_DB_v2 import DatabaseError, MediaDatabase
+from tldw_chatbook.DB.Client_Media_DB_v2 import (
+    DatabaseError,
+    MediaDatabase,
+    SchemaError,
+)
 from tldw_chatbook.Chunking import template_runtime as tr
 from tldw_chatbook.Chunking._template_conversion import (
     DEFAULT_METHOD,
@@ -277,6 +281,24 @@ def test_no_foreign_keys_reference_chunking_templates(tmp_path):
             if fk["table"] == "ChunkingTemplates":
                 offenders.append(table)
     assert offenders == []
+    db.close_connection()
+
+
+def test_fk_guard_validates_sqlite_master_names(tmp_path):
+    # Qodo on PR #1938: the guard builds ``PRAGMA foreign_key_list({name})``
+    # from sqlite_master rows. A name the central ``sql_validation`` module
+    # rejects must fail LOUD — this guard protects a DROP, so a table it
+    # silently skipped would be a table it never actually checked.
+    db = MediaDatabase(str(tmp_path / "fk-guard.db"), client_id="test")
+    conn = db.get_connection()
+    # sanity: every real table name passes validation and the guard is green
+    MediaDatabase._assert_no_foreign_keys_reference(conn, "ChunkingTemplates")
+
+    # a hostile sqlite_master name (here: quote-escaped identifier) is
+    # rejected by sql_validation instead of being skipped
+    conn.execute('CREATE TABLE "bad""name" (id INTEGER PRIMARY KEY)')
+    with pytest.raises(SchemaError):
+        MediaDatabase._assert_no_foreign_keys_reference(conn, "ChunkingTemplates")
     db.close_connection()
 
 
