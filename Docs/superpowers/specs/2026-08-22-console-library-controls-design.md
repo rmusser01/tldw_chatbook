@@ -6,6 +6,8 @@
 
 **Decision:** [ADR-079](../../../backlog/decisions/079-console-library-conversation-authority.md)
 
+**Plan:** [Implementation plan](../plans/2026-08-22-console-library-controls.md)
+
 **PR:** [#1933](https://github.com/rmusser01/tldw_chatbook/pull/1933)
 
 ## Summary

@@ -18,6 +18,7 @@ references:
   - https://github.com/rmusser01/tldw_chatbook/pull/1933
 documentation:
   - Docs/superpowers/specs/2026-08-22-console-library-controls-design.md
+  - Docs/superpowers/plans/2026-08-22-console-library-controls.md
   - backlog/decisions/079-console-library-conversation-authority.md
 ---
 
@@ -107,8 +108,9 @@ the long-lived Console review model.
 
 1. Replace the inherited PR design with the approved architecture, record
    ADR-079, self-review both documents, and obtain written-spec approval.
-2. Write the detailed Superpowers implementation plan and re-check the task
-   and ADR identifiers against all refs before implementation.
+2. Follow the approved detailed plan at
+   `Docs/superpowers/plans/2026-08-22-console-library-controls.md` and re-check
+   the task and ADR identifiers against all refs before implementation.
 3. Deliver the approved design as dependency-ordered atomic subtasks:
    TASK-19900.1 policy/checkpoint storage, Sync compatibility, and lifecycle; TASK-19900.2 runtime enforcement;
    TASK-19900.3 automatic send gate; TASK-19900.4 policy/search/source UI;
