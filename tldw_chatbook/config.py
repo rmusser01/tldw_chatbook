@@ -938,6 +938,19 @@ def coerce_float_setting(
 _SETTINGS_CACHE: Optional[Dict[str, Any]] = None
 _SETTINGS_CACHE_SOURCE: Optional[Path] = None
 _SETTINGS_CACHE_LOCK = None  # Will be initialized when needed
+#: Serializes the miss->rebuild->store sequence (task-3503).
+#:
+#: `_SETTINGS_CACHE_LOCK` guards only the cache *cells*; it is released for
+#: the rebuild itself, so every thread arriving during a miss used to run
+#: the whole rebuild -- re-reading and re-parsing the TOML, re-merging
+#: defaults, re-ensuring directories. Measured at 32 bootstrap loads for 8
+#: threads on ONE invalidation.
+#:
+#: REENTRANT on purpose: the rebuild reaches helpers that read configuration
+#: again, so a plain Lock would deadlock the rebuilding thread against
+#: itself. RLock keeps same-thread reentry behaving exactly as before while
+#: admitting only one *thread* at a time.
+_SETTINGS_REBUILD_LOCK = None  # Will be initialized when needed
 
 
 def resolve_tldw_api_config(app_config) -> Dict:
@@ -1325,6 +1338,59 @@ def _normalize_legacy_provider_api_key(
 
 
 def load_settings(force_reload: bool = False) -> Dict:
+    """Return the merged application settings, rebuilding at most once.
+
+    Thin wrapper over :func:`_load_settings_uncached` that serializes the
+    cache-miss rebuild (task-3503). The cache-hit path is unchanged: one
+    short lock, no rebuild lock taken at all.
+
+    Args:
+        force_reload: Rebuild even on a cache hit.
+
+    Returns:
+        The merged settings mapping.
+    """
+    global _SETTINGS_CACHE_LOCK, _SETTINGS_REBUILD_LOCK
+
+    if _SETTINGS_CACHE_LOCK is None or _SETTINGS_REBUILD_LOCK is None:
+        import threading
+
+        if _SETTINGS_CACHE_LOCK is None:
+            _SETTINGS_CACHE_LOCK = threading.Lock()
+        if _SETTINGS_REBUILD_LOCK is None:
+            _SETTINGS_REBUILD_LOCK = threading.RLock()
+
+    active_config_path = _get_effective_config_path()
+
+    def _cache_hit():
+        with _SETTINGS_CACHE_LOCK:
+            if (
+                _SETTINGS_CACHE is not None
+                and _SETTINGS_CACHE_SOURCE == active_config_path
+            ):
+                return _SETTINGS_CACHE
+        return None
+
+    if not force_reload:
+        cached = _cache_hit()
+        if cached is not None:
+            return cached
+
+    # Miss: serialize the rebuild. Whoever loses the race re-checks the cache
+    # and returns the winner's freshly built settings rather than repeating
+    # the entire rebuild.
+    with _SETTINGS_REBUILD_LOCK:
+        if not force_reload:
+            cached = _cache_hit()
+            if cached is not None:
+                logger.debug(
+                    "load_settings: returning configuration rebuilt by another thread"
+                )
+                return cached
+        return _load_settings_uncached(force_reload=force_reload)
+
+
+def _load_settings_uncached(force_reload: bool = False) -> Dict:
     """
     Loads all settings from TOML config files, environment variables, or defaults into a dictionary.
     It first loads a base config (e.g., server-local), then attempts to load a user-specific
