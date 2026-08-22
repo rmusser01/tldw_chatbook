@@ -199,7 +199,10 @@ class ActorPackRepository:
             ) from None
 
     def commit_persona_intent(
-        self, intent_id: str
+        self,
+        intent_id: str,
+        *,
+        authority_guard: Callable[[], bool] | None = None,
     ) -> tuple[PortableActorIdentity, PersonaActorPackIntent]:
         """Atomically assign its Persona UUID and mark an intent committed."""
 
@@ -210,6 +213,23 @@ class ActorPackRepository:
                 intent = self._get_intent_in_transaction(intent_key)
                 if intent.state != "prepared":
                     raise ActorPackRepositoryError("actor_pack_intent_state_changed")
+                if authority_guard is not None:
+                    connection = self.db.get_connection()
+                    before_changes = connection.total_changes
+                    try:
+                        allowed = authority_guard()
+                    except Exception:
+                        allowed = False
+                    depth = getattr(self.db._local, "transaction_depth", 0)
+                    if (
+                        allowed is not True
+                        or not connection.in_transaction
+                        or depth != 1
+                        or connection.total_changes != before_changes
+                    ):
+                        raise ActorPackRepositoryError(
+                            "actor_pack_intent_state_changed"
+                        )
                 existing = self._get_identity_in_transaction(
                     "persona", intent.persona_id
                 )

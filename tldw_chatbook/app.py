@@ -378,6 +378,11 @@ from .Character_Chat.server_chat_dictionary_service import ServerChatDictionaryS
 from .Character_Chat.server_character_persona_service import (
     ServerCharacterPersonaService,
 )
+from .Actor_Packs.persona_coordinator import (
+    PersonaActorPackCoordinator,
+    PersonaActorPackCoordinatorError,
+)
+from .Actor_Packs.repository import ActorPackRepository
 from .Persona_Buddy import (
     PersonaBuddyController,
     load_local_persona_portrait,
@@ -6583,6 +6588,24 @@ class TldwCli(
             self.chachanotes_db,
             persona_store_path=get_user_data_dir() / "tldw_chatbook_personas.json",
         )
+        self.actor_pack_repository = ActorPackRepository(self.chachanotes_db)
+        self.persona_actor_pack_coordinator = PersonaActorPackCoordinator(
+            self.actor_pack_repository,
+            self.local_character_persona_service,
+        )
+        self.actor_pack_recovery_error: str | None = None
+        try:
+            recovery = self.persona_actor_pack_coordinator.recover()
+        except PersonaActorPackCoordinatorError:
+            self.actor_pack_recovery_error = "actor_pack_recovery_failed"
+            self.loguru_logger.error("Actor Pack recovery failed: actor_pack_recovery_failed")
+        else:
+            if recovery.blocked_intent_ids:
+                self.actor_pack_recovery_error = "actor_pack_recovery_blocked"
+                self.loguru_logger.warning(
+                    "Actor Pack recovery retained quarantined intents: "
+                    "actor_pack_recovery_blocked"
+                )
         self.character_persona_scope_service = CharacterPersonaScopeService(
             local_service=self.local_character_persona_service,
             server_service=self.server_character_persona_service,

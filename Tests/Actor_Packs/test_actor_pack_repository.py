@@ -260,6 +260,38 @@ def test_intent_commit_rolls_back_identity_when_state_update_aborts(repository) 
     assert repository.list_persona_intents() == (intent,)
 
 
+def test_intent_authority_guard_runs_inside_reserved_transaction(repository) -> None:
+    intent = repository.prepare_persona_intent(
+        persona_id="guide",
+        operation="create",
+        old_profile=None,
+        new_profile={"id": "guide"},
+        old_store_sha256=SHA_A,
+        new_store_sha256=SHA_B,
+        old_registry_uuid=None,
+        new_registry_uuid=UUID_A,
+        intent_id="f" * 32,
+    )
+    observed: list[tuple[bool, int]] = []
+
+    def deny() -> bool:
+        observed.append(
+            (
+                repository.db.get_connection().in_transaction,
+                getattr(repository.db._local, "transaction_depth", 0),
+            )
+        )
+        return False
+
+    with pytest.raises(
+        ActorPackRepositoryError, match="actor_pack_intent_state_changed"
+    ):
+        repository.commit_persona_intent(intent.intent_id, authority_guard=deny)
+    assert observed == [(True, 1)]
+    assert repository.get_identity("persona", "guide") is None
+    assert repository.list_persona_intents() == (intent,)
+
+
 def test_quarantine_is_idempotent_and_path_free(repository) -> None:
     intent = repository.prepare_persona_intent(
         persona_id="guide",
