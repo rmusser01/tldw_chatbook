@@ -1413,6 +1413,16 @@ class SubscriptionsDB(BaseDB):
         nest (instrumented depth 1). The hazard was latent, not live; this
         makes it structurally impossible rather than relying on no one ever
         nesting.
+
+        Yields:
+            The thread-local `sqlite3.Connection`. The same object is yielded
+            to a nested block, so an inner `with` shares the outer's
+            transaction rather than starting its own.
+
+        Raises:
+            Exception: Whatever the body raises, re-raised unchanged after the
+                OUTERMOST block rolls back. An inner block does not roll back;
+                the exception propagates so the outermost can.
         """
         conn = self.conn
         if not hasattr(self._local, "transaction_depth"):
