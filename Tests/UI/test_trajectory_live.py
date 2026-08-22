@@ -475,6 +475,17 @@ def test_build_trajectory_snapshot_threads_agent_and_retrieval_owners():
     assert "agent-run:run-1" in event_ids
     assert "agent-step:run-1:0" in event_ids
     assert "retrieval-run:rag-1" in event_ids
+    ordered_ids = [
+        record.event_id for turn in snapshot.turns for record in turn.records
+    ]
+    assert ordered_ids.index("retrieval-run:rag-1") < ordered_ids.index("message:a1")
+    retrieval = next(
+        record
+        for turn in snapshot.turns
+        for record in turn.records
+        if record.event_id == "retrieval-run:rag-1"
+    )
+    assert retrieval.parent_event_id is None
     agent_run = next(
         record
         for turn in snapshot.turns

@@ -41,9 +41,10 @@ Never-fabricate contract
 
 from __future__ import annotations
 
+import hashlib
 import heapq
 import json
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
 
@@ -441,15 +442,8 @@ def derive_trajectory(
         *_records_from_agent_steps(agent_steps),
         *_records_from_retrieval_runs(retrieval_runs),
     ]
-    if extra_records:
-        records = [record for turn in turns for record in turn.records]
-        ordered = _causal_order([*records, *extra_records])
-        turns = _group_turns(
-            [
-                (record.turn_id or record.conversation_id or "trace", record)
-                for record in ordered
-            ]
-        )
+    records = [record for turn in turns for record in turn.records]
+    turns = _coherent_turns(_causal_order([*records, *extra_records]))
     turns = _assign_ledger_seq(turns)
     return TrajectorySnapshot(turns=tuple(turns))
 
@@ -787,12 +781,23 @@ def _sidecar_event_id(row: Any) -> str:
     message_id = _optional_text(_field(row, "message_id")) or "unknown"
     source_seq = _optional_int(_field(row, "seq"))
     owner = conversation_id or message_id
-    suffix = (
-        str(source_seq)
-        if source_seq is not None
-        else str(_field(row, "event_kind") or "event")
+    suffix = str(source_seq) if source_seq is not None else _stable_digest(
+        message_id,
+        conversation_id,
+        _field(row, "turn_id"),
+        _field(row, "event_kind"),
+        _field(row, "step_started_at"),
+        _field(row, "first_token_at"),
+        _field(row, "completed_at"),
+        _field(row, "payload_json"),
     )
     return f"trajectory:{owner}:{suffix}"
+
+
+def _stable_digest(*values: Any) -> str:
+    """Return a compact deterministic identity for immutable source fields."""
+    payload = json.dumps(values, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
 def _records_from_agent_runs(runs: Iterable[Any]) -> list[TrajectoryRecord]:
@@ -834,7 +839,11 @@ def _records_from_agent_runs(runs: Iterable[Any]) -> list[TrajectoryRecord]:
                 label="Agent run",
                 status=status,
                 actor_kind=actor_kind,
-                actor_id=(_optional_text(_field(run, "agent_definition_id")) or run_id),
+                actor_id=(
+                    _optional_text(_field(run, "agent_definition"))
+                    or _optional_text(_field(run, "agent_definition_id"))
+                    or run_id
+                ),
                 run_id=run_id,
                 parent_event_id=(
                     _optional_text(_field(run, "parent_event_id"))
@@ -882,7 +891,28 @@ def _records_from_agent_steps(steps: Iterable[Any]) -> list[TrajectoryRecord]:
         kind = _optional_text(_field(step, "kind")) or "agent_step"
         summary = _optional_text(_field(step, "summary")) or ""
         created_at = _parse_timestamp(_field(step, "created_at"))
-        payload = _field(step, "payload")
+        source_payload = _field(step, "payload")
+        source_payload = source_payload if isinstance(source_payload, Mapping) else {}
+        tool_name = _field(step, "tool_name") or source_payload.get("tool_name")
+        outcome = _optional_text(_field(step, "tool_outcome"))
+        outcome = outcome or _optional_text(source_payload.get("tool_outcome"))
+        payload = {
+            key: value
+            for key, value in (("tool_name", tool_name), ("tool_outcome", outcome))
+            if value not in (None, "")
+        }
+        has_tool_content = any(
+            (_field(step, key) or source_payload.get(key)) not in (None, "")
+            for key in ("args", "result")
+        )
+        default_states = {"summary": "observed" if summary else "not_available"}
+        for key in ("args", "result", "tool_outcome"):
+            value = _field(step, key) or source_payload.get(key)
+            default_states[key] = "not_available"
+            if value not in (None, ""):
+                default_states[key] = (
+                    "omitted_sensitive" if key in {"args", "result"} else "observed"
+                )
         records.append(
             TrajectoryRecord(
                 seq=0,
@@ -900,14 +930,14 @@ def _records_from_agent_steps(steps: Iterable[Any]) -> list[TrajectoryRecord]:
                 completed_at=created_at,
                 model=_optional_text(_field(step, "model")),
                 provider=_optional_text(_field(step, "provider")),
-                payload=dict(payload) if isinstance(payload, Mapping) else None,
+                payload=dict(payload) if payload else None,
                 variants=(),
                 depth=1,
                 event_id=f"agent-step:{run_id}:{source_seq}",
                 conversation_id=_optional_text(_field(step, "conversation_id")),
                 source_seq=source_seq,
                 label=_event_label(kind),
-                status=_optional_text(_field(step, "status")) or "observed",
+                status=_optional_text(_field(step, "status")) or outcome or "observed",
                 actor_kind=_optional_text(_field(step, "actor_kind")) or "agent",
                 actor_id=_optional_text(_field(step, "actor_id")) or run_id,
                 run_id=run_id,
@@ -922,9 +952,12 @@ def _records_from_agent_steps(steps: Iterable[Any]) -> list[TrajectoryRecord]:
                 observed_at=created_at,
                 field_states=_field_state_map(
                     step,
-                    default={"summary": "observed" if summary else "not_available"},
+                    default=default_states,
                 ),
-                sensitivity=_optional_text(_field(step, "sensitivity")) or "diagnostic",
+                sensitivity=(
+                    _optional_text(_field(step, "sensitivity"))
+                    or ("tool_content" if has_tool_content else "diagnostic")
+                ),
             )
         )
     return records
@@ -995,9 +1028,10 @@ def _records_from_retrieval_runs(runs: Iterable[Any]) -> list[TrajectoryRecord]:
 
 def _causal_order(records: Iterable[TrajectoryRecord]) -> list[TrajectoryRecord]:
     """Deterministically order records while keeping causes before effects."""
-    by_id = {record.event_id: record for record in records if record.event_id}
+    unique_records = _unique_event_ids(records)
+    by_id = {record.event_id: record for record in unique_records}
     if not by_id:
-        return list(records)
+        return []
 
     edges: dict[str, set[str]] = {event_id: set() for event_id in by_id}
     indegree = {event_id: 0 for event_id in by_id}
@@ -1016,16 +1050,11 @@ def _causal_order(records: Iterable[TrajectoryRecord]) -> list[TrajectoryRecord]
         indegree[after] += 1
 
     for record in by_id.values():
-        # Message parent ids describe branch ancestry. The message sidecar's
-        # immutable source sequence remains authoritative when historical
-        # rows disagree (legacy v1 compatibility).
-        if not (
-            record.event_id.startswith("message:")
-            and (record.parent_event_id or "").startswith("message:")
-        ):
-            add_edge(record.parent_event_id, record.event_id)
+        add_edge(record.parent_event_id, record.event_id)
         add_edge(record.source_event_id, record.event_id)
         add_edge(record.event_id, record.replacement_event_id)
+        if record.kind == "retrieval_run" and record.message_id:
+            add_edge(record.event_id, f"message:{record.message_id}")
 
     owner_sequences: dict[tuple[str, str], list[TrajectoryRecord]] = {}
     for record in by_id.values():
@@ -1033,7 +1062,10 @@ def _causal_order(records: Iterable[TrajectoryRecord]) -> list[TrajectoryRecord]
             continue
         if record.event_id.startswith("agent-step:") and record.run_id:
             owner = ("agent-step", record.run_id)
-        elif record.event_id.startswith("trajectory:") and record.conversation_id:
+        elif (
+            record.event_id.startswith(("message:", "trajectory:"))
+            and record.conversation_id
+        ):
             owner = ("trajectory", record.conversation_id)
         else:
             continue
@@ -1076,6 +1108,50 @@ def _causal_order(records: Iterable[TrajectoryRecord]) -> list[TrajectoryRecord]
         # to the stable concurrent key for the whole set; preserve every row.
         ordered_ids = sorted(by_id, key=key)
     return [by_id[event_id] for event_id in ordered_ids]
+
+
+def _unique_event_ids(records: Iterable[TrajectoryRecord]) -> list[TrajectoryRecord]:
+    """Keep colliding source rows by assigning deterministic derived identities."""
+    groups: dict[str, list[TrajectoryRecord]] = {}
+    for record in records:
+        base = record.event_id or f"trace-event:{_record_digest(record)}"
+        groups.setdefault(base, []).append(record)
+
+    unique: list[TrajectoryRecord] = []
+    for base in sorted(groups):
+        occurrences: dict[str, int] = {}
+        for index, record in enumerate(
+            sorted(groups[base], key=lambda item: _record_digest(item))
+        ):
+            digest = _record_digest(record)
+            occurrences[digest] = occurrences.get(digest, 0) + 1
+            if index == 0:
+                event_id = base
+            else:
+                event_id = f"{base}:duplicate:{digest}"
+                if occurrences[digest] > 1:
+                    event_id = f"{event_id}:{occurrences[digest]}"
+            unique.append(replace(record, event_id=event_id))
+    return unique
+
+
+def _record_digest(record: TrajectoryRecord) -> str:
+    """Hash a record's source envelope without its mutable display position."""
+    data = asdict(record)
+    data.pop("seq", None)
+    return _stable_digest(data)
+
+
+def _coherent_turns(records: Iterable[TrajectoryRecord]) -> list[TrajectoryTurn]:
+    """Group a causal stream into one stable block per turn."""
+    buckets: dict[str, list[TrajectoryRecord]] = {}
+    for record in records:
+        turn_id = record.turn_id or record.conversation_id or "trace"
+        buckets.setdefault(turn_id, []).append(record)
+    return [
+        TrajectoryTurn(turn_id, tuple(records))
+        for turn_id, records in buckets.items()
+    ]
 
 
 def _group_turns(events: list[tuple[str, TrajectoryRecord]]) -> list[TrajectoryTurn]:
@@ -1153,9 +1229,17 @@ def _marker_record(rec: Any, *, turn_id: str) -> TrajectoryRecord:
     """Build a between-turn compaction marker record."""
     status = str(_field(rec, "status") or "")
     usage = ProviderUsage.from_json(_field(rec, "provider_usage_json"))
-    operation_id = _optional_text(_field(rec, "operation_id")) or "unknown"
     conversation_id = _optional_text(_field(rec, "conversation_id"))
     started_at = _parse_timestamp(_field(rec, "started_at"))
+    operation_id = _optional_text(_field(rec, "operation_id")) or _stable_digest(
+        conversation_id,
+        _field(rec, "purpose"),
+        _field(rec, "started_at"),
+        _field(rec, "finished_at"),
+        status,
+        _field(rec, "provider"),
+        _field(rec, "model"),
+    )
     return TrajectoryRecord(
         seq=0,  # assigned by the final pass
         kind=KIND_COMPACTION,

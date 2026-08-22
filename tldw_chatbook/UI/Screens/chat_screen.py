@@ -1305,7 +1305,6 @@ def _build_trajectory_snapshot(
                             "conversation_id": conversation_id,
                             "message_id": message_id,
                             "turn_id": turn_by_message.get(message_id),
-                            "parent_event_id": f"message:{message_id}",
                             "field_states": {"payload": "omitted"},
                             "sensitivity": "retrieval_metadata",
                         }
