@@ -113,11 +113,16 @@ class PersonasVisualIdentityPackWidget(Vertical):
     }"""
 
     def __init__(
-        self, pack: VisualIdentityPackMetadata | None = None, **kwargs: Any
+        self,
+        pack: VisualIdentityPackMetadata | None = None,
+        *,
+        actor_kind: Literal["character", "persona"] = "character",
+        **kwargs: Any,
     ) -> None:
         kwargs.setdefault("id", "personas-visual-identity-pack")
         super().__init__(**kwargs)
         self.pack = pack
+        self.actor_kind = actor_kind
         self._filtered: tuple[VisualIdentityAssetMetadata, ...] = ()
         self._selected: VisualIdentityAssetMetadata | None = None
         self._staged: dict[str, str] = {}
@@ -246,9 +251,12 @@ class PersonasVisualIdentityPackWidget(Vertical):
         )
         disabled = selected is None
         for action in ("replace", "generate", "clear"):
-            self.query_one(
-                f"#personas-visual-identity-{action}", Button
-            ).disabled = disabled
+            self.query_one(f"#personas-visual-identity-{action}", Button).disabled = (
+                disabled or (self.actor_kind == "persona" and action == "generate")
+            )
+        self.query_one("#personas-visual-identity-generate-all", Button).disabled = (
+            self.actor_kind == "persona" or self.pack is None
+        )
 
     def _replace_preview(self, renderable: object) -> None:
         """Replace the preview holder with one renderable or status."""
@@ -322,10 +330,12 @@ class PersonasVisualIdentityPackWidget(Vertical):
         selected_missing = self._selected is None
         for action in ("replace", "generate", "clear"):
             self.query_one(f"#personas-visual-identity-{action}", Button).disabled = (
-                busy is not None or selected_missing
+                busy is not None
+                or selected_missing
+                or (self.actor_kind == "persona" and action == "generate")
             )
         self.query_one("#personas-visual-identity-generate-all", Button).disabled = (
-            busy is not None or self.pack is None
+            busy is not None or self.pack is None or self.actor_kind == "persona"
         )
         self.query_one("#personas-visual-identity-save", Button).disabled = (
             busy is not None or not self._staged

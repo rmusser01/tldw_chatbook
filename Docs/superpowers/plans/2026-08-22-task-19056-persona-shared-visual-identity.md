@@ -196,11 +196,8 @@
 
 - Modify: `tldw_chatbook/Widgets/Persona_Widgets/personas_visual_identity_pack_widget.py`
 - Modify: `tldw_chatbook/Widgets/Persona_Widgets/persona_profile_editor_widget.py`
-- Modify: `tldw_chatbook/Widgets/Persona_Widgets/personas_pane_messages.py`
 - Modify: `tldw_chatbook/UI/Screens/personas_screen.py`
 - Create: `Tests/UI/test_personas_persona_visual_identity_pack.py`
-- Modify: `Tests/UI/test_personas_visual_identity_pack.py`
-- Modify: `Tests/UI/test_personas_workbench.py`
 
 - [ ] **Step 1: Write widget/eligibility REDs**
 
@@ -255,7 +252,7 @@
 - [ ] **Step 8: Commit Task 3**
 
   ```bash
-  git add tldw_chatbook/Widgets/Persona_Widgets/personas_visual_identity_pack_widget.py tldw_chatbook/Widgets/Persona_Widgets/persona_profile_editor_widget.py tldw_chatbook/Widgets/Persona_Widgets/personas_pane_messages.py tldw_chatbook/UI/Screens/personas_screen.py Tests/UI/test_personas_persona_visual_identity_pack.py Tests/UI/test_personas_visual_identity_pack.py Tests/UI/test_personas_workbench.py
+  git add tldw_chatbook/Widgets/Persona_Widgets/personas_visual_identity_pack_widget.py tldw_chatbook/Widgets/Persona_Widgets/persona_profile_editor_widget.py tldw_chatbook/UI/Screens/personas_screen.py Tests/UI/test_personas_persona_visual_identity_pack.py Docs/superpowers/plans/2026-08-22-task-19056-persona-shared-visual-identity.md
   git commit -m "feat: author Persona expression packs"
   ```
 
