@@ -720,6 +720,11 @@ class LibraryHarness(ConsolidatedCSSApp):
     )
 
     def __init__(self, app_instance, seen_routes=None, screen=None):
+        # TASK-19602: production readers hit ``app_instance.app_config``
+        # from workers (e.g. the Library source snapshot); a screen whose
+        # test swapped ``app_instance`` to this harness must not crash
+        # there. Share the real app's config mapping.
+        self.app_config = getattr(app_instance, "app_config", {})
         super().__init__()
         self.app_instance = app_instance
         self.seen_routes = seen_routes if seen_routes is not None else []
