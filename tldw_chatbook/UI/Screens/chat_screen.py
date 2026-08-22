@@ -5631,13 +5631,37 @@ class ChatScreen(BaseAppScreen):
             LocalLibraryToolService,
         )
 
+        media_chunk_service = None
+        media_reading_service = getattr(app, "local_media_reading_service", None)
+        media_db = getattr(app, "media_db", None) or getattr(
+            media_reading_service, "media_db", None
+        )
+        if media_db is not None or media_reading_service is not None:
+            # The chunk tools need the media DB (row/chunk reads, template
+            # interop) on top of the reading service; built here so a missing
+            # handle degrades only its own tools, like every other backend.
+            from tldw_chatbook.Chunking.chunking_interop_library import (
+                get_chunking_service,
+            )
+            from tldw_chatbook.Library.local_media_chunk_tool_service import (
+                LocalMediaChunkToolService,
+            )
+
+            media_chunk_service = LocalMediaChunkToolService(
+                media_db,
+                media_reading_service,
+                template_interop=(
+                    get_chunking_service(media_db) if media_db is not None else None
+                ),
+            )
         service = LocalLibraryToolService(
-            media_service=getattr(app, "local_media_reading_service", None),
+            media_service=media_reading_service,
             notes_service=getattr(app, "notes_service", None),
             prompt_service=getattr(app, "local_prompt_service", None),
             skills_service=getattr(app, "local_skills_service", None),
             conversation_service=getattr(app, "local_chat_conversation_service", None),
             collections_service=getattr(app, "local_library_collections_service", None),
+            media_chunk_service=media_chunk_service,
         )
         return LibraryToolProvider(service)
 

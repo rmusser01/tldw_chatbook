@@ -393,6 +393,20 @@ def build_local_library_tool_service(
 
     _build("collection", _build_collections)
 
+    def _build_media_chunk():
+        from ..Chunking.chunking_interop_library import get_chunking_service
+        from ..Library.local_media_chunk_tool_service import (
+            LocalMediaChunkToolService,
+        )
+
+        return LocalMediaChunkToolService(
+            media_db,
+            backends["media"],
+            template_interop=get_chunking_service(media_db),
+        )
+
+    _build("media_chunk", _build_media_chunk)
+
     return LocalLibraryToolService(
         media_service=backends["media"],
         notes_service=backends["note"],
@@ -400,6 +414,7 @@ def build_local_library_tool_service(
         skills_service=backends["skill"],
         conversation_service=backends["conversation"],
         collections_service=backends["collection"],
+        media_chunk_service=backends["media_chunk"],
     )
 
 

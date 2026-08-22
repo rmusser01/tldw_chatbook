@@ -60,10 +60,10 @@ def _error_payload(tool_result: ToolResult) -> dict:
 # --------------------------------------------------------------------------
 
 
-def test_direct_catalog_lists_all_18_descriptor_tools():
+def test_direct_catalog_lists_all_22_descriptor_tools():
     provider = LibraryToolProvider(FakeLibraryService())
     catalog = provider.list_catalog()
-    assert len(catalog) == 18
+    assert len(catalog) == 22
     assert [entry.name for entry in catalog] == list(LIBRARY_TOOL_DESCRIPTORS)
     for entry in catalog:
         assert entry.id == f"library:{entry.name}"

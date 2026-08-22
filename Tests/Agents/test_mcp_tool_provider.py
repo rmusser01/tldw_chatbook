@@ -1481,15 +1481,15 @@ def test_compose_catalog_without_exclusions_keeps_every_builtin_name():
     assert "mcp__tldw_chatbook__library_list_media" in names
     assert "mcp__tldw_chatbook__search_rag" in names
     assert "mcp__tldw_chatbook__chat_with_llm" in names
-    assert len(names) == 24  # 23 shadowed + the unrelated built-in
+    assert len(names) == 28  # 27 shadowed + the unrelated built-in
 
 
 def test_compose_catalog_builtin_exclusions_scoped_to_builtin_source():
-    """With the Console exclusion set: exactly the 23 built-in raw names
+    """With the Console exclusion set: exactly the 27 built-in raw names
     disappear; the unrelated built-in and same-named local-profile tools
     remain, and the inventory mapping is left untouched."""
     exclusions = _console_exclusion_set()
-    assert len(exclusions) == 23  # 18 descriptors + 5 legacy, no overlap
+    assert len(exclusions) == 27  # 22 descriptors + 5 legacy, no overlap
     service = FakeMCPService(
         inventory=_mixed_library_inventory(),
         catalog_records=[

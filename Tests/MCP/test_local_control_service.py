@@ -1943,6 +1943,15 @@ _LIBRARY_TOOL_POLICY_EXPECTATIONS = {
     "library_list_collections": ("library.collections.list.local", "library_collections"),
     "library_get_collection": ("library.collections.detail.local", "library_collections"),
     "library_search_collections": ("library.collections.list.local", "library_collections"),
+    # chunking-agent-tools siblings: read tools on the existing media read
+    # path (spec §6 "no new verbs"); the derived mapping resolves their
+    # non-get operations to the browse-level read action. spec_save is
+    # provisional (the tool refuses until its handler lands; the write
+    # action policy lands with the re-chunk task).
+    "library_get_media_structure": ("media.reading.list.local", "media_reading_ingestion_sources"),
+    "library_get_media_chunk": ("media.reading.list.local", "media_reading_ingestion_sources"),
+    "library_list_chunk_specs": ("media.reading.list.local", "media_reading_ingestion_sources"),
+    "library_save_chunk_spec": ("media.reading.list.local", "media_reading_ingestion_sources"),
 }
 
 

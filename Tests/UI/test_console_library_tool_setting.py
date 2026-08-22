@@ -149,7 +149,7 @@ def test_factory_missing_backend_yields_per_tool_feature_unavailable(monkeypatch
 
     assert isinstance(provider, LibraryToolProvider)
     # Catalog still exposes the full descriptor set (no total failure).
-    assert len(provider.list_catalog()) == 18
+    assert len(provider.list_catalog()) == 22
     for tool_id in ("library:library_list_notes", "library:library_list_media"):
         result = provider.invoke(tool_id, {})
         assert result.ok is False

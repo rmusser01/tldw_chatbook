@@ -385,8 +385,9 @@ def _error_code(result):
 # --------------------------------------------------------------------------
 
 
-def test_descriptor_table_covers_18_tools():
-    assert len(LIBRARY_TOOL_DESCRIPTORS) == 18
+def test_descriptor_table_covers_22_tools():
+    # 18 task-1337 tools + the 4 chunking-agent-tools siblings (spec §4).
+    assert len(LIBRARY_TOOL_DESCRIPTORS) == 22
 
 
 def test_unknown_tool_name_is_invalid_argument():
@@ -436,6 +437,62 @@ def test_missing_backend_maps_to_feature_unavailable():
     result = service.invoke("library_list_media", {})
     assert _error_code(result) == "feature_unavailable"
     assert result["error"]["retryable"] is False
+
+
+# --------------------------------------------------------------------------
+# Media chunk-tool dispatch (chunking-agent-tools Task 3)
+# --------------------------------------------------------------------------
+
+
+class FakeMediaChunkService:
+    """Duck-typed stand-in for ``LocalMediaChunkToolService``."""
+
+    def __init__(self, *, payload=None):
+        self.calls = []
+        self._payload = payload if payload is not None else {"echo": True}
+
+    def invoke(self, tool_name, arguments):
+        self.calls.append((tool_name, dict(arguments)))
+        return self._payload
+
+
+_CHUNK_TOOL_ARGUMENTS = {
+    "library_get_media_structure": {"id": "media:AAAA"},
+    "library_get_media_chunk": {"id": "media:AAAA", "chunk_index": 0},
+    "library_list_chunk_specs": {"limit": 5},
+    "library_save_chunk_spec": {"name": "x", "spec": {"method": "words"}},
+}
+
+
+@pytest.mark.parametrize("tool_name", list(_CHUNK_TOOL_ARGUMENTS))
+def test_media_chunk_tools_route_to_the_chunk_service(tool_name):
+    chunk = FakeMediaChunkService()
+    service = _service(media_chunk_service=chunk)
+    arguments = _CHUNK_TOOL_ARGUMENTS[tool_name]
+
+    result = service.invoke(tool_name, arguments)
+
+    assert result == {"echo": True}
+    assert chunk.calls == [(tool_name, arguments)]
+
+
+def test_media_chunk_tools_without_chunk_service_map_to_feature_unavailable():
+    service = _service()
+    for tool_name, arguments in _CHUNK_TOOL_ARGUMENTS.items():
+        result = service.invoke(tool_name, arguments)
+        assert _error_code(result) == "feature_unavailable"
+
+
+def test_media_chunk_service_error_payloads_pass_through_unchanged():
+    chunk = FakeMediaChunkService(
+        payload={"error": {"code": "not_found", "message": "m", "retryable": False, "details": {}}}
+    )
+    service = _service(media_chunk_service=chunk)
+
+    result = service.invoke("library_get_media_structure", {"id": "media:AAAA"})
+
+    assert result is chunk._payload
+    assert _error_code(result) == "not_found"
 
 
 # --------------------------------------------------------------------------
