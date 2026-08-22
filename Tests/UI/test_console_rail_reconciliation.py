@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import replace
 from types import MethodType
 
@@ -62,6 +62,19 @@ SECTION_IDS = (
 )
 LOCAL_HINT = "▼ more — scroll"
 OUTER_HINT = "▼ more sections — scroll"
+SCHEDULER_CALLBACK_LIMIT = 4
+
+
+def _drain_scheduler_callbacks(
+    callbacks: list[tuple[Callable[..., None], tuple[object, ...]]],
+) -> None:
+    """Run one expected scheduler generation without permitting a test hang."""
+
+    for _ in range(SCHEDULER_CALLBACK_LIMIT):
+        if not callbacks:
+            return
+        callback, args = callbacks.pop(0)
+        callback(*args)
 
 
 def _workspace_state() -> ConsoleWorkspaceContextState:
@@ -591,6 +604,179 @@ async def test_production_inspector_counterfactual_ten_eleven_ten_reconciles() -
         assert outer.content_region.height == 10
         assert hint.display is False
         assert outer.scroll_y == 0
+
+
+@pytest.mark.asyncio
+async def test_inspector_geometry_only_generation_reconciles_without_owner_pass() -> (
+    None
+):
+    """A virtual-size invalidation transitions the fold without an owner pass."""
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = _ProductionConsoleHarness(app)
+
+    async with host.run_test(size=(160, 45)) as pilot:
+        inspector = await _open_production_inspector(host, pilot)
+        outer = inspector.query_one("#console-inspector-rail-body")
+        hint = inspector.query_one("#console-inspector-outer-scroll-hint", Static)
+        await outer.remove_children()
+        content = Static("geometry-only content", id="geometry-only-outer-demand")
+        content.styles.height = 10
+        await outer.mount(content)
+        inspector.request_outer_reconcile()
+        await _settle(pilot, passes=8)
+        assert hint.display is False
+        assert inspector._outer_reconcile_scheduled is False
+        fitting_signature = (
+            max(
+                child.virtual_region_with_margin.bottom
+                for child in outer.children
+                if child.display
+            ),
+            outer.content_region.height,
+        )
+        assert fitting_signature[0] <= fitting_signature[1]
+        logical_owner_count = inspector._outer_owner_reconcile_count
+
+        content.styles.height = fitting_signature[1] + 2
+        content.refresh(layout=True)
+        await _settle(pilot, passes=8)
+
+        overflow_signature = (
+            max(
+                child.virtual_region_with_margin.bottom
+                for child in outer.children
+                if child.display
+            ),
+            outer.content_region.height + hint.region.height,
+        )
+        assert overflow_signature != fitting_signature
+        assert overflow_signature[0] > overflow_signature[1]
+        assert hint.display is True
+        assert inspector._outer_reconcile_scheduled is False
+        assert inspector._outer_owner_reconcile_count == logical_owner_count
+        await _settle(pilot, passes=2)
+        assert inspector._outer_reconcile_scheduled is False
+        assert inspector._outer_owner_reconcile_count == logical_owner_count
+
+
+@pytest.mark.asyncio
+async def test_inspector_owner_demand_latches_while_geometry_generation_pending(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = _ProductionConsoleHarness(app)
+
+    async with host.run_test(size=(160, 45)) as pilot:
+        inspector = await _open_production_inspector(host, pilot)
+        await _settle(pilot, passes=8)
+        callbacks: list[tuple[Callable[..., None], tuple[object, ...]]] = []
+
+        def capture_after_refresh(callback, *args) -> None:
+            callbacks.append((callback, args))
+
+        monkeypatch.setattr(inspector, "call_after_refresh", capture_after_refresh)
+        baseline = inspector._outer_owner_reconcile_count
+        inspector._request_outer_geometry_reconcile()
+        inspector.request_outer_reconcile()
+
+        assert inspector._outer_reconcile_scheduled is True
+        assert inspector._outer_reconcile_dirty is True
+        assert inspector._outer_reconcile_owner_demand is True
+        assert len(callbacks) == 1
+        _drain_scheduler_callbacks(callbacks)
+
+        assert callbacks == [], (
+            "owner-demand scheduler did not drain within "
+            f"{SCHEDULER_CALLBACK_LIMIT} callbacks; remaining={callbacks!r}"
+        )
+        assert inspector._outer_reconcile_scheduled is False
+        assert inspector._outer_reconcile_dirty is False
+        assert inspector._outer_reconcile_owner_demand is False
+        assert inspector._outer_owner_reconcile_count == baseline + 1
+
+
+@pytest.mark.asyncio
+async def test_inspector_owner_demand_survives_hint_toggle_continuation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = _ProductionConsoleHarness(app)
+
+    async with host.run_test(size=(160, 45)) as pilot:
+        inspector = await _open_production_inspector(host, pilot)
+        await _settle(pilot, passes=8)
+        callbacks: list[tuple[Callable[..., None], tuple[object, ...]]] = []
+        fold_passes = 0
+
+        def capture_after_refresh(callback, *args) -> None:
+            callbacks.append((callback, args))
+
+        def reconcile_with_hint_continuation() -> bool:
+            nonlocal fold_passes
+            fold_passes += 1
+            if fold_passes == 1:
+                inspector._request_outer_geometry_reconcile()
+                return False
+            return True
+
+        monkeypatch.setattr(inspector, "call_after_refresh", capture_after_refresh)
+        monkeypatch.setattr(
+            inspector,
+            "_reconcile_outer_fold",
+            reconcile_with_hint_continuation,
+        )
+        baseline = inspector._outer_owner_reconcile_count
+        inspector.request_outer_reconcile()
+        _drain_scheduler_callbacks(callbacks)
+
+        assert fold_passes == 2
+        assert callbacks == [], (
+            "hint-toggle continuation did not drain within "
+            f"{SCHEDULER_CALLBACK_LIMIT} callbacks; remaining={callbacks!r}"
+        )
+        assert inspector._outer_reconcile_scheduled is False
+        assert inspector._outer_reconcile_dirty is False
+        assert inspector._outer_reconcile_owner_demand is False
+        assert inspector._outer_owner_reconcile_count == baseline + 1
+
+
+@pytest.mark.asyncio
+async def test_inspector_unmount_before_callback_clears_pending_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = _ProductionConsoleHarness(app)
+
+    async with host.run_test(size=(160, 45)) as pilot:
+        inspector = await _open_production_inspector(host, pilot)
+        await _settle(pilot, passes=8)
+        callbacks: list[tuple[Callable[..., None], tuple[object, ...]]] = []
+
+        def capture_after_refresh(callback, *args) -> None:
+            callbacks.append((callback, args))
+
+        monkeypatch.setattr(inspector, "call_after_refresh", capture_after_refresh)
+        baseline = inspector._outer_owner_reconcile_count
+        inspector.request_outer_reconcile()
+        inspector._outer_reconcile_dirty = True
+        assert len(callbacks) == 1
+        await inspector.remove()
+        assert inspector._outer_reconcile_scheduled is False
+        assert inspector._outer_reconcile_dirty is False
+        assert inspector._outer_reconcile_owner_demand is False
+        callback, args = callbacks.pop(0)
+        callback(*args)
+
+        assert callbacks == []
+        assert inspector._outer_reconcile_scheduled is False
+        assert inspector._outer_reconcile_dirty is False
+        assert inspector._outer_reconcile_owner_demand is False
+        assert inspector._outer_owner_reconcile_count == baseline
 
 
 @pytest.mark.asyncio
@@ -1354,7 +1540,7 @@ async def test_inspector_descendant_owners_reconcile_local_then_outer(
 
         monkeypatch.setattr(ConsoleBoundedSection, "request_reconcile", observe_local)
         monkeypatch.setattr(rail, "request_outer_reconcile", observe_outer)
-        baseline = rail._outer_reconcile_count
+        baseline = rail._outer_owner_reconcile_count
 
         if owner_name == "sources":
             owner = screen.query_one(
@@ -1406,7 +1592,7 @@ async def test_inspector_descendant_owners_reconcile_local_then_outer(
         assert "outer" in events
         assert events.index("local") < events.index("outer")
         assert events.count("outer") == 1
-        assert rail._outer_reconcile_count == baseline + 1
+        assert rail._outer_owner_reconcile_count == baseline + 1
         assert rail._outer_reconcile_scheduled is False
         assert not any(
             section._reconcile_scheduled
@@ -1481,7 +1667,7 @@ async def test_chat_screen_inspector_mutation_paths_delegate_one_owner_request(
 
         monkeypatch.setattr(ConsoleBoundedSection, "request_reconcile", observe_local)
         monkeypatch.setattr(rail, "request_outer_reconcile", observe_outer)
-        baseline = rail._outer_reconcile_count
+        baseline = rail._outer_owner_reconcile_count
 
         if mutation_path == "sources":
             owner = screen.query_one(
@@ -1537,7 +1723,7 @@ async def test_chat_screen_inspector_mutation_paths_delegate_one_owner_request(
         assert "local" in events
         assert events.index("local") < events.index("outer")
         assert events.count("outer") == 1
-        assert rail._outer_reconcile_count == baseline + 1
+        assert rail._outer_owner_reconcile_count == baseline + 1
         assert rail._outer_reconcile_scheduled is False
         assert not any(
             section._reconcile_scheduled

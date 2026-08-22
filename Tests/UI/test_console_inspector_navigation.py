@@ -218,10 +218,10 @@ async def test_terminal_resize_drives_counterfactual_hint_without_feedback_loop(
             ),
             description="fixed demand exactly fitting counterfactual viewport",
         )
-        settled_count = rail._outer_reconcile_count
+        settled_count = rail._outer_owner_reconcile_count
         await pilot.pause()
         await pilot.pause()
-        assert rail._outer_reconcile_count == settled_count
+        assert rail._outer_owner_reconcile_count == settled_count
 
         await pilot.resize_terminal(160, fitting_terminal_height - 1)
         await _wait_for_right_rail_condition(
@@ -389,11 +389,11 @@ async def test_staged_owner_sync_drives_ten_eleven_ten_cue_and_clamp():
             lambda: hint.display is True and not rail._outer_reconcile_scheduled,
             description="eleven-source outer owner overflow after local",
         )
-        overflow_count = rail._outer_reconcile_count
+        overflow_count = rail._outer_owner_reconcile_count
         await pilot.pause()
         assert hint.display is True
         assert outer.virtual_size.height > outer.content_region.height
-        assert rail._outer_reconcile_count == overflow_count
+        assert rail._outer_owner_reconcile_count == overflow_count
         outer.scroll_end(animate=False, immediate=True)
         await _wait_for_right_rail_condition(
             pilot,

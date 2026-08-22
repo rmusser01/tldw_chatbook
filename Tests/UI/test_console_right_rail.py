@@ -538,7 +538,7 @@ async def test_live_work_widget_swaps_cover_real_twenty_twenty_one_geometry(
 
         monkeypatch.setattr(bounded, "request_reconcile", observe_local)
         monkeypatch.setattr(rail, "request_outer_reconcile", observe_outer)
-        baseline = rail._outer_reconcile_count
+        baseline = rail._outer_owner_reconcile_count
 
         screen._pending_console_launch_context = (
             None if direction == "pending-to-readiness" else pending
@@ -584,7 +584,7 @@ async def test_live_work_widget_swaps_cover_real_twenty_twenty_one_geometry(
         assert bounded.hint.display is True
         assert bounded.hint.region.height == 1
         assert bounded._reconcile_scheduled is False
-        assert rail._outer_reconcile_count == baseline + 1
+        assert rail._outer_owner_reconcile_count == baseline + 1
         assert rail._outer_reconcile_scheduled is False
 
         if direction == "pending-to-readiness":

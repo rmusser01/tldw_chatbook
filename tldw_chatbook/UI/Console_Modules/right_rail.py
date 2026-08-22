@@ -248,7 +248,8 @@ class ConsoleInspectorRail(Vertical):
         self._reported_unknown_fingerprints: set[tuple[str, ...]] = set()
         self._outer_reconcile_scheduled = False
         self._outer_reconcile_dirty = False
-        self._outer_reconcile_count = 0
+        self._outer_reconcile_owner_demand = False
+        self._outer_owner_reconcile_count = 0
         self._inspector_focus_active = False
         self._navigation_generation = 0
         self._section_focus_history: dict[str, tuple[Widget, tuple[Widget, ...]]] = {}
@@ -259,11 +260,27 @@ class ConsoleInspectorRail(Vertical):
 
         self.request_outer_reconcile()
 
+    def on_unmount(self) -> None:
+        """Discard pending generations when the Inspector leaves the DOM."""
+
+        self._clear_outer_reconcile_state()
+
     def request_outer_reconcile(self) -> None:
         """Coalesce Inspector owner invalidation behind local section demand."""
 
-        if not self.is_mounted:
+        self._request_outer_reconcile(owner_demand=True)
+
+    def _request_outer_geometry_reconcile(self) -> None:
+        """Reconcile geometry without creating a second logical owner pass."""
+
+        self._request_outer_reconcile(owner_demand=False)
+
+    def _request_outer_reconcile(self, *, owner_demand: bool) -> None:
+        """Schedule one generation while preserving its semantic owner demand."""
+
+        if not self.is_mounted or not self.is_attached or self._pruning:
             return
+        self._outer_reconcile_owner_demand |= owner_demand
         if self._outer_reconcile_scheduled:
             self._outer_reconcile_dirty = True
             return
@@ -271,12 +288,18 @@ class ConsoleInspectorRail(Vertical):
         self._outer_reconcile_dirty = False
         self.call_after_refresh(self._run_scheduled_outer_reconcile)
 
+    def _clear_outer_reconcile_state(self) -> None:
+        """Clear scheduler state without completing a logical owner pass."""
+
+        self._outer_reconcile_scheduled = False
+        self._outer_reconcile_dirty = False
+        self._outer_reconcile_owner_demand = False
+
     def _run_scheduled_outer_reconcile(self) -> None:
         """Reconcile the outer fold only after every local body has settled."""
 
-        if not self.is_mounted:
-            self._outer_reconcile_scheduled = False
-            self._outer_reconcile_dirty = False
+        if not self.is_mounted or not self.is_attached or self._pruning:
+            self._clear_outer_reconcile_state()
             return
         if any(
             section._reconcile_scheduled
@@ -293,9 +316,8 @@ class ConsoleInspectorRail(Vertical):
     def _finish_scheduled_outer_reconcile(self) -> None:
         """Measure after the settled local state has completed one layout pass."""
 
-        if not self.is_mounted:
-            self._outer_reconcile_scheduled = False
-            self._outer_reconcile_dirty = False
+        if not self.is_mounted or not self.is_attached or self._pruning:
+            self._clear_outer_reconcile_state()
             return
         if any(
             section._reconcile_scheduled
@@ -307,12 +329,16 @@ class ConsoleInspectorRail(Vertical):
             self._outer_reconcile_dirty = False
             self.call_after_refresh(self._run_scheduled_outer_reconcile)
             return
+        owner_demand = self._outer_reconcile_owner_demand
+        self._outer_reconcile_owner_demand = False
         self._outer_reconcile_scheduled = False
         self._install_focus_recovery_callbacks()
         self._reconcile_focus_recovery_state()
         if not self._reconcile_outer_fold():
+            self._outer_reconcile_owner_demand |= owner_demand
             return
-        self._outer_reconcile_count += 1
+        if owner_demand:
+            self._outer_owner_reconcile_count += 1
 
     def _reconcile_outer_fold(self) -> bool:
         """Apply the counterfactual outer-hint predicate from laid-out geometry."""
@@ -342,7 +368,7 @@ class ConsoleInspectorRail(Vertical):
             # the next refresh using the new actual body height.
             hint.update("")
             hint.display = required
-            self.request_outer_reconcile()
+            self._request_outer_geometry_reconcile()
             return False
 
         self._update_outer_hint()
@@ -936,7 +962,9 @@ class ConsoleInspectorRail(Vertical):
             collapse_button.styles.content_align = ("left", "middle")
             yield collapse_button
 
-        with _InspectorOuterBody(on_geometry_changed=self.request_outer_reconcile):
+        with _InspectorOuterBody(
+            on_geometry_changed=self._request_outer_geometry_reconcile
+        ):
             project_instruction_row = ConsoleProjectInstructionStatusRow(
                 self._project_instruction_state
             )
