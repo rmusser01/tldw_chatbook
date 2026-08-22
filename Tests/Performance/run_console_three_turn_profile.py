@@ -7,6 +7,7 @@ import hashlib
 import importlib
 import importlib.metadata as importlib_metadata
 import importlib.util
+import inspect
 import json
 import math
 import random
@@ -45,6 +46,12 @@ REQUEST_SETTINGS = {
     "streaming": True,
     "include_usage": True,
 }
+P95_FRACTION = 0.95
+MEASURED_BLOCKS = 30
+BOOTSTRAP_RESAMPLES = 10_000
+BOOTSTRAP_SEED = 19_641
+NON_REGRESSION_CEILING = 1.10
+IMPROVEMENT_CEILING = 1.00
 ORIGINAL_EVIDENCE_SHA256 = {
     "README.md": "724be0f80eff3c9a2eced35b86ae4ce2e6f9a7524d44016cd3f49b61752bd491",
     "real-provider-three-turn-summary.md": (
@@ -208,12 +215,12 @@ def load_original_runner(candidate_root: Path) -> Any:
     sys.modules[name] = module
     try:
         spec.loader.exec_module(module)
+        for function_name in ("validate_sample", "validate_run", "build_summary"):
+            if not callable(getattr(module, function_name, None)):
+                raise RuntimeError("original_runner_contract_mismatch")
     except BaseException:
         sys.modules.pop(name, None)
         raise
-    for function_name in ("validate_sample", "validate_run", "build_summary"):
-        if not callable(getattr(module, function_name, None)):
-            raise RuntimeError("original_runner_contract_mismatch")
     return module
 
 
@@ -249,8 +256,22 @@ def confirmation_protocol(
 ) -> dict[str, Any]:
     """Return the complete machine-only confirmatory protocol contract."""
     if (
+        not isinstance(revisions, Mapping)
+        or not isinstance(provider_kind, str)
+        or not isinstance(provider_server, Mapping)
+        or not isinstance(runtime, Mapping)
+        or not isinstance(model_alias, str)
+        or not isinstance(workspace_content_tree_digest, str)
+        or not isinstance(tool_definition_sha256_by_arm, Mapping)
+    ):
+        raise RuntimeError("confirmation_protocol_invalid")
+    if (
         set(revisions) != {"control", "candidate"}
-        or any(not re.fullmatch(r"[0-9a-f]{40}", str(value)) for value in revisions.values())
+        or any(
+            not isinstance(value, str)
+            or not re.fullmatch(r"[0-9a-f]{40}", value)
+            for value in revisions.values()
+        )
         or not provider_kind
         or not model_alias
         or provider_server.get("model_alias") != model_alias
@@ -264,7 +285,21 @@ def confirmation_protocol(
         raise RuntimeError("confirmation_protocol_invalid")
 
     def clone(value: Any) -> Any:
-        return json.loads(json.dumps(value))
+        try:
+            return json.loads(json.dumps(value))
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("confirmation_protocol_invalid") from exc
+
+    bootstrap = inspect.signature(build_summary).parameters
+    bounds = paired_p95_ratio_bounds(
+        [
+            {"control": float(index), "disabled": float(index), "enabled": float(index)}
+            for index in range(1, 3)
+        ],
+        "disabled",
+        resamples=1,
+        seed=0,
+    )
 
     return {
         "revisions": clone(revisions),
@@ -289,22 +324,18 @@ def confirmation_protocol(
                 tool_definition_sha256_by_arm
             ),
         },
-        "metric_names": list(REQUIRED_METRICS),
-        "primary_gate_names": list(NON_REGRESSION_METRICS),
-        "p95": {"method": "nearest_rank", "fraction": 0.95},
-        "measured_blocks": 30,
+        "metric_names": sorted(REQUIRED_METRICS),
+        "primary_gate_names": sorted(NON_REGRESSION_METRICS),
+        "p95": {"method": "nearest_rank", "fraction": P95_FRACTION},
+        "measured_blocks": MEASURED_BLOCKS,
         "resampling": {
             "method": "paired_complete_blocks",
-            "resamples": 10_000,
-            "seed": 19_641,
+            "resamples": bootstrap["bootstrap_resamples"].default,
+            "seed": bootstrap["bootstrap_seed"].default,
         },
-        "confidence_bounds": [
-            "two_sided_95",
-            "one_sided_lower_95",
-            "one_sided_upper_95",
-        ],
-        "non_regression_ceiling": 1.10,
-        "improvement_ceiling": 1.00,
+        "confidence_bounds": list(bounds),
+        "non_regression_ceiling": NON_REGRESSION_CEILING,
+        "improvement_ceiling": IMPROVEMENT_CEILING,
     }
 
 
@@ -312,6 +343,13 @@ def protocol_mismatches(
     expected: Mapping[str, Any], observed: Mapping[str, Any]
 ) -> tuple[str, ...]:
     """Compare the complete protocol without defaults or partial matching."""
+    if not isinstance(expected, Mapping) or not isinstance(observed, Mapping):
+        return ("protocol_schema_mismatch",)
+    try:
+        json.dumps(expected)
+        json.dumps(observed)
+    except (TypeError, ValueError):
+        return ("protocol_schema_mismatch",)
     if set(expected) != set(_PROTOCOL_MISMATCH_CODES) or set(observed) != set(
         _PROTOCOL_MISMATCH_CODES
     ):
@@ -323,19 +361,142 @@ def protocol_mismatches(
     )
 
 
-def load_original_protocol(candidate_root: Path) -> dict[str, Any]:
-    """Load the digest-verified original JSON manifest as protocol input."""
-    verify_original_evidence(candidate_root)
+def _original_thresholds(original: Any, rows: Sequence[Mapping[str, Any]]) -> tuple[float, float]:
+    """Discover decision thresholds by discriminating the pinned summary builder."""
+    real_bounds = original.paired_p95_ratio_bounds
+
+    def summary_at(ratio: float) -> Mapping[str, Any]:
+        original.paired_p95_ratio_bounds = lambda *_args, **_kwargs: {
+            "two_sided_95": (ratio, ratio),
+            "one_sided_lower_95": ratio,
+            "one_sided_upper_95": ratio,
+        }
+        return original.build_summary(rows, bootstrap_resamples=1)
+
+    def transition(
+        predicate: Callable[[Mapping[str, Any]], bool],
+        *,
+        inclusive: bool,
+    ) -> float:
+        lower, upper = 0.0, 2.0
+        while math.nextafter(lower, math.inf) < upper:
+            middle = (lower + upper) / 2
+            if predicate(summary_at(middle)):
+                lower = middle
+            else:
+                upper = middle
+        boundary = lower if inclusive else upper
+        below = math.nextafter(boundary, -math.inf)
+        above = math.nextafter(boundary, math.inf)
+        if (
+            not predicate(summary_at(below))
+            or predicate(summary_at(boundary)) is not inclusive
+            or predicate(summary_at(above))
+        ):
+            raise RuntimeError("original_protocol_invalid")
+        return boundary
+
+    try:
+        non_regression = transition(
+            lambda summary: summary["arms"]["disabled"]["verdict"] == "pass",
+            inclusive=True,
+        )
+        improvement = transition(
+            lambda summary: bool(summary["critical_path_improvement_claims"]),
+            inclusive=False,
+        )
+    finally:
+        original.paired_p95_ratio_bounds = real_bounds
+    return non_regression, improvement
+
+
+def load_original_protocol(
+    original_runner_root: Path,
+    evidence_repository_root: Path,
+) -> dict[str, Any]:
+    """Load independent runner and retained evidence roots as protocol input."""
+    verify_original_evidence(evidence_repository_root)
     manifest_path = (
-        candidate_root.resolve()
+        evidence_repository_root.resolve()
         / _ORIGINAL_EVIDENCE_RELATIVE
         / "real-provider-three-turn.manifest.json"
     )
     try:
         manifest = json.loads(manifest_path.read_bytes())
-        original = load_original_runner(candidate_root)
+        evidence_root = manifest_path.parent
+        machine_summary = json.loads(
+            (evidence_root / "real-provider-three-turn.summary.json").read_bytes()
+        )
+        rows = [
+            row
+            for row in (
+                json.loads(line)
+                for line in (
+                    evidence_root / "real-provider-three-turn.raw.jsonl"
+                ).read_text(encoding="utf-8").splitlines()
+            )
+            if row.get("event") == "sample"
+        ]
+        original = load_original_runner(original_runner_root)
+        real_percentile = original.nearest_rank_percentile
+        observed_fractions: list[float] = []
+
+        def record_percentile(values: Sequence[float], fraction: float) -> float:
+            observed_fractions.append(fraction)
+            return real_percentile(values, fraction)
+
+        original.nearest_rank_percentile = record_percentile
+        try:
+            built = original.build_summary(rows, bootstrap_resamples=1)
+            bounds = original.paired_p95_ratio_bounds(
+                [
+                    {
+                        "control": float(index),
+                        "disabled": float(index),
+                        "enabled": float(index),
+                    }
+                    for index in range(1, 3)
+                ],
+                "disabled",
+                resamples=1,
+                seed=0,
+            )
+        finally:
+            original.nearest_rank_percentile = real_percentile
+        signature = inspect.signature(original.build_summary).parameters
+        non_regression, improvement = _original_thresholds(original, rows)
         hashes = manifest["fixture_hashes"]
         server = manifest["provider_server"]
+        metric_names = list(built["arms"]["control"]["metrics"])
+        gate_names = list(machine_summary["arms"]["disabled"]["gates"])
+        matching_fractions = {
+            fraction
+            for fraction in observed_fractions
+            if all(
+                real_percentile(
+                    [
+                        row["metrics"][metric]
+                        for row in rows
+                        if row["phase"] == "measured" and row["arm"] == arm
+                    ],
+                    fraction,
+                )
+                == machine_summary["arms"][arm]["metrics"][metric]["p95"]
+                for arm in ARMS
+                for metric in metric_names
+            )
+        }
+        if (
+            set(metric_names) != set(machine_summary["arms"]["control"]["metrics"])
+            or set(gate_names) != set(built["arms"]["disabled"]["gates"])
+            or any(
+                built["arms"][arm]["metrics"]
+                != machine_summary["arms"][arm]["metrics"]
+                for arm in ARMS
+            )
+            or len(matching_fractions) != 1
+        ):
+            raise RuntimeError("original_protocol_invalid")
         return {
             "revisions": manifest["revisions"],
             "provider_kind": manifest["provider"],
@@ -351,22 +512,27 @@ def load_original_protocol(candidate_root: Path) -> dict[str, Any]:
             },
             "fixture_ids": manifest["fixture_ids"],
             "fixture_hashes": hashes,
-            "metric_names": list(original.REQUIRED_METRICS),
-            "primary_gate_names": list(original.NON_REGRESSION_METRICS),
-            "p95": {"method": "nearest_rank", "fraction": 0.95},
-            "measured_blocks": 30,
+            "metric_names": metric_names,
+            "primary_gate_names": gate_names,
+            "p95": {
+                "method": "nearest_rank",
+                "fraction": matching_fractions.pop(),
+            },
+            "measured_blocks": len(
+                {
+                    row["iteration"]
+                    for row in manifest["sample_schedule"]
+                    if row["phase"] == "measured"
+                }
+            ),
             "resampling": {
                 "method": "paired_complete_blocks",
-                "resamples": 10_000,
-                "seed": 19_641,
+                "resamples": signature["bootstrap_resamples"].default,
+                "seed": signature["bootstrap_seed"].default,
             },
-            "confidence_bounds": [
-                "two_sided_95",
-                "one_sided_lower_95",
-                "one_sided_upper_95",
-            ],
-            "non_regression_ceiling": 1.10,
-            "improvement_ceiling": 1.00,
+            "confidence_bounds": list(bounds),
+            "non_regression_ceiling": non_regression,
+            "improvement_ceiling": improvement,
         }
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise RuntimeError("original_protocol_invalid") from exc
@@ -657,9 +823,17 @@ class WorkspaceRuntime:
     permission_definition_hash: str
 
     def close(self) -> None:
-        if self.consent_service is not None:
-            self.consent_service.shutdown(timeout=2.0)
-        self.database.close()
+        failures: list[BaseException] = []
+        try:
+            if self.consent_service is not None:
+                self.consent_service.shutdown(timeout=2.0)
+        except BaseException as exc:
+            failures.append(exc)
+        try:
+            self.database.close()
+        except BaseException as exc:
+            failures.append(exc)
+        _raise_failures("workspace_runtime_cleanup_failed", failures)
 
 
 def balanced_arm_order(iteration: int) -> tuple[str, str, str]:
@@ -694,7 +868,7 @@ def paired_p95_ratio_bounds(
         raise ValueError("paired bootstrap requires at least one resample")
 
     control_p95 = nearest_rank_percentile(
-        [float(block["control"]) for block in blocks], 0.95
+        [float(block["control"]) for block in blocks], P95_FRACTION
     )
     if control_p95 <= 0:
         raise ValueError("paired bootstrap requires a positive control p95")
@@ -704,12 +878,12 @@ def paired_p95_ratio_bounds(
     for _ in range(resamples):
         sampled = [blocks[generator.randrange(len(blocks))] for _ in blocks]
         sampled_control = nearest_rank_percentile(
-            [float(block["control"]) for block in sampled], 0.95
+            [float(block["control"]) for block in sampled], P95_FRACTION
         )
         if sampled_control <= 0:
             raise ValueError("paired bootstrap requires a positive control p95")
         sampled_candidate = nearest_rank_percentile(
-            [float(block[candidate]) for block in sampled], 0.95
+            [float(block[candidate]) for block in sampled], P95_FRACTION
         )
         ratios.append(sampled_candidate / sampled_control)
 
@@ -719,7 +893,7 @@ def paired_p95_ratio_bounds(
             nearest_rank_percentile(ratios, 0.975),
         ),
         "one_sided_lower_95": nearest_rank_percentile(ratios, 0.05),
-        "one_sided_upper_95": nearest_rank_percentile(ratios, 0.95),
+        "one_sided_upper_95": nearest_rank_percentile(ratios, P95_FRACTION),
     }
 
 
@@ -727,7 +901,7 @@ def sample_heartbeat_p95_ns(tick_lateness_ns: Sequence[int]) -> float:
     """Reduce one sample's raw heartbeat ticks to one equally weighted p95."""
     if not tick_lateness_ns:
         raise ValueError("heartbeat vector must not be empty")
-    return nearest_rank_percentile(tick_lateness_ns, 0.95)
+    return nearest_rank_percentile(tick_lateness_ns, P95_FRACTION)
 
 
 def _append_error(errors: list[str], code: str) -> None:
@@ -984,8 +1158,8 @@ def _bound_verdict(bounds: Mapping[str, Any], *, ceiling: float) -> str:
 def build_summary(
     rows: Sequence[Mapping[str, Any]],
     *,
-    bootstrap_resamples: int = 10_000,
-    bootstrap_seed: int = 19_641,
+    bootstrap_resamples: int = BOOTSTRAP_RESAMPLES,
+    bootstrap_seed: int = BOOTSTRAP_SEED,
 ) -> dict[str, Any]:
     """Build recomputable arm summaries and conservative benchmark verdicts."""
     validation_errors = validate_run(rows)
@@ -1007,7 +1181,7 @@ def build_summary(
             values = [float(row["metrics"][metric]) for row in arm_rows]
             distributions[metric] = {
                 "median": statistics.median(values),
-                "p95": nearest_rank_percentile(values, 0.95),
+                "p95": nearest_rank_percentile(values, P95_FRACTION),
             }
         arm_summaries[arm] = {"metrics": distributions}
 
@@ -1024,7 +1198,7 @@ def build_summary(
             )
             gates[metric] = {
                 "bounds": bounds,
-                "verdict": _bound_verdict(bounds, ceiling=1.10),
+                "verdict": _bound_verdict(bounds, ceiling=NON_REGRESSION_CEILING),
             }
         gate_verdicts = [gate["verdict"] for gate in gates.values()]
         arm_verdict = (
@@ -1044,7 +1218,7 @@ def build_summary(
                 resamples=bootstrap_resamples,
                 seed=bootstrap_seed,
             )
-            if float(bounds["one_sided_upper_95"]) < 1.0:
+            if float(bounds["one_sided_upper_95"]) < IMPROVEMENT_CEILING:
                 claims.setdefault(metric, {})[arm] = bounds
     arm_summaries["control"]["verdict"] = "reference"
     overall = (
@@ -1883,14 +2057,23 @@ def prepare_target_worktree(
         raise RuntimeError(f"target_worktree_failed:{name}:target_exists")
     target.parent.mkdir(parents=True, exist_ok=True)
     command = ["git", "worktree", "add", "--detach", str(target), revision]
-    completed = run_command(
-        command,
-        cwd=repository_root,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if completed.returncode != 0 or not target.is_dir():
+    try:
+        completed = run_command(
+            command,
+            cwd=repository_root,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except BaseException as exc:
+        primary = exc
+    else:
+        if completed.returncode == 0 and target.is_dir():
+            return target
+        primary = RuntimeError(f"target_worktree_failed:{name}")
+
+    cleanup_failures: list[BaseException] = []
+    try:
         run_command(
             ["git", "worktree", "remove", "--force", str(target)],
             cwd=repository_root,
@@ -1898,12 +2081,54 @@ def prepare_target_worktree(
             capture_output=True,
             text=True,
         )
-        if target.is_symlink():
-            target.unlink()
-        elif target.exists():
-            shutil.rmtree(target)
-        raise RuntimeError(f"target_worktree_failed:{name}")
-    return target
+    except BaseException as exc:
+        cleanup_failures.append(exc)
+    try:
+        registered = _target_worktree_registered(
+            repository_root, target, run_command=run_command
+        )
+    except BaseException as exc:
+        registered = True
+        cleanup_failures.append(exc)
+    if registered:
+        cleanup_failures.append(
+            RuntimeError(f"target_worktree_unregister_failed:{name}")
+        )
+    else:
+        try:
+            if target.is_symlink():
+                target.unlink()
+            elif target.exists():
+                shutil.rmtree(target)
+        except BaseException as exc:
+            cleanup_failures.append(exc)
+    _raise_failures(
+        "target_worktree_add_failed", [primary, *cleanup_failures]
+    )
+    raise AssertionError("unreachable")
+
+
+def _target_worktree_registered(
+    repository_root: Path,
+    target: Path,
+    *,
+    run_command: Any = subprocess.run,
+) -> bool:
+    completed = run_command(
+        ["git", "worktree", "list", "--porcelain"],
+        cwd=repository_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError("target_worktree_registration_check_failed")
+    expected = str(target.resolve())
+    return any(
+        line.removeprefix("worktree ") == expected
+        for line in completed.stdout.splitlines()
+        if line.startswith("worktree ")
+    )
 
 
 def _fixed_bytes(label: str, size: int) -> bytes:
@@ -2104,12 +2329,15 @@ def protocol_preflight_ownership(
     ]
     if survivors:
         raise RuntimeError("protocol_preflight_thread_survivor")
-    return {
-        "live_threads": 0,
-        "provider_closed": True,
-        "sqlite_closed": True,
-        "shadow_operations_pending": 0,
-    }
+    return {"live_threads": 0}
+
+
+def _raise_failures(message: str, failures: Sequence[BaseException]) -> None:
+    if not failures:
+        return
+    if len(failures) == 1:
+        raise failures[0]
+    raise BaseExceptionGroup(message, list(failures))
 
 
 def protocol_preflight(
@@ -2129,6 +2357,8 @@ def protocol_preflight(
     adapter = adapter_factory(target_root.resolve(), arm)
     runtime: Any | None = None
     result: dict[str, Any] | None = None
+    failure: BaseException | None = None
+    cleanup_failures: list[BaseException] = []
     try:
         runtime = runtime_factory(sample_root.resolve(), arm=arm)
         corpus = corpus_generator(runtime.workspace_root)
@@ -2158,12 +2388,22 @@ def protocol_preflight(
             "workspace_content_tree_digest": corpus_digest,
             "tool_definition_sha256": tool_digest,
         }
+    except BaseException as exc:
+        failure = exc
     finally:
         try:
             if runtime is not None:
                 runtime.close()
-        finally:
+        except BaseException as exc:
+            cleanup_failures.append(exc)
+        try:
             adapter.close()
+        except BaseException as exc:
+            cleanup_failures.append(exc)
+    _raise_failures(
+        "protocol_preflight_failed",
+        ([failure] if failure is not None else []) + cleanup_failures,
+    )
     if result is None:
         raise RuntimeError("protocol_preflight_failed")
     result["final_ownership"] = dict(ownership_probe(baseline_thread_ids))
@@ -3339,7 +3579,7 @@ def _remove_target_worktree(
     if name not in {"control", "candidate"}:
         raise RuntimeError("target_worktree_invalid")
     target = (root / name).resolve()
-    if target.parent != root or not target.is_dir():
+    if target.parent != root or (target.exists() and not target.is_dir()):
         raise RuntimeError("target_worktree_invalid")
     completed = run_command(
         ["git", "worktree", "remove", "--force", str(target)],
@@ -3349,7 +3589,24 @@ def _remove_target_worktree(
         text=True,
     )
     if completed.returncode != 0:
-        raise RuntimeError(f"target_worktree_cleanup_failed:{name}")
+        try:
+            registered = _target_worktree_registered(
+                repository_root, target, run_command=run_command
+            )
+        except RuntimeError as registration_failure:
+            raise BaseExceptionGroup(
+                "target_worktree_cleanup_failed",
+                [
+                    RuntimeError(f"target_worktree_remove_failed:{name}"),
+                    registration_failure,
+                ],
+            ) from None
+        code = (
+            "target_worktree_unregister_failed"
+            if registered
+            else "target_worktree_remove_failed"
+        )
+        raise RuntimeError(f"{code}:{name}")
 
 
 def _remove_target_worktrees(
@@ -3360,7 +3617,7 @@ def _remove_target_worktrees(
     run_command: Any = subprocess.run,
 ) -> None:
     """Attempt every owned worktree removal before reporting cleanup failure."""
-    failures = []
+    failures: list[BaseException] = []
     for name in names:
         try:
             _remove_target_worktree(
@@ -3369,10 +3626,9 @@ def _remove_target_worktrees(
                 name=name,
                 run_command=run_command,
             )
-        except RuntimeError:
-            failures.append(name)
-    if failures:
-        raise RuntimeError("target_worktree_cleanup_failed")
+        except BaseException as exc:
+            failures.append(exc)
+    _raise_failures("target_worktree_cleanup_failed", failures)
 
 
 def prepare_output_root(path: Path) -> None:
@@ -3396,6 +3652,7 @@ def remove_successful_sample_root(run_root: Path, sample_root: Path) -> None:
 def run_parent_mode(args: argparse.Namespace) -> int:
     """Own revisions, child lifecycles, validation, and retained smoke evidence."""
     repository_root = Path(__file__).resolve().parents[2]
+    harness = current_harness_identity(repository_root)
     run_root = args.output_root.resolve()
     prepare_output_root(run_root)
     raw_path = run_root / "real-provider-three-turn.raw.jsonl"
@@ -3429,7 +3686,7 @@ def run_parent_mode(args: argparse.Namespace) -> int:
             revision=revisions["candidate"],
         )
         if revisions["candidate"] == CANDIDATE_SHA:
-            verify_original_evidence(candidate_root)
+            load_original_protocol(candidate_root, repository_root)
             statistics_module = load_original_runner(candidate_root)
         for index, plan in enumerate(sample_schedule(args.iterations)):
             verify_listener_identity(
@@ -3519,16 +3776,25 @@ def run_parent_mode(args: argparse.Namespace) -> int:
                 },
             )
     finally:
+        primary_failure = sys.exception()
         cleanup_names = (
             ("candidate", "control")
             if candidate_root is not None
             else ("control",)
         )
-        _remove_target_worktrees(
-            repository_root,
-            run_root,
-            names=cleanup_names,
-        )
+        try:
+            _remove_target_worktrees(
+                repository_root,
+                run_root,
+                names=cleanup_names,
+            )
+        except BaseException as cleanup_failure:
+            if primary_failure is not None:
+                raise BaseExceptionGroup(
+                    "parent_run_and_cleanup_failed",
+                    [primary_failure, cleanup_failure],
+                ) from None
+            raise
 
     samples_root = run_root / "samples"
     if samples_root.is_dir():
@@ -3558,6 +3824,7 @@ def run_parent_mode(args: argparse.Namespace) -> int:
     listener_after = listener_resource_snapshot(args.endpoint)
     manifest = {
         "schema": 1,
+        "harness": harness,
         "revisions": revisions,
         "model": args.model,
         "provider": "llama_cpp",

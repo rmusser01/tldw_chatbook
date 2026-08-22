@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import functools
 import hashlib
 import io
 import json
+import math
 import os
 import subprocess
 import sys
@@ -602,6 +604,24 @@ def test_original_runner_rejects_digest_drift(tmp_path: Path) -> None:
         load_original_runner(tmp_path)
 
 
+def test_original_runner_contract_failure_removes_isolated_module(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _materialize_original_runner(tmp_path)
+    invalid = SimpleNamespace()
+    monkeypatch.setattr(profile.importlib.util, "module_from_spec", lambda _spec: invalid)
+    monkeypatch.setattr(
+        profile.importlib.util,
+        "spec_from_file_location",
+        lambda *_args: SimpleNamespace(loader=SimpleNamespace(exec_module=lambda _module: None)),
+    )
+
+    with pytest.raises(RuntimeError, match="original_runner_contract_mismatch"):
+        profile.load_original_runner(tmp_path)
+
+    assert "task_20009_original_runner" not in sys.modules
+
+
 def test_burn_in_summary_is_byte_equivalent_when_only_excluded_metrics_change(
     tmp_path: Path,
 ) -> None:
@@ -722,8 +742,8 @@ def test_confirmation_protocol_pins_every_original_machine_contract() -> None:
                 for arm in profile.ARMS
             },
         },
-        "metric_names": list(profile.REQUIRED_METRICS),
-        "primary_gate_names": list(profile.NON_REGRESSION_METRICS),
+        "metric_names": sorted(profile.REQUIRED_METRICS),
+        "primary_gate_names": sorted(profile.NON_REGRESSION_METRICS),
         "p95": {"method": "nearest_rank", "fraction": 0.95},
         "measured_blocks": 30,
         "resampling": {
@@ -845,7 +865,39 @@ def test_original_protocol_loader_never_parses_markdown(
 
     monkeypatch.setattr(Path, "read_text", guarded_read_text)
 
-    assert profile.load_original_protocol(tmp_path) == _original_protocol()
+    assert profile.load_original_protocol(tmp_path, tmp_path) == _original_protocol()
+
+
+def test_original_protocol_uses_real_detached_runner_and_retained_evidence(
+    tmp_path: Path,
+) -> None:
+    repository_root = Path(__file__).resolve().parents[2]
+    git_repository = tmp_path / "repository"
+    subprocess.run(
+        ["git", "clone", "--no-checkout", str(repository_root), str(git_repository)],
+        check=True,
+        capture_output=True,
+    )
+    run_root = tmp_path / "run"
+    candidate = profile.prepare_target_worktree(
+        git_repository,
+        run_root,
+        name="candidate",
+        revision=profile.ORIGINAL_HARNESS_SHA,
+    )
+    try:
+        assert not (
+            candidate
+            / "Docs/superpowers/qa/console-three-turn-real-provider/"
+            "real-provider-three-turn.manifest.json"
+        ).exists()
+        assert profile.load_original_protocol(candidate, repository_root) == _original_protocol()
+        with pytest.raises(RuntimeError, match="original_evidence_missing"):
+            profile.load_original_protocol(candidate, candidate)
+    finally:
+        profile._remove_target_worktree(
+            git_repository, run_root, name="candidate"
+        )
 
 
 def test_original_protocol_is_independent_from_current_harness_drift(
@@ -857,6 +909,22 @@ def test_original_protocol_is_independent_from_current_harness_drift(
     monkeypatch.setattr(profile, "TURN_PROMPTS", ("drifted prompt",))
     monkeypatch.setattr(profile, "FIXED_MUTATION", b"drifted mutation")
     monkeypatch.setattr(profile, "REQUIRED_METRICS", ("drifted_metric",))
+    monkeypatch.setattr(profile, "P95_FRACTION", 0.9)
+    monkeypatch.setattr(profile, "MEASURED_BLOCKS", 29)
+    monkeypatch.setattr(profile, "NON_REGRESSION_CEILING", 1.2)
+    monkeypatch.setattr(profile, "IMPROVEMENT_CEILING", 0.9)
+    current_build_summary = profile.build_summary
+
+    def drifted_current_summary(
+        rows, *, bootstrap_resamples=9_999, bootstrap_seed=7
+    ):
+        return current_build_summary(
+            rows,
+            bootstrap_resamples=bootstrap_resamples,
+            bootstrap_seed=bootstrap_seed,
+        )
+
+    monkeypatch.setattr(profile, "build_summary", drifted_current_summary)
     monkeypatch.setattr(
         profile,
         "REQUEST_SETTINGS",
@@ -869,24 +937,174 @@ def test_original_protocol_is_independent_from_current_harness_drift(
         },
         raising=False,
     )
-    expected = profile.load_original_protocol(tmp_path)
+    expected = profile.load_original_protocol(tmp_path, tmp_path)
     observed = _original_protocol()
 
     assert expected["fixture_hashes"]["turn_prompts_sha256"] == (
         "3f6b88ffa37b4f6b9673878288b93d81e965c50cba1fb2ce7bbb4dfadb5245ac"
     )
-    assert expected["metric_names"] == [
-        "third_send_to_worker_ns",
-        "event_loop_lag_p95_ns",
+    assert expected["metric_names"] == sorted([
         "assistant_durable_to_release_ns",
-        "terminal_to_third_provider_ns",
-        "provider_total_ns",
         "conversation_wall_ns",
-    ]
+        "event_loop_lag_p95_ns",
+        "provider_total_ns",
+        "terminal_to_third_provider_ns",
+        "third_send_to_worker_ns",
+    ])
     assert profile.protocol_mismatches(expected, observed) == (
         "protocol_request_settings_mismatch",
         "protocol_fixture_hashes_mismatch",
         "protocol_metric_names_mismatch",
+        "protocol_p95_mismatch",
+        "protocol_measured_blocks_mismatch",
+        "protocol_resampling_mismatch",
+        "protocol_non_regression_ceiling_mismatch",
+        "protocol_improvement_ceiling_mismatch",
+    )
+
+
+def test_original_protocol_discriminates_through_pinned_statistics_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _copy_original_evidence(tmp_path)
+    _materialize_original_runner(tmp_path)
+    original = profile.load_original_runner(tmp_path)
+    calls: list[tuple[str, object]] = []
+
+    for name in (
+        "nearest_rank_percentile",
+        "paired_p95_ratio_bounds",
+        "build_summary",
+    ):
+        function = getattr(original, name)
+
+        @functools.wraps(function)
+        def wrapped(*args, __name=name, __function=function, **kwargs):
+            calls.append((__name, kwargs.copy()))
+            return __function(*args, **kwargs)
+
+        monkeypatch.setattr(original, name, wrapped)
+    monkeypatch.setattr(profile, "load_original_runner", lambda _root: original)
+
+    protocol = profile.load_original_protocol(tmp_path, tmp_path)
+
+    assert protocol["p95"] == {"method": "nearest_rank", "fraction": 0.95}
+    assert any(name == "nearest_rank_percentile" for name, _kwargs in calls)
+    assert any(
+        name == "paired_p95_ratio_bounds"
+        and kwargs.get("resamples") == 1
+        and kwargs.get("seed") == 0
+        for name, kwargs in calls
+    )
+    assert sum(name == "build_summary" for name, _kwargs in calls) > 2
+
+
+def test_original_protocol_rejects_summary_percentile_behavior_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _copy_original_evidence(tmp_path)
+    _materialize_original_runner(tmp_path)
+    original = profile.load_original_runner(tmp_path)
+    real_build_summary = original.build_summary
+
+    @functools.wraps(real_build_summary)
+    def drifted_build_summary(rows, **kwargs):
+        summary = real_build_summary(rows, **kwargs)
+        measured = [row for row in rows if row.get("phase") == "measured"]
+        for arm, arm_summary in summary["arms"].items():
+            arm_rows = [row for row in measured if row["arm"] == arm]
+            for metric, distribution in arm_summary["metrics"].items():
+                distribution["p95"] = original.nearest_rank_percentile(
+                    [row["metrics"][metric] for row in arm_rows], 0.9
+                )
+        return summary
+
+    monkeypatch.setattr(original, "build_summary", drifted_build_summary)
+    monkeypatch.setattr(profile, "load_original_runner", lambda _root: original)
+
+    with pytest.raises(RuntimeError, match="original_protocol_invalid"):
+        profile.load_original_protocol(tmp_path, tmp_path)
+
+
+def test_original_threshold_discovery_preserves_exact_float_boundaries() -> None:
+    non_regression = 1.104
+    improvement = 0.997
+
+    class Original:
+        def paired_p95_ratio_bounds(self, *_args, **_kwargs):
+            raise AssertionError("threshold helper must inject discriminating bounds")
+
+        def build_summary(self, _rows, *, bootstrap_resamples):
+            bounds = self.paired_p95_ratio_bounds()
+            ratio = bounds["one_sided_upper_95"]
+            claims = {"metric": {"disabled": {}}} if ratio < improvement else {}
+            return {
+                "arms": {
+                    "disabled": {
+                        "verdict": "pass" if ratio <= non_regression else "regression"
+                    }
+                },
+                "critical_path_improvement_claims": claims,
+            }
+
+    original = Original()
+
+    assert profile._original_thresholds(original, ()) == (
+        non_regression,
+        improvement,
+    )
+    assert math.nextafter(non_regression, -math.inf) < non_regression
+    assert math.nextafter(improvement, math.inf) > improvement
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"revisions": None},
+        {"provider_kind": []},
+        {"provider_server": []},
+        {"runtime": "runtime"},
+        {"model_alias": 1},
+        {"workspace_content_tree_digest": None},
+        {"tool_definition_sha256_by_arm": []},
+        {"tool_definition_sha256_by_arm": {arm: None for arm in profile.ARMS}},
+    ],
+)
+def test_confirmation_protocol_rejects_malformed_json_shapes_stably(
+    overrides: dict[str, object],
+) -> None:
+    manifest = json.loads(
+        (
+            Path(__file__).resolve().parents[2]
+            / "Docs/superpowers/qa/console-three-turn-real-provider/"
+            "real-provider-three-turn.manifest.json"
+        ).read_bytes()
+    )
+    arguments = {
+        "revisions": manifest["revisions"],
+        "provider_kind": manifest["provider"],
+        "provider_server": manifest["provider_server"],
+        "runtime": manifest["runtime"],
+        "model_alias": manifest["provider_server"]["model_alias"],
+        "workspace_content_tree_digest": manifest["fixture_hashes"][
+            "workspace_content_tree_digest"
+        ],
+        "tool_definition_sha256_by_arm": manifest["fixture_hashes"][
+            "tool_definition_sha256_by_arm"
+        ],
+    }
+    arguments.update(overrides)
+
+    with pytest.raises(RuntimeError, match="^confirmation_protocol_invalid$"):
+        profile.confirmation_protocol(**arguments)
+
+
+@pytest.mark.parametrize("expected,observed", [(None, {}), ({}, []), ([], []), (1, "x")])
+def test_protocol_mismatches_rejects_malformed_json_shapes_stably(
+    expected: object, observed: object
+) -> None:
+    assert profile.protocol_mismatches(expected, observed) == (
+        "protocol_schema_mismatch",
     )
 
 
@@ -1573,6 +1791,187 @@ def test_current_harness_identity_retains_full_revision_and_runner_digest(
     ]
 
 
+def test_parent_refuses_dirty_harness_before_mutating_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "must-not-exist"
+    monkeypatch.setattr(
+        profile,
+        "current_harness_identity",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("harness_worktree_dirty")
+        ),
+    )
+    monkeypatch.setattr(
+        profile,
+        "prepare_output_root",
+        lambda *_args: pytest.fail("output mutation preceded harness guard"),
+    )
+    args = SimpleNamespace(output_root=output)
+
+    with pytest.raises(RuntimeError, match="harness_worktree_dirty"):
+        profile.run_parent_mode(args)
+
+    assert not output.exists()
+
+
+def test_parent_retains_harness_identity_and_splits_original_roots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository_root = Path(profile.__file__).resolve().parents[2]
+    output = tmp_path / "run"
+    harness = {"revision": "1" * 40, "runner_sha256": "2" * 64}
+    plans = tuple(
+        profile.SamplePlan("measured", arm, 0) for arm in profile.ARMS
+    )
+    monkeypatch.setattr(profile, "current_harness_identity", lambda _root: harness)
+    monkeypatch.setattr(
+        profile,
+        "resolve_benchmark_revisions",
+        lambda *_args, **_kwargs: {
+            "control": profile.CONTROL_SHA,
+            "candidate": profile.CANDIDATE_SHA,
+        },
+    )
+    for name in (
+        "preflight_provider",
+        "provider_server_metadata",
+        "runtime_metadata",
+        "host_load_snapshot",
+        "listener_resource_snapshot",
+    ):
+        monkeypatch.setattr(profile, name, lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(
+        profile,
+        "listener_identity",
+        lambda *_args, **_kwargs: {"fingerprint_sha256": "3" * 64},
+    )
+    monkeypatch.setattr(profile, "verify_listener_identity", lambda *_args: None)
+    monkeypatch.setattr(profile, "sample_schedule", lambda _iterations: plans)
+    monkeypatch.setattr(profile, "validate_sample", lambda _row: ())
+    monkeypatch.setattr(profile, "validate_run", lambda *_args, **_kwargs: ())
+    monkeypatch.setattr(profile, "_remove_target_worktrees", lambda *_args, **_kwargs: None)
+
+    def prepare(_repository, run_root, *, name, revision):
+        target = run_root / name
+        target.mkdir()
+        return target
+
+    monkeypatch.setattr(profile, "prepare_target_worktree", prepare)
+    loaded: list[tuple[Path, Path]] = []
+    monkeypatch.setattr(
+        profile,
+        "load_original_protocol",
+        lambda runner_root, evidence_root: loaded.append((runner_root, evidence_root)),
+    )
+    monkeypatch.setattr(profile, "load_original_runner", lambda _root: profile)
+
+    def child(command, **_kwargs):
+        spec_path = Path(command[command.index("--child-spec") + 1])
+        spec = json.loads(spec_path.read_text(encoding="utf-8"))
+        return profile.ChildResult(
+            "complete",
+            0,
+            {
+                "event": "sample",
+                "sample_id": spec["sample_id"],
+                "arm": spec["arm"],
+                "workspace_content_tree_digest": "4" * 64,
+                "expected_permission_definition_hash": "5" * 64,
+            },
+        )
+
+    monkeypatch.setattr(profile, "run_child_with_watchdog", child)
+    args = SimpleNamespace(
+        output_root=output,
+        control_sha=profile.CONTROL_SHA,
+        candidate_sha=profile.CANDIDATE_SHA,
+        endpoint="http://127.0.0.1:9099",
+        model="fixture.gguf",
+        iterations=1,
+        sample_timeout=1.0,
+    )
+
+    assert profile.run_parent_mode(args) == 0
+    manifest = json.loads(
+        (output / "real-provider-three-turn.manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["harness"] == harness
+    assert loaded == [((output / "candidate").resolve(), repository_root)]
+
+
+def test_parent_preserves_primary_failure_with_cleanup_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        profile,
+        "current_harness_identity",
+        lambda _root: {"revision": "1" * 40, "runner_sha256": "2" * 64},
+    )
+    monkeypatch.setattr(
+        profile,
+        "resolve_benchmark_revisions",
+        lambda *_args, **_kwargs: {
+            "control": profile.CONTROL_SHA,
+            "candidate": profile.CANDIDATE_SHA,
+        },
+    )
+    for name in (
+        "preflight_provider",
+        "provider_server_metadata",
+        "runtime_metadata",
+        "host_load_snapshot",
+        "listener_resource_snapshot",
+    ):
+        monkeypatch.setattr(profile, name, lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(
+        profile,
+        "listener_identity",
+        lambda *_args, **_kwargs: {"fingerprint_sha256": "3" * 64},
+    )
+    calls = 0
+
+    def prepare(_repository, run_root, *, name, revision):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("candidate-primary-failed")
+        target = run_root / name
+        target.mkdir()
+        return target
+
+    monkeypatch.setattr(profile, "prepare_target_worktree", prepare)
+    cleaned: list[tuple[str, ...]] = []
+
+    def cleanup(*_args, **kwargs):
+        cleaned.append(tuple(kwargs["names"]))
+        raise RuntimeError("cleanup-failed")
+
+    monkeypatch.setattr(
+        profile,
+        "_remove_target_worktrees",
+        cleanup,
+    )
+    args = SimpleNamespace(
+        output_root=tmp_path / "run",
+        control_sha=profile.CONTROL_SHA,
+        candidate_sha=profile.CANDIDATE_SHA,
+        endpoint="http://127.0.0.1:9099",
+        model="fixture.gguf",
+        iterations=1,
+        sample_timeout=1.0,
+    )
+
+    with pytest.raises(BaseExceptionGroup) as caught:
+        profile.run_parent_mode(args)
+
+    assert [str(error) for error in caught.value.exceptions] == [
+        "candidate-primary-failed",
+        "cleanup-failed",
+    ]
+    assert cleaned == [("control",)]
+
+
 def _listener_run(identity: str):
     def fake_run(command, **_kwargs):
         if command[0] == "lsof":
@@ -1810,12 +2209,7 @@ def test_protocol_preflight_derives_content_free_fingerprints_and_tears_down(
         "behavior_sha256": result["behavior_sha256"],
         "workspace_content_tree_digest": "c" * 64,
         "tool_definition_sha256": "d" * 64,
-        "final_ownership": {
-            "live_threads": 0,
-            "provider_closed": True,
-            "sqlite_closed": True,
-            "shadow_operations_pending": 0,
-        },
+        "final_ownership": {"live_threads": 0},
     }
     assert len(result["behavior_sha256"]) == 64
     assert closed == ["runtime", "adapter"]
@@ -1838,12 +2232,7 @@ def test_protocol_preflight_measures_ownership_only_after_cleanup(tmp_path: Path
 
     def ownership_probe(_baseline):
         assert closed == ["runtime", "adapter"]
-        return {
-            "live_threads": 0,
-            "provider_closed": True,
-            "sqlite_closed": True,
-            "shadow_operations_pending": 0,
-        }
+        return {"live_threads": 0}
 
     result = profile.protocol_preflight(
         tmp_path / "target",
@@ -1856,6 +2245,11 @@ def test_protocol_preflight_measures_ownership_only_after_cleanup(tmp_path: Path
     )
 
     assert result["final_ownership"] == ownership_probe(set())
+    assert not {
+        "provider_closed",
+        "sqlite_closed",
+        "shadow_operations_pending",
+    } & result["final_ownership"].keys()
 
 
 def test_protocol_preflight_restores_adapter_when_runtime_close_fails(
@@ -1889,6 +2283,48 @@ def test_protocol_preflight_restores_adapter_when_runtime_close_fails(
             corpus_generator=lambda _root: {"content_tree_digest": "c" * 64},
         )
     assert closed == ["runtime", "adapter"]
+
+
+def test_protocol_preflight_preserves_primary_and_all_cleanup_failures(
+    tmp_path: Path,
+) -> None:
+    closed: list[str] = []
+
+    def fail(label: str):
+        def action() -> None:
+            closed.append(label)
+            raise RuntimeError(f"{label}-failed")
+
+        return action
+
+    runtime = SimpleNamespace(
+        workspace_root=tmp_path / "workspace",
+        permission_definition_hash="invalid",
+        review_state="enabled",
+        review_ready=True,
+        close=fail("runtime-close"),
+    )
+    adapter = SimpleNamespace(
+        revision_kind="candidate",
+        close=fail("adapter-close"),
+    )
+
+    with pytest.raises(BaseExceptionGroup) as caught:
+        profile.protocol_preflight(
+            tmp_path / "target",
+            tmp_path / "sample",
+            arm="enabled",
+            adapter_factory=lambda *_args: adapter,
+            runtime_factory=lambda *_args, **_kwargs: runtime,
+            corpus_generator=lambda _root: {"content_tree_digest": "c" * 64},
+        )
+
+    assert closed == ["runtime-close", "adapter-close"]
+    assert [str(error) for error in caught.value.exceptions] == [
+        "protocol_preflight_hash_invalid",
+        "runtime-close-failed",
+        "adapter-close-failed",
+    ]
 
 
 def test_protocol_preflight_child_never_mounts_a_conversation(
@@ -2155,6 +2591,10 @@ def test_prepare_target_worktree_preserves_command_failure(tmp_path: Path) -> No
     prepare_target_worktree = getattr(profile, "prepare_target_worktree", None)
 
     def fake_run(command, **kwargs):
+        if command == ["git", "worktree", "list", "--porcelain"]:
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        if command[2] == "remove":
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
         return subprocess.CompletedProcess(command, 2, stdout="", stderr="busy")
 
     assert callable(prepare_target_worktree)
@@ -2177,7 +2617,10 @@ def test_prepare_target_worktree_cleans_partial_add_failure(tmp_path: Path) -> N
         if command[2] == "add":
             target.mkdir(parents=True)
             return subprocess.CompletedProcess(command, 2, stdout="", stderr="busy")
-        return subprocess.CompletedProcess(command, 1, stdout="", stderr="unregistered")
+        if command[2] == "remove":
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        assert command == ["git", "worktree", "list", "--porcelain"]
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
     with pytest.raises(RuntimeError, match="target_worktree_failed:candidate"):
         profile.prepare_target_worktree(
@@ -2191,8 +2634,158 @@ def test_prepare_target_worktree_cleans_partial_add_failure(tmp_path: Path) -> N
     assert calls == [
         ["git", "worktree", "add", "--detach", str(target), profile.CANDIDATE_SHA],
         ["git", "worktree", "remove", "--force", str(target)],
+        ["git", "worktree", "list", "--porcelain"],
     ]
     assert not target.exists()
+
+
+def test_prepare_target_worktree_accepts_nonzero_remove_when_git_proves_absent(
+    tmp_path: Path,
+) -> None:
+    target = (tmp_path / "run/candidate").resolve()
+
+    def fake_run(command, **_kwargs):
+        if command[2] == "add":
+            target.mkdir(parents=True)
+            return subprocess.CompletedProcess(command, 2, stdout="", stderr="add failed")
+        if command[2] == "remove":
+            return subprocess.CompletedProcess(command, 1, stdout="", stderr="already absent")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    with pytest.raises(RuntimeError, match="^target_worktree_failed:candidate$"):
+        profile.prepare_target_worktree(
+            tmp_path / "repository",
+            tmp_path / "run",
+            name="candidate",
+            revision=profile.CANDIDATE_SHA,
+            run_command=fake_run,
+        )
+
+    assert not target.exists()
+
+
+def test_prepare_target_worktree_cleans_partial_directory_when_add_raises(
+    tmp_path: Path,
+) -> None:
+    target = (tmp_path / "run/candidate").resolve()
+
+    def fake_run(command, **_kwargs):
+        if command[2] == "add":
+            target.mkdir(parents=True)
+            raise RuntimeError("git-add-exploded")
+        if command[2] == "remove":
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    with pytest.raises(RuntimeError, match="^git-add-exploded$"):
+        profile.prepare_target_worktree(
+            tmp_path / "repository",
+            tmp_path / "run",
+            name="candidate",
+            revision=profile.CANDIDATE_SHA,
+            run_command=fake_run,
+        )
+
+    assert not target.exists()
+
+
+def test_prepare_target_worktree_preserves_add_when_remove_and_list_raise(
+    tmp_path: Path,
+) -> None:
+    target = (tmp_path / "run/candidate").resolve()
+    calls: list[list[str]] = []
+
+    def fake_run(command, **_kwargs):
+        calls.append(command)
+        if command[2] == "add":
+            target.mkdir(parents=True)
+            raise RuntimeError("git-add-exploded")
+        if command[2] == "remove":
+            raise RuntimeError("git-remove-exploded")
+        raise OSError("git-list-exploded")
+
+    with pytest.raises(BaseExceptionGroup) as caught:
+        profile.prepare_target_worktree(
+            tmp_path / "repository",
+            tmp_path / "run",
+            name="candidate",
+            revision=profile.CANDIDATE_SHA,
+            run_command=fake_run,
+        )
+
+    assert calls == [
+        ["git", "worktree", "add", "--detach", str(target), profile.CANDIDATE_SHA],
+        ["git", "worktree", "remove", "--force", str(target)],
+        ["git", "worktree", "list", "--porcelain"],
+    ]
+    assert target.is_dir()
+    assert [str(error) for error in caught.value.exceptions] == [
+        "git-add-exploded",
+        "git-remove-exploded",
+        "git-list-exploded",
+        "target_worktree_unregister_failed:candidate",
+    ]
+
+
+def test_prepare_target_worktree_keeps_registered_partial_add_directory(
+    tmp_path: Path,
+) -> None:
+    target = (tmp_path / "run/candidate").resolve()
+
+    def fake_run(command, **_kwargs):
+        if command[2] == "add":
+            target.mkdir(parents=True)
+            return subprocess.CompletedProcess(command, 2, stdout="", stderr="add failed")
+        if command[2] == "remove":
+            return subprocess.CompletedProcess(command, 1, stdout="", stderr="busy")
+        return subprocess.CompletedProcess(
+            command, 0, stdout=f"worktree {target}\nHEAD {'1' * 40}\n\n", stderr=""
+        )
+
+    with pytest.raises(BaseExceptionGroup) as caught:
+        profile.prepare_target_worktree(
+            tmp_path / "repository",
+            tmp_path / "run",
+            name="candidate",
+            revision=profile.CANDIDATE_SHA,
+            run_command=fake_run,
+        )
+
+    assert target.is_dir()
+    assert [str(error) for error in caught.value.exceptions] == [
+        "target_worktree_failed:candidate",
+        "target_worktree_unregister_failed:candidate",
+    ]
+
+
+def test_prepare_target_worktree_keeps_partial_directory_when_registration_unknown(
+    tmp_path: Path,
+) -> None:
+    target = (tmp_path / "run/candidate").resolve()
+
+    def fake_run(command, **_kwargs):
+        if command[2] == "add":
+            target.mkdir(parents=True)
+            return subprocess.CompletedProcess(command, 2, stdout="", stderr="add failed")
+        if command[2] == "remove":
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(command, 1, stdout="", stderr="list failed")
+
+    with pytest.raises(BaseExceptionGroup) as caught:
+        profile.prepare_target_worktree(
+            tmp_path / "repository",
+            tmp_path / "run",
+            name="candidate",
+            revision=profile.CANDIDATE_SHA,
+            run_command=fake_run,
+        )
+
+    assert target.is_dir()
+    assert [str(error) for error in caught.value.exceptions] == [
+        "target_worktree_failed:candidate",
+        "target_worktree_registration_check_failed",
+        "target_worktree_unregister_failed:candidate",
+    ]
 
 
 def test_remove_target_worktree_only_removes_owned_fixed_target(tmp_path: Path) -> None:
@@ -2229,6 +2822,52 @@ def test_remove_target_worktree_only_removes_owned_fixed_target(tmp_path: Path) 
         )
 
 
+def test_remove_target_worktree_preserves_remove_and_registration_failures(
+    tmp_path: Path,
+) -> None:
+    run_root = tmp_path / "run"
+    (run_root / "candidate").mkdir(parents=True)
+
+    def fake_run(command, **_kwargs):
+        return subprocess.CompletedProcess(command, 1, stdout="", stderr="failed")
+
+    with pytest.raises(BaseExceptionGroup) as caught:
+        profile._remove_target_worktree(
+            tmp_path / "repository",
+            run_root,
+            name="candidate",
+            run_command=fake_run,
+        )
+
+    assert [str(error) for error in caught.value.exceptions] == [
+        "target_worktree_remove_failed:candidate",
+        "target_worktree_registration_check_failed",
+    ]
+    assert (run_root / "candidate").is_dir()
+
+
+def test_remove_target_worktree_cleans_registered_missing_directory(
+    tmp_path: Path,
+) -> None:
+    run_root = tmp_path / "run"
+    run_root.mkdir()
+    target = (run_root / "candidate").resolve()
+    calls: list[list[str]] = []
+
+    def fake_run(command, **_kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    profile._remove_target_worktree(
+        tmp_path / "repository",
+        run_root,
+        name="candidate",
+        run_command=fake_run,
+    )
+
+    assert calls == [["git", "worktree", "remove", "--force", str(target)]]
+
+
 def test_remove_target_worktrees_attempts_both_when_first_cleanup_fails(
     tmp_path: Path,
 ) -> None:
@@ -2239,6 +2878,13 @@ def test_remove_target_worktrees_attempts_both_when_first_cleanup_fails(
 
     def fake_run(command, **_kwargs):
         calls.append(command)
+        if command == ["git", "worktree", "list", "--porcelain"]:
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout=f"worktree {(run_root / 'candidate').resolve()}\n\n",
+                stderr="",
+            )
         return subprocess.CompletedProcess(
             command,
             1 if command[-1].endswith("candidate") else 0,
@@ -2246,7 +2892,7 @@ def test_remove_target_worktrees_attempts_both_when_first_cleanup_fails(
             stderr="busy",
         )
 
-    with pytest.raises(RuntimeError, match="target_worktree_cleanup_failed"):
+    with pytest.raises(RuntimeError, match="target_worktree_unregister_failed:candidate"):
         profile._remove_target_worktrees(
             tmp_path / "repository",
             run_root,
@@ -2254,10 +2900,8 @@ def test_remove_target_worktrees_attempts_both_when_first_cleanup_fails(
             run_command=fake_run,
         )
 
-    assert [Path(command[-1]).name for command in calls] == [
-        "candidate",
-        "control",
-    ]
+    removed_names = [Path(command[-1]).name for command in calls if command[2] == "remove"]
+    assert removed_names == ["candidate", "control"]
 
 
 def _write_fingerprint_tree(root: Path, *, candidate: bool) -> None:
@@ -2464,6 +3108,43 @@ def test_generate_corpus_is_deterministic_and_uses_content_digest(tmp_path: Path
     assert first_result["content_tree_digest"] == profile.content_tree_digest(first)
     (second / "corpus/0001.bin").write_bytes(b"changed")
     assert first_result["content_tree_digest"] != profile.content_tree_digest(second)
+
+
+def test_workspace_runtime_close_attempts_and_preserves_all_owned_cleanup() -> None:
+    closed: list[str] = []
+
+    def fail(label: str):
+        def action(*_args, **_kwargs):
+            closed.append(label)
+            raise RuntimeError(f"{label}-failed")
+
+        return action
+
+    runtime = profile.WorkspaceRuntime(
+        workspace_id="fixture",
+        workspace_root=Path("workspace"),
+        shadow_root=Path("shadow"),
+        database=SimpleNamespace(close=fail("database-close")),
+        registry=None,
+        binding=None,
+        consent_service=SimpleNamespace(shutdown=fail("consent-shutdown")),
+        review_state="enabled",
+        review_ready=True,
+        control_plane=None,
+        local_provider=None,
+        hub=None,
+        gate=None,
+        permission_definition_hash="d" * 64,
+    )
+
+    with pytest.raises(BaseExceptionGroup) as caught:
+        runtime.close()
+
+    assert closed == ["consent-shutdown", "database-close"]
+    assert [str(error) for error in caught.value.exceptions] == [
+        "consent-shutdown-failed",
+        "database-close-failed",
+    ]
 
 
 def test_prepare_workspace_runtime_disabled_has_rw_allow_without_shadow(
