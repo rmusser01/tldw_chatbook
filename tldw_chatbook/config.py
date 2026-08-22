@@ -1496,6 +1496,10 @@ def _load_settings_uncached(force_reload: bool = False) -> Dict:
     final_chat_defaults_cli = get_toml_section("chat_defaults")
     final_character_defaults_cli = get_toml_section("character_defaults")
     final_notes_settings_cli = get_toml_section("notes")
+    # (task 11, spec §9.1/AC 40) The [chunking] table -- the config tier of
+    # the ingest template resolution order (``[chunking] default_template``).
+    # Distinct from the legacy CamelCase "Chunking" server section above.
+    final_chunking_settings_cli = get_toml_section("chunking")
     final_image_generation_settings_cli = get_toml_section("image_generation")
     final_video_generation_settings_cli = get_toml_section("video_generation")
     # F-E fix: the first-run wizard's own state (setup_started/setup_completed)
@@ -1762,6 +1766,7 @@ def _load_settings_uncached(force_reload: bool = False) -> Dict:
         "chat_defaults": final_chat_defaults_cli,
         "character_defaults": final_character_defaults_cli,
         "notes": final_notes_settings_cli,  # For notes auto-save settings
+        "chunking": final_chunking_settings_cli,  # Template default for ingest (§9.1)
         "console": final_console_settings_cli,  # For Console behavior settings
         "first_run": final_first_run_settings_cli,  # Wizard setup_started/setup_completed flags
         "image_generation": final_image_generation_settings_cli,  # For Image_Generation/config.py loader
@@ -4229,6 +4234,18 @@ fts_top_k = 10
 vector_top_k = 10
 web_vector_top_k = 10
 llm_context_document_limit = 10
+
+# ==========================================================
+# Chunking Template Configuration
+# ==========================================================
+[chunking]
+# Default chunking template for imports that did not pick one in the
+# Library ingest form. Empty (the default) means plain chunk options
+# (method/size/overlap) -- exactly today's behavior. The name must match
+# a live template row in the media DB (RAG Admin: chunking templates);
+# an unresolvable name fails the import with a named error rather than
+# silently falling back to different chunking.
+default_template = ""
 
 
 # --- Model Capabilities Configuration ---

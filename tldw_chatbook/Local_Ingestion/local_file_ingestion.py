@@ -6,10 +6,11 @@ This module provides functions to process and store various file types (PDFs, do
 e-books, etc.) without going through the UI, leveraging existing processing capabilities.
 """
 
+import json
 import math
 import time
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import datetime, timezone
 from numbers import Real
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Union
@@ -969,10 +970,24 @@ def parse_local_file_for_ingest(
     # re-injections a no-op; ``setdefault`` preserves any user-changed
     # value the builder kept, which is the other half of the ruling.
     ingest_template = chunk_options.get("template")
+    # (task 11, spec §9.2 tail / AC 38) The template NAME is captured here
+    # -- before any branch can consume the dict -- because the persist seam
+    # needs it to fill the ``chunking_template``/``chunking_params`` columns
+    # and ``Media.chunking_config``. It cannot read it back off
+    # ``payload["chunk_options"]`` there: the pdf/document/ebook branches
+    # hand the dict to ``improved_chunking_process``, which POPS the
+    # ``template`` key (its documented contract), so by persist time the
+    # key's presence depends on which branch ran. The resolved dict's
+    # ``name`` is authoritative (``resolve_template`` sets it from the row's
+    # UNIQUE column).
+    ingest_template_name = ""
     if isinstance(ingest_template, dict):
         from ..Chunking.template_runtime import materialize_template_chunk_options
 
         materialize_template_chunk_options(chunk_options, ingest_template)
+        template_name_value = ingest_template.get("name")
+        if isinstance(template_name_value, str):
+            ingest_template_name = template_name_value.strip()
 
     # Prepare common parameters
     common_params = {
@@ -1663,6 +1678,12 @@ def parse_local_file_for_ingest(
             "transcription_model": result.get("transcription_model"),
             "transcription_provenance": result.get("transcription_provenance"),
         }
+        # (task 11, AC 38) Travel ticket for the persist seam: which named
+        # template governed this parse (empty/absent = plain options). See
+        # the capture comment at the materialization site for why this is a
+        # dedicated key rather than re-reading chunk_options["template"].
+        if ingest_template_name:
+            payload["chunking_template"] = ingest_template_name
         # (task-3301) Analysis was requested but the job-option builder
         # found no callable provider: carry the reason through so the
         # queue's done row can say "analysis skipped: ..." instead of the
@@ -1756,6 +1777,98 @@ def _reject_empty_extraction(payload: Dict[str, Any], file_type: str) -> None:
     )
 
 
+def _effective_chunk_params(chunk_options: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """The flat chunk-stage parameters a template/persist run was governed by.
+
+    Draws ``method`` / ``size`` / ``overlap`` out of the (post-materialization)
+    chunk options, preferring the ``max_size`` spelling the template contract
+    uses but storing the ``size`` spelling the flat chunk contract carries.
+    Absent keys are omitted, never ``None`` -- the same present-but-``None``
+    rule the template chunk contract itself follows.
+    """
+    opts = chunk_options if isinstance(chunk_options, dict) else {}
+    params: Dict[str, Any] = {}
+    if isinstance(opts.get("method"), str) and opts["method"]:
+        params["method"] = opts["method"]
+    size = opts.get("max_size", opts.get("size"))
+    if size is not None:
+        params["size"] = size
+    if opts.get("overlap") is not None:
+        params["overlap"] = opts["overlap"]
+    return params
+
+
+def _persist_chunking_template_columns(
+    media_db: MediaDatabase,
+    media_id: int,
+    template_name: str,
+    chunk_options: Optional[Dict[str, Any]],
+) -> None:
+    """Record which template chunked ``media_id`` (task 11, spec §9.2 / AC 38).
+
+    Fills, in ONE transaction at the single Library ingest writer seam:
+
+    * ``UnvectorizedMediaChunks.chunking_template`` / ``chunking_params`` --
+      the columns migration v1->v2 added and nothing had ever written,
+      alongside the ``chunk_engine_version`` stamp; and
+    * ``Media.chunking_config`` -- the per-media stored choice the re-chunk
+      resolution order (§9.1) reads first.
+
+    The ``chunking_config`` JSON shape is dictated by BOTH existing readers
+    and must round-trip them:
+
+    * ``ChunkingTemplateLibrary.get_documents_using_template`` matches
+      ``chunking_config LIKE '%"template": "<name>"%'`` -- so the JSON MUST
+      keep ``json.dumps``' DEFAULT separators (``", "`` / ``": "``). A
+      compact-separator dump would satisfy the ``json_extract`` reader while
+      silently never matching the LIKE (a name that queries as unused).
+    * ``ChunkingTemplateLibrary.get_template_statistics`` groups by
+      ``json_extract(chunking_config, '$.template')`` -- so ``template`` must
+      be a TOP-LEVEL string key.
+
+    The column shape mirrors the dead ``MediaDetailsWidget`` writer's
+    (``template`` / ``chunk_size`` / ``chunk_overlap`` / ``method``) for
+    continuity with the only writer the JSON column has ever had.
+    """
+    params = _effective_chunk_params(chunk_options)
+    # Key order matters for the chunking_params string only in that tests
+    # pin the canonical spelling; the column is read as JSON, not matched.
+    chunking_params_json = json.dumps(params)
+    config: Dict[str, Any] = {"template": template_name}
+    if "method" in params:
+        config["method"] = params["method"]
+    if "size" in params:
+        config["chunk_size"] = params["size"]
+    if "overlap" in params:
+        config["chunk_overlap"] = params["overlap"]
+    # DEFAULT separators are load-bearing (see docstring) -- never pass
+    # ``separators=`` here.
+    chunking_config_json = json.dumps(config)
+    # Sync-validation triggers on both tables require version to increment
+    # by exactly 1 on UPDATE (and client_id/uuid to survive unchanged);
+    # ``version = version + 1`` satisfies that without reading the rows
+    # first. ``last_modified`` mirrors the DB layer's own UTC-ISO spelling.
+    # No sync-log event is written for this bump: the rows were INSERTed
+    # moments ago by this same writer thread with the template fields
+    # already riding the insert-time sync payloads (the chunk dicts are
+    # stamped before ``add_media_with_keywords``); the UPDATE fills the
+    # local columns the INSERT statement does not carry.
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+    with media_db.transaction() as conn:
+        conn.execute(
+            "UPDATE UnvectorizedMediaChunks "
+            "SET chunking_template = ?, chunking_params = ?, "
+            "last_modified = ?, version = version + 1 "
+            "WHERE media_id = ? AND deleted = 0",
+            (template_name, chunking_params_json, now, media_id),
+        )
+        conn.execute(
+            "UPDATE Media SET chunking_config = ?, last_modified = ?, "
+            "version = version + 1 WHERE id = ?",
+            (chunking_config_json, now, media_id),
+        )
+
+
 def persist_parsed_media(
     payload: Dict[str, Any],
     media_db: MediaDatabase,
@@ -1818,6 +1931,7 @@ def persist_parsed_media(
     """
     file_type = payload["file_type"]
     _reject_empty_extraction(payload, file_type)
+    template_name = str(payload.get("chunking_template") or "").strip()
     try:
         logger.debug(f"Storing {file_type} content in database...")
         # task-12 (spec §8): stamp every chunk with the chunking engine
@@ -1828,9 +1942,20 @@ def persist_parsed_media(
         # consumers); non-dict entries are skipped defensively -- the DB
         # writer already skips them, and pre-stamped chunks are not
         # overwritten (a future engine bump changes the value, not the rule).
+        # (task 11, spec §9.2 / AC 38) The template stamp rides the same
+        # setdefault pattern so the sync-event payload (which spreads the
+        # whole chunk dict) carries the same truth the columns do; the DB
+        # writer has no ``chunking_template``/``chunking_params`` columns in
+        # its INSERT, so the actual column fill is the UPDATE below.
+        chunking_params_json = json.dumps(
+            _effective_chunk_params(payload.get("chunk_options"))
+        )
         for chunk in payload.get("chunks") or []:
             if isinstance(chunk, dict):
                 chunk.setdefault("chunk_engine_version", ENGINE_VERSION)
+                if template_name:
+                    chunk.setdefault("chunking_template", template_name)
+                    chunk.setdefault("chunking_params", chunking_params_json)
         # Note: add_media_with_keywords returns tuple: (media_id, media_uuid, message)
         def _persist() -> tuple[Optional[int], Optional[str], str]:
             return media_db.add_media_with_keywords(
@@ -1855,6 +1980,15 @@ def persist_parsed_media(
         else:
             with suppress_ingestion_indexing():
                 media_id, media_uuid, message = _persist()
+        # (task 11, spec §9.2 tail / AC 38) Persisted chunks carry the
+        # template columns alongside the engine-version stamp, and the
+        # Media row records the per-media stored choice for the re-chunk
+        # resolution order. Only when a template was actually used: the
+        # no-template path writes nothing (byte-identical to today).
+        if template_name and media_id is not None:
+            _persist_chunking_template_columns(
+                media_db, media_id, template_name, payload.get("chunk_options")
+            )
         logger.info(f"Successfully ingested {file_type} file with media_id: {media_id}")
         return media_id, media_uuid, message
     except Exception as e:

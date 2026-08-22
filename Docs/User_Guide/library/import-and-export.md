@@ -180,6 +180,7 @@ and the warning never quotes the rejected data.
 | Web "What to fetch" on a local import | The multi-page methods (sitemap / url_level / recursive_scraping) run only on the server. Selecting one while importing on this machine shows "Multi-page fetch runs on the server — this local import fetches one page." right under the control. |
 | "Analyze after import" | Runs an LLM summary of each imported item, stored alongside it (visible from the media viewer's analysis panel). The whole `[analysis_defaults]` section travels — provider, model, temperature, top_p, min_p, max_tokens, system_prompt — so the stored analysis matches what the Media analysis panel would produce under the same config; the key comes from `[api_settings.<provider>]` or the provider's usual environment variable. When the option is on but no provider is callable — including a configured provider the analysis pipeline cannot dispatch ("provider 'X' is not supported for ingest analysis") — a line above Start says so ("Analyze after import is on, but … Imports will run without analysis.") and finished rows read "Imported name — analysis skipped: <reason>". If the analysis call itself fails (provider error), the import still succeeds and the row reads "Imported name — analysis failed: <reason>" instead of silently storing nothing (or worse, the error text). |
 | "Chunk content" | Governs every type: off means no retrieval chunks are stored at all; on chunks plain text / documents / HTML too (not just PDF/e-book/audio), using "Chunk size" and "Chunk overlap" — both measured in words. (The import forms expose the handful of methods that make sense per type; the chunking engine underneath implements the full roster — words, sentences, paragraphs, tokens, semantic, json, xml, ebook_chapters, rolling_summarize, fixed_size, code, code_ast, structure_aware — for anything that calls it directly, including `ebook_chapters` for PDFs and documents.) |
+| "Chunking template" | In the Import behavior fold, above the queue: pick one of your chunking templates (the live rows from RAG Admin) instead of setting method/size/overlap by hand. Defaults to "None (manual settings)" — today's behavior exactly. A picked template's chunking scheme beats the form's untouched size/overlap defaults; only a value you explicitly changed in the form overrides the template. The choice is remembered per imported item (it drives a later re-chunk of that item), and the import form's list loads from the database when the canvas is shown — newly created or renamed templates appear the next time you enter the Import view. The control is hidden in server mode (a server import never carries a template), and it is inert with "Chunk content" off ("— needs Chunk content on"). A template that no longer resolves (deleted or renamed after the choice was made) fails that import row with a named error instead of silently chunking a different way. |
 | "Encoding" | How plain text and HTML files are decoded: "Auto-detect (UTF-8 first)" (strict UTF-8, then detection) or an explicit UTF-8 / UTF-16 / "Latin-1 (ISO-8859-1)" / "Windows-1252 (Western)". A wrong explicit choice shows up as replacement characters rather than failing the import. |
 | "Install verified Parakeet v2 INT8 (630.6 MiB)…" | In the Audio & video fold, enabled when the provider is parakeet-onnx (under any other provider the button is inert and its label ends "— needs the parakeet-onnx provider"). Opens a consent dialog listing Source, Revision, License, Download size, and Destination, ending "All four files are checked against pinned sizes and SHA-256 digests before the bundle becomes usable." Buttons: "Cancel" / "Install". |
 | "Start import" | Queues everything the pre-check found. If "⚠" tooling warnings are outstanding, the first press doesn't submit — the line beside Start turns into "⚠ Press Start again to import anyway — N files will fail without more tooling." (or "… N files may fail." when the missing package is only an optional enhancement) and a second press (or a second Enter in the path field) starts the import. See "Consent for risky imports" below. Start is unavailable, with the reason stated at the button, when the selection has nothing importable: "This folder is empty — there's nothing to import. Choose a folder with files, or a single file." for a folder that really is empty, "Nothing in this folder could be scanned — 2 entries were skipped: folder imports pass over hidden files, links, and folders they can't read. Import a file directly, or choose another folder." for a folder whose entries the scan passed over, and "Nothing in this selection can be imported — N unsupported files." when nothing in it has a handler. Importing on the server adds one more: a selection this machine reads perfectly well but that backend will not take at all (a folder of nothing but images) gates Start with "Nothing in this selection can be sent to the server — 3 files unsupported by the server. Switch to importing on this machine, or choose video, audio, document, PDF or e-book files." — a different sentence from the one above, because the files are fine and the destination is the problem. None of these leaves a failed row behind: the import never starts. |
@@ -320,6 +321,20 @@ and `defusedxml` now ship as core dependencies, so the `tokens` chunking
 method counts real tokens (and says plainly to install tiktoken if it's
 missing, instead of silently approximating by word count) and the `xml`
 method parses safely by default.
+
+If you use a **chunking template** (the "Chunking template" picker above),
+two more things apply. First, a default can be set for every import that
+didn't pick one: `[chunking] default_template = "<name>"` in config.toml
+(empty by default — no default template). Second, a **chunk's offsets can
+be relative to preprocessed text**: most templates run a preprocessing step
+(normalizing whitespace, cleaning markdown) before chunking, so a chunk's
+start/end positions count into that transformed text, not necessarily the
+stored source. Each chunk says which basis it used in its metadata
+(`offset_basis`: "source" when nothing rewrote the text, otherwise the
+preprocessing operation named) — consumers that need source-relative spans
+(navigation, citations) can check that one key instead of guessing. The
+item's stored chunk rows also record which template chunked them, alongside
+the engine-version stamp.
 
 Deep dives: [TRANSCRIPTION.md](../../Features/TRANSCRIPTION.md) covers the
 audio/video transcription providers and their optional extras. See also
@@ -683,3 +698,17 @@ report are Phase C — pinned by
 `Tests/Chunking/test_callsite_characterization.py`. The import form's own
 controls are unchanged; only what the chunking layer does underneath
 moved.*
+
+*Verified against feat/chunking-template-parity — 2026-08-21
+(chunking-template-parity task 11: the Import behavior fold gains the
+"Chunking template" picker documented above — default "None (manual
+settings)", hidden in server mode, markup-escaped labels, populated from
+the template store off the mount path; `[chunking] default_template` ships
+in the config template; template imports fill the `chunking_template` /
+`chunking_params` chunk columns and `Media.chunking_config` in a shape both
+existing readers (`get_documents_using_template`'s LIKE,
+`get_template_statistics`' `json_extract`) round-trip; and the
+offset-basis caveat for template chunks is the paragraph above. Pinned by
+`Tests/UI/test_library_ingest_template_picker.py`,
+`Tests/Local_Ingestion/test_ingest_template_persistence.py`, and
+`Tests/test_config_chunking_defaults.py`.)*

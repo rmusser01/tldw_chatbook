@@ -3398,7 +3398,18 @@ async def test_every_select_renders_human_labels_never_raw_tokens():
                 _, group, name = widget_id.split("-", 2)
                 seen_groups.add(group)
                 cap = get_capabilities(group)
-                field = next(f for f in cap.fields if f.name == name)
+                field = next(
+                    (f for f in cap.fields if f.name == name),
+                    None,
+                )
+                if field is None:
+                    # (task 11) The chunking-template picker is an opt-*
+                    # select with NO schema field: its values ARE the
+                    # user-facing template names (not internal tokens), and
+                    # its default option is the spec §9.3 None label. The
+                    # token-label rule below is a schema-select contract.
+                    assert name == "chunk_template" and group == "generic"
+                    continue
                 rendered = [
                     (str(prompt), value)
                     for prompt, value in select._options
