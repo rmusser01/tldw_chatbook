@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import json
+from pathlib import Path
 
 from scripts import check_backlog_task_ids as backlog_ids
 from scripts import check_persistent_diagnostic_inventory as inventory
@@ -149,6 +150,48 @@ def test_a_changed_sink_entry_shows_both_sides():
     assert "changed sinks" in report
     assert "configure_application_logging" in report
     assert "some_other_scope" in report
+
+
+def test_sink_multiplicity_increase_is_named_with_counts():
+    """Qodo PR #1947 finding 1: `_sink_lines()` used to collapse each file's
+    sink list into a dict keyed by (scope, kind, method, digest), so a SECOND,
+    byte-identical sink call (the same handler installed twice) shared the
+    same key and silently vanished from the comparison -- a pure multiplicity
+    drift, the highest-consequence class this artifact tracks, reported as no
+    change at all (or worse, as "only serialization differs"). The fix must
+    name the count explicitly, not merely say something changed."""
+    committed = _inventory()
+    rebuilt = copy.deepcopy(committed)
+    duplicate_sink = dict(rebuilt["persistent_sink_topology"][0]["sinks"][0])
+    rebuilt["persistent_sink_topology"][0]["sinks"].append(duplicate_sink)
+
+    report = _diff(committed, rebuilt)
+
+    assert "only its serialization differs" not in report
+    assert "changed sinks" in report
+    assert "tldw_chatbook/Logging_Config.py (1 -> 2 entries)" in report
+    assert (
+        "configure_application_logging: loguru_sink.add (cccccccccccccccc): "
+        "1 -> 2  (+1)" in report
+    )
+
+
+def test_sink_multiplicity_decrease_is_named_too():
+    """The symmetric case: deleting one of two identical sink calls must also
+    be named with the old/new count, not silently absorbed."""
+    committed = _inventory()
+    duplicate_sink = dict(committed["persistent_sink_topology"][0]["sinks"][0])
+    committed["persistent_sink_topology"][0]["sinks"].append(duplicate_sink)
+    rebuilt = copy.deepcopy(committed)
+    del rebuilt["persistent_sink_topology"][0]["sinks"][1]
+
+    report = _diff(committed, rebuilt)
+
+    assert "tldw_chatbook/Logging_Config.py (2 -> 1 entries)" in report
+    assert (
+        "configure_application_logging: loguru_sink.add (cccccccccccccccc): "
+        "2 -> 1  (-1)" in report
+    )
 
 
 def test_metadata_drift_is_not_silent():
@@ -310,3 +353,54 @@ def test_unique_task_ids_pass(tmp_path):
     (tmp_path / "task-2 - B.md").write_text("id: TASK-2\n", encoding="utf-8")
     assert backlog_ids.duplicate_ids(tmp_path) == ({}, {})
     assert backlog_ids.main(["--tasks-dir", str(tmp_path)]) == 0
+
+
+def test_repo_relative_accepts_a_relative_path_inside_the_repo():
+    assert inventory._repo_relative(
+        "scripts/check_backlog_task_ids.py"
+    ) == Path("scripts/check_backlog_task_ids.py")
+
+
+def test_repo_relative_accepts_an_absolute_path_inside_the_repo():
+    absolute = inventory.REPO_ROOT / "scripts" / "check_backlog_task_ids.py"
+    assert inventory._repo_relative(str(absolute)) == Path(
+        "scripts/check_backlog_task_ids.py"
+    )
+
+
+def test_repo_relative_rejects_an_absolute_path_outside_the_repo():
+    """Qodo PR #1947 finding 4: this used to be an unguarded
+    `Path.relative_to(REPO_ROOT)` that raised `ValueError` for exactly this
+    input -- an absolute path outside the repo, a routine CLI slip."""
+    assert inventory._repo_relative("/etc/hosts") is None
+
+
+def test_repo_relative_rejects_relative_traversal_out_of_the_repo():
+    """Finding 3: a relative path containing enough `..` segments to walk out
+    of REPO_ROOT must not be read silently."""
+    outside = "/".join([".."] * 12) + "/etc/hosts"
+    assert inventory._repo_relative(outside) is None
+
+
+def test_statements_on_an_absolute_path_outside_the_repo_does_not_crash(capsys):
+    """The bug: `_run_statements()` called `path.relative_to(REPO_ROOT)` with
+    no exception handling, so this exact input killed the recovery tool the
+    failure report tells developers to run with a traceback instead of an
+    error message."""
+    assert inventory._run_statements(["/etc/hosts"], None) == 1
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.err
+    assert "does not resolve inside the repository" in captured.err
+
+
+def test_statements_on_relative_traversal_does_not_read_outside_the_repo(capsys):
+    outside = "/".join([".."] * 12) + "/etc/hosts"
+    assert inventory._run_statements([outside], None) == 1
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.err
+    assert "does not resolve inside the repository" in captured.err
+
+
+def test_statements_still_works_for_a_real_in_repo_path():
+    """The fix must not regress the ordinary case: a relative in-repo path."""
+    assert inventory._run_statements(["scripts/check_backlog_task_ids.py"], None) == 0

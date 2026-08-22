@@ -39,6 +39,7 @@ import json
 import os
 import sys
 import warnings
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -393,9 +394,13 @@ def _sink_key(entry: dict[str, Any]) -> tuple[str, str, str, str]:
     )
 
 
-def _describe_sink(entry: dict[str, Any]) -> str:
-    scope, kind, method, digest = _sink_key(entry)
+def _describe_sink_key(key: tuple[str, str, str, str]) -> str:
+    scope, kind, method, digest = key
     return f"{scope or '<module>'}: {kind}.{method} ({digest})"
+
+
+def _describe_sink(entry: dict[str, Any]) -> str:
+    return _describe_sink_key(_sink_key(entry))
 
 
 def _owner_rows(inventory: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -481,18 +486,37 @@ def _sink_lines(committed: dict[str, Any], rebuilt: dict[str, Any]) -> list[str]
         for entry in new[path]:
             lines.append(f"      + {_describe_sink(entry)}")
     for path in sorted(set(old) & set(new)):
-        before = {_sink_key(entry): entry for entry in old[path]}
-        after = {_sink_key(entry): entry for entry in new[path]}
-        if before == after:
+        # Counted (multiset), not a dict keyed by _sink_key: two identical
+        # sink calls (e.g. the same FileHandler installed twice) share a key,
+        # and a plain `{key: entry}` collapse silently drops the duplicate --
+        # a drift that is purely a MULTIPLICITY change then reports as no
+        # change at all, or worse, as "only serialization differs" (Qodo PR
+        # #1947 finding 1). Counter equality compares counts, so it is the
+        # correct notion of "unchanged" here.
+        before_counts = Counter(_sink_key(entry) for entry in old[path])
+        after_counts = Counter(_sink_key(entry) for entry in new[path])
+        if before_counts == after_counts:
             continue
         lines.append(
             f"  ~ changed sinks: {path} "
-            f"({len(before)} -> {len(after)} entries)"
+            f"({len(old[path])} -> {len(new[path])} entries)"
         )
-        for key in sorted(set(before) - set(after)):
-            lines.append(f"      - {_describe_sink(before[key])}")
-        for key in sorted(set(after) - set(before)):
-            lines.append(f"      + {_describe_sink(after[key])}")
+        for key in sorted(set(before_counts) | set(after_counts)):
+            before_n, after_n = before_counts[key], after_counts[key]
+            if before_n == after_n:
+                continue
+            description = _describe_sink_key(key)
+            if before_n == 0:
+                suffix = f"  (new, x{after_n})" if after_n > 1 else ""
+                lines.append(f"      + {description}{suffix}")
+            elif after_n == 0:
+                suffix = f"  (removed, was x{before_n})" if before_n > 1 else ""
+                lines.append(f"      - {description}{suffix}")
+            else:
+                lines.append(
+                    f"      ~ {description}: "
+                    f"{before_n} -> {after_n}  ({after_n - before_n:+d})"
+                )
     return lines
 
 
@@ -726,12 +750,50 @@ def _source_at(revision: str, path: str) -> str | None:
     )
 
 
+def _repo_relative(raw: str) -> Path | None:
+    """Resolve a ``--statements PATH`` argument to a path inside ``REPO_ROOT``.
+
+    Accepts a path given relative to ``REPO_ROOT`` or an absolute path that
+    already resolves inside it; returns ``None`` -- never raises -- for
+    anything else, so the caller can print a clean error instead of two
+    failure modes Qodo flagged on PR #1947: an absolute path outside the repo
+    used to blow up with an unhandled ``ValueError`` from
+    ``Path.relative_to`` (finding 4), and a relative path containing ``..``
+    could walk out of ``REPO_ROOT`` and read an arbitrary file on disk with
+    no indication it had done so (finding 3).
+
+    This deliberately does not call ``Utils/path_validation.py``: that module
+    imports ``Metrics.metrics_logger``, which imports ``psutil`` -- a
+    third-party package. Every derived-artifact checker is stdlib-only and
+    install-free by design (see the module docstring and
+    ``.github/workflows/derived-artifacts.yml``'s ~90s, no-dependency-install
+    budget), so pulling in the app's path-validation helper here would
+    silently break that contract for a script that only ever reads files
+    inside this repo for review purposes -- and it is invoked with no
+    external/CI-controlled input in the first place (`--statements` is never
+    populated from a workflow; both call sites run the checker bare).
+    """
+    candidate = Path(raw)
+    full = candidate if candidate.is_absolute() else REPO_ROOT / candidate
+    try:
+        resolved = full.resolve()
+        return resolved.relative_to(REPO_ROOT.resolve())
+    except ValueError:
+        return None
+
+
 def _run_statements(paths: list[str], since: str | None) -> int:
     reports: list[str] = []
     for raw in paths:
-        path = Path(raw)
-        if path.is_absolute():
-            path = path.relative_to(REPO_ROOT)
+        path = _repo_relative(raw)
+        if path is None:
+            print(
+                f"cannot use {raw!r}: it does not resolve inside the repository "
+                f"({REPO_ROOT}); pass a path relative to the repo root or an "
+                "absolute path under it",
+                file=sys.stderr,
+            )
+            return 1
         text = path.as_posix()
         try:
             current = (REPO_ROOT / path).read_text(encoding="utf-8")

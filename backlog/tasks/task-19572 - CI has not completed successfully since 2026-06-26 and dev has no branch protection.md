@@ -323,6 +323,120 @@ Fixed in this commit:
 - Repo-wide `pytest --collect-only -q`: **54,651 tests collected, no collection
   errors**.
 
+## Qodo review fixes, PR #1947 (2026-08-22)
+
+Four findings on the PR: two bugs, two "Unvalidated" rule-violation flags. Fixed
+both bugs; the two rule-violation flags are dispositioned below rather than
+complied with reflexively, with evidence for each call.
+
+**Finding 1 (High, Bug) — sink diff dropped duplicates. Fixed.**
+`_sink_lines()` compared each file's persistent-sink entries by building
+`{_sink_key(entry): entry for entry in ...}` -- a plain dict -- so two
+byte-identical sink calls (the same handler installed twice) collapsed to one
+key and a pure **multiplicity** drift, the highest-consequence class this
+artifact exists to catch, could report as no change, or worse. Reproduced
+against the real tree, not synthetic data only: planted an exact duplicate of
+`Logging_Config.py`'s `loguru_logger.add(...)` call inside
+`configure_application_logging`. Against the **pre-fix** code the top-level
+check still failed (the raw JSON differed), but `render_diff()`'s own sink
+section produced nothing, so the report read: *"the committed inventory's
+CONTENT matches the rebuild; only its serialization differs ... Run --write to
+re-normalize it"* -- an actively misleading verdict that would have trained a
+reviewer to blindly `--write` past a real second sink. Fixed by comparing
+`collections.Counter(_sink_key(entry) for entry in ...)` (multiset semantics:
+`Counter.__eq__` compares counts) and reporting the delta explicitly per key
+(`before_n -> after_n (+delta)`, or `+`/`-` with a `(new, x2)` / `(removed, was
+x2)` suffix at the edges). Against the **post-fix** code the same mutation now
+reports:
+```
+persistent sink topology:
+  ~ changed sinks: tldw_chatbook/Logging_Config.py (7 -> 8 entries)
+      ~ configure_application_logging: loguru_sink.add (9fce73a232622dc7): 1 -> 2  (+1)
+```
+Mutation restored via Edit; `git diff -- tldw_chatbook/Logging_Config.py` is
+empty and `--diff` is back to "no drift" against the unmodified tree. Two new
+synthetic tests pin both directions (`test_sink_multiplicity_increase_is_
+named_with_counts`, `test_sink_multiplicity_decrease_is_named_too`), asserting
+the exact count string is present and that "only its serialization differs"
+does **not** appear when there is real drift.
+
+**Finding 4 (Bug, Reliability) — `--statements` crashed on an out-of-repo
+absolute path. Fixed.** `_run_statements()` called
+`path.relative_to(REPO_ROOT)` unconditionally for an absolute `PATH`, so
+`--statements /etc/hosts` raised an unhandled `ValueError` -- a traceback from
+exactly the recovery tool the failure report tells a developer to run.
+
+**Finding 3 (Rule violation, "Unvalidated `--statements` paths read") — fixed
+on the merits, not with the literally suggested implementation.** Qodo's
+suggested fix (`path_validation.py`) is inappropriate for this file:
+`Utils/path_validation.py` imports `Metrics.metrics_logger`, which imports
+`psutil` (third-party) -- pulling it into a script this task's own AC requires
+to stay stdlib-only and install-free would break that contract for every
+future run of `derived-artifacts.yml`. The underlying concern (a relative `..`
+path silently reading outside the repo) is real and is fixed directly: new
+helper `_repo_relative()` resolves the candidate against `REPO_ROOT`, and
+returns `None` -- never raises -- for anything that resolves outside it,
+covering both Finding 3 (relative traversal) and Finding 4 (absolute
+out-of-repo path) with one code path. `_run_statements()` now prints a clear
+one-line stderr message and returns 1 instead of crashing or reading outside
+the repo. Verified: `--statements /etc/hosts` and
+`--statements ../../../../../../etc/hosts` both now print `cannot use ...: it
+does not resolve inside the repository ...` and exit 1 with **no traceback**;
+ordinary relative and absolute in-repo paths are unaffected. Checked the file
+for the same unguarded pattern elsewhere (per the task instructions): the two
+other `relative_to(REPO_ROOT)` call sites (`build_inventory()`'s file walk and
+the `--write`/missing-file messages against the hardcoded `INVENTORY_PATH`)
+never take CLI input, so they were not at risk. Six new tests cover
+`_repo_relative()` (accept relative-in-repo, accept absolute-in-repo, reject
+absolute-outside, reject relative-traversal) and `_run_statements()` (clean
+error with no `Traceback` string for both outside-repo shapes; ordinary in-repo
+path still returns 0).
+
+**Finding 2 (Rule violation, "Unvalidated `--tasks-dir` used") — declined, with
+evidence; not applied.** Same `path_validation.py` objection as Finding 3
+applies (stdlib-only contract), but there is a second, independent reason this
+one specific "fix" would be actively wrong here: `Tests/Architecture/
+test_derived_artifact_checkers.py:305,312` (pre-existing, this branch did not
+add them) deliberately pass a pytest `tmp_path` fixture -- outside `REPO_ROOT`
+by construction -- as `--tasks-dir` to exercise the checker in isolation.
+Confining `--tasks-dir` to the repo root, as the suggested fix would do, breaks
+that test and the flag's own stated purpose (`--tasks-dir` exists precisely so
+callers, including tests, can point it elsewhere). Separately: neither
+workflow that runs this script (`backlog-guard.yml`, `derived-artifacts.yml`)
+ever passes `--tasks-dir` -- both invoke the script bare -- so there is no
+CI-reachable attacker-controlled input reaching this flag at all; the only
+caller is a developer's own CLI argument in their own shell, already reading
+files at their own OS-level permission, which is not a privilege boundary a
+"traversal" can cross. No code-behavior change; added a code comment at the
+argument definition recording this reasoning so a future reviewer (human or
+Qodo) does not treat the omission as an oversight.
+
+**Verified after all four dispositions:**
+- `scripts/preflight.sh` (`GITHUB_ACTIONS=true`) — all four checkers still
+  green: CSS bundle + 4 sheets; profile-owned path census (48/18/46, unchanged);
+  diagnostic inventory (`no drift: the committed inventory matches the rebuild
+  exactly` -- **the pin still reproduces byte-for-byte; nothing was
+  regenerated**); backlog ids (2375 files, no duplicates).
+- `Tests/Architecture/test_derived_artifact_checkers.py`: **27 passed** (the
+  prior 18 plus 9 new: 2 sink-multiplicity, 4 `_repo_relative`, 3
+  `_run_statements`).
+- The five guard suites named in the review brief together: `test_derived_
+  artifact_checkers.py` **27**, `test_derived_artifacts_workflow.py` **7**,
+  `test_persistent_diagnostic_inventory.py` **65**, `test_profile_owned_path_
+  inventory.py` **15**, `test_css_bundle_sync_guard.py` **4** — **118 passed**
+  (109 pre-existing + 9 new).
+- Repo-wide `pytest --collect-only -q`: **54,660 tests collected** (54,651 +
+  9 new), **no collection errors**.
+- `git status` after all restores: only `Tests/Architecture/test_derived_
+  artifact_checkers.py`, `scripts/check_persistent_diagnostic_inventory.py`,
+  and `scripts/check_backlog_task_ids.py` modified -- nothing under
+  `tldw_chatbook/` or `Docs/security/production-diagnostic-inventory.json`.
+
+Commit: `fix(guard): address Qodo review findings on PR #1947 (task-19572)`.
+Status stays **In Progress**: the owner-gated ACs (branch protection, required
+check, main's cron) are unaffected by this fix-up and remain open per "Owner
+gate" below.
+
 ## Owner gate — what an implementer cannot ship in a PR
 
 **1. Branch protection + the required check (ACs 2, 3).** Requires repo-admin

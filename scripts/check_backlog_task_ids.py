@@ -99,6 +99,26 @@ def main(argv: list[str] | None = None) -> int:
         int: ``0`` when every id is unique, ``1`` otherwise (with ``::error::``
             annotations naming each colliding id and its files).
     """
+    # NOTE (Qodo PR #1947 finding 2, "Unvalidated --tasks-dir used"): this is
+    # deliberately NOT routed through Utils/path_validation.py. Three reasons:
+    #   1. path_validation.py imports Metrics.metrics_logger, which imports
+    #      psutil -- a third-party package. This script (and the other
+    #      derived-artifact checkers) are stdlib-only and install-free by
+    #      design (TASK-19572's own AC; see the docstring above and
+    #      .github/workflows/derived-artifacts.yml), so importing it would
+    #      quietly break that contract.
+    #   2. Neither CI workflow that runs this script ever passes --tasks-dir
+    #      (backlog-guard.yml and derived-artifacts.yml both invoke it bare),
+    #      so there is no CI-reachable, externally-controlled input here --
+    #      only a developer's own CLI argument, typed in their own shell,
+    #      reading files they already have OS-level access to. There is no
+    #      privilege boundary for a "traversal" to cross.
+    #   3. --tasks-dir is intentionally usable with a directory outside the
+    #      repo: Tests/Architecture/test_derived_artifact_checkers.py passes
+    #      a pytest `tmp_path` fixture (outside REPO_ROOT) to exercise this
+    #      function in isolation. Confining it to the repo root would break
+    #      that test and the flag's own purpose.
+    # The operations here (`glob`, `read_text`) are read-only regardless.
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--tasks-dir",
