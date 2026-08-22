@@ -20,6 +20,10 @@ from tldw_chatbook.Sync_Interop.domain_adapters import (
     WorkspacesSyncAdapter,
 )
 from tldw_chatbook.Sync_Interop.domain_adapters.notes_m1 import NotesM1SyncAdapter
+from tldw_chatbook.Sync_Interop.domain_adapters._helpers import (
+    decrypt_envelope_payload,
+)
+from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
 
 if TYPE_CHECKING:
     from tldw_chatbook.tldw_api import SyncV2Envelope
@@ -75,8 +79,29 @@ class SyncEnvelopeApplier:
         local_store = self.local_store
         chat_store = None
         if envelope.domain == "chat":
-            chat_store = _ContinuationValidatingChatStore(local_store)
+            try:
+                chat_store = _ContinuationValidatingChatStore(
+                    local_store,
+                    claimed_payload_hash=envelope.payload_hash,
+                    payload=(
+                        decrypt_envelope_payload(
+                            envelope, dataset_key=self.dataset_key
+                        )
+                        if envelope.operation != "delete"
+                        else None
+                    ),
+                )
+            except _InvalidChatMessagePayload:
+                return self._record_conflict(
+                    envelope,
+                    conflict_type="invalid_chat_message_payload",
+                    message="The chat message payload is invalid.",
+                )
             local_store = chat_store
+            if chat_store.payload_hash is not None:
+                envelope = envelope.model_copy(
+                    update={"payload_hash": chat_store.payload_hash}
+                )
         try:
             result = adapter.apply(
                 envelope,
@@ -120,9 +145,24 @@ class SyncEnvelopeApplier:
 class _ContinuationValidatingChatStore:
     """Validate private Chat payload data before forwarding one whole record."""
 
-    def __init__(self, store: Any) -> None:
+    def __init__(
+        self,
+        store: Any,
+        *,
+        claimed_payload_hash: str,
+        payload: dict[str, Any] | None,
+    ) -> None:
         self.store = store
         self.warning: str | None = None
+        if (
+            payload is not None
+            and canonical_payload_hash(payload) != claimed_payload_hash
+        ):
+            raise _InvalidChatMessagePayload
+        self.payload = self._normalize_payload(payload) if payload is not None else None
+        self.payload_hash = (
+            canonical_payload_hash(self.payload) if self.payload is not None else None
+        )
 
     def get_chat_message_hash(self, stable_key: str) -> str | None:
         reader = getattr(self.store, "get_chat_message_hash", None)
@@ -139,6 +179,14 @@ class _ContinuationValidatingChatStore:
         payload: dict[str, Any],
         payload_hash: str,
     ) -> None:
+        if self.payload is None or self.payload_hash is None:
+            raise _InvalidChatMessagePayload
+        writer = getattr(self.store, "append_chat_message", None)
+        if callable(writer):
+            writer(stable_key, self.payload, self.payload_hash)
+
+    def _normalize_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Return the one canonical stored/hash payload for old and new envelopes."""
         payload = dict(payload)
         payload.setdefault("assistant_generation_state", None)
         allowed_keys = {"assistant_generation_state", "content", "role"}
@@ -192,9 +240,7 @@ class _ContinuationValidatingChatStore:
             state.value if state is not None else None
         )
 
-        writer = getattr(self.store, "append_chat_message", None)
-        if callable(writer):
-            writer(stable_key, payload, payload_hash)
+        return payload
 
 
 class _InvalidChatMessagePayload(Exception):

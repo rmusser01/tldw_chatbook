@@ -274,6 +274,7 @@ def test_export_omits_image_blobs_and_message_keys(db) -> None:
         "timestamp",
         "parent_message_id",
         "usage_json",
+        "assistant_generation_state",
     }
     assert "image_data" not in payload["messages"][0]
 

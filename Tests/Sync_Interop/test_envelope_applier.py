@@ -10,6 +10,7 @@ from tldw_chatbook.Sync_Interop.crypto import (
 )
 from tldw_chatbook.Sync_Interop.envelope_applier import SyncEnvelopeApplier
 from tldw_chatbook.Sync_Interop.envelope_builder import SyncEnvelopeBuilder
+from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
 
 
 class RecordingLocalStore:
@@ -215,6 +216,48 @@ def test_chat_applier_allows_versioned_message_update() -> None:
         "role": "assistant",
     }
     assert store.conflicts == []
+
+
+def test_legacy_missing_state_apply_uses_upgraded_canonical_hash_for_update() -> None:
+    dataset_key = generate_dataset_key()
+    builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1", device_id="device-1", dataset_key=dataset_key
+    )
+    store = RecordingLocalStore()
+    applier = SyncEnvelopeApplier(dataset_key=dataset_key, local_store=store)
+    legacy_payload = {"content": "legacy", "role": "assistant"}
+    normalized_payload = {
+        "assistant_generation_state": None,
+        "content": "legacy",
+        "role": "assistant",
+    }
+    legacy = builder.build_chat_message(
+        conversation_id="conversation-1",
+        message_id="message-1",
+        role="assistant",
+        content="legacy",
+    ).model_copy(
+        update={
+            "payload_ciphertext": encrypt_sync_payload(
+                legacy_payload, key=dataset_key
+            ).model_dump_json(),
+            "payload_hash": canonical_payload_hash(legacy_payload),
+        }
+    )
+    normalized_hash = canonical_payload_hash(normalized_payload)
+    upgraded = builder.build_chat_message(
+        conversation_id="conversation-1",
+        message_id="message-1",
+        role="assistant",
+        content="upgraded",
+        base_version=normalized_hash,
+    )
+
+    assert applier.apply(legacy) == {"status": "applied"}
+    assert store.chat_hashes["conversation-1:message-1"] == normalized_hash
+    assert applier.apply(legacy) == {"status": "noop"}
+    assert applier.apply(upgraded) == {"status": "applied"}
+    assert store.chat_messages["conversation-1:message-1"]["content"] == "upgraded"
 
 
 def test_chat_applier_attaches_valid_continuation_to_exact_stable_message() -> None:

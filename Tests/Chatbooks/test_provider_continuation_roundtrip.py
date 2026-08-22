@@ -400,6 +400,115 @@ def test_v2_import_remaps_complete_graph_before_attaching_private_owner(
     assert destination.get_conversation_active_leaf(imported_id) == selected["id"]
 
 
+@pytest.mark.parametrize(
+    ("checkpoint", "persisted_state", "expected_state"),
+    [
+        (json.loads(_checkpoint_json()), "complete", "continuation_active"),
+        (
+            _kimi_family_private("same visible answer"),
+            "complete",
+            "complete",
+        ),
+    ],
+    ids=["active-authoritative", "complete-preserved"],
+)
+def test_v2_import_uses_actual_preserved_continuation_state(
+    tmp_path: Path,
+    chachanotes_template_db: Path,
+    checkpoint: dict,
+    persisted_state: str,
+    expected_state: str,
+) -> None:
+    source_paths, conversation_id, _ = _source_graph(
+        tmp_path, chachanotes_template_db
+    )
+    export_path = _create_export(tmp_path, source_paths, conversation_id)
+
+    def mutate(conversation: dict) -> None:
+        selected = next(
+            message
+            for message in conversation["messages"]
+            if message["role"] == "assistant" and message["is_selected_variant"]
+        )
+        selected["_private"] = {"provider_continuation": checkpoint}
+        selected["assistant_generation_state"] = persisted_state
+
+    rewritten = _rewrite_export(
+        export_path,
+        tmp_path / f"{expected_state}.chatbook.zip",
+        mutate_conversation=mutate,
+    )
+    destination_path = tmp_path / f"destination-{expected_state}.db"
+    shutil.copyfile(chachanotes_template_db, destination_path)
+    importer = ChatbookImporter({"ChaChaNotes": str(destination_path)})
+    importer.temp_dir = tmp_path / f"imports-{expected_state}"
+    importer.temp_dir.mkdir()
+
+    success, message = importer.import_chatbook(
+        rewritten,
+        conflict_resolution=ConflictResolution.RENAME,
+        import_status=ImportStatus(),
+    )
+
+    assert success, message
+    destination = CharactersRAGDB(str(destination_path), "assertion")
+    try:
+        imported = destination.execute_query(
+            "SELECT assistant_generation_state, provider_continuation_json "
+            "FROM messages WHERE provider_continuation_json IS NOT NULL"
+        ).fetchone()
+        assert imported is not None
+        assert imported["assistant_generation_state"] == expected_state
+        assert (
+            parse_provider_continuation_json(
+                imported["provider_continuation_json"]
+            ).state
+            == checkpoint["state"]
+        )
+    finally:
+        destination.close_connection()
+
+
+def test_v2_import_rejects_continuation_active_with_complete_checkpoint(
+    tmp_path: Path, chachanotes_template_db: Path
+) -> None:
+    source_paths, conversation_id, _ = _source_graph(
+        tmp_path, chachanotes_template_db
+    )
+    export_path = _create_export(tmp_path, source_paths, conversation_id)
+
+    def mutate(conversation: dict) -> None:
+        selected = next(
+            message
+            for message in conversation["messages"]
+            if message["role"] == "assistant" and message["is_selected_variant"]
+        )
+        selected["_private"] = {
+            "provider_continuation": _kimi_family_private("same visible answer")
+        }
+        selected["assistant_generation_state"] = "continuation_active"
+
+    rewritten = _rewrite_export(
+        export_path,
+        tmp_path / "incompatible-state.chatbook.zip",
+        mutate_conversation=mutate,
+    )
+    destination_path = tmp_path / "destination-incompatible.db"
+    shutil.copyfile(chachanotes_template_db, destination_path)
+    importer = ChatbookImporter({"ChaChaNotes": str(destination_path)})
+    importer.temp_dir = tmp_path / "imports-incompatible"
+    importer.temp_dir.mkdir()
+
+    success, message = importer.import_chatbook(
+        rewritten,
+        conflict_resolution=ConflictResolution.RENAME,
+        import_status=ImportStatus(),
+    )
+
+    assert success is False
+    assert message == "Failed to import any items from chatbook"
+
+
 def _private_mutations() -> list:
     def payload(conversation):
         return next(

@@ -13,6 +13,7 @@ from tldw_chatbook.Chat.provider_continuation import (
     parse_provider_continuation_json,
 )
 from tldw_chatbook.Chat.assistant_generation_state import (
+    AssistantGenerationState,
     normalize_assistant_generation_state,
 )
 from tldw_chatbook.Sync_Interop.crypto import encrypt_sync_payload
@@ -242,6 +243,11 @@ class SyncEnvelopeBuilder:
             )
         except ValueError:
             raise ValueError("Invalid assistant generation state.") from None
+        if (
+            normalized_state is AssistantGenerationState.CONTINUATION_ACTIVE
+            and (checkpoint is None or checkpoint.state != "active")
+        ):
+            raise ValueError("Invalid assistant generation state.")
         payload = {
             "assistant_generation_state": normalized_state.value
             if normalized_state is not None

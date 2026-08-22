@@ -108,14 +108,26 @@ def test_chat_message_carries_each_closed_assistant_generation_state(
         message_id="message-1",
         role="assistant",
         content="",
+        provider_continuation_json=(
+            _provider_continuation_json()
+            if state is AssistantGenerationState.CONTINUATION_ACTIVE
+            else None
+        ),
         assistant_generation_state=state.value,
     )
 
-    assert decrypt_sync_payload_json(envelope.payload_ciphertext, dataset_key) == {
+    expected = {
         "assistant_generation_state": state.value,
         "content": "",
         "role": "assistant",
     }
+    if state is AssistantGenerationState.CONTINUATION_ACTIVE:
+        expected["provider_continuation_json"] = json.dumps(
+            json.loads(_provider_continuation_json()), separators=(",", ":")
+        )
+    assert decrypt_sync_payload_json(envelope.payload_ciphertext, dataset_key) == (
+        expected
+    )
 
 
 @pytest.mark.parametrize(
@@ -156,6 +168,23 @@ def test_chat_message_rejects_malformed_state_even_with_active_continuation() ->
             content="visible",
             provider_continuation_json=_provider_continuation_json(),
             assistant_generation_state="unknown",
+        )
+
+
+def test_chat_message_rejects_continuation_active_without_active_continuation() -> None:
+    builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1",
+        device_id="device-1",
+        dataset_key=generate_dataset_key(),
+    )
+
+    with pytest.raises(ValueError, match="assistant generation state"):
+        builder.build_chat_message(
+            conversation_id="conversation-1",
+            message_id="message-1",
+            role="assistant",
+            content="",
+            assistant_generation_state="continuation_active",
         )
 
 

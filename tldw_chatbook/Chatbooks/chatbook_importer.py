@@ -31,6 +31,7 @@ from ..Chat.citation_service_factory import (
 from ..Chat.provider_continuation import (
     ProviderContinuationCheckpoint,
     dump_provider_continuation_json,
+    parse_provider_continuation_json,
     read_provider_continuation_json,
 )
 from ..Chat.assistant_generation_state import (
@@ -949,6 +950,11 @@ class ChatbookImporter:
                                     msg_dict["provider_continuation_json"] = (
                                         continuation
                                     )
+                                continuation_checkpoint = (
+                                    parse_provider_continuation_json(continuation)
+                                    if continuation is not None
+                                    else None
+                                )
                                 raw_state = msg.get("assistant_generation_state")
                                 try:
                                     generation_state = (
@@ -956,7 +962,9 @@ class ChatbookImporter:
                                             role=msg["role"],
                                             raw_state=raw_state,
                                             has_valid_active_continuation=(
-                                                continuation is not None
+                                                continuation_checkpoint is not None
+                                                and continuation_checkpoint.state
+                                                == "active"
                                             ),
                                         )
                                     )
@@ -967,9 +975,13 @@ class ChatbookImporter:
                                 if (
                                     generation_state
                                     is AssistantGenerationState.CONTINUATION_ACTIVE
-                                    and continuation is None
                                 ):
-                                    generation_state = None
+                                    if continuation_checkpoint is None:
+                                        generation_state = None
+                                    elif continuation_checkpoint.state != "active":
+                                        raise ValueError(
+                                            "Invalid V2 conversation graph."
+                                        )
                                 msg_dict["assistant_generation_state"] = (
                                     generation_state.value
                                     if generation_state is not None
@@ -1144,6 +1156,13 @@ class ChatbookImporter:
                 )
             except ValueError:
                 raise ValueError("Invalid V2 conversation graph.") from None
+            if (
+                generation_state
+                is AssistantGenerationState.CONTINUATION_ACTIVE
+                and checkpoint is not None
+                and checkpoint.state != "active"
+            ):
+                raise ValueError("Invalid V2 conversation graph.")
             item["assistant_generation_state"] = (
                 generation_state.value if generation_state is not None else None
             )

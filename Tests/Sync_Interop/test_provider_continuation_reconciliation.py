@@ -29,6 +29,11 @@ def test_state_survives_create_update_delete_and_undelete_projection(
     db = CharactersRAGDB(tmp_path / f"lifecycle-{state}.db", client_id="source")
     try:
         conversation_id = db.add_conversation({"title": "Lifecycle"})
+        private_json = (
+            _provider_continuation_json()
+            if state == AssistantGenerationState.CONTINUATION_ACTIVE.value
+            else None
+        )
         message_id = db.add_message(
             {
                 "conversation_id": conversation_id,
@@ -36,6 +41,7 @@ def test_state_survives_create_update_delete_and_undelete_projection(
                 "role": "assistant",
                 "content": "visible",
                 "assistant_generation_state": state,
+                "provider_continuation_json": private_json,
             }
         )
         assert message_id is not None
@@ -51,13 +57,16 @@ def test_state_survives_create_update_delete_and_undelete_projection(
             "authenticated_principal_id": "user-a",
             "workspace_scope": "workspace-1",
         }
-        upsert_hash = canonical_payload_hash(
-            {
-                "assistant_generation_state": state,
-                "content": "visible",
-                "role": "assistant",
-            }
-        )
+        expected_payload = {
+            "assistant_generation_state": state,
+            "content": "visible",
+            "role": "assistant",
+        }
+        if private_json is not None:
+            expected_payload["provider_continuation_json"] = db.get_message_by_id(
+                str(message_id)
+            )["provider_continuation_json"]
+        upsert_hash = canonical_payload_hash(expected_payload)
 
         created = producer.reconcile_chat_message_intent(
             **scope,
@@ -111,13 +120,7 @@ def test_state_survives_create_update_delete_and_undelete_projection(
             for entry in entries
             if entry["envelope"]["operation"] == "upsert"
         ]
-        assert projected == [
-            {
-                "assistant_generation_state": state,
-                "content": "visible",
-                "role": "assistant",
-            }
-        ] * 3
+        assert projected == [expected_payload] * 3
         assert entries[2]["envelope"]["base_version"] == upsert_hash
     finally:
         db.close_connection()

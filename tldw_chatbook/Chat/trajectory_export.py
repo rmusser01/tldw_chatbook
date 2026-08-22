@@ -36,6 +36,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from .assistant_generation_state import normalize_assistant_generation_state
 from tldw_chatbook.Chat.trajectory import (
     TrajectoryRecord,
     TrajectorySnapshot,
@@ -1395,6 +1396,32 @@ def validate_trajectory_export(payload: Any) -> dict:
                 raise TrajectoryExportError(
                     f"Invalid trajectory export: 'messages[{index}].{key}' is missing"
                 )
+        sender = normalized_message["sender"]
+        raw_state = normalized_message["assistant_generation_state"]
+        if raw_state is not None and str(sender or "").lower() != "assistant":
+            raise TrajectoryExportError(
+                f"Invalid trajectory export: 'messages[{index}].assistant_generation_state' "
+                "is invalid for a non-assistant message"
+            )
+        try:
+            state = normalize_assistant_generation_state(
+                role=sender,
+                raw_state=raw_state,
+                has_valid_active_continuation=False,
+            )
+        except ValueError:
+            raise TrajectoryExportError(
+                f"Invalid trajectory export: 'messages[{index}].assistant_generation_state' "
+                "is invalid"
+            ) from None
+        if state is not None and state.value == "continuation_active":
+            raise TrajectoryExportError(
+                f"Invalid trajectory export: 'messages[{index}].assistant_generation_state' "
+                "requires an active continuation"
+            )
+        normalized_message["assistant_generation_state"] = (
+            state.value if state is not None else None
+        )
         normalized_messages.append(normalized_message)
 
     rows = _require(payload, "trajectory_rows", list, "trajectory_rows")

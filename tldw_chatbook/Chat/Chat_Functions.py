@@ -2714,8 +2714,7 @@ def generate_chat_history_content(
             private = read_provider_continuation_json(private_value)
             raw_state = item.get("assistant_generation_state")
             if raw_state is not None and item["role"] != "assistant":
-                logging.warning("Skipping invalid assistant generation state on export.")
-                raw_state = None
+                raise ValueError("Invalid assistant generation state on export.")
             try:
                 generation_state = normalize_assistant_generation_state(
                     role=item["role"],
@@ -2726,7 +2725,16 @@ def generate_chat_history_content(
                     ),
                 )
             except ValueError:
-                generation_state = None
+                raise ValueError("Invalid assistant generation state on export.") from None
+            if (
+                generation_state is not None
+                and generation_state.value == "continuation_active"
+                and (
+                    private.checkpoint is None
+                    or private.checkpoint.state != "active"
+                )
+            ):
+                raise ValueError("Invalid assistant generation state on export.")
             projected["assistant_generation_state"] = (
                 generation_state.value if generation_state is not None else None
             )

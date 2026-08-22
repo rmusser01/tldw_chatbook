@@ -25,12 +25,18 @@ def test_source_proof_and_sync_v2_outbox_carry_explicit_generation_state(
     db = CharactersRAGDB(tmp_path / f"state-{state}.db", client_id="sync-source")
     try:
         conversation_id = db.add_conversation({"title": "State proof"})
+        private_json = (
+            _provider_continuation_json()
+            if state == AssistantGenerationState.CONTINUATION_ACTIVE.value
+            else None
+        )
         message_id = db.add_message(
             {
                 "conversation_id": conversation_id,
                 "sender": "assistant",
                 "role": "assistant",
                 "content": "visible answer",
+                "provider_continuation_json": private_json,
                 "assistant_generation_state": state,
             }
         )
@@ -40,6 +46,10 @@ def test_source_proof_and_sync_v2_outbox_carry_explicit_generation_state(
             "content": "visible answer",
             "role": "assistant",
         }
+        if private_json is not None:
+            payload["provider_continuation_json"] = dump_provider_continuation_json(
+                parse_provider_continuation_json(private_json)
+            )
         payload_hash = canonical_payload_hash(payload)
         source = db.read_committed_chat_sync_intent(
             message_id=str(message_id),
@@ -169,6 +179,141 @@ def test_source_proof_rejects_malformed_wrong_role_and_mismatched_state(
                 message_version=1,
                 payload_hash=payload_hash,
             ) is None
+    finally:
+        db.close_connection()
+
+
+def test_source_proof_rejects_illegal_nonassistant_persisted_state(tmp_path) -> None:
+    db = CharactersRAGDB(tmp_path / "bad-row-state.db", client_id="sync-source")
+    try:
+        conversation_id = db.add_conversation({"title": "Bad row state"})
+        message_id = db.add_message(
+            {
+                "conversation_id": conversation_id,
+                "sender": "user",
+                "role": "user",
+                "content": "visible",
+            }
+        )
+        assert message_id is not None
+        with db.transaction() as connection:
+            connection.execute("DROP TRIGGER messages_sync_update")
+            connection.execute(
+                "UPDATE messages SET assistant_generation_state = 'accepted' "
+                "WHERE id = ?",
+                (message_id,),
+            )
+
+        payload_hash = canonical_payload_hash(
+            {
+                "assistant_generation_state": None,
+                "content": "visible",
+                "role": "user",
+            }
+        )
+        assert db.read_committed_chat_sync_intent(
+            message_id=str(message_id),
+            message_version=1,
+            payload_hash=payload_hash,
+        ) is None
+    finally:
+        db.close_connection()
+
+
+def test_source_proof_rejects_continuation_active_without_continuation(
+    tmp_path,
+) -> None:
+    db = CharactersRAGDB(tmp_path / "missing-continuation.db", client_id="sync-source")
+    try:
+        conversation_id = db.add_conversation({"title": "Missing continuation"})
+        message_id = db.add_message(
+            {
+                "conversation_id": conversation_id,
+                "sender": "assistant",
+                "role": "assistant",
+                "content": "",
+                "assistant_generation_state": "continuation_active",
+            }
+        )
+        assert message_id is not None
+        payload_hash = canonical_payload_hash(
+            {
+                "assistant_generation_state": "continuation_active",
+                "content": "",
+                "role": "assistant",
+            }
+        )
+
+        assert db.read_committed_chat_sync_intent(
+            message_id=str(message_id),
+            message_version=1,
+            payload_hash=payload_hash,
+        ) is None
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.parametrize(
+    ("role", "delete_state"),
+    [
+        ("assistant", "unknown"),
+        ("user", "accepted"),
+        ("assistant", "continuation_active"),
+    ],
+)
+def test_undelete_source_proof_rejects_invalid_prior_delete_state(
+    tmp_path, role: str, delete_state: str
+) -> None:
+    db = CharactersRAGDB(
+        tmp_path / f"bad-delete-{role}-{delete_state}.db", client_id="sync-source"
+    )
+    try:
+        conversation_id = db.add_conversation({"title": "Bad delete"})
+        message_id = db.add_message(
+            {
+                "conversation_id": conversation_id,
+                "sender": role,
+                "role": role,
+                "content": "visible",
+            }
+        )
+        assert message_id is not None
+        assert db.soft_delete_message(str(message_id), expected_version=1)
+        connection = db.get_connection()
+        deleted_payload = json.loads(
+            connection.execute(
+                "SELECT payload FROM sync_log WHERE entity = 'messages' "
+                "AND entity_id = ? AND version = 2",
+                (message_id,),
+            ).fetchone()["payload"]
+        )
+        deleted_payload["assistant_generation_state"] = delete_state
+        connection.execute(
+            "UPDATE sync_log SET payload = ? WHERE entity = 'messages' "
+            "AND entity_id = ? AND version = 2",
+            (json.dumps(deleted_payload), message_id),
+        )
+        connection.commit()
+        with db.transaction() as connection:
+            connection.execute("DROP TRIGGER messages_au")
+            connection.execute(
+                "UPDATE messages SET deleted = 0, version = 3, last_modified = ? "
+                "WHERE id = ?",
+                (db._get_current_utc_timestamp_iso(), message_id),
+            )
+        payload_hash = canonical_payload_hash(
+            {
+                "assistant_generation_state": None,
+                "content": "visible",
+                "role": role,
+            }
+        )
+
+        assert db.read_committed_chat_sync_intent(
+            message_id=str(message_id),
+            message_version=3,
+            payload_hash=payload_hash,
+        ) is None
     finally:
         db.close_connection()
 

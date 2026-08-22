@@ -12,9 +12,13 @@ from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
     export_conversation_to_text,
     load_chat_history_from_file_and_save_to_db,
 )
+from tldw_chatbook.Character_Chat.local_character_persona_service import (
+    LocalCharacterPersonaService,
+)
 from tldw_chatbook.Chat.Chat_Functions import generate_chat_history_content
 from tldw_chatbook.Chat.document_generator import DocumentGenerator
 from tldw_chatbook.Chat.trajectory_export import (
+    TrajectoryExportError,
     build_trajectory_export,
     validate_trajectory_export,
 )
@@ -65,7 +69,16 @@ def test_text_and_document_context_render_empty_assistant_state_copy(
 ) -> None:
     db = CharactersRAGDB(tmp_path / f"text-{state}.db", client_id="export-test")
     try:
-        conversation_id = db.add_conversation({"title": "Portable state"})
+        character_id = db.add_character_card({"name": "Portable assistant"})
+        assert character_id is not None
+        conversation_id = db.add_conversation(
+            {
+                "title": "Portable state",
+                "assistant_kind": "character",
+                "character_id": character_id,
+                "discovery_owner": "ccp_character",
+            }
+        )
         assert db.add_message(
             {
                 "conversation_id": conversation_id,
@@ -88,10 +101,15 @@ def test_text_and_document_context_render_empty_assistant_state_copy(
                 }
             ],
         )
+        markdown = LocalCharacterPersonaService(db).export_chat_history(
+            conversation_id, format="markdown"
+        )
 
         assert exported is not None
         assert expected in exported
         assert expected in context
+        assert isinstance(markdown, str)
+        assert expected in markdown
     finally:
         db.close_connection()
 
@@ -160,6 +178,19 @@ def test_active_path_import_accepts_legacy_missing_generation_state(tmp_path) ->
         db.close_connection()
 
 
+@pytest.mark.parametrize(
+    "message",
+    [
+        {"role": "assistant", "content": "visible", "assistant_generation_state": "unknown"},
+        {"role": "user", "content": "visible", "assistant_generation_state": "accepted"},
+    ],
+    ids=["malformed", "wrong-role"],
+)
+def test_active_json_export_rejects_invalid_generation_state(message: dict) -> None:
+    with pytest.raises(ValueError, match="assistant generation state"):
+        generate_chat_history_content([message], None, None, None)
+
+
 def test_json_export_normalizes_active_continuation_over_stale_state(tmp_path) -> None:
     db = CharactersRAGDB(tmp_path / "active-authority.db", client_id="export-test")
     try:
@@ -217,5 +248,36 @@ def test_trajectory_projection_round_trips_generation_state_without_checkpoint(
             "dispatch_started"
         )
         assert "console_dispatch_checkpoints" not in json.dumps(payload)
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.parametrize(
+    ("sender", "state"),
+    [("assistant", "unknown"), ("user", "accepted")],
+    ids=["malformed", "wrong-role"],
+)
+def test_trajectory_import_rejects_invalid_generation_state(
+    tmp_path, sender: str, state: str
+) -> None:
+    db = CharactersRAGDB(
+        tmp_path / f"trajectory-invalid-{sender}.db", client_id="trajectory-test"
+    )
+    try:
+        conversation_id = db.add_conversation({"title": "Invalid trajectory"})
+        assert db.add_message(
+            {
+                "conversation_id": conversation_id,
+                "sender": "assistant",
+                "role": "assistant",
+                "content": "visible",
+            }
+        )
+        payload = build_trajectory_export(db, conversation_id)
+        payload["messages"][0]["sender"] = sender
+        payload["messages"][0]["assistant_generation_state"] = state
+
+        with pytest.raises(TrajectoryExportError):
+            validate_trajectory_export(payload)
     finally:
         db.close_connection()

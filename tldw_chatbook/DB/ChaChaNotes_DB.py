@@ -15100,8 +15100,11 @@ UPDATE db_schema_version
                     message_id=message_id,
                     conversation_id=row["conversation_id"],
                     role=row["role"],
+                    provider_continuation_json=row["provider_continuation_json"],
                     message_version=message_version,
                 )
+                if message_version > 1 and base_payload_hash is None:
+                    return None
             if row["deleted"] or row["operation"] not in {"create", "update"}:
                 return None
             intent_payload = _normalize_legacy_chat_sync_intent_payload(
@@ -15122,6 +15125,8 @@ UPDATE db_schema_version
             role = row["role"]
             content = row["content"]
             if type(role) is not str or type(content) is not str:
+                return None
+            if row["assistant_generation_state"] is not None and role != "assistant":
                 return None
             private_json = row["provider_continuation_json"]
             has_active_continuation = False
@@ -15146,6 +15151,16 @@ UPDATE db_schema_version
             if (
                 intent_payload["assistant_generation_state"] is not None
                 and role != "assistant"
+            ):
+                return None
+            if (
+                row_state is not None
+                and row_state.value == "continuation_active"
+                and not has_active_continuation
+            ) or (
+                intent_state is not None
+                and intent_state.value == "continuation_active"
+                and not has_active_continuation
             ):
                 return None
             expected_intent = {
@@ -15212,6 +15227,7 @@ UPDATE db_schema_version
         message_id: str,
         conversation_id: str,
         role: str,
+        provider_continuation_json: str | None,
         message_version: int,
     ) -> str | None:
         """Return the immediate prior committed whole-record hash, if provable."""
@@ -15250,6 +15266,33 @@ UPDATE db_schema_version
                 or delete_payload.get("deleted") != 1
             ):
                 return None
+            has_active_continuation = False
+            if provider_continuation_json is not None:
+                if role != "assistant" or type(provider_continuation_json) is not str:
+                    return None
+                checkpoint = parse_provider_continuation_json(
+                    provider_continuation_json
+                )
+                if (
+                    dump_provider_continuation_json(checkpoint)
+                    != provider_continuation_json
+                ):
+                    return None
+                has_active_continuation = checkpoint.state == "active"
+            raw_state = delete_payload["assistant_generation_state"]
+            if raw_state is not None and role != "assistant":
+                return None
+            delete_state = normalize_assistant_generation_state(
+                role=role,
+                raw_state=raw_state,
+                has_valid_active_continuation=has_active_continuation,
+            )
+            if (
+                delete_state is not None
+                and delete_state.value == "continuation_active"
+                and not has_active_continuation
+            ):
+                return None
             return canonical_payload_hash({"deleted": True})
         if operation not in {"create", "update"}:
             return None
@@ -15281,6 +15324,12 @@ UPDATE db_schema_version
             raw_state=payload["assistant_generation_state"],
             has_valid_active_continuation=has_active_continuation,
         )
+        if (
+            state is not None
+            and state.value == "continuation_active"
+            and not has_active_continuation
+        ):
+            return None
         base_payload = {
             "assistant_generation_state": state.value if state is not None else None,
             "content": payload["content"],
@@ -15394,6 +15443,16 @@ UPDATE db_schema_version
             if (
                 intent_payload["assistant_generation_state"] is not None
                 and role != "assistant"
+            ):
+                return None
+            if (
+                state is not None
+                and state.value == "continuation_active"
+                and not has_active_continuation
+            ) or (
+                intent_state is not None
+                and intent_state.value == "continuation_active"
+                and not has_active_continuation
             ):
                 return None
             expected_intent = {
@@ -15539,6 +15598,12 @@ UPDATE db_schema_version
                         raw_state=row["assistant_generation_state"],
                         has_valid_active_continuation=has_active_continuation,
                     )
+                    if (
+                        state is not None
+                        and state.value == "continuation_active"
+                        and not has_active_continuation
+                    ):
+                        continue
                     payload = {
                         "assistant_generation_state": state.value
                         if state is not None
