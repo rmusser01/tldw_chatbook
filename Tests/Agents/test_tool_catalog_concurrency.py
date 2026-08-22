@@ -51,6 +51,7 @@ def test_invoke_by_name_takes_exactly_one_catalog_snapshot():
 
     registry._ensure_catalog_cache = counting
 
+    assert snapshots == []  # nothing but invoke_by_name may be counted
     registry.invoke_by_name(name, {})
 
     assert len(snapshots) == 1  # pre-fix: 2

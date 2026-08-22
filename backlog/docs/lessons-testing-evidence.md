@@ -6307,3 +6307,51 @@ The mismatch first recurred in TASK-19579 and then made the Skills import flow
 look broken because the expected Skills row was absent. Choose the factory whose
 profile posture matches the destination contract; do not redefine a truthful
 fresh-profile factory merely to satisfy returning-user tests.
+
+## A red guard protects nothing, and `raising=False` is how a stale monkeypatch hides (TASK-19569, 2026-08-22)
+
+**What happened.** Three guards had been red on `dev` for weeks. None of them
+was red because the thing it guards was broken:
+
+- `Tests/Agents/test_tool_catalog_concurrency.py` asserted `2 == 1` on every
+  run since it installed its `_ensure_catalog_cache` counter and *then* called
+  `registry.list_catalog()` itself, counting its own setup call. Production was
+  correct the whole time. Hoisting one line made it green — and a mutation
+  restoring the historical two-snapshot `name -> id -> provider` shape in
+  `_owner_record_for_name` made it red again with the same `assert 2 == 1`. For
+  the whole period, a real TOCTOU guard could not detect its own regression.
+- Five `Tests/MCP/` watchlists tests patched
+  `local_server_tools.RuntimeSourceStateStore`, a name TASK-18609 had replaced
+  with an injected `load_default_runtime_source_state`. Four errored at the
+  monkeypatch line. **The other two passed `raising=False`** — so `monkeypatch`
+  cheerfully created a brand-new attribute nobody reads, the test fell through
+  to the real loader, and one of them *passed for an accidental reason* (the
+  real loader happens to return `"local"`, which is what the fake wanted).
+- Six `Tests/DB/test_core_sqlite_owner_privacy.py` failures were the only
+  honest reds in the set: a genuine product defect (a `from None` severing the
+  cause chain the privacy contract walks).
+
+**Two traps worth naming.** First, `monkeypatch.setattr(..., raising=False)` on
+a *seam* is never a convenience — it converts "this seam was renamed" from a
+loud error into a silent no-op, and the resulting green tells you nothing.
+Reserve it for genuinely-optional attributes; on an injection seam, let it
+raise.
+
+Second, mutation-testing a scrubbing guard has to hit the layer the guard
+actually watches. `test_real_watchlists_provider_scrubs_unexpected_failures`
+survived *three* separate leak mutations before biting, because the scrub is
+layered (service `_raise_unexpected` -> provider `ToolResult.error` -> gateway
+fixed-message mapping) and any one layer alone re-scrubs. The mutation that
+finally exposed a real hole was the smallest one: adding `detail=%s` to
+`WatchlistsToolService._raise_unexpected`'s `_LOGGER.error` leaked the sentinel
+into the captured log **and the test still passed** — it asserted against
+capsys and a loguru sink, and neither sees stdlib `logging` records. Its
+sibling in `test_local_server_tools.py` had asserted `sentinel not in
+caplog.text` all along. If a "no secrets leak" test names some output channels,
+check that it names the one the code under test actually writes to.
+
+**What to do.** When you inherit a red test, first establish *why* it is red:
+a defect in the product, a defect in the test, or a seam that moved. Only the
+first is a baseline you may carry. Then never leave a repaired guard at green —
+mutate the behaviour it protects and watch it red, at the layer that owns that
+behaviour, before you call it repaired.
