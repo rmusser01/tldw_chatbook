@@ -3015,6 +3015,17 @@ default_theme = "textual-dark"  # Default theme on startup ("textual-dark", "tex
 palette_theme_limit = 1  # Maximum number of themes to show in command palette (0 = show all)
 log_level = "INFO" # TUI Log Level: DEBUG, INFO, WARNING, ERROR, CRITICAL
 users_name = "default_user" # Default user name for the TUI
+# How long shutdown may take (Textual unmount + interpreter teardown) before a
+# hard exit is forced. Clamped to 1-300 seconds. A quiet exit measures ~0.6s,
+# so this deadline is never reached by a normal quit.
+# NOTE: it is enforced against healthy work too. A background job still
+# running when you quit -- media ingest, notes/character export, library
+# export, an embedding batch -- runs on a thread that cannot be interrupted.
+# If it is still going 120 seconds after you quit, the process is killed and
+# that job's database write is abandoned (not rolled back to a clean earlier
+# state -- simply lost). Raise this if you routinely quit while long jobs are
+# running; lower it only if you would rather lose such a write than wait.
+shutdown_grace_seconds = 120.0
 
 [console]
 collapse_large_pastes = true  # Display large pasted chunks compactly in Console composer

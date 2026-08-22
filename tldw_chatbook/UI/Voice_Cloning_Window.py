@@ -2,7 +2,7 @@
 # Description: Voice Cloning management window for multiple TTS backends
 #
 # Imports
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Set
 from pathlib import Path
 import asyncio
 from uuid import uuid4
@@ -175,6 +175,13 @@ class VoiceCloningWindow(DataTableClickSelectMixin, Vertical):
         self.selected_profile: Optional[str] = None
         self.profiles_data: List[Dict[str, Any]] = []
         self._loading = False
+        #: task-19561. The event loop holds only a WEAK reference to a task,
+        #: so the results of the bare `asyncio.create_task` calls the action
+        #: methods below make were collectable mid-flight -- a keypress could
+        #: start an import or a delete and have it vanish before it finished,
+        #: silently and unreproducibly. These strong references keep each one
+        #: alive until it completes; the done-callback discards it again.
+        self._action_tasks: Set[asyncio.Task[Any]] = set()
 
     def compose(self) -> ComposeResult:
         """Compose the Voice Cloning UI"""
@@ -696,27 +703,40 @@ Tags: {", ".join(profile["tags"]) if profile["tags"] else "None"}
         if window is not None:
             window.current_view = "playground"
 
+    def _spawn_action(self, coroutine: Any, name: str) -> "asyncio.Task[Any]":
+        """Start an action coroutine and hold a strong reference to it.
+
+        task-19561: every caller below used a bare `asyncio.create_task`,
+        whose result the event loop holds only weakly -- so a garbage
+        collection between the keypress and the first await could discard
+        the task outright. See `_action_tasks`.
+        """
+        task = asyncio.create_task(coroutine, name=name)
+        self._action_tasks.add(task)
+        task.add_done_callback(self._action_tasks.discard)
+        return task
+
     def action_new_profile(self) -> None:
         """Create new profile action"""
-        asyncio.create_task(self._create_new_profile())
+        self._spawn_action(self._create_new_profile(), "voice_cloning_new_profile")
 
     def action_delete_profile(self) -> None:
         """Delete profile action"""
         if self.selected_profile:
-            asyncio.create_task(self._delete_profile())
+            self._spawn_action(self._delete_profile(), "voice_cloning_delete_profile")
 
     def action_export_profile(self) -> None:
         """Export profile action"""
         if self.selected_profile:
-            asyncio.create_task(self._export_profile())
+            self._spawn_action(self._export_profile(), "voice_cloning_export_profile")
 
     def action_import_profile(self) -> None:
         """Import profile action"""
-        asyncio.create_task(self._import_profile())
+        self._spawn_action(self._import_profile(), "voice_cloning_import_profile")
 
     def action_test_voice(self) -> None:
         """Test voice action"""
-        asyncio.create_task(self._test_generate_voice())
+        self._spawn_action(self._test_generate_voice(), "voice_cloning_test_voice")
 
     def action_refresh(self) -> None:
         """Refresh profiles"""

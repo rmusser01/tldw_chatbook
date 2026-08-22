@@ -1463,6 +1463,7 @@ def fail_interrupted_audio(
     *,
     exclude: Collection[int] = (),
     exclude_scripts: Collection[int] = (),
+    max_row_id: int | None = None,
 ) -> int:
     """Fail every `generating` audio row as `interrupted`; return the count.
 
@@ -1516,6 +1517,15 @@ def fail_interrupted_audio(
             Defaults to `()`, so every caller that predates this fix is
             unchanged.
 
+        max_row_id: The highest row id this sweep may touch. The startup
+            reconcile passes the boundary it captured before this process
+            could insert anything (``Subscriptions/startup_reconcile.py``),
+            which is what stops it failing rows this process's own scheduler
+            created moments earlier (Qodo, PR #1972). ``None`` -- every
+            pre-existing, UI-gated caller -- is unbounded as before; those
+            callers protect live rows with the claim-registry ``exclude``
+            arguments above instead.
+
     Returns:
         How many rows were failed.
     """
@@ -1535,6 +1545,9 @@ def fail_interrupted_audio(
         placeholders = ",".join("?" for _ in exclude_scripts)
         sql += f" AND script_id NOT IN ({placeholders})"
         params.extend(exclude_scripts)
+    if max_row_id is not None:
+        sql += " AND id <= ?"
+        params.append(int(max_row_id))
 
     with db.transaction() as conn:
         count = conn.execute(sql, params).rowcount
