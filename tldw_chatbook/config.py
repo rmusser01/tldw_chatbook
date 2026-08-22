@@ -3016,8 +3016,12 @@ palette_theme_limit = 1  # Maximum number of themes to show in command palette (
 log_level = "INFO" # TUI Log Level: DEBUG, INFO, WARNING, ERROR, CRITICAL
 users_name = "default_user" # Default user name for the TUI
 # How long shutdown may take (Textual unmount + interpreter teardown) before a
-# hard exit is forced. Clamped to 1-300 seconds. A healthy exit is well under
-# a second; raise this only if a slow local disk makes a real shutdown longer.
+# hard exit is forced. Clamped to 1-300 seconds. A quiet exit measures ~0.6s.
+# NOTE: this deadline is enforced against healthy work too -- a background
+# thread job (media ingest, export, embedding batch) still running when you
+# quit cannot be interrupted, and if it outlives this value the process is
+# killed with that job's write abandoned. Raise it if you routinely quit
+# while long jobs are running.
 shutdown_grace_seconds = 20.0
 
 [console]

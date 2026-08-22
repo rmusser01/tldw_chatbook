@@ -12471,15 +12471,30 @@ class TldwCli(
             # to `None`. Nulling it is what made the situation worse, not
             # better: `asyncio.run`'s `Runner.close()` ends with `await
             # loop.shutdown_default_executor(THREAD_JOIN_TIMEOUT)`, which
-            # both marks the loop as executor-shut-down (so a stray late
-            # `run_in_executor` raises instead of silently spawning a fresh
-            # pool of unjoinable non-daemon threads) and JOINS the worker
-            # threads while the loop is still alive. With `_default_executor`
-            # set to `None` that coroutine returns immediately, and the very
-            # threads this block was trying to hurry along were instead left
-            # for `threading._shutdown()` to join with no bound at all.
+            # JOINS the worker threads while the loop is still alive. With
+            # `_default_executor` set to `None` that coroutine returns at its
+            # second line, and the very threads this block was trying to
+            # hurry along were instead left for `threading._shutdown()` to
+            # join with no bound at all. `run_worker(..., thread=True)` runs
+            # on that same default executor (Textual's `Worker._run_threaded`
+            # ends in `loop.run_in_executor(None, ...)`), so this is not a
+            # corner case.
+            #
+            # Precise about the other half, because it is easy to overclaim:
+            # `shutdown_default_executor` sets `_executor_shutdown_called`
+            # BEFORE its `if self._default_executor is None: return`, so the
+            # "a stray late `run_in_executor` raises" fence applied at the
+            # merge base too. What nulling actually cost was the join -- plus
+            # a window between this block and `Runner.close()` in which a late
+            # `run_in_executor` would build a brand-new pool (that one IS
+            # real, `BaseEventLoop.run_in_executor` creates one when
+            # `_default_executor` is None and the fence is not yet set).
+            #
             # Doing nothing here is the fix: the public, bounded shutdown
-            # runs a few milliseconds later, on its own.
+            # runs a few milliseconds later, on its own. Verified on CPython
+            # 3.12.11, where `constants.THREAD_JOIN_TIMEOUT` is 300s -- far
+            # looser than the exit watchdog armed at the top of this method,
+            # which is what actually bounds the wait.
 
             # Clean up any lingering subprocess
             for proc in (

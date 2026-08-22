@@ -193,3 +193,69 @@ through `_spawn_action`, which holds each in `_action_tasks` until it completes.
 `Tests/Watchlists/test_startup_reconcile.py` (new),
 `Tests/Scheduling/test_briefing_handler_shutdown.py` (new),
 `backlog/docs/lessons-testing-evidence.md`.
+
+## Independent Review (2026-08-22)
+
+Reproduced end to end against real instances (isolated `HOME`/`XDG`, throwaway
+DBs, every probe run as a child process with its own wall-clock kill).
+
+**Confirmed.** The SIGTERM born-red: at the merge base the process died 0.05 s
+after `SIGTERM` with no `App Unmounting`, no `app_stopping`, no `--- FINALLY
+block ---`, no `atexit`, and the in-flight transaction never committed
+(`rows=[]`); on this branch it dies in 3.2 s with every marker present and both
+statements committed. The `RuntimeError: cannot set daemon status of active
+thread` reproduced four times per exit at base, including on the thread holding
+the transaction. The startup sweep reconciled seeded `running`/`queued` runs and
+a `generating` briefing to `failed` on the next launch while leaving pre-existing
+`failed` history untouched. `asyncio.wait` is genuinely bounded where `wait_for`
+would hang: 3.00 s against a worker that swallows `CancelledError`, 0.50 s for
+`BriefingJobHandler.shutdown(timeout=0.5)`. The `claim_process_exit` gate holds:
+with a real `TldwCli` mounted under `run_test()`, `owns_process_exit` is False,
+our handler is not installed, no watchdog thread exists, and a real `SIGTERM`
+takes the default action. Gates: `Tests/App` + `Tests/Scheduling` +
+`Tests/Watchlists` 1190 passed; `Tests/Watchlists` + `Tests/Subscriptions`
+1547 passed / 1 skipped; `Tests/RuntimePolicy` 368 passed (1 failed at the merge
+base — the migration-audit doc, whose direction is right: the base has two
+research builder call sites and the doc claimed four).
+
+**Adjudicated.** The filed 3.00 s is *not* reproducible here. A quiet clean exit
+measures 0.64-0.70 s at the merge base and 0.60-0.61 s on this branch, with no
+non-daemon threads alive when the loop returns. The class of defect is real and
+is pinned by the measurement below instead.
+
+**Corrected.** `BaseEventLoop.shutdown_default_executor` sets
+`_executor_shutdown_called = True` *before* its `if self._default_executor is
+None: return`, so the "a stray late `run_in_executor` raises" fence applied at
+the merge base too. What nulling the attribute actually cost was the *join*
+(plus a real window between `on_unmount` and `Runner.close()` in which a late
+`run_in_executor` builds a fresh pool). Removing the block cannot hang an exit
+that previously returned: at base the same wait simply happened later and
+unbounded, in `threading._shutdown()`.
+
+**New finding (owner call, not fixed here).** The grace period is enforced
+against healthy work, not only against a wedged process. A clean quit
+(`app.exit()`, no signal) with one ordinary `run_worker(..., thread=True)`
+holding an open `BEGIN IMMEDIATE`:
+
+- merge base: died 28.8 s after quit, rc 0, both statements committed
+- this branch: died 20.1 s after quit, **rc 1, transaction abandoned**
+  (`Shutdown did not finish within the grace period (app unmount)`)
+
+Textual thread workers run on the loop's default executor and cannot be
+interrupted, so this is any long ingest/export/embedding batch running when the
+user quits. Under `SIGTERM` the branch is still strictly better (base abandoned
+the write at 0 s). The trade is the one the ACs ask for, but the default of 20 s
+and the silence of the outcome are an owner decision; the docstring claim that
+this is "not a deadline anything healthy races" was false and has been corrected,
+and `config.toml`'s comment now says plainly what is lost.
+
+**Fixed on this branch by the reviewer.** The monotonic arming rule was not
+actually enforced: `arm()` published `self._watchdog` under the lock but started
+the thread outside it, and the guard read `is_alive()` — False for a constructed
+-but-unstarted thread — so a laxer arm landing in that window relaxed a running
+bound (proven by widening the window; a 30 s arm replaced a live 0.5 s one). An
+`RLock` does not help, because signal handlers re-enter on the same thread. The
+guard is now keyed off an unexpired deadline and `thread.start()` moved inside
+the lock; `_watch` additionally retires itself on identity/`None` rather than on
+deadline arithmetic alone, so a `stand_down()` landing between its timeout and
+its check can no longer lose. Three regression tests added.

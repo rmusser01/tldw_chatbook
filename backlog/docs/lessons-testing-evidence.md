@@ -6565,3 +6565,36 @@ replaces itself with a tighter deadline, stand the superseded one down**: the
 first version left the old thread asleep on its original, longer deadline,
 which is a live timer nothing can cancel any more. That bug was found by the
 same real-app-mount test, not by any of the seven unit tests around it.
+
+## A timeout on shutdown is enforced against healthy work too (task-19561)
+
+Independent review of the same watchdog asked one question its own tests did
+not: *can this fire while the app is still doing something legitimate?* The
+answer was yes, and only a side-by-side live probe showed it. A clean quit
+(`app.exit()`, no signal) with one ordinary `run_worker(..., thread=True)`
+holding an open `BEGIN IMMEDIATE`:
+
+| | merge base | with the watchdog |
+|---|---|---|
+| 30 s worker, clean quit | died 28.8 s after quit, **rc 0**, both statements committed | died **20.1 s** after quit, **rc 1**, `[]` — transaction abandoned |
+
+The grace period is not only a stuck-process bound. Textual thread workers run
+on the loop's default executor and cannot be interrupted, so teardown really
+does wait for them — and a *healthy* one that outlives the deadline is
+`os._exit`ed exactly like a wedged one. The unit tests could not see this
+because they arm the watchdog against nothing; the quiet-exit measurement
+(0.6 s) could not see it either, because the whole point is that the
+pathological case is the one with live work in it.
+
+**Generalisable:** when you bound a shutdown, the acceptance evidence must
+include a run with legitimate long work still in flight, not just a quiet exit
+and a wedged thread. Write down which side of the trade you chose, in the
+config comment the user will read — not only in the module docstring.
+
+Second, smaller one from the same review: **`thread.is_alive()` is False for a
+constructed-but-unstarted thread**, so a guard of the shape "is a watchdog
+already running?" written as `self._thread is not None and
+self._thread.is_alive()` has a hole between publishing the thread and starting
+it. An `RLock` does not close it — signal handlers re-enter on the *same*
+thread and sail straight through. Key the guard off the state you actually
+care about (here: an unexpired deadline), not off thread liveness.

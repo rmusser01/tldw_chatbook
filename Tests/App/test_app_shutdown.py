@@ -146,6 +146,97 @@ def test_arming_tighter_replaces_the_running_watchdog(_isolated_shutdown_state):
     assert not [t for t in threading.enumerate() if t.name == "tldw-exit-watchdog"]
 
 
+def test_a_laxer_arm_cannot_slip_through_the_thread_start_window(
+    _isolated_shutdown_state,
+):
+    """The monotonic rule must hold while a watchdog is being started.
+
+    Independent review (task-19561): `arm()` published `self._watchdog` under
+    the lock but called `thread.start()` outside it, and the guard used to
+    read `is_alive()` -- False for a constructed-but-unstarted thread. A
+    second arm landing in that window was therefore let through *even with a
+    laxer deadline*, relaxing a bound that was already running. Every arm
+    site runs on the main thread, and a signal handler re-enters at a
+    bytecode boundary, so the window is reachable without extra threads;
+    `Thread.start` is patched here only to make it wide enough to hit
+    deterministically.
+    """
+    state = app_shutdown._STATE
+    real_start = threading.Thread.start
+    in_window = threading.Event()
+    release = threading.Event()
+
+    def stalling_start(self):
+        if self.name == "tldw-exit-watchdog" and not in_window.is_set():
+            in_window.set()
+            release.wait(5.0)
+        return real_start(self)
+
+    # The same-thread form of the window: a signal handler re-entering
+    # `arm()` while the first one is inside `Thread.start()`. An RLock does
+    # not stop this, so the guard itself has to.
+    assert state.arm(20.0, "first", 1) is True
+    assert state.arm(20.0, "reentrant", 143) is False
+    state.stand_down()
+
+    lax_result: list[bool] = []
+    threading.Thread.start = stalling_start
+    try:
+        tight = threading.Thread(target=lambda: state.arm(0.5, "tight", 7))
+        tight.start()
+        assert in_window.wait(5.0), "never reached the thread-start window"
+        # A laxer arm attempted from inside the window. Before the fix it saw
+        # `is_alive() == False` and was allowed through; now `arm()` is
+        # atomic, so it blocks on the lock and is then correctly refused.
+        lax = threading.Thread(
+            target=lambda: lax_result.append(state.arm(30.0, "lax", 1))
+        )
+        lax.start()
+        time.sleep(0.1)
+        release.set()
+        lax.join(5.0)
+        tight.join(5.0)
+        assert lax_result == [False], "a laxer arm replaced a running bound"
+        remaining = state._watchdog_deadline - time.monotonic()
+        assert remaining < 5.0, f"the 0.5s bound was relaxed to ~{remaining:.1f}s"
+    finally:
+        release.set()
+        threading.Thread.start = real_start
+
+
+def test_a_stood_down_watchdog_waking_at_its_deadline_does_not_hard_exit(
+    _isolated_shutdown_state,
+):
+    """`stand_down()` racing the deadline must still win.
+
+    `_watch` used to decide purely on `_watchdog_deadline > deadline`, which
+    a disarm cannot satisfy: it nulls the deadline. A disarm landing between
+    the timeout and the check therefore still ended in `os._exit`.
+    """
+    exits = _isolated_shutdown_state
+    state = app_shutdown._STATE
+    state.stand_down()
+    state._watchdog_deadline = None
+    # A watchdog waking up on an expired deadline with an unset event.
+    state._watch(time.monotonic() - 1.0, "stale", 9, threading.Event())
+    assert exits == []
+
+
+def test_a_superseded_watchdog_never_fires_even_on_a_tighter_replacement(
+    _isolated_shutdown_state,
+):
+    """Identity, not deadline arithmetic, is what retires a replaced thread."""
+    exits = _isolated_shutdown_state
+    state = app_shutdown._STATE
+    other = threading.Thread(target=lambda: None, name="tldw-exit-watchdog")
+    state._watchdog = other
+    # A TIGHTER replacement: the old `current > deadline` test does not fire
+    # for this, so only the identity check can retire us.
+    state._watchdog_deadline = time.monotonic() - 5.0
+    state._watch(time.monotonic() - 1.0, "superseded", 9, threading.Event())
+    assert exits == []
+
+
 # --- configuration ---------------------------------------------------------
 
 

@@ -72,8 +72,19 @@ __all__ = [
 
 #: How long the whole teardown -- Textual unmount, ``asyncio.run`` cleanup and
 #: interpreter finalization -- may take before the watchdog stops waiting.
-#: Generous on purpose: a measured normal exit is well under a second, so this
-#: is a stuck-process bound, not a deadline anything healthy races.
+#: A measured *quiet* exit is 0.60-0.70s, so this leaves ~30x headroom for
+#: the ordinary case.
+#:
+#: Be clear-eyed about what it is NOT, though: it is not only a stuck-process
+#: bound. `run_worker(..., thread=True)` runs on the loop's default executor
+#: and cannot be interrupted, so teardown genuinely waits for it -- and a
+#: *healthy* worker that outlives this deadline is hard-exited exactly like a
+#: wedged one. Measured on this branch: a clean quit with a 30s thread worker
+#: holding an open ``BEGIN IMMEDIATE`` died at 20.1s with the transaction
+#: abandoned (at the merge base the same run blocked 28.8s and committed).
+#: That is the accepted trade -- the alternative is the unbounded hang this
+#: task exists to remove -- but a deployment that routinely quits during long
+#: ingests/exports should raise ``[general] shutdown_grace_seconds``.
 DEFAULT_SHUTDOWN_GRACE_SECONDS = 20.0
 
 #: Clamp for the configured value. Below a second the watchdog would start
@@ -164,14 +175,22 @@ class _ShutdownState:
         that is already running, so the tightest arm during one teardown is
         the one that holds.
         """
-        deadline = time.monotonic() + seconds
+        now = time.monotonic()
+        deadline = now + seconds
         with self._lock:
-            if (
-                self._watchdog is not None
-                and self._watchdog.is_alive()
-                and self._watchdog_deadline is not None
-                and deadline >= self._watchdog_deadline
-            ):
+            # "A bound is already running" is the *deadline*, not the thread's
+            # `is_alive()`. Independent review (task-19561) found the
+            # `is_alive()` form breakable: it is False for a thread that has
+            # been constructed and published but not yet started, and a second
+            # arm can land in that window -- from another thread, or on this
+            # one, because a signal handler re-enters at a bytecode boundary
+            # and the lock is an RLock that re-entry sails straight through.
+            # A laxer arm slipping through there silently relaxed a bound that
+            # was already running (proven by widening the window). An expired
+            # deadline is correctly *not* a live bound, so re-arming after one
+            # elapsed still works.
+            existing = self._watchdog_deadline
+            if existing is not None and existing > now and deadline >= existing:
                 return False
             # A watchdog being replaced by a tighter one must be told to stop.
             # Leaving it asleep on its old, longer deadline leaves a live
@@ -194,9 +213,17 @@ class _ShutdownState:
                 daemon=True,
             )
             self._watchdog = thread
-        if superseded is not None:
-            superseded.set()
-        thread.start()
+            # Both of these stay INSIDE the lock, so one arm is atomic from
+            # any other thread's point of view: publishing the new watchdog,
+            # standing the old one down and starting the new one cannot be
+            # observed half-done. `thread.start()` used to sit outside the
+            # lock, which is what made the old `is_alive()` guard above
+            # breakable. Neither call can deadlock under the lock --
+            # `Event.set` takes only its own lock, and `_watch` does not touch
+            # `self._lock` until after its own deadline has elapsed.
+            if superseded is not None:
+                superseded.set()
+            thread.start()
         return True
 
     def stand_down(self) -> None:
@@ -222,7 +249,15 @@ class _ShutdownState:
             return
         with self._lock:
             current = self._watchdog_deadline
-        if current is not None and current > deadline:
+            still_current = self._watchdog is threading.current_thread()
+        if current is None or not still_current:
+            # Stood down (`stand_down()` nulls the deadline) or replaced by a
+            # later arm, in either case between our timeout and this check.
+            # The deadline comparison alone missed both: it only caught a
+            # replacement whose deadline was LATER than ours, so a disarm
+            # landing in that window still ended in a hard exit.
+            return
+        if current > deadline:
             # A tighter arm() replaced us while we slept; it owns the decision.
             return
         _report_hard_exit(reason)
