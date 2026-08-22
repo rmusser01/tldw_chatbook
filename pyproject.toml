@@ -294,6 +294,11 @@ dev = [
     "pytest-timeout",  # For handling hanging tests
     "pytest-xdist",  # Parallel test execution: pytest -n auto --dist loadscope
     "pytest-mock",  # Used throughout Tests/; was only in requirements-test.txt
+    # Tests/Agents/test_local_tool_provider.py imports Draft202012Validator at
+    # module level. It reached environments only TRANSITIVELY (chromadb,
+    # docling-core, mcp-unified -- all optional extras), so a plain
+    # `.[dev]` install could not collect that module at all.
+    "jsonschema",
     "pytest-cov",  # Coverage runs documented in Tests/README.md
     "textual-dev", # For Textual development tools
     "hypothesis",
