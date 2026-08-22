@@ -292,6 +292,8 @@ def test_real_run_log_omits_sensitive_tool_args_and_results(wired, monkeypatch):
         "meta:\n  chain_of_thought: private internal plan",
         "{reasoning: private internal plan}",
         "chain-of-thought = private internal plan",
+        "- reasoning: private internal plan",
+        "items:\n  - reasoning_content: private internal plan",
         "ghp_" + "a" * 36,
         "AKIA" + "A" * 16,
         "eyJabcdefghij.abcdefghij.abcdefghij",
@@ -313,6 +315,7 @@ def test_real_run_log_omits_sensitive_tool_args_and_results(wired, monkeypatch):
         "safe output: reasoning about three visible matches",
         "rendered HTML: <div>safe</div>",
         json.dumps({"value": "[" * 65}),
+        "ordinary - reasoning about visible output",
     )
     for value in safe_values:
         assert isinstance(on_record("tool_result", {"content": value}), int)

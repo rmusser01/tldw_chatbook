@@ -774,7 +774,7 @@ _CHAIN_OF_THOUGHT_RE = re.compile(
 )
 _THINK_TAG_RE = re.compile(r"<\s*/?\s*think(?:\s[^>]*)?>", re.IGNORECASE)
 _UNQUOTED_REASONING_FIELD_RE = re.compile(
-    r"(?:^\s*|[,{]\s*|\\?[\"']\s*)"
+    r"(?:^\s*|[,{]\s*|\\n\s*|\\?[\"']\s*)(?:-\s*)?"
     r"(?:reasoning|reasoning[\s_-]+content|chain[\s_-]+of[\s_-]+thought)"
     r"(?:\\?[\"'])?\s*[:=]",
     re.IGNORECASE | re.MULTILINE,
