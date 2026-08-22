@@ -6282,7 +6282,7 @@ but it is not concurrency or restart evidence until the edges are executed.
 
 ---
 
-## A package AST sweep can descend into an ignored nested virtualenv (TASK-19602, 2026-08-22)
+## A package AST sweep can descend into an ignored nested virtualenv (TASK-19906, 2026-08-22)
 
 While verifying the Remote Models redesign, the package-wide class-CSS
 consolidation test failed inside Textual's own `Widget` and `Toast` classes,

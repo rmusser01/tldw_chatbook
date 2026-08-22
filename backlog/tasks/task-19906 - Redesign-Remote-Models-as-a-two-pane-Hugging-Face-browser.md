@@ -1,5 +1,5 @@
 ---
-id: TASK-19602
+id: TASK-19906
 title: Redesign Remote Models as a two-pane Hugging Face browser
 status: Done
 assignee:
@@ -48,8 +48,15 @@ Reason: ADR-025 already governs managed remote acquisition, provenance, consent,
 - Kept candidate selection separate from acquisition and preserved the ADR-025 boundary: `RemoteView` posts only a frozen install intent; `LLMScreen` still owns managed preflight, consent, verification, and provisioning.
 - Added measured responsive behavior for the real Models/Lab body at 80 columns, normalized untrusted update timestamps, preserved keyboard focus across in-place pane updates, and restored validated selected-model context throughout preflight, consent, progress, and terminal outcomes after screen recomposition.
 - Hardened install startup so managed-service or credential-resolver construction failures remain sanitized and retryable instead of stranding disabled controls.
+- Centralized retained terminal-action values as named constants and added a static regression preventing repeated magic action literals.
+- Rebased onto the latest `dev`, audited every diagnostic-inventory delta before refreshing the required generated pin, and confirmed this slice's new diagnostic records only an exception class; inherited ordinary-log path content remains owned by TASK-19864 and is not admitted to the persistent sink. The later Notes merge removed legacy payload-bearing diagnostics and added a payload-free `0600` lock-file sink beneath a verified `0700` application directory.
 - Regenerated the consolidated widget stylesheet and added mounted component, real-host compositor, failure-state, focus, consent, and install-lifecycle coverage.
-- Verification: the final Remote-focused sweep passed 139 tests across the complete Remote view, Hugging Face adapter, and every Remote-named Models/Lab adoption scenario, including live preflight → consent → install phase-copy transitions; all 10 CSS build-integrity tests also passed. Ruff, formatter, Python compilation, generated-CSS reproducibility, `git diff --check`, and the Impeccable detector (zero findings) passed.
+- Verification: the final Remote-focused sweep passed 140 tests across the complete Remote view, Hugging Face adapter, and every Remote-named Models/Lab adoption scenario, including live preflight → consent → install phase-copy transitions and the terminal-action constant guard; all 11 CSS build-integrity tests and all 9 UI latency guardrails also passed. Ruff, formatter, Python compilation, generated-CSS reproducibility, persistent-diagnostic inventory reproduction, profile-owned-path census, `git diff --check`, the 2,406-file duplicate-task-ID guard, and the Impeccable detector (zero findings) passed.
 - A follow-up filtered broad sweep reached 5,505 passed and 85 skipped before stopping at five unrelated worktree failures (Console size/binding drift and persona schema census/version drift). The unfiltered sweep also exposed architecture inventories descending into the ignored nested `tldw_chatbook/.venv`; that recurring test-inventory incident is recorded in `backlog/docs/lessons-testing-evidence.md`. No Models/Remote test failed in either broad run.
 - ADR required: no. Existing ADR: `backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md`.
 <!-- SECTION:NOTES:END -->
+
+## Renumbering provenance
+
+- Previous ID: `TASK-19602`.
+- Renumbered to `TASK-19906` on 2026-08-22 after the older Library task reached `dev` with the original ID; references owned by this Remote Models slice moved with it.

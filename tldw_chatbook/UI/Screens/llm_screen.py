@@ -129,6 +129,12 @@ MODELS_RAIL_SECTIONS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
 #: press-triggered read would report "stopped".
 LAB_SERVER_POLL_SECONDS = 2.0
 
+_REMOTE_INSTALL_TERMINAL_FINISH = "finish"
+_REMOTE_INSTALL_TERMINAL_CANCEL = "cancel"
+_REMOTE_INSTALL_TERMINAL_ACTIONS = frozenset(
+    {_REMOTE_INSTALL_TERMINAL_FINISH, _REMOTE_INSTALL_TERMINAL_CANCEL}
+)
+
 #: Back-compat alias for the (app attribute, display name) server-process
 #: table; ``LAB_SERVER_SOURCES`` in ``lab_server_status`` is the canonical
 #: copy and carries the same six providers.
@@ -2609,7 +2615,10 @@ class LLMScreen(LabScreen):
             self._deliver_curated(
                 InstallStatusChanged(reference, active=False, succeeded=error is None)
             )
-        self._deliver_or_retain_remote_terminal_presentation("finish", message)
+        self._deliver_or_retain_remote_terminal_presentation(
+            _REMOTE_INSTALL_TERMINAL_FINISH,
+            message,
+        )
         self._model_install_reference = None
         self._model_install_service = None
         self._model_install_catalog = None
@@ -2631,7 +2640,10 @@ class LLMScreen(LabScreen):
                 sanitized preflight failure); ``None`` for an explicit
                 decline, which restores the view's default status.
         """
-        self._deliver_or_retain_remote_terminal_presentation("cancel", message)
+        self._deliver_or_retain_remote_terminal_presentation(
+            _REMOTE_INSTALL_TERMINAL_CANCEL,
+            message,
+        )
         self._model_install_reference = None
         self._model_install_service = None
         self._model_install_catalog = None
@@ -2667,7 +2679,7 @@ class LLMScreen(LabScreen):
                 candidate, RemoteGGUFCandidate
             ):
                 view.restore_install_context(catalog, candidate)
-            if action == "finish":
+            if action == _REMOTE_INSTALL_TERMINAL_FINISH:
                 view.finish_install(message)
             else:
                 view.cancel_pending_install(message)
@@ -2689,7 +2701,7 @@ class LLMScreen(LabScreen):
         if (
             not isinstance(catalog, ResolvedRemoteCatalog)
             or not isinstance(candidate, RemoteGGUFCandidate)
-            or action not in {"finish", "cancel"}
+            or action not in _REMOTE_INSTALL_TERMINAL_ACTIONS
         ):
             return False
         view = self._remote_view()
@@ -2698,7 +2710,7 @@ class LLMScreen(LabScreen):
         if not view.restore_install_context(catalog, candidate):
             return False
         message = getattr(self, "_remote_install_terminal_message", None)
-        if action == "finish":
+        if action == _REMOTE_INSTALL_TERMINAL_FINISH:
             view.finish_install(message)
         else:
             view.cancel_pending_install(message)

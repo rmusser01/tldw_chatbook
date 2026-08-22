@@ -3151,6 +3151,26 @@ def test_remote_phase_copy_tracks_preflight_consent_and_active_transitions(
     ]
 
 
+def test_remote_terminal_action_literals_have_one_named_definition_each():
+    """Terminal action values stay centralized instead of becoming magic strings."""
+    import ast
+    from collections import Counter
+    import inspect
+
+    from tldw_chatbook.UI.Screens import llm_screen as module
+
+    tree = ast.parse(inspect.getsource(module))
+    action_literals = Counter(
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and node.value in {"finish", "cancel"}
+    )
+
+    assert action_literals == Counter({"finish": 1, "cancel": 1})
+    assert module._REMOTE_INSTALL_TERMINAL_FINISH == "finish"
+    assert module._REMOTE_INSTALL_TERMINAL_CANCEL == "cancel"
+
+
 @pytest.mark.parametrize("operation", ("preflight", "installation"))
 def test_remote_install_failures_log_exact_context(operation, monkeypatch, tmp_path):
     """Worker diagnostics classify remote failures without logging exception
