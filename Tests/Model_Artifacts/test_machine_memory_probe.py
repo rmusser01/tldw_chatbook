@@ -204,6 +204,213 @@ def test_invalid_available_memory_preserves_valid_total_as_partial() -> None:
     assert snapshot.system_reason is ProbeReason.INVALID_MEMORY_VALUE
 
 
+def test_missing_available_memory_preserves_valid_total_as_partial() -> None:
+    """Reading a missing available field must not discard an already valid total."""
+    snapshot = observe_machine_memory(
+        sources=_sources(
+            platform_name="linux",
+            architecture="x86_64",
+            total=1,
+            available=1,
+            virtual_memory=lambda: SimpleNamespace(total=16 * GIB),
+            run_command=lambda *_args: CommandResult(1, b"", None),
+        )
+    )
+
+    assert snapshot.system_state is SystemMemoryState.PARTIAL
+    assert snapshot.total_bytes == 16 * GIB
+    assert snapshot.available_bytes is None
+    assert snapshot.system_reason is ProbeReason.MEMORY_UNAVAILABLE
+
+
+def test_raising_available_memory_preserves_valid_total_as_partial() -> None:
+    """An available-property failure must not erase independently valid total RAM."""
+
+    class Memory:
+        total = 16 * GIB
+
+        @property
+        def available(self) -> int:
+            raise RuntimeError("private available failure")
+
+    snapshot = observe_machine_memory(
+        sources=_sources(
+            platform_name="linux",
+            architecture="x86_64",
+            total=1,
+            available=1,
+            virtual_memory=Memory,
+            run_command=lambda *_args: CommandResult(1, b"", None),
+        )
+    )
+
+    assert snapshot.system_state is SystemMemoryState.PARTIAL
+    assert snapshot.total_bytes == 16 * GIB
+    assert snapshot.available_bytes is None
+    assert snapshot.system_reason is ProbeReason.MEMORY_UNAVAILABLE
+
+
+@pytest.mark.parametrize(
+    ("memory_error", "expected_state", "expected_reason"),
+    [
+        (
+            PermissionError("private RAM denial"),
+            SystemMemoryState.PERMISSION_DENIED,
+            ProbeReason.PERMISSION_DENIED,
+        ),
+        (
+            RuntimeError("private RAM failure"),
+            SystemMemoryState.UNAVAILABLE,
+            ProbeReason.MEMORY_UNAVAILABLE,
+        ),
+    ],
+)
+def test_unavailable_ram_retains_independently_observed_nvidia(
+    memory_error: Exception,
+    expected_state: SystemMemoryState,
+    expected_reason: ProbeReason,
+) -> None:
+    """A system-memory failure must not suppress valid optional accelerator facts."""
+    snapshot = observe_machine_memory(
+        sources=_sources(
+            platform_name="linux",
+            architecture="x86_64",
+            total=1,
+            available=1,
+            virtual_memory=lambda: (_ for _ in ()).throw(memory_error),
+            run_command=lambda *_args: CommandResult(0, b"0, GPU, 8192\n", None),
+        )
+    )
+
+    assert snapshot.system_state is expected_state
+    assert snapshot.system_reason is expected_reason
+    assert snapshot.total_bytes is None
+    assert snapshot.memory_kind is MemoryKind.UNKNOWN
+    assert snapshot.accelerator_state is AcceleratorState.OBSERVED
+    assert snapshot.accelerators[0].total_bytes == 8 * GIB
+
+
+def test_linux_retains_separate_nvidia_and_amd_observations() -> None:
+    """Returning after NVIDIA would omit supported AMD DRM evidence on mixed systems."""
+    card = Path("/sys/class/drm/card0")
+
+    def read(path: Path, _limit: int) -> bytes:
+        return b"0x1002\n" if path.name == "vendor" else b"8589934592\n"
+
+    def resolve(path: Path) -> Path:
+        if path == LINUX_NVIDIA_SMI:
+            return path
+        return Path("/sys/devices/pci/card0")
+
+    snapshot = observe_machine_memory(
+        sources=_sources(
+            platform_name="linux",
+            architecture="x86_64",
+            total=64 * GIB,
+            available=40 * GIB,
+            run_command=lambda *_args: CommandResult(0, b"0, NVIDIA GPU, 8192\n", None),
+            resolve_path=resolve,
+            read_bounded=read,
+            drm_cards=lambda: (card,),
+        )
+    )
+
+    assert snapshot.accelerator_state is AcceleratorState.OBSERVED
+    assert [item.source for item in snapshot.accelerators] == [
+        AcceleratorSource.NVIDIA_SMI,
+        AcceleratorSource.LINUX_DRM,
+    ]
+    assert [item.total_bytes for item in snapshot.accelerators] == [8 * GIB, 8 * GIB]
+
+
+def test_linux_nvidia_fact_survives_failed_amd_branch_as_partial() -> None:
+    """An enabled DRM failure must mark retained NVIDIA evidence as partial."""
+
+    def resolve(path: Path) -> Path:
+        return path if path == LINUX_NVIDIA_SMI else Path("/tmp/escaped")
+
+    snapshot = observe_machine_memory(
+        sources=_sources(
+            platform_name="linux",
+            architecture="x86_64",
+            total=64 * GIB,
+            available=40 * GIB,
+            run_command=lambda *_args: CommandResult(0, b"0, NVIDIA GPU, 8192\n", None),
+            resolve_path=resolve,
+            drm_cards=lambda: (Path("/sys/class/drm/card0"),),
+        )
+    )
+
+    assert snapshot.accelerator_state is AcceleratorState.PARTIAL
+    assert len(snapshot.accelerators) == 1
+    assert snapshot.accelerators[0].source is AcceleratorSource.NVIDIA_SMI
+    assert snapshot.accelerator_reason is ProbeReason.SYSFS_UNTRUSTED_PATH
+
+
+def test_linux_mixed_accelerators_enforce_aggregate_sixteen_device_cap() -> None:
+    """Independent branch caps must not permit more than 16 aggregate observations."""
+    nvidia_rows = b"".join(
+        f"{index}, NVIDIA-{index}, 1024\n".encode() for index in range(10)
+    )
+    cards = tuple(Path(f"/sys/class/drm/card{index}") for index in range(7))
+
+    def resolve(path: Path) -> Path:
+        if path == LINUX_NVIDIA_SMI:
+            return path
+        return Path("/sys/devices/pci") / path.parent.name
+
+    def read(path: Path, _limit: int) -> bytes:
+        return b"0x1002\n" if path.name == "vendor" else b"1073741824\n"
+
+    snapshot = observe_machine_memory(
+        sources=_sources(
+            platform_name="linux",
+            architecture="x86_64",
+            total=64 * GIB,
+            available=40 * GIB,
+            run_command=lambda *_args: CommandResult(0, nvidia_rows, None),
+            resolve_path=resolve,
+            read_bounded=read,
+            drm_cards=lambda: cards,
+        )
+    )
+
+    assert len(snapshot.accelerators) == 16
+    assert snapshot.accelerator_state is AcceleratorState.PARTIAL
+    assert snapshot.accelerator_reason is ProbeReason.TOO_MANY_DEVICES
+
+
+def test_linux_mixed_accelerator_labels_remain_unique_and_nonthrowing() -> None:
+    """A product name matching the fixed DRM label must not invalidate both facts."""
+
+    def resolve(path: Path) -> Path:
+        return path if path == LINUX_NVIDIA_SMI else Path("/sys/devices/pci/card0")
+
+    def read(path: Path, _limit: int) -> bytes:
+        return b"0x1002\n" if path.name == "vendor" else b"1073741824\n"
+
+    snapshot = observe_machine_memory(
+        sources=_sources(
+            platform_name="linux",
+            architecture="x86_64",
+            total=64 * GIB,
+            available=40 * GIB,
+            run_command=lambda *_args: CommandResult(
+                0, b"0, AMD DRM-reported VRAM 1, 1024\n", None
+            ),
+            resolve_path=resolve,
+            read_bounded=read,
+            drm_cards=lambda: (Path("/sys/class/drm/card0"),),
+        )
+    )
+
+    assert len(snapshot.accelerators) == 2
+    assert [item.label for item in snapshot.accelerators] == [
+        "AMD DRM-reported VRAM 1",
+        "AMD DRM-reported VRAM 1 #2",
+    ]
+
+
 def test_linux_nvidia_uses_only_fixed_path_argv_and_limits() -> None:
     """Allowing PATH/config/remote input would execute an untrusted program."""
     calls: list[tuple[Path, tuple[str, ...], float, int]] = []
@@ -502,20 +709,33 @@ class _ChunkStream:
     def __init__(self, chunks: list[bytes]) -> None:
         self._buffer = b"".join(chunks)
         self.max_requested = 0
+        self.closed = False
+        self.reader: threading.Thread | None = None
 
     def read(self, size: int) -> bytes:
+        self.reader = threading.current_thread()
         self.max_requested = max(self.max_requested, size)
         chunk, self._buffer = self._buffer[:size], self._buffer[size:]
         return chunk
+
+    def close(self) -> None:
+        self.closed = True
 
 
 class _BlockingStream:
     def __init__(self, release: threading.Event) -> None:
         self._release = release
+        self.closed = False
+        self.reader: threading.Thread | None = None
 
     def read(self, _size: int) -> bytes:
+        self.reader = threading.current_thread()
         self._release.wait(1)
         return b""
+
+    def close(self) -> None:
+        self.closed = True
+        self._release.set()
 
 
 class _FakeProcess:
@@ -556,11 +776,16 @@ class _LateExitProcess(_FakeProcess):
         return self.returncode
 
 
+class _UnstartableThread:
+    def start(self) -> None:
+        raise RuntimeError("private thread failure")
+
+
 def test_bounded_runner_rejects_oversize_before_full_accumulation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A whole-stream read would permit unbounded child output in memory."""
-    stream = _ChunkStream([b"x" * (MAX_COMMAND_OUTPUT_BYTES + 1)])
+    stream = _ChunkStream([b"x" * (MAX_COMMAND_OUTPUT_BYTES + 4 * 8192)])
     process = _FakeProcess(stream, survive_terminate=False)
     popen = Mock(return_value=process)
     monkeypatch.setattr(probe.subprocess, "Popen", popen)
@@ -572,6 +797,10 @@ def test_bounded_runner_rejects_oversize_before_full_accumulation(
     assert result == CommandResult(None, b"", ProbeReason.OUTPUT_TOO_LARGE)
     assert stream.max_requested <= 8192
     assert process.events == ["terminate", ("wait", TERMINATE_GRACE_SECONDS)]
+    assert stream.closed is True
+    assert stream.reader is not None
+    stream.reader.join(timeout=0.1)
+    assert stream.reader.is_alive() is False
     popen.assert_called_once_with(
         [str(LINUX_NVIDIA_SMI), *NVIDIA_ARGV],
         stdout=subprocess.PIPE,
@@ -580,12 +809,35 @@ def test_bounded_runner_rejects_oversize_before_full_accumulation(
     )
 
 
+def test_bounded_runner_reaps_child_when_reader_cannot_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A local thread-start failure must not leak the already-created child or pipe."""
+    stream = _ChunkStream([b"output"])
+    process = _FakeProcess(stream, survive_terminate=False)
+    monkeypatch.setattr(probe.subprocess, "Popen", Mock(return_value=process))
+    monkeypatch.setattr(
+        probe.threading,
+        "Thread",
+        lambda **_kwargs: _UnstartableThread(),
+    )
+
+    result = probe._run_bounded_command(
+        LINUX_NVIDIA_SMI, NVIDIA_ARGV, 2.0, MAX_COMMAND_OUTPUT_BYTES
+    )
+
+    assert result == CommandResult(None, b"", ProbeReason.COMMAND_FAILED)
+    assert process.events == ["terminate", ("wait", TERMINATE_GRACE_SECONDS)]
+    assert stream.closed is True
+
+
 def test_bounded_runner_timeout_terminates_kills_and_reaps_in_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Omitting the final kill/wait can leak a timed-out child process."""
     process = _FakeProcess(object(), survive_terminate=True)
-    process.stdout = _BlockingStream(process.release)
+    stream = _BlockingStream(process.release)
+    process.stdout = stream
     monkeypatch.setattr(probe.subprocess, "Popen", Mock(return_value=process))
 
     result = probe._run_bounded_command(
@@ -599,6 +851,10 @@ def test_bounded_runner_timeout_terminates_kills_and_reaps_in_order(
         "kill",
         ("wait", None),
     ]
+    assert stream.closed is True
+    assert stream.reader is not None
+    stream.reader.join(timeout=0.1)
+    assert stream.reader.is_alive() is False
 
 
 def test_bounded_runner_returns_nonzero_without_raw_output_reason(
