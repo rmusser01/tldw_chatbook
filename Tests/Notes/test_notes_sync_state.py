@@ -726,6 +726,49 @@ def test_root_update_rejects_unadvanceable_maximum_timestamp_with_typed_error(
     assert repository.get_root(root.root_id) == root
 
 
+@pytest.mark.parametrize("operation", ("update", "pause", "disconnect"))
+def test_root_mutations_reject_unadvanceable_maximum_version_atomically(
+    tmp_path: Path,
+    operation: str,
+) -> None:
+    database = tmp_path / f"root-version-{operation}.sqlite3"
+    repository = NotesSyncStateRepository(database)
+    root = repository.create_candidate_root("root", "Root", "bidirectional")
+    binding = repository.create_provisional_binding(root.root_id, "note", "note.md")
+    with notes_sync_state_transaction(database, immediate=True) as connection:
+        connection.execute(
+            "UPDATE sync_roots SET row_version = ? WHERE root_id = ?",
+            (_MAX_SQLITE_INTEGER, root.root_id),
+        )
+
+    with pytest.raises(NotesSyncStateError) as caught:
+        if operation == "update":
+            repository.update_candidate_root(
+                root.root_id,
+                _MAX_SQLITE_INTEGER,
+                display_name="Changed",
+            )
+        elif operation == "pause":
+            repository.pause_root(root.root_id, _MAX_SQLITE_INTEGER, "review")
+        else:
+            repository.disconnect_root(root.root_id, _MAX_SQLITE_INTEGER)
+
+    assert type(caught.value) is NotesSyncStateError
+    with notes_sync_state_transaction(database) as connection:
+        persisted_root = connection.execute(
+            """SELECT display_name, state, row_version
+               FROM sync_roots WHERE root_id = ?""",
+            (root.root_id,),
+        ).fetchone()
+        persisted_child = connection.execute(
+            """SELECT state, row_version FROM sync_bindings
+               WHERE binding_id = ?""",
+            (binding.binding_id,),
+        ).fetchone()
+    assert persisted_root == ("Root", "candidate", _MAX_SQLITE_INTEGER)
+    assert persisted_child == ("candidate", binding.row_version)
+
+
 def test_missing_root_errors_are_typed_bounded_and_redacted(tmp_path: Path) -> None:
     repository = _repository(tmp_path)
     missing = "private-missing-root"

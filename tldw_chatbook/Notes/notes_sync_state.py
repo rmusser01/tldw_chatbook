@@ -469,6 +469,11 @@ def _require_root(
     return record
 
 
+def _require_advanceable_root(record: SyncRootRecord) -> None:
+    if record.row_version >= _MAX_SQLITE_INTEGER:
+        raise NotesSyncStateError("A private sync-root version cannot be advanced.")
+
+
 def _select_binding(
     connection: sqlite3.Connection,
     binding_id: str,
@@ -913,6 +918,7 @@ class NotesSyncStateRepository:
         )
         with _repository_transaction(self._database_path, immediate=True) as connection:
             current = _require_root(connection, validated_root_id)
+            _require_advanceable_root(current)
             updated_at = _timestamp_after(current.updated_at)
             changed = _execute_mutation(
                 connection,
@@ -948,6 +954,7 @@ class NotesSyncStateRepository:
         validated_reason = _validate_reason_code(reason_code)
         with _repository_transaction(self._database_path, immediate=True) as connection:
             current = _require_root(connection, validated_root_id)
+            _require_advanceable_root(current)
             changed = _execute_mutation(
                 connection,
                 """UPDATE sync_roots
@@ -979,6 +986,7 @@ class NotesSyncStateRepository:
             current = _require_root(connection, validated_root_id)
             if current.state is SyncRootState.DISCONNECTED:
                 raise SyncStateConflictError("A disconnected sync root is terminal.")
+            _require_advanceable_root(current)
             invalid_child_version = connection.execute(
                 """SELECT 1 FROM sync_bindings
                    WHERE root_id = ? AND state <> 'disconnected'
