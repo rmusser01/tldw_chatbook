@@ -104,7 +104,11 @@ class ConsoleFleetLifecycleController:
         self._console_fleet_unseen_cache: tuple[int, frozenset[str]] | None = None
 
     def consume_pending_console_fleet_completion(self) -> bool:
-        """Claim a staged completion and activate its still-open session."""
+        """Claim a staged completion and activate its still-open session.
+
+        Returns:
+            ``True`` when a matching completion was acknowledged; otherwise ``False``.
+        """
         pending_handoffs = self._pending_handoffs_accessor()
         claim = pending_handoffs.claim(HandoffChannel.CONSOLE_FLEET_COMPLETION)
         if claim is None:
@@ -250,7 +254,15 @@ class ConsoleFleetLifecycleController:
         sessions: tuple[ConsoleChatSession, ...],
         active_session_id: str | None,
     ) -> dict[str, ConsoleRunMarker] | None:
-        """Clear a viewed unseen mark when safe and derive session markers."""
+        """Clear a viewed unseen mark when safe and derive session markers.
+
+        Args:
+            sessions: Current Console sessions to derive markers for.
+            active_session_id: Identifier of the session currently in view, if any.
+
+        Returns:
+            Markers keyed by session ID, or ``None`` when no chat controller exists.
+        """
         chat_controller_available = self._chat_controller_available()
         unseen_ids = self._console_fleet_unseen_ids()
         if unseen_ids and active_session_id:
