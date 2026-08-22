@@ -238,8 +238,7 @@ class ConsoleFleetLifecycleController:
         active_session_id: str | None,
     ) -> dict[str, ConsoleRunMarker] | None:
         """Clear a viewed unseen mark when safe and derive session markers."""
-        if not self._chat_controller_available():
-            return None
+        chat_controller_available = self._chat_controller_available()
         unseen_ids = self._console_fleet_unseen_ids()
         if unseen_ids and active_session_id:
             active = next(
@@ -256,6 +255,8 @@ class ConsoleFleetLifecycleController:
                     and self._clear_fleet_unseen(conversation_id)
                 ):
                     unseen_ids = self._console_fleet_unseen_ids()
+        if not chat_controller_available:
+            return None
         return {
             session.id: self._console_run_marker_with_unseen(session, unseen_ids)
             for session in sessions

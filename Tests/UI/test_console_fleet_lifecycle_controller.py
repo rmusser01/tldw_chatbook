@@ -324,6 +324,41 @@ def test_missing_chat_controller_returns_none_markers() -> None:
     assert markers is None
 
 
+def test_missing_chat_controller_still_clears_a_displayed_unseen_mark() -> None:
+    edges = _Edges()
+    active = _session("active", conversation_id="conversation-active")
+    revision = 4
+    durable_ids = frozenset({"conversation-active"})
+    edges.replace("chat_controller_available", lambda: False)
+    edges.replace("fleet_unseen_revision_accessor", lambda: revision)
+    edges.replace("read_fleet_unseen_ids", lambda: durable_ids)
+    edges.replace("wake_has_pending", lambda conversation_id: False)
+    edges.replace("screen_displayed_accessor", lambda: True)
+
+    def clear_unseen(conversation_id: str) -> bool:
+        nonlocal revision, durable_ids
+        revision = 5
+        durable_ids = frozenset()
+        return True
+
+    edges.replace("clear_fleet_unseen", clear_unseen)
+
+    markers = edges.controller.prepare_session_run_markers((active,), active.id)
+
+    assert markers is None
+    assert edges.calls == [
+        ("chat_controller_available", ()),
+        ("fleet_unseen_revision_accessor", ()),
+        ("read_fleet_unseen_ids", ()),
+        ("wake_has_pending", ("conversation-active",)),
+        ("screen_displayed_accessor", ()),
+        ("clear_fleet_unseen", ("conversation-active",)),
+        ("fleet_unseen_revision_accessor", ()),
+        ("read_fleet_unseen_ids", ()),
+    ]
+    assert "run_marker_for_session" not in edges.call_names
+
+
 def test_pending_wake_defers_view_clear_and_live_marker_outranks_unseen() -> None:
     edges = _Edges()
     active = _session("active", conversation_id="conversation-active")
