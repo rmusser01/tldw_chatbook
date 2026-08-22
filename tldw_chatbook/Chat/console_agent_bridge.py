@@ -5686,7 +5686,9 @@ class ConsoleAgentBridge:
             The newest non-superseded primary run's id, or ``None`` when
             the conversation has never run an agent.
         """
-        record = self._db.latest_primary_run(conversation_id)
+        # task-18601 part A (AC#2): only `record["id"]` is read below --
+        # the metadata-only path never parses the run's step log.
+        record = self._db.latest_primary_run_metadata(conversation_id)
         return record["id"] if record is not None else None
 
     def _owning_run_id_for_log(self, run_id: str) -> str:
@@ -5851,7 +5853,9 @@ class ConsoleAgentBridge:
             The newest non-superseded primary run's id when its
             ``assistant_message_id`` is still NULL, else ``None``.
         """
-        record = self._db.latest_primary_run(conversation_id)
+        # task-18601 part A (AC#2): only id/assistant_message_id are read
+        # below -- the metadata-only path never parses the step log.
+        record = self._db.latest_primary_run_metadata(conversation_id)
         if record is None or record.get("assistant_message_id") is not None:
             return None
         return record["id"]

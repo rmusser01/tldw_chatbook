@@ -947,7 +947,16 @@ class ConsoleFleetWakeCoordinator:
         pending entry forever). A run the durable ledger already shows
         wake-delivered (a redelivered drain, or a restart racing the
         in-memory commit) is DROPPED -- from the returned rows AND from
-        the registry -- rather than re-announced."""
+        the registry -- rather than re-announced.
+
+        task-18601 part A (AC#2): every field this method (and
+        ``compose_wake_notice``, its only consumer) reads --
+        id/agent_definition/status/task/result/wake_delivered_at/
+        updated_at -- is metadata, never a step. Reads prefer
+        ``get_run_metadata``/``get_run_metadata_fresh`` (metadata-only,
+        no step-log parse at all) over ``get_run``/``get_run_fresh``,
+        via ``getattr`` so a test double that only implements the older
+        methods (pre-dating this change) keeps working unchanged."""
         with self._registry_lock:
             if self._disposed:
                 return []
@@ -957,10 +966,14 @@ class ConsoleFleetWakeCoordinator:
         for run_id, status in bucket.items():
             row = None
             if runs_db is not None:
-                try:
-                    row = runs_db.get_run(run_id)
-                except Exception:  # noqa: BLE001
-                    row = None
+                read_row = getattr(runs_db, "get_run_metadata", None)
+                if not callable(read_row):
+                    read_row = getattr(runs_db, "get_run", None)
+                if callable(read_row):
+                    try:
+                        row = read_row(run_id)
+                    except Exception:  # noqa: BLE001
+                        row = None
             if row is not None and (
                 str(row.get("status")) not in TERMINAL_RUN_STATUSES
             ):
@@ -973,7 +986,9 @@ class ConsoleFleetWakeCoordinator:
                 # connection (observed live: a minute-old 'done' child
                 # announced as 'running'). Re-read through a fresh
                 # connection, which cannot inherit the pin.
-                fresh_read = getattr(runs_db, "get_run_fresh", None)
+                fresh_read = getattr(runs_db, "get_run_metadata_fresh", None)
+                if not callable(fresh_read):
+                    fresh_read = getattr(runs_db, "get_run_fresh", None)
                 if callable(fresh_read):
                     try:
                         fresh_row = fresh_read(run_id)

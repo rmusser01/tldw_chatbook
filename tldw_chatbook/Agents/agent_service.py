@@ -3604,10 +3604,12 @@ class AgentService:
             # out of scope), so the honest answer names the real limit
             # instead of pretending the id is unknown. Scoped to THIS
             # conversation's sub-agent runs -- a foreign conversation's
-            # run id stays an unknown id here.
+            # run id stays an unknown id here. task-18601 part A (AC#2):
+            # only agent_kind/conversation_id/status are read below --
+            # get_run_metadata skips the step-log entirely.
             past = None
             try:
-                past = self.db.get_run(target_id)
+                past = self.db.get_run_metadata(target_id)
             except Exception:  # noqa: BLE001 — a read failure is "unknown"
                 past = None
             if (
