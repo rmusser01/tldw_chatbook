@@ -1,15 +1,17 @@
 ---
 id: TASK-21000
 title: Distill Persona Buddy to pet-only chrome
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-22 23:31'
+updated_date: '2026-08-22 23:48'
 labels: []
 dependencies:
   - TASK-20938
 references:
   - Docs/superpowers/specs/2026-08-22-persona-buddy-pet-only-chrome-design.md
-  - backlog/decisions/074-portable-actor-packs-and-local-persona-visual-runtime.md
+  - >-
+    backlog/decisions/074-portable-actor-packs-and-local-persona-visual-runtime.md
 priority: high
 ---
 
@@ -20,7 +22,6 @@ Remove resting chrome and dead space from Persona Buddy so the floating companio
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
-
 <!-- AC:BEGIN -->
 - [ ] #1 At rest, the floating Buddy contains only the complete prepared pet animation box and its one-cell boundary: no title, header, state label, movement hint, default prose, decorative padding, or unused chrome is painted; an ordinary single-frame visual touches every inner edge, while undersized assets may use only the explicit 10x4-cell operable-control footprint and varying animation frames use one stable maximum box without window jitter.
 - [ ] #2 Fold/Open and Close are one-glyph controls inside compact native buttons overlaid in opposite top corners with exact tooltips, non-obscuring keyboard focus, transient focus-visible labels, click targets, and existing keyboard actions; the remaining pet surface stays draggable and the existing resize authority remains usable.
@@ -30,3 +31,11 @@ Remove resting chrome and dead space from Persona Buddy so the floating companio
 - [ ] #6 Navigation, remount, cancellation drain, reduced motion, animation timing, fallback, unavailable recovery, geometry persistence, viewport clamping, and targeted invalidation remain behaviorally intact.
 - [ ] #7 Born-RED-to-GREEN real-CSS/Pilot tests, mutations for text removal, fit authority, alert replacement, thumbnail folding, and hit regions, scoped static/governance gates, one Impeccable review, and isolated actual-terminal screenshots prove the pet-only normal, alert, folded, and constrained-viewport states.
 <!-- AC:END -->
+
+## Implementation Plan
+
+- Follow [the approved implementation plan](../../Docs/superpowers/plans/2026-08-22-task-21000-persona-buddy-pet-only-chrome.md) using born-RED TDD and verification before every commit.
+- Pin a direct-result accepted-render record and stable fit geometry without persisting or feeding derived dimensions back into resolution.
+- Replace resting panel chrome with the pet, overlaid icon controls, fixed actionable alerts, and a real folded thumbnail under exact current authority.
+- Rebuild and verify generated CSS, preserve app-owned lifecycle/persistence fences, and prove the four visual states through real-CSS/Pilot tests and isolated PTY captures.
+- Complete the one-shot Impeccable review and close the task only after every scoped gate and human screenshot UAT is green.
