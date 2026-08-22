@@ -142,13 +142,15 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "Query truncated": ("len(query)", "MAX_QUERY_LENGTH"),
         "Unknown fts_match_construction; using conservative fallback": (),
     },
-    "tldw_chatbook/UI/Screens/chat_screen.py": {
+    "tldw_chatbook/UI/Console_Modules/fleet.py": {
         "Console fleet completion handoff will retry": (
             "claim.revision",
             "type(exc).__name__",
         ),
         "console fleet wake mount-claim failed": ("type(exc).__name__",),
         "fleet survivor check failed": ("type(exc).__name__",),
+    },
+    "tldw_chatbook/UI/Screens/chat_screen.py": {
         "Pending sidebar-state write failed": ("type(error).__name__",),
     },
     "tldw_chatbook/UI/Console_Modules/video.py": {
@@ -599,9 +601,7 @@ def test_task_15743_final_rebase_diagnostics_are_metadata_only() -> None:
                         f"expected {list(expected_fields)!r}"
                     )
                 if captures_exception:
-                    failures.append(
-                        f"{relative}: {label!r} captures exception details"
-                    )
+                    failures.append(f"{relative}: {label!r} captures exception details")
 
     assert failures == []
 
@@ -887,9 +887,7 @@ def test_task_15743_exception_types_survive_loguru_forwarding() -> None:
             for node in ast.walk(tree):
                 if not (isinstance(node, ast.Call) and node.args):
                     continue
-                if not diagnostic_inventory._is_diagnostic_call(
-                    node, logger_symbols
-                ):
+                if not diagnostic_inventory._is_diagnostic_call(node, logger_symbols):
                     continue
                 if not any(
                     "type(exc).__name__" in ast.unparse(argument)
