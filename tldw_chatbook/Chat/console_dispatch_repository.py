@@ -235,8 +235,11 @@ class ConsoleDispatchRepository:
             "user": acceptance.user_message_id,
             "assistant": acceptance.assistant_message_id,
         }
-        for contribution in acceptance.contributions:
-            with _scoped_console_transaction_writer(cursor) as writer:
+        with _scoped_console_transaction_writer(
+            cursor,
+            acceptance.conversation_id,
+        ) as writer:
+            for contribution in acceptance.contributions:
                 contribution.write(
                     writer=writer,
                     conversation_id=acceptance.conversation_id,

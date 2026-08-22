@@ -232,6 +232,123 @@ authorizer mechanism.
 - `tldw_chatbook/Chat/console_transaction_contribution.py`
 - `Tests/Chat/test_console_transaction_contribution.py`
 
+## Fix round 4 — transaction-owned trajectory sequence allocation
+
+### Finding verification and authority amendment
+
+The review finding was valid against the real v45 schema. Both planned
+`LibraryPreparationContribution` and `LibraryActivityContribution` target
+`message_trajectory_metadata`, whose unique `(conversation_id, seq)` index and
+mandatory `seq` column cannot be satisfied safely by the prior write-only capability.
+The existing DB path at `ChaChaNotes_DB.py` allocates `MAX(seq) + 1` under
+`BEGIN IMMEDIATE`, confirming that allocation must share the acceptance transaction's
+private cursor rather than use a standalone read.
+
+Before production edits, the design spec, frozen plan (including the Task 6, 12, and
+23 interfaces), ADR-079, and Task 6 brief were amended consistently. The public
+writer now adds only `next_trajectory_sequence() -> int`: it accepts no conversation,
+table, column, count, or range input and exposes no generic read. The repository binds
+one writer to the accepted conversation, shares it across the entire contribution
+loop, and revokes it afterward. The first call reads the accepted conversation's
+durable maximum through the private cursor; later calls allocate monotonically from
+writer-local state. Rollback therefore leaves no reservation to leak.
+
+### TDD evidence
+
+The real-v45 allocator regressions were written before production changes. After
+correcting the concurrent test fixture so its acceptance attempt ID matched the
+frozen authority, the authoritative RED run was:
+
+```text
+Tests/Chat/test_console_transaction_contribution.py
+10 failed, 41 passed, 1 warning in 10.42s
+```
+
+All ten failures were the expected absent-method failure. They covered the public
+method/revocation contract, a pre-existing trajectory maximum, shared allocation
+across two distinct contributions, ordered activity-like batching, rollback and
+reservation reuse, negative/non-integer/exhausted SQLite maxima, the no-conversation-
+argument boundary, and concurrent repository instances.
+
+After implementation and assertion-shape cleanup for `sqlite3.Row`, the final focused
+run (including a cross-conversation MAX isolation regression) was:
+
+```text
+52 passed, 1 warning in 12.19s
+```
+
+The warning is the existing environment-level `RequestsDependencyWarning`.
+
+### GREEN and compatibility evidence
+
+The final authoritative four-file Task 6 suite completed with:
+
+```text
+119 passed, 1 warning in 18.20s
+```
+
+The unchanged adjacent compatibility suite completed with:
+
+```text
+118 passed, 1 warning in 14.60s
+```
+
+No full suite was run. Every database was a fresh pytest temporary v45 database; the
+profile database was never opened.
+
+### Mutation and control evidence
+
+Each mutation was applied alone with bytecode disabled, killed by the named real-
+behavior test, and restored before final GREEN:
+
+1. Renaming/removing the private allocator produced `1 failed` because the realistic
+   trajectory contribution could not call `next_trajectory_sequence`.
+2. Recreating a writer for each contribution produced `1 failed`: the distinct
+   contributions received different writer identities instead of the required shared
+   transaction allocator.
+3. Removing the accepted-conversation predicate from `MAX(seq)` produced `1 failed`:
+   another conversation's maximum changed the allocation from `8` to `101`.
+4. Exposing the private cursor's connection produced `1 failed`: the historical
+   clear-authorizer/commit escape no longer raised and committed through the leaked
+   connection.
+5. Restoring the old permissive INSERT heuristic produced `16 failed, 9 passed`; the
+   exact grammar matrix caught missing column lists, literal/comment pseudo-binds,
+   conflict actions, INSERT...SELECT, RETURNING, multiple rows, quoted/qualified or
+   Unicode identifiers, and multi-statement SQL.
+
+The final 52-test contribution run proves all mutants were restored and keeps the raw
+cursor plus old-SQL controls green.
+
+### Static checks and self-review
+
+- Scoped Ruff over all ten Task 6 production/test files: `All checks passed!`
+- `git diff --check`: passed with no output.
+- Source proof found the no-argument allocator in the protocol and implementation,
+  one repository-owned writer around the complete contribution loop, the
+  conversation-parameterized private `MAX(seq)` query, and the unchanged anchored
+  exact INSERT grammar.
+- Negative source proof found no public `connection`, `set_authorizer`, raw
+  `writer=cursor`, old first-token heuristic, or generic read/range API.
+- Documentation proof found matching allocator, scope, rollback, integer-limit, and
+  Task 12/23 consumer language in the spec, plan, ADR-079, and Task 6 brief.
+- Self-review confirmed missing rows start at `1`; non-`int`, negative, and exhausted
+  SQLite 64-bit maxima fail closed; a sequence is advanced only in writer-local state;
+  exceptions roll back core/checkpoint/sidecar writes; and two file-backed repository
+  instances serialize to collision-free consecutive values under `BEGIN IMMEDIATE`.
+- No new general repository lesson was warranted; this is a plan-specific capability
+  correction now captured in its existing ADR and frozen authorities.
+
+### Fix round 4 changed files
+
+- `.superpowers/sdd/2026-08-22-console-library-controls/task-6-brief.md`
+- `.superpowers/sdd/2026-08-22-console-library-controls/task-6-report.md`
+- `Docs/superpowers/plans/2026-08-22-console-library-controls.md`
+- `Docs/superpowers/specs/2026-08-22-console-library-controls-design.md`
+- `backlog/decisions/079-console-library-conversation-authority.md`
+- `tldw_chatbook/Chat/console_dispatch_repository.py`
+- `tldw_chatbook/Chat/console_transaction_contribution.py`
+- `Tests/Chat/test_console_transaction_contribution.py`
+
 ## Fix round 2 — transaction-writer capability correction
 
 ### Reviewer escape verification and superseded interpretation

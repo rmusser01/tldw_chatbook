@@ -16,10 +16,14 @@ _INSERT_VALUES_PATTERN = re.compile(
     rf"\s*VALUES\s*\(\s*(?P<placeholders>\?(?:\s*,\s*\?)*)\s*\)\s*\Z",
     re.ASCII | re.IGNORECASE,
 )
+_SQLITE_MAX_INTEGER = (1 << 63) - 1
 
 
 class ConsoleTransactionWriter(Protocol):
-    """Insert-only capability scoped to one caller-owned transaction callback."""
+    """Narrow capability scoped to one caller-owned contribution transaction."""
+
+    def next_trajectory_sequence(self) -> int:
+        """Allocate one seq for the accepted conversation in this transaction."""
 
     def execute(self, statement: str, parameters: tuple[object, ...], /) -> None:
         """Execute one parameterized INSERT through the caller transaction."""
@@ -47,11 +51,50 @@ class ConsoleTransactionContribution(Protocol):
 
 
 class _CursorConsoleTransactionWriter:
-    __slots__ = ("__cursor", "__active")
+    __slots__ = (
+        "__cursor",
+        "__active",
+        "__conversation_id",
+        "__next_trajectory_sequence",
+    )
 
-    def __init__(self, cursor: sqlite3.Cursor) -> None:
+    def __init__(self, cursor: sqlite3.Cursor, conversation_id: str) -> None:
         self.__cursor = cursor
         self.__active = True
+        self.__conversation_id = conversation_id
+        self.__next_trajectory_sequence: int | None = None
+
+    def next_trajectory_sequence(self) -> int:
+        """Allocate one trajectory sequence through the private caller cursor."""
+        self.__require_active()
+        if self.__next_trajectory_sequence is None:
+            row = self.__cursor.execute(
+                "SELECT MAX(seq) FROM message_trajectory_metadata "
+                "WHERE conversation_id = ?",
+                (self.__conversation_id,),
+            ).fetchone()
+            if row is None:
+                raise sqlite3.DatabaseError(
+                    "Unable to read the trajectory sequence maximum."
+                )
+            maximum = row[0]
+            if maximum is None:
+                self.__next_trajectory_sequence = 1
+            elif (
+                type(maximum) is not int
+                or maximum < 0
+                or maximum >= _SQLITE_MAX_INTEGER
+            ):
+                raise sqlite3.DatabaseError(
+                    "Invalid trajectory sequence maximum."
+                )
+            else:
+                self.__next_trajectory_sequence = maximum + 1
+        if self.__next_trajectory_sequence > _SQLITE_MAX_INTEGER:
+            raise sqlite3.DatabaseError("Trajectory sequence exceeds SQLite limits.")
+        allocated = self.__next_trajectory_sequence
+        self.__next_trajectory_sequence += 1
+        return allocated
 
     def execute(self, statement: str, parameters: tuple[object, ...], /) -> None:
         """Execute one validated parameterized INSERT."""
@@ -114,12 +157,13 @@ class _CursorConsoleTransactionWriter:
 @contextmanager
 def _scoped_console_transaction_writer(
     cursor: sqlite3.Cursor,
+    conversation_id: str,
 ) -> Iterator[ConsoleTransactionWriter]:
     if not cursor.connection.in_transaction:
         raise sqlite3.DatabaseError(
             "A contribution requires the caller-owned transaction."
         )
-    writer = _CursorConsoleTransactionWriter(cursor)
+    writer = _CursorConsoleTransactionWriter(cursor, conversation_id)
     try:
         yield cast(ConsoleTransactionWriter, writer)
     finally:

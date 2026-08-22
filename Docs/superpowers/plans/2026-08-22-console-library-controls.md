@@ -693,6 +693,9 @@ Validate exact allowed keys after normalization; do not use `setdefault` for any
 
 ```python
 class ConsoleTransactionWriter(Protocol):
+    def next_trajectory_sequence(self) -> int:
+        """Allocate one seq for the accepted conversation in this transaction."""
+
     def execute(self, statement: str, parameters: tuple[object, ...], /) -> None:
         """Execute one parameterized INSERT through the caller transaction."""
 
@@ -763,7 +766,7 @@ class ConsoleLibraryPolicyCoordinator:
 - [ ] **Step 4: Write RED coordinator tests.** Use two holders for one conversation and two repositories over one file DB. Assert off-loop execution, same-process publication only after commit, fresh execution read defeating stale Allowed, unavailable read producing Never/Blocked, and a commit after capture affecting only the next capture.
 - [ ] **Step 5: Run RED.** Run the four new test files; expected: missing modules/contracts.
 - [ ] **Step 6: Implement minimal repositories and coordinator.** Use parameterized SQL and typed result variants. `settle_with_assistant` and `handoff_to_provider_continuation` must write message content/state/version/hash/sync intent and delete the expected checkpoint in one `transaction(immediate=True)`.
-- [ ] **Step 7: Implement the generic contribution seam.** Contributions receive only an insert-only `ConsoleTransactionWriter`, committed conversation ID candidate, and message-ID map. Its complete accepted SQL grammar is one `INSERT INTO simple_table (simple_column, ...) VALUES (?, ...)` statement with ordinary whitespace, one VALUES row, unquoted/unqualified ASCII identifiers, and equal non-zero column/placeholder/tuple arity; `executemany` requires at least one same-arity tuple. It rejects conflict modifiers/clauses (including REPLACE/IGNORE and both ON CONFLICT actions), literals/comments standing in for placeholders, INSERT...SELECT, RETURNING, multiple VALUES rows, quoted/dynamic identifiers, and every extra clause. The writer exposes no raw cursor/connection, authorizer, transaction/savepoint/ATTACH/DETACH control, commit/rollback, repository/session/publication state, or connection factory. Contribution errors propagate through the caller-owned `BEGIN IMMEDIATE` transaction. This is an API capability boundary for trusted in-process components, not a hostile-code sandbox.
+- [ ] **Step 7: Implement the generic contribution seam.** Contributions receive only an insert-only `ConsoleTransactionWriter`, committed conversation ID candidate, and message-ID map. The writer also exposes `next_trajectory_sequence() -> int`, a no-argument allocator bound internally to the accepted conversation. One writer is shared across the entire contribution loop and revoked after that scope. Its first allocator call reads `MAX(seq)` through the private caller cursor inside the same `BEGIN IMMEDIATE`; later calls return consecutive values across all contributions. Missing rows start at `1`; non-integer, negative, or SQLite 64-bit-overflowing maxima fail closed, and rollback leaks no reservation. The allocator accepts no conversation/table/column/count/range input and exposes no generic read. The complete accepted SQL grammar remains one `INSERT INTO simple_table (simple_column, ...) VALUES (?, ...)` statement with ordinary whitespace, one VALUES row, unquoted/unqualified ASCII identifiers, and equal non-zero column/placeholder/tuple arity; `executemany` requires at least one same-arity tuple. It rejects conflict modifiers/clauses (including REPLACE/IGNORE and both ON CONFLICT actions), literals/comments standing in for placeholders, INSERT...SELECT, RETURNING, multiple VALUES rows, quoted/dynamic identifiers, and every extra clause. The writer exposes no raw cursor/connection, authorizer, transaction/savepoint/ATTACH/DETACH control, commit/rollback, repository/session/publication state, or connection factory. Contribution errors propagate through the caller-owned `BEGIN IMMEDIATE` transaction. This is an API capability boundary for trusted in-process components, not a hostile-code sandbox.
 - [ ] **Step 8: Run GREEN, lint, and mutation probes.** Re-run Step 5; temporarily invert missing/error fail-closed and remove a checkpoint version predicate one at a time, confirm named tests fail, then restore the implementation. Run scoped Ruff.
 - [ ] **Step 9: Commit.** Commit `feat(console): add Library policy and dispatch repositories`.
 
@@ -926,7 +929,7 @@ Pass it into both Skill and MCP collision sets before optional provider registra
 
 **Interfaces:**
 - Consumes: final execution context, checkpoint states, generic contribution protocol.
-- Produces: `ConsoleTurnPreparation`, `ConsolePreparationTransition`, `LibraryPreparationEvent`, `LibraryPreparationContribution`, and `project_library_preparation(rows, active_turn_ids) -> tuple[LibraryPreparationView, ...]`.
+- Produces: `ConsoleTurnPreparation`, `ConsolePreparationTransition`, `LibraryPreparationEvent`, `LibraryPreparationContribution`, and `project_library_preparation(rows, active_turn_ids) -> tuple[LibraryPreparationView, ...]`. `LibraryPreparationContribution` obtains its mandatory `message_trajectory_metadata.seq` only from the shared writer's no-argument `next_trajectory_sequence()` before issuing the canonical parameterized INSERT.
 
 - [ ] **Step 1: Start the child and baseline current retrieval/controller tests.** Put TASK-19900.3 In Progress with this plan link. Run `python -m pytest Tests/Chat/test_console_chat_controller.py Tests/UI/test_console_rag_settings_modal.py Tests/Chat/test_console_prompt_queue_coordinator.py -q`.
 - [ ] **Step 2: Write RED state-machine tests.** Pin every legal transition/action in the spec, reject illegal/repeated/racing transitions by preparation ID/state, distinguish retrieval/persistence/destination pause, disable actions during committing, and prove Never moves directly to ready without a Library status.
@@ -1244,7 +1247,7 @@ class CurrentRunActor:
 
 **Interfaces:**
 - Consumes: bounded events, generic contribution protocol, trajectory rows, active branch/turn selection.
-- Produces: `ConsoleLibraryActivityBuffer.admit/flush/retry/final_flush`, `LibraryActivityContribution`, and `project_library_activity(rows, active_turn_ids, selected_turn_id) -> LibraryActivityView`.
+- Produces: `ConsoleLibraryActivityBuffer.admit/flush/retry/final_flush`, `LibraryActivityContribution`, and `project_library_activity(rows, active_turn_ids, selected_turn_id) -> LibraryActivityView`. `LibraryActivityContribution` obtains one mandatory `message_trajectory_metadata.seq` per ordered event from the shared writer's no-argument `next_trajectory_sequence()` and batch-inserts those allocated rows in event order.
 
 ```python
 class ConsoleLibraryActivityBuffer:

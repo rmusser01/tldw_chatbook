@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sqlite3
+import threading
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -153,6 +155,59 @@ class BatchStatementContribution:
         writer.executemany(self.statement, self.parameter_rows)
 
 
+@dataclass
+class TrajectoryContributionFixture:
+    """Representative future sidecar contribution without product semantics."""
+
+    event_kinds: tuple[str, ...]
+    seen_writer: ConsoleTransactionWriter | None = None
+    allocated_sequences: tuple[int, ...] = ()
+
+    def write(
+        self,
+        *,
+        writer: ConsoleTransactionWriter,
+        conversation_id: str,
+        message_ids: Mapping[str, str],
+    ) -> None:
+        self.seen_writer = writer
+        sequences = tuple(writer.next_trajectory_sequence() for _ in self.event_kinds)
+        self.allocated_sequences = sequences
+        rows = tuple(
+            (
+                message_ids["user"],
+                conversation_id,
+                message_ids["user"],
+                sequence,
+                event_kind,
+                '{"version":1}',
+            )
+            for event_kind, sequence in zip(self.event_kinds, sequences, strict=True)
+        )
+        statement = (
+            "INSERT INTO message_trajectory_metadata("
+            "message_id, conversation_id, turn_id, seq, event_kind, payload_json"
+            ") VALUES (?, ?, ?, ?, ?, ?)"
+        )
+        if len(rows) == 1:
+            writer.execute(statement, rows[0])
+        else:
+            writer.executemany(statement, rows)
+
+
+@dataclass
+class WrongConversationAllocatorContribution:
+    def write(
+        self,
+        *,
+        writer: ConsoleTransactionWriter,
+        conversation_id: str,
+        message_ids: Mapping[str, str],
+    ) -> None:
+        del conversation_id, message_ids
+        writer.next_trajectory_sequence("other-conversation")  # type: ignore[call-arg]
+
+
 def _acceptance(
     conversation_id: str,
     contribution: ConsoleTransactionContribution,
@@ -217,6 +272,30 @@ def _service(path: Path) -> tuple[ChatPersistenceService, str]:
     return ChatPersistenceService(db), conversation_id
 
 
+def _seed_trajectory_sequence(
+    service: ChatPersistenceService,
+    conversation_id: str,
+    sequence: object,
+) -> None:
+    message_id = service.db.add_message(
+        {
+            "id": f"existing-{sequence}",
+            "conversation_id": conversation_id,
+            "sender": "user",
+            "content": "existing trajectory owner",
+        }
+    )
+    assert message_id is not None
+    connection = service.db.get_connection()
+    connection.execute(
+        "INSERT INTO message_trajectory_metadata("
+        "message_id, conversation_id, turn_id, seq, event_kind"
+        ") VALUES (?, ?, ?, ?, ?)",
+        (message_id, conversation_id, message_id, sequence, "existing"),
+    )
+    connection.commit()
+
+
 def test_generic_contribution_receives_only_writer_and_committed_id_map(
     tmp_path: Path,
 ) -> None:
@@ -233,6 +312,7 @@ def test_generic_contribution_receives_only_writer_and_committed_id_map(
     assert contribution.seen_writer is not None
     assert callable(contribution.seen_writer.execute)
     assert callable(contribution.seen_writer.executemany)
+    assert callable(contribution.seen_writer.next_trajectory_sequence)
     assert not any(
         hasattr(contribution.seen_writer, name)
         for name in (
@@ -261,6 +341,252 @@ def test_generic_contribution_receives_only_writer_and_committed_id_map(
             "VALUES (?, ?, ?)",
             (conversation_id, "user", "assistant"),
         )
+    with pytest.raises(RuntimeError, match="active contribution"):
+        contribution.seen_writer.next_trajectory_sequence()
+
+
+def test_real_v45_trajectory_contribution_allocates_after_existing_sequence(
+    tmp_path: Path,
+) -> None:
+    service, conversation_id = _service(tmp_path / "trajectory-next.sqlite")
+    schema_version = service.db.get_connection().execute(
+        "SELECT version FROM db_schema_version "
+        "WHERE schema_name = 'rag_char_chat_schema'"
+    ).fetchone()[0]
+    assert schema_version == 45
+    _seed_trajectory_sequence(service, conversation_id, 7)
+    contribution = TrajectoryContributionFixture(("library_preparation",))
+
+    with service.db.transaction(immediate=True) as cursor:
+        service.console_dispatch_repository.insert_with_messages(
+            cursor,
+            _acceptance(conversation_id, contribution),
+        )
+
+    assert contribution.allocated_sequences == (8,)
+    rows = service.db.get_connection().execute(
+        "SELECT seq, event_kind, payload_json "
+        "FROM message_trajectory_metadata WHERE event_kind != 'existing'"
+    ).fetchall()
+    assert [tuple(row) for row in rows] == [
+        (8, "library_preparation", '{"version":1}')
+    ]
+
+
+def test_trajectory_allocator_uses_only_the_accepted_conversation_maximum(
+    tmp_path: Path,
+) -> None:
+    service, conversation_id = _service(tmp_path / "trajectory-conversation.sqlite")
+    _seed_trajectory_sequence(service, conversation_id, 7)
+    other_conversation_id = service.db.add_conversation({"title": "other"})
+    assert other_conversation_id is not None
+    _seed_trajectory_sequence(service, other_conversation_id, 100)
+    contribution = TrajectoryContributionFixture(("library_preparation",))
+
+    with service.db.transaction(immediate=True) as cursor:
+        service.console_dispatch_repository.insert_with_messages(
+            cursor,
+            _acceptance(conversation_id, contribution),
+        )
+
+    assert contribution.allocated_sequences == (8,)
+
+
+def test_two_contributions_share_one_writer_and_allocate_consecutive_sequences(
+    tmp_path: Path,
+) -> None:
+    service, conversation_id = _service(tmp_path / "trajectory-shared.sqlite")
+    _seed_trajectory_sequence(service, conversation_id, 11)
+    first = TrajectoryContributionFixture(("library_preparation",))
+    second = TrajectoryContributionFixture(("library_activity",))
+    acceptance = replace(
+        _acceptance(conversation_id, first),
+        contributions=(first, second),
+    )
+
+    with service.db.transaction(immediate=True) as cursor:
+        service.console_dispatch_repository.insert_with_messages(cursor, acceptance)
+
+    assert first.seen_writer is second.seen_writer
+    assert first.allocated_sequences == (12,)
+    assert second.allocated_sequences == (13,)
+    assert first.seen_writer is not None
+    with pytest.raises(RuntimeError, match="active contribution"):
+        first.seen_writer.next_trajectory_sequence()
+
+
+def test_activity_like_batch_allocates_ordered_consecutive_sequences(
+    tmp_path: Path,
+) -> None:
+    service, conversation_id = _service(tmp_path / "trajectory-batch.sqlite")
+    contribution = TrajectoryContributionFixture(
+        ("library_activity_first", "library_activity_second", "library_activity_third")
+    )
+
+    with service.db.transaction(immediate=True) as cursor:
+        service.console_dispatch_repository.insert_with_messages(
+            cursor,
+            _acceptance(conversation_id, contribution),
+        )
+
+    rows = service.db.get_connection().execute(
+        "SELECT seq, event_kind FROM message_trajectory_metadata ORDER BY seq"
+    ).fetchall()
+    assert [tuple(row) for row in rows] == [
+        (1, "library_activity_first"),
+        (2, "library_activity_second"),
+        (3, "library_activity_third"),
+    ]
+
+
+def test_trajectory_allocation_rolls_back_and_next_transaction_reuses_max_plus_one(
+    tmp_path: Path,
+) -> None:
+    service, conversation_id = _service(tmp_path / "trajectory-rollback.sqlite")
+    _seed_trajectory_sequence(service, conversation_id, 20)
+    trajectory = TrajectoryContributionFixture(("library_activity",))
+    failure = RecordingContribution(fail=True)
+    failed_acceptance = replace(
+        _acceptance(conversation_id, trajectory),
+        contributions=(trajectory, failure),
+    )
+
+    with pytest.raises(RuntimeError, match="injected contribution failure"):
+        with service.db.transaction(immediate=True) as cursor:
+            service.console_dispatch_repository.insert_with_messages(
+                cursor,
+                failed_acceptance,
+            )
+
+    connection = service.db.get_connection()
+    assert connection.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 1
+    assert connection.execute(
+        "SELECT COUNT(*) FROM console_dispatch_checkpoints"
+    ).fetchone()[0] == 0
+    rows = connection.execute(
+        "SELECT seq FROM message_trajectory_metadata ORDER BY seq"
+    ).fetchall()
+    assert [tuple(row) for row in rows] == [(20,)]
+
+    committed = TrajectoryContributionFixture(("library_preparation",))
+    with service.db.transaction(immediate=True) as cursor:
+        service.console_dispatch_repository.insert_with_messages(
+            cursor,
+            _acceptance(conversation_id, committed),
+        )
+
+    assert committed.allocated_sequences == (21,)
+
+
+@pytest.mark.parametrize("bad_max", [-1, "corrupt", 9_223_372_036_854_775_807])
+def test_trajectory_allocator_rejects_corrupt_or_out_of_range_maxima(
+    tmp_path: Path,
+    bad_max: object,
+) -> None:
+    service, conversation_id = _service(tmp_path / "trajectory-bad-max.sqlite")
+    _seed_trajectory_sequence(service, conversation_id, bad_max)
+
+    with pytest.raises(sqlite3.DatabaseError, match="trajectory sequence"):
+        with service.db.transaction(immediate=True) as cursor:
+            service.console_dispatch_repository.insert_with_messages(
+                cursor,
+                _acceptance(
+                    conversation_id,
+                    TrajectoryContributionFixture(("library_activity",)),
+                ),
+            )
+
+    connection = service.db.get_connection()
+    assert connection.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 1
+    assert connection.execute(
+        "SELECT COUNT(*) FROM console_dispatch_checkpoints"
+    ).fetchone()[0] == 0
+
+
+def test_trajectory_allocator_cannot_request_another_conversation(
+    tmp_path: Path,
+) -> None:
+    service, conversation_id = _service(tmp_path / "trajectory-bound.sqlite")
+
+    with pytest.raises(TypeError):
+        with service.db.transaction(immediate=True) as cursor:
+            service.console_dispatch_repository.insert_with_messages(
+                cursor,
+                _acceptance(conversation_id, WrongConversationAllocatorContribution()),
+            )
+
+    assert service.db.get_connection().execute(
+        "SELECT COUNT(*) FROM messages"
+    ).fetchone()[0] == 0
+
+
+def test_concurrent_repositories_serialize_trajectory_sequence_allocation(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "trajectory-concurrent.sqlite"
+    first_service, conversation_id = _service(database_path)
+    _seed_trajectory_sequence(first_service, conversation_id, 30)
+    second_service = ChatPersistenceService(
+        CharactersRAGDB(database_path, client_id="contribution-test-2")
+    )
+    barrier = threading.Barrier(2)
+    errors: list[BaseException] = []
+
+    def accept(
+        service: ChatPersistenceService,
+        suffix: str,
+        contribution: TrajectoryContributionFixture,
+    ) -> None:
+        base_acceptance = _acceptance(conversation_id, contribution)
+        attempt_id = f"attempt-{suffix}"
+        acceptance = replace(
+            base_acceptance,
+            user_message_id=f"user-{suffix}",
+            assistant_message_id=f"assistant-{suffix}",
+            preparation_id=f"preparation-{suffix}",
+            attempt_id=attempt_id,
+            frozen_authority=replace(
+                base_acceptance.frozen_authority,
+                attempt_id=attempt_id,
+            ),
+        )
+        try:
+            barrier.wait()
+            with service.db.transaction(immediate=True) as cursor:
+                service.console_dispatch_repository.insert_with_messages(
+                    cursor,
+                    acceptance,
+                )
+        except BaseException as exc:
+            errors.append(exc)
+
+    first_contribution = TrajectoryContributionFixture(("library_activity_a",))
+    second_contribution = TrajectoryContributionFixture(("library_activity_b",))
+    threads = (
+        threading.Thread(
+            target=accept,
+            args=(first_service, "a", first_contribution),
+        ),
+        threading.Thread(
+            target=accept,
+            args=(second_service, "b", second_contribution),
+        ),
+    )
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    assert sorted(
+        first_contribution.allocated_sequences
+        + second_contribution.allocated_sequences
+    ) == [31, 32]
+    rows = first_service.db.get_connection().execute(
+        "SELECT seq FROM message_trajectory_metadata "
+        "WHERE event_kind LIKE 'library_activity_%' ORDER BY seq"
+    ).fetchall()
+    assert [tuple(row) for row in rows] == [(31,), (32,)]
 
 
 def test_contribution_error_propagates_and_rolls_back_every_write(tmp_path: Path) -> None:

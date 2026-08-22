@@ -455,7 +455,18 @@ The same foundation repository owns explicit dispatch-checkpoint primitives:
 Generic sidecar contributions do not receive the repository's raw
 `sqlite3.Cursor`. The transaction owner supplies a narrowly typed
 `ConsoleTransactionWriter` capability with only parameterized, insert-only
-`execute(...)` and `executemany(...)` operations. Its complete accepted grammar is
+`execute(...)` and `executemany(...)` operations plus the conversation-bound
+`next_trajectory_sequence() -> int` allocator required by the existing trajectory
+sidecar. The allocator accepts no conversation, table, column, count, or range input.
+On first use it reads `MAX(seq)` for the accepted conversation through the private
+caller cursor inside the same `BEGIN IMMEDIATE`; later calls monotonically allocate
+one consecutive value across every contribution in that acceptance transaction. The
+repository creates one writer for the complete contribution loop and revokes it after
+that scope. A missing maximum starts at `1`; a non-integer, negative, or SQLite
+64-bit-overflowing maximum fails closed. Rollback reserves nothing, so the next
+committed transaction derives its value from durable `MAX(seq)` again.
+
+The writer's complete accepted SQL grammar is
 one statement using unquoted ASCII simple identifiers, of the form
 `INSERT INTO table_name (column_name, ...) VALUES (?, ...)`, with exactly one
 `VALUES` row and equal non-zero column, placeholder, and parameter arity.

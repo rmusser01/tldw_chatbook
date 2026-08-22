@@ -198,8 +198,17 @@ cancelled preparation persists neither the transient echo nor the sidecar. The
 one-shot bypass never changes future policy.
 
 Sidecar contributions participate through an insert-only
-`ConsoleTransactionWriter`, not a raw `sqlite3.Cursor`. The persistence owner keeps
-the cursor private and supplies only the exact grammar
+`ConsoleTransactionWriter`, not a raw `sqlite3.Cursor`. The writer additionally
+supplies `next_trajectory_sequence() -> int`, bound internally to the accepted
+conversation and accepting no conversation, table, column, count, or range input.
+One writer spans the complete contribution loop and is revoked afterward. Its first
+allocator call reads `MAX(seq)` through the private cursor inside the same
+`BEGIN IMMEDIATE`; subsequent calls allocate consecutive values across all
+contributions. Missing rows start at `1`; corrupt, negative, or SQLite 64-bit-limit
+maxima fail closed. Rollback creates no durable reservation, so a later transaction
+derives from committed state.
+
+The persistence owner keeps the cursor private and supplies only the exact grammar
 `INSERT INTO simple_table (simple_column, ...) VALUES (?, ...)`, with one VALUES
 row, unquoted/unqualified ASCII identifiers, and equal non-zero column, placeholder, and
 tuple arity; batch writes require at least one same-arity tuple. Conflict
