@@ -325,6 +325,48 @@ async def test_content_and_allocation_changes_clamp_and_reconcile_state() -> Non
         assert section.hint.display is False
 
 
+@pytest.mark.asyncio
+async def test_overflowing_viewport_keeps_focus_across_allocation_resize(
+    monkeypatch,
+) -> None:
+    recovered: list[None] = []
+    section, _content = _section(
+        30,
+        allocation=10,
+        on_focus_recovery=lambda: recovered.append(None),
+    )
+    app = _FocusHarness(section)
+
+    async with app.run_test(size=(60, 30)) as pilot:
+        await _settle(pilot)
+        section.viewport.focus()
+        await pilot.pause()
+        assert app.focused is section.viewport
+        assert section.viewport.can_focus is True
+
+        focusable_states: list[bool] = []
+        original_set_focusable = section._set_viewport_focusable
+
+        def observe_focusable(viewport, *, focusable, recover_owned_focus):
+            focusable_states.append(focusable)
+            original_set_focusable(
+                viewport,
+                focusable=focusable,
+                recover_owned_focus=recover_owned_focus,
+            )
+
+        monkeypatch.setattr(section, "_set_viewport_focusable", observe_focusable)
+        section.set_allocation(5)
+        await _settle(pilot)
+
+        assert section.viewport.content_region.height == 5
+        assert section.viewport.can_focus is True
+        assert app.focused is section.viewport
+        assert recovered == []
+        assert focusable_states
+        assert False not in focusable_states
+
+
 def test_missing_callback_does_not_consume_focus_recovery_incident() -> None:
     recovered: list[None] = []
     section, _content = _section(1)

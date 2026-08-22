@@ -11,7 +11,13 @@ _MAX_CONTENT_ROWS = 20
 
 @dataclass(frozen=True, slots=True)
 class ContextSectionDemand:
-    """Measured content demand for one Context section in DOM order."""
+    """Measured content demand for one Context section in DOM order.
+
+    Attributes:
+        section_id: Stable section identifier.
+        desired_content_rows: Uncapped rendered content demand.
+        is_open: Whether the section body is currently open.
+    """
 
     section_id: str
     desired_content_rows: int
@@ -20,7 +26,14 @@ class ContextSectionDemand:
 
 @dataclass(frozen=True, slots=True)
 class ContextSectionAllocation:
-    """Stable content and hint allocation for one Context section."""
+    """Stable content and hint allocation for one Context section.
+
+    Attributes:
+        section_id: Stable section identifier.
+        allocated_content_rows: Content rows granted to the section.
+        hint_required: Whether the local overflow hint consumes one row.
+        no_room: Whether an open normal-mode section received no body rows.
+    """
 
     section_id: str
     allocated_content_rows: int
@@ -30,14 +43,27 @@ class ContextSectionAllocation:
 
 @dataclass(frozen=True, slots=True)
 class ContextAllocationResult:
-    """Complete allocation snapshot for atomic application by the Context rail."""
+    """Complete allocation snapshot for atomic application by the Context rail.
+
+    Attributes:
+        allocations: Per-section grants in input DOM order.
+        uses_outer_scroll: Whether short-height Context fallback is active.
+    """
 
     allocations: tuple[ContextSectionAllocation, ...]
     uses_outer_scroll: bool
 
 
 def local_hint_required(desired_content_rows: int, allocated_content_rows: int) -> bool:
-    """Return whether a positive content allocation has hidden rows."""
+    """Return whether a positive content allocation has hidden rows.
+
+    Args:
+        desired_content_rows: Uncapped rendered content demand.
+        allocated_content_rows: Content rows granted to the section.
+
+    Returns:
+        Whether hidden content requires the one-line local hint.
+    """
 
     return desired_content_rows > allocated_content_rows > 0
 
@@ -46,7 +72,15 @@ def outer_hint_required(
     desired_outer_rows: int,
     viewport_rows_without_hint: int,
 ) -> bool:
-    """Derive outer overflow without letting the hint slot affect its own existence."""
+    """Derive outer overflow without making the hint self-sustaining.
+
+    Args:
+        desired_outer_rows: Total rendered rows required by outer content.
+        viewport_rows_without_hint: Rows available when no outer hint is shown.
+
+    Returns:
+        Whether complete sections remain below the outer viewport.
+    """
 
     return desired_outer_rows > viewport_rows_without_hint
 
@@ -58,7 +92,20 @@ def allocate_context_sections(
     sections: Sequence[ContextSectionDemand],
     active_section_id: str | None = None,
 ) -> ContextAllocationResult:
-    """Allocate Context content rows while preserving the input section order."""
+    """Allocate Context content rows while preserving input section order.
+
+    Args:
+        viewport_height: Rows available to the Context rail body.
+        header_chrome_height: Total rows required by direct section headers.
+        sections: Complete demand snapshot in DOM order.
+        active_section_id: Optional section to prioritize transiently.
+
+    Returns:
+        Atomic per-section allocations and the outer-scroll mode.
+
+    Raises:
+        ValueError: If two demands use the same section identifier.
+    """
 
     seen_section_ids: set[str] = set()
     for section in sections:
@@ -104,7 +151,15 @@ def fallback_active_section(
     sections: Sequence[ContextSectionDemand],
     active_section_id: str | None,
 ) -> str | None:
-    """Choose the closest valid predecessor, then the first valid successor."""
+    """Choose the closest valid predecessor, then the first valid successor.
+
+    Args:
+        sections: Complete demand snapshot in DOM order.
+        active_section_id: Current active section, if any.
+
+    Returns:
+        The fallback section identifier, or ``None`` when none is eligible.
+    """
 
     def valid(section: ContextSectionDemand) -> bool:
         return section.is_open and section.desired_content_rows > 0

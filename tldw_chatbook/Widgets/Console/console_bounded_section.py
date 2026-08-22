@@ -16,7 +16,7 @@ MAX_SECTION_CONTENT_LINES = 20
 LOCAL_SCROLL_HINT = "▼ more — scroll"
 
 
-class _BoundedSectionViewport(VerticalScroll):
+class BoundedSectionViewport(VerticalScroll):
     """Native Textual viewport with a scroll-position observation seam."""
 
     def __init__(
@@ -91,7 +91,7 @@ class ConsoleBoundedSection(Vertical):
         self._focused_descendant: Widget | None = None
         self._focus_recovery_notified = False
 
-        self._viewport = _BoundedSectionViewport(
+        self._viewport = BoundedSectionViewport(
             *content,
             on_scroll_changed=self._update_hint,
             id=self.viewport_id,
@@ -130,7 +130,12 @@ class ConsoleBoundedSection(Vertical):
         self.request_reconcile()
 
     def set_allocation(self, allocation: int | None) -> None:
-        """Apply an owner allocation and schedule one post-refresh reconcile."""
+        """Apply an owner allocation and schedule one post-refresh reconcile.
+
+        Args:
+            allocation: Content rows granted by the owner, or ``None`` to use the
+                shared 20-line ceiling.
+        """
 
         self.allocation = allocation
 
@@ -247,6 +252,7 @@ class ConsoleBoundedSection(Vertical):
 
         current_height = viewport.content_region.height
         if current_height != target_height:
+            will_overflow = desired > target_height > 0
             viewport.styles.height = target_height
             viewport.scroll_y = min(
                 viewport.scroll_y,
@@ -254,8 +260,8 @@ class ConsoleBoundedSection(Vertical):
             )
             self._set_viewport_focusable(
                 viewport,
-                focusable=False,
-                recover_owned_focus=not (desired > target_height > 0),
+                focusable=will_overflow,
+                recover_owned_focus=not will_overflow,
             )
             self._has_overflow = False
             self._set_hint_layout(hint, visible=False)
