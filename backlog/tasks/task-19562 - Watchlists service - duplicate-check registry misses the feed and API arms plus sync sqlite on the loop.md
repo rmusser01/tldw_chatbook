@@ -75,3 +75,43 @@ away".
       checkpointed
 - [ ] A guard test fails if a new `async def` in this service performs blocking
       database I/O directly
+
+## Measurement: the busy_timeout question (2026-08-21)
+
+One AC asks that this be **measured, not assumed**. Measured on this branch's
+base; the lane's PLAUSIBLE rating is **confirmed, with one narrowing**.
+
+    SubscriptionsDB connection busy_timeout (ms): 5000
+    journal_mode: wal
+    second writer blocked for 1.08s -> acquired   (lock held 1.0s)
+
+* No `busy_timeout` is set anywhere in `Subscriptions_DB.py`, `base_db.py`
+  or the private-path connector, so the connection inherits Python
+  sqlite3's **5 s** default. The task's premise is correct.
+* A writer collision really does block the caller for as long as the lock is
+  held, up to that 5 s ceiling, and then raises `OperationalError`. On the
+  event loop that stall is the entire UI.
+* **Narrowing worth carrying into the design:** `journal_mode = WAL`, so
+  readers do *not* block writers and writers do *not* block readers. The
+  exposure is **writer-vs-writer only** — not "any of the 22 async methods",
+  as the B-section wording could be read to imply. The read-only methods
+  (`list_sources`, `list_items`, `list_runs`, ...) still block the loop for
+  their own query duration, but they cannot be *stalled* by a concurrent
+  writer.
+
+So both halves are real but distinct: (1) every one of the 22 blocks the loop
+for its own duration -- fix by moving the sqlite work off the loop; (2) the
+*write* paths can additionally stall up to 5 s behind another writer -- and
+lowering `busy_timeout` only converts that stall into an earlier exception, so
+it is not a substitute for (1).
+
+Probe: two connections to a real `SubscriptionsDB`, one holding
+`BEGIN IMMEDIATE` for 1 s while the other times its own `BEGIN IMMEDIATE`.
+
+**Scope note:** this task is an arc, not a quick win -- 7,117 lines across
+`local_watchlists_service.py` (40 `async def`) and `Subscriptions_DB.py`,
+bundling a user-visible correctness bug (duplicate alert notifications), the
+22-method loop-blocking fix, a non-reentrant `transaction()` that
+`record_check_result` nests, and a leaked thread-local connection. Recommend
+splitting: (A) the in-flight guard + duplicate-alert test, (B) the sqlite
+offload, (C) transaction nesting + connection close.
