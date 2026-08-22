@@ -137,7 +137,7 @@ Run: `.venv/bin/pytest -q Tests/Agents/test_agent_step_incremental_persistence.p
 - Test: `Tests/Chat/test_trace_capture_matrix.py`
 - Test: `Tests/Agents/test_trace_approval_capture.py`
 
-- [ ] **Step 1: Write a table-driven event-family matrix test**
+- [x] **Step 1: Write a table-driven event-family matrix test**
 
 The matrix must cover conversation user/system/assistant/feedback/edit/regenerate/
 branch-selection; model start/first-token/completion/retry/error/cancel; tool
@@ -146,32 +146,32 @@ cancel; retrieval start/candidate-selection/outcome; context attach/injection; a
 compaction start/outcome/failure. Assert generic sidecar projection, causal links, and
 safe payload classification.
 
-- [ ] **Step 2: Confirm uncovered families fail.**
+- [x] **Step 2: Confirm uncovered families fail.**
 
-- [ ] **Step 3: Add only the missing `STEP_*` constants and emit at owned seams**
+- [x] **Step 3: Add only the missing `STEP_*` constants and emit at owned seams**
 
 Reuse existing tool/model steps where their semantics are sufficient. Add approval,
 retrieval/context, retry, cancellation, and compaction kinds only when no existing
 record distinguishes the transition. Store safe summaries; never persist hidden
 reasoning or credentials.
 
-- [ ] **Step 4: Add best-effort containment and diagnostics**
+- [x] **Step 4: Add best-effort containment and diagnostics**
 
 Every capture call catches/logs failure with conversation/run/event context and leaves
 the user operation untouched. Project an incomplete marker when a durable owner is
 still writable.
 
-- [ ] **Step 5: Drive one real-seam integration run**
+- [x] **Step 5: Drive one real-seam integration run**
 
 Use the real AgentService, real in-memory/temp databases, real approval callback, and a
 fake provider only at the external provider seam. Assert the joined Trace order rather
 than a hand-written fake contract.
 
-- [ ] **Step 6: Verify**
+- [x] **Step 6: Verify**
 
 Run: `.venv/bin/pytest -q Tests/Chat/test_trace_capture_matrix.py Tests/Agents/test_trace_approval_capture.py Tests/Chat/test_trajectory_capture.py Tests/Agents/test_agent_service.py`
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 `git commit -m "feat(trace): capture console model tool and context events"`
 

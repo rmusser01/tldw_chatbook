@@ -9,6 +9,24 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## A privacy assertion must inspect every default durable owner, not only the primary database
+
+**TASK-19908, 2026-08-22.** Trace capture tests proved that AgentRunsDB and the
+projected ledger omitted hidden reasoning, credentials, and local tool content. An
+independent quality probe then decoded the default filesystem run log and found the
+same raw tool result persisted there, including an explicit hidden-reasoning phrase.
+The projection and its database owner were safe, but the product still violated the
+privacy contract because a second, default-enabled audit owner had not been included
+in the test oracle.
+
+**What to do.** For any capture/privacy change, inventory every durable owner reached
+by the real service seam (database rows, sidecars, files, caches, exports) and inspect
+their decoded persisted bytes. A green projection or sanitized primary table proves
+only that owner. When content is intentionally withheld, also verify that recovery
+handles and user/model guidance do not promise a nonexistent full copy.
+
+---
+
 ## Textual's geometric center is not the painted row for an even-height one-line control
 
 **TASK-16001, 2026-08-13.** A compositor regression helper sampled
