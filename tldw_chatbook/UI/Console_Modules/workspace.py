@@ -3703,7 +3703,7 @@ class ConsoleWorkspaceController:
         if not isinstance(conversation, dict):
             conversation = {}
         store = self._ensure_console_chat_store()
-        session = hydrate_console_session(
+        session = await hydrate_console_session(
             app=self.app_instance,
             store=store,
             conversation_id=target,

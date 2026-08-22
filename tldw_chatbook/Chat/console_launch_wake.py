@@ -337,7 +337,7 @@ async def deliver_launch_wakes(app: Any, marked: Sequence[str]) -> int:
         if not isinstance(conversation, dict):
             conversation = {}
         try:
-            hydrate_console_session(
+            await hydrate_console_session(
                 app=app,
                 store=store,
                 conversation_id=conversation_id,

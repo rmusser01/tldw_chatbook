@@ -17,6 +17,8 @@ from tldw_chatbook.Chat.console_library_policy import (
 )
 from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
 
 
 class _Contribution:
@@ -66,16 +68,26 @@ def _memory_state(store, session_id):
         session.ephemeral,
         session.persisted_conversation_id,
         session.title,
+        session.workspace_id,
         session.library_policy_holder.snapshot,
         session.library_policy_holder.explicitly_staged,
         session.library_policy_holder.save_pending,
+        session.library_policy_hydrated,
         session.rag_scope_holder.scope,
+        store._unresolved_promotion_operations.get(session_id),
+        store._active_leaf_by_session.get(session_id),
+        store._context_summary_by_session.get(session_id),
         tuple(
             (
                 message.id,
+                message.role,
+                message.content,
+                message.status,
                 message.persisted_message_id,
                 message.parent_message_id,
                 message.attachments,
+                message.image_data,
+                message.image_mime_type,
             )
             for message in messages
         ),
@@ -84,6 +96,20 @@ def _memory_state(store, session_id):
 
 def _conversation_count(db):
     return db.get_connection().execute("SELECT COUNT(*) FROM conversations").fetchone()[0]
+
+
+def _bundle_counts(db):
+    connection = db.get_connection()
+    return tuple(
+        connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+        for table in (
+            "conversations",
+            "messages",
+            "console_conversation_library_policy",
+            "message_attachments",
+            "message_trajectory_metadata",
+        )
+    )
 
 
 def test_staged_identity_is_immutable_and_staging_does_not_mutate_session():
@@ -256,3 +282,244 @@ def test_promotion_rejects_unresolved_operation_before_any_write(tmp_path):
 
     assert session.ephemeral is True
     assert _conversation_count(db) == 0
+
+
+def _workspace_store(tmp_path):
+    db = CharactersRAGDB(tmp_path / "chat.sqlite", "workspace-test")
+    registry = LocalWorkspaceRegistryService(
+        WorkspaceDB(tmp_path / "workspace.sqlite", client_id="workspace-test")
+    )
+    registry.create_workspace(workspace_id="workspace-a", name="Workspace A")
+    service = ChatPersistenceService(db, workspace_registry=registry)
+    return db, registry, service, ConsoleChatStore(persistence=service)
+
+
+@pytest.mark.parametrize("failure_point", ("policy", "message", "attachment", "contribution"))
+def test_chat_failure_never_projects_cross_database_workspace_membership(
+    tmp_path, monkeypatch, failure_point
+):
+    db, registry, service, store = _workspace_store(tmp_path)
+    session = store.create_session(workspace_id="workspace-a", ephemeral=True)
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="hello",
+        attachments=(
+            MessageAttachment(b"zero", "image/png", "zero.png", 0),
+            MessageAttachment(b"one", "image/png", "one.png", 1),
+        ),
+    )
+    contribution = _Contribution(fail=failure_point == "contribution")
+    if failure_point == "policy":
+        monkeypatch.setattr(
+            service.console_library_policy_repository,
+            "insert",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("policy fail")),
+        )
+    elif failure_point == "message":
+        monkeypatch.setattr(
+            service,
+            "create_message",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("message fail")),
+        )
+    elif failure_point == "attachment":
+        monkeypatch.setattr(
+            db,
+            "set_message_attachments",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("attachment fail")),
+        )
+
+    with pytest.raises(RuntimeError):
+        store.promote_ephemeral_session(session.id, contributions=(contribution,))
+
+    assert _conversation_count(db) == 0
+    assert registry.list_workspace_conversations("workspace-a") == ()
+
+
+def test_workspace_projection_failure_keeps_commit_and_retries_idempotently(
+    tmp_path, monkeypatch
+):
+    db, registry, service, store = _workspace_store(tmp_path)
+    session = store.create_session(workspace_id="workspace-a", ephemeral=True)
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hello")
+    original_link = registry.link_membership
+    calls = 0
+
+    def fail_once(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("workspace unavailable")
+        return original_link(*args, **kwargs)
+
+    monkeypatch.setattr(registry, "link_membership", fail_once)
+
+    conversation_id = store.promote_ephemeral_session(session.id)
+
+    assert conversation_id is not None
+    assert session.ephemeral is False
+    assert _conversation_count(db) == 1
+    assert store.has_pending_workspace_projection(session.id)
+    assert store.promote_ephemeral_session(session.id) is None
+    assert not store.has_pending_workspace_projection(session.id)
+    assert [row.item_id for row in registry.list_workspace_conversations("workspace-a")] == [conversation_id]
+    assert store.retry_pending_workspace_projection(session.id)
+    assert store.promote_ephemeral_session(session.id) is None
+    assert _conversation_count(db) == 1
+
+
+def test_workspace_projection_reconciles_after_restart_without_duplicate_membership(
+    tmp_path, monkeypatch
+):
+    db, registry, service, store = _workspace_store(tmp_path)
+    session = store.create_session(workspace_id="workspace-a", ephemeral=True)
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hello")
+    original_link = registry.link_membership
+    monkeypatch.setattr(
+        registry,
+        "link_membership",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("workspace unavailable")
+        ),
+    )
+    conversation_id = store.promote_ephemeral_session(session.id)
+    assert registry.list_workspace_conversations("workspace-a") == ()
+
+    monkeypatch.setattr(registry, "link_membership", original_link)
+    restarted = ConsoleChatStore(persistence=service)
+    restored = restarted.restore_persisted_session(
+        title="Restarted",
+        workspace_id="workspace-a",
+        persisted_conversation_id=conversation_id,
+        all_nodes=(),
+    )
+    assert restarted.has_pending_workspace_projection(restored.id)
+    assert restarted.retry_pending_workspace_projection(restored.id)
+    assert restarted.retry_pending_workspace_projection(restored.id)
+    memberships = registry.list_workspace_conversations("workspace-a")
+    assert [row.item_id for row in memberships] == [conversation_id]
+    assert _conversation_count(db) == 1
+
+
+@pytest.mark.parametrize(
+    "failure_point",
+    (
+        "conversation",
+        "policy",
+        "message-0",
+        "message-1",
+        "attachment-0",
+        "attachment-sidecar",
+        "active-leaf",
+        "context-summary",
+        "contribution-0",
+        "contribution-1",
+    ),
+)
+def test_each_bundle_write_boundary_rolls_back_exactly_and_retries_once(
+    tmp_path, monkeypatch, failure_point
+):
+    db, service, store = _store(tmp_path, f"boundary-{failure_point}.db")
+    session = store.create_session(title="Boundary", ephemeral=True)
+    user = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="hello",
+        attachments=(
+            MessageAttachment(b"zero", "image/png", "zero.png", 0),
+            MessageAttachment(b"one", "image/png", "one.png", 1),
+        ),
+    )
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="hi"
+    )
+    store._context_summary_by_session[session.id] = ("summary", assistant.id)
+    contributions = [_Contribution(), _Contribution()]
+    before = _memory_state(store, session.id)
+    failure = RuntimeError(f"injected {failure_point}")
+
+    def fail_once(original, predicate=lambda *_args, **_kwargs: True):
+        failed = False
+
+        def wrapped(*args, **kwargs):
+            nonlocal failed
+            if not failed and predicate(*args, **kwargs):
+                failed = True
+                raise failure
+            return original(*args, **kwargs)
+
+        return wrapped
+
+    if failure_point == "conversation":
+        monkeypatch.setattr(
+            service, "create_conversation", fail_once(service.create_conversation)
+        )
+    elif failure_point == "policy":
+        repository = service.console_library_policy_repository
+        monkeypatch.setattr(repository, "insert", fail_once(repository.insert))
+    elif failure_point.startswith("message-"):
+        target = int(failure_point.rsplit("-", 1)[1])
+        call_index = -1
+        original = service.create_message
+
+        def fail_message(*args, **kwargs):
+            nonlocal call_index
+            call_index += 1
+            if call_index == target:
+                raise failure
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(service, "create_message", fail_message)
+    elif failure_point == "attachment-0":
+        monkeypatch.setattr(
+            db,
+            "add_message",
+            fail_once(
+                db.add_message,
+                lambda payload: payload.get("image_data") == b"zero",
+            ),
+        )
+    elif failure_point == "attachment-sidecar":
+        monkeypatch.setattr(
+            db,
+            "set_message_attachments",
+            fail_once(db.set_message_attachments, lambda _message_id, rows: bool(rows)),
+        )
+    elif failure_point == "active-leaf":
+        monkeypatch.setattr(
+            db,
+            "set_conversation_active_leaf",
+            fail_once(db.set_conversation_active_leaf),
+        )
+    elif failure_point == "context-summary":
+        monkeypatch.setattr(
+            db,
+            "set_conversation_context_summary",
+            fail_once(db.set_conversation_context_summary),
+        )
+    else:
+        contributions[int(failure_point.rsplit("-", 1)[1])].fail = True
+
+    expected_error = (
+        "injected contribution failure"
+        if failure_point.startswith("contribution-")
+        else f"injected {failure_point}"
+    )
+    with pytest.raises(RuntimeError, match=expected_error):
+        store.promote_ephemeral_session(session.id, contributions=contributions)
+
+    assert _memory_state(store, session.id) == before
+    assert _bundle_counts(db) == (0, 0, 0, 0, 0)
+    for contribution in contributions:
+        contribution.fail = False
+    conversation_id = store.promote_ephemeral_session(
+        session.id, contributions=contributions
+    )
+    assert conversation_id is not None
+    assert _bundle_counts(db) == (1, 2, 1, 1, 2)
+    row = db.get_message_by_id(
+        store._nodes_by_session[session.id][user.id].persisted_message_id
+    )
+    assert row["image_data"] == b"zero"
+    attachments = db.get_attachments_for_messages([row["id"]])
+    assert attachments[row["id"]][0]["data"] == b"one"

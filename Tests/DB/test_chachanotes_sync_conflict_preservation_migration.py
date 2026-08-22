@@ -120,7 +120,8 @@ def test_upgrade_from_a_real_v43_database_adds_the_columns(tmp_path: Path):
         # here made a schema bump red this test on version arithmetic and
         # short-circuit the column/row assertions below it -- the exact shape
         # task-19568 removed from the persona-visual migration test. The one
-        # deliberate exact pin lives in the newest migration's test module.
+        # deliberate exact pin now lives in
+        # ``test_real_v47_fixture_gains_exact_v48_local_schema_and_seed_rows``.
         assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
         columns = _columns(connection)
         for name in NEW_COLUMNS:

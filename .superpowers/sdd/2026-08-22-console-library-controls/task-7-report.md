@@ -101,3 +101,85 @@ contributions, and the two new Store suites.
 - Confirmed existing unrelated worktree changes were not overwritten; no secrets,
   profile paths, debug logging, deprecated Settings surfaces, or Task 8+ behavior
   were added.
+
+## Fix round 1 — review correction
+
+### Design correction
+
+Review found that WorkspaceDB membership had been written from inside the
+ChaChaNotes promotion call. The two connections cannot share rollback, and a
+real two-database policy-failure probe left a dangling membership. The spec,
+plan, ADR-079, Task-7 brief, and Backlog notes were amended before production
+code: `conversations.workspace_id` is now durable authority, workspace targets
+are validated before the Chat transaction, and registry membership is an
+idempotent post-commit projection. Projection failure keeps the committed
+identity, records pending work, and reconciles from the durable row on retry or
+restart without minting a second UUID/membership.
+
+The same review corrected three lifecycle boundaries. Runtime/Store now owns a
+live future-session defaults provider used by every `Store.create_session`
+entrypoint; rollback and state replacement unregister/rebind holders; and sync
+restore registers a fail-closed placeholder without reading policy. Production
+resume and launch hydration await coordinator `to_thread` loading, with
+generation checks and activation only after hydration. No Task-8 preparation or
+dispatch behavior was introduced.
+
+### RED and failure injection
+
+- Exact fix-round three-file RED before production: **10 failed, 19 passed**.
+  Categories were missing async hydration/production await, live defaults,
+  rollback unregister, restore-state rebind, precommit workspace orphaning,
+  postcommit projection recovery, and restart reconciliation.
+- First post-implementation attempt: **29 passed**. After the complete review
+  matrix and runtime probes were added, the fix-specific three files finished
+  **35 passed, 1 warning**.
+- The promotion matrix injects at conversation, policy, both message indices,
+  position-0 attachment storage, extra-attachment sidecar, active leaf, context
+  summary, and both generic contributions. Each failure preserves the full
+  captured in-memory identity/policy/message/attachment/scope/active-leaf/
+  summary/unresolved-operation state, leaves all five durable bundle tables at
+  zero rows, and retries to exactly one conversation, two messages, one policy,
+  one sidecar attachment, and two contributions.
+- Real ChatDB + WorkspaceDB cases prove policy/message/attachment/contribution
+  failure creates zero membership; postcommit membership failure leaves one
+  committed conversation and pending projection; retry and crash/restart each
+  converge to one UUID and one membership.
+- First persistence observes the policy insert while `in_transaction == True`
+  and the session still owns its pre-call ID/title. Durable success verifies
+  position 0 in the message row and the extra attachment sidecar separately.
+
+### Final verification
+
+- Exact Task-7 Store battery: **316 passed, 1 warning**.
+- Exact named foundation battery: **225 passed, 4 warnings**.
+- Chat persistence service: **71 passed, 1 warning**.
+- Stale-version-comment owners and the real v45 exact pin: **12 passed, 1
+  warning**.
+- Targeted runtime/hydration/workspace/UI group: **94 passed, 2 failed**. Both
+  failures reproduce unchanged at exact pre-fix commit `51ace1b3b`:
+  `test_app_fences_console_then_drains_buddy_before_profile_teardown` times out
+  because its fixture lacks `notes_sync_runtime_owner`, and
+  `test_a_launch_built_controller_is_not_sticky_when_console_opens` reaches its
+  vacuity guard with `configured_model is None`. Neither is fix-induced; the
+  temporary detached baseline worktree was removed.
+- Scoped Ruff and `git diff --check`: passed. Per the fix-round ruling, the full
+  DB subtrees were not rerun because no schema or migration fixture changed;
+  the six previously proven unrelated media baseline failures remain visible in
+  the original report above.
+
+### Fix-round self-review
+
+- Confirmed no WorkspaceDB write occurs before the ChaChaNotes bundle commits,
+  and projection failure cannot revert a committed session to ephemeral.
+- Confirmed every production `store.create_session` call funnels through the
+  runtime-installed provider; changing Settings affects later sessions only.
+- Confirmed restored policy reads occur through coordinator `asyncio.to_thread`,
+  the loop remains responsive, stale generations do not publish old authority,
+  and production does not activate the restored session while placeholder
+  authority remains.
+- Confirmed holder rollback/close/state-replacement cleanup, overlapping-ID
+  rebinding, stale-holder non-publication, retry idempotence, restricted shared
+  transaction writer use, and the narrow unresolved-operation guard.
+- Added the cross-database rollback incident to
+  `backlog/docs/lessons-testing-evidence.md`; no deprecated Settings surface,
+  profile database, full-suite run, push, or Task-8+ behavior was added.

@@ -322,7 +322,7 @@ def apply_resume_settings_overrides(
     return replace(settings, system_prompt=system_prompt, pinned_prefill=pinned_prefill)
 
 
-def hydrate_console_session(
+async def hydrate_console_session(
     *,
     app: Any,
     store: Any,
@@ -428,8 +428,12 @@ def hydrate_console_session(
         assistant_id=assistant_id,
         assistant_authority_id=assistant_authority_id,
         character_id=character_id,
+        activate=False,
     )
+    await store.hydrate_session_library_policy(session.id)
+    await store.reconcile_pending_workspace_projection(session.id)
     roleplay_context = parse_console_roleplay_context(conversation.get("metadata"))
     session.user_display_name_override = roleplay_context.user_name_override
     session.character_system_template = roleplay_context.character_system_template
+    store.switch_session(session.id)
     return session

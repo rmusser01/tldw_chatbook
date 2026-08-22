@@ -119,12 +119,18 @@ from __future__ import annotations
 import asyncio
 import inspect
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Mapping
 
 from loguru import logger
 
+from tldw_chatbook.Chat.console_library_policy import (
+    ConsoleAssistantLibraryAccess,
+    ConsoleAutoRetrieve,
+    ConsoleLibraryPolicyDefaults,
+)
 from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
 from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
+from tldw_chatbook.config import coerce_bool_setting
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
@@ -138,6 +144,35 @@ CONSOLE_RUNTIME_ATTR = "console_runtime"
 #: or a read-only double). Never the production path — `TldwCli.__init__`
 #: always takes `CONSOLE_RUNTIME_ATTR`.
 _VIEW_RUNTIME_FALLBACK_ATTR = "_console_runtime_fallback"
+
+
+def _current_library_policy_defaults(app: Any) -> ConsoleLibraryPolicyDefaults:
+    """Read fresh future-session defaults from the app's current config."""
+    config = getattr(app, "app_config", None)
+    if not isinstance(config, Mapping):
+        config = {}
+    console = config.get("console", {})
+    chat_defaults = config.get("chat_defaults", {})
+    if not isinstance(console, Mapping):
+        console = {}
+    if not isinstance(chat_defaults, Mapping):
+        chat_defaults = {}
+    return ConsoleLibraryPolicyDefaults(
+        auto_retrieve=(
+            ConsoleAutoRetrieve.AUTOMATIC
+            if coerce_bool_setting(
+                chat_defaults.get("rag_auto_retrieve_on_send", False), False
+            )
+            else ConsoleAutoRetrieve.NEVER
+        ),
+        assistant_access=(
+            ConsoleAssistantLibraryAccess.ALLOWED
+            if coerce_bool_setting(
+                console.get("assistant_library_access_default", False), False
+            )
+            else ConsoleAssistantLibraryAccess.BLOCKED
+        ),
+    )
 
 __all__ = [
     "CONSOLE_RUNTIME_ATTR",
@@ -616,6 +651,9 @@ class ConsoleRuntime:
                 )
                 if persistence is not None
                 else None
+            ),
+            library_policy_defaults_provider=lambda: _current_library_policy_defaults(
+                self._app
             ),
         )
         self._bind_view_hooks()

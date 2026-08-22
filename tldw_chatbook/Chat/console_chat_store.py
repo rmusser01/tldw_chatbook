@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 import threading
@@ -62,6 +63,7 @@ from tldw_chatbook.Chat.console_library_policy import (
     ConsoleLibraryPolicyHolder,
     ConsoleLibraryPolicySnapshot,
     ConsoleLibraryPolicyWriteResult,
+    normalize_policy_read,
 )
 from tldw_chatbook.Chat.console_library_policy_coordinator import (
     ConsoleLibraryPolicyCoordinator,
@@ -604,6 +606,8 @@ class ConsoleChatSession:
     library_policy_holder: ConsoleLibraryPolicyHolder = field(
         default_factory=_default_library_policy_holder
     )
+    #: Restored durable sessions remain fail-closed until off-loop hydration.
+    library_policy_hydrated: bool = True
     draft: str = ""
     #: Session-lifetime evidence that the composer has held user-authored text.
     #: Clearing the draft does not make that work safe to overwrite.
@@ -756,6 +760,9 @@ class ConsoleChatStore:
         sync_v2_workspace_scope: str | None = None,
         on_scope_flushed: Callable[[str, "RagScope | None"], None] | None = None,
         library_policy_defaults: ConsoleLibraryPolicyDefaults | None = None,
+        library_policy_defaults_provider: (
+            Callable[[], ConsoleLibraryPolicyDefaults] | None
+        ) = None,
         library_policy_coordinator: ConsoleLibraryPolicyCoordinator | None = None,
     ) -> None:
         """Initialize the Console chat store.
@@ -798,6 +805,7 @@ class ConsoleChatStore:
                 assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
             )
         )
+        self._library_policy_defaults_provider = library_policy_defaults_provider
         repository = getattr(
             persistence,
             "console_library_policy_repository",
@@ -853,6 +861,7 @@ class ConsoleChatStore:
         self._context_summary_by_session: dict[str, tuple[str | None, str | None]] = {}
         self._deferred_project_instruction_state_session_ids: set[str] = set()
         self._unresolved_promotion_operations: dict[str, str] = {}
+        self._pending_workspace_projections: dict[str, str] = {}
         self._pending_persistence_message_ids: set[str] = set()
         self._terminal_citation_finalizers: dict[str, TerminalCitationFinalizer] = {}
         self._provisional_terminal_selection_ids: set[str] = set()
@@ -1076,6 +1085,16 @@ class ConsoleChatStore:
             or canonical_settings_baseline != settings
         ):
             raise ValueError("canonical baseline must equal the session settings.")
+        defaults = (
+            self._library_policy_defaults_provider()
+            if self._library_policy_defaults_provider is not None
+            else self._library_policy_defaults
+        )
+        if not isinstance(defaults, ConsoleLibraryPolicyDefaults):
+            raise TypeError(
+                "library policy defaults provider must return "
+                "ConsoleLibraryPolicyDefaults"
+            )
         session = ConsoleChatSession(
             id=session_id or str(uuid4()),
             title=title,
@@ -1096,8 +1115,8 @@ class ConsoleChatStore:
             ),
             library_policy_holder=ConsoleLibraryPolicyHolder(
                 ConsoleLibraryPolicySnapshot(
-                    auto_retrieve=self._library_policy_defaults.auto_retrieve,
-                    assistant_access=self._library_policy_defaults.assistant_access,
+                    auto_retrieve=defaults.auto_retrieve,
+                    assistant_access=defaults.assistant_access,
                     policy_revision=None,
                     source="temporary" if ephemeral else "new_session",
                 )
@@ -1351,6 +1370,9 @@ class ConsoleChatStore:
         self._conversation_context_epochs.pop(session_id, None)
         self._speech_preference_epochs.pop(session_id, None)
         self._payload_revisions.pop(session_id, None)
+        self._pending_workspace_projections.pop(session_id, None)
+        if self.library_policy_coordinator is not None:
+            self.library_policy_coordinator.unregister_holder(session_id)
         self._sessions.pop(session_id, None)
         if self.active_session_id == session_id:
             self._activate_session(
@@ -1377,6 +1399,7 @@ class ConsoleChatStore:
         character_name: str | None = None,
         ephemeral: bool = False,
         remote_active: bool = False,
+        activate: bool = True,
     ) -> ConsoleChatSession:
         """Create and activate a native session from persisted conversation data.
 
@@ -1451,19 +1474,22 @@ class ConsoleChatStore:
             character_id=character_id,
             character_name=character_name,
             project_instruction_state=project_instruction_state,
+            activate=activate,
         )
         session.persisted_conversation_id = str(persisted_conversation_id)
+        session.library_policy_hydrated = False
         coordinator = self.library_policy_coordinator
         if coordinator is not None:
-            policy_result = coordinator.repository.read(
-                session.persisted_conversation_id
-            )
-            session.library_policy_holder.snapshot = policy_result.snapshot
+            session.library_policy_holder.snapshot = normalize_policy_read(None).snapshot
             session.library_policy_holder.explicitly_staged = False
             coordinator.register_holder(
                 session.id,
                 session.persisted_conversation_id,
                 session.library_policy_holder,
+            )
+        if session.workspace_id != CONSOLE_GLOBAL_WORKSPACE_ID:
+            self._pending_workspace_projections[session.id] = (
+                session.persisted_conversation_id
             )
         self._restore_speech_preferences(session)
         self._resolve_context_policy_on_resume(session.id)
@@ -1836,6 +1862,7 @@ class ConsoleChatStore:
         self._speech_preference_epochs.pop(session_id, None)
         self._character_emote_feed_by_session.pop(session_id, None)
         self._unresolved_promotion_operations.pop(session_id, None)
+        self._pending_workspace_projections.pop(session_id, None)
         if self.library_policy_coordinator is not None:
             self.library_policy_coordinator.unregister_holder(session_id)
         self._sessions.pop(session_id, None)
@@ -1865,6 +1892,75 @@ class ConsoleChatStore:
         if not isinstance(defaults, ConsoleLibraryPolicyDefaults):
             raise TypeError("defaults must be ConsoleLibraryPolicyDefaults")
         self._library_policy_defaults = defaults
+
+    async def hydrate_session_library_policy(
+        self, session_id: str
+    ) -> ConsoleLibraryPolicySnapshot:
+        """Hydrate one restored holder off-loop without publishing stale work."""
+        session = self._session_or_raise(session_id)
+        conversation_id = session.persisted_conversation_id
+        coordinator = self.library_policy_coordinator
+        if coordinator is None or conversation_id is None:
+            session.library_policy_hydrated = True
+            return session.library_policy_holder.snapshot
+        result = await coordinator.load(session_id, conversation_id)
+        current = self._sessions.get(session_id)
+        if (
+            current is session
+            and current.persisted_conversation_id == conversation_id
+        ):
+            current.library_policy_hydrated = True
+        return result.snapshot
+
+    def has_pending_workspace_projection(self, session_id: str) -> bool:
+        """Return whether post-commit workspace projection still needs retry."""
+        return session_id in self._pending_workspace_projections
+
+    def retry_pending_workspace_projection(self, session_id: str) -> bool:
+        """Reconcile workspace membership from the durable Chat authority."""
+        conversation_id = self._pending_workspace_projections.get(session_id)
+        if conversation_id is None:
+            return True
+        project = getattr(self.persistence, "project_workspace_membership", None)
+        if not callable(project):
+            return False
+        try:
+            project(conversation_id)
+        except Exception:
+            logger.bind(
+                session_id=session_id,
+                conversation_id=conversation_id,
+            ).opt(exception=True).warning(
+                "Workspace membership projection remains pending."
+            )
+            return False
+        current = self._sessions.get(session_id)
+        if (
+            current is not None
+            and current.persisted_conversation_id == conversation_id
+        ):
+            self._pending_workspace_projections.pop(session_id, None)
+        return True
+
+    async def reconcile_pending_workspace_projection(self, session_id: str) -> bool:
+        """Run a pending registry projection away from the event loop."""
+        return await asyncio.to_thread(
+            self.retry_pending_workspace_projection,
+            session_id,
+        )
+
+    def _project_workspace_membership_after_commit(
+        self, session: ConsoleChatSession
+    ) -> None:
+        conversation_id = session.persisted_conversation_id
+        if (
+            conversation_id is None
+            or session.workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID
+        ):
+            self._pending_workspace_projections.pop(session.id, None)
+            return
+        self._pending_workspace_projections[session.id] = conversation_id
+        self.retry_pending_workspace_projection(session.id)
 
     def stage_session_library_policy(
         self,
@@ -2351,6 +2447,11 @@ class ConsoleChatStore:
         """
         restored_sessions = list(sessions)
         self._activate_session(None)
+        if self.library_policy_coordinator is not None:
+            for replaced_session_id in tuple(self._sessions):
+                self.library_policy_coordinator.unregister_holder(
+                    replaced_session_id
+                )
         self._sessions.clear()
         self._messages_by_session.clear()
         self._message_session_index.clear()
@@ -2388,10 +2489,33 @@ class ConsoleChatStore:
         self._native_parent_by_message.clear()
         self._active_leaf_by_session.clear()
         self._context_summary_by_session.clear()
+        self._pending_workspace_projections.clear()
 
         messages_by_session = messages_by_session or {}
         for session in restored_sessions:
-            self._sessions[session.id] = replace(session)
+            restored_holder = ConsoleLibraryPolicyHolder(
+                snapshot=session.library_policy_holder.snapshot,
+                explicitly_staged=session.library_policy_holder.explicitly_staged,
+                save_pending=session.library_policy_holder.save_pending,
+            )
+            restored_session = replace(
+                session,
+                library_policy_holder=restored_holder,
+            )
+            self._sessions[session.id] = restored_session
+            if self.library_policy_coordinator is not None:
+                self.library_policy_coordinator.register_holder(
+                    session.id,
+                    restored_session.persisted_conversation_id,
+                    restored_holder,
+                )
+            if (
+                restored_session.persisted_conversation_id is not None
+                and restored_session.workspace_id != CONSOLE_GLOBAL_WORKSPACE_ID
+            ):
+                self._pending_workspace_projections[session.id] = (
+                    restored_session.persisted_conversation_id
+                )
             self._bump_speech_preference_epoch(session.id)
             self._nodes_by_session[session.id] = {}
             self._children_by_parent[session.id] = {}
@@ -6260,6 +6384,7 @@ class ConsoleChatStore:
         if session.ephemeral:
             return None
         if session.persisted_conversation_id is not None:
+            self.retry_pending_workspace_projection(session_id)
             return session.persisted_conversation_id
         if self.persistence is None:
             return None
@@ -6343,6 +6468,7 @@ class ConsoleChatStore:
                     committed_identity.conversation_id,
                     session.library_policy_holder,
                 )
+        self._project_workspace_membership_after_commit(session)
         if (
             session.user_display_name_override is not None
             or session.character_system_template is not None
@@ -6534,6 +6660,7 @@ class ConsoleChatStore:
         """
         session = self._session_or_raise(session_id)
         if not session.ephemeral:
+            self.retry_pending_workspace_projection(session_id)
             return None
         if self.persistence is None:
             return None
@@ -6794,6 +6921,7 @@ class ConsoleChatStore:
                 identity.conversation_id,
                 session.library_policy_holder,
             )
+        self._project_workspace_membership_after_commit(session)
         for message in messages:
             message.persisted_message_id = staged_message_ids[message.id]
             native_parent = self._native_parent_by_message.get(message.id)

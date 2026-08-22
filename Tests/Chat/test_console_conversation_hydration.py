@@ -22,6 +22,8 @@ failure the plan named ("rather than duplicating it").
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from Tests.UI.app_factory import _build_test_app
@@ -206,7 +208,7 @@ async def test_a_launch_hydrated_session_matches_a_screen_resumed_one(tmp_path):
     tree = await load_console_conversation_tree(launch_app, CONVERSATION_ID)
     assert tree is not None
     conversation = tree["conversation"]
-    launch_session = hydrate_console_session(
+    launch_session = await hydrate_console_session(
         app=launch_app,
         store=launch_store,
         conversation_id=CONVERSATION_ID,
@@ -255,3 +257,34 @@ async def test_a_launch_hydrated_session_matches_a_screen_resumed_one(tmp_path):
         "session ids are per-session uuids; equal ids would mean the two "
         "stores are the same object and this test is not comparing two callers"
     )
+
+
+@pytest.mark.asyncio
+async def test_production_hydration_never_activates_placeholder_authority(
+    tmp_path, monkeypatch
+):
+    app = _fixture_app(tmp_path)
+    store = app.console_runtime.ensure_chat_store()
+    prior = store.create_session(title="Prior")
+    observed = []
+    original_hydrate = store.hydrate_session_library_policy
+
+    async def observe_before_activation(session_id):
+        observed.append((store.active_session_id, session_id))
+        await asyncio.sleep(0)
+        observed.append((store.active_session_id, session_id))
+        return await original_hydrate(session_id)
+
+    monkeypatch.setattr(store, "hydrate_session_library_policy", observe_before_activation)
+    session = await hydrate_console_session(
+        app=app,
+        store=store,
+        conversation_id=CONVERSATION_ID,
+        tree=FIXTURE_TREE,
+        settings=default_console_session_settings(app.app_config),
+        target_scope_type="global",
+    )
+
+    assert observed == [(prior.id, session.id), (prior.id, session.id)]
+    assert session.library_policy_hydrated is True
+    assert store.active_session_id == session.id

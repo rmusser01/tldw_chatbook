@@ -248,9 +248,10 @@ class ChatPersistenceService:
         metadata: Mapping[str, object] | str | None = None,
         speech_preferences: ConsoleSpeechPreferences | None = None,
     ) -> str:
-        """Create a conversation and link it to a workspace when requested.
+        """Create a conversation after validating any workspace authority.
 
         Args:
+            conversation_id: Optional preallocated durable conversation identity.
             character_id: Local character identifier associated with the conversation.
             character_name: Display name used to derive a title when no explicit
                 title is supplied.
@@ -283,10 +284,8 @@ class ChatPersistenceService:
 
         Raises:
             ValueError: If workspace scope is invalid or its workspace cannot be
-                resolved.
-            Exception: If workspace membership linkage fails after creation. A
-                best-effort soft-delete is attempted; a false result can leave
-                the row, and a cleanup exception may replace the link error.
+                resolved. Workspace registry membership is intentionally not
+                written here; it is a post-commit projection of the durable row.
         """
         safe_workspace_id = self._require_workspace_scope(
             scope_type=scope_type,
@@ -335,18 +334,7 @@ class ChatPersistenceService:
                 allow_nan=False,
                 sort_keys=True,
             )
-        conversation_id = self.db.add_conversation(conversation_data)
-        if safe_workspace_id is not None:
-            try:
-                self._link_workspace_conversation(
-                    workspace_id=safe_workspace_id,
-                    conversation_id=conversation_id,
-                    title=title,
-                )
-            except Exception:
-                self._discard_created_conversation(conversation_id)
-                raise
-        return conversation_id
+        return self.db.add_conversation(conversation_data)
 
     def persist_console_conversation_with_policy(
         self,
@@ -356,6 +344,7 @@ class ChatPersistenceService:
         conversation_kwargs: Mapping[str, object],
     ) -> ConsoleLibraryPolicySnapshot:
         """Commit a first conversation row and its Library policy together."""
+        self.validate_workspace_target(**conversation_kwargs)
         with self.db.transaction(immediate=True):
             created_id = self.create_conversation(
                 conversation_id=conversation_id,
@@ -386,6 +375,7 @@ class ChatPersistenceService:
         contributions: Sequence[ConsoleTransactionContribution] = (),
     ) -> ConsoleLibraryPolicySnapshot:
         """Commit one temporary Console transcript and all Task-7 sidecars."""
+        self.validate_workspace_target(**conversation_kwargs)
         with self.db.transaction(immediate=True) as cursor:
             created_id = self.create_conversation(
                 conversation_id=conversation_id,
@@ -499,6 +489,30 @@ class ChatPersistenceService:
             raise ValueError(f"Unknown workspace: {safe_workspace_id}")
         return safe_workspace_id
 
+    def validate_workspace_target(self, **conversation_kwargs: object) -> str | None:
+        """Validate an intended workspace before opening a Chat transaction."""
+        return self._require_workspace_scope(
+            scope_type=conversation_kwargs.get("scope_type"),
+            workspace_id=conversation_kwargs.get("workspace_id"),
+        )
+
+    def project_workspace_membership(self, conversation_id: str) -> Any | None:
+        """Project durable workspace authority into the registry idempotently."""
+        conversation = self.db.get_conversation_by_id(conversation_id)
+        if conversation is None:
+            raise ValueError(f"Conversation {conversation_id} not found")
+        safe_workspace_id = self._require_workspace_scope(
+            scope_type=conversation.get("scope_type"),
+            workspace_id=conversation.get("workspace_id"),
+        )
+        if safe_workspace_id is None:
+            return None
+        return self._link_workspace_conversation(
+            workspace_id=safe_workspace_id,
+            conversation_id=conversation_id,
+            title=str(conversation.get("title") or "Workspace conversation"),
+        )
+
     def _link_workspace_conversation(
         self,
         *,
@@ -513,25 +527,6 @@ class ChatPersistenceService:
             role="workspace-thread",
             title=title,
         )
-
-    def _discard_created_conversation(self, conversation_id: str) -> None:
-        conversation = self.db.get_conversation_by_id(
-            conversation_id,
-            include_deleted=True,
-        )
-        if conversation is None or conversation.get("deleted"):
-            return
-        try:
-            expected_version = int(conversation["version"])
-            self.db.soft_delete_conversation(
-                conversation_id,
-                expected_version=expected_version,
-            )
-        except Exception:
-            logger.bind(conversation_id=conversation_id).opt(exception=True).error(
-                "Failed to soft-delete workspace conversation after membership link failure",
-            )
-            raise
 
     def update_conversation_system_prompt(
         self,

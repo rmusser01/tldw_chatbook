@@ -127,6 +127,14 @@ exact prior session identity/title and moves committing back to a recoverable
 paused state; post-commit failure follows interrupted-turn recovery and is
 never automatically replayed.
 
+That atomicity boundary is the ChaChaNotes database. WorkspaceDB membership is
+a separate idempotent post-commit projection: validate the workspace before the
+Chat transaction, persist `conversations.workspace_id` as durable authority,
+then link membership after commit. Projection failure never rolls the committed
+conversation back to ephemeral and never causes a new UUID on retry; pending
+projection is reconciled from the durable conversation on restore or another
+safe lifecycle point.
+
 For a durable manual or queued user-text turn, that transaction also creates the
 empty assistant recovery owner and a row in the dedicated device-local
 `console_dispatch_checkpoints` table. Stored state and revision columns provide

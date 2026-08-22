@@ -509,7 +509,7 @@ durability. Promotion is disabled while an ephemeral preparation or dispatch
 analogue is `preparing`, paused, `committing`, `accepted`, or
 `dispatch_started`; the Save action explains `Finish or discard the pending
 turn before saving.` Once no unresolved owner remains, promotion is one
-transaction covering:
+ChaChaNotes transaction covering:
 
 - the conversation row;
 - the policy row;
@@ -519,6 +519,15 @@ transaction covering:
 Any failure rolls the complete promotion back and restores the session's
 ephemeral identity, policy holder, messages, activity, and retryability. It
 must not leave a non-ephemeral session pointing at a partial durable bundle.
+
+Workspace membership is a projection in a separate WorkspaceDB and therefore
+cannot be part of that transaction. The target workspace is validated before
+the ChaChaNotes transaction, while the conversation row's `workspace_id` is the
+durable authority. Membership is linked idempotently only after commit. A
+projection failure leaves the committed conversation/session identity intact,
+records retryable pending projection state, and is reconciled from durable
+`workspace_id` on restore or the next safe lifecycle point. Retry never mints a
+second conversation ID or membership.
 
 Temporary sessions may use Assistant Allowed only for a built-in Library
 provider authenticated by the runtime and only for the exact permanent
@@ -537,13 +546,13 @@ policy and trajectory sidecars.
 | Lifecycle event | Policy/activity result |
 | --- | --- |
 | New local session | Capture current future-session defaults in memory. |
-| First durable send | Insert conversation, policy, sent message, and any preparation disclosure atomically; publish session ID/title only after commit. |
+| First durable send | Insert the ChaChaNotes conversation, policy, sent message, and any preparation disclosure atomically; publish session ID/title only after commit, then project workspace membership idempotently. |
 | v44→v45 upgrade | Seed every then-existing active/soft-deleted conversation in the migration transaction. |
 | Later sync/import arrival | No policy row; effective Never/Blocked without a write. |
 | Durable immediate/queued execution | Re-read through the coordinator, then freeze authority at execution. |
 | Concurrent policy save | CAS winner publishes its committed revision to all same-process holders. |
 | Temporary execution | Holder authority and dispatch recovery remain in memory only; exact audited read-only Library names may run when Allowed. |
-| Temporary promotion | Refuse while preparation/dispatch recovery is unresolved; otherwise persist conversation, policy, lineage, completed preparation, and activity atomically. |
+| Temporary promotion | Refuse while preparation/dispatch recovery is unresolved; otherwise persist the ChaChaNotes bundle atomically, publish it, then project workspace membership with retryable reconciliation. |
 | Soft delete / restore | Retain and later resume the same policy and sidecars. |
 | Permanent purge | Foreign-key cascade removes policy and trajectory sidecars. |
 | Chatbook export/import | Policy and operational dispatch checkpoint excluded; activity/preparation trajectory export follows bounded redaction and import is inert. |

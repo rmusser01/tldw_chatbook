@@ -27,6 +27,27 @@ handles and user/model guidance do not promise a nonexistent full copy.
 
 ---
 
+## An outer SQLite rollback cannot undo a write committed by another database
+
+**TASK-19900.1 fix review, 2026-08-22.** Console temporary promotion wrapped
+conversation, policy, messages, attachments, and sidecars in one ChaChaNotes
+transaction, but `create_conversation` also linked WorkspaceDB membership from
+inside that transaction. Failure injection against only the Chat database made
+the bundle look atomic. A real two-file probe failed the later policy write and
+found a committed workspace membership with no surviving conversation; retry
+then produced a second membership identity. The two connection-local transaction
+managers could not provide the cross-database atomicity the call graph implied.
+
+**What to do.** State the database boundary whenever claiming transaction
+atomicity. For a derived row in another database, validate its target before the
+authoritative transaction, commit the authority first, and perform an idempotent
+post-commit projection with durable-source reconciliation after failure/restart.
+Test with two real temporary SQLite files and inject failures both before and
+after the authority commit; one in-memory database or mocked registry cannot
+prove the absence of cross-database orphans.
+
+---
+
 ## Textual's geometric center is not the painted row for an even-height one-line control
 
 **TASK-16001, 2026-08-13.** A compositor regression helper sampled

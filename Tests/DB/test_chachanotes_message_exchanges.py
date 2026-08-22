@@ -109,8 +109,8 @@ def test_schema_version_is_at_least_43(db):
     # exact current-version pin. That made every LATER migration edit this
     # file, which owns only v42->v43. It now asserts at-or-past its own
     # version, and the exact pin lives with the newest migration --
-    # `Tests/DB/test_chachanotes_sync_conflict_preservation_migration.py`'s
-    # the newest migration's exact current-version test.
+    # `Tests/DB/test_chachanotes_console_library_policy_migration.py`'s
+    # `test_real_v47_fixture_gains_exact_v48_local_schema_and_seed_rows`.
     assert _version(db.get_connection()) >= 43
 
 
