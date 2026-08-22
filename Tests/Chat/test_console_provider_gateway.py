@@ -2869,9 +2869,17 @@ class _DeepBacklogHTTPServer(http.server.ThreadingHTTPServer):
     request_queue_size = 32
 
 
+_LOOPBACK_LISTENER_PERMISSION_SKIP_REASON = (
+    "loopback listener unavailable: permission denied"
+)
+
+
 @pytest.fixture
 def local_http_server():
-    server = _DeepBacklogHTTPServer(("127.0.0.1", 0), _JSONOKHandler)
+    try:
+        server = _DeepBacklogHTTPServer(("127.0.0.1", 0), _JSONOKHandler)
+    except PermissionError:
+        pytest.skip(_LOOPBACK_LISTENER_PERMISSION_SKIP_REASON)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -2881,12 +2889,54 @@ def local_http_server():
         thread.join(timeout=2)
 
 
+def test_local_http_server_permission_denied_skips_with_capability_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Classify listener permission denial as an explicit capability skip.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace listener construction.
+    """
+
+    def deny_listener(*_args, **_kwargs):
+        raise PermissionError("sandbox denied loopback bind")
+
+    monkeypatch.setitem(globals(), "_DeepBacklogHTTPServer", deny_listener)
+
+    with pytest.raises(pytest.skip.Exception) as exc_info:
+        next(local_http_server.__wrapped__())
+
+    assert str(exc_info.value) == _LOOPBACK_LISTENER_PERMISSION_SKIP_REASON
+
+
+def test_local_http_server_non_permission_oserror_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keep non-permission listener failures actionable instead of skipping.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace listener construction.
+    """
+
+    def fail_listener(*_args, **_kwargs):
+        raise OSError("address resources exhausted")
+
+    def fail_if_skipped(reason: str) -> None:
+        pytest.fail(f"unexpected capability skip: {reason}")
+
+    monkeypatch.setitem(globals(), "_DeepBacklogHTTPServer", fail_listener)
+    monkeypatch.setattr(pytest, "skip", fail_if_skipped)
+
+    with pytest.raises(OSError, match="address resources exhausted"):
+        next(local_http_server.__wrapped__())
+
+
 # Real owned client AND a real socket: the whole point is httpx's per-loop
-# connection-pool binding against a server this test starts itself
-# (`local_http_server`, ephemeral loopback port). Opts out of both autouse
-# guards (Tests/conftest.py, task-15111).
+# connection-pool binding against a server this test starts itself on numeric
+# loopback only. The fixture skips explicitly when the host denies listener
+# construction (Tests/conftest.py, task-15111).
 @pytest.mark.owned_http_client
-@pytest.mark.allow_network
+@pytest.mark.loopback_network
 def test_owned_http_client_survives_agent_bridge_style_loop_swap(local_http_server):
     """Regression (Task 8 live gate): every agent turn crashed against a real
     llama.cpp server with ``RuntimeError: <asyncio.locks.Event ...> is bound
@@ -3147,7 +3197,7 @@ def test_aclose_closes_current_loop_client_and_schedules_others(monkeypatch):
 
 # Same as above: real owned client + this test's own `local_http_server`.
 @pytest.mark.owned_http_client
-@pytest.mark.allow_network
+@pytest.mark.loopback_network
 def test_active_http_client_concurrent_swap_never_leaves_client_bound_to_wrong_loop(
     local_http_server,
     monkeypatch,
