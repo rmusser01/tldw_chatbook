@@ -44,10 +44,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from fractions import Fraction
-from math import ceil
 
-from rich.cells import cell_len
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
@@ -81,9 +78,7 @@ from ...Workspaces.display_state import ConsoleWorkspaceContextState
 from .agent import CONSOLE_AGENT_CANCEL_ALL_ID, CONSOLE_AGENT_FLEET_SECTION_ID
 from .frame import frame_console_region
 from .rail_section_layout import (
-    ContextAllocationResult,
     ContextSectionDemand,
-    allocate_context_sections,
     fallback_active_section,
     outer_hint_required,
 )
@@ -94,20 +89,21 @@ OUTER_SECTION_SCROLL_HINT = "▼ more sections — scroll"
 
 @dataclass(frozen=True, slots=True)
 class ContextSectionDescriptor:
-    """Stable direct Context-section identity in allocator/DOM order."""
+    """Stable direct Context-section identity and rendered-content ceiling."""
 
     section_id: str
     title: str
+    max_content_lines: int
 
 
 CONTEXT_SECTION_DESCRIPTORS = (
-    ContextSectionDescriptor("session", "Sessions"),
-    ContextSectionDescriptor("workspace", "Workspaces"),
-    ContextSectionDescriptor("conversations", "Conversations"),
-    ContextSectionDescriptor("model", "Model"),
-    ContextSectionDescriptor("agent", "Agent"),
-    ContextSectionDescriptor("details", "Details"),
-    ContextSectionDescriptor("character", "Character"),
+    ContextSectionDescriptor("session", "Sessions", 15),
+    ContextSectionDescriptor("workspace", "Workspaces", 20),
+    ContextSectionDescriptor("conversations", "Conversations", 20),
+    ContextSectionDescriptor("model", "Model", 15),
+    ContextSectionDescriptor("agent", "Agent", 15),
+    ContextSectionDescriptor("details", "Details", 15),
+    ContextSectionDescriptor("character", "Character", 35),
 )
 
 
@@ -137,9 +133,15 @@ class _ContextBoundedSection(ConsoleBoundedSection):
         owner: "ConsoleLeftRail",
     ) -> None:
         self._allocation_owner = owner
+        descriptor = next(
+            item
+            for item in CONTEXT_SECTION_DESCRIPTORS
+            if item.section_id == section_id
+        )
         super().__init__(
             *content,
             section_id=section_id,
+            max_content_lines=descriptor.max_content_lines,
             on_focus_recovery=lambda: owner.recover_section_focus(section_id),
         )
 
@@ -307,18 +309,8 @@ class ConsoleLeftRail(Vertical):
         self._active_section_id: str | None = None
         self._allocation_reconcile_scheduled = False
         self._last_allocation_state: (
-            tuple[
-                ContextAllocationResult,
-                bool,
-                tuple[ConsoleBoundedSection, ...],
-                str | None,
-            ]
-            | None
+            tuple[bool, int, tuple[ConsoleBoundedSection, ...]] | None
         ) = None
-        self._active_transition_generation = 0
-        self._pending_active_reveal_generation: int | None = None
-        self._active_reveal_token = 0
-        self._no_room_section_ids: frozenset[str] = frozenset()
         self._outer_hint_exists = False
         self._outer_hint_text = ""
         self._section_focus_history: dict[str, tuple[Widget, tuple[Widget, ...]]] = {}
@@ -415,9 +407,6 @@ class ConsoleLeftRail(Vertical):
             return
         if section_id != self._active_section_id:
             self._active_section_id = section_id
-            self._active_transition_generation += 1
-            self._pending_active_reveal_generation = self._active_transition_generation
-            self._active_reveal_token += 1
         if request_reconcile:
             self.request_allocation_reconcile()
 
@@ -677,7 +666,7 @@ class ConsoleLeftRail(Vertical):
             self.request_allocation_reconcile()
 
     def request_allocation_reconcile(self) -> None:
-        """Coalesce one post-refresh, all-sibling allocation reconciliation."""
+        """Coalesce one post-refresh local-then-outer reconciliation."""
 
         if not self.is_mounted or self._allocation_reconcile_scheduled:
             return
@@ -685,7 +674,7 @@ class ConsoleLeftRail(Vertical):
         self.call_after_refresh(self._prepare_allocation_reconcile)
 
     def _prepare_allocation_reconcile(self) -> None:
-        """Let every bounded body measure demand before the owner snapshots."""
+        """Let every bounded body commit its own ceiling before outer geometry."""
 
         if not self.is_mounted:
             self._allocation_reconcile_scheduled = False
@@ -698,11 +687,13 @@ class ConsoleLeftRail(Vertical):
                 )
             except (NoMatches, QueryError):
                 continue
+            section.set_allocation(None)
+            section.styles.height = "auto"
             section.request_reconcile()
         self.call_after_refresh(self._run_allocation_reconcile)
 
     def _run_allocation_reconcile(self) -> None:
-        """Snapshot once, call the pure policy once, and commit one full state."""
+        """Snapshot committed complete sections and reconcile the outer owner."""
 
         try:
             descriptors = self._mounted_descriptors()
@@ -711,11 +702,9 @@ class ConsoleLeftRail(Vertical):
             viewport_height = self._snapshot_outer_viewport_height()
             if viewport_height <= 0:
                 return
-            header_chrome_height = self._measure_visible_header_chrome_height(
-                descriptors
-            )
             sections: list[ConsoleBoundedSection] = []
             demands: list[ContextSectionDemand] = []
+            presentation_changed = False
             for descriptor in descriptors:
                 bounded = self.query_one(
                     f"#console-bounded-section-{descriptor.section_id}",
@@ -728,6 +717,14 @@ class ConsoleLeftRail(Vertical):
                 body = bounded.query_one(
                     f"#console-rail-section-body-{descriptor.section_id}"
                 )
+                title = header.query_one(
+                    f"#console-rail-section-title-{descriptor.section_id}", Static
+                )
+                presentation_changed |= self._present_header_title(
+                    title,
+                    base_title=header.title,
+                )
+                header.sync_open(header.open)
                 sections.append(bounded)
                 demands.append(
                     ContextSectionDemand(
@@ -755,28 +752,20 @@ class ConsoleLeftRail(Vertical):
                     fallback_demands,
                     active_section_id,
                 )
-                if active_section_id != self._active_section_id:
-                    self._active_reveal_token += 1
-                    self._pending_active_reveal_generation = None
                 self._active_section_id = active_section_id
-            result = allocate_context_sections(
-                viewport_height=viewport_height,
-                header_chrome_height=header_chrome_height,
-                sections=tuple(demands),
-                active_section_id=active_section_id,
-            )
-            desired_outer_rows = header_chrome_height + sum(
-                allocation.allocated_content_rows + int(allocation.hint_required)
-                for allocation in result.allocations
-            )
+
+            if presentation_changed:
+                self.call_after_refresh(self.request_allocation_reconcile)
+
+            outer = self.query_one("#console-left-rail-body", VerticalScroll)
+            desired_outer_rows = self._measure_outer_content_height(outer)
             needs_outer_hint = outer_hint_required(
                 desired_outer_rows,
                 viewport_height,
             )
             self._apply_allocation_state(
-                descriptors,
                 sections,
-                result,
+                desired_outer_rows=desired_outer_rows,
                 needs_outer_hint=needs_outer_hint,
             )
         except (NoMatches, QueryError):
@@ -798,149 +787,56 @@ class ConsoleLeftRail(Vertical):
             height += max(1, hint.outer_size.height)
         return height
 
-    def _measure_visible_header_chrome_height(
-        self,
-        descriptors: tuple[ContextSectionDescriptor, ...],
-    ) -> int:
-        """Measure fixed header demand from the constrained Textual box model.
+    @staticmethod
+    def _measure_outer_content_height(outer: VerticalScroll) -> int:
+        """Return the committed bottom edge of complete visible sections."""
 
-        ``Widget._get_box_model`` is intentionally isolated here. Textual 8.2.8
-        is exactly pinned by this project, and its ``constrain_width`` path is
-        the only source that includes the rail's actual available width while
-        avoiding the already-compressed arranged height.
-        """
-
-        outer = self.query_one("#console-left-rail-body", VerticalScroll)
-        container_size = outer.content_region.size
-        viewport_size = self.screen.size
-        width_fraction = Fraction(max(0, container_size.width))
-        height_fraction = Fraction(max(0, container_size.height))
-        total = 0
-        for descriptor in descriptors:
-            header = self.query_one(
-                f"#console-rail-section-header-{descriptor.section_id}",
-                DestinationRailSectionHeader,
-            )
-            box_model = header._get_box_model(
-                container_size,
-                viewport_size,
-                width_fraction,
-                height_fraction,
-                constrain_width=True,
-                greedy=False,
-            )
-            total += ceil(box_model.height) + header.styles.margin.height
-        return total
+        return max(
+            (
+                child.virtual_region_with_margin.bottom
+                for child in outer.children
+                if child.display
+            ),
+            default=0,
+        )
 
     def _apply_allocation_state(
         self,
-        descriptors: tuple[ContextSectionDescriptor, ...],
         sections: list[ConsoleBoundedSection],
-        result: ContextAllocationResult,
         *,
+        desired_outer_rows: int,
         needs_outer_hint: bool,
     ) -> None:
-        """Equality-guard and synchronously apply a complete owner snapshot."""
-
-        no_room_ids = frozenset(
-            allocation.section_id
-            for allocation in result.allocations
-            if allocation.no_room
-        )
-        presentation_changed = False
-        for descriptor in descriptors:
-            header = self.query_one(
-                f"#console-rail-section-header-{descriptor.section_id}",
-                DestinationRailSectionHeader,
-            )
-            title = header.query_one(
-                f"#console-rail-section-title-{descriptor.section_id}", Static
-            )
-            toggle = header.query_one(
-                f"#{RAIL_SECTION_TOGGLE_PREFIX}{descriptor.section_id}", Button
-            )
-            constrained = descriptor.section_id in no_room_ids
-            base_title = header.title
-            presentation_changed |= self._present_header_title(
-                title,
-                base_title=base_title,
-                constrained=constrained,
-            )
-            if constrained:
-                if str(toggle.label) != "[>]":
-                    toggle.label = "[>]"
-                toggle.tooltip = f"Prioritize {base_title}"
-            else:
-                header.sync_open(header.open)
-
-        if presentation_changed:
-            # The first paint installs dimension-stable one-line title chrome.
-            # Measure once more after Textual has laid it out; equality guards
-            # make the resulting fixed point a no-op rather than a refresh loop.
-            self.call_after_refresh(self.request_allocation_reconcile)
+        """Equality-guard and synchronously apply complete outer geometry."""
 
         complete_state = (
-            result,
             needs_outer_hint,
+            desired_outer_rows,
             tuple(sections),
-            self._active_section_id,
         )
         if complete_state == self._last_allocation_state:
             self._update_outer_hint()
             return
 
-        previous_result = (
-            self._last_allocation_state[0]
-            if self._last_allocation_state is not None
-            else None
-        )
-        entering_fallback = result.uses_outer_scroll and (
-            previous_result is None or not previous_result.uses_outer_scroll
-        )
-        if previous_result is not None and (
-            previous_result.uses_outer_scroll != result.uses_outer_scroll
-        ):
-            self._active_reveal_token += 1
-
-        for bounded, allocation in zip(sections, result.allocations):
-            bounded.set_allocation(allocation.allocated_content_rows)
-            bounded.styles.height = allocation.allocated_content_rows + int(
-                allocation.hint_required
-            )
-
         outer = self.query_one("#console-left-rail-body", VerticalScroll)
-        target_overflow = "auto" if result.uses_outer_scroll else "hidden"
-        if str(outer.styles.overflow_y) != target_overflow:
-            outer.styles.overflow_y = target_overflow
-        outer.can_focus = result.uses_outer_scroll
-        if not result.uses_outer_scroll and outer.scroll_y != 0:
+        if str(outer.styles.overflow_y) != "auto":
+            outer.styles.overflow_y = "auto"
+        outer.can_focus = needs_outer_hint
+        if not needs_outer_hint and outer.scroll_y != 0:
             outer.scroll_y = 0
 
         hint = self.query_one("#console-left-rail-outer-hint", Static)
         if hint.display is not needs_outer_hint:
             hint.display = needs_outer_hint
         self._outer_hint_exists = needs_outer_hint
-        self._no_room_section_ids = no_room_ids
         self._last_allocation_state = complete_state
         self._update_outer_hint()
-
-        activation_pending = self._pending_active_reveal_generation is not None
-        if (
-            result.uses_outer_scroll
-            and self._active_section_id is not None
-            and (entering_fallback or activation_pending)
-        ):
-            self._pending_active_reveal_generation = None
-            self._queue_active_reveal(self._active_section_id)
-        elif not result.uses_outer_scroll:
-            self._pending_active_reveal_generation = None
 
     @staticmethod
     def _present_header_title(
         title: Static,
         *,
         base_title: str,
-        constrained: bool,
     ) -> bool:
         """Paint one-line chrome while retaining the complete canonical title."""
 
@@ -955,116 +851,9 @@ class ConsoleLeftRail(Vertical):
             changed = True
 
         title.tooltip = base_title
-        target_title = base_title
-        if constrained:
-            target_title = ConsoleLeftRail._title_with_no_room_suffix(
-                base_title,
-                title.content_region.width,
-            )
-        if str(title.renderable) != target_title:
-            title.update(target_title)
+        if str(title.renderable) != base_title:
+            title.update(base_title)
         return changed
-
-    @staticmethod
-    def _title_with_no_room_suffix(base_title: str, width: int) -> str:
-        """Fit the base into ``width`` while preserving the exact status suffix."""
-
-        suffix = " · no room"
-        full_title = f"{base_title}{suffix}"
-        if width <= 0 or cell_len(full_title) <= width:
-            return full_title
-
-        base_budget = width - cell_len(suffix)
-        if base_budget <= 0:
-            # At widths smaller than the suffix itself, keeping the complete
-            # status string is the only honest representation; one-line clipping
-            # remains dimensionally stable until space becomes available.
-            return suffix
-        if cell_len(base_title) <= base_budget:
-            return full_title
-
-        ellipsis = "…"
-        prefix_budget = max(0, base_budget - cell_len(ellipsis))
-        prefix = ""
-        for character in base_title:
-            candidate = f"{prefix}{character}"
-            if cell_len(candidate) > prefix_budget:
-                break
-            prefix = candidate
-        return f"{prefix}{ellipsis}{suffix}"
-
-    def _queue_active_reveal(self, section_id: str) -> None:
-        """Queue one reveal guarded by the current mode/activation token."""
-
-        self._active_reveal_token += 1
-        token = self._active_reveal_token
-        self.call_after_refresh(self._schedule_active_reveal, token, section_id)
-
-    def _schedule_active_reveal(self, token: int, section_id: str) -> None:
-        """Wait through bounded-body layout before revealing outer content."""
-
-        if not self._active_reveal_is_current(token, section_id):
-            return
-        self.call_after_refresh(self._stage_active_reveal, token, section_id)
-
-    def _stage_active_reveal(self, token: int, section_id: str) -> None:
-        """Wait through the outer-scroll reflow before committing its offset."""
-
-        if not self._active_reveal_is_current(token, section_id):
-            return
-        self.call_after_refresh(self._reveal_active_section, token, section_id)
-
-    def _active_reveal_is_current(self, token: int, section_id: str) -> bool:
-        """Return whether a delayed reveal still matches active fallback state."""
-
-        return bool(
-            self.is_attached
-            and token == self._active_reveal_token
-            and section_id == self._active_section_id
-            and self._last_allocation_state is not None
-            and self._last_allocation_state[0].uses_outer_scroll
-        )
-
-    def _reveal_active_section(self, token: int, section_id: str) -> None:
-        """Reveal the active header and its first content row in fallback mode."""
-
-        if not self._active_reveal_is_current(token, section_id):
-            return
-        try:
-            outer = self.query_one("#console-left-rail-body", VerticalScroll)
-            header = self.query_one(
-                f"#console-rail-section-header-{section_id}",
-                DestinationRailSectionHeader,
-            )
-        except (NoMatches, QueryError):
-            return
-        outer.scroll_to(
-            y=max(0, header.virtual_region.y),
-            animate=False,
-            immediate=True,
-        )
-        self._update_outer_hint()
-        self.call_after_refresh(self._confirm_active_reveal, token, section_id)
-
-    def _confirm_active_reveal(self, token: int, section_id: str) -> None:
-        """Commit the transition reveal against the final outer virtual height."""
-
-        if not self._active_reveal_is_current(token, section_id):
-            return
-        try:
-            outer = self.query_one("#console-left-rail-body", VerticalScroll)
-            header = self.query_one(
-                f"#console-rail-section-header-{section_id}",
-                DestinationRailSectionHeader,
-            )
-        except (NoMatches, QueryError):
-            return
-        outer.scroll_to(
-            y=max(0, header.virtual_region.y),
-            animate=False,
-            immediate=True,
-        )
-        self._update_outer_hint()
 
     def _update_outer_hint(self) -> None:
         """Keep the pinned outer slot blank at end and exact before end."""
@@ -1579,9 +1368,6 @@ class ConsoleLeftRail(Vertical):
             return
         event.stop()
         section_id = button_id.removeprefix(RAIL_SECTION_TOGGLE_PREFIX)
-        was_constrained = section_id in self._no_room_section_ids
-        if was_constrained:
-            return
         try:
             header = self.query_one(
                 f"#console-rail-section-header-{section_id}",

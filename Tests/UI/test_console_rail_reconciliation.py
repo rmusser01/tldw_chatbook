@@ -7,7 +7,6 @@ from dataclasses import replace
 from types import MethodType
 
 import pytest
-from rich.cells import cell_len
 from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll
 from textual.events import MouseDown, MouseScrollDown, MouseScrollUp, MouseUp
@@ -25,7 +24,6 @@ from tldw_chatbook.Chat.console_display_state import (
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.Chat.console_rail_state import ConsoleRailState
 from tldw_chatbook.Chat.console_session_settings import ConsoleSettingsSummaryState
-from tldw_chatbook.UI.Console_Modules import left_rail as left_rail_module
 from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
 from tldw_chatbook.UI.Console_Modules.rail_section_layout import outer_hint_required
 from tldw_chatbook.UI.Console_Modules.right_rail import ConsoleInspectorRail
@@ -238,6 +236,68 @@ async def _wait_for_rail_condition(
     pytest.fail("Context rail condition did not stabilize within the refresh bound")
 
 
+@pytest.mark.parametrize("terminal_height", [45, 18], ids=["tall", "short"])
+@pytest.mark.asyncio
+async def test_all_open_context_sections_keep_their_own_complete_ceiling_and_outer_reachability(
+    terminal_height: int,
+) -> None:
+    app = _RailHarness()
+
+    async with app.run_test(size=(60, terminal_height)) as pilot:
+        await _settle(pilot, passes=8)
+        rail = app.query_one(ConsoleLeftRail)
+        outer = rail.query_one("#console-left-rail-body")
+        cue = rail.query_one("#console-left-rail-outer-hint", Static)
+        initial_state = rail._rail_state
+        ceilings = dict(zip(SECTION_IDS, (15, 20, 20, 15, 15, 15, 35), strict=True))
+
+        sections = list(_sections(rail))
+        assert [section.section_id for section in sections] == list(SECTION_IDS)
+        for section in sections:
+            ceiling = ceilings[section.section_id]
+            assert section.desired_content_lines > 0
+            assert section.max_content_lines == ceiling
+            assert section.allocation is None
+            assert section.viewport.content_region.height == min(
+                section.desired_content_lines,
+                ceiling,
+            )
+
+            header = rail.query_one(
+                f"#console-rail-section-header-{section.section_id}"
+            )
+            title = rail.query_one(
+                f"#console-rail-section-title-{section.section_id}", Static
+            )
+            toggle = rail.query_one(
+                f"#console-rail-section-toggle-{section.section_id}", Button
+            )
+            assert header.open is True
+            assert str(title.renderable) == header.title
+            assert "· no room" not in str(title.renderable)
+            assert str(toggle.label) != "[>]"
+
+        assert str(outer.styles.overflow_y) == "auto"
+        assert outer.max_scroll_y > 0
+        assert outer.can_focus is True
+        assert cue.display is True
+        outer.scroll_home(animate=False)
+        await pilot.pause()
+        assert str(cue.renderable) == OUTER_HINT
+
+        for section in sections:
+            header = rail.query_one(
+                f"#console-rail-section-header-{section.section_id}"
+            )
+            outer.scroll_to(y=header.virtual_region.y, animate=False)
+            await pilot.pause()
+            assert header.region.overlaps(outer.content_region)
+            assert section.viewport.region.overlaps(outer.content_region)
+
+        assert rail._rail_state == initial_state
+        assert app.section_toggles == []
+
+
 def _install_demands(
     monkeypatch: pytest.MonkeyPatch,
     demands: dict[str, int],
@@ -263,14 +323,9 @@ def _force_geometry(
     rail: ConsoleLeftRail,
     *,
     viewport_height: int,
-    header_chrome_height: int,
 ) -> None:
     rail._snapshot_outer_viewport_height = MethodType(  # type: ignore[attr-defined]
         lambda self: viewport_height,
-        rail,
-    )
-    rail._measure_visible_header_chrome_height = MethodType(  # type: ignore[attr-defined]
-        lambda self, descriptors: header_chrome_height,
         rail,
     )
 
@@ -294,18 +349,15 @@ def _assert_compositor_hit(screen, widget) -> None:
     assert hit is widget or widget in hit.ancestors, (widget.id, point, hit)
 
 
-def _assert_context_direct_sections_are_compositor_contained(
+async def _assert_context_direct_sections_are_compositor_reachable(
     screen,
     rail: ConsoleLeftRail,
+    pilot,
 ) -> None:
-    """Prove every direct Context section owns distinct painted geometry."""
+    """Prove ordinary outer scrolling paints every complete direct section."""
 
     outer = rail.query_one("#console-left-rail-body")
     assert rail.region.contains_region(outer.region)
-    handles = (
-        screen.query_one("#console-context-rail-handle"),
-        screen.query_one("#console-inspector-rail-handle"),
-    )
     headers = [
         rail.query_one(f"#console-rail-section-header-{section_id}")
         for section_id in SECTION_IDS
@@ -318,27 +370,15 @@ def _assert_context_direct_sections_are_compositor_contained(
     for index, (header, bounded) in enumerate(zip(headers, bounded_sections)):
         assert header.parent is outer
         assert bounded.parent is outer
-        for widget in (header, bounded):
-            assert outer.content_region.contains_region(widget.region), (
-                widget.id,
-                widget.region,
-                outer.content_region,
-            )
-            assert rail.region.contains_region(widget.region)
-            _assert_compositor_hit(screen, widget)
+        outer.scroll_to(y=header.virtual_region.y, animate=False, immediate=True)
+        await pilot.pause()
+        assert header.region.overlaps(outer.content_region)
+        assert bounded.viewport.region.overlaps(outer.content_region)
+        assert rail.region.contains_region(header.region)
+        _assert_compositor_hit(screen, header)
 
         assert not header.region.overlaps(bounded.region)
         assert bounded.region.contains_region(bounded.viewport.region)
-        _assert_compositor_hit(screen, bounded.viewport)
-        if bounded.hint.display:
-            hint = bounded.hint
-            assert bounded.region.contains_region(hint.region)
-            assert outer.content_region.contains_region(hint.region)
-            assert rail.region.contains_region(hint.region)
-            assert not bounded.viewport.region.overlaps(hint.region)
-            _assert_compositor_hit(screen, hint)
-            for handle in handles:
-                assert not hint.region.overlaps(handle.region)
 
         if index + 1 < len(headers):
             following_header = headers[index + 1]
@@ -442,7 +482,11 @@ async def test_bounded_rail_shell_regions_are_compositor_contained(
             context.query_one(f"#console-rail-section-header-{section_id}").open
             for section_id in SECTION_IDS
         )
-        _assert_context_direct_sections_are_compositor_contained(screen, context)
+        await _assert_context_direct_sections_are_compositor_reachable(
+            screen,
+            context,
+            pilot,
+        )
         assert tray.region.contains_region(sources.region)
         assert sources.region.contains_region(sources.viewport.region)
         assert sources.region.contains_region(sources.hint.region)
@@ -782,29 +826,15 @@ async def test_inspector_unmount_before_callback_clears_pending_generation(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("terminal_size", "uses_outer_scroll"),
-    [((120, 30), False), ((80, 24), True)],
-)
+@pytest.mark.parametrize("terminal_size", [(120, 30), (80, 24)])
 async def test_production_css_uses_uncompressed_header_demand_and_reaches_every_section(
     terminal_size: tuple[int, int],
-    uses_outer_scroll: bool,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Real CSS keeps two-row headers and selects fallback from fixed demand."""
+    """Real CSS keeps complete sections reachable through ordinary outer scroll."""
 
     app = _build_test_app()
     _configure_native_ready_console(app)
     host = _ProductionConsoleHarness(app)
-    allocation_calls = []
-    real_allocate = left_rail_module.allocate_context_sections
-
-    def spy_allocate(**kwargs):
-        allocation_calls.append(kwargs)
-        return real_allocate(**kwargs)
-
-    monkeypatch.setattr(left_rail_module, "allocate_context_sections", spy_allocate)
-
     async with host.run_test(size=(120, 30)) as pilot:
         rail = await _open_all_production_context_sections(host, pilot)
         if terminal_size != (120, 30):
@@ -854,61 +884,25 @@ async def test_production_css_uses_uncompressed_header_demand_and_reaches_every_
             str(outer.styles.overflow_y),
             cue.display,
         )
-        assert str(outer.styles.overflow_y) == (
-            "auto" if uses_outer_scroll else "hidden"
+        assert str(outer.styles.overflow_y) == "auto"
+        assert cue.display is True
+        assert all(section.allocation is None for section in _sections(rail))
+        assert all(
+            section.viewport.content_region.height
+            == min(section.desired_content_lines, section.max_content_lines)
+            for section in _sections(rail)
         )
-        assert cue.display is uses_outer_scroll
+        assert all(
+            str(
+                rail.query_one(
+                    f"#console-rail-section-toggle-{section_id}", Button
+                ).label
+            )
+            != "[>]"
+            for section_id in SECTION_IDS
+        )
 
-        if not uses_outer_scroll:
-            assert_stable_sibling_geometry()
-            assert outer.scroll_y == 0
-            assert all(
-                outer.content_region.contains_region(header.region)
-                for header in headers
-            )
-            constrained = next(
-                rail.query_one(f"#console-rail-section-toggle-{section_id}", Button)
-                for section_id in SECTION_IDS
-                if str(
-                    rail.query_one(
-                        f"#console-rail-section-toggle-{section_id}", Button
-                    ).label
-                )
-                == "[>]"
-            )
-            constrained_section_id = constrained.id.removeprefix(
-                "console-rail-section-toggle-"
-            )
-            constrained_header = rail.query_one(
-                f"#console-rail-section-header-{constrained_section_id}"
-            )
-            constrained_title = rail.query_one(
-                f"#console-rail-section-title-{constrained_section_id}", Static
-            )
-            assert str(constrained_title.renderable).endswith(" · no room")
-            assert (
-                cell_len(str(constrained_title.renderable))
-                <= constrained_title.content_region.width
-            )
-            assert str(constrained_title.tooltip) == constrained_header.title
-            assert constrained_header.virtual_region.height == 2
-            constrained_body = rail.query_one(
-                f"#console-bounded-section-{constrained_section_id}",
-                ConsoleBoundedSection,
-            )
-            assert constrained_body.allocation == 0
-            allocation_calls.clear()
-            constrained.press()
-            await _settle(pilot, passes=8)
-            assert constrained_body.allocation is not None
-            assert constrained_body.allocation > 0
-            assert_stable_sibling_geometry()
-            stable_call_count = len(allocation_calls)
-            await _settle(pilot, passes=8)
-            assert len(allocation_calls) == stable_call_count
-            assert rail._allocation_reconcile_scheduled is False
-            return
-
+        assert_stable_sibling_geometry()
         outer.scroll_home(animate=False)
         await pilot.pause()
         assert str(cue.renderable) == OUTER_HINT
@@ -926,7 +920,7 @@ async def test_production_css_uses_uncompressed_header_demand_and_reaches_every_
 async def test_mounted_context_activation_never_persists_but_toggle_writes_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Real ChatScreen mutation, focus, pointer, and [>] paths keep write scope."""
+    """Real ChatScreen mutation, focus, and pointer paths keep write scope."""
 
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -960,7 +954,7 @@ async def test_mounted_context_activation_never_persists_but_toggle_writes_once(
         await _wait_for_rail_condition(
             pilot,
             rail,
-            lambda: not ordinary_header.open and ordinary_body.allocation == 0,
+            lambda: not ordinary_header.open and ordinary_body.allocation is None,
         )
 
         persisted: list[tuple[str, dict[str, bool]]] = []
@@ -989,17 +983,7 @@ async def test_mounted_context_activation_never_persists_but_toggle_writes_once(
         monkeypatch.setattr(console, "_save_console_rail_preferences", save_spy)
         monkeypatch.setattr(rail, "_run_allocation_reconcile", reconcile_spy)
 
-        if str(ordinary.label) == "[>]":
-            assert await pilot.click(ordinary)
-            await _wait_for_rail_condition(
-                pilot,
-                rail,
-                lambda: (
-                    rail._active_section_id == ordinary_section
-                    and str(ordinary.label) != "[>]"
-                ),
-            )
-            assert persisted == []
+        assert str(ordinary.label) != "[>]"
         assert await pilot.click(ordinary)
         await _wait_for_rail_condition(
             pilot,
@@ -1007,20 +991,13 @@ async def test_mounted_context_activation_never_persists_but_toggle_writes_once(
             lambda: ordinary_header.open,
         )
         assert len(persisted) == 1
-        assert ordinary_body.allocation == 0
-        assert str(ordinary.label) == "[>]"
-        assert ordinary_section in rail._no_room_section_ids
-        assert await pilot.click(ordinary)
-        await _wait_for_rail_condition(
-            pilot,
-            rail,
-            lambda: (
-                rail._active_section_id == ordinary_section
-                and (ordinary_body.allocation or 0) > 0
-                and str(ordinary.label) != "[>]"
-            ),
+        assert ordinary_body.allocation is None
+        assert str(ordinary.label) != "[>]"
+        assert "· no room" not in str(
+            rail.query_one(
+                f"#console-rail-section-title-{ordinary_section}", Static
+            ).renderable
         )
-        assert len(persisted) == 1
         assert reconcile_runs >= 1
         stable_runs = reconcile_runs
         await pilot.pause()
@@ -1034,10 +1011,9 @@ async def test_mounted_context_activation_never_persists_but_toggle_writes_once(
         await _wait_for_rail_condition(
             pilot,
             rail,
-            lambda: (
-                rail._active_section_id == "model" and (model_body.allocation or 0) > 0
-            ),
+            lambda: rail._active_section_id == "model",
         )
+        assert model_body.allocation is None
         assert len(persisted) == 1
 
         provider_value = rail.query_one(
@@ -1059,343 +1035,21 @@ async def test_mounted_context_activation_never_persists_but_toggle_writes_once(
 
 
 @pytest.mark.asyncio
-async def test_detached_rail_rejects_a_queued_active_reveal(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    demands = dict.fromkeys(SECTION_IDS, 8)
-    _install_demands(monkeypatch, demands)
-    app = _RailHarness()
-
-    async with app.run_test(size=(60, 12)) as pilot:
-        await _settle(pilot)
-        rail = app.query_one(ConsoleLeftRail)
-        _force_geometry(rail, viewport_height=10, header_chrome_height=14)
-        rail.activate_section("agent")
-        await _settle(pilot)
-        outer = rail.query_one("#console-left-rail-body")
-        calls = []
-        original_scroll_to = outer.scroll_to
-
-        def spy_scroll_to(*args, **kwargs):
-            calls.append((args, kwargs))
-            return original_scroll_to(*args, **kwargs)
-
-        monkeypatch.setattr(outer, "scroll_to", spy_scroll_to)
-        queued_callbacks = []
-
-        def capture_after_refresh(callback, *args):
-            queued_callbacks.append((callback, args))
-
-        monkeypatch.setattr(rail, "call_after_refresh", capture_after_refresh)
-        rail._queue_active_reveal("agent")
-        token = rail._active_reveal_token
-        await rail.remove()
-
-        assert rail._active_reveal_is_current(token, "agent") is False
-        assert len(queued_callbacks) == 1
-        callback, args = queued_callbacks.pop()
-        callback(*args)
-        assert queued_callbacks == []
-        assert calls == []
-
-
-@pytest.mark.asyncio
-async def test_request_path_coalesces_and_allocates_one_complete_latest_snapshot(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    demands = dict.fromkeys(SECTION_IDS, 30)
-    _install_demands(monkeypatch, demands)
-    calls = []
-    real_allocate = left_rail_module.allocate_context_sections
-
-    def spy_allocate(**kwargs):
-        calls.append(kwargs)
-        return real_allocate(**kwargs)
-
-    monkeypatch.setattr(left_rail_module, "allocate_context_sections", spy_allocate)
-    app = _RailHarness()
-
-    async with app.run_test(size=(60, 30)) as pilot:
-        await _settle(pilot)
-        rail = app.query_one(ConsoleLeftRail)
-        _force_geometry(rail, viewport_height=18, header_chrome_height=14)
-        rail.request_allocation_reconcile()
-        await _settle(pilot)
-        assert [section.allocation for section in _sections(rail)] == [
-            1,
-            1,
-            0,
-            0,
-            0,
-            0,
-            0,
-        ]
-        calls.clear()
-
-        demands["session"] = 1
-        demands["workspace"] = 1
-        rail.query_one(
-            "#console-bounded-section-session", ConsoleBoundedSection
-        ).request_reconcile()
-        rail.query_one(
-            "#console-bounded-section-workspace", ConsoleBoundedSection
-        ).request_reconcile()
-        await _settle(pilot)
-
-        assert len(calls) == 1
-        snapshot = calls[0]["sections"]
-        assert [section.section_id for section in snapshot] == list(SECTION_IDS)
-        assert [section.desired_content_rows for section in snapshot[:2]] == [1, 1]
-        result = real_allocate(**calls[0])
-        assert [section.allocation for section in _sections(rail)] == [
-            item.allocated_content_rows for item in result.allocations
-        ]
-        assert [section.allocation for section in _sections(rail)] == [
-            1,
-            1,
-            1,
-            0,
-            0,
-            0,
-            0,
-        ]
-
-
-@pytest.mark.asyncio
-async def test_normal_allocation_is_active_first_and_constrained_press_is_transient(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    demands = dict.fromkeys(SECTION_IDS, 30)
-    _install_demands(monkeypatch, demands)
-    app = _RailHarness()
-
-    async with app.run_test(size=(60, 30)) as pilot:
-        await _settle(pilot)
-        rail = app.query_one(ConsoleLeftRail)
-        _force_geometry(rail, viewport_height=18, header_chrome_height=14)
-        rail.request_allocation_reconcile()
-        await _settle(pilot)
-
-        assert [section.allocation for section in _sections(rail)] == [
-            1,
-            1,
-            0,
-            0,
-            0,
-            0,
-            0,
-        ]
-        constrained = app.query_one("#console-rail-section-toggle-agent", Button)
-        constrained.scroll_visible(animate=False)
-        await pilot.pause()
-        assert str(constrained.label) == "[>]"
-        assert (
-            str(app.query_one("#console-rail-section-title-agent", Static).renderable)
-            == "Agent · no room"
-        )
-
-        await pilot.click(constrained)
-        await _settle(pilot)
-
-        assert app.section_toggles == []
-        assert rail._rail_state.agent_open is True
-        assert (
-            rail.query_one(
-                "#console-bounded-section-agent", ConsoleBoundedSection
-            ).allocation
-            == 1
-        )
-        assert (
-            rail.query_one(
-                "#console-bounded-section-session", ConsoleBoundedSection
-            ).allocation
-            == 1
-        )
-        assert (
-            rail.query_one(
-                "#console-bounded-section-workspace", ConsoleBoundedSection
-            ).allocation
-            == 0
-        )
-        assert str(constrained.label) != "[>]"
-
-        expected_allocations = [1, 0, 0, 0, 1, 0, 0]
-        assert [
-            section.allocation for section in _sections(rail)
-        ] == expected_allocations
-        await rail.recompose()
-        await _settle(pilot)
-
-        assert [
-            section.allocation for section in _sections(rail)
-        ] == expected_allocations
-        assert (
-            str(app.query_one("#console-rail-section-toggle-agent", Button).label)
-            != "[>]"
-        )
-        assert (
-            str(app.query_one("#console-rail-section-toggle-workspace", Button).label)
-            == "[>]"
-        )
-        assert len(list(rail.query("#console-bounded-section-agent"))) == 1
-
-
-@pytest.mark.asyncio
-async def test_normal_mode_disables_outer_scroll_and_short_mode_keeps_every_body(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    demands = dict.fromkeys(SECTION_IDS, 8)
-    _install_demands(monkeypatch, demands)
-    app = _RailHarness()
-
-    async with app.run_test(size=(60, 30)) as pilot:
-        await _settle(pilot)
-        rail = app.query_one(ConsoleLeftRail)
-        outer = app.query_one("#console-left-rail-body")
-        cue = app.query_one("#console-left-rail-outer-hint", Static)
-
-        _force_geometry(rail, viewport_height=30, header_chrome_height=14)
-        rail.request_allocation_reconcile()
-        await _settle(pilot)
-        assert str(outer.styles.overflow_y) == "hidden"
-        assert outer.scroll_y == 0
-        assert cue.display is False
-
-        await pilot.resize_terminal(60, 12)
-        await _settle(pilot)
-        _force_geometry(rail, viewport_height=10, header_chrome_height=14)
-        rail.activate_section("agent")
-        await _settle(pilot)
-        allocations = [section.allocation for section in _sections(rail)]
-        assert allocations == [1, 1, 1, 1, 7, 1, 1]
-        assert all(
-            allocation is not None and allocation > 0 for allocation in allocations
-        )
-        assert str(outer.styles.overflow_y) == "auto"
-        assert cue.can_focus is False
-        assert cue.display is True
-        active_header = rail.query_one("#console-rail-section-header-agent")
-        active = rail.query_one("#console-bounded-section-agent", ConsoleBoundedSection)
-        assert active_header.region.overlaps(outer.content_region), (
-            outer.scroll_y,
-            outer.max_scroll_y,
-            active_header.virtual_region,
-            active_header.region,
-            outer.content_region,
-        )
-        assert active.viewport.region.overlaps(outer.content_region)
-
-        expected_allocations = [1, 1, 1, 1, 7, 1, 1]
-        await rail.recompose()
-        await _settle(pilot)
-        outer = app.query_one("#console-left-rail-body")
-        cue = app.query_one("#console-left-rail-outer-hint", Static)
-        assert [
-            section.allocation for section in _sections(rail)
-        ] == expected_allocations
-        assert str(outer.styles.overflow_y) == "auto"
-        assert cue.display is True
-        outer.scroll_home(animate=False)
-        await pilot.pause()
-        assert str(cue.renderable) == OUTER_HINT
-
-        for section_id in SECTION_IDS:
-            header = rail.query_one(f"#console-rail-section-header-{section_id}")
-            bounded = rail.query_one(
-                f"#console-bounded-section-{section_id}", ConsoleBoundedSection
-            )
-            outer.scroll_to(y=header.virtual_region.y, animate=False)
-            await pilot.pause()
-            assert header.region.overlaps(outer.content_region)
-            assert bounded.viewport.region.overlaps(outer.content_region)
-
-
-@pytest.mark.asyncio
-async def test_fallback_reveal_runs_on_entry_but_unchanged_work_preserves_user_scroll(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    demands = dict.fromkeys(SECTION_IDS, 8)
-    _install_demands(monkeypatch, demands)
-    app = _RailHarness()
-
-    async with app.run_test(size=(60, 30)) as pilot:
-        await _settle(pilot)
-        rail = app.query_one(ConsoleLeftRail)
-        outer = app.query_one("#console-left-rail-body")
-        _force_geometry(rail, viewport_height=30, header_chrome_height=14)
-        rail.activate_section("agent")
-        await _settle(pilot)
-
-        _force_geometry(rail, viewport_height=10, header_chrome_height=14)
-        rail.request_allocation_reconcile()
-        await _settle(pilot)
-        active_header = rail.query_one("#console-rail-section-header-agent")
-        assert outer.scroll_y > 0
-        assert active_header.region.overlaps(outer.content_region)
-
-        outer.scroll_home(animate=False)
-        await pilot.pause()
-        assert outer.scroll_y == 0
-        rail.request_allocation_reconcile()
-        await _settle(pilot)
-        assert outer.scroll_y == 0
-
-        demands["session"] = 9
-        rail.query_one(
-            "#console-bounded-section-session", ConsoleBoundedSection
-        ).request_reconcile()
-        await _settle(pilot)
-        assert outer.scroll_y == 0
-
-
-@pytest.mark.asyncio
-async def test_no_room_suffix_uses_the_mounted_headers_canonical_title(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    demands = dict.fromkeys(SECTION_IDS, 30)
-    _install_demands(monkeypatch, demands)
-    app = _RailHarness()
-
-    async with app.run_test(size=(60, 30)) as pilot:
-        await _settle(pilot)
-        rail = app.query_one(ConsoleLeftRail)
-        _force_geometry(rail, viewport_height=18, header_chrome_height=14)
-        header = rail.query_one("#console-rail-section-header-agent")
-        title = rail.query_one("#console-rail-section-title-agent", Static)
-        header.title = "Workers"
-        title.update("Workers")
-
-        demands["session"] = 1
-        rail.query_one(
-            "#console-bounded-section-session", ConsoleBoundedSection
-        ).request_reconcile()
-        await _settle(pilot)
-        assert str(title.renderable) == "Workers · no room"
-
-        rail.activate_section("agent")
-        await _settle(pilot)
-        assert str(title.renderable) == "Workers"
-        assert (
-            str(rail.query_one("#console-rail-section-toggle-agent", Button).tooltip)
-            == "Collapse Workers"
-        )
-
-
-@pytest.mark.asyncio
-async def test_local_and_outer_hints_use_distinct_counterfactual_predicates(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    demands = dict.fromkeys(SECTION_IDS, 2)
-    _install_demands(monkeypatch, demands)
+async def test_local_and_outer_hints_use_distinct_counterfactual_predicates() -> None:
     app = _RailHarness()
 
     async with app.run_test(size=(60, 30)) as pilot:
         await _settle(pilot)
         rail = app.query_one(ConsoleLeftRail)
         cue = app.query_one("#console-left-rail-outer-hint", Static)
-        _force_geometry(rail, viewport_height=10, header_chrome_height=11)
+        session = rail.query_one(
+            "#console-bounded-section-session", ConsoleBoundedSection
+        )
+        session.query_one("#console-rail-section-body-session").styles.min_height = 16
+        session.request_reconcile()
+        rail.request_allocation_reconcile()
         rail.activate_section("agent")
-        await _settle(pilot)
+        await _settle(pilot, passes=8)
         outer = app.query_one("#console-left-rail-body")
         outer.scroll_home(animate=False)
         await pilot.pause()
@@ -1413,29 +1067,17 @@ async def test_local_and_outer_hints_use_distinct_counterfactual_predicates(
         await pilot.pause()
         assert str(cue.renderable) == OUTER_HINT
 
-        demands.update(dict.fromkeys(SECTION_IDS, 0))
-        geometry = {"chrome": 10}
-        rail._measure_visible_header_chrome_height = MethodType(  # type: ignore[attr-defined]
-            lambda self, descriptors: geometry["chrome"],
-            rail,
-        )
-        for section in _sections(rail):
-            section.request_reconcile()
-        rail.request_allocation_reconcile()
-        await _settle(pilot)
-        assert cue.display is False
-
-        geometry["chrome"] = 11
-        rail.request_allocation_reconcile()
-        await _settle(pilot)
-        assert cue.display is True
-        assert str(cue.renderable) == OUTER_HINT
-
-        geometry["chrome"] = 10
-        rail.request_allocation_reconcile()
-        await _settle(pilot)
+        await pilot.resize_terminal(60, 200)
+        await _settle(pilot, passes=8)
         assert cue.display is False
         assert str(cue.renderable) == ""
+
+        await pilot.resize_terminal(60, 18)
+        await _settle(pilot, passes=8)
+        outer.scroll_home(animate=False)
+        await pilot.pause()
+        assert cue.display is True
+        assert str(cue.renderable) == OUTER_HINT
 
 
 @pytest.mark.asyncio
@@ -1449,7 +1091,7 @@ async def test_focus_and_pointer_activation_are_transient_and_open_close_falls_b
     async with app.run_test(size=(60, 36)) as pilot:
         await _settle(pilot)
         rail = app.query_one(ConsoleLeftRail)
-        _force_geometry(rail, viewport_height=28, header_chrome_height=14)
+        _force_geometry(rail, viewport_height=28)
         rail.request_allocation_reconcile()
         await _settle(pilot)
         assert rail._active_section_id is None
@@ -1473,18 +1115,24 @@ async def test_focus_and_pointer_activation_are_transient_and_open_close_falls_b
         workspace_toggle = rail.query_one(
             "#console-rail-section-toggle-workspace", Button
         )
-        await pilot.click(workspace_toggle)
+        workspace_toggle.scroll_visible(animate=False)
+        await pilot.pause()
+        assert await pilot.click(workspace_toggle)
         await _settle(pilot)
         assert rail._active_section_id == "workspace"
         assert app.section_toggles == ["workspace"]
 
-        await pilot.click(workspace_toggle)
+        workspace_toggle.scroll_visible(animate=False)
+        await pilot.pause()
+        assert await pilot.click(workspace_toggle)
         await _settle(pilot)
         assert rail._active_section_id == "session"
         assert app.section_toggles == ["workspace", "workspace"]
 
         session_toggle = rail.query_one("#console-rail-section-toggle-session", Button)
-        await pilot.click(session_toggle)
+        session_toggle.scroll_visible(animate=False)
+        await pilot.pause()
+        assert await pilot.click(session_toggle)
         await _settle(pilot)
         assert rail._active_section_id == "conversations"
 
@@ -1883,7 +1531,7 @@ async def test_pointer_boundary_owns_header_title_nested_body_and_viewport_but_n
 ) -> None:
     demands = dict.fromkeys(SECTION_IDS, 0)
     demands["workspace"] = 4
-    demands["model"] = 10
+    demands["model"] = 20
     demands["character"] = 4
     _install_demands(monkeypatch, demands)
     app = _RailHarness()
@@ -1891,12 +1539,12 @@ async def test_pointer_boundary_owns_header_title_nested_body_and_viewport_but_n
     async with app.run_test(size=(60, 30)) as pilot:
         await _settle(pilot)
         rail = app.query_one(ConsoleLeftRail)
-        _force_geometry(rail, viewport_height=18, header_chrome_height=14)
+        _force_geometry(rail, viewport_height=18)
         rail.request_allocation_reconcile()
         await _settle(pilot)
 
         model = rail.query_one("#console-bounded-section-model", ConsoleBoundedSection)
-        model.query_one("#console-rail-section-body-model").styles.min_height = 10
+        model.query_one("#console-rail-section-body-model").styles.min_height = 20
         rail.request_allocation_reconcile()
         await _settle(pilot)
         viewport = model.viewport
@@ -1947,20 +1595,20 @@ async def test_overflow_focus_order_and_recovery_stay_within_context_section(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     demands = dict.fromkeys(SECTION_IDS, 0)
-    demands["model"] = 8
+    demands["model"] = 20
     _install_demands(monkeypatch, demands)
     app = _RailHarness()
 
     async with app.run_test(size=(60, 30)) as pilot:
         await _settle(pilot)
         rail = app.query_one(ConsoleLeftRail)
-        _force_geometry(rail, viewport_height=18, header_chrome_height=14)
+        _force_geometry(rail, viewport_height=18)
         rail.request_allocation_reconcile()
         await _settle(pilot)
 
         toggle = rail.query_one("#console-rail-section-toggle-model", Button)
         model = rail.query_one("#console-bounded-section-model")
-        model.query_one("#console-rail-section-body-model").styles.min_height = 8
+        model.query_one("#console-rail-section-body-model").styles.min_height = 20
         model.request_reconcile()
         rail.request_allocation_reconcile()
         await _settle(pilot)
@@ -1996,7 +1644,8 @@ async def test_overflow_focus_order_and_recovery_stay_within_context_section(
         body = rail.query_one("#console-rail-section-body-model")
         first = Button("First", id="context-recovery-first", compact=True)
         second = Button("Second", id="context-recovery-second", compact=True)
-        await body.mount(first, second, before=configure)
+        await body.mount(second, before=configure)
+        await body.mount(first, before=second)
         await _settle(pilot)
         first.focus()
         await pilot.pause()
@@ -2019,7 +1668,7 @@ async def test_focus_recovery_prefers_next_from_removed_target_snapshot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     demands = dict.fromkeys(SECTION_IDS, 0)
-    demands["model"] = 8
+    demands["model"] = 20
     _install_demands(monkeypatch, demands)
     app = _RailHarness()
 
@@ -2049,18 +1698,18 @@ async def test_focus_recovery_uses_previous_only_then_header_then_context_contro
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     demands = dict.fromkeys(SECTION_IDS, 0)
-    demands["model"] = 8
+    demands["model"] = 20
     _install_demands(monkeypatch, demands)
     app = _RailHarness()
 
     async with app.run_test(size=(60, 30)) as pilot:
         await _settle(pilot)
         rail = app.query_one(ConsoleLeftRail)
-        _force_geometry(rail, viewport_height=18, header_chrome_height=14)
+        _force_geometry(rail, viewport_height=18)
         rail.request_allocation_reconcile()
         await _settle(pilot)
         body = rail.query_one("#console-rail-section-body-model")
-        body.styles.min_height = 8
+        body.styles.min_height = 20
         configure = rail.query_one("#console-model-section-configure", Button)
         first = Button("First", id="context-tier-first", compact=True)
         second = Button("Second", id="context-tier-second", compact=True)
@@ -2135,16 +1784,16 @@ async def test_new_rail_remount_resets_active_and_demand_shrink_clamps_local_off
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     demands = dict.fromkeys(SECTION_IDS, 0)
-    demands["model"] = 12
+    demands["model"] = 20
     _install_demands(monkeypatch, demands)
     app = _RailHarness()
 
     async with app.run_test(size=(60, 30)) as pilot:
         await _settle(pilot)
         rail = app.query_one(ConsoleLeftRail)
-        _force_geometry(rail, viewport_height=18, header_chrome_height=14)
+        _force_geometry(rail, viewport_height=18)
         body = rail.query_one("#console-rail-section-body-model")
-        body.styles.min_height = 12
+        body.styles.min_height = 20
         rail.activate_section("model")
         await _settle(pilot)
         model = rail.query_one("#console-bounded-section-model", ConsoleBoundedSection)
@@ -2169,18 +1818,18 @@ async def test_new_rail_remount_resets_active_and_demand_shrink_clamps_local_off
 async def test_active_section_falls_back_when_content_disappears_and_offsets_survive_sync(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    demands = dict.fromkeys(SECTION_IDS, 8)
+    demands = dict.fromkeys(SECTION_IDS, 20)
     _install_demands(monkeypatch, demands)
     app = _RailHarness()
 
     async with app.run_test(size=(60, 30)) as pilot:
         await _settle(pilot)
         rail = app.query_one(ConsoleLeftRail)
-        _force_geometry(rail, viewport_height=18, header_chrome_height=14)
+        _force_geometry(rail, viewport_height=18)
         rail.activate_section("agent")
         await _settle(pilot)
         agent = rail.query_one("#console-bounded-section-agent")
-        agent.query_one("#console-rail-section-body-agent").styles.min_height = 8
+        agent.query_one("#console-rail-section-body-agent").styles.min_height = 20
         agent.request_reconcile()
         rail.request_allocation_reconcile()
         await _settle(pilot)

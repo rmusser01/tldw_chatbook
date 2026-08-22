@@ -221,6 +221,15 @@ async def test_context_direct_bodies_use_seven_bounded_wrappers_in_dom_order():
             "details",
             "character",
         ]
+        assert [section.max_content_lines for section in sections] == [
+            15,
+            20,
+            20,
+            15,
+            15,
+            15,
+            35,
+        ]
         assert [
             section.query_one(".console-rail-section-body").id for section in sections
         ] == [

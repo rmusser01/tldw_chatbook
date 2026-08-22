@@ -50,10 +50,10 @@ class ConsoleBoundedSection(Vertical):
     Args:
         *content: Already-built widgets to mount inside the content viewport.
         section_id: Stable suffix used to derive the root, viewport, and hint IDs.
-        allocation: Optional owner allocation below the 20-line ceiling. ``None``
+        allocation: Optional owner allocation below the instance ceiling. ``None``
             uses the full ceiling.
-        max_content_lines: Rail ceiling. The shared Console contract fixes this at
-            20; the argument makes that contract explicit at construction.
+        max_content_lines: Positive rendered-content row ceiling. Defaults to the
+            Inspector contract of 20.
         on_focus_recovery: Called when the last focused content descendant is
             removed before reconciliation.
         classes: Additional classes for the root widget.
@@ -68,10 +68,12 @@ class ConsoleBoundedSection(Vertical):
         on_focus_recovery: Callable[[], None] | None = None,
         classes: str | None = None,
     ) -> None:
-        if max_content_lines != MAX_SECTION_CONTENT_LINES:
-            raise ValueError(
-                "Console bounded sections use a fixed 20-line content ceiling"
-            )
+        if isinstance(max_content_lines, bool) or not isinstance(
+            max_content_lines, int
+        ):
+            raise TypeError("max_content_lines must be an integer")
+        if max_content_lines <= 0:
+            raise ValueError("max_content_lines must be positive")
         self.section_id = section_id
         self.root_id = f"console-bounded-section-{section_id}"
         self.viewport_id = f"{self.root_id}-viewport"
@@ -105,15 +107,14 @@ class ConsoleBoundedSection(Vertical):
         self._hint.can_focus = False
         self._hint.display = False
 
-    @staticmethod
-    def _normalize_allocation(allocation: int | None) -> int | None:
+    def _normalize_allocation(self, allocation: int | None) -> int | None:
         if allocation is None:
             return None
         if isinstance(allocation, bool) or not isinstance(allocation, int):
             raise TypeError("allocation must be an integer or None")
         if allocation < 0:
             raise ValueError("allocation must be non-negative")
-        return min(allocation, MAX_SECTION_CONTENT_LINES)
+        return min(allocation, self.max_content_lines)
 
     @property
     def allocation(self) -> int | None:
@@ -134,7 +135,7 @@ class ConsoleBoundedSection(Vertical):
 
         Args:
             allocation: Content rows granted by the owner, or ``None`` to use the
-                shared 20-line ceiling.
+                instance ceiling.
         """
 
         self.allocation = allocation

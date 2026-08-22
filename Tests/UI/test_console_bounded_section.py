@@ -95,6 +95,7 @@ def _section(
     count: int,
     *,
     allocation: int | None = None,
+    max_content_lines: int = 20,
     on_focus_recovery: Callable[[], None] | None = None,
 ) -> tuple[ConsoleBoundedSection, Static]:
     content = Static(_lines(count), id="content")
@@ -104,6 +105,7 @@ def _section(
             content,
             section_id="run",
             allocation=allocation,
+            max_content_lines=max_content_lines,
             on_focus_recovery=on_focus_recovery,
         ),
         content,
@@ -146,6 +148,67 @@ async def test_physical_content_line_boundaries(
         assert hint.display is has_overflow
         assert hint.region.height == int(has_overflow)
         assert str(hint.render()) == (LOCAL_HINT if has_overflow else "")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("ceiling", "demand", "viewport_height", "hint_required"),
+    [
+        (15, 14, 14, False),
+        (15, 15, 15, False),
+        (15, 16, 15, True),
+        (20, 19, 19, False),
+        (20, 20, 20, False),
+        (20, 21, 20, True),
+        (35, 34, 34, False),
+        (35, 35, 35, False),
+        (35, 36, 35, True),
+    ],
+)
+async def test_instance_ceiling_controls_physical_content_and_hint_boundary(
+    ceiling: int,
+    demand: int,
+    viewport_height: int,
+    hint_required: bool,
+) -> None:
+    section, _content = _section(demand, max_content_lines=ceiling)
+    app = _Harness(section)
+
+    async with app.run_test(size=(60, 50)) as pilot:
+        await _settle(pilot)
+
+        assert section.max_content_lines == ceiling
+        assert section.desired_content_lines == demand
+        assert section.viewport.content_region.height == viewport_height
+        assert section.viewport.max_scroll_y == int(hint_required)
+        assert section.hint.display is hint_required
+        assert section.hint.region.height == int(hint_required)
+        assert str(section.hint.render()) == (LOCAL_HINT if hint_required else "")
+
+
+@pytest.mark.parametrize("invalid", [True, False, 0, -1, 1.5, "15", None])
+def test_max_content_lines_rejects_non_positive_and_non_integer_values(
+    invalid: object,
+) -> None:
+    expected_error = (
+        TypeError
+        if isinstance(invalid, bool) or not isinstance(invalid, int)
+        else ValueError
+    )
+    with pytest.raises(expected_error):
+        ConsoleBoundedSection(
+            Static("row"),
+            section_id="invalid-ceiling",
+            max_content_lines=invalid,  # type: ignore[arg-type]
+        )
+
+
+def test_allocation_normalizes_against_the_instance_ceiling() -> None:
+    section, _content = _section(40, allocation=35, max_content_lines=15)
+
+    assert section.allocation == 15
+    section.set_allocation(20)
+    assert section.allocation == 15
 
 
 @pytest.mark.asyncio
