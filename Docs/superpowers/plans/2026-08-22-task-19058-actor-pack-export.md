@@ -32,19 +32,19 @@
 - Modify: `tldw_chatbook/Actor_Packs/__init__.py`
 - Create: `Tests/Actor_Packs/test_actor_pack_export.py`
 
-- [ ] **Step 1: Write the actor snapshot REDs**
+- [x] **Step 1: Write the actor snapshot REDs**
 
   Add named tests for local Character and Persona capture, deleted/missing actors,
   server Persona refusal, inactive-but-local Persona eligibility, portrait validation
   before UUID assignment, existing UUID reuse, and missing registry-row eligibility.
 
-- [ ] **Step 2: Run the RED**
+- [x] **Step 2: Run the RED**
 
   Run: `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/Actor_Packs/test_actor_pack_export.py -k 'snapshot or identity or eligibility'`
 
   Expected: collection fails because `tldw_chatbook.Actor_Packs.export` does not exist.
 
-- [ ] **Step 3: Implement the minimum immutable boundary**
+- [x] **Step 3: Implement the minimum immutable boundary**
 
   Add frozen/slotted `ActorPackExportSnapshot`, `ActorPackExportResult`, and fixed-category `ActorPackExportError`. The synchronous service must validate actor and portrait before calling `ActorPackRepository.assign_identity`, then freeze actor kind/id/revision, portable UUID/version, portrait bytes/digest/MIME, profile/source identity, and canonical actor payload. Public reprs omit actor text, bytes, paths, and local ids where they are not required for authority.
 
@@ -61,7 +61,7 @@
       ) -> ActorPackExportSnapshot: ...
   ```
 
-- [ ] **Step 4: Re-read after UUID assignment before freezing**
+- [x] **Step 4: Re-read after UUID assignment before freezing**
 
   Assignment is a durable prerequisite, not snapshot publication. Immediately after
   an existing/new UUID is returned, re-read the complete actor and portrait authority
@@ -72,15 +72,15 @@
   mixed snapshot. Task 2 extends this same post-assignment reread to both active visual
   graphs before the final complete snapshot is returned.
 
-- [ ] **Step 5: Run GREEN and adjacent repository tests**
+- [x] **Step 5: Run GREEN and adjacent repository tests**
 
   Run the focused export file plus `Tests/Actor_Packs/test_actor_pack_repository.py` and confirm all pass.
 
-- [ ] **Step 6: Mutation-check eligibility and assignment order**
+- [x] **Step 6: Mutation-check eligibility and assignment order**
 
   Temporarily move UUID assignment before portrait admission and weaken the local-source guard; confirm the named tests fail, then restore.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
   Commit: `feat: capture Actor Pack export snapshots`
 
@@ -94,15 +94,15 @@
 - Test: `Tests/Persona_Visual/test_persona_visual_repository.py`
 - Test: `Tests/ChaChaNotesDB/test_visual_identity_repository.py`
 
-- [ ] **Step 1: Write visual-section REDs**
+- [x] **Step 1: Write visual-section REDs**
 
   Cover Character Shared Visual Identity, Persona Shared Visual Identity, Persona Visual, Persona with both sections, no-section actor, immutable active-version selection, missing declared assets, malformed stored manifests, and source-file substitution/content ABA between snapshot and final revalidation.
 
-- [ ] **Step 2: Run the RED and inspect exact missing seam**
+- [x] **Step 2: Run the RED and inspect exact missing seam**
 
   Run the visual subset of `test_actor_pack_export.py`; expect missing section capture/materialization failures only.
 
-- [ ] **Step 3: Add the missing bounded Persona Visual export read seam**
+- [x] **Step 3: Add the missing bounded Persona Visual export read seam**
 
   `PersonaVisualRepository.get_active_persona_pack()` intentionally hides
   `source_context_json` and asset storage keys from runtime consumers. Add one narrow
@@ -113,7 +113,7 @@
   with fixed categories, and expose no host path, bytes, local profile path, or server
   identifier. Prove the ordinary runtime graph remains unchanged and path-free.
 
-- [ ] **Step 4: Reuse existing repositories/loaders**
+- [x] **Step 4: Reuse existing repositories/loaders**
 
   Read active graphs through `VisualIdentityRepository.get_active_actor_pack` and
   `PersonaVisualRepository.get_active_persona_pack_for_export`. Copy manifest,
@@ -127,7 +127,7 @@
   existing manifest validator and load every exact asset through
   `load_visual_identity_asset`; do not treat raw repository dictionaries as trusted.
 
-- [ ] **Step 5: Freeze complete authority**
+- [x] **Step 5: Freeze complete authority**
 
   Store the full graph/version/binding identities, canonical manifest digest, per-asset immutable record/digest/size, and pinned source filesystem identity needed for a final exact reread. Any missing asset fails `actor_pack_export_asset_unavailable`; no thin section is emitted.
 
@@ -136,11 +136,11 @@
   returning the complete snapshot. This is the snapshot's consistency point; a
   visual publication or actor edit at any phase fails closed.
 
-- [ ] **Step 6: Run GREEN and mutation checks**
+- [x] **Step 6: Run GREEN and mutation checks**
 
   Remove one asset, change an active binding/version, swap a source inode, and mutate same-inode content behind a deterministic phase barrier. Each must fail without returning archive bytes.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
   Commit: `feat: export Actor Pack visual sections`
 
@@ -154,15 +154,15 @@
 - Create: `Tests/Actor_Packs/fixtures/export-golden/minimal-character.tldw-actor-pack`
 - Create: `Tests/Actor_Packs/fixtures/export-golden/minimal-persona.tldw-actor-pack`
 
-- [ ] **Step 1: Write deterministic archive REDs**
+- [x] **Step 1: Write deterministic archive REDs**
 
   Assert exact `ZIP_STORED`, canonical member order, frozen timestamps/creator/flags/permissions, root manifest last construction with its required self-exclusions, bounded chunked writes, and byte-identical output for identical canonical snapshots.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
   Expect the archive-build API and golden fixtures to be absent.
 
-- [ ] **Step 3: Implement with stdlib `zipfile` only**
+- [x] **Step 3: Implement with stdlib `zipfile` only**
 
   Build the files mapping through `canonicalize_actor_payload`, `build_file_inventory`, and `actor_pack_content_digest`; validate with `validate_actor_pack_document` before writing. Create each `ZipInfo` from the TASK-19057 constants and stream member data in a fixed bounded chunk size. Do not add compression or a new dependency.
 
@@ -171,11 +171,11 @@
       """Write deterministic bytes and return the archive SHA-256."""
   ```
 
-- [ ] **Step 4: Add an independent readback oracle**
+- [x] **Step 4: Add an independent readback oracle**
 
   The test oracle must use stdlib `zipfile`/`json`/`hashlib` directly, not production validation helpers, to check entry metadata, declared bytes, per-file digests, content digest, and absence of forbidden actor/private fields.
 
-- [ ] **Step 5: Prove round trips without import activation**
+- [x] **Step 5: Prove round trips without import activation**
 
   Cover minimal actor+portrait, Character, Persona, Shared Visual Identity only, Persona Visual only, and both visual sections. Confirm no actor/database/profile mutation occurs during readback.
 
@@ -183,7 +183,7 @@
   and prove the UUID remains durably assigned while no destination/archive is
   published.
 
-- [ ] **Step 6: Mutation-check determinism/privacy and commit**
+- [x] **Step 6: Mutation-check determinism/privacy and commit**
 
   Change order/timestamp/self-inventory/digest exclusion and inject a forbidden local field; each independent oracle must fail. Restore and commit: `feat: write deterministic Actor Pack archives`.
 
@@ -196,7 +196,7 @@
 - Modify: `tldw_chatbook/Actor_Packs/export.py`
 - Modify: `tldw_chatbook/Actor_Packs/__init__.py`
 
-- [ ] **Step 1: Write publication REDs**
+- [x] **Step 1: Write publication REDs**
 
   Cover same-directory owned temporary creation, destination symlink/substitution,
   expected destination nonexistence or exact no-follow identity, existing destination
@@ -205,11 +205,11 @@
   supported, pre-commit failure/cancellation cleanup, and a platform capability
   fallback that refuses unverifiable publication.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
   Expect missing `publish_actor_pack` and fixed-category publication error.
 
-- [ ] **Step 3: Implement the narrow publisher**
+- [x] **Step 3: Implement the narrow publisher**
 
   Capture the destination contract when the user confirms the picker: either the name
   must remain absent or its exact no-follow identity must remain unchanged. Open the
@@ -227,17 +227,17 @@
   swallowed error. Cleanup may remove only the exact owned pre-commit temporary
   inode/name; any ambiguous fallback fails closed.
 
-- [ ] **Step 4: Run GREEN under real filesystem races**
+- [x] **Step 4: Run GREEN under real filesystem races**
 
   Use deterministic barriers for destination link swap, parent replacement, temporary substitution, source inode/content ABA, and authority revision changes.
 
-- [ ] **Step 5: Mutation-check ordering and cleanup identity**
+- [x] **Step 5: Mutation-check ordering and cleanup identity**
 
   Move revalidation before the final await/barrier, omit file fsync, weaken expected
   destination/temp identity, treat post-replace fsync failure as uncommitted, or delete
   the committed destination; each named test must fail.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
   Commit: `feat: publish Actor Packs atomically`
 
@@ -252,7 +252,7 @@
 - Create: `Tests/UI/test_actor_pack_export_workflow.py`
 - Create: `Tests/UI/test_actor_pack_export_ownership.py`
 
-- [ ] **Step 1: Write async ownership REDs**
+- [x] **Step 1: Write async ownership REDs**
 
   Pin one app-owned export operation registry/controller, no duplicate submit,
   archive/hash/decode/file work off-loop, post-await fences for
@@ -260,11 +260,11 @@
   signaling, shielded repeated-cancellation drain, navigation cancellation without
   transferring ownership to a screen, and shutdown before profile/DB teardown.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
   Expect the app export owner and Workbench operation seam to be absent.
 
-- [ ] **Step 3: Wire the existing synchronous services once**
+- [x] **Step 3: Wire the existing synchronous services once**
 
   Construct `ActorPackExportController` after Actor Pack/visual repositories are
   available. The controller owns the operation task, cancellation event, destination
@@ -277,14 +277,14 @@
   user/model content beyond the bounded actor/export snapshot required by the active
   operation.
 
-- [ ] **Step 4: Run GREEN and lifecycle mutations**
+- [x] **Step 4: Run GREEN and lifecycle mutations**
 
   Test navigation, profile switch, actor edit, visual publication, destination change,
   repeated cancellation, late result delivery to a replacement screen, and app
   shutdown through deterministic barriers. Mutate each controller and UI-result fence
   plus the drain; the corresponding test must fail.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
   Commit: `feat: coordinate Actor Pack exports`
 
@@ -298,7 +298,7 @@
 - Modify: `Tests/UI/test_personas_inspector_pane.py`
 - Modify: `Tests/UI/test_actor_pack_export_workflow.py`
 
-- [ ] **Step 1: Write Inspector/Pilot REDs**
+- [x] **Step 1: Write Inspector/Pilot REDs**
 
   Assert a labelled `Export Actor Pack` action for an eligible local Character or
   Persona, disabled only for missing/deleted/corrupt selections, enabled for inactive
@@ -306,11 +306,11 @@
   server Personas, no highlight retargeting across await, no forbidden/reserved
   keybinding, and usable labelled/focusable controls at normal and 80x24 geometry.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
   Expect the message/action/button and handler to be absent.
 
-- [ ] **Step 3: Implement the smallest UI seam**
+- [x] **Step 3: Implement the smallest UI seam**
 
   Add one frozen/slotted request message and one Inspector button. Reuse the existing
   export destination picker, but add Actor Pack-specific suffix normalization: append
@@ -320,15 +320,15 @@
   captures exact selection/session/profile authority before opening the picker and
   revalidates it before submitting the immutable controller request.
 
-- [ ] **Step 4: Run GREEN**
+- [x] **Step 4: Run GREEN**
 
   Exercise success, cancel, failure, server source, actor-selection ABA, navigation, and duplicate-submit behavior. User-facing failures and logs remain fixed-category/path-free; success may name only the user-selected destination basename.
 
-- [ ] **Step 5: Run Impeccable once after the final visible change**
+- [x] **Step 5: Run Impeccable once after the final visible change**
 
   Run the project Impeccable detector on the Inspector/Personas screen once; address scoped findings before finalizing and retain its exact evidence.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
   Commit: `feat: export Actor Packs from Workbench`
 
@@ -340,22 +340,22 @@
 - Modify: `backlog/tasks/task-19058 - Export-self-contained-Actor-Packs.md`
 - Modify if this task produces a genuinely reusable incident: `backlog/docs/lessons-testing-evidence.md`
 
-- [ ] **Step 1: Extend architecture/privacy guards**
+- [x] **Step 1: Extend architecture/privacy guards**
 
   Assert the pure Actor Pack export modules import no Textual/UI/server/import-activation boundary; UI owns only orchestration. Assert archives and stable errors contain no local IDs, chats, credentials, provider settings, host paths, session/UI preferences, cleanup tokens, or private diagnostics.
 
-- [ ] **Step 2: Run focused component gates under isolated roots**
+- [x] **Step 2: Run focused component gates under isolated roots**
 
   Establish one temporary HOME/XDG/config/data root before interpreter start. Run all `Tests/Actor_Packs`, the Actor Pack migration/repository tests, affected Shared Visual Identity and Persona Visual repository/loader tests, the focused Workbench/Pilot tests, `Tests/test_probe_import_provenance.py`, packaging tests, and Actor Pack architecture/privacy tests. Record exact pass/fail/skip counts; do not claim a full suite.
 
-- [ ] **Step 3: Run independent golden/readback and real SQLite gates**
+- [x] **Step 3: Run independent golden/readback and real SQLite gates**
 
   Export Character, Persona, and both-visual-section fixtures from real SQLite/profile state; read them through the independent oracle. Repeat identical export and compare exact bytes/SHA-256. Verify authority/cancellation/privacy mutations remain discriminating.
 
-- [ ] **Step 4: Run static/governance gates**
+- [x] **Step 4: Run static/governance gates**
 
   Run scoped Ruff check and formatter check on every changed Python file, `py_compile`/`compileall` on changed production modules, packaging/diagnostic/privacy/architecture/governance gates, placeholder scans, and `git diff --check`.
 
-- [ ] **Step 5: Self-review and close the task**
+- [x] **Step 5: Self-review and close the task**
 
   Review the diff against all eight ACs and ADR-074. Add concise Implementation Notes, check every AC only after its evidence is green, set TASK-19058 to Done with Backlog CLI, verify `backlog task 19058 --plain`, and commit: `docs: complete Actor Pack export task`.
