@@ -348,7 +348,12 @@ PKG_ROOT = Path(tr.__file__).resolve().parents[1]  # .../tldw_chatbook (the pack
 VENDORED_DIR_PARTS = ("Chunking", "engine")
 VENDORED_SHIM_PARTS = ("Chunking", "_shims")
 
-MAPPER_GUARD_ALLOWED = {"Chunking/template_runtime.py"}
+MAPPER_GUARD_ALLOWED = {"Chunking/template_runtime.py", "Chunking/auto_selection.py"}
+# Auto-selection task 2 (spec §4.1/§4.2): Chunking/auto_selection.py joins
+# the allowed set for ONE symbol — TemplateClassifier (its first consumer;
+# construction is separately fenced to that file below). It maps no flat
+# records and constructs no ChunkingTemplate; template_runtime remains the
+# only mapper.
 # task-8 shrank this to template_runtime + the migration's liveness check:
 # the task-8 CRUD rewrite removed the interop's legacy entry — its
 # name-keyed access is now a full-record CRUD fetch shaped

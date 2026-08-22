@@ -14,6 +14,7 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any, Optional
 
+from ..Chunking.auto_selection import AUTO_SENTINEL
 from ..Chunking.chunking_interop_library import get_chunking_service
 
 
@@ -118,6 +119,13 @@ class LocalRAGAdminService:
             decorated.get("template") or decorated.get("template_json")
         )
         decorated["tags"] = self._extract_template_tags(decorated, template_config)
+        # (auto-selection spec §4.3/AC 14) A legacy row named "auto" —
+        # minted before the CRUD reservation — is never hidden or deleted:
+        # the listing flags it ``name_reserved`` so surfaces can render it
+        # as shadowed by the picker sentinel, and auto tier 1 skips it by
+        # name (never selected, never auto-shadowed).
+        if decorated.get("name") == AUTO_SENTINEL:
+            decorated["name_reserved"] = True
         # (task 10, AC-24a) The listing surface carries validity DATA: a
         # stored-invalid template is listed WITH a flag rather than hidden
         # or silently applied. The flag is computed here (the data half);

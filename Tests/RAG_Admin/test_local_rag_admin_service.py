@@ -175,6 +175,37 @@ def test_local_rag_admin_service_filters_templates_by_builtin_flag():
     assert builtin_only == ["builtin-row"]
 
 
+def test_local_rag_admin_service_flags_reserved_sentinel_name():
+    """Auto-selection spec §4.3 (ruling 8.7): a legacy row named ``"auto"``
+    (minted before the CRUD reservation) is never hidden or deleted — the
+    listing decoration flags it ``name_reserved`` so surfaces can render it
+    as shadowed, and auto tier 1 skips it by name."""
+    chunking = FakeChunkingService()
+    chunking.create_template(
+        name="auto",
+        description="legacy sentinel row",
+        template_json={
+            "chunking": {"method": "words", "config": {"max_size": 2, "overlap": 0}},
+            "classifier": {"media_types": ["document"]},
+        },
+    )
+    chunking.create_template(
+        name="normal",
+        description="d",
+        template_json={
+            "chunking": {"method": "words", "config": {"max_size": 2, "overlap": 0}},
+        },
+    )
+    service = LocalRAGAdminService(None, chunking_service=chunking)
+
+    listed = {record["name"]: record for record in service.list_templates()}
+    assert listed["auto"]["name_reserved"] is True
+    assert not listed["normal"].get("name_reserved")
+
+    # The flag rides the single-record surface too.
+    assert service.get_template("auto")["name_reserved"] is True
+
+
 def test_local_rag_admin_service_applies_server_style_template_to_text():
     service = LocalRAGAdminService(None, chunking_service=FakeChunkingService())
     service.create_template(
