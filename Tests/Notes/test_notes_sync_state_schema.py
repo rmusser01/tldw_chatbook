@@ -831,6 +831,24 @@ def test_canonical_census_accounts_for_implicit_unique_indexes(
     assert expected_autoindexes <= {index.name for index in snapshot.indexes}
 
 
+def test_sqlite_analyze_metadata_remains_compatible_with_canonical_v2(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "analyzed.sqlite3"
+    with notes_sync_state_transaction(database):
+        pass
+    with sqlite3.connect(database) as connection:
+        connection.execute("ANALYZE")
+        connection.commit()
+        assert connection.execute(
+            "SELECT name FROM sqlite_master WHERE name = 'sqlite_stat1'"
+        ).fetchone() == ("sqlite_stat1",)
+
+    with notes_sync_state_transaction(database) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone() == (2,)
+        assert connection.execute("SELECT count(*) FROM sync_roots").fetchone() == (0,)
+
+
 def test_schema_error_does_not_leak_raw_schema_or_path_text(tmp_path: Path) -> None:
     database = tmp_path / "private-schema-sentinel.sqlite3"
     _create_oracle_v2(database)

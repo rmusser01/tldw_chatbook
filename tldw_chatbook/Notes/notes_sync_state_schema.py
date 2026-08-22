@@ -543,7 +543,9 @@ def _schema_snapshot(connection: sqlite3.Connection) -> SyncStateSchemaSnapshot:
     table_names = {
         str(row[0])
         for row in connection.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'table'"
+            """SELECT name FROM sqlite_master
+            WHERE type = 'table' AND name NOT LIKE ? ESCAPE '\\'""",
+            (r"sqlite\_%",),
         )
     }
     if table_names != _V2_TABLE_NAMES or observed_objects != canonical_objects:
