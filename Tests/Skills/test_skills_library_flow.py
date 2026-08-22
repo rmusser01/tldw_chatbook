@@ -17,7 +17,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from textual.widgets import Button, Input, Static, TextArea
+from textual.widgets import Button, Input, SelectionList, Static, TextArea
 
 from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_CREATE_SKILL
 from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
@@ -576,6 +576,10 @@ async def test_uninitialized_trust_shows_setup_state_and_bootstrap_enables_appro
         assert screen._library_skill_editor_state.trust_status == "trusted"
         assert trust_service.trust_store.has_manifest()
         assert len(screen.query("#library-skill-trust-setup")) == 0
+        view_details = screen.query_one("#library-skill-trust-view-details", Button)
+        assert view_details
+        view_details.press()
+        await _wait_for_selector(screen, pilot, "#library-skill-trust-unlock")
         assert screen.query_one("#library-skill-trust-unlock", Button)
         assert screen.query_one("#library-skill-trust-review", Button)
         assert screen.query_one("#library-skill-trust-approve", Button)
@@ -942,7 +946,13 @@ async def test_library_shell_create_skill_row_opens_blank_editor(tmp_path):
         assert len(screen.query("#library-skill-name-hint")) == 0
         assert screen.query_one("#library-skill-description", Input).value == ""
         assert screen.query_one("#library-skill-argument-hint", Input).value == ""
-        assert screen.query_one("#library-skill-allowed-tools", Input).value == ""
+        assert screen.query_one("#library-skill-advanced-fields").display is False
+        screen.query_one("#library-skill-editor-mode", Button).press()
+        await _wait_for_display(screen, pilot, "#library-skill-advanced-fields")
+        picker = screen.query_one("#library-skill-tool-picker", SelectionList)
+        assert tuple(picker.selected) == ()
+        captured = screen.query_one("#library-skill-tool-captured", Static)
+        assert str(captured.renderable) == ""
         assert screen.query_one("#library-skill-body", TextArea).text == ""
 
 
