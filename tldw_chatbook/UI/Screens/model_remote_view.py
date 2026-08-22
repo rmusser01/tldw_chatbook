@@ -141,6 +141,30 @@ class RemoteView(Widget):
             self.service = service
             self.credential_resolver = credential_resolver
 
+    class OpenInstalledRequested(Message):
+        """Request navigation to the exact completed managed model."""
+
+        def __init__(self, reference: ArtifactRef) -> None:
+            """Carry the verified managed root without deriving identity from UI copy."""
+            super().__init__()
+            self.reference = reference
+
+    class ConfigureRuntimeRequested(Message):
+        """Request runtime selection for the exact completed managed model."""
+
+        def __init__(self, reference: ArtifactRef) -> None:
+            """Carry the verified managed root into the host-owned chooser."""
+            super().__init__()
+            self.reference = reference
+
+    class DiscoveryStarted(Message):
+        """Notify the host that prior durable completion is no longer current."""
+
+        def __init__(self, query: str) -> None:
+            """Carry the submitted provider query for lifecycle attribution."""
+            super().__init__()
+            self.query = query
+
     BUNDLED_CSS = """
     RemoteView {
         height: 100%;
@@ -148,9 +172,19 @@ class RemoteView(Widget):
     }
 
     RemoteView .remote-header {
-        height: 3;
+        height: 5;
         padding: 0 1;
         background: $panel;
+    }
+
+    RemoteView .remote-source {
+        height: 2;
+        padding: 0;
+        color: $text-muted;
+    }
+
+    RemoteView .remote-search-row {
+        height: 3;
     }
 
     RemoteView #remote-model-query {
@@ -274,6 +308,16 @@ class RemoteView(Widget):
         min-width: 22;
     }
 
+    RemoteView .remote-completion-actions {
+        width: auto;
+        height: 3;
+    }
+
+    RemoteView .remote-completion-actions Button {
+        width: auto;
+        margin-left: 1;
+    }
+
     RemoteView.-narrow .remote-results-pane {
         width: 2fr;
         min-width: 0;
@@ -298,8 +342,14 @@ class RemoteView(Widget):
     }
 
     RemoteView.-narrow #remote-model-selection,
-    RemoteView.-narrow #remote-model-install {
+    RemoteView.-narrow #remote-model-install,
+    RemoteView.-narrow .remote-completion-actions {
         width: 100%;
+        min-width: 0;
+    }
+
+    RemoteView.-narrow .remote-completion-actions Button {
+        width: 1fr;
         min-width: 0;
     }
 
@@ -315,6 +365,7 @@ class RemoteView(Widget):
         credential_resolver_factory: Callable[[], "CredentialResolver"] = (
             _default_credential_resolver
         ),
+        source_label: str = "Hugging Face",
         id: str | None = None,
     ) -> None:
         """Create an idle Remote view without instantiating I/O dependencies.
@@ -323,11 +374,15 @@ class RemoteView(Widget):
             adapter_factory: Lazy bounded metadata-adapter factory.
             service_factory: Lazy managed-store service factory.
             credential_resolver_factory: Lazy credential resolver factory.
+            source_label: Current provider authority shown without implying
+                that Remote is permanently tied to one provider.
             id: Optional Textual widget id.
         """
         self._adapter_factory = adapter_factory
         self._service_factory = service_factory
         self._credential_resolver_factory = credential_resolver_factory
+        self._source_label = source_label
+        self._query_value = ""
         self._search_generation = 0
         self._resolve_generation = 0
         self._results: tuple[RemoteModelSummary, ...] = ()
@@ -335,24 +390,32 @@ class RemoteView(Widget):
         self._selected_repository: str | None = None
         self._selected_candidate: RemoteGGUFCandidate | None = None
         self._operation_reference: ArtifactRef | None = None
+        self._completed_reference: ArtifactRef | None = None
         self._progress: "AcquisitionProgress | None" = None
         super().__init__(id=id)
 
     def compose(self) -> ComposeResult:
         """Compose retained display state without metadata or store access."""
         disabled = self._operation_reference is not None
-        with Horizontal(classes="remote-header"):
-            yield Input(
-                placeholder="Search or enter owner/repository",
-                id="remote-model-query",
-                disabled=disabled,
+        with Vertical(classes="remote-header"):
+            yield Static(
+                f"Source: {self._source_label}",
+                classes="remote-source",
+                markup=False,
             )
-            yield Button(
-                "Search",
-                id="remote-model-search",
-                variant="primary",
-                disabled=disabled,
-            )
+            with Horizontal(classes="remote-search-row"):
+                yield Input(
+                    value=self._query_value,
+                    placeholder="Search or enter owner/repository",
+                    id="remote-model-query",
+                    disabled=disabled,
+                )
+                yield Button(
+                    "Search",
+                    id="remote-model-search",
+                    variant="primary",
+                    disabled=disabled,
+                )
         with Horizontal(classes="remote-workspace"):
             with Vertical(classes="remote-results-pane"):
                 yield Static("Repositories", classes="remote-pane-title")
@@ -382,12 +445,25 @@ class RemoteView(Widget):
                         id="remote-model-selection",
                         markup=False,
                     )
-                    yield Button(
-                        "Review and install…",
-                        id="remote-model-install",
-                        variant="primary",
-                        disabled=disabled or self._selected_candidate is None,
-                    )
+                    if self._completed_reference is None:
+                        yield Button(
+                            "Review and install…",
+                            id="remote-model-install",
+                            variant="primary",
+                            disabled=disabled or self._selected_candidate is None,
+                        )
+                    else:
+                        with Horizontal(classes="remote-completion-actions"):
+                            yield Button(
+                                "Open Installed",
+                                id="remote-model-open-installed",
+                                variant="default",
+                            )
+                            yield Button(
+                                "Configure and use…",
+                                id="remote-model-configure-runtime",
+                                variant="primary",
+                            )
 
     def on_mount(self) -> None:
         """Apply the measured compact layout without creating dependencies."""
@@ -402,6 +478,8 @@ class RemoteView(Widget):
         self.set_class(width < _NARROW_WIDTH, "-narrow")
 
     def _default_status(self) -> str:
+        if self._completed_reference is not None:
+            return "Downloaded · Verified · Managed · Not active"
         if self._selected_candidate is not None:
             return (
                 "GGUF variant selected. Review the managed install before downloading."
@@ -417,6 +495,8 @@ class RemoteView(Widget):
 
     def _selection_summary(self) -> str:
         """Describe the selected GGUF candidate beside the install action."""
+        if self._completed_reference is not None:
+            return "Choose where to configure the verified managed model."
         if self._selected_candidate is None:
             return "Select one GGUF file or complete shard set."
         return (
@@ -559,9 +639,12 @@ class RemoteView(Widget):
         self.query_one("#remote-model-selection", Static).update(
             self._selection_summary()
         )
-        self.query_one("#remote-model-install", Button).disabled = (
-            disabled or self._selected_candidate is None
-        )
+        try:
+            install = self.query_one("#remote-model-install", Button)
+        except NoMatches:
+            self.refresh(recompose=True)
+            return
+        install.disabled = disabled or self._selected_candidate is None
 
     def _set_selected_result_variant(self) -> None:
         """Paint repository selection without replacing the focused result row."""
@@ -591,20 +674,52 @@ class RemoteView(Widget):
         if self._operation_reference is not None:
             return
         query = self.query_one("#remote-model-query", Input).value.strip()
+        self._query_value = query
+        self.post_message(self.DiscoveryStarted(query))
+        was_completed = self._completed_reference is not None
         self._search_generation += 1
         self._resolve_generation += 1
         self._results = ()
         self._resolved = None
         self._selected_repository = None
         self._selected_candidate = None
+        self._completed_reference = None
+        if was_completed:
+            self.refresh(recompose=True)
+            self.call_after_refresh(
+                self._begin_discovery,
+                query,
+                self._search_generation,
+                self._resolve_generation,
+            )
+            return
+        self._begin_discovery(
+            query,
+            self._search_generation,
+            self._resolve_generation,
+        )
+
+    def _begin_discovery(
+        self,
+        query: str,
+        search_generation: int,
+        resolve_generation: int,
+    ) -> None:
+        """Start a current discovery after any completion-state recompose."""
+        if (
+            search_generation != self._search_generation
+            or resolve_generation != self._resolve_generation
+            or query != self._query_value
+        ):
+            return
         self._set_metadata_controls_disabled(True)
         if is_exact_repository(query):
             self._selected_repository = query
             self._refresh_with_status("Inspecting repository…")
-            self._resolve_remote(query, self._resolve_generation, query)
+            self._resolve_remote(query, resolve_generation, query)
             return
         self._refresh_with_status("Searching remote models…")
-        self._search_remote(query, self._search_generation)
+        self._search_remote(query, search_generation)
 
     @on(Button.Pressed, ".remote-result")
     def _result_pressed(self, event: Button.Pressed) -> None:
@@ -695,6 +810,22 @@ class RemoteView(Widget):
                 credential_resolver=credential_resolver,
             )
         )
+
+    @on(Button.Pressed, "#remote-model-open-installed")
+    def _open_installed_pressed(self, event: Button.Pressed) -> None:
+        """Request the exact completed model in the persistent inventory."""
+        event.stop()
+        reference = self._completed_reference
+        if type(reference) is ArtifactRef:
+            self.post_message(self.OpenInstalledRequested(reference))
+
+    @on(Button.Pressed, "#remote-model-configure-runtime")
+    def _configure_runtime_pressed(self, event: Button.Pressed) -> None:
+        """Request host-owned runtime choice for the completed model."""
+        event.stop()
+        reference = self._completed_reference
+        if type(reference) is ArtifactRef:
+            self.post_message(self.ConfigureRuntimeRequested(reference))
 
     @work(thread=True, group="remote_model_search", exit_on_error=False)
     def _search_remote(self, query: str, generation: int) -> None:
@@ -968,7 +1099,12 @@ class RemoteView(Widget):
             return
         self._set_status(message)
 
-    def finish_install(self, message: str | None = None) -> None:
+    def finish_install(
+        self,
+        message: str | None = None,
+        *,
+        completed_reference: ArtifactRef | None = None,
+    ) -> None:
         """Clear the in-flight indicator and hide progress after a completed install.
 
         Called by the host screen (``LLMScreen``) once provisioning
@@ -977,8 +1113,16 @@ class RemoteView(Widget):
         Args:
             message: The outcome copy to show (success or sanitized
                 failure); ``None`` restores the default status.
+            completed_reference: Exact verified managed root on success.
+                ``None`` retains the failure presentation without adoption
+                actions.
         """
         self._operation_reference = None
+        self._completed_reference = (
+            completed_reference
+            if type(completed_reference) is ArtifactRef
+            else None
+        )
         self._progress = None
         try:
             progress = self.query_one(
@@ -990,6 +1134,9 @@ class RemoteView(Widget):
         if progress is not None:
             progress.display = False
         self._set_metadata_controls_disabled(False)
+        if self._completed_reference is not None:
+            self.refresh(recompose=True)
+            return
         self._set_status(message or self._default_status())
 
 

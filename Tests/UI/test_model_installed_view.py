@@ -161,6 +161,31 @@ def _unmanaged_inventory(source: Path):
     )
 
 
+def _managed_inventory_row(tmp_path: Path, reference: ArtifactRef):
+    from tldw_chatbook.UI.Screens.model_browser_state import InventoryRow
+
+    return InventoryRow(
+        path=tmp_path / reference.artifact_id,
+        reference=reference,
+        model_label=reference.artifact_id,
+        revision=reference.revision,
+        precision=reference.variant,
+        dependencies=(),
+        ready=True,
+        active=False,
+        activation_allowed=True,
+        is_broken=False,
+        is_unmanaged=False,
+        provenance="Integrity verified",
+        action_hint="Ready",
+        error=None,
+        size_bytes=1024,
+        installed_store_bytes=2048,
+        staging_store_bytes=0,
+        free_bytes=4096,
+    )
+
+
 async def _wait_until(pilot, predicate, *, timeout_seconds: float = 10.0) -> None:
     """Pump Textual until a cross-thread observation becomes true.
 
@@ -243,6 +268,153 @@ async def test_installed_view_performs_no_io_at_compose_time(tmp_path: Path) -> 
         await pilot.pause()
 
     service_factory.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_reveal_reference_focuses_the_exact_installed_row_without_activation(
+    tmp_path: Path,
+) -> None:
+    """Open Installed locates one exact managed identity and remains read-only."""
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    target = ArtifactRef("remote-gguf", "a" * 40, "q4_k_m")
+    other = ArtifactRef("other-gguf", "b" * 40, "q8_0")
+
+    service_factory = MagicMock()
+    view = InstalledView(service_factory=service_factory, legacy_dir=tmp_path)
+    view._loaded = True
+    view._rows = (
+        _managed_inventory_row(tmp_path, other),
+        _managed_inventory_row(tmp_path, target),
+    )
+    app = _InstalledApp(view)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        view.reveal_reference(target)
+        await _wait_until(
+            pilot,
+            lambda: any(
+                widget.has_class("-revealed")
+                for widget in view.query(".installed-model-row")
+            ),
+        )
+        await _wait_until(
+            pilot,
+            lambda: app.focused is not None
+            and any(
+                getattr(ancestor, "reference", None) == target
+                for ancestor in app.focused.ancestors_with_self
+            ),
+        )
+
+        target_row = next(
+            widget
+            for widget in view.query(".installed-model-row")
+            if getattr(widget, "reference", None) == target
+        )
+        focused = app.focused
+
+        assert target_row.has_class("-revealed")
+        assert focused is not None
+        assert target_row in focused.ancestors_with_self
+        assert focused.has_class("model-activate")
+        assert target_row in app.screen._compositor.visible_widgets
+
+    service_factory.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_reveal_reference_focuses_after_a_fresh_inventory_load(
+    tmp_path: Path,
+) -> None:
+    """A just-downloaded model is located even when Installed was initially stale."""
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    target = ArtifactRef("remote-gguf", "a" * 40, "q4_k_m")
+    view = InstalledView(service_factory=MagicMock(), legacy_dir=tmp_path)
+    app = _InstalledApp(view)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        view.ensure_loaded = MagicMock()
+        view.reveal_reference(target)
+        view._apply_inventory(
+            (_managed_inventory_row(tmp_path, target),),
+            ArtifactDiskUsage(1024, 0, 4096),
+            None,
+        )
+        await _wait_until(
+            pilot,
+            lambda: app.focused is not None
+            and any(
+                getattr(ancestor, "reference", None) == target
+                for ancestor in app.focused.ancestors_with_self
+            ),
+        )
+
+        assert view.ensure_loaded.call_args.kwargs == {"force": True}
+        assert app.focused is not None
+        assert app.focused.has_class("model-activate")
+
+
+@pytest.mark.asyncio
+async def test_reveal_reference_missing_after_successful_refresh_surfaces_recovery(
+    tmp_path: Path,
+) -> None:
+    """A vanished exact ref clears pending focus and explains recovery inline."""
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    target = ArtifactRef("remote-gguf", "a" * 40, "q4_k_m")
+    view = InstalledView(service_factory=MagicMock(), legacy_dir=tmp_path)
+    app = _InstalledApp(view)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        view.ensure_loaded = MagicMock()
+        view.reveal_reference(target)
+        view._apply_inventory(
+            (),
+            ArtifactDiskUsage(0, 0, 4096),
+            None,
+        )
+        await _wait_until(
+            pilot,
+            lambda: bool(view.query("#installed-reveal-status")),
+        )
+
+        recovery = view.query_one("#installed-reveal-status", Static)
+        assert view._revealed_reference is None
+        assert str(recovery.renderable) == (
+            "That managed model is no longer available. Refresh Installed models "
+            "and try again."
+        )
+        assert str(tmp_path) not in str(recovery.renderable)
+
+
+@pytest.mark.asyncio
+async def test_reveal_reference_inventory_error_keeps_retryable_identity(
+    tmp_path: Path,
+) -> None:
+    """A load failure stays distinct from proof that the exact ref vanished."""
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    target = ArtifactRef("remote-gguf", "a" * 40, "q4_k_m")
+    view = InstalledView(service_factory=MagicMock(), legacy_dir=tmp_path)
+    app = _InstalledApp(view)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        view.ensure_loaded = MagicMock()
+        view.reveal_reference(target)
+        view._apply_inventory(
+            (),
+            None,
+            "The local model inventory could not be loaded.",
+        )
+        await pilot.pause()
+
+        assert view._revealed_reference == target
+        assert not view.query("#installed-reveal-status")
+        assert "The local model inventory could not be loaded." in _rendered_static_text(
+            view
+        )
 
 
 @pytest.mark.asyncio

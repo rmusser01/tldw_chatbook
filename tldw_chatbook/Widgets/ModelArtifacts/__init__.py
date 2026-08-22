@@ -19,6 +19,10 @@ from .local_gguf_import import (
     LocalGGUFImportRequested,
 )
 from .plan_panel import ModelPlanPanel
+from .runtime_choice_modal import (
+    ManagedGGUFRuntimeChoice,
+    ManagedGGUFRuntimeChoiceModal,
+)
 
 __all__ = [
     "ActivationRequested",
@@ -32,6 +36,8 @@ __all__ = [
     "ModelInstallModal",
     "ModelInstallProgress",
     "ModelPlanPanel",
+    "ManagedGGUFRuntimeChoice",
+    "ManagedGGUFRuntimeChoiceModal",
     "RepairRequested",
     "make_progress_callback",
 ]

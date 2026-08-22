@@ -426,6 +426,74 @@ async def test_managed_selector_uses_exact_refs_and_path_free_labels(
 
 
 @pytest.mark.asyncio
+async def test_configure_managed_gguf_opens_runtime_and_preselects_exact_ref(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Remote adoption configures source state without starting or activating."""
+    choices = (
+        ManagedGGUFChoice(REF_A, "Model A · Q4_K_M · 4 MiB · Managed"),
+        ManagedGGUFChoice(REF_B, "Model B · Q8_0 · 8 MiB · Managed"),
+    )
+    app, pilot, context, _screen, window, _service = await _mount_models(
+        monkeypatch,
+        choices=choices,
+    )
+    try:
+        accepted = window.configure_managed_gguf("llamafile", REF_B)
+        await pilot.pause()
+
+        selection = window.gguf_source_snapshot("llamafile")
+        assert accepted is True
+        assert window.active_view == "llamafile"
+        assert selection.mode is GGUFSourceMode.MANAGED
+        assert selection.managed_ref == REF_B
+        assert window.query_one("#llamafile-gguf-source-mode", Select).value == "managed"
+        assert window.query_one("#llamafile-gguf-managed-select", Select).value == REF_B
+        assert current_server_claim(app, "llamafile") is None
+    finally:
+        await _close_context(context)
+
+
+@pytest.mark.asyncio
+async def test_configure_managed_gguf_waits_for_fresh_exact_inventory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A just-downloaded ref is selected only after inventory proves it exists."""
+    choice_a = ManagedGGUFChoice(REF_A, "Model A · Q4_K_M · 4 MiB · Managed")
+    choice_b = ManagedGGUFChoice(REF_B, "Model B · Q8_0 · 8 MiB · Managed")
+    _app, pilot, context, _screen, window, _service = await _mount_models(
+        monkeypatch,
+        choices=(choice_a,),
+    )
+    try:
+        monkeypatch.setattr(
+            window_module,
+            "managed_gguf_choices",
+            lambda _installed: (choice_a, choice_b),
+        )
+        generation = window._managed_gguf_inventory_generation
+
+        assert window.configure_managed_gguf("llamacpp", REF_B) is True
+        await _settle_pilot_until(
+            pilot,
+            lambda: (
+                window._managed_gguf_inventory_generation > generation
+                and window.query_one(
+                    "#llamacpp-gguf-managed-select", Select
+                ).value
+                == REF_B
+            ),
+            message="fresh exact managed GGUF was not selected",
+        )
+
+        selection = window.gguf_source_snapshot("llamacpp")
+        assert selection.mode is GGUFSourceMode.MANAGED
+        assert selection.managed_ref == REF_B
+    finally:
+        await _close_context(context)
+
+
+@pytest.mark.asyncio
 async def test_inventory_runs_off_loop_and_stale_results_are_ignored(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

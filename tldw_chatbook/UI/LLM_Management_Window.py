@@ -60,6 +60,7 @@ from ..Event_Handlers.LLM_Management_Events.server_lifecycle import (
     server_lifecycle_snapshot,
     server_is_active,
 )
+from ..Model_Artifacts.service import ArtifactRef
 from ..Model_Artifacts.store import managed_service
 from ..Utils.log_widget_manager import LogWidgetManager
 from ..Widgets.ModelArtifacts import InstallProgressed, InstallStatusChanged
@@ -281,6 +282,31 @@ class LLMManagementWindow(Container):
         `call_after_refresh`, which raced (and lost to) the deferred mount —
         get a second, correctly-ordered chance.
         """
+
+    class ManagedGGUFHandoffResolved(Message):
+        """Report exact managed-GGUF validation to the owning Models screen."""
+
+        def __init__(
+            self,
+            provider: str,
+            reference: ArtifactRef,
+            *,
+            succeeded: bool,
+            reason: str | None = None,
+        ) -> None:
+            """Create a path-free handoff result.
+
+            Args:
+                provider: Internal GGUF runtime key.
+                reference: Exact managed identity that was validated.
+                succeeded: Whether the identity was committed to the runtime.
+                reason: Allowlisted failure category, never a filesystem path.
+            """
+            super().__init__()
+            self.provider = provider
+            self.reference = reference
+            self.succeeded = succeeded
+            self.reason = reason
 
     BUNDLED_CSS = """
     LLMManagementWindow {
@@ -544,6 +570,7 @@ class LLMManagementWindow(Container):
         self._managed_gguf_inventory_generation = 0
         self._managed_gguf_inventory_started = False
         self._managed_gguf_inventory_error = False
+        self._pending_managed_gguf_handoff: tuple[str, ArtifactRef] | None = None
         self._server_active_states = {
             provider: False for provider in self.SERVER_CONTROLS
         }
@@ -1521,6 +1548,67 @@ class LLMManagementWindow(Container):
             self._gguf_sources[provider] = selection
         return selection.validate_for(provider)
 
+    def configure_managed_gguf(
+        self,
+        provider: str,
+        reference: ArtifactRef,
+    ) -> bool:
+        """Open a GGUF runtime and preselect one exact managed model.
+
+        The method changes configuration state only. It never activates a
+        managed root, claims a server, or starts a process.
+
+        Args:
+            provider: Internal GGUF provider key (``llamacpp`` or ``llamafile``).
+            reference: Exact verified managed root to select.
+
+        Returns:
+            ``True`` when the handoff was accepted, including while a fresh
+            inventory read is resolving the exact reference.
+        """
+        if (
+            provider not in self.GGUF_PROVIDERS
+            or type(reference) is not ArtifactRef
+            or any(self._server_active(item) for item in self.GGUF_PROVIDERS)
+        ):
+            return False
+        self.active_view = "llama-cpp" if provider == "llamacpp" else "llamafile"
+        self._pending_managed_gguf_handoff = (provider, reference)
+        if reference in {choice.reference for choice in self._managed_gguf_choices}:
+            self._commit_managed_gguf_handoff(provider, reference)
+            return True
+        self._refresh_managed_gguf_inventory()
+        return True
+
+    def _commit_managed_gguf_handoff(
+        self,
+        provider: str,
+        reference: ArtifactRef,
+    ) -> None:
+        """Commit a provider/ref pair already proven present in inventory."""
+        selection = self._gguf_sources[provider]
+        self._gguf_sources[provider] = GGUFSourceSelection(
+            mode=GGUFSourceMode.MANAGED,
+            managed_ref=reference,
+            external_path=selection.external_path,
+        )
+        mode = self.query_one(f"#{provider}-gguf-source-mode", Select)
+        managed = self.query_one(f"#{provider}-gguf-managed-select", Select)
+        with mode.prevent(Select.Changed):
+            mode.value = GGUFSourceMode.MANAGED.value
+        with managed.prevent(Select.Changed):
+            managed.value = reference
+        self._pending_managed_gguf_handoff = None
+        self._render_gguf_source(provider)
+        self._sync_process_controls(provider)
+        self.post_message(
+            self.ManagedGGUFHandoffResolved(
+                provider,
+                reference,
+                succeeded=True,
+            )
+        )
+
     def _render_gguf_source(self, provider: str) -> None:
         """Patch one source region and its path-free status in place."""
 
@@ -1708,6 +1796,18 @@ class LLMManagementWindow(Container):
             return
         if any(self._server_active(p) for p in self.GGUF_PROVIDERS):
             self._managed_gguf_inventory_started = False
+            pending = self._pending_managed_gguf_handoff
+            if pending is not None:
+                self._pending_managed_gguf_handoff = None
+                provider, reference = pending
+                self.post_message(
+                    self.ManagedGGUFHandoffResolved(
+                        provider,
+                        reference,
+                        succeeded=False,
+                        reason="server-active",
+                    )
+                )
             return
         self._managed_gguf_choices = choices
         self._managed_gguf_inventory_error = bool(error)
@@ -1741,6 +1841,21 @@ class LLMManagementWindow(Container):
                     else Select.NULL
                 )
             self._sync_process_controls(provider)
+        pending = self._pending_managed_gguf_handoff
+        if pending is not None:
+            provider, reference = pending
+            if not error and reference in references:
+                self._commit_managed_gguf_handoff(provider, reference)
+            else:
+                self._pending_managed_gguf_handoff = None
+                self.post_message(
+                    self.ManagedGGUFHandoffResolved(
+                        provider,
+                        reference,
+                        succeeded=False,
+                        reason="inventory-error" if error else "missing",
+                    )
+                )
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Route allowlisted actions inside this destination."""

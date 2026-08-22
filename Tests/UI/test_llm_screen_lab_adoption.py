@@ -655,6 +655,78 @@ async def test_remote_two_pane_install_action_stays_inside_real_models_body_at_8
 
 
 @pytest.mark.asyncio
+async def test_remote_completion_and_runtime_choice_fit_real_models_at_80_columns():
+    """The complete adoption path must remain painted and keyboard-operable."""
+    from tldw_chatbook.UI.Screens.model_remote_view import RemoteView
+    from tldw_chatbook.Widgets.ModelArtifacts import ManagedGGUFRuntimeChoiceModal
+
+    app = _app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        screen = await _models_screen(app)
+        assert await _wait_for(lambda: bool(screen.query("#remote-models-view")), pilot)
+
+        remote_row = next(
+            row for row in _rail_rows(screen) if row.lab_view_key == "remote"
+        )
+        remote_row.press()
+        await pilot.pause()
+
+        window = screen.query_one(LLMManagementWindow)
+        remote = window.query_one("#remote-models-view", RemoteView)
+        resolved = _resolved_remote_model()
+        remote.query_one("#remote-model-query", Input).value = resolved.repository
+        remote._resolve_generation = 1
+        remote._apply_resolve_result(
+            1,
+            resolved.repository,
+            resolved.repository,
+            resolved,
+            None,
+        )
+        await pilot.pause()
+        remote.query_one(".remote-candidate", Button).press()
+        await pilot.pause()
+
+        reference = _remote_catalog().artifact.reference
+        remote.finish_install(
+            "Model downloaded and managed.",
+            completed_reference=reference,
+        )
+        await pilot.pause()
+
+        parent = window.query_one("#llm-view-remote")
+        open_installed = remote.query_one("#remote-model-open-installed", Button)
+        configure = remote.query_one("#remote-model-configure-runtime", Button)
+        _assert_painted_inside(app, open_installed, parent)
+        _assert_painted_inside(app, configure, parent)
+        assert (
+            open_installed.region.bottom <= configure.region.y
+            or open_installed.region.right <= configure.region.x
+        )
+
+        open_installed.focus()
+        await pilot.press("tab")
+        assert app.focused is configure
+        await pilot.press("enter")
+        await pilot.pause()
+
+        modal = app.screen
+        assert isinstance(modal, ManagedGGUFRuntimeChoiceModal)
+        dialog = modal.query_one(".managed-gguf-runtime-modal")
+        llama_cpp = modal.query_one("#managed-gguf-runtime-llamacpp", Button)
+        llamafile = modal.query_one("#managed-gguf-runtime-llamafile", Button)
+        cancel = modal.query_one("#managed-gguf-runtime-cancel", Button)
+        _assert_painted_inside(app, dialog, modal)
+        for action in (llama_cpp, llamafile, cancel):
+            _assert_painted_inside(app, action, dialog)
+        assert app.focused is llama_cpp
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.screen is screen
+
+
+@pytest.mark.asyncio
 async def test_the_window_no_longer_carries_nav_buttons():
     app = _app()
     async with app.run_test(size=(120, 40)) as pilot:
@@ -3588,7 +3660,7 @@ def test_apply_remote_provision_result_notifies_mirrors_and_resets_state(
     screen._model_install_reference = reference
     screen._model_install_service = MagicMock()
     screen._model_install_catalog = catalog
-    screen._model_install_candidate = None
+    screen._model_install_candidate = _resolved_remote_model().candidates[0]
     screen._model_install_credential_resolver = MagicMock()
     screen._model_install_pending_report = object()
     screen._model_install_kind = "remote"
@@ -3612,7 +3684,13 @@ def test_apply_remote_provision_result_notifies_mirrors_and_resets_state(
     assert delivered.active is False
     assert delivered.succeeded == (error is None)
 
-    view.finish_install.assert_called_once_with(expected_message)
+    if error is None:
+        view.finish_install.assert_called_once_with(
+            expected_message,
+            completed_reference=reference,
+        )
+    else:
+        view.finish_install.assert_called_once_with(expected_message)
 
 
 @pytest.mark.parametrize(
@@ -3678,7 +3756,317 @@ def test_remote_terminal_outcome_crosses_the_recompose_gap(
     module.LLMScreen._hydrate_model_install_progress(screen)
 
     fresh_view.restore_install_context.assert_called_once_with(catalog, candidate)
-    getattr(fresh_view, expected_method).assert_called_once_with(expected_message)
+    outcome = getattr(fresh_view, expected_method)
+    if terminal_path == "provision" and error is None:
+        outcome.assert_called_once_with(
+            expected_message,
+            completed_reference=catalog.artifact.reference,
+        )
+    else:
+        outcome.assert_called_once_with(expected_message)
+
+
+def test_successful_remote_completion_survives_later_recomposes(monkeypatch):
+    """A consumed success remains durable until Remote starts new discovery."""
+    from unittest.mock import MagicMock
+
+    from tldw_chatbook.UI.Screens import llm_screen as module
+
+    fake_app = MagicMock()
+    monkeypatch.setattr(module.LLMScreen, "app", property(lambda self: fake_app))
+    catalog = _remote_catalog()
+    candidate = _resolved_remote_model().candidates[0]
+    reference = catalog.artifact.reference
+    screen = module.LLMScreen.__new__(module.LLMScreen)
+    screen.notify = MagicMock()
+    screen._deliver_curated = MagicMock()
+    screen._remote_view = MagicMock(return_value=None)
+    screen._installed_view = MagicMock(return_value=None)
+    screen._model_install_worker = MagicMock()
+    screen._model_install_reference = reference
+    screen._model_install_service = MagicMock()
+    screen._model_install_catalog = catalog
+    screen._model_install_candidate = candidate
+    screen._model_install_credential_resolver = MagicMock()
+    screen._model_install_pending_report = object()
+    screen._model_install_kind = "remote"
+    screen._model_install_active = False
+    screen._model_install_last_progress = None
+    screen._remote_install_terminal_catalog = None
+    screen._remote_install_terminal_candidate = None
+    screen._remote_install_terminal_action = None
+    screen._remote_install_terminal_message = None
+    screen._remote_install_completed_catalog = None
+    screen._remote_install_completed_candidate = None
+    screen._remote_install_completed_reference = None
+    screen._remote_install_completed_message = None
+
+    module.LLMScreen._apply_remote_provision_result(screen, None)
+
+    first_view = MagicMock(is_mounted=True)
+    first_view.restore_install_context.return_value = True
+    screen._remote_view.return_value = first_view
+    module.LLMScreen._hydrate_model_install_progress(screen)
+
+    second_view = MagicMock(is_mounted=True)
+    second_view.restore_install_context.return_value = True
+    screen._remote_view.return_value = second_view
+    module.LLMScreen._hydrate_model_install_progress(screen)
+
+    for view in (first_view, second_view):
+        view.restore_install_context.assert_called_once_with(catalog, candidate)
+        view.finish_install.assert_called_once_with(
+            "Model downloaded and managed. Runtime compatibility has not been verified.",
+            completed_reference=reference,
+        )
+
+
+def test_new_remote_discovery_clears_durable_completion_identity():
+    """A new query supersedes the prior completed model at screen scope."""
+    from tldw_chatbook.UI.Screens import llm_screen as module
+    from tldw_chatbook.UI.Screens.model_remote_view import RemoteView
+
+    screen = module.LLMScreen.__new__(module.LLMScreen)
+    screen._remote_install_completed_catalog = object()
+    screen._remote_install_completed_candidate = object()
+    screen._remote_install_completed_reference = object()
+    screen._remote_install_completed_message = "done"
+
+    screen._remote_discovery_started(RemoteView.DiscoveryStarted("new model"))
+
+    assert screen._remote_install_completed_catalog is None
+    assert screen._remote_install_completed_candidate is None
+    assert screen._remote_install_completed_reference is None
+    assert screen._remote_install_completed_message is None
+
+
+def test_open_installed_switches_and_reveals_exact_reference_without_activation():
+    """The Remote completion action is navigation, never implicit activation."""
+    from unittest.mock import MagicMock
+
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.UI.Screens import llm_screen as module
+    from tldw_chatbook.UI.Screens.model_remote_view import RemoteView
+
+    reference = ArtifactRef("remote-gguf", "a" * 40, "q4_k_m")
+    screen = module.LLMScreen.__new__(module.LLMScreen)
+    screen.llm_window = MagicMock()
+    installed = MagicMock()
+    screen._installed_view = MagicMock(return_value=installed)
+    screen.call_after_refresh = MagicMock(
+        side_effect=lambda callback, *args: callback(*args)
+    )
+    event = RemoteView.OpenInstalledRequested(reference)
+
+    screen._remote_open_installed_requested(event)
+
+    assert screen.llm_window.active_view == "installed"
+    screen.call_after_refresh.assert_called_once_with(
+        installed.reveal_reference,
+        reference,
+    )
+    installed.reveal_reference.assert_called_once_with(reference)
+    assert not any(
+        call[0] == "activate"
+        for call in installed.method_calls
+    )
+
+
+@pytest.mark.asyncio
+async def test_open_installed_exact_row_focus_wins_real_window_switch(
+    tmp_path,
+):
+    """The handoff focus must run after Installed's standard focus restore."""
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.UI.Screens.model_browser_state import InventoryRow
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+    from tldw_chatbook.UI.Screens.model_remote_view import RemoteView
+
+    reference = ArtifactRef("remote-gguf", "a" * 40, "q4_k_m")
+    row = InventoryRow(
+        path=tmp_path / reference.artifact_id,
+        reference=reference,
+        model_label=reference.artifact_id,
+        revision=reference.revision,
+        precision=reference.variant,
+        dependencies=(),
+        ready=True,
+        active=False,
+        activation_allowed=True,
+        is_broken=False,
+        is_unmanaged=False,
+        provenance="Integrity verified",
+        action_hint="Ready",
+        error=None,
+        size_bytes=1024,
+        installed_store_bytes=1024,
+        staging_store_bytes=0,
+        free_bytes=4096,
+    )
+
+    app = _app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        screen = await _models_screen(app)
+        assert await _wait_for(
+            lambda: bool(screen.query("#installed-models-view")),
+            pilot,
+        )
+        window = screen.query_one(LLMManagementWindow)
+        installed = window.query_one("#installed-models-view", InstalledView)
+        installed._loaded = True
+        installed._rows = (row,)
+        installed.refresh(recompose=True)
+        assert await _wait_for(
+            lambda: bool(installed.query(".installed-model-row")),
+            pilot,
+        )
+        window._model_library_focus_ids["installed"] = "installed-models-refresh"
+
+        screen._remote_open_installed_requested(
+            RemoteView.OpenInstalledRequested(reference)
+        )
+        for _ in range(4):
+            await pilot.pause()
+
+        focused = app.focused
+        assert window.active_view == "installed"
+        assert focused is not None
+        assert focused.has_class("model-activate")
+        assert any(
+            getattr(ancestor, "reference", None) == reference
+            for ancestor in focused.ancestors_with_self
+        )
+
+
+def test_configure_runtime_request_opens_choice_and_preserves_exact_reference(
+    monkeypatch,
+):
+    """The host owns provider choice while Remote contributes only identity."""
+    from unittest.mock import MagicMock
+
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.UI.Screens import llm_screen as module
+    from tldw_chatbook.UI.Screens.model_remote_view import RemoteView
+    from tldw_chatbook.Widgets.ModelArtifacts import ManagedGGUFRuntimeChoiceModal
+
+    fake_app = MagicMock()
+    monkeypatch.setattr(module.LLMScreen, "app", property(lambda self: fake_app))
+    reference = ArtifactRef("remote-gguf", "a" * 40, "q4_k_m")
+    screen = module.LLMScreen.__new__(module.LLMScreen)
+    screen.llm_window = MagicMock()
+    screen.llm_window.configure_managed_gguf.return_value = True
+    event = RemoteView.ConfigureRuntimeRequested(reference)
+
+    screen._remote_configure_runtime_requested(event)
+
+    modal, callback = fake_app.push_screen.call_args.args
+    assert isinstance(modal, ManagedGGUFRuntimeChoiceModal)
+    callback("llamacpp")
+    screen.llm_window.configure_managed_gguf.assert_called_once_with(
+        "llamacpp",
+        reference,
+    )
+
+
+@pytest.mark.asyncio
+async def test_pending_runtime_handoff_replays_into_recomposed_models_window(
+    monkeypatch,
+):
+    """A fresh Models body must retain a still-resolving exact handoff."""
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+
+    reference = ArtifactRef("remote-gguf", "a" * 40, "q4_k_m")
+    accepted: list[tuple[LLMManagementWindow, str, ArtifactRef]] = []
+
+    def configure(
+        window: LLMManagementWindow,
+        provider: str,
+        received: ArtifactRef,
+    ) -> bool:
+        accepted.append((window, provider, received))
+        return True
+
+    monkeypatch.setattr(LLMManagementWindow, "configure_managed_gguf", configure)
+
+    app = _app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _models_screen(app)
+        assert await _wait_for(lambda: bool(screen.query("#remote-models-view")), pilot)
+        first_window = screen.query_one(LLMManagementWindow)
+
+        screen._remote_runtime_selected(reference, "llamacpp")
+        assert accepted == [(first_window, "llamacpp", reference)]
+
+        screen.refresh(recompose=True)
+        assert await _wait_for(
+            lambda: screen.llm_window is not first_window
+            and screen.llm_window is not None
+            and screen.llm_window.is_attached,
+            pilot,
+        )
+        replacement = screen.llm_window
+        assert replacement is not None
+        assert await _wait_for(lambda: len(accepted) == 2, pilot)
+
+        assert accepted == [
+            (first_window, "llamacpp", reference),
+            (replacement, "llamacpp", reference),
+        ]
+
+
+def test_runtime_handoff_clears_only_after_matching_window_resolution():
+    """Detached-window results cannot clear a replacement window's intent."""
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+
+    reference = ArtifactRef("remote-gguf", "a" * 40, "q4_k_m")
+    stale = ArtifactRef("other-gguf", "b" * 40, "q8_0")
+    screen = LLMScreen.__new__(LLMScreen)
+    screen._remote_runtime_handoff = ("llamacpp", reference)
+    screen.notify = MagicMock()
+
+    screen._managed_gguf_handoff_resolved(
+        LLMManagementWindow.ManagedGGUFHandoffResolved(
+            "llamacpp",
+            stale,
+            succeeded=True,
+        )
+    )
+    assert screen._remote_runtime_handoff == ("llamacpp", reference)
+
+    screen._managed_gguf_handoff_resolved(
+        LLMManagementWindow.ManagedGGUFHandoffResolved(
+            "llamacpp",
+            reference,
+            succeeded=True,
+        )
+    )
+    assert screen._remote_runtime_handoff is None
+    screen.notify.assert_not_called()
+
+
+def test_runtime_handoff_failure_surfaces_inventory_specific_recovery():
+    """A resolved inventory failure clears intent with actionable copy."""
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+
+    reference = ArtifactRef("remote-gguf", "a" * 40, "q4_k_m")
+    screen = LLMScreen.__new__(LLMScreen)
+    screen._remote_runtime_handoff = ("llamafile", reference)
+    screen.notify = MagicMock()
+
+    screen._managed_gguf_handoff_resolved(
+        LLMManagementWindow.ManagedGGUFHandoffResolved(
+            "llamafile",
+            reference,
+            succeeded=False,
+            reason="inventory-error",
+        )
+    )
+
+    assert screen._remote_runtime_handoff is None
+    screen.notify.assert_called_once_with(
+        "Managed models could not be loaded. Refresh Installed models, then try again.",
+        severity="warning",
+    )
 
 
 @pytest.mark.asyncio

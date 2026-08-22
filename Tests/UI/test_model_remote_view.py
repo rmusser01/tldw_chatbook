@@ -619,6 +619,46 @@ async def test_two_pane_layout_and_install_action_paint_at_eighty_columns() -> N
 
 
 @pytest.mark.asyncio
+async def test_completion_actions_paint_and_tab_at_eighty_columns() -> None:
+    """Both post-download handoffs remain visible and keyboard reachable."""
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+
+    resolved = _resolved()
+    reference = ArtifactRef("owner-repository", "a" * 40, "q4_k_m")
+    view = _view(adapter_factory=MagicMock(), resolver_factory=MagicMock())
+    app = _RemoteApp(view)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        view.query_one("#remote-model-query", Input).value = resolved.repository
+        view._resolve_generation = 1
+        view._apply_resolve_result(
+            1,
+            resolved.repository,
+            resolved.repository,
+            resolved,
+            None,
+        )
+        await pilot.pause()
+        view.query_one(".remote-candidate", Button).press()
+        view.finish_install("done", completed_reference=reference)
+        await pilot.pause()
+
+        open_installed = view.query_one("#remote-model-open-installed", Button)
+        configure = view.query_one("#remote-model-configure-runtime", Button)
+        for button in (open_installed, configure):
+            button.scroll_visible(animate=False, immediate=True, force=True)
+            await pilot.pause()
+            widget, _offset = app.get_widget_at(*button.region.center)
+            assert button in app.screen._compositor.visible_widgets
+            assert button.region.bottom <= view.region.bottom
+            assert widget is button
+
+        app.screen.set_focus(open_installed)
+        await pilot.press("tab")
+        assert app.focused is configure
+
+
+@pytest.mark.asyncio
 async def test_stale_search_and_resolve_completions_cannot_replace_newer_results() -> (
     None
 ):
@@ -1379,6 +1419,222 @@ async def test_finish_install_clears_the_indicator_progress_and_shows_the_given_
         status = str(view.query_one("#remote-model-status", Static).renderable)
 
     assert status == "Model downloaded and managed."
+
+
+@pytest.mark.asyncio
+async def test_successful_install_exposes_provider_attributed_adoption_actions() -> None:
+    """A verified Remote download ends in explicit next actions, not another install."""
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+
+    resolved = _resolved()
+    view = _view(adapter_factory=MagicMock(), resolver_factory=MagicMock())
+    app = _RemoteApp(view)
+    reference = ArtifactRef("owner-repository", "a" * 40, "q4_k_m")
+
+    async with app.run_test() as pilot:
+        query = view.query_one("#remote-model-query", Input)
+        query.value = resolved.repository
+        view._resolve_generation = 1
+        view._apply_resolve_result(
+            1,
+            resolved.repository,
+            resolved.repository,
+            resolved,
+            None,
+        )
+        await pilot.pause()
+        view.query_one(".remote-candidate", Button).press()
+        await pilot.pause()
+
+        view.finish_install(
+            "Model downloaded and managed.",
+            completed_reference=reference,
+        )
+        await pilot.pause()
+
+        rendered = _text(view)
+        open_installed = view.query_one("#remote-model-open-installed", Button)
+        configure = view.query_one("#remote-model-configure-runtime", Button)
+
+        assert "Source: Hugging Face" in rendered
+        assert "Downloaded · Verified · Managed · Not active" in rendered
+        assert open_installed.disabled is False
+        assert configure.disabled is False
+        assert list(view.query("#remote-model-install")) == []
+
+
+@pytest.mark.asyncio
+async def test_open_installed_posts_the_exact_completed_reference() -> None:
+    """The completion action carries managed identity without filename recovery."""
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.UI.Screens.model_remote_view import RemoteView
+
+    resolved = _resolved()
+    reference = ArtifactRef("owner-repository", "a" * 40, "q4_k_m")
+    view = _view(adapter_factory=MagicMock(), resolver_factory=MagicMock())
+
+    class _AdoptionApp(ConsolidatedCSSApp):
+        def __init__(self) -> None:
+            self.opened: list[ArtifactRef] = []
+            super().__init__()
+
+        def compose(self) -> ComposeResult:
+            yield view
+
+        @on(RemoteView.OpenInstalledRequested)
+        def _opened(self, event: RemoteView.OpenInstalledRequested) -> None:
+            self.opened.append(event.reference)
+
+    app = _AdoptionApp()
+    async with app.run_test() as pilot:
+        query = view.query_one("#remote-model-query", Input)
+        query.value = resolved.repository
+        view._resolve_generation = 1
+        view._apply_resolve_result(
+            1,
+            resolved.repository,
+            resolved.repository,
+            resolved,
+            None,
+        )
+        await pilot.pause()
+        view.query_one(".remote-candidate", Button).press()
+        await pilot.pause()
+        view.finish_install(
+            "Model downloaded and managed.",
+            completed_reference=reference,
+        )
+        await pilot.pause()
+
+        view.query_one("#remote-model-open-installed", Button).press()
+        await pilot.pause()
+
+    assert app.opened == [reference]
+
+
+@pytest.mark.asyncio
+async def test_configure_runtime_posts_the_exact_completed_reference() -> None:
+    """Remote delegates runtime choice while preserving exact managed identity."""
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+    from tldw_chatbook.UI.Screens.model_remote_view import RemoteView
+
+    resolved = _resolved()
+    reference = ArtifactRef("owner-repository", "a" * 40, "q4_k_m")
+    view = _view(adapter_factory=MagicMock(), resolver_factory=MagicMock())
+
+    class _AdoptionApp(ConsolidatedCSSApp):
+        def __init__(self) -> None:
+            self.configured: list[ArtifactRef] = []
+            super().__init__()
+
+        def compose(self) -> ComposeResult:
+            yield view
+
+        @on(RemoteView.ConfigureRuntimeRequested)
+        def _configured(self, event: RemoteView.ConfigureRuntimeRequested) -> None:
+            self.configured.append(event.reference)
+
+    app = _AdoptionApp()
+    async with app.run_test() as pilot:
+        query = view.query_one("#remote-model-query", Input)
+        query.value = resolved.repository
+        view._resolve_generation = 1
+        view._apply_resolve_result(
+            1,
+            resolved.repository,
+            resolved.repository,
+            resolved,
+            None,
+        )
+        await pilot.pause()
+        view.query_one(".remote-candidate", Button).press()
+        await pilot.pause()
+        view.finish_install(
+            "Model downloaded and managed.",
+            completed_reference=reference,
+        )
+        await pilot.pause()
+
+        view.query_one("#remote-model-configure-runtime", Button).press()
+        await pilot.pause()
+
+    assert app.configured == [reference]
+
+
+@pytest.mark.asyncio
+async def test_new_search_clears_the_prior_completion_actions() -> None:
+    """A new discovery cannot retain adoption actions for a stale managed root."""
+    from tldw_chatbook.Model_Artifacts.service import ArtifactRef
+
+    resolved = _resolved()
+    adapter = _Adapter(search_result=(_summary("new/repository"),), resolved=resolved)
+    reference = ArtifactRef("owner-repository", "a" * 40, "q4_k_m")
+    view = _view(
+        adapter_factory=lambda: adapter,
+        resolver_factory=lambda: _Resolver([]),
+    )
+    app = _RemoteApp(view)
+
+    async with app.run_test() as pilot:
+        query = view.query_one("#remote-model-query", Input)
+        query.value = resolved.repository
+        view._resolve_generation = 1
+        view._apply_resolve_result(
+            1,
+            resolved.repository,
+            resolved.repository,
+            resolved,
+            None,
+        )
+        await pilot.pause()
+        view.query_one(".remote-candidate", Button).press()
+        await pilot.pause()
+        view.finish_install(
+            "Model downloaded and managed.",
+            completed_reference=reference,
+        )
+        await pilot.pause()
+
+        await _submit(app, pilot, "new model")
+
+        assert view._query_value == "new model"
+        assert adapter.search_calls == [("new model", "configured-token")]
+        assert [result.repository for result in view._results] == ["new/repository"]
+        assert list(view.query("#remote-model-open-installed")) == []
+        assert list(view.query("#remote-model-configure-runtime")) == []
+        assert view.query_one("#remote-model-install", Button).disabled is True
+        assert "new/repository" in _text(view)
+
+
+@pytest.mark.asyncio
+async def test_new_discovery_notifies_the_host_to_clear_durable_completion() -> None:
+    """Starting a search invalidates the screen owner's prior adoption target."""
+    from tldw_chatbook.UI.Screens.model_remote_view import RemoteView
+
+    adapter = _Adapter(search_result=(_summary("new/repository"),))
+    view = _view(
+        adapter_factory=lambda: adapter,
+        resolver_factory=lambda: _Resolver([]),
+    )
+
+    class _DiscoveryApp(ConsolidatedCSSApp):
+        def __init__(self) -> None:
+            self.view = view
+            self.started: list[str] = []
+            super().__init__()
+
+        def compose(self) -> ComposeResult:
+            yield view
+
+        @on(RemoteView.DiscoveryStarted)
+        def _started(self, event: RemoteView.DiscoveryStarted) -> None:
+            self.started.append(event.query)
+
+    app = _DiscoveryApp()
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "new model")
+
+    assert app.started == ["new model"]
 
 
 @pytest.mark.asyncio
