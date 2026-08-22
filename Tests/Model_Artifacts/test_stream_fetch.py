@@ -268,12 +268,83 @@ async def test_max_bytes_bounds_final_size(tmp_path):
                 )
 
 
-def test_strip_headers_mirror_matches_egress():
-    """Drift guard: our local strip tuple must equal egress's."""
+def test_cross_origin_header_policy_is_shared_not_mirrored():
+    """Drift guard, task-19733: the mirror is gone; the policy is imported.
+
+    This module used to keep its own copy of egress's strip tuple, and this
+    test compared the two SETS -- which only detects drift after someone
+    edits one side and runs the suite. It now asserts the stronger property:
+    there is one object, so divergence is not expressible. The
+    ``hasattr`` assertion is the anti-regression -- re-introducing a local
+    ``_STRIP_HEADERS`` copy fails here.
+    """
     from tldw_chatbook.Utils import egress
     from tldw_chatbook.Model_Artifacts import fetch
 
-    assert set(fetch._STRIP_HEADERS) == set(egress._STRIP_HEADERS)
+    assert fetch.CROSS_ORIGIN_SAFE_HEADERS is egress.CROSS_ORIGIN_SAFE_HEADERS
+    assert not hasattr(fetch, "_STRIP_HEADERS")
+
+
+@pytest.mark.asyncio
+async def test_cross_origin_hop_keeps_range_but_drops_custom_credential(
+    tmp_path, monkeypatch
+):
+    """Catalog -> CDN is the normal artifact download, and it is cross-origin.
+
+    Two things must hold on that second hop at once (task-19733):
+    ``Range``/``If-Range`` MUST survive or resume silently stops working,
+    while a credential under a name nobody denylisted (``X-Artifact-Token``)
+    must NOT. A rule that only drops four known names fails the second half;
+    a rule that drops everything fails the first.
+    """
+    seen: list[httpx.Request] = []
+    body = b"tail-bytes-after-resume"
+
+    async def allow_egress(_url: str, *, trusted_origins: frozenset[str]) -> None:
+        """Keep this transport-only test independent of DNS/egress policy."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.host == "catalog.example":
+            return httpx.Response(
+                302,
+                headers={"Location": "https://cdn.example/model.gguf"},
+                request=request,
+            )
+        return httpx.Response(
+            206,
+            headers={
+                "content-range": f"bytes 100-{100 + len(body) - 1}/{100 + len(body)}",
+                "etag": '"v1"',
+            },
+            content=body,
+            request=request,
+        )
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Model_Artifacts.fetch.check_url_or_raise_async", allow_egress
+    )
+    dest = tmp_path / "model.gguf"
+    dest.write_bytes(b"x" * 100)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        await stream_fetch(
+            "https://catalog.example/model.gguf",
+            dest,
+            client=client,
+            max_bytes=100 + len(body),
+            resume_from=100,
+            validators=FetchValidators(etag='"v1"', last_modified=None),
+            headers={"X-Artifact-Token": "sentinel-not-a-real-key-19733"},
+        )
+
+    assert len(seen) == 2
+    first, second = seen
+    assert first.headers.get("x-artifact-token") == "sentinel-not-a-real-key-19733"
+    assert "cdn.example" in str(second.url)
+    assert "x-artifact-token" not in second.headers
+    assert second.headers.get("range") == "bytes=100-"
+    assert second.headers.get("if-range") == '"v1"'
+    assert dest.read_bytes() == b"x" * 100 + body
 
 
 @pytest.mark.asyncio

@@ -345,7 +345,127 @@ async def check_url_or_raise_async(url: str, *, trusted_origins=frozenset()) -> 
 #: forward the real API key verbatim; every ``Authorization``-based adapter
 #: is already protected by this tuple. There is no legitimate cross-origin
 #: use of this header, so adding it is strictly tightening.
+#:
+#: NOTE (task-19733): this tuple is no longer the cross-origin RULE -- the rule
+#: is :data:`CROSS_ORIGIN_SAFE_HEADERS` below, an allowlist. It survives as the
+#: never-cross floor: both exemption sets below are constructed by SUBTRACTING
+#: it, so a careless future edit that adds one of these names to an exemption
+#: list cannot take effect.
 _STRIP_HEADERS = ("authorization", "cookie", "proxy-authorization", "x-goog-api-key")
+
+#: Request headers that MAY be forwarded across an origin boundary on a
+#: redirect hop. Everything else the caller (or the client's own default
+#: headers) supplied is dropped.
+#:
+#: This is an ALLOWLIST on purpose (task-19733). A denylist of credential
+#: header names cannot be correct in this app, because the credential header
+#: NAME is user-supplied: a subscription's ``auth_config`` chooses it
+#: (``Subscriptions/monitoring_engine.py`` only *defaults* to ``X-API-Key``),
+#: and so does a per-site config (``site_config_manager.SiteConfig.get_headers``,
+#: same default). Growing ``_STRIP_HEADERS`` one incident at a time closes the
+#: name someone happened to think of and forwards every other one verbatim to
+#: whatever host the feed redirects to.
+#:
+#: Membership test: a header is listed here only when forwarding it to a
+#: DIFFERENT origin is both (a) needed by a real caller and (b) incapable of
+#: carrying a secret. That admits content negotiation, cache validators, and
+#: range/partial-content headers -- a CDN redirect (feeds, model artifacts)
+#: genuinely needs those or conditional GET and download resume break.
+#:
+#: Consequence to know about: a NON-credential custom header a user configured
+#: for a feed (``custom_headers``) also stops being forwarded once that feed
+#: redirects off-origin. That is deliberate -- nothing at this layer can tell
+#: ``X-Feed-Token`` from ``X-Client-Version`` by name -- and it is the safe
+#: direction to be wrong in.
+CROSS_ORIGIN_SAFE_HEADERS = frozenset(
+    {
+        # Content negotiation
+        "accept",
+        "accept-charset",
+        "accept-encoding",
+        "accept-language",
+        # Caching / conditional requests
+        "cache-control",
+        "pragma",
+        "if-match",
+        "if-modified-since",
+        "if-none-match",
+        "if-unmodified-since",
+        # Partial content (Model_Artifacts resume; HF -> CDN is cross-origin)
+        "if-range",
+        "range",
+        # Client identity (not a credential)
+        "user-agent",
+    }
+) - frozenset(_STRIP_HEADERS)
+
+#: Framing/connection headers owned by the HTTP client library itself, never a
+#: caller credential. They are exempt from the allowlist so that stripping a
+#: BUILT request cannot break the request it is protecting (dropping ``host``
+#: would be fatal; dropping ``connection`` would silently change keep-alive).
+_TRANSPORT_HEADERS = frozenset(
+    {
+        "host",
+        "connection",
+        "keep-alive",
+        "content-length",
+        # Describes the request BODY, never a credential. Every guarded helper
+        # is GET-only today so this is inert, but it belongs with the framing
+        # headers rather than the allowlist: the day one of them grows a body,
+        # silently dropping Content-Type would corrupt the request.
+        "content-type",
+        "transfer-encoding",
+        "te",
+        "trailer",
+        "upgrade",
+        "proxy-connection",
+    }
+) - frozenset(_STRIP_HEADERS)
+
+
+def filter_cross_origin_headers(headers) -> dict:
+    """Caller-supplied headers reduced to the ones safe to send off-origin.
+
+    Deny-by-default: a name absent from :data:`CROSS_ORIGIN_SAFE_HEADERS` is
+    dropped, whatever it is called. Use this for the ``headers`` mapping a
+    caller passed in, before it is handed to the transport.
+
+    Args:
+        headers: Any mapping of header name -> value (may be ``None``).
+
+    Returns:
+        A new plain ``dict`` containing only the allowlisted entries,
+        preserving the caller's casing.
+    """
+    return {
+        str(k): v
+        for k, v in dict(headers or {}).items()
+        if str(k).lower() in CROSS_ORIGIN_SAFE_HEADERS
+    }
+
+
+def strip_cross_origin_request_headers(request_headers) -> None:
+    """In place, drop every non-forwardable header from a BUILT request.
+
+    The complement of :func:`filter_cross_origin_headers`: that one filters
+    what the caller passed, this one filters what the transport actually
+    assembled -- which additionally contains the client object's DEFAULT
+    headers (``httpx.Client(headers=...)``, a ``requests.Session``'s
+    ``headers``/``auth``/cookies). Those are invisible to the caller-side
+    filter, and a credential set there leaks exactly the same way.
+
+    Transport/framing headers (:data:`_TRANSPORT_HEADERS`) are left alone;
+    everything else must be on :data:`CROSS_ORIGIN_SAFE_HEADERS` to survive.
+
+    Args:
+        request_headers: A mutable, case-insensitive header mapping
+            (``httpx.Headers`` or ``requests.structures.CaseInsensitiveDict``).
+    """
+    for name in list(request_headers.keys()):
+        lowered = str(name).lower()
+        if lowered in CROSS_ORIGIN_SAFE_HEADERS or lowered in _TRANSPORT_HEADERS:
+            continue
+        request_headers.pop(name, None)
 
 
 class EgressFetchError(Exception):
@@ -489,12 +609,16 @@ def same_origin(url_a: str, url_b: str) -> bool:
 
 
 def _hop_headers(headers, same_origin: bool) -> dict:
-    hop = {str(k): v for k, v in dict(headers or {}).items()}
-    if not same_origin:
-        for key in list(hop):
-            if key.lower() in _STRIP_HEADERS:
-                hop.pop(key)
-    return hop
+    """Caller headers for one hop: everything same-origin, allowlist otherwise.
+
+    task-19733 inverted the cross-origin branch from a denylist of credential
+    names to :func:`filter_cross_origin_headers`. Same-origin hops are
+    untouched, so an authenticated feed that redirects within its own origin
+    keeps working exactly as before.
+    """
+    if same_origin:
+        return {str(k): v for k, v in dict(headers or {}).items()}
+    return filter_cross_origin_headers(headers)
 
 
 def guarded_fetch_httpx(
@@ -522,9 +646,10 @@ def guarded_fetch_httpx(
             # level (e.g. httpx.Client(headers={"Authorization": ...})) —
             # these are merged onto the built request by httpx and are
             # invisible to _hop_headers, which only sees the per-call
-            # `headers` argument.
-            for _h in _STRIP_HEADERS:
-                request.headers.pop(_h, None)
+            # `headers` argument. Allowlist, not denylist (task-19733): a
+            # client-default header named by the user leaks identically to a
+            # per-call one.
+            strip_cross_origin_request_headers(request.headers)
         response = client.send(request, stream=True, follow_redirects=False)
         try:
             if response.is_redirect and response.status_code != 304:
@@ -565,8 +690,9 @@ async def guarded_fetch_httpx_async(
     """Async capped GET via httpx.AsyncClient with per-hop re-validation.
 
     ``auth`` is applied on same-origin hops only (credential-stripping rule).
-    Client-default sensitive headers (e.g. an ``httpx.AsyncClient(headers=...)``
-    default ``Authorization``) are also stripped on cross-origin hops. A
+    Cross-origin hops carry only :data:`CROSS_ORIGIN_SAFE_HEADERS`, whether the
+    header came from the ``headers`` argument or from the client object's own
+    defaults (e.g. an ``httpx.AsyncClient(headers=...)``). A
     client-level ``auth=`` CALLABLE (set on the ``httpx.Client``/``AsyncClient``
     itself, as opposed to the ``auth`` parameter of this function) is NOT
     suppressed by this guard — no live caller uses that flow today; this is a
@@ -585,8 +711,7 @@ async def guarded_fetch_httpx_async(
         if not is_same_origin:
             # Strip credentials the client attaches at the transport-object
             # level — see guarded_fetch_httpx for the rationale.
-            for _h in _STRIP_HEADERS:
-                request.headers.pop(_h, None)
+            strip_cross_origin_request_headers(request.headers)
         send_kwargs = {"stream": True, "follow_redirects": False}
         if auth is not None and is_same_origin:
             send_kwargs["auth"] = auth
@@ -649,10 +774,11 @@ def guarded_fetch_requests(
                 )
             )
             if not is_same_origin:
-                # prepare_request applies session.auth/cookies into headers;
-                # a cross-origin hop must not carry them.
-                for key in ("Authorization", "Cookie", "Proxy-Authorization"):
-                    prepared.headers.pop(key, None)
+                # prepare_request applies session.auth/cookies AND the
+                # session's default headers into the prepared request; a
+                # cross-origin hop must not carry any of them unless they are
+                # explicitly forwardable (task-19733).
+                strip_cross_origin_request_headers(prepared.headers)
             response = sess.send(
                 prepared, stream=True, timeout=timeout, allow_redirects=False
             )
@@ -698,7 +824,14 @@ async def guarded_fetch_aiohttp(
     headers: dict | None = None,
     timeout=None,
 ) -> GuardedResponse:
-    """Capped GET via aiohttp.ClientSession with per-hop re-validation."""
+    """Capped GET via aiohttp.ClientSession with per-hop re-validation.
+
+    Cross-origin hops carry only :data:`CROSS_ORIGIN_SAFE_HEADERS` out of the
+    ``headers`` argument. Unlike the httpx/requests helpers there is no built
+    request object to post-filter here, so a credential set as an
+    ``aiohttp.ClientSession(headers=...)`` DEFAULT is not suppressed — a
+    documented residual, unchanged by task-19733; no live caller does that.
+    """
     from multidict import CIMultiDict
 
     current = url
