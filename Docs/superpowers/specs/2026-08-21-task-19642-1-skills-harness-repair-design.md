@@ -192,10 +192,10 @@ Only tests related to the modified harness/functionality will run:
    `git diff --check`. The current
    baseline has two small Ruff findings in `test_skills_library_flow.py`
    (one unused local import and one semicolon-separated pause); because that
-   file is already in scope, remove those two findings. Both large files also
-   have pre-existing whole-file Ruff-format drift, so do not bulk-reformat or
-   claim a green whole-file formatter check; keep every changed hunk formatted
-   consistently and record the baseline explicitly.
+   file is already in scope, remove those two findings. All four modified
+   Python files have pre-existing whole-file Ruff-format drift, so do not
+   bulk-reformat or claim a green whole-file formatter check; keep every changed
+   hunk formatted consistently and record the baseline explicitly.
 7. Perform inverse evidence by temporarily restoring one stale contract at a
    time (fresh-profile factory, direct clean Delete, or old create-save copy),
    confirm its named focused test fails, and restore the repair. Temporarily

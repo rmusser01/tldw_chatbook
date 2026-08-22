@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Restore the 29 assigned Skills Library/import integration failures by aligning their test harness and interactions with the accepted Library lifecycle and Skill-editor contracts.
+**Goal:** Restore the 29 assigned Skills Library/import integration failures and eliminate the trust-header ordering race exposed by independent closeout verification.
 
-**Architecture:** Change only the two Skills integration test owners plus task evidence. Reuse the existing returning-user Library app wrapper and bounded Textual wait helpers, make optional Prompt/Study/Quiz seams inert, and drive the current clean/dirty/delete/create lifecycle instead of changing production behavior.
+**Architecture:** Keep the completed harness repair in the two Skills integration owners, then move the existing trust-posture refresh across the Skills-canvas mount boundary. Preserve strict targeted sync, route/generation/focus guards, and the no-whole-screen-fallback contract; add one deterministic mounted-owner test instead of retries, sleeps, or a new reconciliation abstraction.
 
 **Tech Stack:** Python 3.11+, Textual 8.x, pytest/pytest-asyncio, Ruff, Backlog.md.
 
@@ -12,7 +12,7 @@
 
 **ADR path:** `backlog/decisions/076-library-lifecycle-progressive-disclosure.md`
 
-**Reason:** ADR-076 already owns fresh-profile Starter filtering; TASK-19025 owns the current Skill-editor lifecycle. This repair changes neither contract.
+**Reason:** ADR-076 and TASK-19025 already own the Library and Skill-editor contracts, and the existing entry-reconciliation contract already requires automatic workers to project only into their mounted owner. Moving one refresh trigger after that mount is a routine sequencing fix, not a new architectural policy.
 
 ---
 
@@ -22,6 +22,8 @@
 
 - `Tests/Skills/test_skills_library_flow.py` — returning-user app factory, inert optional owners, bounded navigation helpers, and current Skill-editor interactions.
 - `Tests/Skills/test_skills_import.py` — returning-user app factory and bounded Skills/Import navigation.
+- `Tests/UI/test_library_entry_compose_once.py` — deterministic mounted-owner ordering regression.
+- `tldw_chatbook/UI/Screens/library_screen.py` — start the existing Skills trust-posture refresh after destination mounting.
 - `backlog/tasks/task-19642.1 - Repair-recurring-Skills-Library-and-import-harness-failures.md` — checked acceptance criteria, exact evidence, and implementation notes.
 
 **Modify only if the incident is not already recorded adequately**
@@ -30,9 +32,16 @@
 
 **Do not modify**
 
-- `tldw_chatbook/` production code.
+- Production code outside `tldw_chatbook/UI/Screens/library_screen.py`.
 - ADR-076, Library lifecycle defaults, Skill trust/security behavior, service ownership, or the shared `Tests/UI/app_factory.py` defaults.
+- `_load_library_skills_trust_posture` guards, `_sync_library_canvas` fallback semantics, or entry-reconciliation ownership contracts.
 - Unrelated fixed pauses or unrelated Skills tests.
+
+## Execution state
+
+Tasks 1-3 below are already implemented, committed, and reviewed; they remain
+as provenance for the repaired 29-node harness. Do not repeat their edit or
+inverse steps. Resume at Task 4 from the clean plan commit.
 
 ## Task 1: Repair the full-Library harness contract
 
@@ -385,7 +394,176 @@ Run the Task 3 Step 1 command again.
 
 Expected: 34 passed.
 
-## Task 4: Close TASK-19642.1 with exact evidence
+## Task 4: Start Skills trust posture only after its canvas mounts
+
+**Files:**
+
+- Modify: `Tests/UI/test_library_entry_compose_once.py`
+- Modify: `tldw_chatbook/UI/Screens/library_screen.py:17327-17360`
+
+- [ ] **Step 1: Add the deterministic mounted-owner RED test**
+
+Add this owner test near the existing Skills posture reconciliation tests:
+
+```python
+@pytest.mark.asyncio
+async def test_skills_rail_starts_trust_posture_after_canvas_mount(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    app.skills_scope_service = _FakeSkillsScopeService(
+        available=[{"name": "code-review"}]
+    )
+    screen = LibraryScreen(app)
+    screen.restore_state(
+        {"library_selected_row_id": LIBRARY_ROW_BROWSE_CONVERSATIONS}
+    )
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        active_screen = _active_library_screen(host)
+        await _wait_for_library_shell(active_screen, pilot)
+        await active_screen.workers.wait_for_complete()
+        observed_owner_state: list[bool] = []
+
+        def record_refresh() -> None:
+            observed_owner_state.append(
+                bool(active_screen.query("#library-skills-canvas"))
+            )
+
+        monkeypatch.setattr(
+            active_screen,
+            "_refresh_library_skills_trust_posture",
+            record_refresh,
+        )
+
+        await active_screen._select_library_rail_row(
+            LIBRARY_ROW_BROWSE_SKILLS
+        )
+        await _wait_for_selector(
+            active_screen, pilot, "#library-skills-canvas"
+        )
+
+        assert active_screen._library_selected_row_id == (
+            LIBRARY_ROW_BROWSE_SKILLS
+        )
+        assert active_screen._library_skills_view == "list"
+        assert observed_owner_state == [True]
+```
+
+The spy is installed only after initial Library workers settle, so it observes
+the rail-entry trigger rather than snapshot initialization.
+
+- [ ] **Step 2: Run the owner test and verify deterministic RED**
+
+Run:
+
+```bash
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q \
+  Tests/UI/test_library_entry_compose_once.py::test_skills_rail_starts_trust_posture_after_canvas_mount \
+  --tb=short
+```
+
+Expected: fail with `observed_owner_state == [False]`; the existing trigger
+runs while the outgoing route still owns the canvas.
+
+- [ ] **Step 3: Move the existing trigger after destination mounting**
+
+Delete the pre-mount block that calls
+`self._refresh_library_skills_trust_posture()` before the shell is built. After
+the existing targeted replacement/whole-screen fallback completes, add:
+
+```python
+if (
+    self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
+    and self._library_skills_view == "list"
+):
+    # The strict posture projection requires its retained owner to exist.
+    self._refresh_library_skills_trust_posture()
+```
+
+Do not modify `_load_library_skills_trust_posture`, `_sync_library_canvas`, or
+their route/generation/focus and fallback semantics.
+
+- [ ] **Step 4: Run the deterministic owner test and verify GREEN**
+
+Run the Step 2 command.
+
+Expected: 1 passed.
+
+- [ ] **Step 5: Run the directly related reconciliation owners**
+
+Run:
+
+```bash
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q \
+  Tests/UI/test_library_entry_compose_once.py::test_skills_rail_starts_trust_posture_after_canvas_mount \
+  'Tests/UI/test_library_entry_compose_once.py::test_automatic_entry_worker_composes_screen_once_and_routes_in_place[skills-size0]' \
+  'Tests/UI/test_library_entry_compose_once.py::test_automatic_entry_worker_composes_screen_once_and_routes_in_place[skills-size1]' \
+  Tests/UI/test_library_entry_compose_once.py::test_stale_skills_posture_cannot_project_after_route_switch \
+  Tests/UI/test_library_entry_compose_once.py::test_stale_skills_generation_cannot_project_on_the_same_route \
+  Tests/UI/test_library_entry_compose_once.py::test_skills_posture_sync_composes_focus_with_render_completion \
+  Tests/Skills/test_skills_library_flow.py::test_orphaned_manifest_is_one_click_resetup \
+  --tb=short
+```
+
+Expected: 7 passed. The compose-once cases must still report no screen-level
+recompose after the mounted owner exists.
+
+- [ ] **Step 6: Run scoped static checks**
+
+Run:
+
+```bash
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff check \
+  tldw_chatbook/UI/Screens/library_screen.py \
+  Tests/UI/test_library_entry_compose_once.py \
+  Tests/Skills/test_skills_import.py \
+  Tests/Skills/test_skills_library_flow.py
+git diff --check
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff format --check \
+  tldw_chatbook/UI/Screens/library_screen.py \
+  Tests/UI/test_library_entry_compose_once.py \
+  Tests/Skills/test_skills_import.py \
+  Tests/Skills/test_skills_library_flow.py
+```
+
+Expected: Ruff check and `git diff --check` exit 0. Formatter check retains the
+pre-existing exit 1 baseline for all four large files; record it and do not
+bulk-format.
+
+- [ ] **Step 7: Prove the ordering inverse**
+
+Use `apply_patch` to move the refresh block back before shell construction,
+run only the Step 2 owner test, and confirm it fails with
+`observed_owner_state == [False]`. Restore with `apply_patch`, rerun the owner
+test to 1 passed, then require `git diff --check` green.
+
+- [ ] **Step 8: Commit the ordering repair**
+
+```bash
+git add \
+  tldw_chatbook/UI/Screens/library_screen.py \
+  Tests/UI/test_library_entry_compose_once.py
+git commit -m "fix(library): mount Skills before trust refresh"
+```
+
+- [ ] **Step 9: Run the exact two-file gate three consecutive times**
+
+Run this command three separate times and record every result:
+
+```bash
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q \
+  Tests/Skills/test_skills_import.py \
+  Tests/Skills/test_skills_library_flow.py \
+  --tb=short
+```
+
+Expected each time: 34 passed. If any run fails, keep TASK-19642.1 open and
+return to systematic debugging.
+
+## Task 5: Close TASK-19642.1 with exact evidence
 
 **Files:**
 
@@ -398,14 +576,15 @@ Search `backlog/docs/lessons-testing-evidence.md` for an existing returning-user
 
 - [ ] **Step 2: Update task acceptance criteria and notes**
 
-Check all three ACs only after Task 3 is green. Add Implementation Notes containing:
+Check all three ACs only after Task 4 Step 9 is green. Add Implementation Notes containing:
 
-- the four confirmed drift classes;
-- the test-only files changed and explicit no-production-code result;
-- exact `34 passed` two-file evidence and `12 passed` owner evidence;
+- the four confirmed test-contract drift classes and mounted-owner ordering race;
+- all modified files, including the narrow production sequencing change;
+- three consecutive `34 passed` two-file runs, `12 passed` editor owners, and
+  `7 passed` ordering/reconciliation owners;
 - Ruff and `git diff --check` results;
-- the pre-existing two-file formatter baseline, without claiming formatter success;
-- all three representative causal inverse failures and successful restoration;
+- the pre-existing four-file formatter baseline, without claiming formatter success;
+- all four representative causal inverse failures and successful restoration;
 - explicit confirmation that the focused output contained no Prompt/Study/Quiz
   backend exception or local Library snapshot failure warning;
 - ADR-076 reuse and no-new-ADR decision;
@@ -433,14 +612,14 @@ Expected: status Done, all ACs checked, plan/notes/ADR evidence present.
 git add \
   'backlog/tasks/task-19642.1 - Repair-recurring-Skills-Library-and-import-harness-failures.md' \
   backlog/docs/lessons-testing-evidence.md
-git commit -m "docs: close TASK-19642.1"
+git commit -m "docs: complete TASK-19642.1"
 ```
 
 If the lessons file was not changed, omit it from `git add`.
 
 - [ ] **Step 5: Run final scoped verification from clean HEAD**
 
-Run Task 3 Steps 1-3 again after the closeout commit, then:
+Run Task 3 Steps 1-3 and Task 4 Steps 5-6 again after the closeout commit, then:
 
 ```bash
 git status --short
@@ -451,4 +630,18 @@ Expected: empty status, focused tests/Ruff green, and no whitespace errors. Do n
 
 ## Execution and review handoff
 
-After implementation, use `superpowers:verification-before-completion`, then `superpowers:requesting-code-review`. Address technically valid review feedback through `superpowers:receiving-code-review`. Push and create the PR only after the focused clean-HEAD evidence is green; address Qodo/PR comments, then use `superpowers:finishing-a-development-branch` before merge.
+After implementation, use `superpowers:verification-before-completion`, then
+`superpowers:requesting-code-review`. Address technically valid review feedback
+through `superpowers:receiving-code-review`.
+
+Before creating the PR, fetch and rebase onto current `origin/dev`. After the
+rebase, run Task 4 Steps 5-6, run the exact two-file gate from Task 4 Step 9
+three consecutive times, run the 12 editor-owner cases from Task 3 Step 2, and
+require `git diff --check origin/dev...HEAD` plus an empty status. Do not run a
+repository-wide suite.
+
+Push and create the PR only after that post-rebase focused evidence is green.
+Inspect Qodo and all PR review threads, apply only technically valid feedback
+through the receiving-review workflow, rerun the affected focused gates, and
+resolve the threads. Use `superpowers:finishing-a-development-branch` before
+merging.
