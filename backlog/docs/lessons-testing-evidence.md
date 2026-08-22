@@ -5797,7 +5797,6 @@ Threat model, recorded because it is what makes the above worth the effort: no
 root these features operate on (TASK-19700).
 
 
-
 ## A setup step whose failure is only a log line builds the wrong fixture (TASK-19554, 2026-08-21)
 
 **What happened.** `Tests/Notes/test_sync_engine.py::test_conflict_detection`
@@ -5829,7 +5828,6 @@ calls instead of reusing a literal. The tell that something is wrong is a
 fixture that passes against a *stronger* claim than it set up: here, deleting
 the entire baseline step would not have changed the test's result, which is the
 definition of a setup step that is not doing anything.
-
 
 
 ## A guarantee is only proved for the sink you asserted against — and a test's stand-in is not the shipped one (TASK-19555, 2026-08-21)
@@ -6680,3 +6678,60 @@ the thing works. And when you write the "degrade gracefully" branch, say out
 loud what the resulting end state is: here the correct one for a legitimately
 embedded app is *no handlers, no claim, no watchdog* — fully inert — which is
 only reachable if the failure path leaves the state untouched and retryable.
+
+## "Zero external callers" ages: re-derive the caller set, do not inherit the claim (TASK-19564, 2026-08-22)
+
+**What happened.** TASK-19564 filed ChaChaNotes `sync_log` as a write-only
+shadow copy and recommended *retiring the content columns* on the strength of
+"both of its readers have **zero external callers** — nothing consumes it."
+That sentence was true when the pattern was named. By the time the task was
+implemented, `ChaChaNotes_DB.py` had **six** `sync_log` readers, not two, and
+three of the four newer ones had live non-test callers:
+`read_committed_chat_sync_intent` (`ConsoleChatStore
+.ensure_provider_continuation_durable`, which **raises** on a `None` read),
+`read_committed_chat_delete_intent`, and
+`list_current_committed_chat_sync_intents`
+(`._reconcile_restored_chat_sync_intents`, on every conversation restore).
+Each compares the stored payload to the live `messages` row **field by field**;
+the payload IS the commit proof. Retiring `content` as recommended would have
+made every comparison fail — silently disabling Sync v2 and turning every
+provider-continuation checkpoint into a hard error.
+
+**Why the stale claim was believable.** Grepping the two READER NAMES the
+filing quoted reproduces the filing's answer exactly: `get_sync_log_entries`
+and `get_latest_sync_log_change_id` really do have only test callers in this
+database (the production hits are `Prompt_Management/Prompts_Interop.py`
+calling the *Prompts* DB's same-named methods). The claim fails only if you
+grep the TABLE, `sync_log`, and read every hit — the newer readers embed it in
+a `JOIN sync_log AS intent` inside a method whose name says nothing about the
+log.
+
+**What to do.** When a filing says a thing is dead, re-derive the caller set
+from the artifact itself (the table, the column, the file) rather than from the
+symbol names the filing chose, and check the *newest* code first — a corpse
+claim decays from the direction of recent work. Then confirm the negative
+direction too: what *would* break if you removed it, checked by reading the
+would-be-orphaned call sites, not by running a suite. Here the suite would not
+have caught it either: the readers `return None` on failure, and the callers
+degrade to `{"status": "skipped"}`.
+
+**Second-order find, same session.** Writing the direct-index witness for the
+sibling task surfaced an unrelated live defect the same way: `messages_au` and
+`keyword_collections_au` issued an FTS5 `'delete'` unconditionally, and
+`add_keyword_collection` on a soft-deleted name raised `database disk image is
+malformed` through the public API. Nothing had ever asserted against the FTS
+index directly, so it had gone unnoticed. Also worth knowing before you reach
+for it: FTS5 `'rebuild'` re-derives from the base table with **no** `deleted`
+filter, so using it to repair an external-content index re-indexes every
+tombstoned row. Use `'delete-all'` plus an explicit filtered reinsert.
+
+**Third find, same session — `_` is a wildcard in SQL `LIKE`.** The new
+retention triggers were first named `<entity>_sync_log_prune`, which silently
+joined the `<entity>_sync_%` namespace that three tests assert the exact
+membership of as a design invariant ("these four triggers, and only these,
+write the sync log"). Only ONE of the three went red, because the other two run
+against pre-migration historical databases where the new triggers do not exist
+yet — so two-thirds of the collision was invisible until a later schema bump
+would have surfaced it in an unrelated PR. When adding a schema object, grep
+the test tree for `LIKE '<prefix>%'` patterns your new name could match, and
+remember the underscore matches any single character.
