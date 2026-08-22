@@ -125,6 +125,7 @@
 **Files:**
 
 - Modify: `tldw_chatbook/Character_Chat/visual_identity.py`
+- Modify: `tldw_chatbook/Character_Chat/persona_visual_identity.py`
 - Modify only if RED requires: `tldw_chatbook/DB/VisualIdentity_DB.py`
 - Create: `Tests/Character_Chat/test_persona_visual_identity_publication.py`
 - Modify: `Tests/Character_Chat/test_visual_identity_publication.py`
@@ -185,7 +186,7 @@
 - [ ] **Step 8: Commit Task 2**
 
   ```bash
-  git add tldw_chatbook/Character_Chat/visual_identity.py tldw_chatbook/DB/VisualIdentity_DB.py Tests/Character_Chat/test_persona_visual_identity_publication.py Tests/Character_Chat/test_visual_identity_publication.py Tests/ChaChaNotesDB/test_visual_identity_repository.py
+  git add tldw_chatbook/Character_Chat/visual_identity.py tldw_chatbook/Character_Chat/persona_visual_identity.py tldw_chatbook/DB/VisualIdentity_DB.py Tests/Character_Chat/test_persona_visual_identity_publication.py Tests/Character_Chat/test_visual_identity_publication.py Tests/ChaChaNotesDB/test_visual_identity_repository.py Docs/superpowers/plans/2026-08-22-task-19056-persona-shared-visual-identity.md
   git commit -m "feat: publish Persona expression packs"
   ```
 

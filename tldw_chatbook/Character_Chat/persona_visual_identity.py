@@ -34,6 +34,20 @@ class LocalPersonaVisualIdentityAuthority:
     persona_revision: int
     portrait: LocalPersonaVisualIdentityPortrait | None
 
+    @property
+    def cache_identity(self) -> tuple[str, ...]:
+        """Return the complete path-free authority identity."""
+
+        portrait = self.portrait
+        return (
+            f"source={self.source}",
+            f"persona_id={self.persona_id}",
+            f"persona_revision={self.persona_revision}",
+            f"portrait_id={portrait.portrait_id if portrait is not None else ''}",
+            f"portrait_revision={portrait.revision if portrait is not None else ''}",
+            f"portrait_sha256={portrait.sha256 if portrait is not None else ''}",
+        )
+
 
 def capture_local_persona_visual_identity(
     local_service: object,
