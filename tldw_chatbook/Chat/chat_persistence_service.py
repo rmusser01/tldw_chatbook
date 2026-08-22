@@ -15,6 +15,10 @@ from tldw_chatbook.Chat.console_context_repository import (
     ConsoleContextRepository,
     ContextPolicyReadResult,
 )
+from tldw_chatbook.Chat.console_dispatch_repository import ConsoleDispatchRepository
+from tldw_chatbook.Chat.console_library_policy_repository import (
+    ConsoleLibraryPolicyRepository,
+)
 from tldw_chatbook.Chat.console_prefill import PINNED_PREFILL_METADATA_KEY
 from tldw_chatbook.Chat.console_roleplay_metadata import (
     ConsoleRoleplayContext,
@@ -83,6 +87,8 @@ class ChatPersistenceService:
         self.workspace_registry = workspace_registry
         self.citation_repository = citation_repository
         self.context_repository = ConsoleContextRepository(db)
+        self.console_library_policy_repository = ConsoleLibraryPolicyRepository(db)
+        self.console_dispatch_repository = ConsoleDispatchRepository(db)
 
     @property
     def canonical_citation_writes_ready(self) -> bool:
