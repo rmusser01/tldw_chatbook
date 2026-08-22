@@ -46,6 +46,9 @@
         padding: 0 1;
     }
 
+
+
+
 /* ===== WIDGET: LLMManagementWindow (UI/LLM_Management_Window.py) ===== */
 
 
@@ -68,32 +71,32 @@
         height: 100%;
         width: 100%;
     }
-    
+
     LLMManagementWindow .llm-view.-active {
         display: block;
     }
-    
+
     LLMManagementWindow .section-title {
         text-style: bold;
         margin: 1 0;
         color: $primary;
     }
-    
+
     LLMManagementWindow .section_label {
         text-style: bold;
         margin: 1 0;
         color: $secondary;
     }
-    
+
     LLMManagementWindow .description {
         margin: 0 0 1 0;
         color: $text-muted;
     }
-    
+
     LLMManagementWindow .label {
         margin: 1 0 0 0;
     }
-    
+
     LLMManagementWindow .input_container {
         layout: horizontal;
         height: 3;
@@ -109,120 +112,121 @@
         padding-right: 1;
         color: $text;
     }
-    
+
     LLMManagementWindow .input_container Input {
         width: 1fr;
         min-width: 16;
     }
-    
+
     LLMManagementWindow .input_container Button {
         width: auto;
         margin: 0 0 0 1;
     }
-    
+
     LLMManagementWindow .button_container {
         layout: horizontal;
         margin: 1 0;
         height: 3;
     }
-    
+
     LLMManagementWindow .button_container Button {
         margin: 0 1 0 0;
     }
-    
+
     LLMManagementWindow .log_output {
         height: 15;
         border: solid $primary;
         margin: 1 0;
     }
-    
+
     LLMManagementWindow .help-text-display {
         height: 10;
         border: solid $secondary;
         padding: 1;
     }
-    
+
     LLMManagementWindow .additional_args_textarea {
         height: 5;
         margin: 0 0 1 0;
     }
-    
+
     LLMManagementWindow .separator {
         height: 1;
         margin: 1 0;
         color: $primary;
     }
-    
+
     LLMManagementWindow .ollama-button-bar {
         layout: horizontal;
         height: 3;
         margin: 1 0;
     }
-    
+
     LLMManagementWindow .ollama-button-bar Button {
         margin: 0 1 0 0;
     }
-    
+
     LLMManagementWindow .ollama-actions-grid {
         layout: horizontal;
         margin: 1 0;
     }
-    
+
     LLMManagementWindow .ollama-actions-column {
         width: 50%;
         padding: 0 1;
     }
-    
+
     LLMManagementWindow .column-title {
         text-style: bold;
         margin: 0 0 1 0;
         color: $secondary;
     }
-    
+
     LLMManagementWindow .input_field_short {
         width: 40%;
     }
-    
+
     LLMManagementWindow .input_field_long {
         width: 100%;
     }
-    
+
     LLMManagementWindow .action_button_short {
         width: auto;
     }
-    
+
     LLMManagementWindow .full_width_button {
         width: 100%;
         margin: 1 0;
     }
-    
+
     LLMManagementWindow .delete_button {
         background: $error;
     }
-    
+
     LLMManagementWindow .embeddings_container {
         layout: horizontal;
         margin: 1 0;
     }
-    
+
     LLMManagementWindow .embeddings_inputs {
         width: 70%;
     }
-    
+
     LLMManagementWindow .action_button_tall {
         width: 30%;
         margin: 0 0 0 1;
     }
-    
+
     LLMManagementWindow .output_textarea_medium {
         height: 10;
         margin: 1 0;
     }
-    
+
     LLMManagementWindow .log_output_large {
         height: 20;
         margin: 1 0;
     }
+
 
 /* ===== WIDGET: LogsWindow (UI/Logs_Window.py) ===== */
 
@@ -233,6 +237,7 @@
     LogsWindow #logs-empty-state {
         display: none;
     }
+
 
 /* ===== WIDGET: MCPAuditMode (UI/MCP_Modules/mcp_audit_mode.py) ===== */
 
@@ -341,6 +346,7 @@
         height: auto;
         min-height: 0;
     }
+
 
 /* ===== WIDGET: MCPInspector (UI/MCP_Modules/mcp_inspector.py) ===== */
 
@@ -540,6 +546,7 @@
         min-height: 6;
     }
 
+
 /* ===== WIDGET: MCPPermissionsMode (UI/MCP_Modules/mcp_permissions_mode.py) ===== */
 
 
@@ -607,6 +614,7 @@
         min-height: 0;
     }
 
+
 /* ===== WIDGET: MCPRail (UI/MCP_Modules/mcp_rail.py) ===== */
 
 
@@ -637,6 +645,7 @@
         color: $text-muted;
         padding: 0 1;
     }
+
 
 /* ===== WIDGET: MCPServersMode (UI/MCP_Modules/mcp_servers_mode.py) ===== */
 
@@ -701,6 +710,7 @@
         min-height: 0;
         color: $text-muted;
     }
+
 
 /* ===== WIDGET: MCPToolsMode (UI/MCP_Modules/mcp_tools_mode.py) ===== */
 
@@ -772,6 +782,7 @@
         min-height: 0;
     }
 
+
 /* ===== WIDGET: MCPWorkbench (UI/MCP_Modules/mcp_workbench.py) ===== */
 
 
@@ -808,6 +819,7 @@
         min-width: 20;
     }
 
+
 /* ===== WIDGET: BaseAppScreen (UI/Navigation/base_app_screen.py) ===== */
 
 
@@ -818,6 +830,7 @@
         min-height: 0;
         padding-top: 0;
     }
+
 
 /* ===== WIDGET: MainNavigationBar (UI/Navigation/main_navigation.py) ===== */
 
@@ -1000,6 +1013,7 @@
         color: $text;
         text-style: bold underline;
     }
+
 
 /* ===== WIDGET: LibraryScreen (UI/Screens/library_screen.py) ===== */
 
@@ -1719,6 +1733,7 @@
         display: none;
     }
 
+
 /* ===== WIDGET: MCPScreen (UI/Screens/mcp_screen.py) ===== */
 
     MCPScreen Button.mcp-mode-chip {
@@ -1766,6 +1781,7 @@
         text-style: bold underline;
         outline: none;
     }
+
 
 /* ===== WIDGET: PersonasScreen (UI/Screens/personas_screen.py) ===== */
 
@@ -1922,6 +1938,7 @@
         width: 100%;
     }
 
+
 /* ===== WIDGET: ConflictsTab (UI/Screens/scheduling/conflicts_tab.py) ===== */
 
 
@@ -1947,6 +1964,7 @@
         color: $text-muted;
     }
 
+
 /* ===== WIDGET: SyncStatusWidget (UI/Screens/scheduling/sync_status_widget.py) ===== */
 
 
@@ -1969,6 +1987,7 @@
     SyncStatusWidget #scheduling-clear-error {
         width: auto;
     }
+
 
 /* ===== WIDGET: TaskDetail (UI/Screens/scheduling/task_detail.py) ===== */
 
@@ -1999,6 +2018,7 @@
         height: auto;
     }
 
+
 /* ===== WIDGET: PersonaProfileEditorWidget (Widgets/Persona_Widgets/persona_profile_editor_widget.py) ===== */
 
 
@@ -2012,6 +2032,8 @@
     /* Live per-field validation (Roleplay P3b Task 4): a literal color, not
        a $ds-* token - BUNDLED_CSS must resolve in bare-App test harnesses
        that never load the app stylesheet. */
+
+
 
 /* ===== WIDGET: PersonasCharacterEditorWidget (Widgets/Persona_Widgets/personas_character_editor_widget.py) ===== */
 
@@ -2128,6 +2150,8 @@
        a $ds-* token - BUNDLED_CSS must resolve in bare-App test harnesses
        that never load the app stylesheet. */
 
+
+
 /* ===== WIDGET: PersonasInspectorPane (Widgets/Persona_Widgets/personas_inspector_pane.py) ===== */
 
     /* Portrait box for the selected character. Sized like the editor's
@@ -2162,6 +2186,10 @@
        variables the ds-text-disabled/ds-surface-raised tokens alias; widget
        DEFAULT_CSS cannot see bundle-scoped ds-* names.) */
 
+
+
+
+
 /* ===== WIDGET: PersonasLibraryPane (Widgets/Persona_Widgets/personas_library_pane.py) ===== */
 
 
@@ -2188,3 +2216,7 @@
     /* F-030 narrow panes: stack each bar vertically so every action wraps
        onto its own full-width row (a Textual Horizontal never wraps, so one
        over-wide row would clip instead). */
+
+
+
+

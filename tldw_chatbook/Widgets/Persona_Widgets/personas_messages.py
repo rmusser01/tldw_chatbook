@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Literal
 
 from textual.message import Message
@@ -34,6 +35,62 @@ PersonaAction = Literal[
     "cancel",
     "refresh",
 ]
+PersonaBuddyAction = Literal["use", "show", "close", "disable"]
+PersonaBuddySource = Literal["local", "server"]
+
+
+@dataclass(frozen=True, slots=True)
+class _PersonaBuddyActionPayload:
+    action: PersonaBuddyAction
+    source: PersonaBuddySource
+    persona_id: str
+    revision: int
+
+
+class PersonaBuddyActionRequested(Message):
+    """Request one explicit Buddy ownership or visibility change."""
+
+    __slots__ = ("_payload",)
+
+    def __init__(
+        self,
+        *,
+        action: PersonaBuddyAction,
+        source: PersonaBuddySource,
+        persona_id: str,
+        revision: int,
+    ) -> None:
+        super().__init__()
+        if (
+            action not in {"use", "show", "close", "disable"}
+            or source not in {"local", "server"}
+            or not persona_id
+            or type(revision) is not int
+            or revision < 1
+        ):
+            raise ValueError("invalid Persona Buddy action")
+        self._payload = _PersonaBuddyActionPayload(
+            action=action,
+            source=source,
+            persona_id=persona_id,
+            revision=revision,
+        )
+
+    @property
+    def action(self) -> PersonaBuddyAction:
+        return self._payload.action
+
+    @property
+    def source(self) -> PersonaBuddySource:
+        return self._payload.source
+
+    @property
+    def persona_id(self) -> str:
+        return self._payload.persona_id
+
+    @property
+    def revision(self) -> int:
+        return self._payload.revision
 
 
 class PersonaModeChanged(Message):
@@ -118,6 +175,9 @@ class PersonaMarksChanged(Message):
 __all__ = [
     "PersonaAction",
     "PersonaActionRequested",
+    "PersonaBuddyAction",
+    "PersonaBuddyActionRequested",
+    "PersonaBuddySource",
     "PersonaEntityKind",
     "PersonaEntitySelected",
     "PersonaMarksChanged",

@@ -372,6 +372,11 @@ from .Character_Chat.server_chat_dictionary_service import ServerChatDictionaryS
 from .Character_Chat.server_character_persona_service import (
     ServerCharacterPersonaService,
 )
+from .Persona_Buddy import (
+    PersonaBuddyController,
+    load_local_persona_portrait,
+    parse_persona_buddy_preferences,
+)
 from .RAG_Admin.local_rag_admin_service import LocalRAGAdminService
 from .RAG_Admin.rag_admin_scope_service import RAGAdminScopeService
 from .RAG_Admin.server_rag_admin_service import ServerRAGAdminService
@@ -5772,6 +5777,22 @@ class TldwCli(
         self._wire_study_services()
         self._wire_research_services()
         self._wire_character_persona_services()
+        self.persona_buddy_controller = PersonaBuddyController(
+            preferences=parse_persona_buddy_preferences(
+                self.app_config.get("persona_buddy", {})
+            ),
+            local_persona_service=self.local_character_persona_service,
+            portrait_loader=partial(
+                load_local_persona_portrait,
+                self.local_character_persona_service,
+            ),
+            profile_db=self.chachanotes_db,
+            profile_root=get_user_data_dir(),
+            reduced_motion=bool(get_cli_setting("appearance", "reduce_motion", False)),
+            scheduler=self.call_after_refresh,
+        )
+        self._persona_buddy_unavailable_authority = None
+        self._persona_buddy_shutdown_task: asyncio.Task[None] | None = None
 
         # --- Initialize worker handler registry ---
         self._init_worker_handlers()
@@ -8239,6 +8260,83 @@ class TldwCli(
     # Generous enough that a real save is never cut short, small enough that a
     # wedged one costs a few seconds instead of the session.
     NAVIGATION_FLUSH_TIMEOUT_SECONDS: float = 5.0
+
+    @staticmethod
+    def _persona_buddy_authority(controller: Any, snapshot: Any) -> tuple[Any, ...]:
+        """Return the exact app-lifetime authority for one visual decision."""
+
+        return (
+            id(controller),
+            snapshot.generation,
+            snapshot.selection,
+            snapshot.preferences_generation,
+            snapshot.profile_generation,
+        )
+
+    def is_persona_buddy_confirmed_unavailable(
+        self, controller: Any, snapshot: Any
+    ) -> bool:
+        """Query and clear the app-owned unavailable marker by exact authority."""
+
+        authority = self._persona_buddy_authority(controller, snapshot)
+        marker = getattr(self, "_persona_buddy_unavailable_authority", None)
+        if marker is not None and marker != authority:
+            self._persona_buddy_unavailable_authority = None
+            return False
+        return marker == authority
+
+    def confirm_persona_buddy_unavailable(
+        self,
+        *,
+        screen: Any,
+        view: Any,
+        view_generation: int,
+        controller: Any,
+        snapshot: Any,
+        visual: Any,
+    ) -> bool:
+        """Publish unavailable only for the exact current app/screen/view authority."""
+
+        current_controller = getattr(self, "persona_buddy_controller", None)
+        try:
+            current_screen = self.screen
+        except Exception:
+            return False
+        if (
+            controller is not current_controller
+            or current_screen is not screen
+            or not screen.is_attached
+            or screen._persona_buddy_view is not view
+            or screen.persona_buddy_view_generation != view_generation
+            or not view.is_attached
+        ):
+            return False
+        current = controller.snapshot()
+        if (
+            self._persona_buddy_authority(controller, current)
+            != self._persona_buddy_authority(controller, snapshot)
+            or current.visual is not visual
+            or visual is None
+            or visual.available
+        ):
+            return False
+        self._persona_buddy_unavailable_authority = self._persona_buddy_authority(
+            controller, current
+        )
+        return True
+
+    async def reconcile_persona_buddy_view(self) -> bool:
+        """Reconcile the active screen and report whether its Buddy is absent."""
+
+        from .UI.Navigation.base_app_screen import BaseAppScreen
+
+        try:
+            screen = self.screen
+        except Exception:
+            return False
+        if not isinstance(screen, BaseAppScreen) or not screen.is_active:
+            return False
+        return await screen.reconcile_persona_buddy_view()
 
     def _create_navigation_screen(self, screen_name: str, screen_class: type):
         """Build a FRESH screen instance for every navigation.
@@ -11580,6 +11678,17 @@ class TldwCli(
             self._console_image_edit_shutdown_task = task
         await asyncio.shield(task)
 
+    async def _shutdown_persona_buddy(self) -> None:
+        """Drain the app-owned Buddy before profile database teardown."""
+        task = self._persona_buddy_shutdown_task
+        if task is None:
+            task = asyncio.create_task(
+                self.persona_buddy_controller.shutdown(),
+                name="shutdown_persona_buddy",
+            )
+            self._persona_buddy_shutdown_task = task
+        await asyncio.shield(task)
+
     async def _shutdown_console_runtime(self) -> None:
         """Destroy the app-owned Console runtime exactly once, at exit.
 
@@ -11601,12 +11710,15 @@ class TldwCli(
 
     async def _shutdown_app_owned_lifecycles(self) -> None:
         """Drain durable app-owned work before Textual closes screen state."""
+        # Console shutdown terminally fences every trusted Buddy producer
+        # before Buddy itself closes admission and drains owned work.
+        await self._shutdown_console_runtime()
+        await self._shutdown_persona_buddy()
         coordinator = getattr(self, "_audio_cpp_artifact_lease_coordinator", None)
         if coordinator is not None:
             await coordinator.shutdown()
         await self.audio_cpp_model_install_owner.shutdown()
         await self._shutdown_console_image_edits()
-        await self._shutdown_console_runtime()
         await self._shutdown_file_notes_session_owner()
 
     async def _shutdown(self) -> None:

@@ -122,6 +122,8 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from loguru import logger
 
+from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
     from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
@@ -462,6 +464,9 @@ class ConsoleRuntime:
         self._provider_gateway: Any | None = None
         self._agent_bridge: Any | None = None
         self._chat_controller: Any | None = None
+        self._persona_buddy_sink = PersonaBuddyConsoleAdapter(
+            getattr(app, "persona_buddy_controller", None)
+        )
         #: The view (a `ChatScreen`) currently attached, or `None` while the
         #: runtime is VIEWLESS -- which is now a real, supported state, not
         #: a transient. Written only by `attach_view`/`detach_view`.
@@ -510,6 +515,14 @@ class ConsoleRuntime:
     def chat_controller(self) -> "ConsoleChatController | None":
         """The built chat controller, or `None`."""
         return self._chat_controller
+
+    @property
+    def persona_buddy_sink(self) -> PersonaBuddyConsoleAdapter:
+        """The app-owned, screen-free sink for trusted Console state."""
+        self._persona_buddy_sink.bind_controller(
+            getattr(self._app, "persona_buddy_controller", None)
+        )
+        return self._persona_buddy_sink
 
     # -- handle writes (the screen's properties, and 59 test sites) --------
 
@@ -691,6 +704,7 @@ class ConsoleRuntime:
                 else None
             ),
             change_tracker=change_tracker if change_tracker.available else None,
+            buddy_sink=self.persona_buddy_sink,
         )
         # PR3a-2 Task 4: the survivor-completion attention consumer (durable
         # unseen mark + app-wide toast + deep link), registered NEXT TO
@@ -723,6 +737,7 @@ class ConsoleRuntime:
             ConsoleChatController,
         )
 
+        kwargs.setdefault("buddy_sink", self.persona_buddy_sink)
         self._chat_controller = ConsoleChatController(**kwargs)
         if self.view is None:
             # task-15860 Task 4: a runtime can be VIEWLESS FROM BIRTH, not
@@ -995,6 +1010,10 @@ class ConsoleRuntime:
                 logger.opt(exception=True).warning(
                     "Console runtime: controller shutdown failed at dispose."
                 )
+        # Controller shutdown begins by terminally fencing the fleet-wake
+        # coordinator. Only after every trusted producer is tombstoned may
+        # the shared Buddy sink release its remaining owner tokens.
+        self._persona_buddy_sink.dispose()
         close = getattr(gateway, "aclose", None)
         if callable(close):
             try:

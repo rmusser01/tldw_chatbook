@@ -14,11 +14,71 @@
         align: center middle;
     }
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 /* ===== WIDGET: ConversationSelectionDialog (Widgets/conversation_selection_dialog.py) ===== */
 
     ConversationSelectionDialog {
         align: center middle;
     }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 /* ===== WIDGET: EmojiPickerScreen (Widgets/emoji_picker.py) ===== */
 
@@ -36,12 +96,16 @@
     /* EmojiButton :focus styling lives in css/components/_widgets.tcss
        (needs the bundle's $ds-focus-* tokens; TASK-16811). */
 
+
+
+
+
 /* ===== WIDGET: FileExtractionDialog (Widgets/file_extraction_dialog.py) ===== */
 
     FileExtractionDialog {
         align: center middle;
     }
-    
+
     FileExtractionDialog > Vertical {
         width: 80%;
         height: 80%;
@@ -52,8 +116,44 @@
         padding: 1;
     }
 
+
+
+
+
+
+
+
+
+
+
+
+
+
 /* ===== WIDGET: VoiceBlendDialog (Widgets/voice_blend_dialog.py) ===== */
 
     VoiceBlendDialog {
         align: center middle;
     }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

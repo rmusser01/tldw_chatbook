@@ -1,5 +1,6 @@
 """Base screen class for all application screens."""
 
+import asyncio
 from typing import TYPE_CHECKING, Optional, Dict, Any
 from loguru import logger
 
@@ -54,6 +55,9 @@ class BaseAppScreen(Screen):
         #: search aliases, screen routing) -- only this screen's OWN composed
         #: nav bar's highlight is affected.
         self.nav_bar_active: str = screen_name
+        self._persona_buddy_view = None
+        self._persona_buddy_view_generation = 0
+        self._persona_buddy_reconcile_lock = asyncio.Lock()
 
         logger.debug(f"Initializing {self.__class__.__name__} screen: {screen_name}")
 
@@ -162,6 +166,7 @@ class BaseAppScreen(Screen):
         self.release_mouse_capture_for_teardown()
         await super().recompose()
         self.sweep_stale_mouse_capture()
+        await self.reconcile_persona_buddy_view()
 
     def release_mouse_capture_for_teardown(self) -> None:
         """Release any mouse capture before removing widgets.
@@ -213,7 +218,9 @@ class BaseAppScreen(Screen):
         # defaults to ``screen_name``, see ``__init__``), not ``screen_name``
         # directly, so a screen can opt out of a misleading destination
         # highlight without touching every other screen's behavior.
-        yield MainNavigationBar(active=self.nav_bar_active, active_route=self.nav_bar_active)
+        yield MainNavigationBar(
+            active=self.nav_bar_active, active_route=self.nav_bar_active
+        )
 
         # Content area below navigation
         with Container(id="screen-content"):
@@ -360,7 +367,158 @@ class BaseAppScreen(Screen):
         carries a legacy ``super().on_mount()`` call.
         """
         logger.info(f"Screen {self.screen_name} mounted")
+        self.call_after_refresh(self._schedule_persona_buddy_reconcile)
+
+    def on_screen_resume(self) -> None:
+        """Replay app-owned Buddy state after this screen is uncovered."""
+
+        self.call_after_refresh(self._schedule_persona_buddy_reconcile)
 
     def on_unmount(self) -> None:
         """Called when the screen is unmounted."""
+        self._persona_buddy_view_generation += 1
+        view = self._persona_buddy_view
+        self._persona_buddy_view = None
+        if view is not None:
+            view.release_interaction_capture()
         logger.info(f"Screen {self.screen_name} unmounted")
+
+    @property
+    def persona_buddy_view_generation(self) -> int:
+        """Return this screen's current disposable Buddy-view generation."""
+
+        return self._persona_buddy_view_generation
+
+    def confirm_persona_buddy_unavailable(
+        self,
+        *,
+        view: Any,
+        controller: Any,
+        snapshot: Any,
+        visual: Any,
+    ) -> bool:
+        """Publish unavailable through the app's exact screen/view fence."""
+
+        confirm = getattr(self.app_instance, "confirm_persona_buddy_unavailable", None)
+        return bool(
+            callable(confirm)
+            and confirm(
+                screen=self,
+                view=view,
+                view_generation=view.view_generation,
+                controller=controller,
+                snapshot=snapshot,
+                visual=visual,
+            )
+        )
+
+    def is_persona_buddy_confirmed_unavailable(
+        self, controller: Any, snapshot: Any
+    ) -> bool:
+        """Query the app-owned marker for this exact controller authority."""
+
+        unavailable = getattr(
+            self.app_instance, "is_persona_buddy_confirmed_unavailable", None
+        )
+        return bool(callable(unavailable) and unavailable(controller, snapshot))
+
+    def _schedule_persona_buddy_reconcile(self) -> None:
+        """Schedule one idempotent mount reconciliation after screen paint."""
+
+        if not self.is_attached:
+            return
+        self.run_worker(
+            self.reconcile_persona_buddy_view,
+            group="persona-buddy-view-reconcile",
+            exclusive=True,
+        )
+
+    def sync_persona_buddy_reconciled_state(self) -> None:
+        """Refresh screen-local Buddy affordances after view reconciliation."""
+
+        return None
+
+    async def reconcile_persona_buddy_view(self) -> bool:
+        """Reconcile one generation; return whether no current view remains."""
+
+        from ...Widgets.Persona_Widgets.persona_buddy_widget import (  # noqa: PLC0415
+            PersonaBuddyWidget,
+        )
+
+        async with self._persona_buddy_reconcile_lock:
+            controller = getattr(self.app_instance, "persona_buddy_controller", None)
+            active = self.is_attached and self.app.screen is self
+            snapshot = controller.snapshot() if controller is not None else None
+            confirmed_unavailable = bool(
+                snapshot is not None
+                and self.is_persona_buddy_confirmed_unavailable(controller, snapshot)
+            )
+            desired = bool(
+                active
+                and snapshot is not None
+                and snapshot.enabled
+                and snapshot.open
+                and snapshot.selection is not None
+                and not confirmed_unavailable
+            )
+
+            current = self._persona_buddy_view
+            if current is not None and not current.is_attached:
+                current = None
+                self._persona_buddy_view = None
+
+            if not desired:
+                self._persona_buddy_view_generation += 1
+                if current is not None:
+                    current.release_interaction_capture()
+                    await current.remove()
+                    if self._persona_buddy_view is current:
+                        self._persona_buddy_view = None
+                if self.is_attached and self.app.screen is self:
+                    self.sync_persona_buddy_reconciled_state()
+                return True
+
+            if current is not None:
+                current.refresh_from_controller()
+                current.resume_resolution()
+                self.sync_persona_buddy_reconciled_state()
+                return False
+
+            self._persona_buddy_view_generation += 1
+            generation = self._persona_buddy_view_generation
+            view = PersonaBuddyWidget(
+                controller=controller,
+                view_generation=generation,
+                reconcile=self.app_instance.reconcile_persona_buddy_view,
+                is_current=lambda candidate: bool(
+                    generation == self._persona_buddy_view_generation
+                    and self._persona_buddy_view is candidate
+                    and self.is_attached
+                    and self.app.screen is self
+                ),
+            )
+            self._persona_buddy_view = view
+            try:
+                await self.mount(view)
+            except BaseException:
+                if self._persona_buddy_view is view:
+                    self._persona_buddy_view = None
+                if view.is_attached:
+                    view.release_interaction_capture()
+                    await view.remove()
+                raise
+            still_current = bool(
+                generation == self._persona_buddy_view_generation
+                and self._persona_buddy_view is view
+                and self.is_attached
+                and self.app.screen is self
+            )
+            if not still_current:
+                view.release_interaction_capture()
+                if view.is_attached:
+                    await view.remove()
+                if self._persona_buddy_view is view:
+                    self._persona_buddy_view = None
+                return True
+            self.sync_persona_buddy_reconciled_state()
+            return False

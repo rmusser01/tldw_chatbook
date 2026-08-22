@@ -1041,6 +1041,8 @@ class ConsoleRealtimeSession:
             a tab switch mid-conversation must not scatter half a spoken
             exchange across two transcripts (the same discipline V3's
             `pending_session_id` enforces for its own send).
+        buddy_generation: Monotonic app-owned loop generation used only
+            to fence trusted Buddy lifecycle state from replaced loops.
         idle_timeout_seconds: The configured idle ceiling, kept here so the
             exit toast can name it without re-reading config at exit time.
         tap: The `RealtimeMicTap` streaming microphone PCM into the session.
@@ -1122,6 +1124,7 @@ class ConsoleRealtimeSession:
     controller: RealtimeLoopController
     console_session_id: str
     idle_timeout_seconds: float
+    buddy_generation: int = 0
     tap: Any = None
     session: Any = None
     sink: Any = None
@@ -5686,11 +5689,15 @@ class ChatScreen(BaseAppScreen):
         """
         session = getattr(self, "_session", None)
         prompts = getattr(self, "_prompts", None)
+        retrieval = getattr(self, "_retrieval", None)
+        skill = getattr(self, "_skill", None)
         return {
             # constructor-supplied callables
             "_chat_dictionary_applier": self._console_chat_dictionary_applier,
             "_world_info_applier": self._console_world_info_applier,
-            "_rag_capture_provider": self._retrieval._capture_console_staged_rag,
+            "_rag_capture_provider": getattr(
+                retrieval, "_capture_console_staged_rag", None
+            ),
             "_default_session_settings": getattr(
                 session, "_default_console_session_settings", None
             ),
@@ -5720,8 +5727,12 @@ class ChatScreen(BaseAppScreen):
             # task-2154.16 (FB-05): the ACTIVE session's own run failing --
             # one error toast carrying the run's visible copy.
             "notify_run_failure": self._notify_console_run_failure,
-            "set_pending_skill_install": self._skill._set_console_pending_skill_install,
-            "set_pending_skill_script": self._skill._set_console_pending_skill_script,
+            "set_pending_skill_install": getattr(
+                skill, "_set_console_pending_skill_install", None
+            ),
+            "set_pending_skill_script": getattr(
+                skill, "_set_console_pending_skill_script", None
+            ),
             # PR3a-2 Task 5, user-wins-ties.
             "wake_user_priority_probe": self._console_wake_user_priority,
             # task-15971: the delivery COMMIT's visibility probe -- a wake
@@ -6819,6 +6830,12 @@ class ChatScreen(BaseAppScreen):
             return
 
         idle_timeout = realtime_idle_timeout_seconds()
+        buddy_generation = (
+            self._console_runtime()
+            .persona_buddy_sink.next_voice_generation(console_session_id)
+        )
+        if buddy_generation is None:
+            return
         controller = RealtimeLoopController(
             self._handle_console_realtime_intent,
             acoustic_barge_in=acoustic_barge_in_enabled(),
@@ -6828,6 +6845,7 @@ class ChatScreen(BaseAppScreen):
             controller=controller,
             console_session_id=console_session_id,
             idle_timeout_seconds=idle_timeout,
+            buddy_generation=buddy_generation,
         )
         self._console_realtime = session
         session.tick_timer = self.set_interval(0.1, self._tick_console_realtime)
@@ -8392,6 +8410,11 @@ class ChatScreen(BaseAppScreen):
         session = self._console_realtime
         if session is None:
             return
+        self._console_runtime().persona_buddy_sink.voice_state(
+            session.console_session_id,
+            session.buddy_generation,
+            state,
+        )
         gated = session.controller.mic_gated
         session.mic_gated = gated
         tap = session.tap
@@ -8722,6 +8745,10 @@ class ChatScreen(BaseAppScreen):
         session = self._console_realtime
         if session is None:
             return None
+        self._console_runtime().persona_buddy_sink.release_voice(
+            session.console_session_id,
+            session.buddy_generation,
+        )
         self._console_realtime = None
         # Exiting mid-reply IS an interruption: close the row that way
         # rather than leaving a `pending` assistant message that nothing
@@ -19569,7 +19596,8 @@ class ChatScreen(BaseAppScreen):
             self.run_worker(
                 self._skill._refresh_console_skill_candidates(), exclusive=False
             )
-        # Note: BaseAppScreen doesn't have on_screen_resume, so no super() call
+        # Textual's MRO dispatch also invokes BaseAppScreen's shared reconciliation;
+        # this handler extends that resume event with Console-owned replay work.
 
     def set_task_resume_state(self, task_state: TaskResumeState) -> None:
         """Update native Console task-resume state and refresh its cards."""
