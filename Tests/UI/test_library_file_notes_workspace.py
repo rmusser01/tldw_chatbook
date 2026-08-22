@@ -62,7 +62,22 @@ from Tests.UI.test_library_shell import (  # noqa: E402
     _two_conversations,
     _wait_for_library_shell,
 )
-from Tests.UI.app_factory import _build_test_app  # noqa: E402
+from Tests.UI.app_factory import _build_test_app as _build_tldw_test_app  # noqa: E402
+
+
+def _build_test_app(*args, **kwargs):
+    """Force the legacy (graduated) Library profile this suite assumes.
+
+    TASK-19602: under the pytest sandbox the factory builds a NEW profile
+    (lifecycle UNKNOWN -> landing surfaces), which strands the
+    Database-Notes switch contract; mirrors test_library_shell.py's
+    wrapper. Pass ``preserve_profile_admission=True`` for new-profile
+    tests.
+    """
+    app = _build_tldw_test_app(*args, **kwargs)
+    if not kwargs.pop("preserve_profile_admission", False):
+        app.library_new_profile_admission = False
+    return app
 
 
 class _WorkspaceHarness(ConsolidatedCSSApp):
