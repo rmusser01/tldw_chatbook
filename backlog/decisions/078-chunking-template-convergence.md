@@ -2,9 +2,12 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-21
-- **Tasks:** task-1 (ADR + governance filings; this ADR precedes all
-  implementation) and the PR 0/A–E tasks of the Chunking Template Parity
-  sub-project (#2 of the parity program)
+- **Tasks:** TASK-19801 (PR 0 — #1 residue + this ADR's governance filings;
+  the ADR preceded all implementation), TASK-19802 (PR A — processor),
+  TASK-19803 (PR B — schema v7 + CRUD), TASK-19804 (PR C — convergence),
+  TASK-19805 (PR D — ingest consumers), TASK-19806 (PR E — re-chunk &
+  report) — the PR 0/A–E board tasks of the Chunking Template Parity
+  sub-project (#2 of the parity program); §11 follow-ups TASK-19641–19648
 - **Related:** `Docs/superpowers/specs/2026-08-21-chunking-template-parity-design.md`
   (design; §13's eight maintainer rulings are the long-form version of this
   ADR), `Docs/superpowers/plans/2026-08-21-chunking-template-parity.md`
