@@ -61,7 +61,7 @@
 - Modify: `backlog/tasks/task-3070.8 - Extract-Console-fleet-and-wake-lifecycle-controller.md`
 - Create: `Docs/superpowers/plans/2026-08-21-task-3070-8-console-fleet-lifecycle.md`
 
-- [ ] **Step 1: Confirm branch/base cleanliness and current source counts**
+- [x] **Step 1: Confirm branch/base cleanliness and current source counts**
 
 Run:
 
@@ -75,7 +75,7 @@ wc -l tldw_chatbook/UI/Screens/chat_screen.py
 
 Expected: clean status before plan edits, merge base equals current `origin/dev`, and the recorded counts remain explainable. If `origin/dev` advanced, rebase the documentation commits and inspect the upstream screen delta. Preserve the immutable 0a8e/421/20,349/652/19,928/636 task oracle and historical 401-line oracle. If upstream changes make the approved projection inapplicable, stop and amend/re-review the design rather than silently rewriting its constants.
 
-- [ ] **Step 2: Re-run the focused baseline**
+- [x] **Step 2: Re-run the focused baseline**
 
 ```bash
 ../../.venv/bin/python -m pytest -q \
@@ -87,7 +87,7 @@ Expected: clean status before plan edits, merge base equals current `origin/dev`
 
 Expected on the recorded base: 17 passed; only the recorded dependency/runtime warnings.
 
-- [ ] **Step 3: Record the diagnostic baseline without writing it**
+- [x] **Step 3: Record the diagnostic baseline without writing it**
 
 ```bash
 ../../.venv/bin/python scripts/check_persistent_diagnostic_inventory.py
@@ -97,7 +97,7 @@ Expected on the recorded base: 17 passed; only the recorded dependency/runtime w
 
 Expected: generated-inventory check is inherited RED and the metadata-only registry node is green. Capture the exact latest-dev owner delta separately during Task 5; do not regenerate here.
 
-- [ ] **Step 4: Commit only plan/task metadata**
+- [x] **Step 4: Commit only plan/task metadata**
 
 ```bash
 git add \
@@ -105,6 +105,31 @@ git add \
   Docs/superpowers/plans/2026-08-21-task-3070-8-console-fleet-lifecycle.md
 git commit -m "docs(console): plan fleet lifecycle extraction"
 ```
+
+**Task 0 evidence (2026-08-21):**
+
+- The worktree was clean on `codex/task-3070-8-console-fleet-lifecycle` at
+  `ba497c1419f3e8410afb779daee3ca0c44364197`. The fetched `origin/dev` was
+  `af52deeb6aafbd4c5e1564ec52ba792815f47343`, then advanced during the focused
+  run to `d4f3f97763ddf3fa46eeb35ae9473827e72695bc`; the merge base remained the
+  immutable implementation base `0a8e2882588fdad5a99aca6e2215735c43927528`.
+  Per the Task 0 execution boundary, no rebase was performed; final latest-dev
+  reconciliation remains Task 5 Step 6.
+- Direct AST/source measurement at both the immutable base and Task 0 HEAD found
+  `ChatScreen` at 20,349 physical lines / 652 direct method definitions and the
+  exact reviewed 16-method family at 421 definition lines. The earned ceilings
+  remain 19,928 / 636. The historical oracle at
+  `8d806b71d9c5ae7ed333ccb42780f6b2ea68acd0` remains 16 methods /
+  `raw_lines=401`.
+- The approved focused pytest command passed 17 tests with 3 warnings in 35.86s:
+  the existing Requests dependency warning, pydub `audioop` deprecation warning,
+  and the survivor final-settle unawaited-coroutine runtime warning. There were
+  no failures.
+- The generated diagnostic checker was run without `--write` and exited 1 with
+  `production diagnostic owners or persistent-sink topology changed; review the diff before running --write`.
+  This is the inherited RED baseline; the manifest was not regenerated. The
+  metadata-only registry node passed 1 test with 1 Requests dependency warning
+  in 1.71s.
 
 ### Task 1: Lock ownership, dependency, and behavior contracts with RED tests
 
