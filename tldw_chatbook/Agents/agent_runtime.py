@@ -91,8 +91,8 @@ def safe_utc_timestamp(wall_clock: Callable[[], datetime]) -> str:
         value = wall_clock()
         if not isinstance(value, datetime):
             raise TypeError("wall clock must return datetime")
-        if value.tzinfo is None:
-            value = value.replace(tzinfo=timezone.utc)
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("wall clock must return an aware datetime")
         return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     except Exception:  # noqa: BLE001 — timestamp capture is best-effort
         return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")

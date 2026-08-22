@@ -692,6 +692,15 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _safe_exception_type(exc: Exception) -> str:
+    """Return an exception class name without rendering exception content."""
+    try:
+        name = getattr(type(exc), "__name__", "")
+    except Exception:  # noqa: BLE001 — logging must remain non-load-bearing
+        return "Exception"
+    return name if isinstance(name, str) and name else "Exception"
+
+
 def _default_chat_call():
     from tldw_chatbook.Chat.Chat_Functions import chat_api_call
 
@@ -2154,7 +2163,9 @@ class AgentService:
         except Exception as exc:  # noqa: BLE001 — trace capture is best-effort
             logger.warning(
                 "could not persist terminal agent steps "
-                f"(run_id={run_id}): {exc}"
+                "run_id={} error_type={}",
+                run_id,
+                _safe_exception_type(exc),
             )
         self.db.set_status(run_id, outcome.status, result=outcome.final_text or None)
 
@@ -4244,7 +4255,10 @@ class AgentService:
             except Exception as exc:  # noqa: BLE001 — trace capture is best-effort
                 logger.warning(
                     "could not persist agent step incrementally "
-                    f"(run_id={run_id}, step_index={step.index}): {exc}"
+                    "run_id={} step_index={} error_type={}",
+                    run_id,
+                    step.index,
+                    _safe_exception_type(exc),
                 )
             if self._on_step is not None:
                 self._on_step(step, agent_kind, run_id)

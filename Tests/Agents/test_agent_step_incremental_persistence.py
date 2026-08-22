@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -14,9 +14,10 @@ from tldw_chatbook.Agents.agent_models import (
     ModelTurn,
     ToolResult,
 )
-from tldw_chatbook.Agents.agent_runtime import LoopDeps
+from tldw_chatbook.Agents.agent_runtime import LoopDeps, safe_utc_timestamp
 from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
+import tldw_chatbook.DB.AgentRuns_DB as agent_runs_db_module
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
@@ -112,6 +113,31 @@ def test_raising_wall_clock_falls_back_without_aborting_run(db: AgentRunsDB) -> 
     assert parsed.utcoffset() == timezone.utc.utcoffset(parsed)
 
 
+@pytest.mark.parametrize(
+    "invalid_value",
+    [None, "2026-08-22T13:00:00Z", datetime(2001, 1, 1, 0, 0, 0)],
+)
+def test_safe_utc_timestamp_rejects_invalid_or_naive_clock_values(
+    invalid_value,
+) -> None:
+    before = datetime.now(timezone.utc)
+    timestamp = safe_utc_timestamp(lambda: invalid_value)
+    after = datetime.now(timezone.utc)
+
+    parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    assert before <= parsed <= after
+
+
+def test_safe_utc_timestamp_converts_aware_non_utc_value() -> None:
+    ist = timezone(timedelta(hours=5, minutes=30))
+
+    timestamp = safe_utc_timestamp(
+        lambda: datetime(2026, 8, 22, 18, 30, 0, 123456, tzinfo=ist)
+    )
+
+    assert timestamp == "2026-08-22T13:00:00.123456Z"
+
+
 def test_terminal_error_step_without_live_timestamp_uses_wall_clock_fallback(
     db: AgentRunsDB,
 ) -> None:
@@ -160,16 +186,30 @@ def test_live_serialization_failure_still_notifies_ui_and_finalizes_status(
 def test_live_and_terminal_trace_write_failure_still_finalizes_status(
     db: AgentRunsDB, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    warnings = []
+
+    class UnprintableTraceError(RuntimeError):
+        def __str__(self):
+            raise AssertionError("exception text must not be rendered")
+
     def fail_trace_write(_run_id, _steps):
-        raise RuntimeError("trace store unavailable")
+        raise UnprintableTraceError("SECRET_TRACE_PAYLOAD")
 
     monkeypatch.setattr(db, "insert_steps_at_indices", fail_trace_write)
+    monkeypatch.setattr(
+        agent_service_module.logger,
+        "warning",
+        lambda message, *args: warnings.append((message, args)),
+    )
     run_id, outcome = _run(_service(db))
 
     run = db.get_run(run_id)
     assert outcome.status == "done"
     assert run["status"] == "done" and run["result"] == "done"
     assert run["steps"] == []
+    assert len(warnings) == 2
+    assert all("UnprintableTraceError" in args for _message, args in warnings)
+    assert all("SECRET_TRACE_PAYLOAD" not in repr(item) for item in warnings)
 
 
 def test_failed_incremental_write_does_not_abort_and_terminal_write_recovers(
@@ -249,17 +289,156 @@ def test_explicit_index_insert_is_idempotent_and_first_writer_wins(
 ) -> None:
     run_id = db.create_run(conversation_id="c", agent_kind="primary")
     original = {"index": 4, "kind": "model", "summary": "original"}
-    replacement = {"index": 4, "kind": "model", "summary": "replacement"}
+    same_value_different_order = {
+        "summary": "original",
+        "kind": "model",
+        "index": 4,
+    }
 
     db.insert_steps_at_indices(run_id, [(4, original)])
-    db.insert_steps_at_indices(run_id, [(4, replacement)])
+    db.insert_steps_at_indices(run_id, [(4, same_value_different_order)])
 
     with db.connection() as conn:
         rows = conn.execute(
-            "SELECT seq FROM agent_run_steps WHERE run_id = ?", (run_id,)
+            "SELECT seq, payload FROM agent_run_steps WHERE run_id = ?", (run_id,)
         ).fetchall()
     assert [row["seq"] for row in rows] == [4]
+    assert rows[0]["payload"] == (
+        '{"index":4,"kind":"model","summary":"original"}'
+    )
     assert db.get_run(run_id)["steps"] == [original]
+
+
+def test_explicit_index_insert_rejects_divergent_stored_payload(
+    db: AgentRunsDB,
+) -> None:
+    assert hasattr(agent_runs_db_module, "AgentStepConflictError")
+    run_id = db.create_run(conversation_id="c", agent_kind="primary")
+    db.insert_steps_at_indices(
+        run_id, [(4, {"index": 4, "kind": "model", "summary": "original"})]
+    )
+
+    with pytest.raises(agent_runs_db_module.AgentStepConflictError):
+        db.insert_steps_at_indices(
+            run_id,
+            [(4, {"index": 4, "kind": "model", "summary": "replacement"})],
+        )
+
+    assert db.get_run(run_id)["steps"][0]["summary"] == "original"
+
+
+def test_explicit_index_insert_deduplicates_identical_batch_entries(
+    db: AgentRunsDB,
+) -> None:
+    run_id = db.create_run(conversation_id="c", agent_kind="primary")
+    first = {"index": 2, "kind": "model", "summary": "same"}
+    reordered = {"summary": "same", "kind": "model", "index": 2}
+
+    db.insert_steps_at_indices(run_id, [(2, first), (2, reordered)])
+
+    assert db.get_run(run_id)["steps"] == [first]
+
+
+def test_explicit_index_insert_rejects_divergent_duplicate_batch_entries(
+    db: AgentRunsDB,
+) -> None:
+    assert hasattr(agent_runs_db_module, "AgentStepConflictError")
+    run_id = db.create_run(conversation_id="c", agent_kind="primary")
+
+    with pytest.raises(agent_runs_db_module.AgentStepConflictError):
+        db.insert_steps_at_indices(
+            run_id,
+            [
+                (2, {"index": 2, "kind": "model", "summary": "first"}),
+                (2, {"index": 2, "kind": "model", "summary": "second"}),
+            ],
+        )
+
+    assert db.get_run(run_id)["steps"] == []
+
+
+@pytest.mark.parametrize(
+    ("seq", "payload", "error"),
+    [
+        (True, {"index": True}, TypeError),
+        (-1, {"index": -1}, ValueError),
+        ("0", {"index": 0}, TypeError),
+        (0.0, {"index": 0}, TypeError),
+        (0, [], TypeError),
+        (0, {}, ValueError),
+        (0, {"index": True}, TypeError),
+        (0, {"index": "0"}, TypeError),
+        (0, {"index": 0.0}, TypeError),
+        (0, {"index": 1}, ValueError),
+    ],
+)
+def test_explicit_index_insert_validates_index_and_payload_before_write(
+    db: AgentRunsDB, seq, payload, error
+) -> None:
+    run_id = db.create_run(conversation_id="c", agent_kind="primary")
+
+    with pytest.raises(error):
+        db.insert_steps_at_indices(run_id, [(seq, payload)])
+
+    assert db.get_run(run_id)["steps"] == []
+
+
+def test_explicit_index_validation_occurs_before_transaction(
+    db: AgentRunsDB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_id = db.create_run(conversation_id="c", agent_kind="primary")
+
+    def transaction_started():
+        raise AssertionError("transaction opened before validation")
+
+    monkeypatch.setattr(db, "transaction", transaction_started)
+    with pytest.raises(ValueError, match="non-negative"):
+        db.insert_steps_at_indices(run_id, [(-1, {"index": -1})])
+
+
+def test_explicit_index_json_serialization_occurs_before_transaction(
+    db: AgentRunsDB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_id = db.create_run(conversation_id="c", agent_kind="primary")
+
+    def transaction_started():
+        raise AssertionError("transaction opened before serialization")
+
+    monkeypatch.setattr(db, "transaction", transaction_started)
+    with pytest.raises(TypeError):
+        db.insert_steps_at_indices(
+            run_id, [(0, {"index": 0, "value": object()})]
+        )
+
+
+def test_explicit_step_insert_preserves_terminal_lifecycle_timestamp_and_wake(
+    db: AgentRunsDB,
+) -> None:
+    parent_id = db.create_run(conversation_id="wake", agent_kind="primary")
+    child_id = db.create_run(
+        conversation_id="wake",
+        agent_kind="subagent",
+        parent_run_id=parent_id,
+    )
+    db.set_status(child_id, "done", result="collected in turn")
+    db.set_status(parent_id, "done", result="parent done")
+    with db.connection() as conn:
+        conn.execute(
+            "UPDATE agent_runs SET updated_at = ? WHERE id = ?",
+            ("2000-01-01T00:00:00.000000Z", child_id),
+        )
+        conn.execute(
+            "UPDATE agent_runs SET updated_at = ? WHERE id = ?",
+            ("2001-01-01T00:00:00.000000Z", parent_id),
+        )
+
+    assert db.undelivered_wake_runs("wake") == []
+    db.insert_steps_at_indices(
+        child_id, [(0, {"index": 0, "kind": "model", "summary": "late"})]
+    )
+
+    assert db.get_run(child_id)["updated_at"] == "2000-01-01T00:00:00.000000Z"
+    assert db.undelivered_wake_runs("wake") == []
 
 
 def test_explicit_index_insert_rejects_unknown_run(db: AgentRunsDB) -> None:

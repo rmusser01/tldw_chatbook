@@ -39,6 +39,28 @@ def _now_iso() -> str:
 _IN_CLAUSE_CHUNK = 900
 
 
+class AgentStepConflictError(ValueError):
+    """A durable step index already owns a different canonical payload."""
+
+
+def _canonical_step_payload(index: int, payload: dict) -> str:
+    """Validate and serialize one explicit-index step before locking SQLite."""
+    if type(index) is not int:
+        raise TypeError("step index must be an int")
+    if index < 0:
+        raise ValueError("step index must be non-negative")
+    if not isinstance(payload, dict):
+        raise TypeError("step payload must be a dict")
+    if "index" not in payload:
+        raise ValueError("step payload must include index")
+    payload_index = payload["index"]
+    if type(payload_index) is not int:
+        raise TypeError("step payload index must be an int")
+    if payload_index != index:
+        raise ValueError("step payload index must match sequence index")
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+
 class AgentRunsDB(BaseDB):
     """Run records for the agent runtime (vertical-slice spec data model).
 
@@ -1447,12 +1469,28 @@ class AgentRunsDB(BaseDB):
         """Insert caller-indexed steps without rewriting existing rows.
 
         Live capture calls this with one step; terminal recovery calls it
-        with the complete outcome. The ``(run_id, seq)`` primary key makes
-        repeats no-ops while missing indices are filled.
+        with the complete outcome. Validation and canonical JSON encoding
+        finish before the write lock. Under the lock, an identical retry is
+        a no-op and a divergent retry raises ``AgentStepConflictError``.
+        Step inserts do not change ``agent_runs.updated_at`` because that
+        timestamp records lifecycle transitions used by wake classification.
 
         Raises:
             KeyError: If ``run_id`` does not exist.
+            TypeError: If an index or payload has the wrong type, or JSON
+                serialization fails.
+            ValueError: If an index is negative or disagrees with its payload.
+            AgentStepConflictError: If one index has divergent payloads.
         """
+        prepared: dict[int, str] = {}
+        for index, payload in steps:
+            canonical = _canonical_step_payload(index, payload)
+            if index in prepared and prepared[index] != canonical:
+                raise AgentStepConflictError(
+                    f"conflicting step payloads for run index {index}"
+                )
+            prepared[index] = canonical
+
         stamp = _now_iso()
         with self.transaction() as conn:
             exists = conn.execute(
@@ -1460,20 +1498,33 @@ class AgentRunsDB(BaseDB):
             ).fetchone()
             if exists is None:
                 raise KeyError(f"Unknown run id: {run_id}")
-            if steps:
-                conn.executemany(
+            for index, canonical in prepared.items():
+                existing = conn.execute(
+                    "SELECT payload FROM agent_run_steps "
+                    "WHERE run_id = ? AND seq = ?",
+                    (run_id, index),
+                ).fetchone()
+                if existing is not None:
+                    try:
+                        stored = json.dumps(
+                            json.loads(existing["payload"]),
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        )
+                    except (TypeError, ValueError) as exc:
+                        raise AgentStepConflictError(
+                            f"stored step payload is not canonicalizable at index {index}"
+                        ) from exc
+                    if stored != canonical:
+                        raise AgentStepConflictError(
+                            f"step payload conflicts with durable index {index}"
+                        )
+                    continue
+                conn.execute(
                     "INSERT INTO agent_run_steps (run_id, seq, payload, created_at) "
-                    "VALUES (?, ?, ?, ?) "
-                    "ON CONFLICT(run_id, seq) DO NOTHING",
-                    [
-                        (run_id, int(index), json.dumps(payload), stamp)
-                        for index, payload in steps
-                    ],
+                    "VALUES (?, ?, ?, ?)",
+                    (run_id, index, canonical, stamp),
                 )
-            conn.execute(
-                "UPDATE agent_runs SET updated_at = ? WHERE id = ?",
-                (stamp, run_id),
-            )
 
     def set_status(self, run_id: str, status: str, result: str | None = None) -> bool:
         """Update a run's terminal (or in-progress) status.
