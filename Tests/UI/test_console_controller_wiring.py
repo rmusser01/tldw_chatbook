@@ -36,14 +36,21 @@ from types import SimpleNamespace
 import pytest
 
 from Tests.UI.test_destination_shells import _build_test_app
+from tldw_chatbook.UI.Console_Modules.agent import ConsoleAgentController
 from tldw_chatbook.UI.Console_Modules.character import ConsoleCharacterController
 from tldw_chatbook.UI.Console_Modules.dictation import ConsoleDictationController
+from tldw_chatbook.UI.Console_Modules.fleet import ConsoleFleetLifecycleController
 from tldw_chatbook.UI.Console_Modules.hands_free import ConsoleHandsFreeController
+from tldw_chatbook.UI.Console_Modules.image import ConsoleImageController
 from tldw_chatbook.UI.Console_Modules.message import ConsoleMessageController
+from tldw_chatbook.UI.Console_Modules.prompt_queue import (
+    ConsolePromptQueueUIController,
+)
 from tldw_chatbook.UI.Console_Modules.prompts import ConsolePromptsController
 from tldw_chatbook.UI.Console_Modules.retrieval import ConsoleRetrievalController
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.UI.Console_Modules.skill import ConsoleSkillController
+from tldw_chatbook.UI.Console_Modules.video import ConsoleVideoController
 from tldw_chatbook.UI.Console_Modules.workspace import ConsoleWorkspaceController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
@@ -55,6 +62,25 @@ _EXPECTED_SLOTS: list[tuple[str, type]] = [
     ("_hands_free", ConsoleHandsFreeController),
     ("_message", ConsoleMessageController),
     ("_prompts", ConsolePromptsController),
+]
+
+#: Complete controller graph for the Task-3070.8 construction-order contract.
+#: Kept separate because `_EXPECTED_SLOTS` is a historical common-interface subset.
+_ALL_CONTROLLER_SLOTS: list[tuple[str, type]] = [
+    ("_image", ConsoleImageController),
+    ("_video", ConsoleVideoController),
+    ("_retrieval", ConsoleRetrievalController),
+    ("_skill", ConsoleSkillController),
+    ("_workspace", ConsoleWorkspaceController),
+    ("_character", ConsoleCharacterController),
+    ("_fleet", ConsoleFleetLifecycleController),
+    ("_session", ConsoleSessionController),
+    ("_dictation", ConsoleDictationController),
+    ("_hands_free", ConsoleHandsFreeController),
+    ("_message", ConsoleMessageController),
+    ("_prompts", ConsolePromptsController),
+    ("_agent", ConsoleAgentController),
+    ("_prompt_queue", ConsolePromptQueueUIController),
 ]
 
 #: Every controller takes `chat_store_accessor=lambda: self._ensure_console_
@@ -83,6 +109,34 @@ def test_all_six_controllers_are_constructed_with_the_right_classes():
         assert isinstance(controller, cls), (
             f"{attr} is {type(controller).__name__}, expected {cls.__name__}"
         )
+
+
+def test_all_fourteen_controllers_are_constructed_with_the_right_classes() -> None:
+    screen = _unmounted_console()
+    names = [attr for attr, _ in _ALL_CONTROLLER_SLOTS]
+    observed = [key for key in vars(screen) if key in set(names)]
+
+    for attr, cls in _ALL_CONTROLLER_SLOTS:
+        controller = getattr(screen, attr, None)
+        assert controller is not None, f"{attr} was never wired"
+        assert isinstance(controller, cls), (
+            f"{attr} is {type(controller).__name__}, expected {cls.__name__}"
+        )
+    assert observed == names, f"controller build order changed: {observed}"
+
+
+def test_fleet_controller_is_constructed_with_late_bound_screen_edges() -> None:
+    screen = _unmounted_console()
+    controller = getattr(screen, "_fleet", None)
+    assert isinstance(controller, ConsoleFleetLifecycleController), (
+        "_fleet was never wired"
+    )
+
+    screen._console_composer_or_none = lambda: SimpleNamespace(
+        draft_text=lambda: " replacement draft "
+    )
+
+    assert controller._console_wake_user_priority("session-a") is True
 
 
 def test_retrieval_controller_is_constructed_with_late_bound_screen_edges():
