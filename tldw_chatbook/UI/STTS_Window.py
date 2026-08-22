@@ -2499,20 +2499,40 @@ class STTSWindow(Container):
             event.stop()
             self.post_message(SpeechDestinationBackRequested())
         elif event.button.id == "view-playground-btn":
-            self.run_worker(self.request_view("playground"), exclusive=True)
+            self.run_worker(
+                self.request_view("playground"),
+                exclusive=True,
+                group="stts-request-view",
+            )
         elif event.button.id == "view-profiles-btn":
-            self.run_worker(self.request_view("profiles"), exclusive=True)
+            self.run_worker(
+                self.request_view("profiles"),
+                exclusive=True,
+                group="stts-request-view",
+            )
         elif event.button.id == "view-settings-btn":
-            self.run_worker(self.request_view("settings"), exclusive=True)
+            self.run_worker(
+                self.request_view("settings"),
+                exclusive=True,
+                group="stts-request-view",
+            )
         elif event.button.id == "view-audiobook-btn":
-            self.run_worker(self.request_view("audiobook"), exclusive=True)
+            self.run_worker(
+                self.request_view("audiobook"),
+                exclusive=True,
+                group="stts-request-view",
+            )
         elif event.button.id == "view-voice-cloning-btn":
             # Import and push the Voice Cloning window
             from tldw_chatbook.UI.Voice_Cloning_Window import VoiceCloningWindow
 
             self.app.push_screen(VoiceCloningWindow())
         elif event.button.id == "view-stt-btn":
-            self.run_worker(self.request_view("dictation"), exclusive=True)
+            self.run_worker(
+                self.request_view("dictation"),
+                exclusive=True,
+                group="stts-request-view",
+            )
         else:
             # Try to delegate to the active content widget
             try:

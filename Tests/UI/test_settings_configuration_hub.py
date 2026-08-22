@@ -1267,8 +1267,13 @@ def test_settings_library_rag_save_uses_exclusive_thread_worker():
     source = inspect.getsource(SettingsScreen)
 
     assert getattr(worker, "__wrapped__", None) is not None
+    # TASK-19559: the group is now explicit, so this worker cancels only
+    # its own predecessor rather than every other exclusive worker on the
+    # Settings screen (Textual puts an ungrouped exclusive worker in the
+    # shared "default" group).
     assert (
-        "@work(exclusive=True, thread=True)\n    def _settings_save_library_rag_worker"
+        '@work(exclusive=True, group="settings-save-library-rag", thread=True)\n'
+        "    def _settings_save_library_rag_worker"
     ) in source
 
 
@@ -1506,8 +1511,13 @@ def test_settings_appearance_save_uses_exclusive_thread_worker():
     source = inspect.getsource(SettingsScreen)
 
     assert getattr(worker, "__wrapped__", None) is not None
+    # TASK-19559: the group is now explicit, so this worker cancels only
+    # its own predecessor rather than every other exclusive worker on the
+    # Settings screen (Textual puts an ungrouped exclusive worker in the
+    # shared "default" group).
     assert (
-        "@work(exclusive=True, thread=True)\n    def _settings_save_appearance_worker"
+        '@work(exclusive=True, group="settings-save-appearance", thread=True)\n'
+        "    def _settings_save_appearance_worker"
     ) in source
 
 
@@ -1777,8 +1787,13 @@ def test_settings_storage_save_uses_exclusive_thread_worker():
     source = inspect.getsource(SettingsScreen)
 
     assert getattr(worker, "__wrapped__", None) is not None
+    # TASK-19559: the group is now explicit, so this worker cancels only
+    # its own predecessor rather than every other exclusive worker on the
+    # Settings screen (Textual puts an ungrouped exclusive worker in the
+    # shared "default" group).
     assert (
-        "@work(exclusive=True, thread=True)\n    def _settings_save_storage_worker"
+        '@work(exclusive=True, group="settings-save-storage", thread=True)\n'
+        "    def _settings_save_storage_worker"
     ) in source
 
 
@@ -9105,8 +9120,11 @@ def test_settings_advanced_config_load_backup_handler_uses_worker(monkeypatch):
     def fail_direct_load():
         raise AssertionError("backup loading should not run in the button handler")
 
-    def fake_worker():
-        calls.append("worker")
+    def fake_worker(dispatch_text):
+        # TASK-19559: the handler must hand the worker the editor text as it
+        # stands at dispatch, so the arrival callback can refuse to clobber
+        # typing that happened while the backup was being read.
+        calls.append(("worker", dispatch_text))
 
     monkeypatch.setattr(screen, "_load_advanced_backup_preview", fail_direct_load)
     monkeypatch.setattr(
@@ -9117,7 +9135,7 @@ def test_settings_advanced_config_load_backup_handler_uses_worker(monkeypatch):
 
     screen.handle_advanced_load_backup(event)
 
-    assert calls == ["stop", "worker"]
+    assert calls == ["stop", ("worker", "")]
 
 
 @pytest.mark.asyncio
@@ -10178,3 +10196,77 @@ async def test_settings_manual_sync_run_token_guards_stale_worker_finally():
     # The current worker's finally clears it.
     await wrapped(screen, 2)
     assert screen._manual_sync_run_in_flight is False
+
+
+@pytest.mark.asyncio
+async def test_settings_advanced_config_backup_load_never_clobbers_unsaved_typing(
+    monkeypatch, tmp_path
+):
+    """TASK-19559: a background backup read must not overwrite live typing.
+
+    `_advanced_load_backup_worker` is a *thread* worker. `Worker.cancel()`
+    cannot stop a thread worker -- the body finishes in the executor and its
+    `call_from_thread` callback lands regardless -- so the only place the
+    result can be refused is on arrival. This test holds the off-loop read
+    open, types into the editor while it is blocked, then releases it.
+
+    Born red against the branch base, where `_apply_advanced_backup_preview_
+    result` assigned `TextArea.text = backup_text` unconditionally: the user's
+    unsaved edit was silently replaced by the backup.
+    """
+    import threading
+
+    config_path = tmp_path / "config.toml"
+    backup_path = tmp_path / "config.toml.bak"
+    current_text = '[chat_defaults]\nprovider = "OpenAI"\n'
+    backup_text = '[chat_defaults]\nprovider = "Ollama"\nmodel = "llama3"\n'
+    config_path.write_text(current_text, encoding="utf-8")
+    backup_path.write_text(backup_text, encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    release = threading.Event()
+    original_read = SettingsScreen._read_advanced_backup_preview
+
+    def gated_read(self):
+        # Runs on the worker thread, so blocking here does not stall the loop.
+        release.wait(10)
+        return original_read(self)
+
+    monkeypatch.setattr(
+        SettingsScreen, "_read_advanced_backup_preview", gated_read
+    )
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-advanced-config")
+        screen = _active_destination_screen(host)
+        editor = screen.query_one("#settings-advanced-config-editor", TextArea)
+        assert editor.text == current_text
+
+        await pilot.click("#settings-advanced-load-backup")
+        await pilot.pause(0.1)
+        assert not release.is_set()
+
+        # The user keeps typing while the backup is still being read.
+        editor.focus()
+        await pilot.pause()
+        editor.move_cursor(editor.document.end)
+        await pilot.press("z")
+        await pilot.pause()
+        typed_text = editor.text
+        assert typed_text != current_text, "the simulated keystroke did not land"
+
+        release.set()
+        # Wait on the neutral prefix, so a regression reds on the editor
+        # assertion below (the behaviour) rather than on a wait timeout.
+        await _wait_for_settings_text(screen, pilot, "Advanced config recovery:")
+        await pilot.pause(0.2)
+
+        assert editor.text == typed_text, (
+            "the background backup load overwrote unsaved typing"
+        )
+        assert backup_text not in editor.text
+        assert "not applied" in screen._advanced_config_result
+        assert "unsaved edits were kept" in screen._advanced_config_result

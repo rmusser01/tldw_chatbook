@@ -1,8 +1,8 @@
 """Handler for conversation-related operations in the Personas screen."""
 
+from functools import partial
 from typing import TYPE_CHECKING, Optional, List, Dict, Any, Tuple, Union
 from loguru import logger
-from textual import work
 from textual.widgets import ListView, ListItem, Input, Static
 
 from ...config import get_chachanotes_db_lazy
@@ -50,6 +50,8 @@ class CCPConversationHandler:
         self.current_conversation_id: Optional[ConversationId] = None
         self.current_conversation_data: Dict[str, Any] = {}
         self.search_results: List[Dict[str, Any]] = []
+        # TASK-19563: monotonic dispatch counter; see `_apply_search_results`.
+        self._conversation_search_generation: int = 0
 
         logger.debug("CCPConversationHandler initialized")
 
@@ -96,6 +98,16 @@ class CCPConversationHandler:
         normalized = [normalize_conversation_row(row) for row in conversations]
         return [row for row in normalized if self._matches_active_scope(row)]
 
+    def _next_search_generation(self) -> int:
+        """Claim the newest conversation-search generation.
+
+        TASK-19563: the generation-counter pattern from
+        `UI/Screens/chat_screen.py` -- bumped once per dispatch, captured by
+        the worker, and compared again when the result arrives.
+        """
+        self._conversation_search_generation += 1
+        return self._conversation_search_generation
+
     async def handle_search(self, search_term: str, search_type: str = "title") -> None:
         """Handle conversation search (async wrapper).
 
@@ -107,25 +119,45 @@ class CCPConversationHandler:
             f"Starting conversation search: term='{search_term}', type={search_type}"
         )
 
-        # Run the sync search in a worker thread
+        # TASK-19563: worker arguments travel with the callable, as a
+        # `functools.partial` (the pattern `CCPCharacterHandler.load_character`
+        # already uses). Two bugs lived in the previous spelling, and neither
+        # was observable from the handler:
+        #   * the arguments were passed positionally to `run_worker`, where
+        #     they bound to its own `name`/`group` parameters and then collided
+        #     with the explicit `name=` keyword -- `TypeError: run_worker() got
+        #     multiple values for argument 'name'`;
+        #   * `_search_conversations_sync` carried a `@work` decorator, which
+        #     asserts `isinstance(self, DOMNode)`. `CCPConversationHandler` is
+        #     a plain object that merely *holds* a window, so the decorator
+        #     could only ever have raised `AssertionError`.
+        # Between them, CCP conversation search never ran at all.
         self.window.run_worker(
-            self._search_conversations_sync,
-            search_term,
-            search_type,
+            partial(
+                self._search_conversations_sync,
+                search_term,
+                search_type,
+                self._next_search_generation(),
+            ),
             thread=True,
             exclusive=True,
+            group="ccp-conversation-search",
             name="conversation_search",
         )
 
-    @work(thread=True)
     def _search_conversations_sync(
-        self, search_term: str, search_type: str = "title"
+        self,
+        search_term: str,
+        search_type: str = "title",
+        generation: Optional[int] = None,
     ) -> None:
         """Sync method to perform conversation search in a worker thread.
 
         Args:
             search_term: The term to search for
             search_type: Type of search ("title", "content", "tags")
+            generation: The dispatch generation this read belongs to; results
+                whose generation is no longer current are dropped on arrival.
         """
         logger.debug(
             f"Searching conversations: term='{search_term}', type={search_type}"
@@ -134,8 +166,7 @@ class CCPConversationHandler:
         try:
             db = self._conversation_db()
             if db is None:
-                self.search_results = []
-                self.window.call_from_thread(self._update_search_results_ui)
+                self._deliver_search_results(generation, [])
                 logger.warning(
                     "Conversation DB unavailable; returning empty CCP results"
                 )
@@ -161,19 +192,45 @@ class CCPConversationHandler:
             else:
                 results = []
 
-            self.search_results = self._filter_conversations_for_scope(
-                list(results or [])
-            )
+            filtered = self._filter_conversations_for_scope(list(results or []))
 
-            # Update the search results list on main thread
-            self.window.call_from_thread(self._update_search_results_ui)
+            # Hand the rows to the event loop; the loop decides whether this
+            # generation is still the one the user is waiting for.
+            self._deliver_search_results(generation, filtered)
 
             logger.info(
-                f"Found {len(self.search_results)} conversations matching '{search_term}'"
+                f"Found {len(filtered)} conversations matching '{search_term}'"
             )
 
         except Exception as e:
             logger.opt(exception=True).error(f"Error searching conversations: {e}")
+
+    def _deliver_search_results(
+        self, generation: Optional[int], results: List[Dict[str, Any]]
+    ) -> None:
+        """Hop one search result set back to the Textual event loop."""
+        self.window.call_from_thread(self._apply_search_results, generation, results)
+
+    async def _apply_search_results(
+        self, generation: Optional[int], results: List[Dict[str, Any]]
+    ) -> None:
+        """Adopt a search result set only while it is still the current one.
+
+        TASK-19563: this is a *thread* worker, so `Worker.cancel()` does not
+        stop its body -- it runs to completion in the executor and this
+        callback still lands. Rejecting at arrival is therefore the only
+        guard that actually works; without it the list renders the results
+        for `"a"` while the search box already reads `"ab"`.
+        """
+        current = self._conversation_search_generation
+        if generation is not None and generation != current:
+            logger.debug(
+                "Dropping superseded CCP conversation search results "
+                f"(generation {generation} != {current})"
+            )
+            return
+        self.search_results = results
+        await self._update_search_results_ui()
 
     def _search_by_title_sync(self, search_term: str) -> List[Dict[str, Any]]:
         """Search conversations by title (sync version for worker).
@@ -264,16 +321,22 @@ class CCPConversationHandler:
         """
         logger.info(f"Loading conversation {conversation_id}")
 
-        # Run the sync database operation in a worker thread
+        # Run the sync database operation in a worker thread.
+        # TASK-19563: worker arguments travel with the callable (a
+        # `functools.partial`, as in `CCPCharacterHandler.load_character`) --
+        # passing them positionally to `run_worker` binds them to
+        # `run_worker`'s own `name`/`group` parameters instead, which then
+        # collides with the explicit `name=` keyword and raises `TypeError`.
+        # The `@work` decorator is likewise gone: it asserts
+        # `isinstance(self, DOMNode)`, and this handler is a plain object.
         self.window.run_worker(
-            self._load_conversation_sync,
-            conversation_id,
+            partial(self._load_conversation_sync, conversation_id),
             thread=True,
             exclusive=True,
+            group="ccp-load-conversation",
             name=f"load_conversation_{conversation_id}",
         )
 
-    @work(thread=True)
     def _load_conversation_sync(self, conversation_id: ConversationId) -> None:
         """Sync method to load conversation data in a worker thread.
 
@@ -478,13 +541,17 @@ class CCPConversationHandler:
         try:
             search_input = self.window.query_one("#conv-char-search-input", Input)
             if search_input.value:
+                # TASK-19563: `handle_search` is a coroutine function, so it
+                # must be *called* and the coroutine handed to `run_worker`.
+                # The previous spelling passed the bound method plus arguments
+                # positionally, which bound them to `run_worker`'s own
+                # `name`/`group` parameters and then collided with the explicit
+                # `name=` keyword -- a `TypeError` swallowed by the `except`
+                # below, so refresh silently did nothing.
                 self.window.run_worker(
-                    self.handle_search,
-                    search_input.value,
-                    "title",
-                    thread=True,
+                    self.handle_search(search_input.value, "title"),
                     exclusive=True,
-                    name="refresh_search",
+                    group="ccp-conversation-search-refresh",
                 )
         except Exception as e:
             logger.error(f"Error refreshing conversation list: {e}")

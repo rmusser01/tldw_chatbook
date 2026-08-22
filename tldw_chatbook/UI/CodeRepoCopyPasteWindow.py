@@ -877,7 +877,11 @@ class CodeRepoCopyPasteWindow(ModalScreen):
             return
 
         # Run export in a worker to avoid blocking UI
-        self.run_worker(self._export_to_zip_worker(selected_files), exclusive=True)
+        self.run_worker(
+            self._export_to_zip_worker(selected_files),
+            exclusive=True,
+            group="coderepo-export-to-zip",
+        )
 
     @on(Button.Pressed, "#generate-compilation-btn")
     async def generate_compilation(self, event: Button.Pressed) -> None:

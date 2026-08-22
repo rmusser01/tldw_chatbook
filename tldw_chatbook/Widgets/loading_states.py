@@ -79,7 +79,7 @@ class LoadingState(Container):
         if self.auto_start and self.loader:
             self.start_loading()
 
-    @work(exclusive=True)
+    @work(exclusive=True, group="loading-states-start-loading")
     async def start_loading(self) -> None:
         """Start the loading process."""
         self.is_loading = True

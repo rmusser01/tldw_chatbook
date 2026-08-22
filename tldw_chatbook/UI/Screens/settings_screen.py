@@ -5354,7 +5354,7 @@ class SettingsScreen(BaseAppScreen):
         )
         self._settings_save_image_gen_worker(draft_values, warnings)
 
-    @work(exclusive=True, thread=True)
+    @work(exclusive=True, group="settings-save-image-gen", thread=True)
     def _settings_save_image_gen_worker(
         self, draft_values: ImageGenDraftValues, warnings: list[str]
     ) -> None:
@@ -5765,7 +5765,7 @@ class SettingsScreen(BaseAppScreen):
         )
         self._settings_save_video_gen_worker(draft_values, warnings)
 
-    @work(exclusive=True, thread=True)
+    @work(exclusive=True, group="settings-save-video-gen", thread=True)
     def _settings_save_video_gen_worker(
         self, draft_values: VideoGenDraftValues, warnings: list[str]
     ) -> None:
@@ -8195,7 +8195,7 @@ class SettingsScreen(BaseAppScreen):
         self._update_storage_check_widgets()
         self.app.notify("Storage check finished.", severity="information")
 
-    @work(exclusive=True, thread=True)
+    @work(exclusive=True, group="settings-storage-check", thread=True)
     def _storage_check_worker(
         self, values: SettingsStorageDefaults | None = None
     ) -> None:
@@ -8292,7 +8292,7 @@ class SettingsScreen(BaseAppScreen):
         self._update_privacy_check_widgets()
         self.app.notify("Privacy check finished.", severity="information")
 
-    @work(exclusive=True, thread=True)
+    @work(exclusive=True, group="settings-privacy-check", thread=True)
     def _privacy_check_worker(self, app_config: object) -> None:
         rows = self._privacy_check_results(app_config)
         self.app.call_from_thread(self._apply_privacy_check_result, rows)
@@ -8416,7 +8416,7 @@ class SettingsScreen(BaseAppScreen):
             "Diagnostics validation and reload finished.", severity="information"
         )
 
-    @work(exclusive=True, thread=True)
+    @work(exclusive=True, group="settings-diagnostics-validate-reload", thread=True)
     def _diagnostics_validation_and_reload_worker(self) -> None:
         validation_result, reload_result, loaded_config = (
             self._diagnostics_validation_and_reload_results()
@@ -8551,7 +8551,7 @@ class SettingsScreen(BaseAppScreen):
         self._update_advanced_validation_status()
         return result
 
-    @work(exclusive=True, thread=True)
+    @work(exclusive=True, group="settings-advanced-validate-config", thread=True)
     def _advanced_validate_config_worker(self, text: str) -> None:
         validation = SettingsConfigAdapter().validate_raw_toml(text)
         status = "valid" if validation.valid else "invalid"
@@ -8573,7 +8573,7 @@ class SettingsScreen(BaseAppScreen):
         )
         self._update_advanced_validation_status()
 
-    @work(exclusive=True, thread=True)
+    @work(exclusive=True, group="settings-advanced-save-config", thread=True)
     def _advanced_save_config_worker(self, text: str) -> None:
         result = self._save_advanced_config_text(text)
         loaded_config: dict | None = None
@@ -8599,22 +8599,49 @@ class SettingsScreen(BaseAppScreen):
         )
         self._update_advanced_validation_status()
 
-    @work(exclusive=True, thread=True)
-    def _advanced_load_backup_worker(self) -> None:
+    @work(exclusive=True, group="settings-advanced-load-backup", thread=True)
+    def _advanced_load_backup_worker(self, dispatch_text: str) -> None:
+        """Read the backup off-loop, carrying the editor text seen at dispatch.
+
+        TASK-19559: this is a *thread* worker, so `Worker.cancel()` does not
+        stop it -- the body runs to completion in the executor and the
+        `call_from_thread` callback below still lands. The only place the
+        result can be refused is on arrival, which is why the editor text the
+        user had when they pressed the button travels with it.
+        """
         result, backup_text = self._read_advanced_backup_preview()
         self.app.call_from_thread(
             self._apply_advanced_backup_preview_result,
             result,
             backup_text,
+            dispatch_text,
         )
 
     def _apply_advanced_backup_preview_result(
         self,
         result: str,
         backup_text: str | None,
+        dispatch_text: str | None = None,
     ) -> None:
+        """Apply a backup preview only if the editor is untouched since dispatch.
+
+        TASK-19559: the editor is a live `TextArea`. If the user kept typing
+        while the backup was being read off-loop, writing the backup over the
+        top silently destroys their unsaved edits, so the write is refused and
+        the refusal is reported instead of being swallowed.
+        """
         final_result = result
         if backup_text is not None:
+            current_text = self._advanced_editor_text()
+            if dispatch_text is not None and current_text != dispatch_text:
+                self._advanced_config_result = (
+                    "Advanced config recovery: not applied - the editor changed "
+                    "while the backup was loading; unsaved edits were kept"
+                )
+                self._set_static_text(
+                    "#settings-advanced-config-result", self._advanced_config_result
+                )
+                return
             try:
                 self.query_one(
                     "#settings-advanced-config-editor", TextArea
@@ -20747,7 +20774,10 @@ class SettingsScreen(BaseAppScreen):
         self._set_static_text(
             "#settings-advanced-config-result", self._advanced_config_result
         )
-        self._advanced_load_backup_worker()
+        # TASK-19559: carry the editor text as it stands right now, so the
+        # arrival callback can tell "nothing changed" from "the user typed
+        # while we were reading the backup".
+        self._advanced_load_backup_worker(self._advanced_editor_text())
 
     @on(Button.Pressed, ".settings-advanced-guided-path-button")
     def handle_advanced_guided_path(self, event: Button.Pressed) -> None:
@@ -22032,7 +22062,7 @@ class SettingsScreen(BaseAppScreen):
         )
         self.app.notify(self._appearance_result, severity="error")
 
-    @work(exclusive=True, thread=True)
+    @work(exclusive=True, group="settings-save-appearance", thread=True)
     def _settings_save_appearance_worker(
         self, section_values: Mapping[str, object]
     ) -> None:
@@ -22288,7 +22318,7 @@ class SettingsScreen(BaseAppScreen):
         )
         self.app.notify(self._library_rag_result, severity="error")
 
-    @work(exclusive=True, thread=True)
+    @work(exclusive=True, group="settings-save-library-rag", thread=True)
     def _settings_save_library_rag_worker(
         self,
         values: SettingsLibraryRagDefaults,
@@ -22327,7 +22357,7 @@ class SettingsScreen(BaseAppScreen):
         self._set_static_text("#settings-storage-save-result", self._storage_result)
         self.app.notify(self._storage_result, severity="error")
 
-    @work(exclusive=True, thread=True)
+    @work(exclusive=True, group="settings-save-storage", thread=True)
     def _settings_save_storage_worker(
         self, section_values: Mapping[str, object]
     ) -> None:
@@ -22389,7 +22419,7 @@ class SettingsScreen(BaseAppScreen):
         )
         self.app.notify("Failed to save Console behavior settings.", severity="error")
 
-    @work(exclusive=True, thread=True)
+    @work(exclusive=True, group="settings-save-console-behavior", thread=True)
     def _settings_save_console_behavior_worker(
         self,
         console_values: Mapping[str, object],

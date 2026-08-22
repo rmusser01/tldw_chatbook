@@ -51,6 +51,9 @@ class StudyFlashcardsController:
         self.selected_card_record: Optional[dict[str, Any]] = None
         self._scope_service_cache: Optional[StudyScopeService] = None
         self.has_decks: bool = False
+        # TASK-19559: rating submissions are serialised, never cancelled --
+        # see `submit_rating`.
+        self._review_submit_lock = asyncio.Lock()
 
     def _current_mode(self) -> str:
         getter = getattr(self.app_instance, "get_authoritative_runtime_source", None)
@@ -882,36 +885,54 @@ class StudyFlashcardsController:
         self._set_review_controls(show_answer_enabled=False, ratings_enabled=True)
 
     async def submit_rating(self, rating: int) -> None:
+        """Persist one rating, serialised behind any rating already in flight.
+
+        TASK-19559: this is a durable write, so it must never be raced away by
+        the next press. The card under review is captured **synchronously**,
+        before the first ``await``, so a second press that arrives while the
+        first save is still running rates the card the user was actually
+        looking at rather than whatever card has since been loaded. The lock
+        then serialises the two saves instead of cancelling either, so every
+        press reaches the database in press order.
+        """
         service = self._scope_service()
-        if (
-            service is None
-            or not self.current_review_card
-            or not self._scope_is_available()
-        ):
+        card = self.current_review_card
+        if service is None or not card or not self._scope_is_available():
             return
 
-        try:
-            outcome = await service.submit_flashcard_review(
-                mode=self._current_mode(),
-                **self._scope_arguments(),
-                card_id=str(self.current_review_card.get("backing_id") or ""),
-                rating=rating,
-                current_card=self.current_review_card,
-            )
-        except Exception:
-            logger.opt(exception=True).error("Failed to submit flashcard review")
-            self._notify("Failed to save review.", severity="error")
-            return
+        async with self._review_submit_lock:
+            try:
+                outcome = await service.submit_flashcard_review(
+                    mode=self._current_mode(),
+                    **self._scope_arguments(),
+                    card_id=str(card.get("backing_id") or ""),
+                    rating=rating,
+                    current_card=card,
+                )
+            except asyncio.CancelledError:
+                # `CancelledError` is a `BaseException`, so the `except
+                # Exception` below can never see it. Log it explicitly rather
+                # than letting a lost review vanish silently, then re-raise so
+                # the worker still unwinds (TASK-19559).
+                logger.warning(
+                    "Flashcard review submission was cancelled before it "
+                    "completed; the rating may not have been saved."
+                )
+                raise
+            except Exception:
+                logger.opt(exception=True).error("Failed to submit flashcard review")
+                self._notify("Failed to save review.", severity="error")
+                return
 
-        review_session = outcome.get("review_session") or {}
-        session_id = review_session.get("review_session_id")
-        if session_id is not None:
-            self.current_review_session_id = int(session_id)
-            self.current_review_session_mode = self._current_mode()
+            review_session = outcome.get("review_session") or {}
+            session_id = review_session.get("review_session_id")
+            if session_id is not None:
+                self.current_review_session_id = int(session_id)
+                self.current_review_session_mode = self._current_mode()
 
-        self._set_review_status("Review saved.")
-        self._set_next_intervals(outcome.get("next_intervals"))
-        await self._load_next_review_candidate(deck_id=self._selected_deck_id())
+            self._set_review_status("Review saved.")
+            self._set_next_intervals(outcome.get("next_intervals"))
+            await self._load_next_review_candidate(deck_id=self._selected_deck_id())
 
     async def _load_next_review_candidate(self, *, deck_id: Optional[str]) -> None:
         service = self._scope_service()

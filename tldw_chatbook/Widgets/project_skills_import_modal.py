@@ -326,7 +326,11 @@ class ProjectSkillsImportModal(SafeModalDismissMixin, ModalScreen[ImportDecision
             except Exception:  # noqa: BLE001 - purely cosmetic, never fatal
                 pass
         selected = self._selected_entries()
-        self.run_worker(self._run_import(selected), exclusive=True)
+        self.run_worker(
+            self._run_import(selected),
+            exclusive=True,
+            group="project-skills-run-import",
+        )
 
     async def _run_import(self, entries: tuple[ProjectSkillEntry, ...]) -> None:
         outcomes: list[ImportOutcome] = []

@@ -384,7 +384,7 @@ class InlineLoadingIndicator(Static):
         self._loading = False
         self._dots = 0
 
-    @work(exclusive=True)
+    @work(exclusive=True, group="ccp-loading-indicator-animate")
     async def animate(self):
         """Animate the loading dots."""
         import asyncio

@@ -162,7 +162,7 @@ class DictationPerformanceWidget(Widget):
         """Load metrics on mount."""
         self.refresh_metrics()
 
-    @work(exclusive=True)
+    @work(exclusive=True, group="dictation-performance-refresh-metrics")
     async def refresh_metrics(self):
         """Refresh performance metrics."""
         monitor = get_performance_monitor()

@@ -781,6 +781,7 @@ class StudyWindow(Container):
             self.run_worker(
                 self.flashcards_controller.end_review_session_if_needed(),
                 exclusive=True,
+                group="study-end-review-session",
             )
 
         # Remove old content
@@ -911,12 +912,20 @@ class StudyWindow(Container):
         delete_deck_note.display = server_mode
 
     def _schedule_flashcards_refresh(self) -> None:
-        self.run_worker(self.flashcards_controller.initialize_view(), exclusive=True)
+        self.run_worker(
+            self.flashcards_controller.initialize_view(),
+            exclusive=True,
+            group="study-flashcards-initialize-view",
+        )
         self.call_after_refresh(self._configure_flashcards_lifecycle_controls)
         self.call_after_refresh(self._notify_shell_state_changed)
 
     def _schedule_quizzes_refresh(self) -> None:
-        self.run_worker(self.quizzes_controller.initialize_view(), exclusive=True)
+        self.run_worker(
+            self.quizzes_controller.initialize_view(),
+            exclusive=True,
+            group="study-quizzes-initialize-view",
+        )
         self.call_after_refresh(self._configure_quizzes_lifecycle_controls)
         self.call_after_refresh(self._notify_shell_state_changed)
 
@@ -1004,15 +1013,27 @@ class StudyWindow(Container):
 
     @on(Button.Pressed, "#create-deck-button")
     def handle_create_deck(self) -> None:
-        self.run_worker(self.flashcards_controller.create_deck(), exclusive=True)
+        self.run_worker(
+            self.flashcards_controller.create_deck(),
+            exclusive=True,
+            group="study-create-deck",
+        )
 
     @on(Button.Pressed, "#flashcard-refresh-button")
     def handle_refresh_cards(self) -> None:
-        self.run_worker(self.flashcards_controller.refresh_cards(), exclusive=True)
+        self.run_worker(
+            self.flashcards_controller.refresh_cards(),
+            exclusive=True,
+            group="study-refresh-cards",
+        )
 
     @on(Button.Pressed, "#create-card-btn")
     def handle_create_card(self) -> None:
-        self.run_worker(self.flashcards_controller.create_card(), exclusive=True)
+        self.run_worker(
+            self.flashcards_controller.create_card(),
+            exclusive=True,
+            group="study-create-card",
+        )
 
     @on(Button.Pressed, "#delete-deck-button")
     async def handle_delete_deck(self) -> None:
@@ -1036,7 +1057,11 @@ class StudyWindow(Container):
 
     @on(Button.Pressed, "#start-review-btn")
     def handle_start_review(self) -> None:
-        self.run_worker(self.flashcards_controller.start_review(), exclusive=True)
+        self.run_worker(
+            self.flashcards_controller.start_review(),
+            exclusive=True,
+            group="study-start-review",
+        )
 
     @on(Button.Pressed, "#show-answer-button")
     def handle_show_answer(self) -> None:
@@ -1050,8 +1075,19 @@ class StudyWindow(Container):
     @on(Button.Pressed, "#review-rating-5")
     def handle_review_rating(self, event: Button.Pressed) -> None:
         rating = int(str(event.button.id).rsplit("-", 1)[-1])
+        # TASK-19559: a spaced-repetition rating is a DURABLE WRITE, so it is
+        # deliberately NOT `exclusive=True`. Exclusivity cancels the previous
+        # worker in the same group, and `submit_rating` awaits the review save
+        # -- a second fast press would kill the first press's save before it
+        # reached the database, and `CancelledError` is a `BaseException` that
+        # the handler's `except Exception:` cannot even observe. Ratings are
+        # instead serialised inside `StudyFlashcardsController.submit_rating`
+        # (an `asyncio.Lock`), so presses queue and every one persists.
+        # The explicit group also keeps these workers out of `"default"`, where
+        # any other Study worker would cancel them.
         self.run_worker(
-            self.flashcards_controller.submit_rating(rating), exclusive=True
+            self.flashcards_controller.submit_rating(rating),
+            group="study-flashcard-rating",
         )
 
     @on(Select.Changed, "#deck-select")
@@ -1060,31 +1096,59 @@ class StudyWindow(Container):
 
     @on(Button.Pressed, "#create-quiz-button")
     def handle_create_quiz(self) -> None:
-        self.run_worker(self.quizzes_controller.create_quiz(), exclusive=True)
+        self.run_worker(
+            self.quizzes_controller.create_quiz(),
+            exclusive=True,
+            group="study-create-quiz",
+        )
 
     @on(Button.Pressed, "#delete-quiz-button")
     def handle_delete_quiz(self) -> None:
-        self.run_worker(self.quizzes_controller.delete_quiz(), exclusive=True)
+        self.run_worker(
+            self.quizzes_controller.delete_quiz(),
+            exclusive=True,
+            group="study-delete-quiz",
+        )
 
     @on(Button.Pressed, "#create-quiz-question-button")
     def handle_create_quiz_question(self) -> None:
-        self.run_worker(self.quizzes_controller.create_question(), exclusive=True)
+        self.run_worker(
+            self.quizzes_controller.create_question(),
+            exclusive=True,
+            group="study-create-quiz-question",
+        )
 
     @on(Button.Pressed, "#delete-quiz-question-button")
     def handle_delete_quiz_question(self) -> None:
-        self.run_worker(self.quizzes_controller.delete_question(), exclusive=True)
+        self.run_worker(
+            self.quizzes_controller.delete_question(),
+            exclusive=True,
+            group="study-delete-quiz-question",
+        )
 
     @on(Button.Pressed, "#start-quiz-attempt-button")
     def handle_start_quiz_attempt(self) -> None:
-        self.run_worker(self.quizzes_controller.start_attempt(), exclusive=True)
+        self.run_worker(
+            self.quizzes_controller.start_attempt(),
+            exclusive=True,
+            group="study-start-quiz-attempt",
+        )
 
     @on(Button.Pressed, "#submit-quiz-answer-button")
     def handle_submit_quiz_answer(self) -> None:
-        self.run_worker(self.quizzes_controller.submit_current_answer(), exclusive=True)
+        self.run_worker(
+            self.quizzes_controller.submit_current_answer(),
+            exclusive=True,
+            group="study-submit-quiz-answer",
+        )
 
     @on(Button.Pressed, "#load-quiz-attempt-history-button")
     def handle_load_quiz_attempt_history(self) -> None:
-        self.run_worker(self.quizzes_controller.load_selected_attempt(), exclusive=True)
+        self.run_worker(
+            self.quizzes_controller.load_selected_attempt(),
+            exclusive=True,
+            group="study-load-quiz-attempt-history",
+        )
 
     @on(Select.Changed, "#quiz-select")
     async def handle_quiz_select_changed(self, event: Select.Changed) -> None:

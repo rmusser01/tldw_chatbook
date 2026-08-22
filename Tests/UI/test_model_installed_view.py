@@ -2681,7 +2681,9 @@ def test_forced_refresh_queues_behind_an_inflight_inventory_load(
         None,
     )
 
-    view._load_inventory.assert_called_once_with()
+    # TASK-19563: the dispatch generation rides with the read so
+    # `_apply_inventory` can refuse a superseded one.
+    view._load_inventory.assert_called_once_with(view._inventory_generation)
     assert view._loading is True
 
 
@@ -3283,3 +3285,40 @@ def test_models_rail_lists_surviving_destinations_without_a_downloader() -> None
     models_section = dict(MODELS_RAIL_SECTIONS)["Models"]
     keys = [key for key, _label in models_section]
     assert keys == ["curated", "installed", "external", "remote"]
+
+
+def test_superseded_inventory_read_is_discarded_on_arrival(tmp_path: Path) -> None:
+    """TASK-19563: a slow first inventory read cannot overwrite a newer one.
+
+    `_load_inventory` is a *thread* worker. `Worker.cancel()` does not stop a
+    thread worker -- the body finishes in the executor and its
+    `call_from_thread` callback lands regardless -- so the group on that
+    decorator cannot help. The generation captured at dispatch and compared on
+    arrival is what actually refuses the stale rows.
+
+    Born red against the branch base, where `_apply_inventory` took no
+    generation at all and applied whichever result arrived last.
+    """
+    from tldw_chatbook.UI.Screens.model_installed_view import InstalledView
+
+    view = InstalledView(service_factory=MagicMock(), legacy_dir=tmp_path)
+    view.refresh = MagicMock()
+    view._load_inventory = MagicMock()
+
+    view.ensure_loaded()
+    # Pretend the first read has left the dispatcher but not yet come back.
+    view._loading = False
+    view._loaded = True
+    view.ensure_loaded(force=True)
+
+    first_generation, second_generation = (
+        call.args[0] for call in view._load_inventory.call_args_list
+    )
+    assert second_generation > first_generation
+
+    # The stale read lands after the fresh one was dispatched.
+    view._apply_inventory(("stale",), None, None, None, first_generation)
+    assert view._rows == (), "a superseded inventory read was applied"
+
+    view._apply_inventory(("fresh",), None, None, None, second_generation)
+    assert view._rows == ("fresh",)

@@ -4165,7 +4165,7 @@ class ToolsSettingsWindow(Container):
                     streaming=False,
                 ),
                 thread=True,
-                exclusive=True,
+                exclusive=True, group="tools-settings-test-chat-connection",
             )
             test_response = extract_response_content(raw)
 
@@ -4302,7 +4302,7 @@ class ToolsSettingsWindow(Container):
                             streaming=False,
                         ),
                         thread=True,
-                        exclusive=True,
+                        exclusive=True, group="tools-settings-test-all-api-keys",
                     )
 
                     if extract_response_content(raw):

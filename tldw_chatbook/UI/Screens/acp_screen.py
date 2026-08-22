@@ -448,7 +448,7 @@ class ACPScreen(BaseAppScreen):
         event.stop()
         self._launch_acp_runtime_worker("ACP agent session")
 
-    @work(exclusive=True, thread=True)
+    @work(exclusive=True, group="acp-launch-runtime", thread=True)
     def _launch_acp_runtime_worker(self, title: str) -> None:
         manager = getattr(self.app_instance, "acp_runtime_process_manager", None)
         launcher = getattr(manager, "start_session", None)
@@ -489,7 +489,7 @@ class ACPScreen(BaseAppScreen):
         event.stop()
         self._stop_acp_runtime_worker()
 
-    @work(exclusive=True, thread=True)
+    @work(exclusive=True, group="acp-stop-runtime", thread=True)
     def _stop_acp_runtime_worker(self) -> None:
         manager = getattr(self.app_instance, "acp_runtime_process_manager", None)
         stopper = getattr(manager, "stop", None)

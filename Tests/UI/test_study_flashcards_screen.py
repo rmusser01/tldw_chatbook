@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -1366,3 +1367,134 @@ async def test_start_review_blocks_when_pending_session_teardown_keeps_failing()
         assert len(end_review_calls) == 2
         assert not any(call[0] == "get_next_review_candidate" for call in scope.calls)
         assert controller._pending_review_session_teardown is not None
+
+
+class GatedReviewStudyScopeService(FakeStudyScopeService):
+    """A scope service whose review save can be held open mid-flight.
+
+    `submit_flashcard_review` records the write only *after* the gate opens,
+    so a submission that is cancelled at its await never appears in
+    `persisted` -- which is exactly what "the rating did not reach the
+    database" looks like from the user's side.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.gate = asyncio.Event()
+        self.entered: list[tuple[str | None, int]] = []
+        self.persisted: list[tuple[str | None, int]] = []
+        self.candidates = [
+            {
+                "card": {
+                    "record_id": f"local:study_flashcard:card-local-{index}",
+                    "backing_id": f"card-local-{index}",
+                    "deck_record_id": "local:study_deck:deck-local-1",
+                    "front": f"Question {index}",
+                    "back": f"Answer {index}",
+                    "queue_state": "new",
+                },
+                "selection_reason": "new",
+                "next_intervals": {"again": "10m", "good": "1d"},
+                "review_session": {"review_session_id": 41},
+                "detail_available": True,
+            }
+            for index in range(1, 6)
+        ]
+
+    async def submit_flashcard_review(
+        self,
+        *,
+        mode=None,
+        scope_type=None,
+        workspace_id=None,
+        card_id=None,
+        rating,
+        current_card=None,
+        answer_time_ms=None,
+    ):
+        self.entered.append((card_id, rating))
+        await self.gate.wait()
+        self.persisted.append((card_id, rating))
+        return {
+            "card": {
+                **(current_card or {}),
+                "interval_days": 3,
+                "queue_state": "review",
+            },
+            "rating": rating,
+            "next_intervals": {"again": "10m", "good": "3d"},
+            "review_session": {"review_session_id": 41},
+            "detail_available": True,
+        }
+
+
+@pytest.mark.asyncio
+async def test_fast_consecutive_flashcard_ratings_all_persist():
+    """TASK-19559: a second rating press must not destroy the first save.
+
+    Born red against the branch base, where `handle_review_rating` scheduled
+    `submit_rating` with `exclusive=True` and no `group=`. That put every
+    rating in the shared "default" group, so `add_worker` cancelled the
+    in-flight save the moment the next press arrived -- and because
+    `CancelledError` is a `BaseException`, `submit_rating`'s `except
+    Exception:` could not even see it happen. The first rating simply
+    vanished. Pre-fix this asserts `persisted == [(card, 5)]`; post-fix both
+    ratings are present.
+
+    Driven through the real rating buttons -- two consecutive presses with the
+    save held open in between -- not by inspecting the dispatch keywords.
+    """
+    scope = GatedReviewStudyScopeService()
+    app_instance = SimpleNamespace(
+        study_scope_service=scope,
+        current_runtime_backend="local",
+        runtime_backend=None,
+        app_config={},
+        notify=lambda *args, **kwargs: None,
+    )
+    app = _build_full_study_app(app_instance)
+
+    async with app.run_test(size=(180, 60)) as pilot:
+        await pilot.pause(0.2)
+        await pilot.click("#view-flashcards-btn")
+        await pilot.pause(0.3)
+
+        app.screen.query_one("#deck-select", Select).value = "deck-local-1"
+        # Let the deck-change refresh (and its review-session teardown) finish
+        # before starting a review, so nothing tears the card down underneath us.
+        await pilot.pause(0.5)
+        controller = app.screen.query_one(StudyWindow).flashcards_controller
+
+        await controller.start_review()
+        await pilot.pause(0.2)
+        controller.show_answer()
+        await pilot.pause(0.1)
+
+        # `Button.press()` posts the real `Button.Pressed` message through the
+        # real `@on` handler; it just does not need the button to be within the
+        # visible viewport the way `pilot.click` does.
+        rating_three = app.screen.query_one("#review-rating-3", Button)
+        rating_five = app.screen.query_one("#review-rating-5", Button)
+        assert not rating_three.disabled, (
+            f"rating buttons should be live after Show; card="
+            f"{controller.current_review_card}; calls={scope.calls}"
+        )
+
+        # First press: the save enters the service and blocks on the gate.
+        rating_three.press()
+        await pilot.pause(0.2)
+        assert len(scope.entered) == 1, "first rating never reached the service"
+        assert scope.persisted == [], "the gate should still be holding the save"
+
+        # Second press while the first save is still in flight.
+        rating_five.press()
+        await pilot.pause(0.2)
+
+        scope.gate.set()
+        await pilot.pause(0.4)
+
+        assert len(scope.persisted) == 2, (
+            "a fast consecutive rating cancelled the previous save; persisted="
+            f"{scope.persisted}"
+        )
+        assert sorted(rating for _card_id, rating in scope.persisted) == [3, 5]
