@@ -166,3 +166,94 @@ restored to byte-identical SHA-256.
 `group=` additions; `Tests/UI/test_settings_configuration_hub.py`,
 `Tests/UI/test_media_window_v2_parity.py`,
 `Tests/UI/test_study_flashcards_screen.py`.
+
+## Review response (do-not-ship findings R1/R2/R3)
+
+Independent review confirmed the guard, the allowlist and the census (133
+sites / 32 files; the task's own "145 / 35" header is wrong) but returned
+**do-not-ship** on the Study path: removing exclusivity there was correct, and
+was not paired with the arrival-time guard this same change applies everywhere
+else. All three findings reproduced, were fixed, and are now pinned.
+
+Evidence is a single probe run identically against base `e98076411`, the
+pre-fix branch `3f539c2d4`, and the fix — real Textual workers, real DB,
+reading persisted state:
+
+| | base | pre-fix branch | fixed |
+|---|---|---|---|
+| R1 `_handle_exception` | `[]` | `WorkerFailed(NoMatches('#review-status'))` | `[]` |
+| R1 rating persisted | `[]` (lost) | `[('card-local-1', 3)]` | `[('card-local-1', 3)]` |
+| R1 `current_review_session_id` | `None` | `41` (resurrected) | `None` |
+| R2 `#card-list` rows / `current_cards` | 2 / 2 | 4 / 2 | 2 / 2 |
+| R3 `repetitions` / `interval` | 1 / 1d | 2 / 6d | 1 / 1d |
+
+**R1 — arrival guard.** `StudyWindow.watch_current_view` calls
+`remove_children()`, so leaving the sub-view mid-save destroys the widgets
+every `_set_review_*` helper reaches with a bare `query_one`. Exclusivity used
+to swallow this by cancelling the save first. `StudyFlashcardsController` now
+carries a `_review_presentation` token, bumped wherever the presented card
+changes or the panel is torn down (`reset_review_panel`,
+`_load_next_review_candidate`, `end_review_session_if_needed`).
+`submit_rating` captures it before its first `await` and re-checks it — plus
+`_review_panel_is_live()` — after the write lands, before touching session
+state or UI. Note the fixed column beats base on the row that matters: the
+rating **persists** where base lost it, and nothing raises.
+
+**R2 — the missed writer.** `handle_deck_select_changed` was left ungrouped
+*and* non-exclusive, so it sat in `"default"` while `handle_refresh_cards`
+moved to `study-refresh-cards`; base's ungrouped-exclusive refresh had been
+cancelling it. Both rebuild `#card-list`, so by this task's own rule (group
+after the *work*) they now share `study-refresh-cards`, exclusive.
+
+**R3 — SM-2 is compounding; semantic choice flagged for the owner.**
+`ChaChaNotes_DB.update_flashcard_review` is not idempotent: two reviews of one
+card move it `repetitions` 0->1->2 and `interval` 1d->6d. Converting a lost
+write into a doubled schedule is a different data defect, not a fix, and the
+old gated test *pinned* the doubling by holding one card fixed.
+
+Resolved as **one review per card presentation**: `submit_rating` records the
+presentation it has written for and drops a second submission for the same
+one, and rating buttons are now disabled the moment a press is accepted (re-
+enabled on the failure path), so the UI cannot produce the second press at all.
+
+The controller proposed "apply the **latest** rating once"; this ships
+**first-press-wins**, and the difference needs an owner call. Reasoning: by the
+time a second press arrives the first write is already awaiting the service, so
+the only ways to honour "latest" are to un-apply SM-2 (no such API) or to
+debounce the first write, which adds latency to *every* rating on the hot path.
+Anki, the reference implementation for this interaction, also disables the
+answer buttons on press and routes the next press to the *next* card — which is
+what disabling the buttons now reproduces. Both options agree on the part that
+matters (SM-2 applied exactly once); only the tie-break differs, and it is only
+reachable programmatically now. If the owner prefers latest-wins, the mechanism
+is a short debounce window and it should be filed as its own task.
+
+**Tests.** The doubling-pinning test is gone. Five now stand, each red at the
+baseline that owns it: `..._survives_a_sibling_study_worker` (red at base —
+this is the AC's actual named bug, `Study_Window.py:1007/1011` eating the
+save), `..._on_distinct_cards_all_persist` (the AC as-meant), `..._survives_
+leaving_the_flashcards_sub_view` (red at **both** baselines: lost write at
+base, `WorkerFailed` pre-fix), `..._do_not_interleave_the_card_list` (red
+pre-fix, 4 vs 2), `..._applies_sm2_once` (red pre-fix, real DB, 2/6d).
+
+**Guard hole closed by the reviewer (`3f539c2d4`, kept):** the walk checked
+only that a `group=` node was *present*. `group="default"` is byte-identical to
+omitting it, and `group=""`/`None` are falsy so `add_worker`'s
+`if exclusive and worker.group:` skips `cancel_group` entirely — the site asks
+for exclusivity and silently gets none.
+
+**Residuals to file, not fixed here** (both are the inverse shape — work that
+should be inside an existing group running outside it):
+1. `schedules_workbench` mutation workers (`_delete_and_refresh`,
+   `_save_and_refresh`, `_run_and_refresh`, `_update_and_refresh`,
+   `_bulk_delete`, `_bulk_toggle`) `await load_tasks()` inline, so that reload
+   runs outside `schedules-load-tasks` and cannot be superseded by a newer one.
+2. Watchlists notification mark-read/dismiss reload notifications inline,
+   outside `wc_notifications`.
+
+**Also recorded:** `Tests/Watchlists/test_watchlists_pane_filter_in_place.py::
+test_article_search_hides_a_day_header_whose_whole_group_is_filtered_out` is a
+**timezone flake**, not a regression — at base `e98076411` it passes under
+`TZ=UTC` and fails under `America/Los_Angeles`. The other two residual
+failures (`test_persistent_diagnostic_inventory`, `test_screen_size_ratchet
+[chat_screen.py]`) were confirmed pre-existing at that same base.

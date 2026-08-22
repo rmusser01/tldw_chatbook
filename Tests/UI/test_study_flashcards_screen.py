@@ -1369,6 +1369,28 @@ async def test_start_review_blocks_when_pending_session_teardown_keeps_failing()
         assert controller._pending_review_session_teardown is not None
 
 
+
+def _review_candidates(count: int = 6) -> list[dict]:
+    """`count` distinct due cards, so a review queue can actually advance."""
+    return [
+        {
+            "card": {
+                "record_id": f"local:study_flashcard:card-local-{index}",
+                "backing_id": f"card-local-{index}",
+                "deck_record_id": "local:study_deck:deck-local-1",
+                "front": f"Question {index}",
+                "back": f"Answer {index}",
+                "queue_state": "new",
+            },
+            "selection_reason": "new",
+            "next_intervals": {"again": "10m", "good": "1d"},
+            "review_session": {"review_session_id": 41},
+            "detail_available": True,
+        }
+        for index in range(1, count + 1)
+    ]
+
+
 class GatedReviewStudyScopeService(FakeStudyScopeService):
     """A scope service whose review save can be held open mid-flight.
 
@@ -1381,25 +1403,8 @@ class GatedReviewStudyScopeService(FakeStudyScopeService):
     def __init__(self):
         super().__init__()
         self.gate = asyncio.Event()
-        self.entered: list[tuple[str | None, int]] = []
         self.persisted: list[tuple[str | None, int]] = []
-        self.candidates = [
-            {
-                "card": {
-                    "record_id": f"local:study_flashcard:card-local-{index}",
-                    "backing_id": f"card-local-{index}",
-                    "deck_record_id": "local:study_deck:deck-local-1",
-                    "front": f"Question {index}",
-                    "back": f"Answer {index}",
-                    "queue_state": "new",
-                },
-                "selection_reason": "new",
-                "next_intervals": {"again": "10m", "good": "1d"},
-                "review_session": {"review_session_id": 41},
-                "detail_available": True,
-            }
-            for index in range(1, 6)
-        ]
+        self.candidates = _review_candidates()
 
     async def submit_flashcard_review(
         self,
@@ -1412,7 +1417,6 @@ class GatedReviewStudyScopeService(FakeStudyScopeService):
         current_card=None,
         answer_time_ms=None,
     ):
-        self.entered.append((card_id, rating))
         await self.gate.wait()
         self.persisted.append((card_id, rating))
         return {
@@ -1428,23 +1432,36 @@ class GatedReviewStudyScopeService(FakeStudyScopeService):
         }
 
 
-@pytest.mark.asyncio
-async def test_fast_consecutive_flashcard_ratings_all_persist():
-    """TASK-19559: a second rating press must not destroy the first save.
+class GatedCardListStudyScopeService(FakeStudyScopeService):
+    """Holds `list_flashcards` open so two card-list rebuilds can interleave."""
 
-    Born red against the branch base, where `handle_review_rating` scheduled
-    `submit_rating` with `exclusive=True` and no `group=`. That put every
-    rating in the shared "default" group, so `add_worker` cancelled the
-    in-flight save the moment the next press arrived -- and because
-    `CancelledError` is a `BaseException`, `submit_rating`'s `except
-    Exception:` could not even see it happen. The first rating simply
-    vanished. Pre-fix this asserts `persisted == [(card, 5)]`; post-fix both
-    ratings are present.
+    def __init__(self):
+        super().__init__()
+        self.gate = asyncio.Event()
+        self.list_calls = 0
+        self.candidates = _review_candidates()
 
-    Driven through the real rating buttons -- two consecutive presses with the
-    save held open in between -- not by inspecting the dispatch keywords.
-    """
-    scope = GatedReviewStudyScopeService()
+    async def list_flashcards(
+        self,
+        *,
+        mode=None,
+        scope_type=None,
+        workspace_id=None,
+        deck_id=None,
+        q=None,
+        limit=100,
+        offset=0,
+    ):
+        self.list_calls += 1
+        await self.gate.wait()
+        return [
+            card
+            for card in self.cards
+            if deck_id is None or card["deck_record_id"].endswith(str(deck_id))
+        ]
+
+
+def _study_app_for(scope):
     app_instance = SimpleNamespace(
         study_scope_service=scope,
         current_runtime_backend="local",
@@ -1452,49 +1469,255 @@ async def test_fast_consecutive_flashcard_ratings_all_persist():
         app_config={},
         notify=lambda *args, **kwargs: None,
     )
-    app = _build_full_study_app(app_instance)
+    return _build_full_study_app(app_instance)
+
+
+async def _enter_review(pilot, app):
+    """Open Flashcards, pick the deck, start a review and reveal the answer."""
+    await pilot.pause(0.2)
+    await pilot.click("#view-flashcards-btn")
+    await pilot.pause(0.3)
+    app.screen.query_one("#deck-select", Select).value = "deck-local-1"
+    # Let the deck-change refresh settle before starting a review, so nothing
+    # tears the card down underneath the test.
+    await pilot.pause(0.5)
+    window = app.screen.query_one(StudyWindow)
+    controller = window.flashcards_controller
+    await controller.start_review()
+    await pilot.pause(0.2)
+    controller.show_answer()
+    await pilot.pause(0.1)
+    return window, controller
+
+
+@pytest.mark.asyncio
+async def test_flashcard_rating_survives_a_sibling_study_worker():
+    """TASK-19559(a): the named bug -- a sibling Study worker ate the save.
+
+    `Study_Window.py:1007/1011` (create deck, refresh cards) and the
+    `initialize_view` refresh at `914` were all `exclusive=True` with no
+    `group=`, which put them in the shared "default" group alongside the
+    rating submission. Pressing any of them while a rating was in flight
+    cancelled the save, and `CancelledError` is a `BaseException` that
+    `submit_rating`'s `except Exception:` cannot observe -- the rating simply
+    vanished.
+
+    Born red against the branch base: `persisted == []`.
+    """
+    scope = GatedReviewStudyScopeService()
+    app = _study_app_for(scope)
+
+    async with app.run_test(size=(180, 60)) as pilot:
+        window, _controller = await _enter_review(pilot, app)
+
+        window.query_one("#review-rating-3", Button).press()
+        await pilot.pause(0.2)
+        assert scope.persisted == [], "the gate should still be holding the save"
+
+        # A sibling Study worker starts while the save is in flight.
+        window.query_one("#flashcard-refresh-button", Button).press()
+        await pilot.pause(0.2)
+
+        scope.gate.set()
+        await pilot.pause(0.5)
+
+        assert scope.persisted == [("card-local-1", 3)], (
+            "a sibling Study worker cancelled the in-flight rating save; "
+            f"persisted={scope.persisted}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_consecutive_ratings_on_distinct_cards_all_persist():
+    """TASK-19559: rating card after card in quick succession loses nothing.
+
+    This is the acceptance criterion's real content: *distinct* cards all
+    persist. (Two presses on one card are a double-submit, not two reviews --
+    see `test_double_press_on_one_card_applies_sm2_once`.)
+    """
+    scope = GatedReviewStudyScopeService()
+    scope.gate.set()  # saves complete immediately; the user never waits
+    app = _study_app_for(scope)
+
+    async with app.run_test(size=(180, 60)) as pilot:
+        window, controller = await _enter_review(pilot, app)
+
+        for _ in range(3):
+            assert controller.current_review_card is not None
+            window.query_one("#review-rating-4", Button).press()
+            await pilot.pause(0.3)
+            controller.show_answer()
+            await pilot.pause(0.05)
+
+        assert len(scope.persisted) == 3, f"persisted={scope.persisted}"
+        assert [card_id for card_id, _rating in scope.persisted] == [
+            "card-local-1",
+            "card-local-2",
+            "card-local-3",
+        ]
+
+
+@pytest.mark.asyncio
+async def test_rating_in_flight_survives_leaving_the_flashcards_sub_view():
+    """TASK-19559 review R1: switching sub-view mid-save must not crash.
+
+    `StudyWindow.watch_current_view` calls `remove_children()` on the view
+    container, destroying every widget `_set_review_status` /
+    `_set_next_intervals` query with a bare `query_one`. Exclusivity used to
+    hide this by cancelling the save first. Removing it exposed an unhandled
+    `WorkerFailed(NoMatches(...))`, and the tail also re-assigned
+    `current_review_session_id` for a session teardown had just ended.
+
+    Base vs branch, identical probe -- base lost the rating and raised
+    nothing; the pre-fix branch raised `WorkerFailed` and resurrected session
+    41. The fix keeps the write *and* stays quiet.
+    """
+    scope = GatedReviewStudyScopeService()
+    app = _study_app_for(scope)
+    captured: list[str] = []
+
+    async with app.run_test(size=(180, 60)) as pilot:
+        app._handle_exception = lambda error: captured.append(repr(error))
+        window, controller = await _enter_review(pilot, app)
+
+        window.query_one("#review-rating-3", Button).press()
+        await pilot.pause(0.2)
+
+        # The user leaves Flashcards while the save is still in flight.
+        window.current_view = "quizzes"
+        await pilot.pause(0.4)
+
+        scope.gate.set()
+        await pilot.pause(0.6)
+
+        assert captured == [], f"unhandled worker exception: {captured}"
+        assert scope.persisted == [("card-local-1", 3)], (
+            f"the rating did not survive the sub-view switch: {scope.persisted}"
+        )
+        assert controller.current_review_session_id is None, (
+            "an ended review session was resurrected by the rating's tail"
+        )
+
+
+@pytest.mark.asyncio
+async def test_deck_change_and_refresh_do_not_interleave_the_card_list():
+    """TASK-19559 review R2: two card-list rebuilds must not interleave.
+
+    `handle_deck_select_changed` was left ungrouped *and* non-exclusive, so it
+    sat in the shared "default" group while `handle_refresh_cards` moved to
+    `study-refresh-cards`. Base's ungrouped-exclusive refresh used to cancel
+    the deck-change rebuild; afterwards both `refresh_cards()` bodies appended
+    into `#card-list` together and the visible row count no longer matched
+    `current_cards`.
+    """
+    scope = GatedCardListStudyScopeService()
+    app = _study_app_for(scope)
 
     async with app.run_test(size=(180, 60)) as pilot:
         await pilot.pause(0.2)
         await pilot.click("#view-flashcards-btn")
         await pilot.pause(0.3)
-
-        app.screen.query_one("#deck-select", Select).value = "deck-local-1"
-        # Let the deck-change refresh (and its review-session teardown) finish
-        # before starting a review, so nothing tears the card down underneath us.
-        await pilot.pause(0.5)
-        controller = app.screen.query_one(StudyWindow).flashcards_controller
-
-        await controller.start_review()
-        await pilot.pause(0.2)
-        controller.show_answer()
-        await pilot.pause(0.1)
-
-        # `Button.press()` posts the real `Button.Pressed` message through the
-        # real `@on` handler; it just does not need the button to be within the
-        # visible viewport the way `pilot.click` does.
-        rating_three = app.screen.query_one("#review-rating-3", Button)
-        rating_five = app.screen.query_one("#review-rating-5", Button)
-        assert not rating_three.disabled, (
-            f"rating buttons should be live after Show; card="
-            f"{controller.current_review_card}; calls={scope.calls}"
-        )
-
-        # First press: the save enters the service and blocks on the gate.
-        rating_three.press()
-        await pilot.pause(0.2)
-        assert len(scope.entered) == 1, "first rating never reached the service"
-        assert scope.persisted == [], "the gate should still be holding the save"
-
-        # Second press while the first save is still in flight.
-        rating_five.press()
-        await pilot.pause(0.2)
-
+        window = app.screen.query_one(StudyWindow)
+        controller = window.flashcards_controller
         scope.gate.set()
-        await pilot.pause(0.4)
+        await pilot.pause(0.3)
 
-        assert len(scope.persisted) == 2, (
-            "a fast consecutive rating cancelled the previous save; persisted="
-            f"{scope.persisted}"
+        # Hold both rebuilds open together.
+        scope.gate.clear()
+        app.screen.query_one("#deck-select", Select).value = "deck-local-1"
+        await pilot.pause(0.1)
+        window.query_one("#flashcard-refresh-button", Button).press()
+        await pilot.pause(0.1)
+        scope.gate.set()
+        await pilot.pause(0.6)
+
+        rows = len(window.query_one("#card-list", ListView).children)
+        assert rows == len(controller.current_cards), (
+            f"#card-list holds {rows} rows against "
+            f"{len(controller.current_cards)} cards -- two rebuilds interleaved"
         )
-        assert sorted(rating for _card_id, rating in scope.persisted) == [3, 5]
+
+
+@pytest.mark.asyncio
+async def test_double_press_on_one_card_applies_sm2_once(tmp_path):
+    """TASK-19559 review R3: SM-2 is compounding, so a double-submit doubles it.
+
+    `ChaChaNotes_DB.update_flashcard_review` runs SM-2, which is *not*
+    idempotent: applying it twice to one card moves `repetitions` 0 -> 1 -> 2
+    and `interval` 1d -> 6d. Removing exclusivity turned a lost write into a
+    doubled schedule, which is a different data defect, not a fix.
+
+    Real DB, real Textual workers, two rapid presses on one card. Expected
+    `repetitions=1, interval=1` (SM-2 applied exactly once, matching base);
+    the pre-fix branch recorded `repetitions=2, interval=6`.
+    """
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.Study_Interop.local_study_service import LocalStudyService
+
+    db = CharactersRAGDB(str(tmp_path / "study.db"), "study-review-probe")
+    deck_id = db.create_deck("Doubling deck")
+    card_id = db.create_flashcard(
+        {"deck_id": deck_id, "front": "Q", "back": "A"}
+    )
+    local = LocalStudyService(db)
+
+    class RealDbStudyScopeService(FakeStudyScopeService):
+        def __init__(self):
+            super().__init__()
+            self.gate = asyncio.Event()
+            self.candidates = [
+                {
+                    "card": {
+                        "record_id": f"local:study_flashcard:{card_id}",
+                        "backing_id": card_id,
+                        "deck_record_id": f"local:study_deck:{deck_id}",
+                        "front": "Q",
+                        "back": "A",
+                        "queue_state": "new",
+                    },
+                    "selection_reason": "new",
+                    "next_intervals": {"again": "10m", "good": "1d"},
+                    "review_session": {"review_session_id": 41},
+                    "detail_available": True,
+                }
+            ] * 4
+
+        async def submit_flashcard_review(
+            self,
+            *,
+            mode=None,
+            scope_type=None,
+            workspace_id=None,
+            card_id=None,
+            rating,
+            current_card=None,
+            answer_time_ms=None,
+        ):
+            await self.gate.wait()
+            outcome = local.submit_flashcard_review(card_id, rating=rating)
+            return {
+                "card": outcome["card"],
+                "rating": rating,
+                "next_intervals": {"good": "3d"},
+                "review_session": {"review_session_id": 41},
+                "detail_available": True,
+            }
+
+    scope = RealDbStudyScopeService()
+    app = _study_app_for(scope)
+
+    async with app.run_test(size=(180, 60)) as pilot:
+        window, _controller = await _enter_review(pilot, app)
+
+        window.query_one("#review-rating-3", Button).press()
+        await pilot.pause(0.2)
+        window.query_one("#review-rating-5", Button).press()
+        await pilot.pause(0.2)
+        scope.gate.set()
+        await pilot.pause(0.8)
+
+    row = db.get_flashcard(card_id)
+    assert (row["repetitions"], row["interval"]) == (1, 1), (
+        "SM-2 was applied more than once for a single card presentation: "
+        f"repetitions={row['repetitions']} interval={row['interval']}"
+    )

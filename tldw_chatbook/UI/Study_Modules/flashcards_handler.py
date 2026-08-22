@@ -6,6 +6,7 @@ import asyncio
 from typing import TYPE_CHECKING, Any, Optional
 
 from loguru import logger
+from textual.css.query import NoMatches, QueryError
 from textual.widgets import (
     Button,
     Input,
@@ -54,6 +55,16 @@ class StudyFlashcardsController:
         # TASK-19559: rating submissions are serialised, never cancelled --
         # see `submit_rating`.
         self._review_submit_lock = asyncio.Lock()
+        # TASK-19559 review: a monotonic token for "which card is on screen
+        # right now". It is bumped every time the presented card changes and
+        # every time the panel is torn down, so a rating that finishes saving
+        # can tell whether the panel it was started from is still the one in
+        # front of the user. See `submit_rating`.
+        self._review_presentation: int = 0
+        # The presentation a review has already been written for. SM-2 is
+        # compounding, so a second submission for the SAME presentation is a
+        # double-submit, not a second review -- see `submit_rating`.
+        self._reviewed_presentation: Optional[int] = None
 
     def _current_mode(self) -> str:
         getter = getattr(self.app_instance, "get_authoritative_runtime_source", None)
@@ -482,7 +493,35 @@ class StudyFlashcardsController:
             button = self.window.query_one(f"#review-rating-{rating}", Button)
             button.disabled = not ratings_enabled
 
+    def _bump_review_presentation(self) -> int:
+        """Claim a new "card on screen" token.
+
+        TASK-19559 review: called every time the presented card changes or the
+        review panel is torn down. `submit_rating` captures the token before it
+        awaits and re-checks it afterwards, which is the arrival-time guard the
+        rest of this change already applies in `ccp_character_handler`,
+        `model_installed_view` and the Settings backup load.
+        """
+        self._review_presentation += 1
+        return self._review_presentation
+
+    def _review_panel_is_live(self) -> bool:
+        """Is the review panel still mounted?
+
+        `StudyWindow.watch_current_view` calls `remove_children()` on the view
+        container, so switching sub-view destroys these widgets outright while
+        a rating save is still in flight. Every `_set_review_*` helper does a
+        bare `query_one`, so touching them afterwards raises `NoMatches` out of
+        the worker.
+        """
+        try:
+            self.window.query_one("#review-status", Static)
+        except (NoMatches, QueryError):
+            return False
+        return True
+
     def reset_review_panel(self, message: str) -> None:
+        self._bump_review_presentation()
         self.current_review_card = None
         self.current_review_session_id = None
         self.current_review_session_mode = None
@@ -885,22 +924,53 @@ class StudyFlashcardsController:
         self._set_review_controls(show_answer_enabled=False, ratings_enabled=True)
 
     async def submit_rating(self, rating: int) -> None:
-        """Persist one rating, serialised behind any rating already in flight.
+        """Write exactly one review for the card currently on screen.
 
-        TASK-19559: this is a durable write, so it must never be raced away by
-        the next press. The card under review is captured **synchronously**,
-        before the first ``await``, so a second press that arrives while the
-        first save is still running rates the card the user was actually
-        looking at rather than whatever card has since been loaded. The lock
-        then serialises the two saves instead of cancelling either, so every
-        press reaches the database in press order.
+        TASK-19559: a spaced-repetition rating is a durable write, so it must
+        not be raced away by the next press -- exclusivity used to cancel the
+        in-flight save, and `CancelledError` is a `BaseException` that the
+        `except Exception` below cannot even observe. Three rules replace it:
+
+        * **Serialised, never cancelled.** The lock queues a second press
+          behind the first instead of destroying it.
+        * **Once per presentation.** `update_flashcard_review` runs SM-2, which
+          is *compounding and non-idempotent*: applying two reviews to one card
+          moves it from `repetitions=1, interval=1d` to `repetitions=2,
+          interval=6d`. Two rapid presses on the same card are a double-submit,
+          not two recall events, so the second is dropped rather than
+          compounded. (Ratings are also disabled the moment a press is
+          accepted, so the UI cannot produce the second press at all; this
+          check is the durable backstop for any programmatic caller.)
+        * **Guarded at arrival.** `StudyWindow.watch_current_view` calls
+          `remove_children()`, so leaving the flashcards sub-view mid-save
+          destroys the widgets every `_set_review_*` helper queries, and the
+          tail below would otherwise resurrect a review session that teardown
+          had just ended. The presentation token is re-checked after the await.
         """
         service = self._scope_service()
         card = self.current_review_card
         if service is None or not card or not self._scope_is_available():
             return
 
+        # Captured synchronously, before the first await, so a queued second
+        # press is judged against the card the user was actually looking at.
+        presentation = self._review_presentation
+
         async with self._review_submit_lock:
+            if self._reviewed_presentation == presentation:
+                logger.info(
+                    "Ignoring a duplicate flashcard rating: this card has "
+                    "already been reviewed once and SM-2 would compound it."
+                )
+                return
+            self._reviewed_presentation = presentation
+
+            # Stop the UI producing a second press for this same card.
+            if self._review_panel_is_live():
+                self._set_review_controls(
+                    show_answer_enabled=False, ratings_enabled=False
+                )
+
             try:
                 outcome = await service.submit_flashcard_review(
                     mode=self._current_mode(),
@@ -922,6 +992,26 @@ class StudyFlashcardsController:
             except Exception:
                 logger.opt(exception=True).error("Failed to submit flashcard review")
                 self._notify("Failed to save review.", severity="error")
+                # The write did not land, so this presentation is reviewable
+                # again and the user needs the buttons back to retry.
+                self._reviewed_presentation = None
+                if self._review_panel_is_live():
+                    self._set_review_controls(
+                        show_answer_enabled=False, ratings_enabled=True
+                    )
+                return
+
+            # ARRIVAL GUARD. The write has landed; everything below only
+            # touches UI and session state, and both are wrong to touch if the
+            # panel this rating came from is gone or has already moved on.
+            if (
+                presentation != self._review_presentation
+                or not self._review_panel_is_live()
+            ):
+                logger.info(
+                    "Flashcard review saved, but the review panel moved on "
+                    "before the result arrived; leaving the current view alone."
+                )
                 return
 
             review_session = outcome.get("review_session") or {}
@@ -965,6 +1055,7 @@ class StudyFlashcardsController:
             )
             return
 
+        self._bump_review_presentation()
         self.current_review_card = card
         review_session = candidate.get("review_session") or {}
         session_id = review_session.get("review_session_id")
@@ -1002,6 +1093,7 @@ class StudyFlashcardsController:
 
         self._pending_review_session_teardown = None
         if self.current_review_session_id == teardown_request.get("review_session_id"):
+            self._bump_review_presentation()
             self.current_review_session_id = None
             self.current_review_card = None
             self.current_review_session_mode = None

@@ -92,7 +92,16 @@ instances touched by this work; do not open a 42-site sweep on its own account.
 
 ## Implementation Notes
 
-**Headline: CCP conversation search never ran at all.** Reading the named site
+**Note on severity, corrected in review: surface (a) is dead code.**
+`PersonasScreen` (1008-1009) only ever builds `character_handler` and
+`persona_handler` -- `CCPConversationHandler` and `CCPDictionaryHandler` are
+never instantiated in production. The conversation-search and dictionary fixes
+below are correct but unreachable, so **the live fix in this task is the
+Personas character load (b)**, and (a) must not be described as the headline.
+The findings are kept because the handlers are still imported, exported and
+tested, and would be reached the moment either is wired up.
+
+**What reading the named site turned up.** Reading the named site
 closely turned up two independent defects underneath the stale-results
 symptom, neither observable from the handler:
 

@@ -1092,7 +1092,18 @@ class StudyWindow(Container):
 
     @on(Select.Changed, "#deck-select")
     def handle_deck_select_changed(self, event: Select.Changed) -> None:
-        self.run_worker(self.flashcards_controller.handle_deck_changed())
+        # TASK-19559 review: `handle_deck_changed` ends the review session and
+        # then rebuilds `#card-list` -- the same list `handle_refresh_cards`
+        # rebuilds. Both writers must share one exclusive group so the newer
+        # rebuild supersedes the older one; ungrouped and non-exclusive, this
+        # one sat in "default" and interleaved with the grouped refresh,
+        # leaving `#card-list` holding one row per interleaved append while
+        # `current_cards` held the true count.
+        self.run_worker(
+            self.flashcards_controller.handle_deck_changed(),
+            exclusive=True,
+            group="study-refresh-cards",
+        )
 
     @on(Button.Pressed, "#create-quiz-button")
     def handle_create_quiz(self) -> None:
