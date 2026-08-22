@@ -1553,6 +1553,9 @@ def test_expanding_the_character_section_reallows_a_rail_width_avatar():
         def apply_section_open(self, section_id, section_open):
             applied.append((section_id, section_open))
 
+        def request_allocation_reconcile(self):
+            pass
+
     def _fake_query_one(selector, expect_type=None):
         # Final review finding 5: a wildcard fake here would still pass even
         # if `_toggle_console_rail_section` queried the wrong id or type --
