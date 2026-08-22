@@ -879,6 +879,8 @@ class RemoteView(Widget):
         self,
         catalog: ResolvedRemoteCatalog,
         candidate: RemoteGGUFCandidate,
+        *,
+        status_message: str = "Installing the selected GGUF variant…",
     ) -> bool:
         """Restore selected-model presentation after a screen recompose.
 
@@ -890,6 +892,7 @@ class RemoteView(Widget):
         Args:
             catalog: Frozen one-item catalog retained by ``LLMScreen``.
             candidate: Exact GGUF candidate retained alongside the catalog.
+            status_message: Truthful host-owned lifecycle copy to restore.
 
         Returns:
             Whether the retained values reproduced the exact frozen catalog.
@@ -933,7 +936,7 @@ class RemoteView(Widget):
         self._selected_repository = repository
         self._selected_candidate = candidate
         self._operation_reference = descriptor.reference
-        self._refresh_with_status("Installing the selected GGUF variant…")
+        self._refresh_with_status(status_message)
         self._set_metadata_controls_disabled(True)
         return True
 

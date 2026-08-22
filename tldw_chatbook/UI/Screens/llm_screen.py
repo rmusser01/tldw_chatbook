@@ -2714,6 +2714,17 @@ class LLMScreen(LabScreen):
             or getattr(self, "_remote_install_terminal_action", None) is not None
         )
 
+    def _remote_install_context_status(self) -> str:
+        """Return truthful lifecycle copy for a reconstructed Remote detail."""
+        if self._model_install_active or (
+            self._model_install_pending_report is not None
+            and self._model_install_worker is not None
+        ):
+            return "Installing the selected GGUF variant…"
+        if self._model_install_pending_report is not None:
+            return "Awaiting review; no download has started."
+        return "Preparing the managed install plan…"
+
     def compose_lab_rail(self) -> ComposeResult:
         """Yield the two rail sections and their nine provider rows."""
         for title, entries in MODELS_RAIL_SECTIONS:
@@ -2876,6 +2887,7 @@ class LLMScreen(LabScreen):
             view.restore_install_context(
                 self._model_install_catalog,
                 self._model_install_candidate,
+                status_message=self._remote_install_context_status(),
             )
         if not self._model_install_active:
             return

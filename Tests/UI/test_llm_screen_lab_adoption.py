@@ -2694,9 +2694,16 @@ async def test_remote_install_progress_survives_a_screen_level_recompose(monkeyp
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("lifecycle_phase", ("preflight", "pending-consent"))
+@pytest.mark.parametrize(
+    ("lifecycle_phase", "expected_status"),
+    (
+        ("preflight", "Preparing the managed install plan…"),
+        ("pending-consent", "Awaiting review; no download has started."),
+    ),
+)
 async def test_remote_context_survives_recompose_before_the_first_progress_tick(
     lifecycle_phase: str,
+    expected_status: str,
     monkeypatch,
 ):
     """Remote context stays truthful throughout preflight and consent.
@@ -2759,6 +2766,10 @@ async def test_remote_context_survives_recompose_before_the_first_progress_tick(
         assert candidate.label in detail_text
         assert fresh_remote.query_one("#remote-model-install", Button).disabled
         assert fresh_remote.query_one("#remote-model-search", Button).disabled
+        assert (
+            str(fresh_remote.query_one("#remote-model-status", Static).renderable)
+            == expected_status
+        )
 
 
 @pytest.mark.asyncio
