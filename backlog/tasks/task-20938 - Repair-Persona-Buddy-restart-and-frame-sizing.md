@@ -11,6 +11,8 @@ references:
   - >-
     Docs/superpowers/specs/2026-08-22-persona-buddy-uat-repairs-design.md
   - >-
+    Docs/superpowers/plans/2026-08-22-task-20938-persona-buddy-uat-repairs.md
+  - >-
     backlog/decisions/074-portable-actor-packs-and-local-persona-visual-runtime.md
 priority: high
 ---
@@ -39,8 +41,10 @@ ADR required: no
 ADR path: `backlog/decisions/074-portable-actor-packs-and-local-persona-visual-runtime.md`
 Reason: ADR-074 already defines Buddy preference persistence, native Textual rendering, exact runtime authority, and verification boundaries; this task repairs two implementation defects without changing those decisions.
 
-1. Review and approve the linked repair design, then write the executable TDD plan.
-2. Add focused startup and frame-slot RED tests at the real configuration and Textual seams.
-3. Apply the smallest root-cause fixes, run scoped regressions and mutations, and repeat isolated full-app UAT.
-4. Record final evidence and deviations, complete the acceptance criteria, and close the task only when every scoped gate is green.
+Executable plan: [Persona Buddy UAT Repairs Implementation Plan](../../Docs/superpowers/plans/2026-08-22-task-20938-persona-buddy-uat-repairs.md)
+
+1. Project the effective Buddy table at the existing normalized-config boundary, with real-TOML startup and first-write TDD.
+2. Use the visible frame Static as the exact shared resolution/authority size, with real-CSS crop, resize, and hidden-state TDD.
+3. Run scoped regression, mutation, static, privacy, and architecture gates.
+4. Repeat isolated full-application UAT without `NO_COLOR`, then record exact closeout evidence and deviations.
 <!-- SECTION:PLAN:END -->

@@ -3,7 +3,7 @@
 Date: 2026-08-22
 Task: [TASK-20938](../../../backlog/tasks/task-20938%20-%20Repair-Persona-Buddy-restart-and-frame-sizing.md)
 Decision: [ADR-074](../../../backlog/decisions/074-portable-actor-packs-and-local-persona-visual-runtime.md)
-Status: Approved for written-spec review
+Status: Approved
 
 ## Problem
 
