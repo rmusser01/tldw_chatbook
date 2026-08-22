@@ -889,3 +889,27 @@ task completion.
   the screen and 16 on the controller; scope/privacy/diff checks are clean. Final
   specification and quality review approved the fix and the amended no-task-regression
   completion contract, with no new failures.
+
+### Reviewed delivery rebase (2026-08-22)
+
+- The completed 23-commit branch was rebased onto frozen delivery base
+  `95eadbc108f5350e55404c2e7510f401424f5de6`. The range-diff maps every commit
+  exactly. No fleet behavior or ownership contract changed.
+- The rebased candidate is 19,995 physical `ChatScreen` lines / 640 direct methods,
+  with zero moved definitions on the screen and all 16 exactly once on
+  `ConsoleFleetLifecycleController`. The exact core passed 22 / 22 with 2 warnings in
+  3.12s. The exact affected matrix completed at 156 passed / 2 failed / 1 skipped /
+  10 warnings in 140.88s; the remaining selection completed at 6 passed / 1 failed /
+  2 warnings in 21.55s.
+- The three remaining failures are the same project-instruction `NoActiveWorker`,
+  synthetic Notes-owner teardown timeout, and changed-files `NoActiveAppError`
+  deviations documented above. Running those exact three nodes on archived delivery
+  base `95eadbc1` reproduced all three by the same mechanisms (3 failed / 4 warnings
+  in 15.32s). The prior stale Library-label metadata deviation is repaired upstream;
+  both exact diagnostic tests now pass.
+- The canonical writer is idempotent at the final rebased HEAD. Non-write verification
+  reports 525 owners / 1,222 TASK-492 calls / 7,206 TASK-494 calls / 8 sink files.
+  Ruff check and format-check pass all 14 changed Python paths; four production modules
+  compile in a validated temporary cache; diff, ownership, registry, and scope checks
+  pass. Per user instruction, no local full suite ran. No push, PR, CI, or merge action
+  was performed as part of this delivery verification.
