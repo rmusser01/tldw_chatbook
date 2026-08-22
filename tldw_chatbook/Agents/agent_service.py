@@ -816,30 +816,13 @@ def _contains_hidden_reasoning(content: str) -> bool:
     return has_reasoning_key(parsed)
 
 
-def _contains_structured_local_path(content: str) -> bool:
-    """Inspect decoded string leaves so JSON escaping cannot hide paths."""
-    try:
-        parsed = json.loads(content)
-    except (TypeError, ValueError):
-        return contains_local_path(content)
-
-    def has_path(value: Any) -> bool:
-        if isinstance(value, Mapping):
-            return any(has_path(item) for item in value.values())
-        if isinstance(value, list):
-            return any(has_path(item) for item in value)
-        return isinstance(value, str) and contains_local_path(value)
-
-    return has_path(parsed)
-
-
 def _safe_run_log_content(record_type: str, content: str) -> tuple[str, bool]:
     """Return sanitized durable content and whether fidelity was withheld."""
     if record_type not in {"tool_call", "tool_result"}:
         return content, False
-    if _contains_hidden_reasoning(content):
+    if contains_local_path(content):
         return "", True
-    if _contains_structured_local_path(content):
+    if _contains_hidden_reasoning(content):
         return "", True
     uppered = content.upper()
     if "-----BEGIN " in uppered and "PRIVATE KEY-----" in uppered:

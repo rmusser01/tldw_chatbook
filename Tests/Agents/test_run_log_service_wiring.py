@@ -299,6 +299,10 @@ def test_real_run_log_omits_sensitive_tool_args_and_results(wired, monkeypatch):
         r"C:\Users\alice\secret.txt",
         r"\\server\share\secret.txt",
         'File "package/module.py", line 42, in run',
+        json.dumps({"meta": {"file_path": "/api/private"}}),
+        "cat /docs/private/local",
+        "open /help/private/local",
+        "[" * 1_000 + '{"file_path":"/api/private"}' + "]" * 1_000,
     )
     for value in sensitive:
         assert on_record("tool_call", {"content": json.dumps({"value": value})}) is None

@@ -90,10 +90,19 @@ _LOCAL_PATH_RE = re.compile(
 )
 _HTTP_URL_RE = re.compile(r"https?://[^\s\"'<>]+", re.IGNORECASE)
 _HTTP_REQUEST_TARGET_RE = re.compile(
-    r"^(\s*(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+)\S+", re.IGNORECASE
+    r"^(\s*(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+)\S+(?=\s+HTTP/\d)",
+    re.IGNORECASE,
 )
 _SAFE_ROUTE_ROOTS = frozenset({"api", "docs", "help", "v1", "v2", "v3"})
 _PATH_CONTEXT_KEYS = frozenset({"path", "file_path", "file", "cwd", "directory"})
+_STRUCTURED_PATH_FIELD_RE = re.compile(
+    r"[\"']?(?:path|file_path|file|cwd|directory)[\"']?\s*[:=]\s*"
+    r"[\"']?(?:file://|~/|/|[A-Za-z]:[\\/]|\\\\)",
+    re.IGNORECASE,
+)
+_LOCAL_FILE_COMMANDS = frozenset({"cd", "ls", "cat", "open", "less", "head", "tail"})
+_STRUCTURED_PARSE_MAX_CHARS = 4_096
+_STRUCTURED_NESTING_MAX = 64
 _PYTHON_STACK_RE = re.compile(
     r"\bfile\s+[\"']?[^\"',\s]+[\\/][^\"',]+[\"']?,\s*line\s+\d+",
     re.IGNORECASE,
@@ -107,12 +116,27 @@ def contains_local_path(value: str) -> bool:
     """Return whether text contains a local path or file URI."""
     stripped_value = value.strip()
     if stripped_value.startswith(("{", "[", "(")):
-        try:
-            structured = json.loads(stripped_value)
-        except (TypeError, ValueError):
+        depth = 0
+        for char in stripped_value:
+            if char in "{[(":
+                depth += 1
+                if depth > _STRUCTURED_NESTING_MAX:
+                    return True
+            elif char in "}])":
+                depth = max(0, depth - 1)
+        if len(stripped_value) > _STRUCTURED_PARSE_MAX_CHARS:
+            structured = None
+            if _STRUCTURED_PATH_FIELD_RE.search(stripped_value):
+                return True
+        else:
             try:
-                structured = ast.literal_eval(stripped_value)
-            except (SyntaxError, ValueError):
+                if re.match(r"^[{[(]\s*'", stripped_value):
+                    structured = ast.literal_eval(stripped_value)
+                else:
+                    structured = json.loads(stripped_value)
+            except (MemoryError, RecursionError, OverflowError):
+                return True
+            except (SyntaxError, TypeError, ValueError):
                 structured = None
 
         def has_path_context(item: Any) -> bool:
@@ -129,6 +153,19 @@ def contains_local_path(value: str) -> bool:
                         return True
             elif isinstance(item, (list, tuple)):
                 return any(has_path_context(nested) for nested in item)
+            elif isinstance(item, str):
+                candidate = item.strip()
+                if _STRUCTURED_PATH_FIELD_RE.search(candidate):
+                    return True
+                if _PYTHON_STACK_RE.search(candidate) or _JS_STACK_RE.search(candidate):
+                    return True
+                if candidate.lower().startswith("file://") or candidate.startswith(
+                    ("~/", "\\\\")
+                ) or (len(candidate) > 2 and candidate[1:3] in {":\\", ":/"}):
+                    return True
+                if candidate.startswith("/"):
+                    parts = [part for part in candidate.split("/") if part]
+                    return bool(parts and parts[0].lower() not in _SAFE_ROUTE_ROOTS)
             return False
 
         if structured is not None and has_path_context(structured):
@@ -153,11 +190,12 @@ def contains_local_path(value: str) -> bool:
         if candidate.startswith("/"):
             parts = [part for part in candidate.split("/") if part]
             prefix = searchable[max(0, match.start() - 32) : match.start()].lower()
+            command_match = re.search(r"\b([a-z_]+)\s+$", prefix)
             explicit_context = bool(
-                re.search(
-                    r"(?:\b(?:cd|ls)\s+|"
-                    r"\b(?:cwd|path|file_path|file|directory)\s*[:=]\s*)$",
-                    prefix,
+                command_match
+                and command_match.group(1) in _LOCAL_FILE_COMMANDS
+                or re.search(
+                    r"\b(?:cwd|path|file_path|file|directory)\s*[:=]\s*$", prefix
                 )
             )
             if explicit_context or not parts or parts[0].lower() not in _SAFE_ROUTE_ROOTS:
