@@ -17,6 +17,12 @@ from .export import (
     ActorPackExportSnapshot,
     write_actor_pack_archive,
 )
+from .publication import (
+    ActorPackDestinationContract,
+    ActorPackPublicationError,
+    capture_actor_pack_destination,
+    publish_actor_pack,
+)
 
 __all__ = [
     "ActorPackDocument",
@@ -28,6 +34,10 @@ __all__ = [
     "ActorPackExportResult",
     "ActorPackExportService",
     "ActorPackExportSnapshot",
+    "ActorPackDestinationContract",
+    "ActorPackPublicationError",
+    "capture_actor_pack_destination",
+    "publish_actor_pack",
     "write_actor_pack_archive",
     "validate_actor_pack_document",
 ]
