@@ -1,7 +1,7 @@
 ---
 id: TASK-19057
 title: Define and create portable Actor Packs
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-20 18:13'
 labels: []
@@ -31,3 +31,20 @@ Define a secure, deterministic one-actor portable envelope and let users create 
 - [ ] #7 Unknown required features, malformed/colliding paths, invalid actor kinds/payloads/portraits, concurrent registry assignment or UUID collision, and stale profile, editor, or portrait authority fail closed with no partial actor, registry row, intent, staged portrait, or other residue.
 - [ ] #8 This task is scoped to Actor Pack format, schema, canonicalization, digest, and pure-validator contracts plus actor creation and the Persona cross-store coordinator; export writer, import reader, extraction, staging, review, and activation implementation are absent and reserved for TASK-19058 and TASK-19059. Verification includes born-RED→GREEN tests, mutation proof for authority, safety, cancellation, and recovery guards, assigned-worktree provenance, real SQLite migration and crash-recovery tests in an isolated profile, and scoped Ruff, format, compile, diff, diagnostic, privacy, architecture, and governance checks.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no
+ADR path: backlog/decisions/074-portable-actor-packs-and-local-persona-visual-runtime.md
+Reason: ADR-074 already defines the Actor Pack schema, portable identity registry, local-only authority, and bounded Persona JSON/SQLite recovery protocol implemented by this task.
+
+Executable plan: Docs/superpowers/plans/2026-08-22-task-19057-portable-actor-pack-foundation.md
+
+1. Freeze the pure Actor Pack schema, canonical path/JSON, inventory, digest, portrait, actor payload, and typed optional-section contracts.
+2. Add the v45 portable UUID registry and bounded Persona mutation intents with real migration and repository coverage.
+3. Implement the purpose-built Persona JSON/SQLite coordinator, compensation, quarantine, and startup recovery matrix.
+4. Add one transactionally atomic Character creation path and one coordinator-backed Persona creation path, both portrait- and authority-fenced.
+5. Reuse the canonical Workbench editors for a distinct New Actor Pack action without adding ZIP export/import or visual-authoring scope.
+6. Prove cancellation drain, stale authority, privacy, architecture, migration packaging, and isolated-profile behavior before closeout.
+<!-- SECTION:PLAN:END -->
