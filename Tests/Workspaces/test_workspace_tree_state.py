@@ -179,6 +179,21 @@ def test_literal_labels_and_deterministic_ties_are_preserved() -> None:
     assert first[0].conversations[0].title == "[red]same[/red]"
 
 
+def test_search_matches_literal_workspace_label_and_excludes_nonmatches() -> None:
+    tree = build_workspace_tree_state(
+        workspaces=(
+            ("literal", "[bold]工程[/bold] 🧭"),
+            ("other", "Unrelated workspace"),
+        ),
+        rows=(),
+        query="工程",
+    )
+
+    assert [(node.workspace_id, node.label) for node in tree] == [
+        ("literal", "[bold]工程[/bold] 🧭")
+    ]
+
+
 def test_next_cursor_is_scoped_to_its_workspace() -> None:
     tree = build_workspace_tree_state(
         workspaces=(("w1", "One"), ("w2", "Two")),

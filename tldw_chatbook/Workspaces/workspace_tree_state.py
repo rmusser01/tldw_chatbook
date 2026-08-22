@@ -35,9 +35,11 @@ def build_workspace_tree_state(
     workspaces: Iterable[tuple[str, str]],
     rows: Iterable[ConsoleConversationBrowserInputRow],
     next_cursors: Mapping[str, int | None] | None = None,
+    query: str = "",
 ) -> tuple[WorkspaceTreeWorkspace, ...]:
     """Build the named-workspace projection without I/O or UI dependencies."""
     cursors = dict(next_cursors or {})
+    normalized_query = str(query or "").strip().casefold()
     labels: dict[str, str] = {}
     for raw_workspace_id, raw_label in workspaces:
         workspace_id = str(raw_workspace_id or "").strip()
@@ -65,30 +67,42 @@ def build_workspace_tree_state(
             continue
         owned_rows[workspace_id].append(row)
 
-    return tuple(
-        WorkspaceTreeWorkspace(
-            workspace_id=workspace_id,
-            label=label,
-            conversations=tuple(
-                WorkspaceTreeConversation(
-                    conversation_id=str(row.conversation_id),
-                    title=str(row.title or ""),
-                    starred=bool(row.starred),
-                    updated_sort=str(row.updated_sort or ""),
-                    selected=bool(row.selected),
-                    run_marker=str(row.run_marker or ""),
-                )
-                for row in sorted(
-                    owned_rows[workspace_id],
-                    key=console_conversation_starred_recency_sort_key,
-                )
-            ),
-            next_cursor=cursors.get(workspace_id),
+    projected: list[WorkspaceTreeWorkspace] = []
+    for workspace_id, label in sorted(
+        labels.items(), key=lambda item: (item[1].casefold(), item[0])
+    ):
+        workspace_rows = owned_rows[workspace_id]
+        label_matches = normalized_query in label.casefold()
+        if normalized_query and not label_matches:
+            workspace_rows = [
+                row
+                for row in workspace_rows
+                if normalized_query in str(row.title or "").casefold()
+            ]
+            if not workspace_rows:
+                continue
+        projected.append(
+            WorkspaceTreeWorkspace(
+                workspace_id=workspace_id,
+                label=label,
+                conversations=tuple(
+                    WorkspaceTreeConversation(
+                        conversation_id=str(row.conversation_id),
+                        title=str(row.title or ""),
+                        starred=bool(row.starred),
+                        updated_sort=str(row.updated_sort or ""),
+                        selected=bool(row.selected),
+                        run_marker=str(row.run_marker or ""),
+                    )
+                    for row in sorted(
+                        workspace_rows,
+                        key=console_conversation_starred_recency_sort_key,
+                    )
+                ),
+                next_cursor=cursors.get(workspace_id),
+            )
         )
-        for workspace_id, label in sorted(
-            labels.items(), key=lambda item: (item[1].casefold(), item[0])
-        )
-    )
+    return tuple(projected)
 
 
 def update_workspace_tree_conversation(

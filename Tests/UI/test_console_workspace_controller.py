@@ -159,6 +159,15 @@ def _browser_row(
     )
 
 
+def _membership_registry(*conversation_ids: str):
+    return SimpleNamespace(
+        list_workspace_conversations=lambda _workspace_id: tuple(
+            SimpleNamespace(item_id=conversation_id)
+            for conversation_id in conversation_ids
+        )
+    )
+
+
 def _workspace_state() -> ConsoleWorkspaceContextState:
     return ConsoleWorkspaceContextState(
         heading="Workspace",
@@ -262,8 +271,104 @@ async def test_search_failures_preserve_each_lane_and_expose_scoped_retry() -> N
 
 
 @pytest.mark.asyncio
+async def test_normal_search_transitions_preserve_settled_rows_per_lane_on_failure() -> (
+    None
+):
+    registry = SimpleNamespace(
+        list_workspaces=lambda: (
+            SimpleNamespace(workspace_id="workspace-7", name="Seven", archived=False),
+            SimpleNamespace(
+                workspace_id=DEFAULT_WORKSPACE_ID, name="Default", archived=False
+            ),
+        ),
+        list_workspace_conversations=lambda workspace_id: (
+            (
+                SimpleNamespace(
+                    item_id="flat-settled",
+                    title="Stable ordinary row",
+                    role="member",
+                ),
+            )
+            if workspace_id == DEFAULT_WORKSPACE_ID
+            else ()
+        ),
+    )
+
+    async def fail_search(**_kwargs):
+        raise RuntimeError("private service detail")
+
+    controller = _workspace_controller(
+        app_instance=SimpleNamespace(
+            workspace_registry_service=registry,
+            chat_conversation_scope_service=SimpleNamespace(
+                list_conversations=fail_search,
+                local_service=None,
+            ),
+        )
+    )
+    workspace_settled = (_browser_row("workspace-settled", "Stable workspace row"),)
+    loaded_children = (_browser_row("loaded-child", "Loaded child"),)
+    controller._workspace_tree_search.rows = workspace_settled
+    controller._workspace_page_attempts["workspace-7"] = (
+        controller._new_workspace_page_state(rows=loaded_children, next_cursor=75)
+    )
+    initial_flat = controller._with_console_conversation_browser_state(
+        _workspace_state()
+    ).conversation_browser
+    assert initial_flat is not None
+    assert [
+        row.conversation_id for section in initial_flat.sections for row in section.rows
+    ] == ["flat-settled"]
+    flat_settled = controller._flat_conversation_search.settled_rows
+    assert [row.conversation_id for row in flat_settled] == ["flat-settled"]
+
+    controller.transition_browser_search("first needle", disabled=False)
+    controller.transition_browser_search("needle", disabled=False)
+    flat_token = controller._flat_conversation_search.generation
+    await controller._refresh_console_conversation_browser_search("needle", flat_token)
+
+    assert controller._flat_conversation_search.rows == flat_settled
+    assert controller._flat_conversation_search.total == 1
+    assert controller._flat_conversation_search.retry_query == "needle"
+    assert (
+        controller._flat_conversation_search.error
+        == "Conversation search is unavailable."
+    )
+    assert controller._workspace_tree_search.rows == workspace_settled
+    assert controller._workspace_page_attempts["workspace-7"].rows == loaded_children
+    flat_projection = controller._with_console_conversation_browser_state(
+        _workspace_state()
+    ).conversation_browser
+    assert flat_projection is not None
+    assert [
+        row.conversation_id
+        for section in flat_projection.sections
+        for row in section.rows
+    ] == ["flat-settled"]
+
+    flat_after_failure = controller._flat_conversation_search.rows
+    controller.transition_workspace_tree_search("workspace needle", disabled=False)
+    await controller.refresh_workspace_tree_search("workspace needle")
+
+    assert controller._workspace_tree_search.rows == workspace_settled
+    assert controller._workspace_tree_search.retry_query == "workspace needle"
+    assert controller._workspace_tree_search.error == "Workspace search is unavailable."
+    assert controller._workspace_page_attempts["workspace-7"].rows == loaded_children
+    assert controller._flat_conversation_search.rows == flat_after_failure
+    assert [
+        row.conversation_id
+        for node in controller.workspace_tree_projection()
+        for row in node.conversations
+    ] == ["loaded-child"]
+
+
+@pytest.mark.asyncio
 async def test_workspace_page_retry_generation_rejects_stale_failure() -> None:
-    controller = _workspace_controller()
+    controller = _workspace_controller(
+        app_instance=SimpleNamespace(
+            workspace_registry_service=_membership_registry("existing", "page-row")
+        )
+    )
     calls = 0
     release_retry = asyncio.Event()
 
@@ -305,7 +410,11 @@ async def test_workspace_page_retry_generation_rejects_stale_failure() -> None:
 
 @pytest.mark.asyncio
 async def test_overlapping_same_cursor_page_commits_once_by_conversation_id() -> None:
-    controller = _workspace_controller()
+    controller = _workspace_controller(
+        app_instance=SimpleNamespace(
+            workspace_registry_service=_membership_registry("same")
+        )
+    )
     releases = [asyncio.Event(), asyncio.Event()]
     started = [asyncio.Event(), asyncio.Event()]
     calls = 0
@@ -339,6 +448,9 @@ async def test_workspace_search_projects_hit_outside_loaded_page() -> None:
             SimpleNamespace(
                 workspace_id="workspace-7", name="Workspace 7", archived=False
             ),
+            SimpleNamespace(
+                workspace_id="workspace-8", name="Unrelated", archived=False
+            ),
         )
     )
     controller = _workspace_controller(
@@ -356,6 +468,7 @@ async def test_workspace_search_projects_hit_outside_loaded_page() -> None:
     await controller.refresh_workspace_tree_search("needle")
 
     projection = controller.workspace_tree_projection()
+    assert [node.workspace_id for node in projection] == ["workspace-7"]
     assert [row.conversation_id for row in projection[0].conversations] == ["outside"]
 
 
@@ -408,6 +521,200 @@ async def test_membership_move_discards_inflight_page_and_projects_new_owner_onc
     ]
     assert owners == ["workspace-8"]
     assert controller._workspace_page_attempts["workspace-7"].rows == ()
+
+
+@pytest.mark.asyncio
+async def test_settled_page_membership_move_to_default_has_one_ordinary_owner() -> None:
+    memberships = {
+        "workspace-7": [
+            SimpleNamespace(item_id="moving", title="Moving", role="member")
+        ],
+        DEFAULT_WORKSPACE_ID: [],
+    }
+    registry = SimpleNamespace(
+        list_workspaces=lambda: (
+            SimpleNamespace(workspace_id="workspace-7", name="Seven", archived=False),
+            SimpleNamespace(
+                workspace_id=DEFAULT_WORKSPACE_ID, name="Default", archived=False
+            ),
+        ),
+        list_workspace_conversations=lambda workspace_id: tuple(
+            memberships[workspace_id]
+        ),
+    )
+
+    async def list_conversations(**_kwargs):
+        return {
+            "items": [{"id": "moving", "title": "Moving", "state": "saved"}],
+            "total": 1,
+        }
+
+    controller = _workspace_controller(
+        app_instance=SimpleNamespace(
+            workspace_registry_service=registry,
+            chat_conversation_scope_service=SimpleNamespace(
+                list_conversations=list_conversations
+            ),
+        )
+    )
+    await controller.load_workspace_tree_page("workspace-7", 0)
+    assert [
+        row.conversation_id
+        for node in controller.workspace_tree_projection()
+        for row in node.conversations
+    ] == ["moving"]
+
+    memberships["workspace-7"] = []
+    memberships[DEFAULT_WORKSPACE_ID] = [
+        SimpleNamespace(item_id="moving", title="Moving", role="member")
+    ]
+    state = controller._with_console_conversation_browser_state(_workspace_state())
+    tree = state.workspace_tree
+    flat = state.conversation_browser
+    assert flat is not None
+    owners = [
+        *(
+            node.workspace_id
+            for node in tree
+            for row in node.conversations
+            if row.conversation_id == "moving"
+        ),
+        *(
+            "flat"
+            for section in flat.sections
+            for row in section.rows
+            if row.conversation_id == "moving"
+        ),
+    ]
+
+    assert owners == ["flat"]
+
+
+@pytest.mark.asyncio
+async def test_membership_read_failure_preserves_settled_page_and_retry_state() -> None:
+    membership_unavailable = False
+
+    def list_memberships(_workspace_id):
+        if membership_unavailable:
+            raise RuntimeError("registry unavailable")
+        return (SimpleNamespace(item_id="settled", title="Settled", role="member"),)
+
+    registry = SimpleNamespace(
+        list_workspaces=lambda: (
+            SimpleNamespace(workspace_id="workspace-7", name="Seven", archived=False),
+        ),
+        list_workspace_conversations=list_memberships,
+    )
+
+    async def list_conversations(**_kwargs):
+        return {
+            "items": [{"id": "settled", "title": "Settled", "state": "saved"}],
+            "total": 151,
+        }
+
+    controller = _workspace_controller(
+        app_instance=SimpleNamespace(
+            workspace_registry_service=registry,
+            chat_conversation_scope_service=SimpleNamespace(
+                list_conversations=list_conversations
+            ),
+        )
+    )
+    await controller.load_workspace_tree_page("workspace-7", 0)
+    membership_unavailable = True
+
+    state = controller._with_console_conversation_browser_state(_workspace_state())
+    attempt = controller._workspace_page_attempts["workspace-7"]
+
+    assert [
+        row.conversation_id
+        for node in state.workspace_tree
+        for row in node.conversations
+    ] == ["settled"]
+    assert state.workspace_tree[0].next_cursor == 75
+    assert attempt.error == "Workspace conversations are unavailable."
+    assert attempt.retry_cursor == 75
+
+
+def test_projection_uses_canonical_membership_snapshots_without_polling() -> None:
+    membership_calls: list[str] = []
+    workspace_calls: list[str] = []
+    memberships = {
+        "workspace-1": ("moving",),
+        "workspace-2": ("steady-2",),
+        "workspace-3": ("steady-3",),
+        DEFAULT_WORKSPACE_ID: (),
+    }
+
+    def list_memberships(workspace_id):
+        membership_calls.append(workspace_id)
+        return tuple(
+            SimpleNamespace(item_id=item_id) for item_id in memberships[workspace_id]
+        )
+
+    def list_workspaces():
+        workspace_calls.append("list")
+        return tuple(
+            SimpleNamespace(
+                workspace_id=workspace_id, name=workspace_id, archived=False
+            )
+            for workspace_id in memberships
+        )
+
+    registry = SimpleNamespace(
+        list_workspaces=list_workspaces,
+        list_workspace_conversations=list_memberships,
+    )
+    controller = _workspace_controller(
+        app_instance=SimpleNamespace(workspace_registry_service=registry)
+    )
+    for workspace_id, conversation_id in (
+        ("workspace-1", "moving"),
+        ("workspace-2", "steady-2"),
+        ("workspace-3", "steady-3"),
+    ):
+        attempt = controller._new_workspace_page_state(
+            rows=(
+                _browser_row(
+                    conversation_id, conversation_id, workspace_id=workspace_id
+                ),
+            ),
+            next_cursor=75,
+        )
+        attempt.membership_token = memberships[workspace_id]
+        controller._workspace_page_attempts[workspace_id] = attempt
+    steady_attempts = {
+        workspace_id: controller._workspace_page_attempts[workspace_id]
+        for workspace_id in ("workspace-2", "workspace-3")
+    }
+
+    controller.workspace_tree_projection()
+    assert membership_calls == []
+    workspace_calls.clear()
+
+    controller.apply_workspace_membership_snapshot(
+        {
+            "workspace-1": (),
+            "workspace-2": memberships["workspace-2"],
+            "workspace-3": memberships["workspace-3"],
+            DEFAULT_WORKSPACE_ID: ("moving",),
+        },
+        complete=True,
+    )
+    assert workspace_calls == []
+    projection = controller.workspace_tree_projection()
+
+    assert membership_calls == []
+    assert all(
+        row.conversation_id != "moving"
+        for node in projection
+        for row in node.conversations
+    )
+    for workspace_id, attempt in steady_attempts.items():
+        assert controller._workspace_page_attempts[workspace_id] is attempt
+        assert [row.conversation_id for row in attempt.rows] == [
+            memberships[workspace_id][0]
+        ]
 
 
 def test_workspace_controller_constructor_documents_every_dependency():
