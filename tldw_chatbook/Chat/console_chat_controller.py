@@ -3664,12 +3664,18 @@ class ConsoleChatController:
                     citation_context,
                 )
             if citation_context and echoed_user is not None:
+                trace_prefix = f"console-trace:{echoed_user.id}:retrieval"
+                retrieval_event_id = f"{trace_prefix}:retrieval_completed"
+                attached_event_id = f"{trace_prefix}:context_attached"
                 self.store.record_trace_event(
                     session.id,
                     anchor_message_id=echoed_user.id,
                     event_kind="context_attached",
                     summary="Retrieved context attached",
                     status="completed",
+                    event_id=attached_event_id,
+                    parent_event_id=retrieval_event_id,
+                    source_event_id=retrieval_event_id,
                     sensitivity="system_context",
                 )
                 self.store.record_trace_event(
@@ -3678,6 +3684,9 @@ class ConsoleChatController:
                     event_kind="context_injected",
                     summary="Retrieved context injected into provider request",
                     status="completed",
+                    event_id=f"{trace_prefix}:context_injected",
+                    parent_event_id=attached_event_id,
+                    source_event_id=attached_event_id,
                     sensitivity="system_context",
                 )
             if origin is ConsoleSubmissionOrigin.AGENT_WAKE:
@@ -7141,31 +7150,7 @@ class ConsoleChatController:
             content="",
             persist=self.store.persistence is not None,
         )
-        self.store.record_trace_event(
-            session_id,
-            anchor_message_id=message_id,
-            event_kind="message_regenerated",
-            summary="Assistant response regenerated",
-            status="started",
-            source_event_id=(
-                f"message:{message.persisted_message_id}"
-                if message.persisted_message_id is not None
-                else None
-            ),
-            replacement_event_id=(
-                f"message:{new_message.persisted_message_id}"
-                if new_message.persisted_message_id is not None
-                else f"console-message:{new_message.id}"
-            ),
-            field_states={
-                "replacement_event_id": (
-                    "observed"
-                    if new_message.persisted_message_id is not None
-                    else "not_available"
-                )
-            },
-        )
-        return await self._stream_assistant_response(
+        result = await self._stream_assistant_response(
             resolution=resolution,
             provider_messages=provider_messages,
             assistant_message_id=new_message.id,
@@ -7175,6 +7160,35 @@ class ConsoleChatController:
             skill_bundle_block=skill_bundle_block,
             turn_context=turn_context,
         )
+        try:
+            persisted_sibling = self.store.get_message(new_message.id)
+        except KeyError:
+            persisted_sibling = None
+        replacement_event_id = (
+            f"message:{persisted_sibling.persisted_message_id}"
+            if persisted_sibling is not None
+            and persisted_sibling.persisted_message_id is not None
+            else None
+        )
+        self.store.record_trace_event(
+            session_id,
+            anchor_message_id=message_id,
+            event_kind="message_regenerated",
+            summary="Assistant response regenerated",
+            status="completed" if replacement_event_id is not None else "incomplete",
+            source_event_id=(
+                f"message:{message.persisted_message_id}"
+                if message.persisted_message_id is not None
+                else None
+            ),
+            replacement_event_id=replacement_event_id,
+            field_states={
+                "replacement_event_id": (
+                    "observed" if replacement_event_id is not None else "not_available"
+                )
+            },
+        )
+        return result
 
     #: Guidance cap for the transcript span fed to the summarizer (Task 3).
     #: Well above any realistic single-summary span so it never trims in tests
@@ -9261,18 +9275,30 @@ class ConsoleChatController:
         anchor_message_id = (
             self.store.active_leaf(session_id) if session_id is not None else None
         )
+        trace_prefix = (
+            f"console-trace:{anchor_message_id}:retrieval"
+            if anchor_message_id is not None
+            else None
+        )
+        previous_event_id: str | None = None
 
         def record(event_kind: str, summary: str, status: str) -> None:
+            nonlocal previous_event_id
             if session_id is None or anchor_message_id is None:
                 return
+            event_id = f"{trace_prefix}:{event_kind}"
             self.store.record_trace_event(
                 session_id,
                 anchor_message_id=anchor_message_id,
                 event_kind=event_kind,
                 summary=summary,
                 status=status,
+                event_id=event_id,
+                parent_event_id=previous_event_id,
+                source_event_id=previous_event_id,
                 sensitivity="retrieval_metadata",
             )
+            previous_event_id = event_id
 
         record("retrieval_started", "Retrieval started", "started")
         try:
@@ -11108,6 +11134,13 @@ class ConsoleChatController:
         # this belt keeps direct callers (tests) working.
         if stream_signals is None:
             stream_signals = self._new_run_stream_signals()
+        stream_signals.model_retry_callback = lambda: self.store.record_trace_event(
+            owner_id,
+            anchor_message_id=assistant_message_id,
+            event_kind="model_retry",
+            summary="Provider stream retried as a non-streaming request",
+            status="retrying",
+        )
         if variant_mode:
             self.store.begin_variant_stream(assistant_message_id)
         if prefill and not prepare_retry:
@@ -11125,9 +11158,9 @@ class ConsoleChatController:
             self.store.record_trace_event(
                 owner_id,
                 anchor_message_id=assistant_message_id,
-                event_kind="model_retry",
-                summary="Provider retry started",
-                status="retrying",
+                event_kind="message_retry_requested",
+                summary="User requested another response attempt",
+                status="started",
             )
         try:
             provider_stream = self.provider_gateway.stream_chat(

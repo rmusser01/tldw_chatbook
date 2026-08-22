@@ -11,9 +11,44 @@ from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Agents.builtin_tool_gate import BuiltinToolGate
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolCatalogRegistry
 from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
+from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Chat.trajectory import derive_trajectory
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Tools.file_operation_tools import ReadFileTool
+from tldw_chatbook.Tools.tool_executor import Tool
+
+
+class _CredentialResultTool(Tool):
+    @property
+    def name(self) -> str:
+        return "credential_result"
+
+    @property
+    def description(self) -> str:
+        return "Return a test result."
+
+    @property
+    def parameters(self) -> dict:
+        return {"type": "object", "properties": {}}
+
+    async def execute(self, **_kwargs) -> dict:
+        return {
+            "text": (
+                "ghp_" + "a" * 36 + " "
+                "AKIA" + "A" * 16 + " "
+                "eyJabcdefghij.abcdefghij.abcdefghij "
+                "-----BEGIN PRIVATE KEY-----"
+            )
+        }
+
+
+class _HiddenReasoningResultTool(_CredentialResultTool):
+    @property
+    def name(self) -> str:
+        return "hidden_reasoning_result"
+
+    async def execute(self, **_kwargs) -> dict:
+        return {"text": "chain of thought: private internal plan"}
 
 
 def _native_call(name: str, args: dict, call_id: str = "call-1") -> dict:
@@ -247,5 +282,186 @@ def test_repeated_same_tool_calls_keep_distinct_safe_durable_correlation(
         assert {step["call_id"] for step in decisions} == {"a", "b"}
         assert all(step["parent_event_id"] for step in decisions)
         assert secret_a not in repr(durable) and secret_b not in repr(durable)
+    finally:
+        db.close()
+
+
+def test_generic_tool_credentials_are_scrubbed_at_durable_agent_step_boundary(
+    tmp_path,
+) -> None:
+    gate = BuiltinToolGate(service=None)
+    provider = BuiltinToolProvider(gate=gate)
+    provider._tools["credential_result"] = _CredentialResultTool()
+    provider._tools["hidden_reasoning_result"] = _HiddenReasoningResultTool()
+    registry = ToolCatalogRegistry()
+    registry.register_provider(provider)
+    replies = [
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            _native_call("credential_result", {}, "credentials"),
+                            _native_call("hidden_reasoning_result", {}, "reasoning"),
+                        ],
+                    }
+                }
+            ]
+        },
+        {"choices": [{"message": {"content": "done"}}]},
+    ]
+    db = AgentRunsDB(tmp_path / "agent-runs.db", client_id="test")
+    try:
+        service = AgentService(
+            db,
+            registry,
+            chat_call=lambda **_kwargs: replies.pop(0),
+            review_tool_calls=lambda calls, _run_id: {
+                call.call_id: "proceed" for call in calls
+            },
+        )
+        run_id, outcome = service.run_turn(
+            conversation_id="conv-1",
+            messages=[{"role": "user", "content": "run it"}],
+            config=AgentConfig(
+                model="model",
+                system_prompt="system",
+                allowed_tools=("credential_result", "hidden_reasoning_result"),
+                native_tools=True,
+            ),
+            api_endpoint="openai",
+        )
+
+        assert outcome.status == "done"
+        durable = db.get_run(run_id)["steps"]
+        serialized = repr(durable)
+        for secret_fragment in (
+            "ghp_",
+            "AKIA",
+            "eyJabcdefghij",
+            "BEGIN PRIVATE KEY",
+            "private internal plan",
+        ):
+            assert secret_fragment not in serialized
+        result_step = next(
+            step
+            for step in durable
+            if step.get("tool_name") == "credential_result"
+            and step.get("field_states", {}).get("result") == "redacted"
+        )
+        assert result_step["result"]
+        assert "summarized" not in repr(result_step["field_states"])
+        hidden_step = next(
+            step
+            for step in durable
+            if step.get("tool_name") == "hidden_reasoning_result"
+            and step.get("field_states", {}).get("result") == "omitted"
+        )
+        assert hidden_step["result"] == ""
+        assert hidden_step["field_states"]["result"] == "omitted"
+    finally:
+        db.close()
+
+
+def test_denied_call_cancelled_before_dispatch_is_not_approval_revoked(tmp_path) -> None:
+    gate = BuiltinToolGate(service=None)
+    provider = BuiltinToolProvider(gate=gate)
+    provider._tools["credential_result"] = _CredentialResultTool()
+    registry = ToolCatalogRegistry()
+    registry.register_provider(provider)
+    cancel = {"set": False}
+
+    def deny_and_cancel(calls, _run_id):
+        cancel["set"] = True
+        return {call.call_id: "deny" for call in calls}
+
+    db = AgentRunsDB(tmp_path / "agent-runs.db", client_id="test")
+    try:
+        service = AgentService(
+            db,
+            registry,
+            chat_call=lambda **_kwargs: {
+                "choices": [
+                    {
+                        "message": {
+                            "content": None,
+                            "tool_calls": [_native_call("credential_result", {})],
+                        }
+                    }
+                ]
+            },
+            review_tool_calls=deny_and_cancel,
+        )
+        run_id, outcome = service.run_turn(
+            conversation_id="conv-1",
+            messages=[{"role": "user", "content": "run it"}],
+            config=AgentConfig(
+                model="model",
+                system_prompt="system",
+                allowed_tools=("credential_result",),
+                native_tools=True,
+            ),
+            api_endpoint="openai",
+            should_cancel=lambda: cancel["set"],
+        )
+
+        assert outcome.status == "cancelled"
+        kinds = [step["kind"] for step in db.get_run(run_id)["steps"]]
+        approval_lifecycle = [
+            kind
+            for kind in kinds
+            if kind.startswith("tool_") or kind.startswith("approval_")
+        ]
+        assert approval_lifecycle == [
+            "tool_proposed",
+            "approval_requested",
+            "approval_denied",
+        ]
+        assert "approval_revoked" not in kinds
+    finally:
+        db.close()
+
+
+def test_agent_service_actual_request_assembly_captures_safe_context_chain(tmp_path) -> None:
+    db = AgentRunsDB(tmp_path / "agent-runs.db", client_id="test")
+    try:
+        service = AgentService(
+            db,
+            ToolCatalogRegistry(),
+            chat_call=lambda **_kwargs: {"choices": [{"message": {"content": "done"}}]},
+            review_tool_calls=lambda _calls, _run_id: {},
+        )
+        run_id, outcome = service.run_turn(
+            conversation_id="conv-1",
+            messages=[
+                {
+                    "role": "user",
+                    "content": "project credential=sk-project-secret",
+                    EPHEMERAL_ORIGIN_KEY: "project",
+                }
+            ],
+            config=AgentConfig(
+                model="model",
+                system_prompt="system credential=sk-system-secret",
+                workspace_context_note="workspace credential=sk-workspace-secret",
+                allowed_tools=(),
+            ),
+            api_endpoint="openai",
+        )
+
+        assert outcome.status == "done"
+        durable = db.get_run(run_id)["steps"]
+        attached = next(step for step in durable if step["kind"] == "context_attached")
+        injected = next(step for step in durable if step["kind"] == "context_injected")
+        assert attached["parent_event_id"] == f"agent-run:{run_id}"
+        assert injected["parent_event_id"] == f"agent-step:{run_id}:{attached['index']}"
+        assert injected["source_event_id"] == f"agent-step:{run_id}:{attached['index']}"
+        assert attached["field_states"]["content"] == "omitted"
+        assert attached["sensitivity"] == "system_context"
+        serialized = repr(durable)
+        for secret in ("sk-project-secret", "sk-system-secret", "sk-workspace-secret"):
+            assert secret not in serialized
+        assert all(name in attached["summary"] for name in ("project", "system", "workspace"))
     finally:
         db.close()

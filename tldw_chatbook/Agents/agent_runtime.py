@@ -1414,6 +1414,10 @@ def run_agent_loop(
                 trace_state["decision"] = decision_step
 
         for call in calls:
+            verdict = (
+                (verdicts.get(call.call_id) if call.call_id else None)
+                or verdicts.get(call.name, "proceed")
+            )
             # F5 (Qodo #5, PR #1066 review): emit the tool_call record BEFORE
             # the dispatch chain below, not after. `call.name`/`call.args`
             # are already known here, so nothing is gained by waiting -- and
@@ -1430,7 +1434,7 @@ def run_agent_loop(
             # here, before the side effect, and legacy refusals retain their
             # pre-existing record order.
             if deps.should_cancel():
-                if deps.review_tool_calls is not None:
+                if deps.review_tool_calls is not None and verdict == "proceed":
                     trace_state = call_trace[id(call)]
                     decision_step = trace_state.get("decision")
                     trace(
@@ -1506,11 +1510,6 @@ def run_agent_loop(
             # verdicts, and the fence path builds ToolCalls with NO call_id
             # at all (`parse_tool_call`), so a name-keyed verdict must still stop
             # every matching call or the MCP gate silently opens.
-            verdict = "proceed"
-            if call.call_id and call.call_id in verdicts:
-                verdict = verdicts[call.call_id]
-            else:
-                verdict = verdicts.get(call.name, "proceed")
             if continuation_checkpoint is not None and verdict != "proceed":
                 continuation_cap = (
                     min(budget.max_tool_result_chars, 16_000)

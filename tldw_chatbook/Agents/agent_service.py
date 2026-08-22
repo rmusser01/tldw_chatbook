@@ -13,7 +13,6 @@ import dataclasses
 import functools
 import json
 import math
-import re
 import sys
 import threading
 import time
@@ -39,6 +38,7 @@ from tldw_chatbook.Utils.token_counter import (
     estimate_tokens,
     get_model_token_limit,
 )
+from tldw_chatbook.Utils.log_sanitizer import REDACTION_MARKER, redact_log_line
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Chat.console_history_budget import count_console_messages_tokens
 
@@ -712,9 +712,8 @@ def _safe_agent_step_record(run_id: str, step: AgentStep) -> dict[str, Any]:
         record["args"] = None
         states["args"] = "omitted"
     if step.result:
-        result = step.result[:2000]
-        lower = result.lower()
-        sensitive_result = step.tool_name.startswith("fs_") or step.tool_name in {
+        result = step.result
+        file_result = step.tool_name.startswith("fs_") or step.tool_name in {
             "read_file",
             "write_file",
             "list_directory",
@@ -723,26 +722,28 @@ def _safe_agent_step_record(run_id: str, step: AgentStep) -> dict[str, Any]:
             "read_skill_file",
             "run_skill_script",
         }
-        sensitive_result = sensitive_result or any(
-            marker in lower
-            for marker in (
-                "api_key",
-                "api key",
-                "authorization:",
-                "bearer ",
-                "password",
-                "credential",
-                "secret",
-                "reasoning_content",
-                "chain of thought",
-                "sk-",
-            )
+        contains_private_key = (
+            "-----BEGIN " in result.upper() and "PRIVATE KEY-----" in result.upper()
         )
-        sensitive_result = sensitive_result or bool(
-            re.search(r"(?:^|\s)(?:/[^\s]+|[A-Za-z]:\\[^\s]+)", result)
+        hidden_reasoning = any(
+            marker in result.lower()
+            for marker in ("reasoning_content", "chain of thought")
         )
-        record["result"] = "" if sensitive_result else result
-        states["result"] = "omitted" if sensitive_result else "summarized"
+        scrubbed = redact_log_line(result)
+        if file_result or hidden_reasoning:
+            record["result"] = ""
+            states["result"] = "omitted"
+        elif contains_private_key:
+            record["result"] = REDACTION_MARKER
+            states["result"] = "redacted"
+        else:
+            record["result"] = scrubbed
+            if scrubbed != result:
+                states["result"] = (
+                    "redacted" if REDACTION_MARKER in scrubbed else "truncated"
+                )
+            else:
+                states["result"] = "observed"
     if step.tool_name and (step.args is not None or step.result):
         record["summary"] = f"{step.tool_name} recorded"
     if step.tool_name:
@@ -1529,9 +1530,11 @@ class AgentService:
         chain_id: str = "primary",
         payload_state: InstructionChainPayloadState | None = None,
         staged_delivery: dict[str, InstructionDeliveryReceipt] | None = None,
+        on_context_assembled: Callable[[tuple[str, ...]], None] | None = None,
     ):
         native = config.native_tools and provider_supports_native_tools(api_endpoint)
         initial_context_checked = False
+        context_observed = False
         staged = staged_delivery if staged_delivery is not None else {}
         # TASK-1272 (Phase 3): the ONLY gate on whether eviction may run at
         # all is (a) `log_active` -- the SAME condition, reused verbatim,
@@ -1569,7 +1572,7 @@ class AgentService:
             active_schemas: tuple,
             current_continuation: ProviderContinuationCheckpoint | None = None,
         ) -> ModelTurn:
-            nonlocal protocol_key, protocol_text, initial_context_checked
+            nonlocal protocol_key, protocol_text, initial_context_checked, context_observed
             if (
                 project_instruction_context is not None
                 and payload_state is not None
@@ -1718,6 +1721,21 @@ class AgentService:
                         "project_instruction_delivery_failed"
                     ) from None
                 staged.pop("receipt", None)
+            if on_context_assembled is not None and not context_observed:
+                categories = ["system"]
+                if config.workspace_context_note:
+                    categories.append("workspace")
+                if any(
+                    row.get(PROJECT_INSTRUCTION_ROW_KEY)
+                    or row.get(EPHEMERAL_ORIGIN_KEY)
+                    for row in payload
+                ):
+                    categories.insert(0, "project")
+                try:
+                    on_context_assembled(tuple(categories))
+                except Exception:  # noqa: BLE001 — capture never fails a request
+                    logger.warning("agent_context_capture_failed")
+                context_observed = True
             resp = self.chat_call(
                 api_endpoint=api_endpoint,
                 messages_payload=payload,
@@ -4252,6 +4270,7 @@ class AgentService:
                 staged_delivery["receipt"] = result.delivery_receipt
             return result
 
+        context_callback_ref: dict[str, Callable[[tuple[str, ...]], None]] = {}
         call_model = self._make_call_model(
             config,
             api_endpoint,
@@ -4264,6 +4283,11 @@ class AgentService:
             chain_id=chain_id,
             payload_state=payload_state,
             staged_delivery=staged_delivery,
+            on_context_assembled=(
+                lambda categories: context_callback_ref["callback"](categories)
+                if self.review_tool_calls is not None
+                else None
+            ),
         )
 
         def observe_step(step: AgentStep) -> None:
@@ -4323,6 +4347,33 @@ class AgentService:
                     )
                 except Exception:  # noqa: BLE001 — non-recursive containment
                     logger.warning("could not persist agent capture diagnostic")
+
+        def observe_context_assembled(categories: tuple[str, ...]) -> None:
+            """Persist safe presence-only facts at the exact request seam."""
+            attached = AgentStep(
+                index=3_000_000,
+                kind="context_attached",
+                summary=f"{', '.join(categories)} context attached",
+                created_at=_now_iso(),
+                status="completed",
+                field_states={"content": "omitted"},
+                sensitivity="system_context",
+            )
+            injected = AgentStep(
+                index=3_000_001,
+                kind="context_injected",
+                summary=f"{', '.join(categories)} context injected",
+                created_at=attached.created_at,
+                status="completed",
+                parent_step_index=attached.index,
+                source_step_index=attached.index,
+                field_states={"content": "omitted"},
+                sensitivity="system_context",
+            )
+            observe_trace_step(attached)
+            observe_trace_step(injected)
+
+        context_callback_ref["callback"] = observe_context_assembled
 
         deps = LoopDeps(
             call_model=call_model,

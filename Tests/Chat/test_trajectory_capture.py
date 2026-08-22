@@ -19,6 +19,11 @@ from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_provider_gateway import (
+    ConsoleProviderGateway,
+    ConsoleProviderResolution,
+)
+from tldw_chatbook.Chat.trajectory import derive_trajectory
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, TrajectoryRowWrite
 
 
@@ -119,7 +124,8 @@ def test_tool_marker_append_produces_tool_call_and_result_rows(tmp_path):
             assert row.message_id == assistant.persisted_message_id
             payload = json.loads(row.payload_json)
             assert payload["name"] == "fs_list"
-            assert payload["result"] == "file-a\nfile-b\nfile-c"
+            assert payload["result"] == ""
+            assert payload["field_states"]["result"] == "omitted"
             assert payload.get("truncated") is not True
     finally:
         db.close()
@@ -312,6 +318,27 @@ async def test_real_submit_captures_retrieval_and_context_at_owner_seams(tmp_pat
             json.loads(row.payload_json)["sensitivity"] == "system_context"
             for row in context_rows
         )
+        snapshot = derive_trajectory(
+            db.get_messages_for_conversation(conversation_id),
+            {},
+            rows,
+            [],
+            [],
+        )
+        records = [record for turn in snapshot.turns for record in turn.records]
+        by_kind = {record.kind: record for record in records}
+        chain = (
+            "retrieval_started",
+            "retrieval_candidates_selected",
+            "retrieval_completed",
+            "context_attached",
+            "context_injected",
+        )
+        for parent_kind, child_kind in zip(chain, chain[1:]):
+            assert by_kind[child_kind].parent_event_id == by_kind[parent_kind].event_id
+            assert by_kind[child_kind].source_event_id == by_kind[parent_kind].event_id
+        emitted_ids = {record.event_id for record in records}
+        assert all(by_kind[kind].event_id in emitted_ids for kind in chain)
     finally:
         db.close()
 
@@ -373,7 +400,7 @@ async def test_direct_provider_cancel_emits_cancel_without_completion(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_direct_provider_retry_emits_retry_at_dispatch_seam(tmp_path):
+async def test_user_retry_action_is_not_mislabeled_as_provider_retry(tmp_path):
     db, store = _store_with_db(tmp_path)
     gateway = _TraceGateway("empty")
     try:
@@ -392,13 +419,76 @@ async def test_direct_provider_retry_emits_retry_at_dispatch_seam(tmp_path):
             if item.id == session.id
         )
         kinds = [row.event_kind for row in db.get_trajectory_rows(conversation_id)]
-        assert "model_retry" in kinds
+        assert "message_retry_requested" in kinds
+        assert "model_retry" not in kinds
     finally:
         db.close()
 
 
 @pytest.mark.asyncio
-async def test_regenerate_uses_stable_replacement_identity_before_persistence(tmp_path):
+async def test_real_llamacpp_fallback_retry_reaches_console_owner(
+    tmp_path, monkeypatch
+) -> None:
+    class _EmptyStreamResponse:
+        def raise_for_status(self):
+            return None
+
+        async def aiter_lines(self):
+            return
+            yield  # pragma: no cover
+
+    class _StreamCtx:
+        async def __aenter__(self):
+            return _EmptyStreamResponse()
+
+        async def __aexit__(self, *_exc):
+            return False
+
+    class _FakeClient:
+        def stream(self, *_args, **_kwargs):
+            return _StreamCtx()
+
+    db, store = _store_with_db(tmp_path)
+    gateway = ConsoleProviderGateway()
+    resolution = ConsoleProviderResolution(
+        provider="llama_cpp",
+        base_url="http://127.0.0.1:9099",
+        model="model",
+        ready=True,
+        execution_key="llama_cpp",
+        streaming=True,
+    )
+
+    async def resolve_for_send(_selection):
+        return resolution
+
+    gateway.resolve_for_send = resolve_for_send
+    monkeypatch.setattr(
+        ConsoleProviderGateway, "_active_http_client", lambda self: _FakeClient()
+    )
+
+    async def fake_complete(self, **_kwargs):
+        return "recovered"
+
+    monkeypatch.setattr(ConsoleProviderGateway, "complete_llamacpp_chat", fake_complete)
+    try:
+        session = store.ensure_session(title="Trace")
+        controller = ConsoleChatController(store=store, provider_gateway=gateway)
+        result = await controller.submit_draft("question")
+        assert result.accepted
+        conversation_id = next(
+            item.persisted_conversation_id
+            for item in store.sessions()
+            if item.id == session.id
+        )
+        kinds = [row.event_kind for row in db.get_trajectory_rows(conversation_id)]
+        assert kinds.count("model_retry") == 1
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_regenerate_replacement_identity_resolves_after_persistence(tmp_path):
     db, store = _store_with_db(tmp_path)
     try:
         session = store.ensure_session(title="Trace")
@@ -428,13 +518,20 @@ async def test_regenerate_uses_stable_replacement_identity_before_persistence(tm
         rows = db.get_trajectory_rows(conversation_id)
         row = next(row for row in rows if row.event_kind == "message_regenerated")
         payload = json.loads(row.payload_json)
-        assert payload["replacement_event_id"].startswith("console-message:")
-        assert payload["field_states"]["replacement_event_id"] == "not_available"
+        assert payload["replacement_event_id"].startswith("message:")
+        assert payload["field_states"]["replacement_event_id"] == "observed"
+        snapshot = derive_trajectory(
+            db.get_messages_for_conversation(conversation_id), {}, rows, [], []
+        )
+        records = [record for turn in snapshot.turns for record in turn.records]
+        emitted_ids = {record.event_id for record in records}
+        regenerated = next(record for record in records if record.kind == "message_regenerated")
+        assert regenerated.replacement_event_id in emitted_ids
     finally:
         db.close()
 
 
-def test_tool_result_capped_at_256kib_with_truncated_marker(tmp_path):
+def test_tool_result_uses_bounded_safe_summary_with_truncated_marker(tmp_path):
     db, store = _store_with_db(tmp_path)
     try:
         session = store.ensure_session(title="Trajectory")
@@ -451,11 +548,11 @@ def test_tool_result_capped_at_256kib_with_truncated_marker(tmp_path):
             content="answer",
             persist=True,
         )
-        huge = "x" * (300 * 1024)
+        huge = "safe " * (70 * 1024)
         store.append_message(
             session.id,
             role=ConsoleMessageRole.TOOL,
-            content="⚙ fs_read → preview",
+            content="⚙ generic_lookup → preview",
             tool_output_full=huge,
         )
 
@@ -468,7 +565,7 @@ def test_tool_result_capped_at_256kib_with_truncated_marker(tmp_path):
         for row in tool_rows:
             payload = json.loads(row.payload_json)
             assert payload["truncated"] is True
-            assert len(payload["result"].encode("utf-8")) <= 256 * 1024
+            assert len(payload["result"]) <= 2100
             assert payload["result"] != huge
     finally:
         db.close()
@@ -495,12 +592,12 @@ def test_tool_result_cap_is_byte_safe_for_multibyte_content(tmp_path):
         )
         # U+1F600 encodes to 4 UTF-8 bytes per character: ~100k chars is
         # ~400 KiB, well over the 256 KiB byte cap.
-        huge = "😀" * (100 * 1024)
+        huge = "😀 " * (100 * 1024)
         assert len(huge) < 256 * 1024  # characters under, bytes over
         store.append_message(
             session.id,
             role=ConsoleMessageRole.TOOL,
-            content="⚙ fs_read → preview",
+            content="⚙ generic_lookup → preview",
             tool_output_full=huge,
         )
 
@@ -514,10 +611,128 @@ def test_tool_result_cap_is_byte_safe_for_multibyte_content(tmp_path):
             payload = json.loads(row.payload_json)
             assert payload["truncated"] is True
             stored = payload["result"]
-            assert len(stored.encode("utf-8")) <= 256 * 1024
+            assert len(stored) <= 2100
             # The split codepoint at the byte boundary was dropped cleanly.
-            assert stored.endswith("😀") or stored == ""
+            assert "�" not in stored
             assert stored != huge
+    finally:
+        db.close()
+
+
+def test_tool_marker_scrubs_credentials_and_omits_file_content_durably(tmp_path):
+    db, store = _store_with_db(tmp_path)
+    secrets = (
+        "ghp_" + "a" * 36,
+        "AKIA" + "A" * 16,
+        "eyJabcdefghij.abcdefghij.abcdefghij",
+        "-----BEGIN PRIVATE KEY-----",
+    )
+    try:
+        session = store.ensure_session(title="Trajectory")
+        conversation_id = store.persist_session_if_needed(session.id)
+        store.append_message(
+            session.id, role=ConsoleMessageRole.USER, content="go", persist=True
+        )
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="answer",
+            persist=True,
+        )
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.TOOL,
+            content="⚙ generic_lookup → preview",
+            tool_output_full=" ".join(secrets),
+        )
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.TOOL,
+            content="⚙ fs_read → preview",
+            tool_output_full="/Users/alice/private.txt\nprivate file body",
+        )
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.TOOL,
+            content="⚙ generic_lookup → 3 matches",
+            tool_output_full="chain of thought: private internal plan",
+        )
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.TOOL,
+            content="⚙ generic_lookup → 3 matches",
+            tool_output_full="3 safe matches",
+        )
+
+        rows = [
+            row
+            for row in db.get_trajectory_rows(conversation_id)
+            if row.event_kind == "tool_result"
+        ]
+        serialized = repr(rows)
+        assert all(secret not in serialized for secret in secrets)
+        assert "/Users/alice/private.txt" not in serialized
+        assert "private file body" not in serialized
+        assert "private internal plan" not in serialized
+        payloads = [json.loads(row.payload_json) for row in rows]
+        generic_secret, file_payload, hidden_payload, safe_payload = payloads
+        assert generic_secret["field_states"]["result"] == "redacted"
+        assert generic_secret["sensitivity"] == "tool_content"
+        assert file_payload["result"] == ""
+        assert file_payload["field_states"]["result"] == "omitted"
+        assert hidden_payload["result"] == ""
+        assert hidden_payload["field_states"]["result"] == "omitted"
+        assert safe_payload["result"] == "3 safe matches"
+        assert safe_payload["field_states"]["result"] == "observed"
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("diagnostic_fails", (False, True))
+def test_sidecar_write_failure_attempts_one_nonrecursive_diagnostic(
+    tmp_path, monkeypatch, diagnostic_fails: bool
+) -> None:
+    db, store = _store_with_db(tmp_path)
+    try:
+        session = store.ensure_session(title="Trajectory")
+        conversation_id = store.persist_session_if_needed(session.id)
+        user = store.append_message(
+            session.id, role=ConsoleMessageRole.USER, content="go", persist=True
+        )
+        real_writer = store.persistence.write_trajectory_rows
+        calls: list[list[str]] = []
+
+        def selective_writer(rows):
+            kinds = [row.event_kind for row in rows]
+            calls.append(kinds)
+            if kinds != ["capture_failed"] or diagnostic_fails:
+                raise RuntimeError("secret diagnostic failure")
+            return real_writer(rows)
+
+        monkeypatch.setattr(store.persistence, "write_trajectory_rows", selective_writer)
+        assert not store.record_trace_event(
+            session.id,
+            anchor_message_id=user.id,
+            event_kind="model_error",
+            summary="Provider request failed",
+        )
+        assert calls == [["model_error"], ["capture_failed"]]
+        rows = db.get_trajectory_rows(conversation_id)
+        diagnostics = [row for row in rows if row.event_kind == "capture_failed"]
+        assert len(diagnostics) == (0 if diagnostic_fails else 1)
+        if diagnostics:
+            payload = json.loads(diagnostics[0].payload_json)
+            assert payload["field_states"]["payload"] == "capture_failed"
+            assert "secret diagnostic failure" not in repr(payload)
+
+        # Retrying the same failed observation cannot create another diagnostic.
+        store.record_trace_event(
+            session.id,
+            anchor_message_id=user.id,
+            event_kind="model_error",
+            summary="Provider request failed",
+        )
+        assert calls.count(["capture_failed"]) == 1
     finally:
         db.close()
 

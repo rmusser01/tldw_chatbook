@@ -883,6 +883,9 @@ def _field_state_map(
 def _sidecar_event_id(row: Any) -> str:
     """Stable identifier for a trajectory-sidecar owner row."""
     explicit = _optional_text(_field(row, "event_id"))
+    if explicit is None:
+        payload = _parse_payload(_field(row, "payload_json"))
+        explicit = _optional_text(payload.get("event_id")) if payload else None
     if explicit:
         return explicit
     conversation_id = _optional_text(_field(row, "conversation_id"))

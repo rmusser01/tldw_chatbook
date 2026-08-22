@@ -80,6 +80,7 @@ from tldw_chatbook.Chat.rag_scope import RagScope, SessionScopeHolder
 from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
 from tldw_chatbook.TTS.profile_errors import ProfileValidationError
 from tldw_chatbook.TTS.profile_types import CharacterRef
+from tldw_chatbook.Utils.log_sanitizer import REDACTION_MARKER, redact_log_line
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 from tldw_chatbook.Video_Generation.video_store import video_content_marker
 
@@ -92,12 +93,6 @@ if TYPE_CHECKING:
 
 #: Maximum number of attachments a Console session may stage before send.
 MAX_PENDING_ATTACHMENTS = 5
-
-#: Trajectory sidecar (schema v38): stored tool-result payload cap. The full
-#: untruncated output remains available live in-session via
-#: ``ConsoleChatMessage.tool_output_full``; beyond this cap the sidecar row
-#: stores a truncated result plus ``{"truncated": true}`` in its payload.
-TRAJECTORY_RESULT_CAP_BYTES = 256 * 1024
 
 TerminalCitationFinalizer = Callable[[str], SealedCitationWrite | None]
 
@@ -858,6 +853,7 @@ class ConsoleChatStore:
         # parent message persists. Keyed by the parent's NATIVE message id.
         self._pending_trajectory_tool_rows: dict[str, list[dict[str, Any]]] = {}
         self._pending_trajectory_event_rows: dict[str, list[dict[str, Any]]] = {}
+        self._trajectory_capture_failure_keys: set[tuple[str, str, str, str]] = set()
 
     def subscribe_message_completed(
         self,
@@ -4500,10 +4496,11 @@ class ConsoleChatStore:
         with self._trajectory_lock:
             try:
                 result = writer(list(rows))
-            except Exception as exc:
-                logger.bind(row_count=len(rows), error=repr(exc)).warning(
-                    "trajectory_rows_write_failed"
-                )
+            except Exception:
+                logger.warning("trajectory_rows_write_failed")
+                result = False
+            if result is False:
+                self._write_capture_failed_diagnostic(writer, rows)
                 return False
         if result is not False:
             # task-5: a successful sidecar write is trajectory-visible state.
@@ -4516,6 +4513,45 @@ class ConsoleChatStore:
                     if session.persisted_conversation_id == conversation_id:
                         self._bump_payload_revision(session.id)
         return result is not False
+
+    def _write_capture_failed_diagnostic(
+        self,
+        writer: Callable[[Sequence[TrajectoryRowWrite]], object],
+        rows: Sequence[TrajectoryRowWrite],
+    ) -> None:
+        """Attempt one payload-free diagnostic without re-entering capture."""
+        first = rows[0]
+        if any(row.event_kind == "capture_failed" for row in rows):
+            return
+        key = (
+            first.conversation_id,
+            first.message_id,
+            first.turn_id,
+            ",".join(row.event_kind for row in rows),
+        )
+        if key in self._trajectory_capture_failure_keys:
+            return
+        self._trajectory_capture_failure_keys.add(key)
+        diagnostic = TrajectoryRowWrite(
+            message_id=first.message_id,
+            conversation_id=first.conversation_id,
+            turn_id=first.turn_id,
+            seq=None,
+            event_kind="capture_failed",
+            step_started_at=first.step_started_at,
+            payload_json=json.dumps(
+                {
+                    "summary": "Trace capture failed",
+                    "status": "incomplete",
+                    "field_states": {"payload": "capture_failed"},
+                    "sensitivity": "diagnostic",
+                }
+            ),
+        )
+        try:
+            writer([diagnostic])
+        except Exception:
+            logger.warning("trajectory_capture_diagnostic_write_failed")
 
     def variant_sets_for_conversation(
         self, conversation_id: str
@@ -4556,30 +4592,61 @@ class ConsoleChatStore:
     def _trajectory_tool_payload(content: str, tool_output_full: str | None) -> str:
         """Build the ``payload_json`` for one tool record.
 
-        ``name`` is best-effort parsed from the marker text (the live bridge
-        formats tool markers as ``⚙ <tool_name> → <preview>``); ``result``
-        is the full untruncated output when available, capped at
-        ``TRAJECTORY_RESULT_CAP_BYTES`` with a ``{"truncated": true}``
-        marker beyond that. ``args`` is ``None``: the marker-append seam
-        carries no argument dict, and fabricating one from display text
-        would be worse than absent.
+        ``name`` is best-effort parsed from the marker text. File-shaped and
+        hidden-reasoning outputs are omitted; other outputs pass through the
+        shared credential/path scrubber and its bounded-summary limit.
+        ``args`` is ``None`` because this seam does not observe arguments.
         """
         text = content or ""
         name: str | None = None
         if text.startswith("⚙ "):
             name = text[2:].split(" →", 1)[0].strip() or None
-        result = tool_output_full if tool_output_full is not None else text
-        payload: dict[str, Any] = {"name": name, "args": None, "result": result}
-        encoded = result.encode("utf-8")
-        if len(encoded) > TRAJECTORY_RESULT_CAP_BYTES:
-            # Cap BYTES, not characters: a character slice of multibyte
-            # text (up to 4 bytes/codepoint) could leave the stored result
-            # up to 4x over budget. Truncate the encoded form and decode
-            # back with errors="ignore" so a split codepoint is dropped
-            # rather than crashing or being replaced by a longer escape.
-            payload["result"] = encoded[:TRAJECTORY_RESULT_CAP_BYTES].decode(
-                "utf-8", errors="ignore"
+        raw_result = tool_output_full if tool_output_full is not None else text
+        file_result = bool(name) and (
+            name.startswith("fs_")
+            or name
+            in {
+                "read_file",
+                "write_file",
+                "list_directory",
+                "glob_files",
+                "grep_files",
+                "read_skill_file",
+                "run_skill_script",
+            }
+        )
+        contains_private_key = (
+            "-----BEGIN " in raw_result.upper()
+            and "PRIVATE KEY-----" in raw_result.upper()
+        )
+        hidden_reasoning = any(
+            marker in raw_result.lower()
+            for marker in ("reasoning_content", "chain of thought")
+        )
+        scrubbed = redact_log_line(raw_result)
+        if file_result or hidden_reasoning:
+            result = ""
+            result_state = "omitted"
+        elif contains_private_key:
+            result = REDACTION_MARKER
+            result_state = "redacted"
+        else:
+            result = scrubbed
+            result_state = (
+                "redacted"
+                if REDACTION_MARKER in scrubbed
+                else "truncated"
+                if scrubbed != raw_result
+                else "observed"
             )
+        payload: dict[str, Any] = {
+            "name": name,
+            "args": None,
+            "result": result,
+            "field_states": {"args": "not_available", "result": result_state},
+            "sensitivity": "tool_content",
+        }
+        if result_state == "truncated":
             payload["truncated"] = True
         return json.dumps(payload)
 
@@ -4754,6 +4821,8 @@ class ConsoleChatStore:
         event_kind: str,
         summary: str,
         status: str = "observed",
+        event_id: str | None = None,
+        parent_event_id: str | None = None,
         source_event_id: str | None = None,
         replacement_event_id: str | None = None,
         sensitivity: str = "diagnostic",
@@ -4769,6 +4838,8 @@ class ConsoleChatStore:
             payload = {
                 "summary": summary,
                 "status": status,
+                "event_id": event_id,
+                "parent_event_id": parent_event_id,
                 "source_event_id": source_event_id,
                 "replacement_event_id": replacement_event_id,
                 "field_states": {
