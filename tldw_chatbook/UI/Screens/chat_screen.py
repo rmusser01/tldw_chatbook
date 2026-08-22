@@ -1200,7 +1200,9 @@ def _build_trajectory_snapshot(
     diagnostic_events: list[Any] = []
     active_leaf: str | None = None
 
-    def capture_failed(source: str, error: Exception) -> None:
+    def capture_failed(
+        source: str, error: Exception, *, message_id: str | None = None
+    ) -> None:
         logger.opt(exception=error).error(
             "Trace source read failed: source={} conversation_id={}",
             source,
@@ -1208,8 +1210,12 @@ def _build_trajectory_snapshot(
         )
         diagnostic_events.append(
             {
-                "event_id": f"capture-failed:{source}:{conversation_id}",
+                "event_id": (
+                    f"capture-failed:{source}:{conversation_id}"
+                    f"{f':{message_id}' if message_id else ''}"
+                ),
                 "conversation_id": conversation_id,
+                "message_id": message_id,
                 "event_kind": "capture_failed",
                 "status": "capture_failed",
                 "summary": f"{source} capture failed",
@@ -1271,7 +1277,6 @@ def _build_trajectory_snapshot(
                 offset += len(page)
         except Exception as error:  # noqa: BLE001
             capture_failed("context", error)
-            compaction_records = []
     turn_by_message: dict[str, str] = {}
     for trajectory_row in traj_rows:
         if isinstance(trajectory_row, Mapping):
@@ -1284,30 +1289,33 @@ def _build_trajectory_snapshot(
             turn_by_message[str(row_message_id)] = str(row_turn_id)
     if agent_runs_db is not None:
         try:
-            for raw_run in agent_runs_db.list_runs(conversation_id):
-                run = dict(raw_run) if isinstance(raw_run, Mapping) else {}
-                run_id = str(run.get("id") or "")
-                if not run_id:
-                    continue
-                assistant_message_id = str(run.get("assistant_message_id") or "")
-                if assistant_message_id in turn_by_message:
-                    run["turn_id"] = turn_by_message[assistant_message_id]
-                agent_runs.append(run)
-                for step in run.get("steps", ()) or ():
-                    if not isinstance(step, Mapping):
+            raw_runs = agent_runs_db.list_runs(conversation_id)
+            for raw_run in raw_runs:
+                try:
+                    run = dict(raw_run) if isinstance(raw_run, Mapping) else {}
+                    run_id = str(run.get("id") or "")
+                    if not run_id:
                         continue
-                    agent_steps.append(
+                    assistant_message_id = str(run.get("assistant_message_id") or "")
+                    if assistant_message_id in turn_by_message:
+                        run["turn_id"] = turn_by_message[assistant_message_id]
+                    steps = list(run.get("steps", ()) or ())
+                    converted_steps = [
                         {
                             **step,
                             "run_id": run_id,
                             "conversation_id": conversation_id,
                             "turn_id": run.get("turn_id"),
                         }
-                    )
+                        for step in steps
+                        if isinstance(step, Mapping)
+                    ]
+                    agent_runs.append(run)
+                    agent_steps.extend(converted_steps)
+                except Exception as error:  # noqa: BLE001
+                    capture_failed("agent", error)
         except Exception as error:  # noqa: BLE001
             capture_failed("agent", error)
-            agent_runs = []
-            agent_steps = []
     citation_repository = getattr(persistence, "citation_repository", None)
     if citation_repository is not None:
         assistant_ids = [
@@ -1358,7 +1366,7 @@ def _build_trajectory_snapshot(
                         }
                     )
             except Exception as error:  # noqa: BLE001
-                capture_failed("retrieval", error)
+                capture_failed("retrieval", error, message_id=message_id)
                 continue
     return derive_trajectory(
         messages,

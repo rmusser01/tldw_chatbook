@@ -630,6 +630,11 @@ def test_collided_identity_is_never_an_arbitrary_lineage_target() -> None:
 
     assert len(set(duplicate_ids)) == 2
     assert "agent-run:duplicate" not in duplicate_ids
+    assert all(
+        r.field_states["event_id"] == "capture_failed"
+        for r in records
+        if r.run_id == "duplicate"
+    )
     assert child.parent_event_id is None
     assert child.field_states["parent_event_id"] == "capture_failed"
 
@@ -666,3 +671,21 @@ def test_agent_privacy_and_terminal_completion_are_honest() -> None:
     assert running.completed_at is None
     assert by_id["agent-run:done"].completed_at == 10
     assert by_id["agent-step:running:1"].sensitivity == "conversation_content"
+
+
+def test_large_linear_causal_chain_does_not_use_python_recursion() -> None:
+    runs = [
+        {
+            "id": str(index),
+            "parent_event_id": f"agent-run:{index - 1}" if index else None,
+            "created_at": 5001 - index,
+        }
+        for index in range(5001)
+    ]
+
+    records = _records(_snapshot(agent_runs=runs))
+
+    assert len(records) == 5001
+    assert [record.event_id for record in records] == [
+        f"agent-run:{index}" for index in range(5001)
+    ]

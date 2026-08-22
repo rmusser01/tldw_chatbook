@@ -516,7 +516,14 @@ def test_snapshot_builder_prefilters_citations_and_pages_context_failures():
 
         def list_auxiliary_attempts(self, _conversation_id, *, limit, offset):
             self.offsets.append(offset)
-            return [{"operation_id": f"op-{offset + i}"} for i in range(500)] if offset == 0 else []
+            if offset:
+                raise RuntimeError("late context failure")
+            return [{"operation_id": f"op-{i}"} for i in range(500)]
+
+    class _Runs:
+        def list_runs(self, _conversation_id):
+            yield {"id": "retained-run", "conversation_id": "conv-1"}
+            raise RuntimeError("late agent failure")
 
     class _Citations:
         candidate_calls = 0
@@ -540,16 +547,42 @@ def test_snapshot_builder_prefilters_citations_and_pages_context_failures():
         variant_sets_for_conversation=lambda _conversation_id: (),
     )
 
-    snapshot = _build_trajectory_snapshot(store, "conv-1")
+    snapshot = _build_trajectory_snapshot(store, "conv-1", agent_runs_db=_Runs())
     records = [record for turn in snapshot.turns for record in turn.records]
 
     assert context.offsets == [0, 500]
     assert citations.candidate_calls == 1
     assert citations.detail_calls == 0
+    assert sum(record.kind == "compaction" for record in records) == 500
+    assert any(record.event_id == "agent-run:retained-run" for record in records)
     failure = next(record for record in records if record.kind == "capture_failed")
     assert failure.status == "capture_failed"
     assert failure.field_states == {"source": "capture_failed"}
     assert failure.sensitivity == "diagnostic"
+
+
+def test_retrieval_failures_are_distinct_and_message_owned():
+    messages = [msg("a1", "assistant", content="x", ts=1), msg("a2", "assistant", content="x", ts=2)]
+
+    class _DB:
+        def get_messages_for_conversation(self, *_args, **_kwargs): return messages
+        def get_trajectory_rows(self, _conversation_id): return []
+        def get_conversation_active_leaf(self, _conversation_id): return None
+
+    class _Citations:
+        def active_owner_candidate_message_ids(self, message_ids): return set(message_ids)
+        def get_active_trace_for_current_message(self, *_args): raise RuntimeError("SECRET")
+
+    store = SimpleNamespace(
+        persistence=SimpleNamespace(db=_DB(), context_repository=None, citation_repository=_Citations()),
+        variant_sets_for_conversation=lambda _conversation_id: (),
+    )
+    records = [r for turn in _build_trajectory_snapshot(store, "conv-1").turns for r in turn.records]
+    failures = [r for r in records if r.kind == "capture_failed"]
+
+    assert {record.message_id for record in failures} == {"a1", "a2"}
+    assert len({record.event_id for record in failures}) == 2
+    assert all("SECRET" not in record.content_preview for record in failures)
 
 
 async def test_trajectory_launch_action_presents_screen():

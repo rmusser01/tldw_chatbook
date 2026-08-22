@@ -1147,40 +1147,45 @@ def _causal_order(records: Iterable[TrajectoryRecord]) -> list[TrajectoryRecord]
 def _strong_components(
     nodes: Mapping[str, Any], edges: Mapping[str, set[str]]
 ) -> list[list[str]]:
-    """Return deterministic strongly connected components for an event graph."""
-    index = 0
-    stack: list[str] = []
-    on_stack: set[str] = set()
-    indices: dict[str, int] = {}
-    lowlinks: dict[str, int] = {}
-    components: list[list[str]] = []
-
-    def visit(node: str) -> None:
-        nonlocal index
-        indices[node] = lowlinks[node] = index
-        index += 1
-        stack.append(node)
-        on_stack.add(node)
-        for child in sorted(edges[node]):
-            if child not in indices:
-                visit(child)
-                lowlinks[node] = min(lowlinks[node], lowlinks[child])
-            elif child in on_stack:
-                lowlinks[node] = min(lowlinks[node], indices[child])
-        if lowlinks[node] != indices[node]:
-            return
-        component: list[str] = []
+    """Return deterministic SCCs without consuming Python's call stack."""
+    visited: set[str] = set()
+    finish: list[str] = []
+    for root in sorted(nodes):
+        if root in visited:
+            continue
+        visited.add(root)
+        stack: list[tuple[str, bool]] = [(root, False)]
         while stack:
-            child = stack.pop()
-            on_stack.remove(child)
-            component.append(child)
-            if child == node:
-                break
-        components.append(component)
+            node, exiting = stack.pop()
+            if exiting:
+                finish.append(node)
+                continue
+            stack.append((node, True))
+            for child in reversed(sorted(edges[node])):
+                if child not in visited:
+                    visited.add(child)
+                    stack.append((child, False))
 
-    for node in sorted(nodes):
-        if node not in indices:
-            visit(node)
+    reverse_edges: dict[str, set[str]] = {node: set() for node in nodes}
+    for before, children in edges.items():
+        for after in children:
+            reverse_edges[after].add(before)
+    components: list[list[str]] = []
+    assigned: set[str] = set()
+    for root in reversed(finish):
+        if root in assigned:
+            continue
+        component: list[str] = []
+        stack = [(root, False)]
+        assigned.add(root)
+        while stack:
+            node, _ = stack.pop()
+            component.append(node)
+            for parent in reversed(sorted(reverse_edges[node])):
+                if parent not in assigned:
+                    assigned.add(parent)
+                    stack.append((parent, False))
+        components.append(component)
     return components
 
 
@@ -1201,6 +1206,9 @@ def _unique_event_ids(records: Iterable[TrajectoryRecord]) -> list[TrajectoryRec
             event_id = base
             if base in ambiguous:
                 event_id = f"{base}:collision:{digest}:{occurrences[digest]}"
+                states = dict(record.field_states)
+                states["event_id"] = "capture_failed"
+                record = replace(record, field_states=states)
             unique.append(replace(record, event_id=event_id))
     resolved: list[TrajectoryRecord] = []
     for record in unique:

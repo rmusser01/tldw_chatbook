@@ -294,7 +294,7 @@ def test_active_owner_candidate_ids_are_identity_scoped_and_bounded(
     _persist(db, repository, message_id="candidate-message")
 
     candidates = repository.active_owner_candidate_message_ids(
-        tuple(["missing"] * 600 + ["candidate-message"])
+        tuple([f"missing-{index}" for index in range(500)] + ["candidate-message"])
     )
 
     assert candidates == {"candidate-message"}
