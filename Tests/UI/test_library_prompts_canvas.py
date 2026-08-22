@@ -153,7 +153,23 @@ from Tests.UI.test_library_shell import (
     _wait_for_library_shell,
     _wait_for_selector,
 )
-from Tests.UI.app_factory import _build_test_app
+from Tests.UI.app_factory import _build_test_app as _build_tldw_test_app
+
+
+def _build_test_app(*args, **kwargs):
+    """Force the legacy (graduated) Library profile this suite assumes.
+
+    TASK-19602: under the pytest sandbox the factory builds a NEW profile
+    (library_new_profile_admission True -> lifecycle UNKNOWN -> the 2-row
+    landing rail), which orphans every rail-row press in this file.
+    test_library_shell.py solved the same drift with its local wrapper;
+    this mirrors it. Tests that need the new-profile behavior pass
+    ``preserve_profile_admission=True``.
+    """
+    app = _build_tldw_test_app(*args, **kwargs)
+    if not kwargs.pop("preserve_profile_admission", False):
+        app.library_new_profile_admission = False
+    return app
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -10125,7 +10141,8 @@ async def test_library_use_mismatched_structured_prompt_requires_conversion(tmp_
         )
         assert host.seen_routes == []
         assert app.get_acp_runtime_session_state() == session_before
-        app.notify.assert_called_once()
+        # TASK-19602: the lifecycle graduation toast (4aa59c20a) may
+        # precede the expected notification -- the count is no longer one.
         assert "Convert and save as new Prompt" in app.notify.call_args.args[0]
         assert screen._selected_prompt_id == prompt_id
         assert screen._library_prompt_dirty is False
@@ -10161,8 +10178,10 @@ async def test_library_prompt_editing_shows_unsaved_marker_and_save_clears_it(tm
         assert "Unsaved" not in str(meta_before.renderable)
         discard = screen.query_one("#library-prompt-discard", Button)
         assert str(discard.label) == "Discard changes"
-        assert discard.disabled is True
-        assert str(discard.tooltip) == "No unsaved Prompt changes to discard."
+        # TASK-19602: a24a2202f's simplification keeps Discard enabled in
+        # the clean state (only mutation/write in-flight disables it) --
+        # the clean-state tooltip contract moved to the later assertions.
+        assert discard.disabled is False
 
         screen.query_one("#library-prompt-author", Input).value = "Changed"
         await pilot.pause()
@@ -10456,6 +10475,13 @@ async def test_library_prompts_export_refuses_server_mode_before_prompt_count(
     tmp_path,
 ):
     _db, service = _real_prompt_scope_service(tmp_path)
+    # TASK-19602: the pristine-empty prompts canvas renders the distilled
+    # empty CTA (3aef9bcd1) with no action row -- seed one prompt so the
+    # list (and its Export action) composes in server mode.
+    _db.add_prompt(
+        name="Placeholder", author="A", details="d",
+        system_prompt="", user_prompt="",
+    )
     prompt_ids = Mock(side_effect=AssertionError("Prompt DB must not be touched"))
     app = _build_test_app()
     _wire_empty_non_prompt_services(app)
@@ -10704,7 +10730,7 @@ async def test_library_prompt_export_blocks_invalid_recipe_without_downgrade(tmp
         await pilot.pause()
 
         assert len(host.screen_stack) == stack_size
-        app.notify.assert_called_once()
+        # TASK-19602 (lifecycle toast may precede): count no longer one.
         args, kwargs = app.notify.call_args
         assert "Fix block validation errors before exporting" in args[0]
         assert kwargs.get("severity") == "warning"
@@ -10830,7 +10856,7 @@ async def test_library_prompt_write_export_preserves_live_recipe_structure(tmp_p
         )
         assert parsed["artifact_type"] == "recipe"
         assert parsed["prompt_definition"] == definition
-        app.notify.assert_called_once()
+        # TASK-19602 (lifecycle toast may precede): count no longer one.
         assert "exported successfully" in app.notify.call_args.args[0]
 
 
@@ -10873,7 +10899,7 @@ async def test_library_prompt_write_export_file_rejects_invalid_path(
         )
 
         assert not destination.exists()
-        app.notify.assert_called_once()
+        # TASK-19602 (lifecycle toast may precede): count no longer one.
         args, kwargs = app.notify.call_args
         assert "Rejected export path" in args[0]
         assert kwargs.get("severity") == "warning"
@@ -10911,7 +10937,7 @@ async def test_library_prompt_write_export_file_cancelled_dialog_notifies_quietl
             prompt_id,
         )
 
-        app.notify.assert_called_once()
+        # TASK-19602 (lifecycle toast may precede): count no longer one.
         assert "cancelled" in app.notify.call_args.args[0]
 
 
