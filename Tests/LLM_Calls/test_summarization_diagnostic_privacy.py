@@ -21,6 +21,7 @@ from typing import Any, Callable, Iterator
 import pytest
 from loguru import logger as loguru_logger
 
+from Tests.ast_shape import stable_dump
 from scripts import check_persistent_diagnostic_inventory as diagnostic_inventory
 from tldw_chatbook.LLM_Calls import Local_Summarization_Lib as local_summarization
 from tldw_chatbook.LLM_Calls import (
@@ -988,7 +989,7 @@ def _message_shape(expression: str) -> str:
     node = ast.parse(f"logger.info({expression})").body[0]
     assert isinstance(node, ast.Expr)
     assert isinstance(node.value, ast.Call)
-    return ast.dump(node.value.args[0], include_attributes=False)
+    return stable_dump(node.value.args[0], include_attributes=False)
 
 
 def _single_call(source: str):

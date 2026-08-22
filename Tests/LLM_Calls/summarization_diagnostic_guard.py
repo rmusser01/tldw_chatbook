@@ -6,6 +6,7 @@ import ast
 from collections import defaultdict
 from dataclasses import dataclass
 
+from Tests.ast_shape import stable_dump
 from scripts.check_persistent_diagnostic_inventory import (
     LOG_METHODS,
     _is_diagnostic_call,
@@ -622,7 +623,7 @@ def discover_diagnostic_calls(source: str, *, module: str) -> list[DiagnosticCal
                 event=event,
                 occurrence=occurrences[occurrence_key],
                 message_shape=(
-                    ast.dump(first, include_attributes=False)
+                    stable_dump(first, include_attributes=False)
                     if first is not None
                     else "<missing>"
                 ),
