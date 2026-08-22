@@ -1,10 +1,10 @@
 ---
 id: TASK-19056
 title: Enable Shared Visual Identity for Persona actors
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-20 18:01'
-updated_date: '2026-08-22 17:11'
+updated_date: '2026-08-22 18:33'
 labels: []
 dependencies:
   - TASK-16319
@@ -61,4 +61,6 @@ Implemented Persona actors on the existing Shared Visual Identity boundary: exac
 Verification: assigned-worktree provenance and architecture gate 4 passed; complete affected-component gate 984 passed with 1 Windows-only skip and 3 dependency warnings; diagnostic, privacy, architecture, and governance gate 68 passed; focused Console gate 99 passed with 314 deselected; lifecycle and mutation matrix 88 passed. Born-RED to GREEN and mutation evidence covered source, Persona revision, editor generation, binding version, post-decode identity, cancellation drain, and affected-only invalidation guards. All changed Python files pass Ruff, format, py_compile, and diff checks; the forbidden-boundary scan found no Persona Buddy, Persona Visual, Actor Pack archive, or server-write coupling. No full repository suite was run.
 
 ADR: no new ADR was required; the implementation follows ADR-067 and ADR-074. The executable plan at Docs/superpowers/plans/2026-08-22-task-19056-persona-shared-visual-identity.md was completed without architectural deviation. No reusable lesson entry was warranted.
+
+Rebase follow-up: rebased onto current dev and repaired three inherited/overlap failures before PR publication. A born-RED config lock-order test exposed a settings-rebuild/config-file inversion; the shared write boundary now acquires those locks in one order, with 78 focused config tests green. The Console avatar fake was aligned with dev's new allocation callback, blank conversation search now clears synchronously, and the workspace-rail test uses its existing bounded recompose waiter (five independent green runs). The complete affected gate passed 984 tests with one Windows-only skip and four warnings before the final no-conflict rebase; post-rebase overlap verification passed 116 rail/shell tests, 68 architecture/governance tests, and the repaired rail-row test in five isolated processes. The diagnostic inventory update was reviewed statement-by-statement: it pins dev's existing Inspector structural-fingerprint warning (no row values/action labels, secrets, paths, or tracebacks) and removes one stale expectation for a deleted Library warning. Ruff, py_compile, and diff checks pass; inherited formatter baselines are unchanged. No full repository suite was run.
 <!-- SECTION:NOTES:END -->
