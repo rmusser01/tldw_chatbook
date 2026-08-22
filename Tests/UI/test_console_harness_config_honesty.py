@@ -66,6 +66,6 @@ async def test_persisted_chat_default_reaches_the_turn_context_snapshot():
         controller = screen._ensure_console_chat_controller()
         session_id = controller.store.active_session_id
 
-        context = controller.resolve_turn_execution_context(session_id)
+        context = controller.resolve_turn_configuration_snapshot(session_id)
 
         assert context.rag_defaults["auto_retrieve_on_send"] is True

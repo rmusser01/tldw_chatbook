@@ -18,8 +18,24 @@ from tldw_chatbook.Chat.console_chat_models import (
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+    ConsoleEgressClass,
+    ConsoleLibraryItemScopeSnapshot,
+    ConsoleProviderIntent,
+    ConsoleResolvedDestination,
+    ConsoleTurnLibraryAuthority,
+)
+from tldw_chatbook.Chat.console_library_policy import (
+    AUTOMATIC_LIBRARY_SOURCE_TYPES,
+    ConsoleAssistantLibraryAccess,
+    ConsoleAutoRetrieve,
+    ConsoleLibraryPolicySnapshot,
+)
 from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
-from tldw_chatbook.Chat.console_turn_context import ConsoleTurnExecutionContext
+from tldw_chatbook.Chat.console_turn_context import (
+    ConsoleTurnConfigurationSnapshot,
+    ConsoleTurnExecutionContext,
+)
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 
 
@@ -91,7 +107,7 @@ def test_capture_detaches_nested_mutable_configuration_sources():
     tool_configuration = {"local": {"enabled": True, "names": ["fs_read"]}}
     payload_settings = {"headers": {"x-mode": "one"}, "stops": ["END"]}
 
-    context = ConsoleTurnExecutionContext.capture(
+    context = ConsoleTurnConfigurationSnapshot.capture(
         session_id="session-a",
         provider_selection=selection,
         session_settings=_settings("openai", "gpt-context", "system-a"),
@@ -137,7 +153,7 @@ def test_capture_detaches_nested_mutable_configuration_sources():
 
 def test_direct_constructor_also_detaches_mutable_inputs():
     capabilities = {"formats": ["image/png"]}
-    context = ConsoleTurnExecutionContext(
+    context = ConsoleTurnConfigurationSnapshot(
         session_id="session-a",
         provider_selection=ConsoleProviderSelection(provider="openai"),
         capabilities=capabilities,
@@ -148,10 +164,83 @@ def test_direct_constructor_also_detaches_mutable_inputs():
     assert context.capabilities["formats"] == ("image/png",)
 
 
+def _authority() -> ConsoleTurnLibraryAuthority:
+    return ConsoleTurnLibraryAuthority(
+        policy=ConsoleLibraryPolicySnapshot(
+            auto_retrieve=ConsoleAutoRetrieve.NEVER,
+            assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+            policy_revision=4,
+            source="durable",
+        ),
+        direct_library_tools=True,
+        source_types=AUTOMATIC_LIBRARY_SOURCE_TYPES,
+        scope_snapshot=ConsoleLibraryItemScopeSnapshot((), (), True),
+        provider_intent=ConsoleProviderIntent("openai", "gpt-context", None),
+        attempt_id="attempt-1",
+    )
+
+
+def _destination() -> ConsoleResolvedDestination:
+    return ConsoleResolvedDestination(
+        provider="openai",
+        model="gpt-context",
+        endpoint_identity="https://api.example.invalid/v1",
+        egress_class=ConsoleEgressClass.UNKNOWN,
+    )
+
+
+def test_final_context_requires_complete_authority_and_destination():
+    configuration = ConsoleTurnConfigurationSnapshot.capture(
+        session_id="session-a",
+        provider_selection=ConsoleProviderSelection(provider="openai"),
+    )
+
+    with pytest.raises(TypeError, match="library_authority"):
+        ConsoleTurnExecutionContext(
+            configuration=configuration,
+            library_authority=None,
+            resolved_destination=_destination(),
+        )
+    with pytest.raises(TypeError, match="resolved_destination"):
+        ConsoleTurnExecutionContext(
+            configuration=configuration,
+            library_authority=_authority(),
+            resolved_destination=None,
+        )
+
+
+def test_final_context_exposes_read_only_configuration_compatibility_properties():
+    configuration = ConsoleTurnConfigurationSnapshot.capture(
+        session_id="session-a",
+        provider_selection=ConsoleProviderSelection(
+            provider="openai", configured_model="gpt-context"
+        ),
+        capabilities={"vision": True},
+        rag_defaults={"top_k": 5},
+        tool_configuration={"direct_library_tools": True},
+        provider_payload_settings={"temperature": 0.2},
+    )
+    context = ConsoleTurnExecutionContext(
+        configuration=configuration,
+        library_authority=_authority(),
+        resolved_destination=_destination(),
+    )
+
+    assert context.session_id == "session-a"
+    assert context.effective_model == "gpt-context"
+    assert context.provider_selection.provider == "openai"
+    assert context.capabilities == {"vision": True}
+    assert context.rag_defaults == {"top_k": 5}
+    assert context.tool_configuration == {"direct_library_tools": True}
+    assert context.provider_payload_settings == {"temperature": 0.2}
+    with pytest.raises(AttributeError):
+        context.configuration = configuration
+
+
 def test_live_tool_kill_switch_is_not_frozen_into_turn_context():
     store = ConsoleChatStore()
     session = store.create_session(workspace_id="workspace-a")
-    context = ConsoleTurnExecutionContext.capture(
+    context = ConsoleTurnConfigurationSnapshot.capture(
         session_id=session.id,
         provider_selection=ConsoleProviderSelection(provider="openai"),
         tool_configuration={"local_tools_enabled": True},
@@ -489,7 +578,7 @@ async def test_message_actions_thread_one_captured_context(action_name: str):
             content="answer",
         )
 
-    context = ConsoleTurnExecutionContext.capture(
+    context = ConsoleTurnConfigurationSnapshot.capture(
         session_id=session.id,
         provider_selection=ConsoleProviderSelection(
             provider="openai",
@@ -504,7 +593,7 @@ async def test_message_actions_thread_one_captured_context(action_name: str):
     )
     context_calls: list[str] = []
 
-    def resolve_context(session_id: str) -> ConsoleTurnExecutionContext:
+    def resolve_context(session_id: str) -> ConsoleTurnConfigurationSnapshot:
         context_calls.append(session_id)
         return context
 
@@ -561,7 +650,7 @@ async def test_summarize_and_rag_capture_receive_the_owning_turn_context():
         role=ConsoleMessageRole.USER,
         content="second question",
     )
-    context = ConsoleTurnExecutionContext.capture(
+    context = ConsoleTurnConfigurationSnapshot.capture(
         session_id=session.id,
         provider_selection=ConsoleProviderSelection(
             provider="openai",
@@ -602,7 +691,9 @@ async def test_summarize_and_rag_capture_receive_the_owning_turn_context():
         context.provider_selection,
         context.provider_selection,
     ]
-    assert rag_contexts == [context]
+    assert len(rag_contexts) == 1
+    assert rag_contexts[0] is not None
+    assert rag_contexts[0].configuration == context
 
 
 @pytest.mark.asyncio
@@ -624,7 +715,7 @@ async def test_attachment_gate_and_payload_use_captured_capabilities():
             mime_type="image/png",
         ),
     )
-    context = ConsoleTurnExecutionContext.capture(
+    context = ConsoleTurnConfigurationSnapshot.capture(
         session_id=session.id,
         provider_selection=ConsoleProviderSelection(
             provider="custom",

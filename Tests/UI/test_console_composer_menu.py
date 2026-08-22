@@ -466,7 +466,7 @@ def _fake_controller_with(messages):
         ConsoleMessageRole,
         ConsoleProviderSelection,
     )
-    from tldw_chatbook.Chat.console_turn_context import ConsoleTurnExecutionContext
+    from tldw_chatbook.Chat.console_turn_context import ConsoleTurnConfigurationSnapshot
 
     class _Store:
         def messages_for_session(self, session_id):
@@ -491,7 +491,7 @@ def _fake_controller_with(messages):
     controller = ConsoleChatController.__new__(ConsoleChatController)
     controller.store = _Store()
     controller._turn_context_provider = lambda session_id: (
-        ConsoleTurnExecutionContext.capture(
+        ConsoleTurnConfigurationSnapshot.capture(
             session_id=session_id,
             provider_selection=ConsoleProviderSelection(provider="test-provider"),
         )

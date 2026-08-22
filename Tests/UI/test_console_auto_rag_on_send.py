@@ -29,7 +29,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.Chat.rag_scope import EffectiveScope, scope_empty_notice
-from tldw_chatbook.Chat.console_turn_context import ConsoleTurnExecutionContext
+from tldw_chatbook.Chat.console_turn_context import ConsoleTurnConfigurationSnapshot
 from tldw_chatbook.config import load_settings, save_setting_to_cli_config
 from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
     LocalRagContextResult,
@@ -672,7 +672,7 @@ async def test_capture_seam_calls_the_hook_before_consuming(monkeypatch):
     """
     order: list[str] = []
     seen_contexts: list = []
-    turn_context = ConsoleTurnExecutionContext.capture(
+    turn_context = ConsoleTurnConfigurationSnapshot.capture(
         session_id="s1",
         provider_selection=ConsoleProviderSelection(provider="test-provider"),
     )

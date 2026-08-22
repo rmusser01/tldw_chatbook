@@ -18,6 +18,13 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleStagedSource,
     ConsoleWorkspaceContext,
 )
+from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+    ConsoleLibraryItemScopeSnapshot,
+    ConsoleProviderIntent,
+    ConsoleResolvedDestination,
+    ConsoleTurnLibraryAuthority,
+)
+from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryPolicySnapshot
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSnapshot
 
@@ -83,8 +90,8 @@ def _detached_selection(
 
 
 @dataclass(frozen=True, slots=True)
-class ConsoleTurnExecutionContext:
-    """Immutable provider-input configuration for one Console turn."""
+class ConsoleTurnConfigurationSnapshot:
+    """Immutable provider-input configuration captured before gateway resolution."""
 
     session_id: str
     provider_selection: ConsoleProviderSelection
@@ -143,7 +150,7 @@ class ConsoleTurnExecutionContext:
         rag_defaults: Mapping[str, Any] | None = None,
         tool_configuration: Mapping[str, Any] | None = None,
         provider_payload_settings: Mapping[str, Any] | None = None,
-    ) -> "ConsoleTurnExecutionContext":
+    ) -> "ConsoleTurnConfigurationSnapshot":
         """Capture detached values from mutable application-owned sources."""
         return cls(
             session_id=str(session_id),
@@ -164,3 +171,160 @@ class ConsoleTurnExecutionContext:
             self.provider_selection.explicit_model
             or self.provider_selection.configured_model
         )
+
+
+def _detached_configuration(
+    configuration: ConsoleTurnConfigurationSnapshot,
+) -> ConsoleTurnConfigurationSnapshot:
+    """Copy an already-frozen configuration at the final-context boundary."""
+    return ConsoleTurnConfigurationSnapshot(
+        session_id=configuration.session_id,
+        provider_selection=configuration.provider_selection,
+        scratch_space=configuration.scratch_space,
+        session_settings=configuration.session_settings,
+        workspace_roots=configuration.workspace_roots,
+        capabilities=configuration.capabilities,
+        rag_defaults=configuration.rag_defaults,
+        tool_configuration=configuration.tool_configuration,
+        provider_payload_settings=configuration.provider_payload_settings,
+    )
+
+
+def _detached_authority(
+    authority: ConsoleTurnLibraryAuthority,
+) -> ConsoleTurnLibraryAuthority:
+    """Copy the complete Library authority without retaining caller containers."""
+    policy = authority.policy
+    return ConsoleTurnLibraryAuthority(
+        policy=ConsoleLibraryPolicySnapshot(
+            auto_retrieve=policy.auto_retrieve,
+            assistant_access=policy.assistant_access,
+            policy_revision=policy.policy_revision,
+            source=policy.source,
+            error_code=policy.error_code,
+        ),
+        direct_library_tools=bool(authority.direct_library_tools),
+        source_types=tuple(str(value) for value in authority.source_types),
+        scope_snapshot=ConsoleLibraryItemScopeSnapshot(
+            note_ids=tuple(str(value) for value in authority.scope_snapshot.note_ids),
+            media_ids=tuple(
+                str(value) for value in authority.scope_snapshot.media_ids
+            ),
+            conversations_allowed=bool(
+                authority.scope_snapshot.conversations_allowed
+            ),
+        ),
+        provider_intent=ConsoleProviderIntent(
+            provider=str(authority.provider_intent.provider),
+            model=(
+                str(authority.provider_intent.model)
+                if authority.provider_intent.model is not None
+                else None
+            ),
+            endpoint=(
+                str(authority.provider_intent.endpoint)
+                if authority.provider_intent.endpoint is not None
+                else None
+            ),
+        ),
+        attempt_id=str(authority.attempt_id),
+    )
+
+
+def _detached_destination(
+    destination: ConsoleResolvedDestination,
+) -> ConsoleResolvedDestination:
+    """Copy the credential-free gateway result at the final-context boundary."""
+    return ConsoleResolvedDestination(
+        provider=str(destination.provider),
+        model=str(destination.model) if destination.model is not None else None,
+        endpoint_identity=str(destination.endpoint_identity),
+        egress_class=destination.egress_class,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleTurnExecutionContext:
+    """Complete immutable execution authority constructed after the gateway."""
+
+    configuration: ConsoleTurnConfigurationSnapshot
+    library_authority: ConsoleTurnLibraryAuthority
+    resolved_destination: ConsoleResolvedDestination
+
+    def __post_init__(self) -> None:
+        """Reject incomplete contexts and detach every constructor input."""
+        if not isinstance(self.configuration, ConsoleTurnConfigurationSnapshot):
+            raise TypeError(
+                "configuration must be a ConsoleTurnConfigurationSnapshot"
+            )
+        if not isinstance(self.library_authority, ConsoleTurnLibraryAuthority):
+            raise TypeError("library_authority must be a ConsoleTurnLibraryAuthority")
+        if not isinstance(self.resolved_destination, ConsoleResolvedDestination):
+            raise TypeError(
+                "resolved_destination must be a ConsoleResolvedDestination"
+            )
+        object.__setattr__(
+            self,
+            "configuration",
+            _detached_configuration(self.configuration),
+        )
+        object.__setattr__(
+            self,
+            "library_authority",
+            _detached_authority(self.library_authority),
+        )
+        object.__setattr__(
+            self,
+            "resolved_destination",
+            _detached_destination(self.resolved_destination),
+        )
+
+    @property
+    def session_id(self) -> str:
+        """Return the captured owning-session identifier."""
+        return self.configuration.session_id
+
+    @property
+    def effective_model(self) -> str | None:
+        """Return the explicit model or its captured configured fallback."""
+        return self.configuration.effective_model
+
+    @property
+    def provider_selection(self) -> ConsoleProviderSelection:
+        """Return the detached pre-gateway provider selection."""
+        return self.configuration.provider_selection
+
+    @property
+    def session_settings(self) -> ConsoleSessionSettings | None:
+        """Return the detached owning-session settings."""
+        return self.configuration.session_settings
+
+    @property
+    def scratch_space(self) -> ConsoleScratchSnapshot | None:
+        """Return the frozen scratch-space authority for this turn."""
+        return self.configuration.scratch_space
+
+    @property
+    def workspace_roots(self) -> tuple[str, ...]:
+        """Return the detached workspace roots."""
+        return self.configuration.workspace_roots
+
+    @property
+    def capabilities(self) -> Mapping[str, object]:
+        """Return the detached provider-capability mapping."""
+        return self.configuration.capabilities
+
+    @property
+    def rag_defaults(self) -> Mapping[str, object]:
+        """Return the detached retrieval defaults."""
+        return self.configuration.rag_defaults
+
+    @property
+    def tool_configuration(self) -> Mapping[str, object]:
+        """Return the detached tool configuration."""
+        return self.configuration.tool_configuration
+
+    @property
+    def provider_payload_settings(self) -> Mapping[str, object]:
+        """Return the detached provider-payload settings."""
+        return self.configuration.provider_payload_settings

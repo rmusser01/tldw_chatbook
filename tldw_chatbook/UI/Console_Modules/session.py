@@ -184,7 +184,7 @@ from ...Chat.console_session_settings import (
     default_console_session_settings,
 )
 from ...Chat.console_scratch_space import ConsoleScratchSnapshot
-from ...Chat.console_turn_context import ConsoleTurnExecutionContext
+from ...Chat.console_turn_context import ConsoleTurnConfigurationSnapshot
 from ...Chat.provider_readiness import provider_config_key
 from ...Character_Chat.visual_identity import (
     VisualIdentityResolution,
@@ -2228,7 +2228,7 @@ class ConsoleSessionController:
 
     def _build_console_turn_execution_context(
         self, session_id: str
-    ) -> ConsoleTurnExecutionContext:
+    ) -> ConsoleTurnConfigurationSnapshot:
         """Capture one detached configuration snapshot for an owning session."""
         from ...Chat.attachment_core import max_history_images
         from ...Tools.workspace_file_roots import folder_binding_roots
@@ -2261,7 +2261,7 @@ class ConsoleSessionController:
         except Exception:  # noqa: BLE001 -- optional roots never block a send
             workspace_roots = ()
 
-        return ConsoleTurnExecutionContext.capture(
+        return ConsoleTurnConfigurationSnapshot.capture(
             session_id=session_id,
             provider_selection=selection,
             scratch_space=self._scratch_snapshot_provider(session_id),

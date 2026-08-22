@@ -123,6 +123,19 @@ from tldw_chatbook.Chat.console_context_repository import (
     ConsoleContextRepository,
     ConsoleMemoryRecord,
 )
+from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+    ConsoleEgressClass,
+    ConsoleLibraryItemScopeSnapshot,
+    ConsoleProviderIntent,
+    ConsoleResolvedDestination,
+    ConsoleTurnLibraryAuthority,
+)
+from tldw_chatbook.Chat.console_library_policy import (
+    AUTOMATIC_LIBRARY_SOURCE_TYPES,
+    ConsoleAssistantLibraryAccess,
+    ConsoleAutoRetrieve,
+    ConsoleLibraryPolicySnapshot,
+)
 from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
 from tldw_chatbook.Chat.console_prepared_request import (
     CONTINUATION_OWNER_KEY,
@@ -161,7 +174,10 @@ from tldw_chatbook.Chat.console_roleplay_identity import (
     expand_character_template,
     resolve_console_message_presentation,
 )
-from tldw_chatbook.Chat.console_turn_context import ConsoleTurnExecutionContext
+from tldw_chatbook.Chat.console_turn_context import (
+    ConsoleTurnConfigurationSnapshot,
+    ConsoleTurnExecutionContext,
+)
 from tldw_chatbook.Chat.console_prompt_queue import (
     ConsolePromptQueueRegistry,
     PromptQueueMutationResult,
@@ -1715,7 +1731,7 @@ class ConsoleChatController:
         library_provider_factory: "Callable[..., Any | None] | None" = None,
         global_user_display_name: Callable[[], str] | None = None,
         context_repository: ConsoleContextRepository | None = None,
-        turn_context_provider: "Callable[[str], ConsoleTurnExecutionContext] | None" = None,
+        turn_context_provider: "Callable[[str], ConsoleTurnConfigurationSnapshot] | None" = None,
         queued_staged_rider_provider: "Callable[[str], bool] | None" = None,
         provider_config: "Callable[[], Mapping[str, Any]] | None" = None,
         confirm_project_instruction_dispatch: Callable[
@@ -3503,8 +3519,6 @@ class ConsoleChatController:
                     else None
                 ),
             )
-        turn_context = self.resolve_turn_execution_context(session.id)
-        turn_selection = turn_context.provider_selection
         # PR3a-2 Task 5: a wake never touches the user's staged state --
         # pending attachments belong to the USER's next send and must be
         # neither embedded nor cleared by a machine turn.
@@ -3532,8 +3546,10 @@ class ConsoleChatController:
             )
         if validation_error is not None:
             return self._block(session.id, validation_error)
+        configuration = self.resolve_turn_configuration_snapshot(session.id)
+        turn_selection = configuration.provider_selection
         if has_pending_attachment:
-            vision_model = turn_context.effective_model
+            vision_model = configuration.effective_model
             # ONE capability check decides the gate AND the copy: this
             # module's is_vision_capable (the documented monkeypatch seam) is
             # injected into vision_block_reason instead of being re-checked
@@ -3542,7 +3558,7 @@ class ConsoleChatController:
                 turn_selection.provider,
                 vision_model,
                 is_capable=lambda _provider, _model: bool(
-                    turn_context.capabilities.get("vision", False)
+                    configuration.capabilities.get("vision", False)
                 ),
             )
             if block_reason is not None:
@@ -3551,6 +3567,10 @@ class ConsoleChatController:
             return self._block(
                 session.id, turn_selection.workspace_context.recovery_copy
             )
+        library_authority = await self._capture_turn_library_authority(
+            session.id,
+            configuration,
+        )
 
         # TASK-457(a): echo the USER message BEFORE resolving the provider, so a
         # slow/cold readiness probe no longer leaves the transcript blank while
@@ -3632,6 +3652,12 @@ class ConsoleChatController:
             if echoed_user is not None:
                 self.store.mark_message_send_blocked(echoed_user.id)
             return self._block(session.id, visible_copy)
+
+        turn_context = self._finalize_turn_execution_context(
+            configuration,
+            library_authority,
+            resolution,
+        )
 
         if pendings:
             self.store.clear_pending_attachments(session.id)
@@ -8651,12 +8677,17 @@ class ConsoleChatController:
             )
         return selection
 
-    def resolve_turn_execution_context(
+    def resolve_turn_configuration_snapshot(
         self, session_id: str
-    ) -> ConsoleTurnExecutionContext:
-        """Capture one detached configuration snapshot for an owning session."""
+    ) -> ConsoleTurnConfigurationSnapshot:
+        """Capture detached pre-gateway configuration for an owning session."""
         if self._turn_context_provider is not None:
             context = self._turn_context_provider(session_id)
+            if not isinstance(context, ConsoleTurnConfigurationSnapshot):
+                raise TypeError(
+                    "Console turn-context provider must return "
+                    "ConsoleTurnConfigurationSnapshot."
+                )
             if context.session_id != session_id:
                 raise ValueError(
                     "Console turn-context provider returned a different session."
@@ -8665,7 +8696,7 @@ class ConsoleChatController:
 
         selection = self._provider_selection_for_session(session_id)
         model = selection.explicit_model or selection.configured_model
-        return ConsoleTurnExecutionContext.capture(
+        return ConsoleTurnConfigurationSnapshot.capture(
             session_id=session_id,
             provider_selection=selection,
             scratch_space=self._scratch_spaces.snapshot(session_id),
@@ -8712,6 +8743,118 @@ class ConsoleChatController:
                 "thinking_effort": selection.thinking_effort,
                 "thinking_budget_tokens": selection.thinking_budget_tokens,
             },
+        )
+
+    def resolve_turn_execution_context(
+        self, session_id: str
+    ) -> ConsoleTurnConfigurationSnapshot:
+        """Return pre-gateway configuration for legacy read-only consumers.
+
+        Runtime send paths must construct :class:`ConsoleTurnExecutionContext`
+        only after fresh Library-policy capture and gateway resolution.  This
+        compatibility method therefore returns the explicitly named pre-gateway
+        type and cannot manufacture an incomplete final context.
+        """
+        return self.resolve_turn_configuration_snapshot(session_id)
+
+    async def _capture_turn_library_authority(
+        self,
+        session_id: str,
+        configuration: ConsoleTurnConfigurationSnapshot,
+    ) -> ConsoleTurnLibraryAuthority:
+        """Freshly read and freeze maximum Library authority for one turn."""
+        session = next(
+            (item for item in self.store.sessions() if item.id == session_id),
+            None,
+        )
+        if session is None:
+            raise KeyError(f"Unknown Console session: {session_id}")
+
+        coordinator = self.store.library_policy_coordinator
+        if coordinator is None:
+            policy = session.library_policy_holder.snapshot
+        else:
+            try:
+                policy = await coordinator.capture_for_execution(session_id)
+            except Exception:  # noqa: BLE001 - authority always fails closed
+                policy = ConsoleLibraryPolicySnapshot(
+                    auto_retrieve=ConsoleAutoRetrieve.NEVER,
+                    assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+                    policy_revision=None,
+                    source="unavailable",
+                    error_code="policy_read_error",
+                )
+
+        held_scope = session.rag_scope_holder.scope
+        note_ids: tuple[str, ...] = ()
+        media_ids: tuple[str, ...] = ()
+        conversations_allowed = True
+        if held_scope is not None:
+            note_ids = tuple(
+                str(item.source_id)
+                for item in held_scope.items
+                if item.source_type == "note"
+            )
+            media_ids = tuple(
+                str(item.source_id)
+                for item in held_scope.items
+                if item.source_type == "media"
+            )
+            conversations_allowed = False
+
+        selection = configuration.provider_selection
+        return ConsoleTurnLibraryAuthority(
+            policy=policy,
+            direct_library_tools=bool(
+                configuration.tool_configuration.get(
+                    "direct_library_tools",
+                    True,
+                )
+            ),
+            source_types=tuple(AUTOMATIC_LIBRARY_SOURCE_TYPES),
+            scope_snapshot=ConsoleLibraryItemScopeSnapshot(
+                note_ids=tuple(note_ids),
+                media_ids=tuple(media_ids),
+                conversations_allowed=conversations_allowed,
+            ),
+            provider_intent=ConsoleProviderIntent(
+                provider=str(selection.provider),
+                model=configuration.effective_model,
+                endpoint=(
+                    str(selection.base_url) if selection.base_url is not None else None
+                ),
+            ),
+            attempt_id=str(uuid4()),
+        )
+
+    @staticmethod
+    def _resolved_destination_for_context(resolution: Any) -> ConsoleResolvedDestination:
+        """Adapt the existing gateway seam without Task 9 classification."""
+        destination = getattr(resolution, "resolved_destination", None)
+        if isinstance(destination, ConsoleResolvedDestination):
+            return destination
+        return ConsoleResolvedDestination(
+            provider=str(getattr(resolution, "provider", "") or "unknown"),
+            model=(
+                str(getattr(resolution, "model", ""))
+                if getattr(resolution, "model", None) is not None
+                else None
+            ),
+            endpoint_identity="",
+            egress_class=ConsoleEgressClass.UNKNOWN,
+        )
+
+    def _finalize_turn_execution_context(
+        self,
+        configuration: ConsoleTurnConfigurationSnapshot,
+        library_authority: ConsoleTurnLibraryAuthority,
+        resolution: Any,
+    ) -> ConsoleTurnExecutionContext:
+        """Combine frozen inputs only after the provider gateway resolves."""
+        return ConsoleTurnExecutionContext(
+            configuration=configuration,
+            library_authority=library_authority,
+            resolved_destination=self._resolved_destination_for_context(resolution),
         )
 
     @staticmethod
