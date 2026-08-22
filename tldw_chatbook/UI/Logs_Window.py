@@ -193,10 +193,21 @@ class LogsWindow(Container):
                 )
             yield Input(placeholder="Filter logs (regex ok)…", id="logs-filter-text")
             yield Button("Pause", id="logs-pause")
+        # TASK-19555: this text used to say, flatly, "copy the logs and share
+        # them when asking for help" -- an invitation to put an unfiltered
+        # session transcript on the clipboard. Credentials and the account
+        # name are now stripped at the sink, but file names, note titles and
+        # search terms are still in there, so the invitation says what it is
+        # inviting and points at the action the user can actually read first.
         yield Static(
             "No log entries yet.\n"
-            "Something not working? Reproduce the problem, then copy the logs "
-            "and share them when asking for help.",
+            "Something not working? Reproduce the problem, filter to the "
+            "lines that matter, then use Copy visible logs — you share "
+            "exactly what you can see.\n"
+            "Recognised API-key formats and your account name are removed; "
+            "file names, titles and search terms are not, so read before you "
+            "share. Copy all (redacted) shares timings, loggers and error "
+            "types only.",
             id="logs-empty-state",
         )
         yield RichLog(
@@ -216,7 +227,9 @@ class LogsWindow(Container):
                 variant="primary",
             )
             yield Button(
-                "Copy all",
+                # The label must not promise more than the artifact carries
+                # (TASK-19555): "Copy all" now yields the metadata-only form.
+                "Copy all (redacted)",
                 id="copy-logs-button",
                 classes="logs-action-button",
             )
@@ -504,16 +517,29 @@ class LogsWindow(Container):
             )
             return
         self.app.copy_to_clipboard("\n".join(record.message for record in records))
+        # TASK-19555: this is the deliberate, filtered action, so the payload
+        # stays descriptive -- but the notification names the residual
+        # exposure rather than leaving the user to discover it in a bug report.
         self.app.notify(
-            f"Copied {len(records)} visible log lines to clipboard!",
+            f"Copied {len(records)} visible log lines. Recognised key formats "
+            "and your account name were removed; file names and search terms "
+            "were not.",
             title="Clipboard",
             severity="information",
-            timeout=4,
+            timeout=6,
         )
 
     @on(Button.Pressed, "#copy-logs-button")
     def _on_copy_all(self) -> None:
-        """Copy the full session log (unbounded buffer) to the clipboard."""
+        """Copy the redacted session log to the clipboard.
+
+        The app's ``PersistentLogHandler`` fills ``_log_buffer`` with the
+        metadata-only form of each record (TASK-19555): this action exports
+        thousands of lines the user has never read, so it carries timestamps,
+        loggers, levels and exception types, and no message bodies. Sharing
+        actual log text is the job of "Copy visible logs", where the user can
+        see what they are sharing first.
+        """
         buffer = getattr(self.app_instance, "_log_buffer", None)
         if not buffer:
             self.app.notify(
@@ -525,10 +551,11 @@ class LogsWindow(Container):
             return
         self.app.copy_to_clipboard("\n".join(buffer))
         self.app.notify(
-            f"Copied {len(buffer)} log entries to clipboard!",
+            f"Copied {len(buffer)} redacted log entries — timings, loggers "
+            "and error types only. Use Copy visible logs to share log text.",
             title="Clipboard",
             severity="information",
-            timeout=4,
+            timeout=6,
         )
 
     # ------------------------------------------------------------------

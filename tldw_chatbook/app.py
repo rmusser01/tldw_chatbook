@@ -7829,18 +7829,79 @@ class TldwCli(
     # unreferenced here but out of this task's scope.
 
     def _setup_buffered_logging(self):
-        """Set up a persistent buffered logging handler for screen navigation mode."""
+        """Set up a persistent buffered logging handler for screen navigation mode.
+
+        TASK-19555 (privacy). This is the ONE choke point every in-app
+        diagnostic passes through, and the two stores it fills have different
+        jobs and therefore different privacy bars:
+
+        * ``_log_records`` is the LIVE VIEW. It stays descriptive -- redacting
+          it would empty the Logs screen of the content the screen exists to
+          show -- but every line is first stripped of credentials and of the
+          operating-system account name, which are never worth reading and are
+          the two things a screenshot or a shoulder-surfer must not capture.
+        * ``_log_buffer`` is the SHARE ARTIFACT: the exact payload
+          ``LogsWindow._on_copy_all`` joins onto the system clipboard. It holds
+          the metadata-only form, because "Copy all" bulk-exports thousands of
+          lines the user has never read -- consent that cannot be informed.
+          Anything a user deliberately shares, they share by filtering the view
+          and pressing "Copy visible".
+
+        Both stores are bounded to the same window, so the share action cannot
+        export more history than the screen admits to keeping.
+        """
         from collections import deque
         import logging
 
-        # Create a buffer to store ALL log messages (no max length)
+        from tldw_chatbook.UI.Logs_Window import MAX_LOG_RECORDS
+        from tldw_chatbook.Utils.log_sanitizer import (
+            REDACTION_MARKER,
+            redact_log_line,
+        )
+        from tldw_chatbook.Utils.persistent_diagnostics import (
+            PersistentDiagnosticFilter,
+            safe_metadata_token,
+        )
+
+        # The clipboard payload for "Copy all". Bounded (TASK-19555): an
+        # unbounded session buffer is a memory leak and a disclosure surface,
+        # and it let "Copy all" export far more history than the Logs screen
+        # itself retains or discloses in its status line.
         if not hasattr(self, "_log_buffer"):
-            self._log_buffer = deque()  # No maxlen - keep all logs
+            self._log_buffer = deque(maxlen=MAX_LOG_RECORDS)
 
         # Structured records (level, name, formatted message) for the Logs
         # screen's filtering; bounded like the RichLog widget itself.
         if not hasattr(self, "_log_records"):
-            self._log_records = deque(maxlen=10000)
+            self._log_records = deque(maxlen=MAX_LOG_RECORDS)
+
+        # The SAME admission rule the rotating file handler uses, so the
+        # clipboard and the disk sink cannot drift apart on what counts as
+        # metadata-only. Reused as an object, not re-implemented.
+        share_admission = PersistentDiagnosticFilter()
+
+        def _share_line(record, formatted, formatter):
+            """Return the metadata-only form of one record for the clipboard.
+
+            Schema-validated ADR-029 metadata events pass through verbatim --
+            they are already the safe artifact. Everything else keeps its
+            timestamp, logger, level and exception type, and loses its message
+            body: the body is where interpolated paths, titles, queries,
+            prompts, tool arguments and provider payloads live, and no
+            sink-side rule can tell those apart from the wording around them.
+            """
+            if share_admission.filter(record):
+                return formatted
+            detail = ""
+            exc_type = record.exc_info[0] if record.exc_info else None
+            if exc_type is not None:
+                name = safe_metadata_token(getattr(exc_type, "__name__", ""))
+                detail = f" (exception_type={name})"
+            stamp = formatter.formatTime(record, formatter.datefmt)
+            return (
+                f"{stamp} - {record.name} - {record.levelname} - "
+                f"{REDACTION_MARKER}{detail}"
+            )
 
         # Create a custom handler that stores logs in the buffer
         class PersistentLogHandler(logging.Handler):
@@ -7851,8 +7912,10 @@ class TldwCli(
 
             def emit(self, record):
                 try:
-                    msg = self.format(record)
-                    self.buffer.append(msg)
+                    formatted = self.format(record)
+                    formatter = self.formatter or logging.Formatter()
+                    self.buffer.append(_share_line(record, formatted, formatter))
+                    msg = redact_log_line(formatted)
                     self.app._log_records.append((record.levelname, record.name, msg))
 
                     # Preferred live path: the Logs screen's LogsWindow applies
@@ -7904,8 +7967,15 @@ class TldwCli(
         self._current_log_widget = None
 
     def _display_buffered_logs(self, log_widget):
-        """Display all buffered logs in the RichLog widget."""
-        if not hasattr(self, "_log_buffer"):
+        """Display all buffered logs in the RichLog widget.
+
+        Reads ``_log_records`` (the live-view store), NOT ``_log_buffer``
+        (the metadata-only clipboard artifact) -- TASK-19555. This legacy
+        path currently has no callers; it is pointed at the right store so
+        that reviving it shows a maintainer real diagnostics rather than a
+        screen of redaction markers.
+        """
+        if not hasattr(self, "_log_records"):
             return
 
         # Store reference to current log widget
@@ -7915,13 +7985,13 @@ class TldwCli(
         log_widget.clear()
 
         # Write all buffered messages to the widget
-        for msg in self._log_buffer:
+        for _level, _name, msg in self._log_records:
             log_widget.write(msg)
 
         # Scroll to the latest entry
         log_widget.scroll_end()
 
-        logger.debug(f"Displayed {len(self._log_buffer)} buffered log entries")
+        logger.debug(f"Displayed {len(self._log_records)} buffered log entries")
 
     def _setup_logging(self):
         """Set up logging for the application.

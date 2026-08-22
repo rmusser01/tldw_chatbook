@@ -5829,3 +5829,87 @@ calls instead of reusing a literal. The tell that something is wrong is a
 fixture that passes against a *stronger* claim than it set up: here, deleting
 the entire baseline step would not have changed the test's result, which is the
 definition of a setup step that is not doing anything.
+
+
+
+## A guarantee is only proved for the sink you asserted against — and a test's stand-in is not the shipped one (TASK-19555, 2026-08-21)
+
+**What happened.** ADR-029 says persistent application logs are metadata-only
+with respect to user content. `Tests/test_remaining_diagnostic_sentinel_matrix.py`
+looked like thorough proof: for seven domain owners it injected a private
+sentinel, attached a **filtered** `PrivateRotatingFileHandler` and an
+**unfiltered** `_CollectingHandler`, and asserted the sentinel stayed out of
+the file. Green for months.
+
+The app installs an unfiltered collector too — `TldwCli._setup_buffered_
+logging`'s `PersistentLogHandler`, root logger, level `NOTSET`, no filter,
+feeding an unbounded `deque` that the Logs screen's "Copy all" joined onto the
+system clipboard, under an empty state telling the user to reproduce the
+problem and share their logs. The suite never asserted against it. Its
+`_CollectingHandler` was a test-local stand-in, present to prove the *other*
+half of the design (that payloads stay available to the UI), and its existence
+made the file assertion read as coverage of "the collector" in general. It was
+not. Writing a first assertion against the real handler produced the sentinel,
+an `sk-` key and a full traceback carrying a note title, all on the clipboard
+path, immediately.
+
+**What to do.** When a test proves a security property at a sink, count the
+sinks. `grep` for every `addHandler`/`add` on the same logger and name in the
+test which ones are covered — the filter that enforces the guarantee was
+attached at exactly two call sites here, both the same handler, and that was
+findable in one search. And when a test constructs a second handler as scenery,
+ask whether the *production* object of that kind is asserted anywhere; a
+stand-in beside the thing under test is the most convincing way to look covered
+while covering nothing. The tell is an assertion list where the dangerous
+surface appears only as a positive (`assert sentinel in collector.messages`)
+and never as a negative.
+
+**And then it happened again, to the person writing this entry, in the same
+task.** The fix redacted at `PersistentLogHandler.emit`, which fills two
+stores (`_log_buffer`, `_log_records`) and *then* hands the line to whichever
+on-screen surface is mounted. I pinned both stores, wrote the paragraph above
+about counting sinks, and shipped. Review mutated
+`logs_window.append_record(…, msg)` to `…, formatted` — feeding the
+UNREDACTED line to the mounted widget and therefore into `LogsWindow._records`,
+which is exactly what "Copy visible logs" puts on the clipboard — and the
+suite returned **111 passed, 0 failed**. A *store* is not a *feed*. When one
+function writes the same value to several places, the count that matters is
+the number of **assignments and calls that carry it outward**, not the number
+of collections it lands in; walk the function line by line and pin each one.
+Cheapest reliable check: mutate each outward hand-off in turn and require a
+red for every one — three lines of test closed this, but only after a mutation
+found it.
+
+## A security test that never emitted its payload, twice (TASK-19555, 2026-08-22)
+
+**What happened.** Fixing a truncation bug that could leave a partial API key
+in the Logs view, I wrote the obvious regression test: log a line with the key
+positioned across the 2,000-character cap, assert no fragment survives. It
+passed against the **broken** implementation — twice, for two different
+reasons.
+
+1. The padding length was hand-computed from the cap alone. The handler's
+   formatter prepends `asctime - name - LEVEL - `, roughly 68 characters of
+   unpredictable width, so the key landed comfortably past the cut and was
+   discarded whole. Nothing was ever astride anything.
+2. The rewrite used `logger.info("%s %s", padding, secret)`. **Loguru formats
+   with `str.format`, not `%`.** With no `{}` in the template, loguru logged
+   the template verbatim and silently dropped every argument. The test emitted
+   the literal string `%s %s` and asserted, truthfully, that it contained no
+   credential.
+
+Both were found by mutating the fix and expecting red, not by reading the
+test. The shipped version measures the prefix width off a probe record,
+sweeps every straddle position rather than guessing one, and carries an
+anti-vacuity control that asserts the sentinel is a shape the redactor
+actually recognises.
+
+**What to do.** For a "secret X must not appear in Y" test, the assertion is
+satisfied by an empty Y, so it proves nothing until you separately prove X was
+there. Add a control in the same test — log the payload plainly and assert it
+*was* redacted — and where the position of X matters, sweep the range and
+derive the offsets from a measured value instead of arithmetic on a constant.
+Then mutate the fix: a negative-space assertion that stays green under the
+mutation is not a test. And in this codebase specifically: **`loguru` uses
+brace formatting**; a `%s` template is a silent no-op that drops your payload,
+while stdlib `logging` calls on the same page take `%s` correctly.
