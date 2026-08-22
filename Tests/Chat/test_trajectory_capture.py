@@ -235,7 +235,12 @@ def test_streamed_assistant_row_carries_timing(tmp_path):
             "trace_version": 2,
         }
         snapshot = derive_trajectory(
-            db.get_messages_for_conversation(conversation_id), {}, rows, [], []
+            db.get_messages_for_conversation(conversation_id),
+            {},
+            rows,
+            [],
+            [],
+            active_leaf_message_id=db.get_conversation_active_leaf(conversation_id),
         )
         records = [record for turn in snapshot.turns for record in turn.records]
         assert [record.kind for record in records] == [
@@ -544,13 +549,26 @@ async def test_regenerate_replacement_identity_resolves_after_persistence(tmp_pa
         payload = json.loads(row.payload_json)
         assert payload["replacement_event_id"].startswith("message:")
         assert payload["field_states"]["replacement_event_id"] == "observed"
+        active_leaf_message_id = db.get_conversation_active_leaf(conversation_id)
+        assert active_leaf_message_id is not None
         snapshot = derive_trajectory(
-            db.get_messages_for_conversation(conversation_id), {}, rows, [], []
+            db.get_messages_for_conversation(conversation_id),
+            {},
+            rows,
+            [],
+            [],
+            active_leaf_message_id=active_leaf_message_id,
         )
         records = [record for turn in snapshot.turns for record in turn.records]
         emitted_ids = {record.event_id for record in records}
         regenerated = next(record for record in records if record.kind == "message_regenerated")
+        assert regenerated.status == "completed"
         assert regenerated.replacement_event_id in emitted_ids
+        assert f"message:{original.persisted_message_id}" not in emitted_ids
+        ordered_ids = [record.event_id for record in records]
+        assert ordered_ids.index(regenerated.event_id) < ordered_ids.index(
+            regenerated.replacement_event_id
+        )
     finally:
         db.close()
 
@@ -587,6 +605,21 @@ async def test_regenerate_partial_error_records_failed_replacement(tmp_path):
             if row.event_kind == "message_regenerated"
         )
         assert json.loads(row.payload_json)["status"] == "failed"
+        snapshot = derive_trajectory(
+            db.get_messages_for_conversation(conversation_id),
+            {},
+            db.get_trajectory_rows(conversation_id),
+            [],
+            [],
+            active_leaf_message_id=db.get_conversation_active_leaf(conversation_id),
+        )
+        regenerated = next(
+            record
+            for turn in snapshot.turns
+            for record in turn.records
+            if record.kind == "message_regenerated"
+        )
+        assert regenerated.status == "failed"
     finally:
         db.close()
 
@@ -626,6 +659,21 @@ async def test_regenerate_cancel_records_stopped_replacement(tmp_path):
             if row.event_kind == "message_regenerated"
         )
         assert json.loads(row.payload_json)["status"] == "stopped"
+        snapshot = derive_trajectory(
+            db.get_messages_for_conversation(conversation_id),
+            {},
+            db.get_trajectory_rows(conversation_id),
+            [],
+            [],
+            active_leaf_message_id=db.get_conversation_active_leaf(conversation_id),
+        )
+        regenerated = next(
+            record
+            for turn in snapshot.turns
+            for record in turn.records
+            if record.kind == "message_regenerated"
+        )
+        assert regenerated.status == "stopped"
     finally:
         db.close()
 

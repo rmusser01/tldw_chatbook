@@ -88,9 +88,16 @@ _LOCAL_PATH_RE = re.compile(
     r"[^\s\"'<>]*"
 )
 _HTTP_URL_RE = re.compile(r"https?://[^\s\"'<>]+", re.IGNORECASE)
-_HTTP_METHODS = ("GET ", "POST ", "PUT ", "PATCH ", "DELETE ", "HEAD ", "OPTIONS ")
-_COMMON_POSIX_ROOTS = frozenset(
-    {"bin", "dev", "etc", "home", "opt", "private", "root", "tmp", "usr", "var"}
+_HTTP_REQUEST_TARGET_RE = re.compile(
+    r"^(\s*(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+)\S+", re.IGNORECASE
+)
+_SAFE_ROUTE_ROOTS = frozenset({"api", "docs", "help", "v1", "v2", "v3"})
+_PYTHON_STACK_RE = re.compile(
+    r"\bfile\s+[\"']?[^\"',\s]+[\\/][^\"',]+[\"']?,\s*line\s+\d+",
+    re.IGNORECASE,
+)
+_JS_STACK_RE = re.compile(
+    r"^\s*at\s+.*[\\/][^\s)]+:\d+(?::\d+)?\)?\s*$", re.IGNORECASE
 )
 
 
@@ -100,14 +107,12 @@ def contains_local_path(value: str) -> bool:
         return True
     searchable_lines: list[str] = []
     for line in value.splitlines() or [value]:
-        stripped = line.lstrip()
-        if any(stripped.upper().startswith(method) for method in _HTTP_METHODS):
-            continue
-        if "File " in line and ", line " in line:
-            quoted = line.split("File ", 1)[1].split(", line ", 1)[0].strip(" \"'")
-            if "/" in quoted or "\\" in quoted:
-                return True
-        searchable_lines.append(_HTTP_URL_RE.sub("", line))
+        without_urls = _HTTP_URL_RE.sub("", line)
+        if _PYTHON_STACK_RE.search(without_urls) or _JS_STACK_RE.search(without_urls):
+            return True
+        searchable_lines.append(
+            _HTTP_REQUEST_TARGET_RE.sub(r"\1", without_urls, count=1)
+        )
     searchable = "\n".join(searchable_lines)
     for match in _LOCAL_PATH_RE.finditer(searchable):
         candidate = match.group(0)
@@ -117,9 +122,9 @@ def contains_local_path(value: str) -> bool:
             return True
         if candidate.startswith("/"):
             parts = [part for part in candidate.split("/") if part]
-            if len(parts) > 1 or (
-                parts and (parts[0] in _COMMON_POSIX_ROOTS or "." in parts[0])
-            ):
+            prefix = searchable[max(0, match.start() - 8) : match.start()].lower()
+            explicit_context = bool(re.search(r"(?:\bcd\s+|\bcwd\s*=\s*)$", prefix))
+            if explicit_context or not parts or parts[0].lower() not in _SAFE_ROUTE_ROOTS:
                 return True
     return False
 
@@ -400,6 +405,7 @@ def derive_trajectory(
     # the owning message row.
     message_rows: dict[str, Any] = {}
     sidecar_rows: dict[str, list[Any]] = {}
+    replacement_owned_rows: dict[str, list[Any]] = {}
     for row in traj_rows:
         mid = _field(row, "message_id")
         kind = str(_field(row, "event_kind") or "")
@@ -409,6 +415,20 @@ def derive_trajectory(
             message_rows[str(mid)] = row
         else:
             sidecar_rows.setdefault(str(mid), []).append(row)
+            metadata = _parse_payload(_field(row, "payload_json")) or {}
+            replacement = _optional_text(
+                _field(row, "replacement_event_id")
+            ) or _optional_text(metadata.get("replacement_event_id"))
+            if (
+                active_ids is not None
+                and str(mid) not in active_ids
+                and replacement is not None
+                and replacement.startswith("message:")
+                and replacement.removeprefix("message:") in active_ids
+            ):
+                replacement_owned_rows.setdefault(
+                    replacement.removeprefix("message:"), []
+                ).append(row)
 
     rendered = [
         m
@@ -483,6 +503,19 @@ def derive_trajectory(
                     ),
                 )
             )
+        for sidecar_row in sorted(
+            replacement_owned_rows.get(m.mid, ()),
+            key=lambda r: _as_int(_field(r, "seq")),
+        ):
+            retained = _record_from_sidecar_event(
+                sidecar_row,
+                turn_id=turn_id,
+                owner=m,
+            )
+            # The row belongs durably to an off-path source, so its source
+            # sequence cannot order it after the on-path replacement while
+            # replacement causality orders it before that same message.
+            events.append((turn_id, replace(retained, source_seq=None)))
 
     turns = _group_turns(events)
     turns = _insert_compaction_markers(turns, compaction_records, turn_msg_times)

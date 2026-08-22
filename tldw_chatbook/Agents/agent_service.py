@@ -13,6 +13,7 @@ import dataclasses
 import functools
 import json
 import math
+import re
 import sys
 import threading
 import time
@@ -768,19 +769,71 @@ def _safe_agent_step_record(run_id: str, step: AgentStep) -> dict[str, Any]:
     return record
 
 
-def _safe_run_log_content(record_type: str, content: str) -> str:
-    """Sanitize durable tool records without changing runtime payloads."""
+_CHAIN_OF_THOUGHT_RE = re.compile(
+    r"\bchain(?:[\s_-]+of[\s_-]+thought)\b", re.IGNORECASE
+)
+_THINK_TAG_RE = re.compile(r"<\s*/?\s*think(?:\s[^>]*)?>", re.IGNORECASE)
+_REASONING_KEY_RE = re.compile(
+    r"[\"']\s*(?:reasoning|reasoning_content|chain_of_thought)\s*[\"']\s*:",
+    re.IGNORECASE,
+)
+_REASONING_KEYS = frozenset({"reasoning", "reasoning_content", "chain_of_thought"})
+
+
+def _contains_hidden_reasoning(content: str) -> bool:
+    """Recognize explicit reasoning containers without matching ordinary prose."""
+    if _THINK_TAG_RE.search(content) or _CHAIN_OF_THOUGHT_RE.search(content):
+        return True
+    try:
+        parsed = json.loads(content)
+    except (TypeError, ValueError):
+        return bool(_REASONING_KEY_RE.search(content))
+
+    def has_reasoning_key(value: Any) -> bool:
+        if isinstance(value, Mapping):
+            return any(
+                str(key).lower() in _REASONING_KEYS or has_reasoning_key(item)
+                for key, item in value.items()
+            )
+        if isinstance(value, list):
+            return any(has_reasoning_key(item) for item in value)
+        if isinstance(value, str):
+            return bool(_REASONING_KEY_RE.search(value))
+        return False
+
+    return has_reasoning_key(parsed)
+
+
+def _contains_structured_local_path(content: str) -> bool:
+    """Inspect decoded string leaves so JSON escaping cannot hide paths."""
+    try:
+        parsed = json.loads(content)
+    except (TypeError, ValueError):
+        return contains_local_path(content)
+
+    def has_path(value: Any) -> bool:
+        if isinstance(value, Mapping):
+            return any(has_path(item) for item in value.values())
+        if isinstance(value, list):
+            return any(has_path(item) for item in value)
+        return isinstance(value, str) and contains_local_path(value)
+
+    return has_path(parsed)
+
+
+def _safe_run_log_content(record_type: str, content: str) -> tuple[str, bool]:
+    """Return sanitized durable content and whether fidelity was withheld."""
     if record_type not in {"tool_call", "tool_result"}:
-        return content
-    lowered = content.lower()
-    if any(marker in lowered for marker in ("reasoning_content", "chain of thought")):
-        return ""
-    if contains_local_path(content):
-        return ""
+        return content, False
+    if _contains_hidden_reasoning(content):
+        return "", True
+    if _contains_structured_local_path(content):
+        return "", True
     uppered = content.upper()
     if "-----BEGIN " in uppered and "PRIVATE KEY-----" in uppered:
-        return REDACTION_MARKER
-    return redact_log_line(content, max_length=0)
+        return REDACTION_MARKER, True
+    sanitized = redact_log_line(content, max_length=0)
+    return sanitized, sanitized != content
 
 
 def _default_chat_call():
@@ -4259,22 +4312,23 @@ class AgentService:
                     built by ``_emit_record``'s ``**payload`` kwargs.
 
             Returns:
-                The record number MUST be returned here, not swallowed:
-                Task 7 threads it into the truncation trailer so a cut
-                result points at its own full copy in the log (see
-                ``_truncate_tool_result``). ``None`` when the writer is
-                inactive or the underlying write failed -- never raises.
+                The record number for safe, full-fidelity content so a cut
+                result can point at its complete log copy. ``None`` when
+                content was withheld/redacted, the writer is inactive, or
+                the write failed; a privacy-safe audit row is still kept.
             """
             content = str(payload.get("content", ""))
-            return writer.append(
+            safe_content, altered = _safe_run_log_content(record_type, content)
+            record_number = writer.append(
                 run_id=run_id,
                 kind=agent_kind,
                 type=record_type,
-                content=_safe_run_log_content(record_type, content),
+                content=safe_content,
                 tool=str(payload.get("tool", "")),
                 status=str(payload.get("status", "")),
                 call_id=str(payload.get("call_id", "")),
             )
+            return None if altered else record_number
 
         def prepare_project_instructions(
             calls: list[ToolCall],

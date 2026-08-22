@@ -278,6 +278,13 @@ def test_real_run_log_omits_sensitive_tool_args_and_results(wired, monkeypatch):
     on_record = captured["deps"].on_record
     sensitive = (
         "chain of thought: private internal plan",
+        "chain-of-thought: private internal plan",
+        "CHAIN_OF_THOUGHT: private internal plan",
+        "<think>private internal plan</think>",
+        "<THINK>private internal plan</THINK>",
+        json.dumps({"reasoning": "private internal plan"}),
+        json.dumps({"meta": {"reasoning_content": "private internal plan"}}),
+        "{'chain_of_thought': 'private internal plan'}",
         "ghp_" + "a" * 36,
         "AKIA" + "A" * 16,
         "eyJabcdefghij.abcdefghij.abcdefghij",
@@ -289,9 +296,13 @@ def test_real_run_log_omits_sensitive_tool_args_and_results(wired, monkeypatch):
         'File "package/module.py", line 42, in run',
     )
     for value in sensitive:
-        on_record("tool_call", {"content": json.dumps({"value": value})})
-        on_record("tool_result", {"content": value})
-    on_record("tool_result", {"content": "safe output: 3 matches"})
+        assert on_record("tool_call", {"content": json.dumps({"value": value})}) is None
+        assert on_record("tool_result", {"content": value}) is None
+    safe_number = on_record(
+        "tool_result",
+        {"content": "safe output: reasoning about three visible matches"},
+    )
+    assert isinstance(safe_number, int)
 
     records = read_all(root)
     persisted = "\n".join(record.content for record in records)
@@ -299,7 +310,10 @@ def test_real_run_log_omits_sensitive_tool_args_and_results(wired, monkeypatch):
         assert value not in persisted
     assert "private internal plan" not in persisted
     assert "private-key-body" not in persisted
-    assert any(record.content == "safe output: 3 matches" for record in records)
+    assert any(
+        record.content == "safe output: reasoning about three visible matches"
+        for record in records
+    )
 
 
 def test_run_turn_called_twice_on_one_service_gets_two_separate_logs(wired):

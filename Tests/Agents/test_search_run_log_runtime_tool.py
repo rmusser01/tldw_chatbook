@@ -341,6 +341,65 @@ def test_real_closure_recovers_full_content_beyond_both_caps(tmp_path, monkeypat
     )
 
 
+def test_sensitive_large_result_has_no_recoverable_run_log_handle(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.Agents import run_log as run_log_module
+    from tldw_chatbook.Agents.run_log_format import iter_records
+    import tldw_chatbook.Tools.file_operation_tools as file_tools
+    import tldw_chatbook.config as config_module
+
+    monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    monkeypatch.setattr(file_tools, "_resolve_sandbox_config", lambda: str(sandbox))
+
+    def fake_get_cli_setting(section, key=None, default=None):
+        if section == "tools" and key == "read_file_enabled":
+            return True
+        return default
+
+    monkeypatch.setattr(config_module, "get_cli_setting", fake_get_cli_setting)
+    (sandbox / "private.txt").write_text("S" * 30_000, encoding="utf-8")
+    calls = []
+
+    def chat(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            return _svc_fence("read_file", {"file_path": "private.txt"})
+        return {"choices": [{"message": {"content": "done"}}]}
+
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider(gate=_AllowGate()))
+    service = AgentService(db, registry, chat_call=chat)
+    _run_id, outcome = service.run_turn(
+        conversation_id="c1",
+        messages=[{"role": "user", "content": "read it"}],
+        config=AgentConfig(
+            model="m",
+            system_prompt="s",
+            allowed_tools=("read_file",),
+            budget=RunBudget(),
+        ),
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+    truncated = calls[1]["messages_payload"][-1]["content"]
+    assert "Re-issue the call with a narrower query" in truncated
+    assert "full result is recorded" not in truncated
+    assert "search_run_log(from_record=" not in truncated
+
+    run_dir = next(path for path in (tmp_path / ".agent-runs").iterdir() if path.is_dir())
+    records = [
+        record
+        for segment in sorted(run_dir.glob("logs.*.txt"))
+        for record in iter_records(segment.read_bytes())
+    ]
+    result_record = next(record for record in records if record.type == "tool_result")
+    assert result_record.content == ""
+
+
 def test_parent_can_filter_its_log_to_subagent_records_via_kind(tmp_path, monkeypatch):
     """IMPORTANT 5's regression test: `kind` is implemented in
     `search_records` and justified by spec §4.1 ("a parent can search its
