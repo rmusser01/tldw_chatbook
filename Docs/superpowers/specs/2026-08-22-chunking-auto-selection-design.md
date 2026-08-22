@@ -56,6 +56,48 @@ Two consequences, both folded into §4.2:
 
 ---
 
+## 0.2 The upstream auto-apply orchestrator — and where chatbook deliberately diverges
+
+Found during the approved-spec review (upstream
+`Ingestion_Media_Processing/chunking_options.py:520-660`, the shared
+`apply_*_template` helper used by every process-* endpoint):
+
+- **Upstream's selection loop matches §4.2's design**: iterate live candidates,
+  `score <= 0 → continue`, best key `(score, priority)` strictly-greater — ties
+  keep the first-listed candidate (#2's listing is name-ordered, so
+  priority-then-name is the effective equivalent; the coupling is stated here
+  so re-ordering the listing doesn't silently change selection).
+- **Upstream applies only hierarchical blocks.** After picking a winner (or an
+  explicit template by name), upstream extracts **only**
+  `chunking.config.hierarchical_template` + `chunking.method` +
+  `chunking.config.{max_size, overlap}` into the options dict; a winning
+  template with no hierarchical block is **silently ignored**, and
+  preprocessing/postprocessing stages never run on either path.
+- **Upstream's auto is a separate form flag** (`auto_apply_template: bool`),
+  not a sentinel in the template-name slot.
+
+**Divergences chatbook takes deliberately (ruling §8.6):**
+
+1. **A winning template runs in full** — preprocessing, chunking,
+   postprocessing — through #2's template engine, exactly as a manually-picked
+   template does. Upstream's extraction-only behavior is an artifact of its
+   options-dict plumbing; chatbook's #2 exists to run all three stages.
+   Auto-selected and manually-selected templates are indistinguishable in
+   effect. Filed as `UPSTREAM_DEFECTS.md` #16 (auto/explicit paths silently
+   drop template stages).
+2. **Auto rides the picker's `chunk_template` slot with the reserved name
+   `"auto"`** (§4.3), rather than upstream's extra form flag — chatbook's
+   single picker slot is the established surface. The name is **reserved**:
+   #2's validator refuses `name == "auto"` at create/rename (ruling §8.7), so
+   no user template can be shadowed by the sentinel.
+3. **Tier composition is chatbook's** (template tier suppresses the planner —
+   §8.2). Upstream runs the planner and the template-apply helper as separate
+   mechanisms (the planner takes template name/status purely to emit fallback
+   *reasons*). Chatbook's chain is a composition of the two upstream pieces,
+   not a mirror of either call site; the composition is the spec's subject.
+
+---
+
 ## 1. Why
 
 #2 made templates *real*: stored, validated, pickable, honored on ingest and
@@ -123,21 +165,30 @@ fallback_reasons: list[str]}`. The tiers, in order:
 
 1. **Template tier.** Score every live (non-deleted) template with
    `TemplateClassifier.score(template_json, media_type=…, title=…, url=…,
-   filename=…)`. The winner is the highest score **strictly greater than 0**
-   (§0.1 correction 1); ties break by the classifier block's `priority`
-   (higher wins; #2's validator already enforces int), then by name for
-   determinism. Each template's evaluation is individually guarded — one
-   malformed block is skipped with a fallback reason, never poisons the loop
-   (regex safety itself is already enforced at write time by #2's validator).
-   On a winner: `tier="template"`, the resolved template dict rides, and
-   **auto_planner does not run** (ruling §8.2: a selected template's chunk-stage
-   config *is* the plan).
+   filename=…)`. **Stored-invalid templates are excluded from candidacy**
+   before scoring (their bodies could win and then fail the item at #2's
+   apply-refusal; the AC-24a validity flag from `_decorate_template_record`
+   is the exclusion signal). The winner is the highest score **strictly
+   greater than 0** (§0.1 correction 1 — and upstream's own `score <= 0:
+   continue`); ties break by the classifier block's `priority` (higher wins;
+   absent → 0), then by listing order — which #2 makes name-ordered, so
+   effectively priority-then-name (§0.2 notes the coupling). Each template's
+   evaluation is individually guarded — one malformed block is skipped with a
+   fallback reason, never poisons the loop (regex safety itself is already
+   enforced at write time by #2's validator). On a winner: `tier="template"`,
+   the resolved template dict rides, and **auto_planner does not run**
+   (ruling §8.2: a selected template's chunk-stage config *is* the plan). A
+   winning template is applied **in full** — all three stages through #2's
+   engine, indistinguishable from a manual pick (ruling §8.6).
 2. **Plan tier.** The vendored `plan_auto_chunking(...)` with
    `chunking_mode="auto"`, `perform_chunking=True`, `goal` (hardcoded
    `"balanced"`), `media_type`, `requested_llm=False`, `llm_available=False`
    (#6 contract), `semantic_available` from the embeddings config's enabled
    state, and the template-status args left None (no template was consulted).
-   Its `chunk_options` and the plan's rationale/fallback metadata ride.
+   Its `chunk_options` and the plan's rationale/fallback metadata ride. The
+   plan's options follow **#2's precedence rule unchanged**: they beat the
+   ingest builder's defaults, and lose only to values the user explicitly
+   changed in the form (same treatment as a template's chunk-stage config).
 3. **Plain tier.** `chunk_options=None` — the caller keeps today's defaults.
    Auto cannot *fail*; it can only explain why it declined.
 
@@ -145,7 +196,9 @@ fallback_reasons: list[str]}`. The tiers, in order:
 
 - **Picker:** a new option "Auto" beside "None (manual settings)" (None stays
   the default — ruling §8.3/Option A). It travels the existing
-  `chunk_template` slot with the sentinel value `"auto"`.
+  `chunk_template` slot with the **reserved** name `"auto"` (§0.2 divergence
+  2): #2's create/rename validation refuses a template named `"auto"`, so no
+  user template can be shadowed by the sentinel.
 - **Resolution:** `template_runtime.resolve_ingest_template` detects the
   sentinel at its picker tier and calls `resolve_auto`, returning whichever
   tier won. Everything downstream (#2's precedence machinery, materialization,
@@ -185,6 +238,12 @@ template's name/params as in #2.
   exclusively the picker sentinel.
 - The `media_type`/`title`/`filename`/`url` inputs come from the ingest job's
   already-known metadata; nothing re-reads file contents at selection time.
+  **Vocabulary alignment is an explicit implementation item** (§6.9): the
+  planner normalizes `web_document/webpage/article/html → "web"` and switches
+  its method choice on the normalized value; chatbook's ingest media-type
+  strings must be mapped onto the planner's expectations (or the mapping's
+  absence documented as intentional) before the tier-2 fixtures are frozen —
+  a mismatch means per-type plans silently never fire.
 
 ## 6. Testing
 
@@ -210,6 +269,11 @@ template's name/params as in #2.
    default.
 8. Suites: `Tests/Chunking/`, `Tests/Local_Ingestion/`, targeted
    `Tests/UI/test_library_ingest_*`, `Tests/RAG_Admin/`, import-weight guard.
+9. **Media-type vocabulary check** (§5): a build-time test asserting the
+   mapping from chatbook's ingest media-type strings to the planner's
+   normalized vocabulary — every string chatbook can send appears in the
+   mapping table (explicit `identity` entries count), so a vocabulary drift
+   on either side fails loudly instead of silently disabling tier-2 plans.
 
 ## 7. Acceptance criteria
 
@@ -221,8 +285,10 @@ template's name/params as in #2.
       permits construction only there; `TemplateLearner`/`TemplateManager`
       remain fully fenced
 - [ ] #3 Tier 1 selects only strictly-positive scores, tie-broken by
-      `priority` then name; a malformed block is skipped with a reason, never
-      fatal; the six #2 built-ins are provably never auto-selected
+      `priority` (absent → 0) then listing order; **stored-invalid templates
+      are excluded from candidacy**; a malformed block is skipped with a
+      reason, never fatal; the six #2 built-ins are provably never
+      auto-selected
 - [ ] #4 §0.1's corrected threshold semantics are pinned: no-block → never;
       block-with-absent-min_score → positive score selects
 - [ ] #5 Tier 2 uses the vendored planner with `llm_available=False` and
@@ -245,6 +311,15 @@ template's name/params as in #2.
        classifier block" explanation) with a re-verified stamp; CHANGELOG entry
 - [ ] #13 Targeted suites green (§6.8); import-weight guard green; no new
        core dependencies
+- [ ] #14 The name `"auto"` is reserved: create/rename refuses it with a
+       named error, and the reservation is pinned by a test; a
+       pre-existing template named `"auto"` (created before #3) is flagged by
+       the migration-less guard as shadowed and never auto-selected nor
+       auto-shadowed (explicitly documented behavior)
+- [ ] #15 The media-type mapping table exists, covers every ingest media-type
+       string, and is enforced by the §6.9 vocabulary test
+- [ ] #16 UPSTREAM_DEFECTS.md gains entry #16 (auto/explicit template paths
+       apply only the hierarchical block and silently drop all other stages)
 
 ## 8. Decisions taken (brainstorm, 2026-08-22)
 
@@ -260,3 +335,15 @@ template's name/params as in #2.
    caller-side `score > 0` guard (no-block templates return 0.0), not by an
    absent-min_score veto; threshold behavior inside a present block follows
    the upstream clamp for parity.
+
+**Added during the approved-spec review (2026-08-22), findings 1-3:**
+
+6. **A winning template runs in full** (all three stages via #2's engine),
+   deliberately diverging from upstream's hierarchical-block-only extraction
+   (§0.2); the upstream wart is filed as UPSTREAM_DEFECTS.md #16.
+7. **The name `"auto"` is reserved** at create/rename — the picker sentinel
+   rides the existing slot without shadowing any user template (upstream
+   avoids the collision with a separate flag; chatbook's single-slot surface
+   makes the reservation the smaller change).
+8. **Stored-invalid templates are not auto-selection candidates** — auto must
+   never pick a body that #2's apply path would then refuse.
