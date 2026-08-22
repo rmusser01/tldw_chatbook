@@ -503,7 +503,7 @@ def test_notes_sync_state_path_is_profile_local_and_not_a_generic_database_path(
         assert "tldw_chatbook_notes_sync_state.db" not in source
 
 
-def test_receipt_repository_creates_v1_normalized_schema_without_private_text(
+def test_receipt_repository_creates_v2_normalized_schema_without_private_text(
     tmp_path: Path,
 ) -> None:
     repository = _repository(tmp_path)
@@ -512,7 +512,7 @@ def test_receipt_repository_creates_v1_normalized_schema_without_private_text(
     schema = repository._test_schema_snapshot()
 
     assert snapshot.batch_size == 25
-    assert schema.user_version == 1
+    assert schema.user_version == 2
     assert set(schema.tables) == {
         "import_sessions",
         "import_items",
@@ -581,7 +581,7 @@ def test_schema_column_census_excludes_content_and_exception_fields(
     }
 
 
-def test_schema_v1_indexes_targeted_dependency_and_identity_queries(
+def test_schema_v2_missing_receipt_indexes_fail_closed_without_repair(
     tmp_path: Path,
 ) -> None:
     database = tmp_path / "notes-sync.sqlite3"
@@ -595,7 +595,8 @@ def test_schema_v1_indexes_targeted_dependency_and_identity_queries(
         connection.execute("DROP INDEX IF EXISTS idx_import_items_source_session")
         connection.commit()
 
-    NoteImportReceiptRepository(database).load_session_snapshot(_APPROVAL_ID)
+    with pytest.raises(ImportReceiptError, match="incompatible"):
+        NoteImportReceiptRepository(database).load_session_snapshot(_APPROVAL_ID)
 
     with sqlite3.connect(database) as connection:
         indexes = {
@@ -645,19 +646,17 @@ def test_schema_v1_indexes_targeted_dependency_and_identity_queries(
             ).fetchall()
         )
 
-    assert {
+    assert not {
         "idx_import_payload_target",
         "idx_import_folder_target",
         "idx_import_membership_path",
         "idx_import_folder_parent",
         "idx_import_items_source_session",
-    } <= indexes
-    assert "idx_import_membership_path" in detail
-    assert "idx_import_payload_target" in payload_detail
-    assert "idx_import_folder_target" in folder_detail
-    assert "idx_import_items_source_session" in source_detail
-    assert "SCAN item" not in source_detail
-    assert "USE TEMP B-TREE" not in source_detail
+    } & indexes
+    assert "idx_import_membership_path" not in detail
+    assert "idx_import_payload_target" not in payload_detail
+    assert "idx_import_folder_target" not in folder_detail
+    assert "idx_import_items_source_session" not in source_detail
 
 
 def test_prior_observation_lookup_uses_bounded_large_input_query_count(
