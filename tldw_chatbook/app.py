@@ -296,6 +296,12 @@ from tldw_chatbook.Utils.Emoji_Handling import (
     FALLBACK_TITLE_BRAIN,
     supports_emoji,
 )
+from tldw_chatbook.Utils.app_shutdown import (
+    arm_exit_watchdog,
+    install_termination_handlers,
+    register_running_app,
+    unregister_running_app,
+)
 from tldw_chatbook.Utils.ui_responsiveness import UIResponsivenessMonitor
 from tldw_chatbook.Utils.db_status_manager import DBStatusManager
 from tldw_chatbook.Utils.persistent_diagnostics import persist_event
@@ -682,6 +688,13 @@ API_IMPORTS_SUCCESSFUL = True
 DEFERRED_AUDIO_SERVICE_DELAY_SECONDS = 0.1
 DEFERRED_DB_SIZE_UPDATE_DELAY_SECONDS = 0.1
 DEFERRED_MEDIA_CLEANUP_DELAY_SECONDS = 5.0
+
+# task-19561: how long a cancelled worker gets to settle before shutdown
+# stops waiting on it and says so. Replaces a flat `asyncio.sleep(0.1)` that
+# waited on nothing in particular. Sized to be invisible on a quiet exit
+# (the wait ends the moment the last worker finishes) while still bounding a
+# thread worker that will not notice cancellation at all.
+WORKER_CANCELLATION_GRACE_SECONDS = 3.0
 
 # task-15472: after first paint, warm the lazy screen-module import cache from
 # a background thread so the FIRST click to each tab doesn't pay for a
@@ -7133,6 +7146,13 @@ class TldwCli(
                 chachanotes_db_getter=lambda: getattr(self, "chachanotes_db", None),
             )
 
+        # task-19561: shutdown has to be able to reach the generations this
+        # handler spawns, and the scheduler loop is not a route to them --
+        # they are bare `asyncio.Task`s, not workers, deliberately detached
+        # from the tick. Keeping the handler itself on the app is the only
+        # handle `on_unmount` has.
+        self._briefing_job_handler = briefing_handler
+
         handlers: dict[str, Handler] = {
             "reminder": ReminderHandler(
                 dispatch_service=self.notification_dispatch_service
@@ -10262,6 +10282,12 @@ class TldwCli(
         )
         mount_start = time.perf_counter()
 
+        # task-19561: hand the process-level SIGTERM/SIGINT handler this app
+        # and its running loop, so a termination signal becomes an ordinary
+        # `App.exit()` instead of an `os._exit(0)` through the middle of
+        # whatever was writing at the time.
+        register_running_app(self)
+
         # TASK-1240. Anchors a session in the persistent log; its absence dates
         # a crash to before this point. Wrapped: `persist_event` raises on a
         # malformed component and its sink can fail; diagnostics must never be
@@ -10438,7 +10464,15 @@ class TldwCli(
         # Only schedule post-mount setup if splash screen is not active
         if not self.splash_screen_active:
             # Schedule setup to run after initial rendering.
-            asyncio.create_task(self._run_no_splash_post_mount_setup())
+            # task-19561: this was a bare `create_task` whose result nobody
+            # held. The event loop keeps only a weak reference to a task, so
+            # the whole no-splash startup path could be garbage-collected
+            # mid-flight. `_create_deferred_startup_task` keeps the strong
+            # reference AND puts it in the set shutdown already cancels.
+            self._create_deferred_startup_task(
+                self._run_no_splash_post_mount_setup(),
+                name="no_splash_post_mount_setup",
+            )
 
         # Theme registration
         theme_start = time.perf_counter()
@@ -11451,6 +11485,10 @@ class TldwCli(
             self._schedule_screen_preimport,
         )
         self.schedule_media_cleanup()
+        self._create_deferred_startup_task(
+            self._reconcile_interrupted_subscription_work(),
+            name="deferred_subscription_interrupt_reconcile",
+        )
         coordinator = getattr(
             self,
             "citation_artifact_ownership_coordinator",
@@ -11509,6 +11547,48 @@ class TldwCli(
             logger.opt(exception=True).warning(
                 "Launch wake scheduling failed; owed wakes stay staged for "
                 "the next Console visit."
+            )
+
+    async def _reconcile_interrupted_subscription_work(self) -> None:
+        """Un-wedge subscriptions rows a previous process never finished.
+
+        task-19561. ``local_watchlist_runs`` (``queued``/``running``),
+        ``briefings``/``briefing_scripts``/``briefing_audio``
+        (``generating``) all carry a status only the process doing the work
+        can move off, and several of them double as one-at-a-time guards --
+        so a row stranded by a termination does not merely look wrong, it
+        shuts the feature. Until now the only sweep was UI-gated: it ran
+        when the user happened to open the matching Watchlists pane, scoped
+        to that one watchlist.
+
+        Doing it on the way *in* is what makes it durable. A reconcile on
+        the way out can only cover terminations the process survives long
+        enough to run it -- never ``SIGKILL``, a crash, or a battery going
+        flat, which are exactly the cases that strand a row. Runs on a
+        thread (SQLite) and is best-effort: a failed sweep is logged and the
+        launch continues.
+        """
+        db = getattr(self, "subscriptions_db", None)
+        if db is None:
+            return
+        from tldw_chatbook.Subscriptions.startup_reconcile import (
+            reconcile_interrupted_subscription_work,
+        )
+
+        try:
+            reconciled = await asyncio.to_thread(
+                reconcile_interrupted_subscription_work, db
+            )
+        except Exception as exc:  # noqa: BLE001 - a launch never dies on this
+            self.loguru_logger.warning(
+                f"Startup reconcile of interrupted subscriptions work failed "
+                f"type={type(exc).__name__}"
+            )
+            return
+        if any(reconciled.values()):
+            self.loguru_logger.info(
+                f"Startup reconcile failed interrupted subscriptions work: "
+                f"{reconciled}"
             )
 
     async def _reconcile_citation_artifact_ownership(self) -> None:
@@ -11868,18 +11948,7 @@ class TldwCli(
         self._shutting_down = True
 
         # Cancel all active workers first
-        try:
-            active_workers = [w for w in self.workers if not w.is_finished]
-            if active_workers:
-                self.loguru_logger.info(
-                    f"Cancelling {len(active_workers)} active workers"
-                )
-                for worker in active_workers:
-                    worker.cancel()
-                # Give workers a moment to cancel
-                await asyncio.sleep(0.1)
-        except Exception as e:
-            self.loguru_logger.error(f"Error cancelling workers: {e}")
+        await self._cancel_and_settle_workers("shutdown request")
 
         if self._rich_log_handler:
             await self._rich_log_handler.stop_processor()
@@ -11890,6 +11959,54 @@ class TldwCli(
         self._stop_footer_status_timers()
         self.loguru_logger.info("DB size update timer stopped.")
         # --- End Stop DB Size Update Timer ---
+
+    async def _cancel_and_settle_workers(self, phase: str) -> None:
+        """Cancel every live worker and actually wait for them, bounded.
+
+        task-19561. Both shutdown hooks used to cancel their workers and
+        then ``await asyncio.sleep(0.1)`` -- a flat wait that is
+        simultaneously too long (nothing to wait for on a quiet exit) and
+        far too short (a worker mid-``await`` gets one tick, and a thread
+        worker gets nothing at all), and which never observed the outcome
+        either way. Waiting on the workers themselves is both faster in the
+        common case and honest in the uncommon one; the timeout keeps a
+        worker that ignores cancellation from turning quit into a hang, and
+        says which ones they were.
+        """
+        try:
+            active_workers = [w for w in self.workers if not w.is_finished]
+            if not active_workers:
+                return
+            self.loguru_logger.info(
+                f"Cancelling {len(active_workers)} active workers ({phase})"
+            )
+            for worker in active_workers:
+                worker.cancel()
+            # `asyncio.wait`, NOT `wait_for(...)`: on expiry `wait_for`
+            # cancels what it is waiting on and awaits that cancellation, so
+            # anything that does not honour a cancel hangs the very call
+            # meant to bound it. `wait` returns the stragglers instead.
+            waiters = [asyncio.ensure_future(w.wait()) for w in active_workers]
+            _, unsettled = await asyncio.wait(
+                waiters, timeout=WORKER_CANCELLATION_GRACE_SECONDS
+            )
+            for waiter in waiters:
+                if waiter.done() and not waiter.cancelled():
+                    # WorkerCancelled/WorkerFailed are the expected outcomes
+                    # of cancelling at shutdown; retrieve them so they do not
+                    # resurface as "exception was never retrieved".
+                    waiter.exception()
+                else:
+                    waiter.cancel()
+            if unsettled:
+                stragglers = [w.name for w in active_workers if not w.is_finished]
+                self.loguru_logger.warning(
+                    f"{len(stragglers)} worker(s) did not settle within "
+                    f"{WORKER_CANCELLATION_GRACE_SECONDS}s of cancellation "
+                    f"({phase}): {stragglers}"
+                )
+        except Exception as e:
+            self.loguru_logger.error(f"Error cancelling workers ({phase}): {e}")
 
     async def _close_server_context_provider_cached_client(self) -> None:
         server_context_provider = getattr(self, "server_context_provider", None)
@@ -12092,6 +12209,13 @@ class TldwCli(
         import asyncio
 
         logging.info("--- App Unmounting ---")
+        # task-19561: from here to process death, everything is teardown.
+        # Arm the bound now rather than at the entry point, so the deadline
+        # covers this method too -- and so a quit that wedges inside cleanup
+        # is bounded exactly like a SIGTERM that does. Idempotent and
+        # monotonic: a signal-armed watchdog already holds a tighter
+        # deadline and this call leaves it alone.
+        arm_exit_watchdog(reason="app unmount")
         # TASK-1240. Distinguishes a clean exit from a kill: a log whose last
         # line is app_started ended abruptly. Wrapped, and deliberately so:
         # this line sits ABOVE the entire shutdown sequence -- DB closes,
@@ -12198,6 +12322,27 @@ class TldwCli(
                 except Exception as e:
                     self.loguru_logger.error(f"Error stopping scheduler worker: {e}")
 
+            # task-19561: stopping the scheduler worker does NOT stop the
+            # generations it dispatched. `BriefingJobHandler.handle` spawns
+            # each one as a bare `asyncio.Task` (Locked Decision 3 -- a
+            # multi-minute LLM call must not stall the tick), so they are
+            # absent from `App.workers` and survived every cancellation
+            # above, only to be destroyed mid-flight when the loop closed.
+            # Cancel them here, while the loop is still alive to deliver it.
+            briefing_handler = getattr(self, "_briefing_job_handler", None)
+            if briefing_handler is not None:
+                try:
+                    cancelled = await briefing_handler.shutdown()
+                    if cancelled:
+                        self.loguru_logger.info(
+                            f"Cancelled {cancelled} in-flight scheduled briefing "
+                            "generation(s)"
+                        )
+                except Exception as e:
+                    self.loguru_logger.error(
+                        f"Error stopping scheduled briefing generations: {e}"
+                    )
+
             # Disconnect local MCP client sessions (P5-T6), if any were ever
             # established this run.
             try:
@@ -12208,12 +12353,8 @@ class TldwCli(
                     f"Error disconnecting local MCP client sessions: {e}"
                 )
 
-            # Cancel any pending workers
-            for worker in self.workers:
-                if not worker.is_finished:
-                    worker.cancel()
-            # Wait briefly for workers to complete
-            await asyncio.sleep(0.1)
+            # Cancel any pending workers and wait for them, bounded.
+            await self._cancel_and_settle_workers("unmount")
 
             # Stop media cleanup timer
             if hasattr(self, "_media_cleanup_timer") and self._media_cleanup_timer:
@@ -12325,18 +12466,20 @@ class TldwCli(
 
                     # Run in background to avoid blocking
                     self.run_worker(kill_afplay_processes, name="kill_afplay")
-            import asyncio
-
-            # Shutdown thread pool executors
-            try:
-                # Get the default executor if it exists
-                loop = asyncio.get_event_loop()
-                if hasattr(loop, "_default_executor") and loop._default_executor:
-                    self.loguru_logger.info("Shutting down default executor")
-                    loop._default_executor.shutdown(wait=False)
-                    loop._default_executor = None
-            except Exception as e:
-                self.loguru_logger.error(f"Error shutting down executor: {e}")
+            # task-19561: this used to reach into `loop._default_executor`,
+            # call `shutdown(wait=False)` and then set the private attribute
+            # to `None`. Nulling it is what made the situation worse, not
+            # better: `asyncio.run`'s `Runner.close()` ends with `await
+            # loop.shutdown_default_executor(THREAD_JOIN_TIMEOUT)`, which
+            # both marks the loop as executor-shut-down (so a stray late
+            # `run_in_executor` raises instead of silently spawning a fresh
+            # pool of unjoinable non-daemon threads) and JOINS the worker
+            # threads while the loop is still alive. With `_default_executor`
+            # set to `None` that coroutine returns immediately, and the very
+            # threads this block was trying to hurry along were instead left
+            # for `threading._shutdown()` to join with no bound at all.
+            # Doing nothing here is the fix: the public, bounded shutdown
+            # runs a few milliseconds later, on its own.
 
             # Clean up any lingering subprocess
             for proc in (
@@ -12356,37 +12499,33 @@ class TldwCli(
                 except Exception as e:
                     self.loguru_logger.error(f"Error terminating subprocess: {e}")
 
-            # Force-set daemon flag on ThreadPoolExecutor and AudioPlayer threads
+            # task-19561: a loop that force-set `thread.daemon = True` on
+            # every live `ThreadPoolExecutor*`/`AudioPlayer*` thread used to
+            # sit here. CPython raises `RuntimeError: cannot set daemon
+            # status of active thread` for every one of them, so it changed
+            # nothing and logged an ERROR per thread while doing it. The
+            # "Active non-daemon threads remaining" warning that followed
+            # reported the same threads a moment before the process was
+            # going to wait on them anyway, with no way to act on it.
+            # Both are gone. What replaces them is the exit watchdog armed
+            # at the top of this method: it names the threads still alive
+            # at the moment the wait actually becomes a hang, and ends the
+            # process rather than merely describing it.
+
+            # Threads that expose a cooperative stop() still get asked --
+            # that half was never dead code.
             for thread in threading.enumerate():
-                if thread.name.startswith(("ThreadPoolExecutor", "AudioPlayer")):
+                if thread is threading.main_thread() or not thread.is_alive():
+                    continue
+                stop = getattr(thread, "stop", None)
+                if callable(stop):
                     try:
-                        thread.daemon = True
-                        self.loguru_logger.info(f"Set daemon flag on {thread.name}")
+                        stop()
+                        self.loguru_logger.info(f"Stopped thread: {thread.name}")
                     except Exception as e:
                         self.loguru_logger.error(
-                            f"Could not set daemon flag on {thread.name}: {e}"
+                            f"Error stopping thread {thread.name}: {e}"
                         )
-
-            # Log any remaining non-daemon threads
-            active_threads = [
-                t
-                for t in threading.enumerate()
-                if t.is_alive() and not t.daemon and t != threading.main_thread()
-            ]
-            if active_threads:
-                self.loguru_logger.warning(
-                    f"Active non-daemon threads remaining: {[t.name for t in active_threads]}"
-                )
-                # Attempt to stop them if they have stop methods
-                for thread in active_threads:
-                    if hasattr(thread, "stop") and callable(thread.stop):
-                        try:
-                            thread.stop()
-                            self.loguru_logger.info(f"Stopped thread: {thread.name}")
-                        except Exception as e:
-                            self.loguru_logger.error(
-                                f"Error stopping thread {thread.name}: {e}"
-                            )
         except Exception as e:
             self.loguru_logger.error(f"Error checking active threads: {e}")
 
@@ -12395,6 +12534,10 @@ class TldwCli(
         store = getattr(self, "_library_ingest_jobs_store", None)
         if store is not None:
             store.close()
+
+        # Nothing this app owns is left to ask; a signal from here on has
+        # no orderly path to offer and should unwind the main thread.
+        unregister_running_app(self)
 
         logging.shutdown()
         self.loguru_logger.info("--- App Unmounted (Loguru) ---")
@@ -13371,6 +13514,12 @@ if __name__ == "__main__":
         )
         raise SystemExit(0)
 
+    # task-19561: `python -m tldw_chatbook.app` installed no signal handlers
+    # at all, so SIGTERM took the process out with the kernel default -- even
+    # more abrupt than the console script's `os._exit(0)`. Both entry points
+    # now share one bounded, graceful mechanism.
+    install_termination_handlers()
+
     # Create instance with early logging flag
     app_instance = TldwCli()
     app_instance._cli_focus_override = bool(_main_args.focus)
@@ -13380,26 +13529,18 @@ if __name__ == "__main__":
         app_instance.run()
     except KeyboardInterrupt:
         loguru_logger.info("--- KeyboardInterrupt received ---")
-        # Force cleanup inline
-        import threading
-        import concurrent.futures
-
-        for thread in threading.enumerate():
-            if thread != threading.main_thread() and not thread.daemon:
-                try:
-                    thread.daemon = True
-                except Exception:
-                    pass
-        try:
-            concurrent.futures.thread._threads_queues.clear()
-        except Exception:
-            pass
     except Exception:
         loguru_logger.exception("--- CRITICAL ERROR DURING app.run() ---")
         traceback.print_exc()  # Make sure traceback prints
     finally:
         # This might run even if app exits early internally in run()
         loguru_logger.info("--- FINALLY block after app.run() ---")
+        # Everything from here is interpreter teardown -- `asyncio.run`'s
+        # executor join, `threading._shutdown()`, `atexit`. None of it is
+        # interruptible from Python, so this is the last point a bound can
+        # be placed on it. Idempotent: a SIGTERM-armed watchdog already
+        # holds a tighter deadline and this call leaves it alone.
+        arm_exit_watchdog(reason="interpreter exit")
 
     loguru_logger.info("--- AFTER app.run() call (if not crashed hard) ---")
 
@@ -13484,64 +13625,17 @@ def main_cli_runner():
     # Set environment variable to suppress FFmpeg output
     os.environ["TORCHAUDIO_LOG_LEVEL"] = "ERROR"
 
-    # Set up signal handlers for clean exit
-    import signal
-    import os
-    import atexit
-
-    def force_cleanup():
-        """Force cleanup on exit"""
-        import threading
-        import concurrent.futures
-
-        # Force kill any Higgs-related threads first
-        for thread in threading.enumerate():
-            thread_name = thread.name.lower()
-            if any(
-                name in thread_name
-                for name in ["higgs", "boson", "serve_engine", "audio"]
-            ):
-                loguru_logger.warning(f"Force killing thread: {thread.name}")
-                try:
-                    # Mark as daemon to not block exit
-                    thread.daemon = True
-                except Exception:
-                    pass
-
-        # Force daemon all threads
-        for thread in threading.enumerate():
-            if thread != threading.main_thread() and not thread.daemon:
-                try:
-                    thread.daemon = True
-                except Exception:
-                    pass
-
-        # Clear thread pool queues
-        try:
-            concurrent.futures.thread._threads_queues.clear()
-        except Exception:
-            pass
-
-        # Force clear any PyTorch CUDA resources
-        try:
-            import torch
-
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                torch.cuda.synchronize()
-        except Exception:
-            pass
-
-    # Register cleanup
-    atexit.register(force_cleanup)
-
-    def signal_handler(signum, frame):
-        loguru_logger.info(f"Received signal {signum}, forcing clean exit")
-        force_cleanup()
-        os._exit(0)
-
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
+    # task-19561: SIGTERM used to be answered here by `os._exit(0)` from
+    # inside the handler, after an `atexit`-registered `force_cleanup` that
+    # tried to daemonize already-started threads (a `RuntimeError` every
+    # time) and cleared `concurrent.futures.thread._threads_queues` (which
+    # only ever robs `_python_exit` of the sentinels that let idle executor
+    # threads finish). `os._exit` skipped Textual's `on_unmount` entirely --
+    # no database closed, no transaction rolled back, and any row already
+    # flipped to `running` stranded there permanently. The handlers below
+    # run the ordinary shutdown path and keep a hard exit only as the
+    # bounded, last-resort escape. See `Utils/app_shutdown.py`.
+    install_termination_handlers()
 
     # Initialize logging first
     initialize_early_logging()
@@ -13643,26 +13737,15 @@ def main_cli_runner():
         app_instance.run()
     except KeyboardInterrupt:
         loguru_logger.info("--- KeyboardInterrupt received ---")
-        # Force cleanup inline
-        import threading
-        import concurrent.futures
-
-        for thread in threading.enumerate():
-            if thread != threading.main_thread() and not thread.daemon:
-                try:
-                    thread.daemon = True
-                except Exception:
-                    pass
-        try:
-            concurrent.futures.thread._threads_queues.clear()
-        except Exception:
-            pass
     except Exception:
         loguru_logger.exception("--- CRITICAL ERROR DURING app.run() ---")
         traceback.print_exc()  # Make sure traceback prints
     finally:
         # This might run even if app exits early internally in run()
         loguru_logger.info("--- FINALLY block after app.run() ---")
+        # Bound interpreter teardown (see the identical call in the
+        # `__main__` block for why this is the last placeable bound).
+        arm_exit_watchdog(reason="interpreter exit")
 
     loguru_logger.info("--- AFTER app.run() call (if not crashed hard) ---")
 

@@ -6525,3 +6525,43 @@ paragraph.
    an error rather than a failure and can be skipped past with
    `--continue-on-collection-errors`. Grep for `ERROR` as well as `FAILED` when
    surveying a suite, or an entire file's worth of tests will read as "not failing".
+
+---
+
+## A `wait_for` around work that ignores cancellation is not a bound (task-19561)
+
+While replacing shutdown's flat `asyncio.sleep(0.1)` with a real bounded wait,
+the first draft was `await asyncio.wait_for(asyncio.gather(*tasks), timeout)`.
+It read like a timeout. The test written for exactly that case —
+"shutdown does not hang on a task that ignores cancellation" — **wedged the
+whole pytest run for five minutes** until the harness killed it.
+
+`wait_for` (and `asyncio.timeout`, which it is built on in 3.11+) implements
+its deadline by *cancelling* what it is awaiting and then awaiting that
+cancellation. Work that swallows `CancelledError` therefore hangs the very call
+whose timeout was supposed to bound it. Use `asyncio.wait(tasks, timeout=...)`
+when the point is to stop waiting: it returns `(done, pending)` and cancels
+nothing. Then drain `.exception()` off the finished ones so a cancelled-at-
+shutdown task does not resurface as "exception was never retrieved".
+
+The generalisable half: **a timeout is only a bound if the thing it is wrapped
+around can be interrupted.** Write the uncooperative-work test — it is the only
+one that distinguishes the two.
+
+## A process-lifetime mechanism must be gated on owning the process (task-19561)
+
+The same task added an exit watchdog: a daemon thread that `os._exit`s if
+shutdown has not finished within a grace period, armed from `App.on_unmount`.
+Every unit test passed. What that misses is that `Textual`'s `run_test()`
+mounts and unmounts a **real** `TldwCli` inside the pytest process, which then
+runs thousands more tests — so every such test was arming a timer to kill the
+test runner ~20 seconds later. It surfaced only because a test was written that
+mounts the real app and asserts *no watchdog thread exists afterwards*.
+
+Two rules fell out. **Gate anything that ends the process on an explicit claim
+made by an entry point** (`claim_process_exit()` here), never on "the app is
+shutting down" — under test those are different facts. And **when a mechanism
+replaces itself with a tighter deadline, stand the superseded one down**: the
+first version left the old thread asleep on its original, longer deadline,
+which is a live timer nothing can cancel any more. That bug was found by the
+same real-app-mount test, not by any of the seven unit tests around it.

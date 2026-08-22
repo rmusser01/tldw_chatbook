@@ -3015,6 +3015,10 @@ default_theme = "textual-dark"  # Default theme on startup ("textual-dark", "tex
 palette_theme_limit = 1  # Maximum number of themes to show in command palette (0 = show all)
 log_level = "INFO" # TUI Log Level: DEBUG, INFO, WARNING, ERROR, CRITICAL
 users_name = "default_user" # Default user name for the TUI
+# How long shutdown may take (Textual unmount + interpreter teardown) before a
+# hard exit is forced. Clamped to 1-300 seconds. A healthy exit is well under
+# a second; raise this only if a slow local disk makes a real shutdown longer.
+shutdown_grace_seconds = 20.0
 
 [console]
 collapse_large_pastes = true  # Display large pasted chunks compactly in Console composer
