@@ -6646,6 +6646,10 @@ def get_notes_sync_state_db_path() -> Path:
     return get_user_data_dir() / "tldw_chatbook_notes_sync_state.db"
 
 
+NOTES_SYNC_RECOVERY_CAPACITY_BYTES_DEFAULT = 256 * 1024 * 1024
+_NOTES_SYNC_RECOVERY_CAPACITY_ENV = "TLDW_NOTES_SYNC_RECOVERY_CAPACITY_BYTES"
+
+
 def get_notes_sync_recovery_capacity_bytes(
     config_data: Mapping[str, Any] | None = None,
 ) -> int:
@@ -6654,10 +6658,23 @@ def get_notes_sync_recovery_capacity_bytes(
     selected = (
         load_cli_config_and_ensure_existence() if config_data is None else config_data
     )
+    env_value = os.getenv(_NOTES_SYNC_RECOVERY_CAPACITY_ENV)
     notes = selected.get("notes")
-    if not isinstance(notes, Mapping):
-        raise ValueError("notes.recovery_capacity_bytes must be configured.")
-    capacity = notes.get("recovery_capacity_bytes", 256 * 1024 * 1024)
+    capacity: object
+    if env_value is not None:
+        try:
+            capacity = int(env_value)
+        except ValueError:
+            raise ValueError(
+                "notes.recovery_capacity_bytes must be a positive integer."
+            ) from None
+    elif isinstance(notes, Mapping):
+        capacity = notes.get(
+            "recovery_capacity_bytes",
+            NOTES_SYNC_RECOVERY_CAPACITY_BYTES_DEFAULT,
+        )
+    else:
+        capacity = NOTES_SYNC_RECOVERY_CAPACITY_BYTES_DEFAULT
     if type(capacity) is not int or not 1 <= capacity <= 2**63 - 1:
         raise ValueError("notes.recovery_capacity_bytes must be a positive integer.")
     return capacity

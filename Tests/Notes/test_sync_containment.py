@@ -662,17 +662,8 @@ def test_move_bounded_postcommit_refusal_is_distinct_partial(
     assert (root_path / "after.md").read_bytes() == b"before"
 
 
-def test_legacy_engine_source_has_no_pathname_sync_escape_hatches() -> None:
-    source = (
-        Path(sync_paths.__file__)
-        .with_name("sync_engine.py")
-        .read_text(encoding="utf-8")
-    )
-
-    assert ".rglob(" not in source
-    assert "file_path.read_text(" not in source
-    assert "file_path.parent.mkdir(" not in source
-    assert "atomic_write_text(" not in source
+def test_legacy_pathname_sync_engine_remains_retired() -> None:
+    assert not Path(sync_paths.__file__).with_name("sync_engine.py").exists()
 
 
 # --------------------------------------------------------------------------

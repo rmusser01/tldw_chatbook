@@ -275,15 +275,16 @@ def test_pinned_historical_v1_receipt_rows_survive_value_for_value_and_indexes_r
             ),
         )
         connection.execute("DROP INDEX idx_import_items_target")
+        queries = {
+            "import_sessions": "SELECT * FROM import_sessions",
+            "import_items": "SELECT * FROM import_items",
+            "import_payload_effects": "SELECT * FROM import_payload_effects",
+            "import_folder_effects": "SELECT * FROM import_folder_effects",
+            "import_membership_effects": "SELECT * FROM import_membership_effects",
+        }
         before = {
-            table: connection.execute(f"SELECT * FROM {table}").fetchall()
-            for table in (
-                "import_sessions",
-                "import_items",
-                "import_payload_effects",
-                "import_folder_effects",
-                "import_membership_effects",
-            )
+            table: connection.execute(query).fetchall()
+            for table, query in queries.items()
         }
         connection.commit()
 
@@ -291,8 +292,8 @@ def test_pinned_historical_v1_receipt_rows_survive_value_for_value_and_indexes_r
 
     with sqlite3.connect(database) as connection:
         after = {
-            table: connection.execute(f"SELECT * FROM {table}").fetchall()
-            for table in before
+            table: connection.execute(query).fetchall()
+            for table, query in queries.items()
         }
         indexes = {
             row[0]

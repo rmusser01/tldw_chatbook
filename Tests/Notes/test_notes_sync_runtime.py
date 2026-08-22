@@ -690,6 +690,36 @@ async def test_migration_failure_is_bounded_and_never_starts_runtime_work(
 
 
 @pytest.mark.asyncio
+async def test_first_cutover_does_not_reread_the_marker_after_durable_write(
+    tmp_path: Path,
+) -> None:
+    class _SingleReadMarkerStore(NotesDeviceStateStore):
+        marker_reads = 0
+
+        def get_setting(self, key: str) -> NotesSyncStoreSetting | None:
+            if key == "cutover_marker":
+                self.marker_reads += 1
+                if self.marker_reads > 1:
+                    raise RuntimeError("private second marker read")
+            return super().get_setting(key)
+
+    store = _SingleReadMarkerStore(tmp_path / "sync.sqlite3")
+    store.initialize()
+    owner, _, _ = _owner(
+        store=store,
+        admitted=True,
+        adapter=_Adapter([]),
+    )
+
+    await owner.start()
+
+    assert store.marker_reads == 1
+    assert owner.snapshot().status == "active"
+    assert NotesDeviceStateStore.get_setting(store, "cutover_marker") is not None
+    await owner.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_inert_builder_performs_no_legacy_read_or_runtime_construction(
     tmp_path: Path,
 ) -> None:

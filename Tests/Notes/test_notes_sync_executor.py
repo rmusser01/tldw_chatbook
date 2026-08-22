@@ -783,8 +783,11 @@ async def test_new_action_reconstruction_rejects_override_token_corruption(
         ).reconstruct_request(request.operation_id)
 
 
-def test_recovery_capacity_has_one_bounded_config_default() -> None:
+def test_recovery_capacity_has_one_bounded_config_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     defaults = tomllib.loads(config_module.CONFIG_TOML_CONTENT)
+    monkeypatch.delenv("TLDW_NOTES_SYNC_RECOVERY_CAPACITY_BYTES", raising=False)
 
     assert defaults["notes"]["recovery_capacity_bytes"] == 256 * 1024 * 1024
     assert (
@@ -795,6 +798,19 @@ def test_recovery_capacity_has_one_bounded_config_default() -> None:
         config_module.get_notes_sync_recovery_capacity_bytes({"notes": {}})
         == 256 * 1024 * 1024
     )
+    assert config_module.get_notes_sync_recovery_capacity_bytes({}) == 256 * 1024 * 1024
+    assert (
+        config_module.get_notes_sync_recovery_capacity_bytes({"notes": "invalid"})
+        == 256 * 1024 * 1024
+    )
+    monkeypatch.setenv("TLDW_NOTES_SYNC_RECOVERY_CAPACITY_BYTES", "8192")
+    assert (
+        config_module.get_notes_sync_recovery_capacity_bytes(
+            {"notes": {"recovery_capacity_bytes": 4096}}
+        )
+        == 8192
+    )
+    monkeypatch.delenv("TLDW_NOTES_SYNC_RECOVERY_CAPACITY_BYTES")
     with pytest.raises(ValueError, match="recovery_capacity_bytes"):
         config_module.get_notes_sync_recovery_capacity_bytes(
             {"notes": {"recovery_capacity_bytes": 0}}

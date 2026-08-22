@@ -163,18 +163,21 @@ def _snapshot_and_plan(
 
 
 def _private_counts(store: NotesDeviceStateStore) -> dict[str, int]:
+    queries = {
+        "notes_sync_roots": "SELECT COUNT(*) FROM notes_sync_roots",
+        "notes_sync_bindings": "SELECT COUNT(*) FROM notes_sync_bindings",
+        "notes_sync_legacy_migrations": (
+            "SELECT COUNT(*) FROM notes_sync_legacy_migrations"
+        ),
+        "notes_sync_operations": "SELECT COUNT(*) FROM notes_sync_operations",
+        "notes_sync_recovery": "SELECT COUNT(*) FROM notes_sync_recovery",
+        "notes_sync_store_settings": ("SELECT COUNT(*) FROM notes_sync_store_settings"),
+        "import_sessions": "SELECT COUNT(*) FROM import_sessions",
+    }
     with store.transaction() as connection:
         return {
-            name: int(connection.execute(f"SELECT COUNT(*) FROM {name}").fetchone()[0])
-            for name in (
-                "notes_sync_roots",
-                "notes_sync_bindings",
-                "notes_sync_legacy_migrations",
-                "notes_sync_operations",
-                "notes_sync_recovery",
-                "notes_sync_store_settings",
-                "import_sessions",
-            )
+            name: int(connection.execute(query).fetchone()[0])
+            for name, query in queries.items()
         }
 
 

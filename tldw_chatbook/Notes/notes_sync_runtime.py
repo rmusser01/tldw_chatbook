@@ -703,15 +703,15 @@ class NotesSyncRuntimeOwner:
                     self._status = "awaiting_cutover"
                     self._next_action = "finish_upgrade"
                     return
+                marker = NotesSyncStoreSetting("cutover_marker", CUTOVER_MARKER)
                 await asyncio.to_thread(
                     self._store.set_setting,
-                    NotesSyncStoreSetting("cutover_marker", CUTOVER_MARKER),
+                    marker,
                 )
             except Exception:
                 self._status = "failed"
                 self._next_action = "review_settings"
                 return
-            marker = await asyncio.to_thread(self._store.get_setting, "cutover_marker")
         if not self._cutover_admitted or marker is None:
             self._status = "awaiting_cutover"
             self._next_action = "finish_upgrade"
