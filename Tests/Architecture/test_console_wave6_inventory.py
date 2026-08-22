@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,12 +23,25 @@ TASK10_SCREEN_LINE_CEILING = 20_943
 LINE_OVERAGE = 4_445
 METHOD_OVERAGE = 119
 DESCRIPTOR_LINE_BUDGET = 64
-FLEET_TASK_IMPLEMENTATION_BASE = "d4f3f97763ddf3fa46eeb35ae9473827e72695bc"
-FLEET_TASK_BASE_SCREEN_LINES = 20_428
-FLEET_TASK_BASE_METHODS = 653
-FLEET_TASK_DEFINITION_LINES = 421
-FLEET_TASK_MAX_SCREEN_LINES = 20_007
-FLEET_TASK_MAX_METHODS = 637
+FLEET_TASK0_IMPLEMENTATION_BASE = "d4f3f97763ddf3fa46eeb35ae9473827e72695bc"
+FLEET_TASK0_BASE_SCREEN_LINES = 20_428
+FLEET_TASK0_BASE_METHODS = 653
+FLEET_TASK0_DEFINITION_LINES = 421
+FLEET_TASK0_MAX_SCREEN_LINES = 20_007
+FLEET_TASK0_MAX_METHODS = 637
+FLEET_FINAL_REBASE_BASE = "02cd80b33004305765b5cd91b3d264aa3664596e"
+FLEET_FINAL_REBASE_BASE_SCREEN_LINES = 20_486
+FLEET_FINAL_REBASE_BASE_METHODS = 656
+FLEET_FINAL_REBASE_DEFINITION_LINES = 421
+FLEET_FINAL_REBASE_MAX_SCREEN_LINES = 20_065
+FLEET_FINAL_REBASE_MAX_METHODS = 640
+FLEET_FINAL_REBASE_ADDED_SCREEN_METHODS = frozenset(
+    {
+        "_console_inspector_active",
+        "_request_console_context_allocation_reconcile",
+        "_request_console_live_work_reconcile",
+    }
+)
 FLEET_CONTROLLER_CALLBACKS = frozenset(
     {
         "pending_handoffs_accessor",
@@ -564,6 +578,16 @@ def _methods(path: Path, class_name: str) -> dict[str, ast.AST]:
 
 def _span(node: ast.AST) -> int:
     return node.end_lineno - node.lineno + 1  # type: ignore[attr-defined]
+
+
+def _method_family_ast_digest(
+    methods: dict[str, ast.AST], names: frozenset[str]
+) -> str:
+    """Return a stable digest for one exact reviewed method family."""
+    payload = "\n".join(
+        ast.dump(methods[name], include_attributes=False) for name in sorted(names)
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()
 
 
 def _is_property(node: ast.AST) -> bool:
@@ -1894,27 +1918,60 @@ def test_fleet_controller_has_only_named_non_dom_dependencies() -> None:
 
 @pytest.mark.unit
 def test_fleet_task_ratchet_is_earned() -> None:
-    """Require the current-base 421-line/16-method extraction to be earned."""
+    """Require the immutable Task 0 and frozen final-rebase ratchets."""
     group = WAVE6_GROUPS["fleet"]
-    base_source = _source_at_revision(FLEET_TASK_IMPLEMENTATION_BASE, _SCREEN_PATH)
-    base_class = _class_node_from_source(base_source, "ChatScreen", _SCREEN_PATH)
-    base_methods = _methods_from_class(base_class)
+    task0_source = _source_at_revision(FLEET_TASK0_IMPLEMENTATION_BASE, _SCREEN_PATH)
+    task0_class = _class_node_from_source(task0_source, "ChatScreen", _SCREEN_PATH)
+    task0_methods = _methods_from_class(task0_class)
+    final_source = _source_at_revision(FLEET_FINAL_REBASE_BASE, _SCREEN_PATH)
+    final_class = _class_node_from_source(final_source, "ChatScreen", _SCREEN_PATH)
+    final_methods = _methods_from_class(final_class)
     current_source, current_class = _class_node(_SCREEN_PATH, "ChatScreen")
+    current_methods = _methods_from_class(current_class)
 
-    assert len(base_source.splitlines()) == FLEET_TASK_BASE_SCREEN_LINES
-    assert _method_count(base_class) == FLEET_TASK_BASE_METHODS
-    assert group.moved <= base_methods.keys()
-    assert sum(_span(base_methods[name]) for name in group.moved) == (
-        FLEET_TASK_DEFINITION_LINES
+    assert len(task0_source.splitlines()) == FLEET_TASK0_BASE_SCREEN_LINES
+    assert _method_count(task0_class) == FLEET_TASK0_BASE_METHODS
+    assert group.moved <= task0_methods.keys()
+    assert sum(_span(task0_methods[name]) for name in group.moved) == (
+        FLEET_TASK0_DEFINITION_LINES
     )
     assert len(group.moved) == 16
-    assert len(current_source.splitlines()) <= FLEET_TASK_MAX_SCREEN_LINES, (
-        "fleet task screen-line ratchet remains RED: "
-        f"{len(current_source.splitlines())} > {FLEET_TASK_MAX_SCREEN_LINES}"
+
+    assert len(final_source.splitlines()) == FLEET_FINAL_REBASE_BASE_SCREEN_LINES
+    assert _method_count(final_class) == FLEET_FINAL_REBASE_BASE_METHODS
+    assert group.moved <= final_methods.keys()
+    assert sum(_span(final_methods[name]) for name in group.moved) == (
+        FLEET_FINAL_REBASE_DEFINITION_LINES
     )
-    assert _method_count(current_class) <= FLEET_TASK_MAX_METHODS, (
+    assert final_methods.keys() - task0_methods.keys() == (
+        FLEET_FINAL_REBASE_ADDED_SCREEN_METHODS
+    )
+    assert not (task0_methods.keys() - final_methods.keys())
+    assert _method_family_ast_digest(
+        task0_methods, group.moved
+    ) == _method_family_ast_digest(final_methods, group.moved)
+
+    assert FLEET_TASK0_MAX_SCREEN_LINES == (
+        FLEET_TASK0_BASE_SCREEN_LINES - FLEET_TASK0_DEFINITION_LINES
+    )
+    assert FLEET_TASK0_MAX_METHODS == FLEET_TASK0_BASE_METHODS - len(group.moved)
+    assert FLEET_FINAL_REBASE_MAX_SCREEN_LINES == (
+        FLEET_FINAL_REBASE_BASE_SCREEN_LINES - FLEET_FINAL_REBASE_DEFINITION_LINES
+    )
+    assert FLEET_FINAL_REBASE_MAX_METHODS == (
+        FLEET_FINAL_REBASE_BASE_METHODS - len(group.moved)
+    )
+    assert not (group.moved & current_methods.keys()), (
+        "fleet task methods returned to ChatScreen: "
+        f"{sorted(group.moved & current_methods.keys())}"
+    )
+    assert len(current_source.splitlines()) <= FLEET_FINAL_REBASE_MAX_SCREEN_LINES, (
+        "fleet task screen-line ratchet remains RED: "
+        f"{len(current_source.splitlines())} > {FLEET_FINAL_REBASE_MAX_SCREEN_LINES}"
+    )
+    assert _method_count(current_class) <= FLEET_FINAL_REBASE_MAX_METHODS, (
         "fleet task method ratchet remains RED: "
-        f"{_method_count(current_class)} > {FLEET_TASK_MAX_METHODS}"
+        f"{_method_count(current_class)} > {FLEET_FINAL_REBASE_MAX_METHODS}"
     )
 
 

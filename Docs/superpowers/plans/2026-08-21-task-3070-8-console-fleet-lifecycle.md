@@ -21,7 +21,7 @@
 - Work only in `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/task-3070-8-console-fleet-lifecycle` on `codex/task-3070-8-console-fleet-lifecycle`.
 - Treat `Docs/superpowers/specs/2026-08-21-task-3070-8-console-fleet-lifecycle-design.md` as the approved contract.
 - Do not add a screen handle, sibling controller object, generic dependency bag, base class, event bus, method shim, compatibility descriptor, setting, DOM id, CSS rule, or user-visible copy.
-- Preserve the historical Wave 6 `raw_lines=401` oracle at its recorded `POST_IMAGE_IMPLEMENTATION_BASE` and the initial reviewed `0a8e288` oracle at 421 definition lines / 20,349 screen lines / 652 direct methods / 19,928 and 636 projections. Use the rebased current implementation-base oracle for the same 421 definition lines, 20,428 total screen lines, 653 direct methods, and post-extraction ceilings of 20,007/637.
+- Preserve the historical Wave 6 `raw_lines=401` oracle at its recorded `POST_IMAGE_IMPLEMENTATION_BASE` and the initial reviewed `0a8e288` oracle at 421 definition lines / 20,349 screen lines / 652 direct methods / 19,928 and 636 projections. Preserve the immutable Task 0 `d4f3f977` oracle for the same 421 definition lines, 20,428 total screen lines, 653 direct methods, and post-extraction ceilings of 20,007/637. Use the separately frozen final-rebase `02cd80b3` source at 20,486 lines / 656 methods, with the unchanged 16-method/421-line fleet AST, for delivery ceilings of 20,065/640.
 - The two controller state fields are private controller details: `_console_fleet_survivor_timer` and `_console_fleet_unseen_cache`. Tests that inspect them move to `screen._fleet`; no screen shadow/proxy is allowed.
 - Preserve exact callback late binding. A test monkeypatch after construction must affect the next controller call.
 - Keep first-chat consumption before teardown notice and synchronous wake claiming; keep wake claiming before every timer/worker/view-clear.
@@ -38,6 +38,12 @@
 - Rebased `ChatScreen`: 20,428 physical lines / 653 direct methods; projected ceilings 20,007 / 637.
 - Current-base fleet family: 421 physical definition lines / 16 direct methods.
 - Historical Wave 6 fleet family at `POST_IMAGE_IMPLEMENTATION_BASE`: 401 lines / 16 methods.
+- Frozen final-rebase source: `02cd80b33004305765b5cd91b3d264aa3664596e`
+  at 20,486 physical lines / 656 direct methods. Its exact fleet family remains
+  AST-identical at 16 methods / 421 lines. The three added methods are
+  `_console_inspector_active`, `_request_console_context_allocation_reconcile`, and
+  `_request_console_live_work_reconcile`; all are unrelated bounded-rail
+  reconciliation work. The final earned ceilings are therefore 20,065 / 640.
 - Rebased focused fleet baseline: 17 passed, 4 warnings in 39.63 seconds.
 - Rebased metadata-only registry baseline: 1 passed, 1 dependency warning in 1.80 seconds.
 - Generated diagnostic inventory non-write baseline: green after the mandatory latest-dev rebase at 521 owners / 1,221 TASK-492 calls / 7,208 TASK-494 calls / 7 sink files. The pre-rebase 0a8 branch was inherited RED; upstream reconciled that delta. No Task 0 manifest write occurred.
@@ -707,7 +713,17 @@ diagnostic evidence, ADR decision, changed files, and user-authorized affected-o
 test scope, but keep the task `In Progress` and final AC/plan closeout boxes open until
 the post-rebase verification below succeeds.
 
-- [ ] **Step 6: Rebase on latest dev and re-verify before delivery**
+- [ ] **Step 6: Use the approved frozen final-rebase oracle and re-verify before delivery**
+
+The 2026-08-22 ratchet amendment reviewed and approved
+`02cd80b33004305765b5cd91b3d264aa3664596e` as the frozen final-rebase source.
+Its 20,486 lines / 656 methods minus the unchanged 421-line / 16-method family earn
+20,065-line / 640-method candidate ceilings. The candidate measured 19,996 lines /
+640 methods when this amendment was reviewed. This approval changes no Task 5 or AC
+completion state; the remaining focused, diagnostic, static, and closeout gates still
+must run against this evidence.
+
+If `origin/dev` advances before actual delivery, that is a separate delivery rebase:
 
 ```bash
 git fetch origin dev
@@ -715,14 +731,16 @@ git rebase origin/dev
 ```
 
 Preserve the historical 401-line oracle, the initial immutable 0a8e planning evidence,
-and the Task 0 `d4f3f977` implementation-base ratchet with its exact 421-line/16-method
-earned reduction. Record separately named final-rebase screen measurements. If
-upstream screen changes make the approved absolute projection inapplicable, stop and
-amend/re-review the design instead of rewriting any immutable evidence.
+the Task 0 `d4f3f977` implementation-base ratchet with its exact 421-line/16-method
+earned reduction, and this amendment's frozen `02cd80b3` final-rebase oracle. Record
+any later delivery-base measurements under a new name. If later upstream screen
+changes make the approved absolute projection inapplicable, stop and amend/re-review
+the design instead of silently rewriting any fixed evidence.
 
-After the rebase, rerun Task 5 Step 3's three-way preview against the new exact
-`origin/dev` SHA. Only if every inherited delta is independently classified and the
-task union/topology assertions pass, run:
+For the approved `02cd80b3` delivery base—or after any separately reviewed later
+delivery rebase—rerun Task 5 Step 3's three-way preview against that exact base SHA.
+Only if every inherited delta is independently classified and the task union/topology
+assertions pass, run:
 
 ```bash
 ../../.venv/bin/python scripts/check_persistent_diagnostic_inventory.py --write

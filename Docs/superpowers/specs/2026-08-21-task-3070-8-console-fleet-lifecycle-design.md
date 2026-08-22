@@ -32,6 +32,19 @@ replacement-screen-line budget. The historical Wave 6 manifest remains a third,
 separate oracle at 401 physical definition lines. The existing Wave 6 architecture manifest already names
 `fleet.py`, `ConsoleFleetLifecycleController`, and screen owner slot `_fleet`.
 
+The approved final-rebase source is frozen separately at
+`02cd80b33004305765b5cd91b3d264aa3664596e`: 20,486 physical lines / 656 direct
+methods. Its fleet family remains the same 16 methods / 421 definition lines and has
+the same AST digest as the immutable Task 0 family. Upstream added exactly three
+unrelated direct screen methods: `_console_inspector_active`,
+`_request_console_context_allocation_reconcile`, and
+`_request_console_live_work_reconcile`. They belong to bounded-rail reconciliation,
+not fleet lifecycle, so the final-rebase earned ceilings are 20,065 lines and 640
+direct methods. This amendment does not rewrite the immutable Task 0 ceilings; it
+adds the fixed delivery-base oracle needed to distinguish unrelated upstream growth
+from a fleet regression. A later `origin/dev` advance is a separate delivery rebase
+and review, never authority to silently rewrite either fixed oracle.
+
 Focused baseline evidence is green: 17 tests passed across the Wave 6 compatibility
 gate, survivor-tick behavior, restart staging, and wake wiring in 39.63 seconds. Four
 existing dependency/runtime warnings were emitted; no test failed.
@@ -298,8 +311,9 @@ Implementation follows focused TDD; no local full-suite run is authorized.
 2. Extend the Wave 6 architecture test to require all 16 methods solely on
    `ConsoleFleetLifecycleController`, zero DOM calls across every controller method,
    no sibling-controller/screen reach-through, exact named keyword-only wiring, no new
-   fleet replacement definition on `ChatScreen`, and task-local ceilings of 20,007
-   screen lines and 637 direct methods.
+   fleet replacement definition on `ChatScreen`, the immutable Task 0 projections of
+   20,007 screen lines / 637 direct methods, and frozen final-rebase ceilings of 20,065
+   screen lines / 640 direct methods.
 3. Add mutation-sensitive checks for claim release/acknowledge, durable-mark deferral,
    late-bound composer/controller access, teardown leave gating, and final settle paint.
 4. Update only focused callers/fixtures that still invoke the moved screen methods.
@@ -315,8 +329,9 @@ Implementation follows focused TDD; no local full-suite run is authorized.
 
 The implementation is complete only when the screen contains none of the 16 moved
 definitions, no production caller targets those names on `ChatScreen`, Workspace is
-wired directly to `_fleet`, the task-local 20,007-line/637-method ceilings pass, and
-the focused behavior remains green.
+wired directly to `_fleet`, the frozen final-rebase 20,065-line/640-method ceilings
+pass without changing the immutable Task 0 evidence, and the focused behavior remains
+green.
 
 ## Scope Exclusions
 
