@@ -20,9 +20,12 @@ from tldw_chatbook.Notes.note_import_execution_models import (
 from tldw_chatbook.Notes.note_import_plan_models import ImportBounds, NoteImportPlan
 from tldw_chatbook.Notes.note_import_receipts import NoteImportReceiptRepository
 from tldw_chatbook.Notes.notes_sync_state import (
+    MAX_SYNC_BINDINGS,
     MAX_SYNC_ROOTS,
     NotesSyncStateError,
     NotesSyncStateRepository,
+    SyncBindingRecord,
+    SyncBindingState,
     SyncRootRecord,
     SyncRootState,
     SyncStateCapacityError,
@@ -84,9 +87,12 @@ def _assert_exact_v2(database: Path) -> None:
 
 def test_public_root_api_is_narrow_and_exports_required_types() -> None:
     assert {
+        "MAX_SYNC_BINDINGS",
         "MAX_SYNC_ROOTS",
         "NotesSyncStateError",
         "NotesSyncStateRepository",
+        "SyncBindingRecord",
+        "SyncBindingState",
         "SyncRootRecord",
         "SyncRootState",
         "SyncStateCapacityError",
@@ -101,11 +107,17 @@ def test_public_root_api_is_narrow_and_exports_required_types() -> None:
         if not name.startswith("_")
     }
     assert public_methods == {
+        "create_provisional_binding",
         "create_candidate_root",
+        "disconnect_binding",
         "disconnect_root",
+        "get_binding",
         "get_root",
+        "list_bindings",
         "list_roots",
+        "mark_binding_needs_attention",
         "pause_root",
+        "update_provisional_binding",
         "update_candidate_root",
     }
     assert "set_state" not in public_methods
@@ -114,6 +126,12 @@ def test_public_root_api_is_narrow_and_exports_required_types() -> None:
         "paused",
         "disconnected",
     }
+    assert {state.value for state in SyncBindingState} == {
+        "candidate",
+        "needs_attention",
+        "disconnected",
+    }
+    assert MAX_SYNC_BINDINGS == 100_000
 
 
 def test_root_projection_maps_every_column_and_redacts_private_values(
@@ -865,3 +883,560 @@ def test_sync_state_exception_hierarchy_is_public_and_specific() -> None:
     assert issubclass(SyncStateConflictError, NotesSyncStateError)
     assert issubclass(SyncStateCapacityError, NotesSyncStateError)
     assert issubclass(SyncStateCorruptionError, NotesSyncStateError)
+
+
+def test_binding_projection_maps_every_column_and_redacts_private_values(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "binding-projection.sqlite3"
+    repository = NotesSyncStateRepository(database)
+    root = repository.create_candidate_root("root", "Root", "bidirectional")
+    with notes_sync_state_transaction(database, immediate=True) as connection:
+        connection.execute(
+            """INSERT INTO sync_migration_runs (
+                   migration_id, source_kind, source_revision_before,
+                   source_revision_after, state, created_at, updated_at
+               ) VALUES (?, 'legacy_notes_sync_v1', ?, ?, 'matched_recheck', 10, 11)""",
+            (_PRIVATE_MIGRATION_ID, "b" * 64, "b" * 64),
+        )
+        connection.execute(
+            """INSERT INTO sync_bindings (
+                   binding_id, root_id, note_id, lexical_relative_path, path_key,
+                   state, row_version, needs_rescan, reason_code, source_kind,
+                   source_locator_digest, source_migration_id, created_at, updated_at
+               ) VALUES (?, ?, ?, ?, ?, 'needs_attention', 7, 1,
+                         'legacy_conflict', 'legacy_notes_sync_v1', ?, ?, 12, 13)""",
+            (
+                _PRIVATE_ID,
+                root.root_id,
+                "private-note-id",
+                _PRIVATE_PATH,
+                "private-path-key",
+                _PRIVATE_DIGEST,
+                _PRIVATE_MIGRATION_ID,
+            ),
+        )
+
+    record = repository.get_binding(_PRIVATE_ID)
+
+    assert tuple(field.name for field in fields(SyncBindingRecord)) == (
+        "binding_id",
+        "root_id",
+        "note_id",
+        "lexical_relative_path",
+        "path_key",
+        "state",
+        "row_version",
+        "needs_rescan",
+        "reason_code",
+        "source_kind",
+        "source_locator_digest",
+        "source_migration_id",
+        "created_at",
+        "updated_at",
+    )
+    assert record == SyncBindingRecord(
+        binding_id=_PRIVATE_ID,
+        root_id=root.root_id,
+        note_id="private-note-id",
+        lexical_relative_path=_PRIVATE_PATH,
+        path_key="private-path-key",
+        state=SyncBindingState.NEEDS_ATTENTION,
+        row_version=7,
+        needs_rescan=True,
+        reason_code="legacy_conflict",
+        source_kind="legacy_notes_sync_v1",
+        source_locator_digest=_PRIVATE_DIGEST,
+        source_migration_id=_PRIVATE_MIGRATION_ID,
+        created_at=12,
+        updated_at=13,
+    )
+    assert SyncBindingRecord.__dataclass_params__.frozen is True
+    assert hasattr(record, "__slots__")
+    with pytest.raises(FrozenInstanceError):
+        record.reason_code = "changed"  # type: ignore[misc]
+    assert repr(record) == (
+        "SyncBindingRecord(state='needs_attention', row_version=7, "
+        "needs_rescan=True, reason_code='legacy_conflict')"
+    )
+    for private in (
+        _PRIVATE_ID,
+        root.root_id,
+        "private-note-id",
+        _PRIVATE_PATH,
+        "private-path-key",
+        _PRIVATE_DIGEST,
+        _PRIVATE_MIGRATION_ID,
+        "legacy_notes_sync_v1",
+    ):
+        assert private not in repr(record)
+
+
+def test_create_get_list_and_update_provisional_bindings(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    root = repository.create_candidate_root("root", "Root", "bidirectional")
+    first = repository.create_provisional_binding(
+        root.root_id, "note-1", "folder/../one.md"
+    )
+    second = repository.create_provisional_binding(root.root_id, "note-2", "two.md")
+
+    assert first.root_id == root.root_id
+    assert first.note_id == "note-1"
+    assert first.lexical_relative_path == "folder/../one.md"
+    assert first.path_key is None
+    assert first.state is SyncBindingState.CANDIDATE
+    assert first.row_version == 1
+    assert first.needs_rescan is True
+    assert first.reason_code is None
+    assert first.source_kind is None
+    assert first.source_locator_digest is None
+    assert first.source_migration_id is None
+    assert first.created_at == first.updated_at
+    assert repository.get_binding(first.binding_id) == first
+    assert repository.list_bindings(root_id=root.root_id) == (first, second)
+
+    updated = repository.update_provisional_binding(
+        first.binding_id,
+        first.row_version,
+        lexical_relative_path="renamed.md",
+        path_key="portable/renamed.md",
+    )
+    assert updated.lexical_relative_path == "renamed.md"
+    assert updated.path_key == "portable/renamed.md"
+    assert updated.row_version == first.row_version + 1
+    assert updated.updated_at > first.updated_at
+    assert updated.created_at == first.created_at
+    with pytest.raises(SyncStateConflictError):
+        repository.update_provisional_binding(
+            first.binding_id,
+            first.row_version,
+            lexical_relative_path="stale.md",
+        )
+    assert repository.get_binding(first.binding_id) == updated
+
+
+@pytest.mark.parametrize(
+    ("root_id", "note_id", "lexical_relative_path", "error_type"),
+    (
+        (None, "note", "note.md", TypeError),
+        ("root", None, "note.md", TypeError),
+        ("root", "note", None, TypeError),
+        ("", "note", "note.md", ValueError),
+        ("root", "", "note.md", ValueError),
+        ("root", "note", "", ValueError),
+        ("private\x00root", "note", "note.md", ValueError),
+        ("root", "private\x00note", "note.md", ValueError),
+        ("root", "note", "private\x00path", ValueError),
+        ("x" * 257, "note", "note.md", ValueError),
+        ("root", "x" * 257, "note.md", ValueError),
+        ("root", "note", "x" * 32_769, ValueError),
+    ),
+)
+def test_create_binding_rejects_invalid_private_values_before_transaction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    root_id: object,
+    note_id: object,
+    lexical_relative_path: object,
+    error_type: type[Exception],
+) -> None:
+    @contextmanager
+    def unexpected_transaction(*_args: object, **_kwargs: object):
+        raise AssertionError("invalid binding input opened the database")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(sync_module, "_repository_transaction", unexpected_transaction)
+    with pytest.raises(error_type):
+        _repository(tmp_path).create_provisional_binding(
+            root_id,  # type: ignore[arg-type]
+            note_id,  # type: ignore[arg-type]
+            lexical_relative_path,  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.parametrize(
+    ("column", "malformed"),
+    (
+        ("note_id", ""),
+        ("note_id", "private\x00note"),
+        ("lexical_relative_path", ""),
+        ("lexical_relative_path", "private\x00path"),
+        ("path_key", "private\x00key"),
+        ("state", "active"),
+        ("row_version", 0),
+        ("needs_rescan", 2),
+        ("reason_code", "Private-Reason"),
+        ("created_at", 0),
+        ("updated_at", 0),
+    ),
+)
+def test_binding_projection_rejects_noncanonical_rows_without_disclosure(
+    tmp_path: Path,
+    column: str,
+    malformed: object,
+) -> None:
+    database = tmp_path / f"corrupt-binding-{column}.sqlite3"
+    repository = NotesSyncStateRepository(database)
+    root = repository.create_candidate_root("root", "Root", "bidirectional")
+    binding = repository.create_provisional_binding(root.root_id, "note", "note.md")
+    with notes_sync_state_transaction(database, immediate=True) as connection:
+        connection.execute("PRAGMA ignore_check_constraints = ON")
+        connection.execute(
+            f"UPDATE sync_bindings SET {column} = ? WHERE binding_id = ?",
+            (malformed, binding.binding_id),
+        )
+
+    with pytest.raises(SyncStateCorruptionError) as caught:
+        repository.get_binding(binding.binding_id)
+    if isinstance(malformed, str) and malformed:
+        assert malformed not in str(caught.value)
+    assert len(str(caught.value)) <= 160
+    assert caught.value.__context__ is None
+
+
+def test_live_note_ownership_is_global_across_candidate_and_paused_roots(
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path)
+    candidate = repository.create_candidate_root(
+        "candidate", "Candidate", "bidirectional"
+    )
+    paused = repository.create_candidate_root("paused", "Paused", "bidirectional")
+    paused = repository.pause_root(paused.root_id, paused.row_version, "review")
+    owner = repository.create_provisional_binding(candidate.root_id, "note-1", "one.md")
+    repository.mark_binding_needs_attention(
+        owner.binding_id, owner.row_version, "review"
+    )
+
+    with pytest.raises(SyncStateConflictError) as caught:
+        repository.create_provisional_binding(paused.root_id, "note-1", "other.md")
+    assert "note-1" not in str(caught.value)
+    assert repository.list_bindings(root_id=paused.root_id) == ()
+
+
+def test_nullable_path_keys_are_allowed_but_live_non_null_keys_are_unique_per_root(
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path)
+    first_root = repository.create_candidate_root("one", "One", "bidirectional")
+    second_root = repository.create_candidate_root("two", "Two", "bidirectional")
+    first = repository.create_provisional_binding(first_root.root_id, "note-1", "x")
+    second = repository.create_provisional_binding(first_root.root_id, "note-2", "x")
+    other_root = repository.create_provisional_binding(
+        second_root.root_id, "note-3", "x"
+    )
+    first = repository.update_provisional_binding(
+        first.binding_id, first.row_version, path_key="same-key"
+    )
+    other_root = repository.update_provisional_binding(
+        other_root.binding_id, other_root.row_version, path_key="same-key"
+    )
+
+    with pytest.raises(SyncStateConflictError):
+        repository.update_provisional_binding(
+            second.binding_id, second.row_version, path_key="same-key"
+        )
+    assert repository.get_binding(second.binding_id).path_key is None
+    assert first.path_key == other_root.path_key == "same-key"
+
+
+def test_individual_binding_disconnect_is_terminal_and_releases_ownership_and_capacity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sync_module, "MAX_SYNC_BINDINGS", 1)
+    repository = _repository(tmp_path)
+    first_root = repository.create_candidate_root("one", "One", "bidirectional")
+    second_root = repository.create_candidate_root("two", "Two", "bidirectional")
+    binding = repository.create_provisional_binding(
+        first_root.root_id, "note-1", "one.md"
+    )
+    binding = repository.update_provisional_binding(
+        binding.binding_id, binding.row_version, path_key="released-key"
+    )
+    with pytest.raises(SyncStateCapacityError):
+        repository.create_provisional_binding(second_root.root_id, "note-2", "two.md")
+
+    disconnected = repository.disconnect_binding(
+        binding.binding_id, binding.row_version
+    )
+    assert disconnected.state is SyncBindingState.DISCONNECTED
+    assert disconnected.row_version == binding.row_version + 1
+    replacement = repository.create_provisional_binding(
+        first_root.root_id, "note-1", "replacement.md"
+    )
+    replacement = repository.update_provisional_binding(
+        replacement.binding_id, replacement.row_version, path_key="released-key"
+    )
+    assert replacement.state is SyncBindingState.CANDIDATE
+    assert replacement.path_key == "released-key"
+    for operation in (
+        lambda: repository.update_provisional_binding(
+            disconnected.binding_id,
+            disconnected.row_version,
+            lexical_relative_path="reopen.md",
+        ),
+        lambda: repository.mark_binding_needs_attention(
+            disconnected.binding_id, disconnected.row_version, "reopen_attempt"
+        ),
+        lambda: repository.disconnect_binding(
+            disconnected.binding_id, disconnected.row_version
+        ),
+    ):
+        with pytest.raises(SyncStateConflictError):
+            operation()
+
+
+def test_mark_binding_needs_attention_is_versioned_and_redacted(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    root = repository.create_candidate_root("root", "Root", "bidirectional")
+    binding = repository.create_provisional_binding(root.root_id, "note-1", "one.md")
+
+    marked = repository.mark_binding_needs_attention(
+        binding.binding_id, binding.row_version, "legacy_conflict"
+    )
+
+    assert marked.state is SyncBindingState.NEEDS_ATTENTION
+    assert marked.needs_rescan is True
+    assert marked.reason_code == "legacy_conflict"
+    assert marked.row_version == binding.row_version + 1
+    with pytest.raises(SyncStateConflictError):
+        repository.mark_binding_needs_attention(
+            binding.binding_id, binding.row_version, "stale"
+        )
+
+
+def test_binding_writes_reject_missing_or_disconnected_parent(tmp_path: Path) -> None:
+    database = tmp_path / "binding-parent.sqlite3"
+    repository = NotesSyncStateRepository(database)
+    root = repository.create_candidate_root("root", "Root", "bidirectional")
+    binding = repository.create_provisional_binding(root.root_id, "note-1", "one.md")
+    repository.disconnect_root(root.root_id, root.row_version)
+
+    with pytest.raises(SyncStateConflictError):
+        repository.create_provisional_binding(root.root_id, "note-2", "two.md")
+    with pytest.raises(SyncStateConflictError):
+        repository.update_provisional_binding(
+            binding.binding_id,
+            binding.row_version + 1,
+            lexical_relative_path="changed.md",
+        )
+    with pytest.raises(NotesSyncStateError):
+        repository.create_provisional_binding("missing-root", "note-3", "three.md")
+
+    second_root = repository.create_candidate_root("second", "Second", "bidirectional")
+    orphan = repository.create_provisional_binding(
+        second_root.root_id, "note-4", "four.md"
+    )
+    with sqlite3.connect(database) as connection:
+        connection.execute("PRAGMA foreign_keys = OFF")
+        connection.execute(
+            "DELETE FROM sync_roots WHERE root_id = ?", (second_root.root_id,)
+        )
+    with pytest.raises(SyncStateCorruptionError):
+        repository.update_provisional_binding(
+            orphan.binding_id,
+            orphan.row_version,
+            lexical_relative_path="orphaned.md",
+        )
+
+
+def test_root_disconnect_atomically_disconnects_bindings_and_releases_capacity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sync_module, "MAX_SYNC_BINDINGS", 2)
+    repository = _repository(tmp_path)
+    root = repository.create_candidate_root("root", "Root", "bidirectional")
+    first = repository.create_provisional_binding(root.root_id, "note-1", "one.md")
+    second = repository.create_provisional_binding(root.root_id, "note-2", "two.md")
+
+    disconnected_root = repository.disconnect_root(root.root_id, root.row_version)
+
+    disconnected = repository.list_bindings(root_id=root.root_id)
+    assert tuple(binding.state for binding in disconnected) == (
+        SyncBindingState.DISCONNECTED,
+        SyncBindingState.DISCONNECTED,
+    )
+    assert tuple(binding.row_version for binding in disconnected) == (
+        first.row_version + 1,
+        second.row_version + 1,
+    )
+    assert all(
+        binding.updated_at == disconnected_root.updated_at for binding in disconnected
+    )
+    replacement_root = repository.create_candidate_root(
+        "replacement", "Replacement", "bidirectional"
+    )
+    repository.create_provisional_binding(
+        replacement_root.root_id, "note-1", "replacement-one.md"
+    )
+    repository.create_provisional_binding(
+        replacement_root.root_id, "note-2", "replacement-two.md"
+    )
+
+
+def test_binding_reads_fail_closed_for_disconnected_root_with_live_child(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "corrupt-parent-child.sqlite3"
+    repository = NotesSyncStateRepository(database)
+    root = repository.create_candidate_root("root", "Root", "bidirectional")
+    binding = repository.create_provisional_binding(root.root_id, "note-1", "one.md")
+    with notes_sync_state_transaction(database, immediate=True) as connection:
+        connection.execute(
+            "UPDATE sync_roots SET state = 'disconnected' WHERE root_id = ?",
+            (root.root_id,),
+        )
+
+    for operation in (
+        lambda: repository.get_binding(binding.binding_id),
+        lambda: repository.list_bindings(root_id=root.root_id),
+        lambda: repository.get_root(root.root_id),
+        repository.list_roots,
+    ):
+        with pytest.raises(SyncStateCorruptionError):
+            operation()
+
+
+def test_disconnect_vs_create_race_never_leaves_live_child_under_disconnected_root(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "disconnect-create-race.sqlite3"
+    repository = NotesSyncStateRepository(database)
+    root = repository.create_candidate_root("root", "Root", "bidirectional")
+    barrier = Barrier(2)
+
+    def disconnect() -> object:
+        barrier.wait(timeout=5)
+        return NotesSyncStateRepository(database).disconnect_root(
+            root.root_id, root.row_version
+        )
+
+    def create() -> object:
+        barrier.wait(timeout=5)
+        try:
+            return NotesSyncStateRepository(database).create_provisional_binding(
+                root.root_id, "note-race", "race.md"
+            )
+        except SyncStateConflictError as error:
+            return error
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        disconnected_future = executor.submit(disconnect)
+        created_future = executor.submit(create)
+        disconnected_future.result(timeout=10)
+        create_result = created_future.result(timeout=10)
+
+    with notes_sync_state_transaction(database) as connection:
+        contradictory = connection.execute(
+            """SELECT count(*)
+               FROM sync_bindings AS binding
+               JOIN sync_roots AS root ON root.root_id = binding.root_id
+               WHERE root.state = 'disconnected'
+                 AND binding.state <> 'disconnected'"""
+        ).fetchone()[0]
+    assert contradictory == 0
+    if isinstance(create_result, SyncBindingRecord):
+        assert (
+            repository.get_binding(create_result.binding_id).state
+            is SyncBindingState.DISCONNECTED
+        )
+    else:
+        assert isinstance(create_result, SyncStateConflictError)
+
+
+def test_live_binding_capacity_is_exact_atomic_and_released_by_disconnect(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sync_module, "MAX_SYNC_BINDINGS", 2)
+    repository = _repository(tmp_path)
+    root = repository.create_candidate_root("root", "Root", "bidirectional")
+    first = repository.create_provisional_binding(root.root_id, "note-1", "one.md")
+    repository.create_provisional_binding(root.root_id, "note-2", "two.md")
+
+    with pytest.raises(SyncStateCapacityError) as caught:
+        repository.create_provisional_binding(root.root_id, "note-3", "three.md")
+    assert "2" in str(caught.value)
+    assert len(repository.list_bindings(root_id=root.root_id)) == 2
+
+    repository.disconnect_binding(first.binding_id, first.row_version)
+    repository.create_provisional_binding(root.root_id, "note-3", "three.md")
+    assert (
+        sum(
+            binding.state is not SyncBindingState.DISCONNECTED
+            for binding in repository.list_bindings(root_id=root.root_id)
+        )
+        == 2
+    )
+
+
+def test_binding_integrity_errors_are_bounded_redacted_and_unchained(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _repository(tmp_path)
+    root = repository.create_candidate_root("root", "Root", "bidirectional")
+    private_uuid = "00000000-0000-4000-8000-000000000001"
+    monkeypatch.setattr(sync_module, "uuid4", lambda: private_uuid)
+    repository.create_provisional_binding(root.root_id, "note-1", "one.md")
+
+    with pytest.raises(SyncStateConflictError) as caught:
+        repository.create_provisional_binding(root.root_id, "note-2", "two.md")
+    assert private_uuid not in str(caught.value)
+    assert len(str(caught.value)) <= 160
+    assert caught.value.__context__ is None
+    assert caught.value.__cause__ is None
+
+
+def test_missing_binding_errors_are_typed_bounded_and_redacted(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    missing = "private-missing-binding"
+    for operation in (
+        lambda: repository.get_binding(missing),
+        lambda: repository.update_provisional_binding(
+            missing, 1, lexical_relative_path="changed.md"
+        ),
+        lambda: repository.mark_binding_needs_attention(missing, 1, "review"),
+        lambda: repository.disconnect_binding(missing, 1),
+    ):
+        with pytest.raises(NotesSyncStateError) as caught:
+            operation()
+        assert missing not in str(caught.value)
+        assert len(str(caught.value)) <= 160
+
+
+def test_every_binding_mutation_requests_an_immediate_transaction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class TransactionObserved(Exception):
+        pass
+
+    observed: list[bool] = []
+
+    @contextmanager
+    def observe_transaction(
+        _database_path: Path,
+        *,
+        immediate: bool = False,
+    ):
+        observed.append(immediate)
+        raise TransactionObserved
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(sync_module, "_repository_transaction", observe_transaction)
+    repository = _repository(tmp_path)
+    operations = (
+        lambda: repository.create_provisional_binding("root", "note", "note.md"),
+        lambda: repository.update_provisional_binding(
+            "binding", 1, lexical_relative_path="changed.md"
+        ),
+        lambda: repository.mark_binding_needs_attention("binding", 1, "review"),
+        lambda: repository.disconnect_binding("binding", 1),
+    )
+    for operation in operations:
+        with pytest.raises(TransactionObserved):
+            operation()
+    assert observed == [True, True, True, True]
