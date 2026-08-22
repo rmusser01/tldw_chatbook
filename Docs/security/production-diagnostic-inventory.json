@@ -1980,7 +1980,7 @@
     },
     {
       "call_count": 70,
-      "diagnostic_digest": "04c4f3f8a3dc9eeadbdd",
+      "diagnostic_digest": "c8c97abdd441f878754e",
       "owner": "TASK-494",
       "path": "tldw_chatbook/TTS/backends/kokoro.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -3232,6 +3232,13 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
+      "call_count": 1,
+      "diagnostic_digest": "01bf025ed01c65569ea6",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Widgets/Console/console_run_inspector.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
       "call_count": 2,
       "diagnostic_digest": "fd3c40d9f3d798e91fc4",
       "owner": "TASK-494",
@@ -3847,9 +3854,9 @@
   "schema_version": 2,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 520,
+    "owner_files": 521,
     "persistent_sink_files": 8,
     "task_492_calls": 1222,
-    "task_494_calls": 7188
+    "task_494_calls": 7189
   }
 }
