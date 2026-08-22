@@ -443,6 +443,41 @@ def test_missing_callback_does_not_consume_focus_recovery_incident() -> None:
 
 
 @pytest.mark.asyncio
+async def test_focus_recovery_acknowledgement_suppresses_the_observer_second_signal() -> (
+    None
+):
+    recovered: list[None] = []
+    removed = Button("Removed", id="ack-removed")
+    replacement = Button("Replacement", id="ack-replacement")
+    section = ConsoleBoundedSection(
+        removed,
+        replacement,
+        section_id="acknowledgement",
+    )
+    app = _FocusHarness(section)
+
+    async with app.run_test(size=(60, 20)) as pilot:
+        await _settle(pilot)
+        removed.focus()
+        await pilot.pause()
+        await removed.remove()
+        section._on_focus_recovery = lambda: recovered.append(None)
+
+        app.screen.set_focus(replacement)
+        section._acknowledge_focus_recovery(replacement)
+        section._recover_removed_focus_target()
+        assert section._focused_descendant is replacement
+        assert section._focus_recovery_notified is True
+        assert recovered == []
+
+        section._acknowledge_focus_recovery(None)
+        section._recover_removed_focus_target()
+        assert section._focused_descendant is None
+        assert section._focus_recovery_notified is True
+        assert recovered == []
+
+
+@pytest.mark.asyncio
 async def test_viewport_focus_recovers_once_when_overflow_disappears() -> None:
     recovered: list[None] = []
     content = Static(_lines(21), id="shrinking-content")

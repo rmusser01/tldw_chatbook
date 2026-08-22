@@ -364,6 +364,17 @@ class ConsoleBoundedSection(Vertical):
         self._focus_recovery_notified = True
         callback()
 
+    def _acknowledge_focus_recovery(self, target: Widget | None) -> None:
+        """Acknowledge owner recovery so this observer cannot signal it again."""
+
+        self._focused_descendant = (
+            target
+            if target is not None
+            and (target is self._viewport or self._viewport in target.ancestors)
+            else None
+        )
+        self._focus_recovery_notified = True
+
     def _fail_closed(self) -> None:
         self._has_overflow = False
         self._viewport.can_focus = False

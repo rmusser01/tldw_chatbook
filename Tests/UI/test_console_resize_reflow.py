@@ -12,8 +12,10 @@ from textual.css.query import NoMatches
 from textual.widgets import Button, Static, Tooltip
 
 from tldw_chatbook.Chat.console_session_settings import ConsoleSettingsSummaryState
-from tldw_chatbook.UI.Console_Modules import left_rail as left_rail_module
-from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
+from tldw_chatbook.UI.Console_Modules.left_rail import (
+    CONTEXT_SECTION_DESCRIPTORS,
+    ConsoleLeftRail,
+)
 from tldw_chatbook.UI.Console_Modules.right_rail import ConsoleInspectorRail
 from tldw_chatbook.Widgets.Console.console_bounded_section import ConsoleBoundedSection
 from tldw_chatbook.app import TldwCli
@@ -340,19 +342,22 @@ async def test_height_resize_requests_one_coalesced_context_reconcile(
             pilot,
             lambda: _context_allocation_idle(rail),
         )
-        before_allocations = tuple(
-            section.allocation for section in rail.query(ConsoleBoundedSection)
+        for descriptor in CONTEXT_SECTION_DESCRIPTORS:
+            rail.apply_section_open(descriptor.section_id, True)
+        await _wait_for_context_condition(
+            pilot,
+            lambda: _context_allocation_idle(rail),
         )
+        sections = list(rail.query(ConsoleBoundedSection))
+        before_allocations = tuple(section.allocation for section in sections)
         before_viewport_height = rail.query_one(
             "#console-left-rail-body"
         ).content_region.height
 
         helper_calls = 0
         reconcile_runs = 0
-        allocation_calls = []
         original_helper = console._request_console_context_allocation_reconcile
         original_reconcile = rail._run_allocation_reconcile
-        original_allocate = left_rail_module.allocate_context_sections
 
         def helper_spy() -> None:
             nonlocal helper_calls
@@ -364,23 +369,12 @@ async def test_height_resize_requests_one_coalesced_context_reconcile(
             reconcile_runs += 1
             original_reconcile()
 
-        def allocate_spy(**kwargs):
-            result = original_allocate(**kwargs)
-            allocation_calls.append((kwargs, result))
-            return result
-
         monkeypatch.setattr(
             console,
             "_request_console_context_allocation_reconcile",
             helper_spy,
         )
         monkeypatch.setattr(rail, "_run_allocation_reconcile", reconcile_spy)
-        monkeypatch.setattr(
-            left_rail_module,
-            "allocate_context_sections",
-            allocate_spy,
-        )
-
         await pilot.resize_terminal(160, 30)
         await _wait_for_context_condition(
             pilot,
@@ -389,22 +383,33 @@ async def test_height_resize_requests_one_coalesced_context_reconcile(
                 and _context_allocation_idle(rail)
             ),
         )
-        after_allocations = tuple(
-            section.allocation for section in rail.query(ConsoleBoundedSection)
-        )
+        after_allocations = tuple(section.allocation for section in sections)
+        outer = rail.query_one("#console-left-rail-body")
+        cue = rail.query_one("#console-left-rail-outer-hint", Static)
         assert console.query_one("#console-shell").has_class("-console-compact")
         assert helper_calls >= 1
         assert reconcile_runs == 1
-        assert len(allocation_calls) == 1
-        assert rail.query_one("#console-left-rail-body").content_region.height < (
-            before_viewport_height
+        assert outer.content_region.height < before_viewport_height
+        assert (
+            before_allocations
+            == after_allocations
+            == tuple(None for _section in sections)
         )
-        allocation_kwargs, allocation_result = allocation_calls[0]
-        assert allocation_kwargs["viewport_height"] < before_viewport_height
-        assert after_allocations == tuple(
-            item.allocated_content_rows for item in allocation_result.allocations
+        assert [section.max_content_lines for section in sections] == [
+            descriptor.max_content_lines for descriptor in CONTEXT_SECTION_DESCRIPTORS
+        ]
+        assert all(
+            section.viewport.content_region.height
+            == min(section.desired_content_lines, section.max_content_lines)
+            for section in sections
         )
-        assert len(after_allocations) == len(before_allocations)
+        assert str(outer.styles.overflow_y) == "auto"
+        assert outer.max_scroll_y > 0
+        assert cue.display is True
+        last_header = rail.query_one("#console-rail-section-header-character")
+        outer.scroll_end(animate=False, immediate=True)
+        await pilot.pause()
+        assert last_header.region.overlaps(outer.content_region)
         stable_runs = reconcile_runs
         await pilot.pause()
         assert reconcile_runs == stable_runs

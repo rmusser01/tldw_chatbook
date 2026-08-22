@@ -96,6 +96,14 @@ class ContextSectionDescriptor:
     max_content_lines: int
 
 
+@dataclass(frozen=True, slots=True)
+class _ContextFocusRecoveryIncident:
+    """Stable local-focus identity retained across one DOM mutation."""
+
+    target_id: str | None
+    target_index: int | None
+
+
 CONTEXT_SECTION_DESCRIPTORS = (
     ContextSectionDescriptor("session", "Sessions", 15),
     ContextSectionDescriptor("workspace", "Workspaces", 20),
@@ -307,6 +315,8 @@ class ConsoleLeftRail(Vertical):
         self._character_avatar_name = character_avatar_name
         self._manual_reaction_label = str(manual_reaction_label or "").strip()
         self._active_section_id: str | None = None
+        self._active_reveal_generation = 0
+        self._pending_active_reveal: tuple[int, str, Widget | None] | None = None
         self._allocation_reconcile_scheduled = False
         self._last_allocation_state: (
             tuple[bool, int, tuple[ConsoleBoundedSection, ...]] | None
@@ -314,6 +324,7 @@ class ConsoleLeftRail(Vertical):
         self._outer_hint_exists = False
         self._outer_hint_text = ""
         self._section_focus_history: dict[str, tuple[Widget, tuple[Widget, ...]]] = {}
+        self._pending_focus_recoveries: dict[str, _ContextFocusRecoveryIncident] = {}
         self._pointer_activation_pending: str | None = None
         self._pointer_activation_waits_for_button = False
         self._pointer_activation_target: Widget | None = None
@@ -398,15 +409,22 @@ class ConsoleLeftRail(Vertical):
         section_id: str,
         *,
         request_reconcile: bool = True,
+        reveal_target: Widget | None = None,
+        deliberate_reveal: bool = True,
     ) -> None:
-        """Prioritize one mounted direct Context section without persistence."""
+        """Activate and deliberately reveal one section without persistence."""
 
         if section_id not in {
             descriptor.section_id for descriptor in self._mounted_descriptors()
         }:
             return
-        if section_id != self._active_section_id:
-            self._active_section_id = section_id
+        self._active_section_id = section_id
+        self._active_reveal_generation += 1
+        self._pending_active_reveal = (
+            (self._active_reveal_generation, section_id, reveal_target)
+            if deliberate_reveal
+            else None
+        )
         if request_reconcile:
             self.request_allocation_reconcile()
 
@@ -468,41 +486,101 @@ class ConsoleLeftRail(Vertical):
             self._focusable_body_controls(section_id),
         )
 
-    def recover_section_focus(self, section_id: str) -> None:
-        """Recover invalidated local focus next, previous, header, then rail toggle."""
+    @staticmethod
+    def _stable_focus_id(widget: Widget) -> str | None:
+        return widget.id or None
 
+    def _focus_recovery_incident(
+        self,
+        previous: Widget,
+        controls: tuple[Widget, ...],
+    ) -> _ContextFocusRecoveryIncident:
+        return _ContextFocusRecoveryIncident(
+            target_id=self._stable_focus_id(previous),
+            target_index=controls.index(previous) if previous in controls else None,
+        )
+
+    def _ensure_focus_recovery(
+        self,
+        section_id: str,
+    ) -> _ContextFocusRecoveryIncident | None:
+        """Freeze and schedule one semantic recovery incident per section."""
+
+        pending = self._pending_focus_recoveries.get(section_id)
+        if pending is not None:
+            return pending
+        history = self._section_focus_history.get(section_id)
+        if history is None:
+            return None
+        incident = self._focus_recovery_incident(*history)
+        self._pending_focus_recoveries[section_id] = incident
+        self.call_after_refresh(
+            self._recover_pending_focus,
+            section_id,
+            incident,
+        )
+        return incident
+
+    def _focus_is_valid_outside_rail(self, focused: Widget | None) -> bool:
+        return bool(
+            focused is not None
+            and self._is_enabled_focus_target(focused)
+            and focused is not self
+            and self not in focused.ancestors
+        )
+
+    def _recover_pending_focus(
+        self,
+        section_id: str,
+        incident: _ContextFocusRecoveryIncident,
+    ) -> None:
+        """Resolve one current incident against the section's current DOM."""
+
+        if self._pending_focus_recoveries.get(section_id) is not incident:
+            return
+        if not self.is_attached:
+            self._pending_focus_recoveries.pop(section_id, None)
+            return
+        if self._focus_is_valid_outside_rail(self.app.focused):
+            self._pending_focus_recoveries.pop(section_id, None)
+            self._section_focus_history.pop(section_id, None)
+            return
         try:
             bounded = self.query_one(
                 f"#console-bounded-section-{section_id}", ConsoleBoundedSection
             )
         except (NoMatches, QueryError):
-            bounded = None
-        focused = self.app.focused
-        if focused is not None and self._is_enabled_focus_target(focused):
-            owned = bool(
-                bounded is not None
-                and (
-                    focused is bounded.viewport or bounded.viewport in focused.ancestors
-                )
-            )
-            if not owned:
-                return
+            self._pending_focus_recoveries.pop(section_id, None)
+            return
 
-        previous_target, previous_controls = self._section_focus_history.get(
-            section_id,
-            (bounded.viewport if bounded is not None else self, ()),
-        )
-        if previous_target in previous_controls:
-            previous_index = previous_controls.index(previous_target)
-            ordered_candidates = previous_controls[previous_index + 1 :] + tuple(
-                reversed(previous_controls[:previous_index])
+        controls = self._focusable_body_controls(section_id)
+        candidates: list[Widget] = []
+        if incident.target_id is not None:
+            candidates.extend(
+                control
+                for control in controls
+                if self._stable_focus_id(control) == incident.target_id
             )
+        if incident.target_index is None:
+            candidates.extend(controls)
         else:
-            ordered_candidates = previous_controls
-        for candidate in ordered_candidates:
+            index = min(incident.target_index, len(controls))
+            candidates.extend(controls[index:])
+            candidates.extend(reversed(controls[:index]))
+
+        seen: set[Widget] = set()
+        for candidate in candidates:
+            if candidate in seen:
+                continue
+            seen.add(candidate)
             if self._is_enabled_focus_target(candidate):
-                self._record_section_focus(section_id, candidate)
-                candidate.focus()
+                self._commit_focus_recovery(
+                    section_id,
+                    incident,
+                    bounded,
+                    candidate,
+                    controls,
+                )
                 return
 
         for selector in (
@@ -514,9 +592,69 @@ class ConsoleLeftRail(Vertical):
             except (NoMatches, QueryError):
                 continue
             if self._is_enabled_focus_target(candidate):
-                self._record_section_focus(section_id, candidate)
-                candidate.focus()
+                self._commit_focus_recovery(
+                    section_id,
+                    incident,
+                    bounded,
+                    candidate,
+                    controls,
+                )
                 return
+
+        self._pending_focus_recoveries.pop(section_id, None)
+        self._section_focus_history.pop(section_id, None)
+        bounded._acknowledge_focus_recovery(None)
+
+    def _commit_focus_recovery(
+        self,
+        section_id: str,
+        incident: _ContextFocusRecoveryIncident,
+        bounded: ConsoleBoundedSection,
+        candidate: Widget,
+        controls: tuple[Widget, ...],
+    ) -> None:
+        """Synchronously select and acknowledge one current recovery target."""
+
+        if self._pending_focus_recoveries.get(section_id) is not incident:
+            return
+        self._pending_focus_recoveries.pop(section_id, None)
+        self._section_focus_history[section_id] = (candidate, controls)
+        self.screen.set_focus(candidate)
+        bounded._acknowledge_focus_recovery(candidate)
+
+    def _section_is_outer_visible(self, section_id: str) -> bool:
+        """Return whether a section's header and first body rows are visible."""
+
+        try:
+            outer = self.query_one("#console-left-rail-body", VerticalScroll)
+            header = self.query_one(
+                f"#console-rail-section-header-{section_id}",
+                DestinationRailSectionHeader,
+            )
+            bounded = self.query_one(
+                f"#console-bounded-section-{section_id}", ConsoleBoundedSection
+            )
+        except (NoMatches, QueryError):
+            return False
+        return header.region.overlaps(
+            outer.content_region
+        ) and bounded.viewport.region.overlaps(outer.content_region)
+
+    def recover_section_focus(self, section_id: str) -> None:
+        """Coalesce one bounded invalidation into semantic local recovery."""
+
+        if self._focus_is_valid_outside_rail(self.app.focused):
+            self._pending_focus_recoveries.pop(section_id, None)
+            self._section_focus_history.pop(section_id, None)
+            return
+        history = self._section_focus_history.get(section_id)
+        if (
+            history is not None
+            and self.app.focused is history[0]
+            and self._is_enabled_focus_target(history[0])
+        ):
+            return
+        self._ensure_focus_recovery(section_id)
 
     def _paint_scroll_focus_owner(
         self,
@@ -559,14 +697,14 @@ class ConsoleLeftRail(Vertical):
                 and not previous_target.is_attached
             )
             if removed_target_snapshot:
-                self.call_after_refresh(
-                    self._recover_removed_focus_snapshot,
-                    section_id,
-                    previous_target,
-                )
-            else:
+                self._ensure_focus_recovery(section_id)
+            elif section_id not in self._pending_focus_recoveries:
                 self._record_section_focus(section_id, target)
-            self.activate_section(section_id, request_reconcile=False)
+            self.activate_section(
+                section_id,
+                request_reconcile=False,
+                deliberate_reveal=False,
+            )
             self.call_after_refresh(
                 self._finish_focus_activation,
                 section_id,
@@ -578,20 +716,6 @@ class ConsoleLeftRail(Vertical):
             outer_active=outer_active,
         )
 
-    def _recover_removed_focus_snapshot(
-        self,
-        section_id: str,
-        removed_target: Widget,
-    ) -> None:
-        """Recover from Textual's incidental focus without replacing its snapshot."""
-
-        current_target, _controls = self._section_focus_history.get(
-            section_id,
-            (None, ()),
-        )
-        if current_target is removed_target and not removed_target.is_attached:
-            self.recover_section_focus(section_id)
-
     def _finish_focus_activation(self, section_id: str, target: Widget) -> None:
         """Reconcile keyboard focus unless a pointer press still owns the target."""
 
@@ -599,6 +723,13 @@ class ConsoleLeftRail(Vertical):
             self._pointer_activation_pending == section_id
             and self.app.focused is target
         ):
+            return
+        if (
+            self.app.focused is target
+            and target.is_mounted
+            and not self._section_is_outer_visible(section_id)
+        ):
+            self.activate_section(section_id, reveal_target=target)
             return
         self.request_allocation_reconcile()
 
@@ -616,6 +747,7 @@ class ConsoleLeftRail(Vertical):
         ):
             return
         self._section_focus_history.clear()
+        self._pending_focus_recoveries.clear()
         self._paint_scroll_focus_owner(section_id=None, outer_active=False)
 
     def on_mouse_down(self, event: MouseDown) -> None:
@@ -632,7 +764,11 @@ class ConsoleLeftRail(Vertical):
             isinstance(ancestor, DestinationRailSectionHeader)
             for ancestor in target.ancestors
         )
-        self.activate_section(section_id, request_reconcile=False)
+        self.activate_section(
+            section_id,
+            request_reconcile=False,
+            deliberate_reveal=False,
+        )
 
     def on_mouse_up(self, event: MouseUp) -> None:
         """Defer canceled-press cleanup until a native button action can win."""
@@ -658,12 +794,13 @@ class ConsoleLeftRail(Vertical):
         """Commit allocation after the pressed control has retained its target."""
 
         pending = self._pointer_activation_pending
+        target = self._pointer_activation_target
         self._pointer_activation_generation += 1
         self._pointer_activation_pending = None
         self._pointer_activation_waits_for_button = False
         self._pointer_activation_target = None
         if pending is not None:
-            self.request_allocation_reconcile()
+            self.activate_section(pending, reveal_target=target)
 
     def request_allocation_reconcile(self) -> None:
         """Coalesce one post-refresh local-then-outer reconciliation."""
@@ -752,6 +889,9 @@ class ConsoleLeftRail(Vertical):
                     fallback_demands,
                     active_section_id,
                 )
+                if active_section_id != self._active_section_id:
+                    self._active_reveal_generation += 1
+                    self._pending_active_reveal = None
                 self._active_section_id = active_section_id
 
             if presentation_changed:
@@ -768,6 +908,7 @@ class ConsoleLeftRail(Vertical):
                 desired_outer_rows=desired_outer_rows,
                 needs_outer_hint=needs_outer_hint,
             )
+            self._queue_pending_active_reveal()
         except (NoMatches, QueryError):
             # Recompose may briefly remove one member of the complete snapshot.
             return
@@ -873,6 +1014,91 @@ class ConsoleLeftRail(Vertical):
             return
         self._outer_hint_text = text
         hint.update(text)
+
+    def _queue_pending_active_reveal(self) -> None:
+        """Queue one deliberate reveal after complete geometry is committed."""
+
+        pending = self._pending_active_reveal
+        self._pending_active_reveal = None
+        if pending is None:
+            return
+        generation, section_id, target = pending
+        self._queue_active_reveal(
+            section_id,
+            target,
+            generation=generation,
+        )
+
+    def _queue_active_reveal(
+        self,
+        section_id: str,
+        target: Widget | None,
+        *,
+        generation: int | None = None,
+    ) -> None:
+        """Queue one bounded reveal guarded by current activation intent."""
+
+        if generation is None:
+            self._active_reveal_generation += 1
+            generation = self._active_reveal_generation
+        self.call_after_refresh(
+            self._reveal_active_section,
+            generation,
+            section_id,
+            target,
+        )
+
+    def _active_reveal_is_current(
+        self,
+        generation: int,
+        section_id: str,
+        target: Widget | None,
+    ) -> bool:
+        """Reject delayed reveals after newer intent, focus change, or unmount."""
+
+        if (
+            not self.is_attached
+            or generation != self._active_reveal_generation
+            or section_id != self._active_section_id
+        ):
+            return False
+        if target is not None and (
+            not target.is_mounted or self.app.focused is not target
+        ):
+            return False
+        return True
+
+    def _reveal_active_section(
+        self,
+        generation: int,
+        section_id: str,
+        target: Widget | None,
+    ) -> None:
+        """Physically reveal the active header and first complete body rows."""
+
+        if not self._active_reveal_is_current(generation, section_id, target):
+            return
+        try:
+            outer = self.query_one("#console-left-rail-body", VerticalScroll)
+            header = self.query_one(
+                f"#console-rail-section-header-{section_id}",
+                DestinationRailSectionHeader,
+            )
+            bounded = self.query_one(
+                f"#console-bounded-section-{section_id}",
+                ConsoleBoundedSection,
+            )
+        except (NoMatches, QueryError):
+            return
+        if not (outer.is_mounted and header.is_mounted and bounded.display):
+            return
+        outer.scroll_to(
+            y=max(0, outer.scroll_y + header.region.y - outer.content_region.y),
+            animate=False,
+            immediate=True,
+            force=True,
+        )
+        self._update_outer_hint()
 
     def sync_workspace_context(self, state: ConsoleWorkspaceContextState) -> None:
         """Push one context snapshot into every scoped rail projection.

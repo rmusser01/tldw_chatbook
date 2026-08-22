@@ -298,6 +298,211 @@ async def test_all_open_context_sections_keep_their_own_complete_ceiling_and_out
         assert app.section_toggles == []
 
 
+@pytest.mark.asyncio
+async def test_production_deliberate_context_activation_reveals_the_complete_section(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Deliberate activation reveals an ordinary-outer-scroll section physically."""
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = _ProductionConsoleHarness(app)
+
+    async with host.run_test(size=(120, 30)) as pilot:
+        rail = await _open_all_production_context_sections(host, pilot)
+        console = host.screen_stack[-1]
+        outer = rail.query_one("#console-left-rail-body")
+        header = rail.query_one("#console-rail-section-header-character")
+        bounded = rail.query_one(
+            "#console-bounded-section-character", ConsoleBoundedSection
+        )
+        persisted: list[tuple[str, dict[str, bool]]] = []
+        monkeypatch.setattr(
+            console,
+            "_save_console_rail_preferences",
+            lambda key, serialized, **_kwargs: persisted.append((key, serialized)),
+        )
+
+        outer.scroll_home(animate=False, immediate=True)
+        await pilot.pause()
+        assert not header.region.overlaps(outer.content_region)
+
+        rail.activate_section("character")
+        await _wait_for_rail_condition(
+            pilot,
+            rail,
+            lambda: (
+                rail._active_section_id == "character"
+                and header.region.overlaps(outer.content_region)
+                and bounded.viewport.region.overlaps(outer.content_region)
+            ),
+        )
+
+        outer.scroll_home(animate=False, immediate=True)
+        await pilot.pause()
+        focus_target = rail.query_one("#console-character-reaction-open", Button)
+        focus_target.focus()
+        await _wait_for_rail_condition(
+            pilot,
+            rail,
+            lambda: (
+                pilot.app.focused is focus_target
+                and header.region.overlaps(outer.content_region)
+                and bounded.viewport.region.overlaps(outer.content_region)
+            ),
+        )
+
+        assert persisted == []
+
+
+@pytest.mark.asyncio
+async def test_production_context_outer_and_local_offsets_reconcile_independently(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Valid outer/local offsets persist; demand shrink clamps only invalid outer."""
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = _ProductionConsoleHarness(app)
+
+    async with host.run_test(size=(120, 30)) as pilot:
+        rail = await _open_all_production_context_sections(host, pilot)
+        console = host.screen_stack[-1]
+        outer = rail.query_one("#console-left-rail-body")
+        sections = list(_sections(rail))
+        persisted: list[tuple[str, dict[str, bool]]] = []
+        monkeypatch.setattr(
+            console,
+            "_save_console_rail_preferences",
+            lambda key, serialized, **_kwargs: persisted.append((key, serialized)),
+        )
+
+        fillers: dict[str, Static] = {}
+        for section in sections:
+            body = section.query_one(f"#console-rail-section-body-{section.section_id}")
+            filler = Static(
+                "\n".join(
+                    f"{section.section_id} {row}"
+                    for row in range(section.max_content_lines + 5)
+                ),
+                id=f"context-offset-filler-{section.section_id}",
+            )
+            fillers[section.section_id] = filler
+            await body.mount(filler)
+            section.request_reconcile()
+        rail.request_allocation_reconcile()
+        await _wait_for_rail_condition(
+            pilot,
+            rail,
+            lambda: True,
+        )
+
+        local_section = rail.query_one(
+            "#console-bounded-section-session", ConsoleBoundedSection
+        )
+        local_section.viewport.scroll_to(y=2, animate=False, immediate=True)
+        outer.scroll_to(
+            y=min(12, outer.max_scroll_y - 1), animate=False, immediate=True
+        )
+        await pilot.pause()
+        local_offset = local_section.viewport.scroll_y
+        outer_offset = outer.scroll_y
+        assert local_offset == 2
+        assert 0 < outer_offset < outer.max_scroll_y
+
+        rail.request_allocation_reconcile()
+        await _wait_for_rail_condition(pilot, rail, lambda: True)
+        assert outer.scroll_y == outer_offset
+        assert local_section.viewport.scroll_y == local_offset
+
+        workspace = rail.query_one(
+            "#console-bounded-section-workspace", ConsoleBoundedSection
+        )
+        fillers["workspace"].update(
+            "\n".join(
+                f"workspace changed {row}"
+                for row in range(workspace.max_content_lines + 6)
+            )
+        )
+        workspace.request_reconcile()
+        rail.request_allocation_reconcile()
+        await _wait_for_rail_condition(pilot, rail, lambda: True)
+        assert outer.scroll_y == outer_offset
+        assert local_section.viewport.scroll_y == local_offset
+
+        outer.scroll_end(animate=False, immediate=True)
+        await pilot.pause()
+        invalid_after_shrink = outer.scroll_y
+        for section in sections:
+            if section is local_section:
+                continue
+            await fillers[section.section_id].remove()
+            section.request_reconcile()
+        rail.request_allocation_reconcile()
+        await _wait_for_rail_condition(
+            pilot,
+            rail,
+            lambda: outer.max_scroll_y < invalid_after_shrink,
+        )
+
+        assert outer.scroll_y == outer.max_scroll_y
+        assert local_section.viewport.scroll_y == local_offset
+        assert persisted == []
+
+
+@pytest.mark.asyncio
+async def test_delayed_context_reveal_rejects_stale_generation_focus_and_unmount(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A delayed reveal cannot outlive newer intent, focus, or its rail."""
+
+    app = _RailHarness()
+    async with app.run_test(size=(60, 18)) as pilot:
+        await _settle(pilot, passes=8)
+        rail = app.query_one(ConsoleLeftRail)
+        outer = rail.query_one("#console-left-rail-body")
+        target = rail.query_one("#console-character-reaction-open", Button)
+        outside = Button("Outside", id="outside-delayed-context-reveal")
+        await app.screen.mount(outside)
+        await pilot.pause()
+
+        callbacks: list[tuple[Callable[..., None], tuple[object, ...]]] = []
+        monkeypatch.setattr(
+            rail,
+            "call_after_refresh",
+            lambda callback, *args: callbacks.append((callback, args)),
+        )
+
+        outer.scroll_home(animate=False, immediate=True)
+        rail._queue_active_reveal("character", None)
+        rail.activate_section("model", request_reconcile=False)
+        callback, args = callbacks.pop(0)
+        callback(*args)
+        assert outer.scroll_y == 0
+        assert callbacks == []
+
+        target.focus()
+        await pilot.pause()
+        callbacks.clear()
+        rail.activate_section("character", request_reconcile=False)
+        outer.scroll_home(animate=False, immediate=True)
+        rail._queue_active_reveal("character", target)
+        outside.focus()
+        await pilot.pause()
+        callback, args = callbacks.pop(0)
+        callback(*args)
+        assert outer.scroll_y == 0
+        _drain_scheduler_callbacks(callbacks)
+        assert callbacks == []
+
+        rail._queue_active_reveal("character", None)
+        await rail.remove()
+        callback, args = callbacks.pop(0)
+        callback(*args)
+        assert outer.scroll_y == 0
+        assert callbacks == []
+
+
 def _install_demands(
     monkeypatch: pytest.MonkeyPatch,
     demands: dict[str, int],
@@ -1691,6 +1896,163 @@ async def test_focus_recovery_prefers_next_from_removed_target_snapshot(
         await _settle(pilot)
 
         assert app.focused is configure
+
+
+@pytest.mark.parametrize(
+    "signal_order",
+    ["rail_then_bounded", "bounded_then_rail"],
+)
+@pytest.mark.asyncio
+async def test_context_focus_recovery_coalesces_adversarial_signal_order(
+    monkeypatch: pytest.MonkeyPatch,
+    signal_order: str,
+) -> None:
+    demands = dict.fromkeys(SECTION_IDS, 0)
+    demands["model"] = 20
+    _install_demands(monkeypatch, demands)
+    app = _RailHarness()
+
+    async with app.run_test(size=(60, 30)) as pilot:
+        await _settle(pilot)
+        rail = app.query_one(ConsoleLeftRail)
+        model = rail.query_one("#console-bounded-section-model", ConsoleBoundedSection)
+        body = rail.query_one("#console-rail-section-body-model")
+        configure = rail.query_one("#console-model-section-configure", Button)
+        first = Button("First", id=f"context-order-first-{signal_order}")
+        second = Button("Second", id=f"context-order-second-{signal_order}")
+        await body.mount(first, second, before=configure)
+        await _settle(pilot)
+        first.focus()
+        await pilot.pause()
+        app.screen.set_focus(model.viewport)
+
+        callbacks: list[tuple[Callable[..., None], tuple[object, ...]]] = []
+        monkeypatch.setattr(
+            rail,
+            "call_after_refresh",
+            lambda callback, *args: callbacks.append((callback, args)),
+        )
+        signals = {
+            "rail": lambda: rail._ensure_focus_recovery("model"),
+            "bounded": lambda: rail.recover_section_focus("model"),
+        }
+        for signal in signal_order.split("_then_"):
+            signals[signal]()
+
+        incident = rail._pending_focus_recoveries["model"]
+        recovery_callbacks = [
+            (callback, args)
+            for callback, args in callbacks
+            if callback.__name__ == "_recover_pending_focus"
+        ]
+        assert len(recovery_callbacks) == 1
+        assert recovery_callbacks[0][1] == ("model", incident)
+
+        await first.remove()
+        callback, args = recovery_callbacks[0]
+        callback(*args)
+
+        assert app.focused is second
+        assert rail._pending_focus_recoveries == {}
+        assert model._focused_descendant is second
+        assert model._focus_recovery_notified is True
+
+        model._recover_removed_focus_target()
+        rail.recover_section_focus("model")
+        assert app.focused is second
+        assert rail._pending_focus_recoveries == {}
+
+
+@pytest.mark.asyncio
+async def test_context_focus_recovery_prefers_same_id_remount_over_ordinal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    demands = dict.fromkeys(SECTION_IDS, 0)
+    demands["model"] = 20
+    _install_demands(monkeypatch, demands)
+    app = _RailHarness()
+
+    async with app.run_test(size=(60, 30)) as pilot:
+        await _settle(pilot)
+        rail = app.query_one(ConsoleLeftRail)
+        body = rail.query_one("#console-rail-section-body-model")
+        configure = rail.query_one("#console-model-section-configure", Button)
+        original = Button("Original", id="context-stable-remount")
+        ordinal = Button("Ordinal", id="context-stable-ordinal")
+        await body.mount(original, ordinal, before=configure)
+        await _settle(pilot)
+        original.focus()
+        await pilot.pause()
+
+        callbacks: list[tuple[Callable[..., None], tuple[object, ...]]] = []
+        monkeypatch.setattr(
+            rail,
+            "call_after_refresh",
+            lambda callback, *args: callbacks.append((callback, args)),
+        )
+        incident = rail._ensure_focus_recovery("model")
+        await original.remove()
+        replacement = Button("Replacement", id="context-stable-remount")
+        await body.mount(replacement)
+        await pilot.pause()
+
+        callback, args = next(
+            (callback, args)
+            for callback, args in callbacks
+            if callback.__name__ == "_recover_pending_focus"
+        )
+        assert args == ("model", incident)
+        callback(*args)
+
+        assert app.focused is replacement
+        assert app.focused is not ordinal
+        assert rail._pending_focus_recoveries == {}
+
+
+@pytest.mark.asyncio
+async def test_stale_context_focus_recovery_callback_cannot_consume_new_incident(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _RailHarness()
+
+    async with app.run_test(size=(60, 30)) as pilot:
+        await _settle(pilot)
+        rail = app.query_one(ConsoleLeftRail)
+        body = rail.query_one("#console-rail-section-body-model")
+        configure = rail.query_one("#console-model-section-configure", Button)
+        first = Button("First", id="context-stale-first")
+        second = Button("Second", id="context-stale-second")
+        outside = Button("Outside", id="context-stale-outside")
+        await body.mount(first, second, before=configure)
+        await app.screen.mount(outside)
+        await _settle(pilot)
+
+        callbacks: list[tuple[Callable[..., None], tuple[object, ...]]] = []
+        monkeypatch.setattr(
+            rail,
+            "call_after_refresh",
+            lambda callback, *args: callbacks.append((callback, args)),
+        )
+        first.focus()
+        rail._record_section_focus("model", first)
+        stale_incident = rail._ensure_focus_recovery("model")
+        stale_callback, stale_args = next(
+            (callback, args)
+            for callback, args in callbacks
+            if callback.__name__ == "_recover_pending_focus"
+        )
+
+        app.screen.set_focus(outside)
+        rail._clear_focus_owner_if_focus_left()
+        app.screen.set_focus(second)
+        rail._record_section_focus("model", second)
+        current_incident = rail._ensure_focus_recovery("model")
+        assert current_incident is not stale_incident
+
+        stale_callback(*stale_args)
+
+        assert app.focused is second
+        assert rail._pending_focus_recoveries == {"model": current_incident}
 
 
 @pytest.mark.asyncio
