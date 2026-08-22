@@ -136,16 +136,49 @@ reason>"` and every `reason=` in `Utils/private_paths.py` is a fixed token
 (`shared_writable_parent`, `missing_parent`, ...), never a path. The scrubbed
 message is unchanged.
 
+Audited exhaustively (AST scan of all 65 `PrivatePathResult(...)` constructions
+repo-wide — the only way a `PrivatePathError` can be built): 60 pass a string
+literal, 4 a ternary between two literals, and 1 is `_failure()` in
+`private_sqlite.py`, whose 26 call sites are 25 literals plus one
+`type(exc).__name__`. The only non-literal shape anywhere is
+`type(exc).__name__` (3 sites), which yields an exception *class name* raised by
+a syscall — never a path, filename, or user value.
+
+**Scope caveat on that rationale.** The handler catches `(sqlite3.Error,
+PrivatePathError)`, so `from error` chains the `sqlite3.Error` branch too, which
+the argument above does not cover. Measured directly by rendering the real
+failure through `traceback`, stdlib `logging(exc_info=True)` and loguru: on the
+`PrivatePathError` branch chaining adds exactly one line — `PrivatePathError:
+unsafe_parent: shared_writable_parent` — and leaks nothing. On the
+`sqlite3.Error` branch it does make raw driver text traceback-renderable again,
+which `a189533c1` had removed from the *message*. Five realistic connect/PRAGMA
+failures were probed and every SQLite message is path-free (`unable to open
+database file`, `file is not a database`, ...), so no path or user content can
+escape; both app sinks are `diagnose=False` (`Logging_Config.py:438`,
+`__init__.py:68`), so no frame locals are dumped either; and the two public read
+paths re-sever with `from None`. If tighter containment is wanted later, the
+one-line narrowing `from (error if isinstance(error, PrivatePathError) else
+None)` satisfies the privacy contract exactly while keeping driver text severed.
+
 **Does the shape recur? No — this was the only affected connect site.** The
 four sibling owners (`base`, `chachanotes`, `prompts`, `evals`) either never
 catch `PrivatePathError` or already chain with `from e`
 (`ChaChaNotes_DB.py:3086`, `Prompts_DB.py:459`), which is why the identical
-parametrizations passed for them. The other `from None` raises in
-`Client_Media_DB_v2.py` (`:2290` media search, `:6746` distinct media types)
-catch bare `Exception`/`sqlite3.Error`, not `PrivatePathError`, and are not on
-the privacy contract's path. `DB/private_sqlite.py`'s many `from None` raises
-are the *producers* of `PrivatePathError` — deliberate `OSError`-detail scrubs
-where the boundary error is the `PrivatePathError` itself — and were left alone.
+parametrizations passed for them. Verified by an AST sweep over every
+`connect_private_sqlite()` call site in `tldw_chatbook/`: exactly three of the
+~46 sites sit in a `try` whose handler can catch a `PrivatePathError` and
+re-raises, and after this change all three chain. The other `from None` raises
+in `Client_Media_DB_v2.py` (`:2302` media search, `:6758` distinct media types)
+catch bare `Exception` — which *does* catch `PrivatePathError`, so the earlier
+wording here was wrong. They are nonetheless correctly left alone, for a
+stronger reason: `Tests/DB/test_client_media_debug_logging.py:229`
+(`test_connection_open_failure_is_wrapped_without_private_diagnostics`)
+explicitly asserts `raised.value.__cause__ is None` at those two sites. They
+are deliberately, guardedly severed — and they re-contain the inner
+`DatabaseError` on both public read paths. `DB/private_sqlite.py`'s many
+`from None` raises are the *producers* of `PrivatePathError` — deliberate
+`OSError`-detail scrubs where the boundary error is the `PrivatePathError`
+itself — and were left alone.
 
 **B — test fix.** The counter install and the test's own `list_catalog()` call
 were swapped, plus an `assert snapshots == []` precondition so the counter can
@@ -163,6 +196,19 @@ flip local→server→local between gateway calls. All **12** `raising=False`
 arguments were removed (all of them in `test_local_server_tools.py`;
 `test_gateway_runtime_tools.py` had none) — not just the 3 sitting on the stale
 name: on an injection seam, a rename must fail loudly at the patch line.
+
+**The `raising=False` cases were worse than "fail downstream" — two of them
+were GREEN.** Re-measured individually at `da4e828af`:
+`test_watchlists_first_local_call_opens_one_read_only_database` (`:261`) and
+`test_watchlists_unready_database_is_bounded_and_keeps_other_tools` (`:450`)
+both **passed** while patching the vanished `RuntimeSourceStateStore` — the
+never-read attribute was installed, the service fell through to the real
+loader, and the real loader happens to return `"local"`, which is exactly what
+their fakes wanted. Only `:207` failed downstream on a scrubbed `ToolResult`.
+So this change repairs **seven** tests, not five: the five reds plus two that
+were green while asserting nothing about the seam they patched. The
+green-and-hollow pair is the more dangerous half, and neither would ever have
+been noticed from a test report.
 
 **What the five tests were actually asserting, and whether that needed
 updating.** The runtime-source patch was setup in all five, never the
@@ -207,9 +253,44 @@ test_application_state_ownership.py test_remaining_diagnostic_sentinel_matrix.py
 (`test_reading_progress_reopens_through_versioned_migration` — a v5→v6
 `duplicate column name` migration bug; `test_legacy_server_client_builder_matches
 _are_listed_in_migration_audit`; and 6 huggingface-egress fixture errors whose
-blamed test ids shuffle run to run). Pre-existing, untouched. `ruff check` and
-`ruff format --check` clean on all four changed files; the 5 `ruff check` errors
-elsewhere under `Tests/MCP/` are pre-existing at the merge base.
+blamed test ids shuffle run to run). Pre-existing, untouched. `ruff check` clean
+on all four changed files; the 5 `ruff check` errors elsewhere under
+`Tests/MCP/` are pre-existing at the merge base. **Correction:** `ruff format
+--check` is *not* clean on `Client_Media_DB_v2.py` — it reports "would
+reformat", but identically at the merge base, and every hunk it wants is in
+untouched code (lines 733, 970, 987, 2238, 2289, 3946); the changed region
+(769–787) is correctly formatted. The other three files are clean.
+
+`test_reading_progress_reopens_through_versioned_migration` is a **test**
+defect, not a shipped migration bug — see the characterisation below.
+
+**Characterisation of the pre-existing media-migration red (for filing).**
+`test_reading_progress_reopens_through_versioned_migration` dies with
+`DatabaseError: Migration v5->v6 failed: duplicate column name:
+chunk_engine_version`, thrown out of `MediaDatabase.__init__`, so the database
+cannot be opened at all. **It does not brick a real upgrade.** Probed against
+the real `MediaDatabase`: a genuine v2 database upgrades cleanly to v6, and so
+does a genuine v5 database (the actual shipped path). The migration is also
+atomic — poisoning the version bump after the `ALTER` leaves `version=5` with
+the column *absent* and a retry succeeds — so no partial-apply state is
+reachable. The failing state is manufactured by the test itself: it fakes a
+"v2" database by dropping v3's `ReadingProgress` table and v5's
+`transcription_provenance_json` column but **not** v6's
+`chunk_engine_version` column, which task-11 added after this test was written.
+The consequence is the same class as the three findings above: the media DB's
+whole v2→v6 migration chain has been unguarded since v6 landed, because the one
+test that walks the chain dies on its last hop. Worth noting separately: any
+such schema drift is *unrecoverable* (the second open fails identically, with no
+tolerance or repair path), so an idempotent `ADD COLUMN` would be cheap
+hardening.
+
+The 6 egress errors are one root cause, not six: something on this path loads
+`sentence-transformers/all-MiniLM-L6-v2`, `huggingface_hub` issues a real
+`HEAD https://huggingface.co/...` , the network guard blocks it, and
+`huggingface_hub` **retries with backoff** — so the blocked-attempt record
+drains into whichever test happens to be tearing down. Count is stable (2 in
+`Tests/Tools/test_document_expansion_tool.py`, 4 in
+`Tests/Tools/test_file_tools_workspace_roots.py`); the blamed ids are not.
 
 **Modified files.** `tldw_chatbook/DB/Client_Media_DB_v2.py`,
 `Tests/Agents/test_tool_catalog_concurrency.py`,
