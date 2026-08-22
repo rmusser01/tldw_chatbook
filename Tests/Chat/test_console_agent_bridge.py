@@ -862,12 +862,21 @@ async def test_plain_and_character_forced_plain_never_resolve_project_instructio
         agent_bridge=ExplodingBridge(),
         agent_runtime_enabled=force_character,
     )
+    resolution = SimpleNamespace(
+        provider="openai", model="gpt-4o-mini", max_tokens=128
+    )
+    configuration = controller.resolve_turn_configuration_snapshot(session.id)
+    authority = await controller._capture_turn_library_authority(
+        session.id, configuration
+    )
+    turn_context = controller._finalize_turn_execution_context(
+        configuration, authority, resolution
+    )
     result = await controller._stream_assistant_response_inner(
-        resolution=SimpleNamespace(
-            provider="openai", model="gpt-4o-mini", max_tokens=128
-        ),
+        resolution=resolution,
         provider_messages=[{"role": "user", "content": user.content}],
         assistant_message_id=assistant.id,
+        turn_context=turn_context,
     )
     assert result.accepted is True
     assert gateway.calls == 1

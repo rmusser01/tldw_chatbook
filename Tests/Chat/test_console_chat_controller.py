@@ -4787,11 +4787,19 @@ async def test_trim_budgets_against_resolution_model_not_controller_state(monkey
         max_tokens=0,
         visible_copy="",
     )
+    configuration = controller.resolve_turn_configuration_snapshot(session.id)
+    authority = await controller._capture_turn_library_authority(
+        session.id, configuration
+    )
+    turn_context = controller._finalize_turn_execution_context(
+        configuration, authority, resolution
+    )
 
     await controller._stream_assistant_response(
         resolution=resolution,
         provider_messages=provider_messages,
         assistant_message_id=assistant.id,
+        turn_context=turn_context,
     )
 
     # Budgeted against the 520-token resolution window (not the 1M self.model),

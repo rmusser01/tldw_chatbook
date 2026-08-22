@@ -114,3 +114,92 @@ After restoration, the exact four named tests passed **4/4**.
   Task 9+ behavior was added.
 - No generalizable new incident beyond the existing testing/backlog lessons arose,
   so no lessons document was changed.
+
+## Fix round 1 — complete contexts on every execution attempt
+
+Review base: `76bcdc413`. The review finding was reproducible: normal submit
+already constructed a complete final context, but retry, queued retry,
+continue, regenerate, edit/resend, and provider-continuation recovery passed a
+pre-gateway `ConsoleTurnConfigurationSnapshot` into provider execution. Both
+provider-boundary methods also synthesized that incomplete snapshot when their
+caller omitted the final context.
+
+### RED evidence
+
+- Before fix production edits, the exact Step 3 command finished with **9
+  failed, 79 passed, 1 inherited Requests dependency warning**.
+- Four failures were the parameterized retry/continue/regenerate/edit-resend
+  real paths reaching the streaming boundary with configuration only.
+- Queued retry failed after the queue had visibly reacquired a `HELD`
+  reservation; continuation recovery failed at the agent boundary.
+- The remaining three failures proved direct streaming, `_run_agent_reply`,
+  and Library-provider composition accepted an incomplete snapshot.
+- A second RED/green cycle proved that an absent policy coordinator reused the
+  staged Allowed holder; the named regression now requires exact unavailable
+  Never/Blocked fail-closed authority.
+
+### Fix and ordering
+
+- Added one async attempt finalizer used by all reviewed action/recovery paths:
+  capture configuration after action admission or queue recovery claim, await a
+  fresh policy capture, resolve the gateway destination, then construct the
+  complete immutable `ConsoleTurnExecutionContext` only for a ready execution.
+- Queue admission still captures nothing. A queued retry captures only from the
+  recovery callback after `recover_and_drain` has reacquired its slot.
+- Retry, continue, regenerate, and edit/resend now pass that complete context
+  through payload construction and streaming. Continuation recovery does the
+  same through history assembly and `_run_agent_reply`.
+- Until Tasks 15/16 durably persist the original continuation attempt's frozen
+  authority, continuation recovery performs a fresh fail-closed capture. It
+  never invents the unavailable original snapshot or reuses a cached Allowed
+  holder. A missing coordinator and a coordinator exception both produce exact
+  Never/Blocked, `source="unavailable"`, `error_code="policy_read_error"`.
+- `_stream_assistant_response_inner`, `_run_agent_reply`, and
+  `_library_provider_for_context` now reject anything that is not an actual
+  complete `ConsoleTurnExecutionContext` before provider or Library composition.
+  The compatibility configuration alias remains only for proven read-only or
+  pre-gateway consumers.
+- Gateway resolution still uses the existing injected destination seam and
+  conservative UNKNOWN fallback. No Task 9 destination classification, Task 10
+  Library gating/provider selection, endpoint inference, or schema work was
+  added.
+
+### Mutation and compatibility evidence
+
+- Mutating only the retry handoff back to
+  `turn_context.configuration` failed
+  `test_message_actions_thread_one_captured_context[retry]` at the real provider
+  boundary. Restoring the complete handoff made the named test pass.
+- Exact Step 3 GREEN: **89 passed, 1 inherited Requests dependency warning**.
+- Controller/turn-context/agent-bridge compatibility trio: **443 passed, 1
+  inherited warning**.
+- Queue, citation-boundary, and provider-gateway compatibility excluding two
+  sandbox-only localhost tests: **381 passed, 2 deselected, 1 inherited
+  warning**.
+- The excluded gateway tests both fail at `socket.bind` with `PermissionError`
+  under this sandbox. A detached worktree at the pre-fix base reproduced both
+  identical errors.
+- The broader provider-continuation file has 27 setup/durability failures at
+  `Local continuation intent is stale or unavailable; save and retry.` A
+  representative failing test reproduced identically in the detached pre-fix
+  worktree. The task-local real continuation recovery test supplies the durable
+  boundary explicitly and passes.
+- Scoped Ruff over all changed Python files and `git diff --check` pass.
+
+### Fix-round self-review
+
+- Re-enumerated every reviewed provider-executing path and confirmed each ready
+  call reaches streaming/agent execution with the final type; no configuration-
+  only fallback remains at either provider boundary.
+- Confirmed action validation precedes capture, queued retry capture observes a
+  held claim, fresh policy precedes gateway resolution, and final construction
+  follows the ready gateway result.
+- Confirmed fresh unavailable policy defeats a cached Allowed holder for both
+  raised reads and missing coordinator wiring.
+- Confirmed incomplete contexts fail before direct provider streaming, agent
+  composition, and Library factory invocation.
+- Confirmed missing-owner close races still return the existing session-closed
+  result before context validation, while any live provider execution is strict.
+- Confirmed the fix does not persist continuation authority early, classify
+  destinations, reserve Library names, or gate Library providers; those remain
+  owned by later frozen tasks.

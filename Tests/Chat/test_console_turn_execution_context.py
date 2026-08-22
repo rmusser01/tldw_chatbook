@@ -591,13 +591,29 @@ async def test_message_actions_thread_one_captured_context(action_name: str):
         session_settings=store.session_settings(session.id),
         tool_configuration={"agent_runtime_enabled": False},
     )
+    events: list[str] = []
     context_calls: list[str] = []
 
     def resolve_context(session_id: str) -> ConsoleTurnConfigurationSnapshot:
+        events.append("configuration")
         context_calls.append(session_id)
         return context
 
-    gateway = _PausedGateway()
+    class UnavailableCoordinator:
+        async def capture_for_execution(self, captured_session_id: str):
+            assert captured_session_id == session.id
+            events.append("policy")
+            raise RuntimeError("durable policy unavailable")
+
+    class ActionGateway(_PausedGateway):
+        async def resolve_for_send(self, selection: ConsoleProviderSelection):
+            events.append("gateway")
+            resolution = await super().resolve_for_send(selection)
+            resolution.resolved_destination = _destination()
+            return resolution
+
+    store.library_policy_coordinator = UnavailableCoordinator()
+    gateway = ActionGateway()
     gateway.release_resolve.set()
     controller = ConsoleChatController(
         store=store,
@@ -608,6 +624,17 @@ async def test_message_actions_thread_one_captured_context(action_name: str):
         agent_runtime_enabled=False,
         turn_context_provider=resolve_context,
     )
+    observed_contexts: list[ConsoleTurnExecutionContext] = []
+    real_inner = controller._stream_assistant_response_inner
+
+    async def assert_complete_provider_boundary(**kwargs):
+        events.append("provider-boundary")
+        turn_context = kwargs["turn_context"]
+        assert isinstance(turn_context, ConsoleTurnExecutionContext)
+        observed_contexts.append(turn_context)
+        return await real_inner(**kwargs)
+
+    controller._stream_assistant_response_inner = assert_complete_provider_boundary
 
     if action_name == "retry":
         result = await controller.retry_message(assistant.id)
@@ -621,6 +648,17 @@ async def test_message_actions_thread_one_captured_context(action_name: str):
     assert result.accepted is True
     assert context_calls == [session.id]
     assert gateway.selections == [context.provider_selection]
+    assert events == ["configuration", "policy", "gateway", "provider-boundary"]
+    assert len(observed_contexts) == 1
+    turn_context = observed_contexts[0]
+    assert turn_context.resolved_destination == _destination()
+    assert turn_context.library_authority.policy == ConsoleLibraryPolicySnapshot(
+        auto_retrieve=ConsoleAutoRetrieve.NEVER,
+        assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+        policy_revision=None,
+        source="unavailable",
+        error_code="policy_read_error",
+    )
     assert gateway.message_batches[0][0] == {
         "role": "system",
         "content": "captured-system",

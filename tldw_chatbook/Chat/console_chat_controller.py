@@ -3212,8 +3212,8 @@ class ConsoleChatController:
                 "Enable or configure it, or Discard the interrupted run.",
             )
             return False
-        resolution = await self.provider_gateway.resolve_for_send(
-            self._provider_selection_for_session(session_id)
+        resolution, turn_context = (
+            await self._capture_and_resolve_turn_execution_context(session_id)
         )
         if not self._provider_continuation_recovery_target_is_current(
             session_id=session_id,
@@ -3227,6 +3227,7 @@ class ConsoleChatController:
                 "Provider credentials are not ready. Fix Settings, then retry.",
             )
             return False
+        assert turn_context is not None
         target = _continuation_restore_target_for_resolution(resolution)
         if target is None:
             self.store.set_provider_continuation_warning(
@@ -3257,6 +3258,7 @@ class ConsoleChatController:
                     session_id,
                     before_message_id=message.id,
                     annotate_ids=bool(prior_sidecar),
+                    turn_context=turn_context,
                 ),
                 assistant_message_id=message.id,
                 prepare_retry=False,
@@ -3267,7 +3269,7 @@ class ConsoleChatController:
                 resume_provider_continuation=True,
                 continuation_sidecar=prior_sidecar,
                 continuation_history_target=prior_target,
-                turn_context=self.resolve_turn_execution_context(session_id),
+                turn_context=turn_context,
             )
         finally:
             if (
@@ -5698,6 +5700,7 @@ class ConsoleChatController:
         self, turn_context: ConsoleTurnExecutionContext
     ) -> Any | None:
         """Build the Library provider from this turn's captured mode."""
+        self._require_complete_turn_execution_context(turn_context)
         factory = self._library_provider_factory
         if factory is None:
             return None
@@ -6904,19 +6907,19 @@ class ConsoleChatController:
         if message.status != "failed":
             return self._block(session_id, "Only failed messages can be retried.")
 
-        turn_context = self.resolve_turn_execution_context(session_id)
         self._set_run_state(
             ConsoleRunState.retrying("Retrying failed response."),
             session_id=session_id,
         )
-        resolution = await self.provider_gateway.resolve_for_send(
-            turn_context.provider_selection
+        resolution, turn_context = (
+            await self._capture_and_resolve_turn_execution_context(session_id)
         )
         if not getattr(resolution, "ready", False):
             visible_copy = self._blocked_visible_copy(
                 getattr(resolution, "visible_copy", "")
             )
             return self._block(session_id, visible_copy)
+        assert turn_context is not None
 
         provider_messages = self._provider_messages_for_session(
             session_id,
@@ -7046,19 +7049,19 @@ class ConsoleChatController:
             )
             return ConsoleSubmitResult(False, False, visible_copy)
 
-        turn_context = self.resolve_turn_execution_context(session_id)
         self._set_run_state(
             ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider."),
             session_id=session_id,
         )
-        resolution = await self.provider_gateway.resolve_for_send(
-            turn_context.provider_selection
+        resolution, turn_context = (
+            await self._capture_and_resolve_turn_execution_context(session_id)
         )
         if not getattr(resolution, "ready", False):
             visible_copy = self._blocked_visible_copy(
                 getattr(resolution, "visible_copy", "")
             )
             return self._block(session_id, visible_copy)
+        assert turn_context is not None
 
         provider_messages = self._provider_messages_through_message(
             session_id,
@@ -7170,19 +7173,19 @@ class ConsoleChatController:
             )
             return ConsoleSubmitResult(False, False, visible_copy)
 
-        turn_context = self.resolve_turn_execution_context(session_id)
         self._set_run_state(
             ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider."),
             session_id=session_id,
         )
-        resolution = await self.provider_gateway.resolve_for_send(
-            turn_context.provider_selection
+        resolution, turn_context = (
+            await self._capture_and_resolve_turn_execution_context(session_id)
         )
         if not getattr(resolution, "ready", False):
             visible_copy = self._blocked_visible_copy(
                 getattr(resolution, "visible_copy", "")
             )
             return self._block(session_id, visible_copy)
+        assert turn_context is not None
 
         provider_messages = self._provider_messages_for_session(
             session_id,
@@ -7735,20 +7738,20 @@ class ConsoleChatController:
         clean_content, validation_error = self._validated_draft(new_content)
         if validation_error is not None:
             return self._block(session_id, validation_error)
-        turn_context = self.resolve_turn_execution_context(session_id)
-        turn_selection = turn_context.provider_selection
+        configuration = self.resolve_turn_configuration_snapshot(session_id)
+        turn_selection = configuration.provider_selection
 
         # task-573: the resend carries the anchor's attachments, so the same
         # vision gate a fresh send applies (see ``submit_draft``) must fire
         # here too -- BEFORE any node is created (mutate-last discipline).
         anchor_attachments = tuple(message.attachments)
         if any(a.data is not None for a in anchor_attachments):
-            vision_model = turn_context.effective_model
+            vision_model = configuration.effective_model
             block_reason = vision_block_reason(
                 turn_selection.provider,
                 vision_model,
                 is_capable=lambda _provider, _model: bool(
-                    turn_context.capabilities.get("vision", False)
+                    configuration.capabilities.get("vision", False)
                 ),
             )
             if block_reason is not None:
@@ -7758,12 +7761,18 @@ class ConsoleChatController:
             ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider."),
             session_id=session_id,
         )
-        resolution = await self.provider_gateway.resolve_for_send(turn_selection)
+        resolution, turn_context = (
+            await self._capture_and_resolve_turn_execution_context(
+                session_id,
+                configuration,
+            )
+        )
         if not getattr(resolution, "ready", False):
             visible_copy = self._blocked_visible_copy(
                 getattr(resolution, "visible_copy", "")
             )
             return self._block(session_id, visible_copy)
+        assert turn_context is not None
 
         # Build + transform the payload BEFORE creating either new node
         # (task-2 review fix): the edited turn is synthesized as a
@@ -8772,7 +8781,13 @@ class ConsoleChatController:
 
         coordinator = self.store.library_policy_coordinator
         if coordinator is None:
-            policy = session.library_policy_holder.snapshot
+            policy = ConsoleLibraryPolicySnapshot(
+                auto_retrieve=ConsoleAutoRetrieve.NEVER,
+                assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+                policy_revision=None,
+                source="unavailable",
+                error_code="policy_read_error",
+            )
         else:
             try:
                 policy = await coordinator.capture_for_execution(session_id)
@@ -8856,6 +8871,49 @@ class ConsoleChatController:
             library_authority=library_authority,
             resolved_destination=self._resolved_destination_for_context(resolution),
         )
+
+    async def _capture_and_resolve_turn_execution_context(
+        self,
+        session_id: str,
+        configuration: ConsoleTurnConfigurationSnapshot | None = None,
+    ) -> tuple[Any, ConsoleTurnExecutionContext | None]:
+        """Capture one attempt's authority, then resolve and finalize its context.
+
+        Callers invoke this only after their action-specific admission checks (or,
+        for queued recovery, after the coordinator has reacquired the claim).  A
+        non-ready gateway result has no execution context because no provider will
+        execute; ready results always carry the complete immutable runtime input.
+        """
+        captured_configuration = (
+            configuration
+            if configuration is not None
+            else self.resolve_turn_configuration_snapshot(session_id)
+        )
+        library_authority = await self._capture_turn_library_authority(
+            session_id,
+            captured_configuration,
+        )
+        resolution = await self.provider_gateway.resolve_for_send(
+            captured_configuration.provider_selection
+        )
+        if not getattr(resolution, "ready", False):
+            return resolution, None
+        return resolution, self._finalize_turn_execution_context(
+            captured_configuration,
+            library_authority,
+            resolution,
+        )
+
+    @staticmethod
+    def _require_complete_turn_execution_context(
+        turn_context: object,
+    ) -> ConsoleTurnExecutionContext:
+        """Reject pre-gateway snapshots at every provider execution boundary."""
+        if not isinstance(turn_context, ConsoleTurnExecutionContext):
+            raise TypeError(
+                "turn_context must be a complete ConsoleTurnExecutionContext"
+            )
+        return turn_context
 
     @staticmethod
     def _ensure_user_continuation_instruction(
@@ -10606,9 +10664,8 @@ class ConsoleChatController:
             # no-op since nothing will ever read a closed session's state.
             return self._session_closed_result()
         owner = next((s for s in self.store.sessions() if s.id == owner_id), None)
-        if turn_context is None:
-            turn_context = self.resolve_turn_execution_context(owner_id)
-        elif turn_context.session_id != owner_id:
+        turn_context = self._require_complete_turn_execution_context(turn_context)
+        if turn_context.session_id != owner_id:
             raise ValueError("Console turn context does not own the assistant row.")
         try:
             continuation_sidecar, continuation_target = (
@@ -11964,9 +12021,8 @@ class ConsoleChatController:
             session_id = self.store.session_id_for_message(assistant_message_id)
         except KeyError:
             return self._session_closed_result()
-        if turn_context is None:
-            turn_context = self.resolve_turn_execution_context(session_id)
-        elif turn_context.session_id != session_id:
+        turn_context = self._require_complete_turn_execution_context(turn_context)
+        if turn_context.session_id != session_id:
             raise ValueError("Console turn context does not own the assistant row.")
         scratch_snapshot = turn_context.scratch_space
         if scratch_snapshot is None:

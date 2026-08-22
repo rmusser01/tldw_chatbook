@@ -1468,12 +1468,21 @@ async def test_citation_repair_predispatch_exception_privacy_scrubs_session(
     else:
         monkeypatch.setattr(controller_module, "bound_messages_to_window", fail)
 
+    configuration = controller.resolve_turn_configuration_snapshot(session_id)
+    authority = await controller._capture_turn_library_authority(
+        session_id, configuration
+    )
+    turn_context = controller._finalize_turn_execution_context(
+        configuration, authority, gateway.resolution
+    )
+
     with pytest.raises(RuntimeError, match=_REPAIR_PROVIDER_EXCEPTION_SENTINEL):
         await controller._stream_assistant_response(
             resolution=gateway.resolution,
             provider_messages=[{"role": "user", "content": "question"}],
             assistant_message_id=assistant.id,
             citation_repair_session=repair_session,
+            turn_context=turn_context,
         )
 
     assert repair_session.contract is None
