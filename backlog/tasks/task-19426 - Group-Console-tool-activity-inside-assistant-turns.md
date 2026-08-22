@@ -57,10 +57,10 @@ Key decisions and tradeoffs:
 - Transcript set_messages accepts optional session identity so recycled marker ids cannot retain expansion across session switches.
 - Inspector resolves active-session display-only markers through the transcript only after the authoritative store lookup misses.
 
-Verification on latest dev base d01f4cc52 and final feature head e2e4febb6:
+Verification after the final rebase onto dev base bfc9c5c08:
 - Complete focused changed-functionality suite: 856 passed, 2 warnings.
 - Additional modified-code coverage for continuation persistence, models/review hook, local-server blocked outcomes, Inspector activity selection, and CSS integrity: 127 passed, 2 warnings.
-- Adjacent Console suite: 322 passed. One settings SelectOverlay mount race passed alone on the feature branch and on clean dev. The two marker E2E binding_unavailable failures reproduced exactly on clean dev.
+- Adjacent Console suite: 323 passed. The two marker E2E `binding_unavailable` failures reproduced exactly on clean dev before any feature assertion runs.
 - Changed Python compileall, Ruff lint, intentional new-file Ruff format gate, git diff check, and CSS source/bundle integrity all passed.
 - Isolated live Console UAT exercised real fs_list/fs_read activity at wide and narrow sizes, mouse/Enter/Space/o disclosure parity, failed and successful runs, stable selection and scroll during streaming, Ctrl+K resume with identical collapsed ordering, and Inspector attribution for expanded and collapsed display-only activities. Evidence manifest: /private/tmp/task19426-uat-r2zoEDPZ/evidence/manifest.md.
 
