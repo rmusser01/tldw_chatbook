@@ -177,14 +177,12 @@ async def test_wake_turn_in_a_nonviewed_session_flips_the_tab_glyph_off_running(
             f"glyph without a session switch: {label!r}"
         )
         # 15664 AC#2 stays pinned: the poll must have stopped itself again.
-        await _settle(
-            pilot, lambda: console._console_transcript_sync_timer is None
-        )
+        await _settle(pilot, lambda: console._console_transcript_sync_timer is None)
         assert console._console_transcript_sync_timer is None, (
             "the transcript poll must self-stop after the wake settles -- "
             "no recurring idle repaint (15664 AC#2)"
         )
-        assert console._console_fleet_survivor_timer is None
+        assert console._fleet._console_fleet_survivor_timer is None
 
 
 @pytest.mark.asyncio
@@ -224,17 +222,13 @@ async def test_wake_reply_reaches_the_viewed_transcript_without_a_switch(
         ), "precondition: the delivered reply is in the store"
 
         await pilot.pause(1.2)
-        transcript = console.query_one(
-            "#console-native-transcript", ConsoleTranscript
-        )
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
         synced = [str(m.content) for m in transcript._messages]
         assert any("wake reply body" in content for content in synced), (
             "task-15862: the wake turn's reply never reached the viewed "
             f"session's rendered transcript (widget rows: {len(synced)})"
         )
-        await _settle(
-            pilot, lambda: console._console_transcript_sync_timer is None
-        )
+        await _settle(pilot, lambda: console._console_transcript_sync_timer is None)
         assert console._console_transcript_sync_timer is None, (
             "the transcript poll must self-stop after the wake settles -- "
             "no recurring idle repaint (15664 AC#2)"
@@ -278,9 +272,7 @@ async def test_composer_blocked_copy_names_the_wake_not_provider_setup(
         # One paint mid-wake (live: the last paint before the freeze).
         await console._sync_native_console_chat_ui()
         await pilot.pause()
-        composer = console.query_one(
-            "#console-native-composer", ConsoleComposerBar
-        )
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         reason = str(composer._send_disabled_reason or "")
         assert "provider setup" not in reason.lower(), (
             "task-15862 AC#3: mid-wake composer copy blamed provider setup "
@@ -292,9 +284,7 @@ async def test_composer_blocked_copy_names_the_wake_not_provider_setup(
         )
         from textual.widgets import Button
 
-        tooltip = str(
-            console.query_one("#console-send-message", Button).tooltip or ""
-        )
+        tooltip = str(console.query_one("#console-send-message", Button).tooltip or "")
         assert "sub-agent" in tooltip.lower(), (
             "the send button's hover copy must name the wake too, not the "
             f"queue's not-yet-accepted line: {tooltip!r}"
@@ -340,9 +330,7 @@ async def test_poll_survives_the_wake_scheduling_gap_then_stops_after(
             )
         finally:
             wake._delivering = None
-        await _settle(
-            pilot, lambda: console._console_transcript_sync_timer is None
-        )
+        await _settle(pilot, lambda: console._console_transcript_sync_timer is None)
         assert console._console_transcript_sync_timer is None, (
             "with the delivery over and nothing busy the poll must stop "
             "itself (15664 AC#2: no recurring idle repaint)"

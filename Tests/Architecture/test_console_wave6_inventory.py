@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import subprocess
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -22,6 +23,62 @@ TASK10_SCREEN_LINE_CEILING = 20_943
 LINE_OVERAGE = 4_445
 METHOD_OVERAGE = 119
 DESCRIPTOR_LINE_BUDGET = 64
+FLEET_TASK0_IMPLEMENTATION_BASE = "d4f3f97763ddf3fa46eeb35ae9473827e72695bc"
+FLEET_TASK0_BASE_SCREEN_LINES = 20_428
+FLEET_TASK0_BASE_METHODS = 653
+FLEET_TASK0_DEFINITION_LINES = 421
+FLEET_TASK0_MAX_SCREEN_LINES = 20_007
+FLEET_TASK0_MAX_METHODS = 637
+FLEET_FINAL_REBASE_BASE = "02cd80b33004305765b5cd91b3d264aa3664596e"
+FLEET_FINAL_REBASE_BASE_SCREEN_LINES = 20_486
+FLEET_FINAL_REBASE_BASE_METHODS = 656
+FLEET_FINAL_REBASE_DEFINITION_LINES = 421
+FLEET_FINAL_REBASE_MAX_SCREEN_LINES = 20_065
+FLEET_FINAL_REBASE_MAX_METHODS = 640
+FLEET_FINAL_REBASE_ADDED_SCREEN_METHODS = frozenset(
+    {
+        "_console_inspector_active",
+        "_request_console_context_allocation_reconcile",
+        "_request_console_live_work_reconcile",
+    }
+)
+FLEET_CONTROLLER_CALLBACKS = frozenset(
+    {
+        "pending_handoffs_accessor",
+        "ensure_chat_store",
+        "ensure_chat_controller",
+        "activate_workspace_for_session",
+        "switch_chat_session",
+        "schedule_native_console_sync",
+        "ensure_agent_bridge",
+        "wire_wake_coordinator",
+        "seed_wake_from_marks",
+        "retry_wake_soon",
+        "wake_has_pending",
+        "wake_delivering_conversation_id",
+        "displayed_composer_draft_accessor",
+        "screen_displayed_accessor",
+        "screen_mounted_accessor",
+        "active_session_id_accessor",
+        "chat_sessions_accessor",
+        "defer_on_message_pump",
+        "start_transcript_sync_timer",
+        "transcript_sync_timer_active",
+        "sync_native_console_ui",
+        "create_interval",
+        "record_timer_created",
+        "record_timer_stopped",
+        "chat_controller_available",
+        "fleet_has_unsettled_children",
+        "run_marker_for_session",
+        "fleet_teardown_split",
+        "leave_runtime",
+        "stage_teardown_notices",
+        "fleet_unseen_revision_accessor",
+        "read_fleet_unseen_ids",
+        "clear_fleet_unseen",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -500,18 +557,27 @@ def _source_at_revision(revision: str, path: Path) -> str:
 
 
 def _methods_from_class(class_node: ast.ClassDef) -> dict[str, ast.AST]:
-    return {
-        node.name: node
+    return {node.name: node for node in _method_definitions(class_node)}
+
+
+def _method_definitions(
+    class_node: ast.ClassDef,
+) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
+    """Return every direct method definition in source order."""
+    return [
+        node
         for node in class_node.body
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-    }
+    ]
+
+
+def _method_name_counts(class_node: ast.ClassDef) -> Counter[str]:
+    """Count direct method definitions without collapsing duplicate names."""
+    return Counter(node.name for node in _method_definitions(class_node))
 
 
 def _method_count(class_node: ast.ClassDef) -> int:
-    return sum(
-        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-        for node in class_node.body
-    )
+    return len(_method_definitions(class_node))
 
 
 def _methods(path: Path, class_name: str) -> dict[str, ast.AST]:
@@ -1693,6 +1759,331 @@ def test_character_controller_has_only_named_non_dom_dependencies() -> None:
     assert init.args.kwarg is None
     assert "_screen" not in _self_assignments(controller)
     assert not any(_calls_dom_query(method) for method in methods.values())
+
+
+def _assert_fleet_ownership_contract(
+    screen_methods: dict[str, ast.AST],
+    target_methods: dict[str, ast.AST],
+) -> None:
+    """Require the reviewed fleet family to have one controller owner."""
+    group = WAVE6_GROUPS["fleet"]
+    missing = group.moved - target_methods.keys()
+    assert not missing, (
+        f"fleet methods missing from ConsoleFleetLifecycleController: {sorted(missing)}"
+    )
+    duplicates = group.moved & screen_methods.keys()
+    assert not duplicates, (
+        f"fleet methods still owned by ChatScreen: {sorted(duplicates)}"
+    )
+
+
+def _assert_fleet_ownership_multiplicity(
+    screen_class: ast.ClassDef,
+    target_class: ast.ClassDef,
+) -> None:
+    """Require zero screen and exactly one controller definition per fleet name."""
+    group = WAVE6_GROUPS["fleet"]
+    screen_counts = _method_name_counts(screen_class)
+    target_counts = _method_name_counts(target_class)
+    screen_duplicates = {
+        name: screen_counts[name] for name in group.moved if screen_counts[name]
+    }
+    target_multiplicity = {
+        name: target_counts[name] for name in group.moved if target_counts[name] != 1
+    }
+    assert not screen_duplicates, (
+        f"fleet methods still owned by ChatScreen: {screen_duplicates}"
+    )
+    assert not target_multiplicity, (
+        f"fleet controller methods must occur exactly once: {target_multiplicity}"
+    )
+
+
+def _assert_fleet_method_boundaries(methods: dict[str, ast.AST]) -> None:
+    """Reject DOM access and direct screen/sibling handles."""
+    dom_offenders = {
+        name for name, method in methods.items() if _calls_dom_query(method)
+    }
+    assert not dom_offenders, (
+        f"fleet controller methods query DOM: {sorted(dom_offenders)}"
+    )
+    composer_widget_offenders = {
+        name
+        for name, method in methods.items()
+        if any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "draft_text"
+            for node in ast.walk(method)
+        )
+    }
+    assert not composer_widget_offenders, (
+        "fleet controller methods reach composer widgets: "
+        f"{sorted(composer_widget_offenders)}"
+    )
+
+    forbidden_owners = frozenset(
+        {
+            "screen",
+            "_screen",
+            "app",
+            "_app",
+            "app_instance",
+            "_app_instance",
+            "controller",
+            "_controller",
+            "_console_chat_controller",
+            "wake",
+            "_wake",
+            "fleet_wake",
+            "_fleet_wake",
+            "_workspace",
+            "_session",
+            "_agent",
+            "_image",
+            "_video",
+            "_retrieval",
+            "_skill",
+            "_character",
+            "_dictation",
+            "_hands_free",
+            "_message",
+            "_prompts",
+            "_prompt_queue",
+        }
+    )
+    sibling_offenders = {
+        name: sorted(_self_owner_accesses(method, forbidden_owners))
+        for name, method in methods.items()
+        if _self_owner_accesses(method, forbidden_owners)
+    }
+    assert not sibling_offenders, (
+        f"fleet controller methods reach screen/sibling owners: {sibling_offenders}"
+    )
+
+
+def _assert_fleet_controller_boundary(controller: ast.ClassDef) -> None:
+    """Require exact named callbacks and reject DOM/sibling capabilities."""
+    methods = _methods_from_class(controller)
+    group = WAVE6_GROUPS["fleet"]
+    expected_methods = group.moved | {"prepare_session_run_markers"}
+    assert _method_name_counts(controller) == Counter(
+        {name: 1 for name in expected_methods | {"__init__"}}
+    )
+
+    init = methods["__init__"]
+    assert isinstance(init, ast.FunctionDef)
+    assert not init.args.posonlyargs
+    assert [argument.arg for argument in init.args.args] == ["self"]
+    assert {argument.arg for argument in init.args.kwonlyargs} == (
+        FLEET_CONTROLLER_CALLBACKS
+    )
+    assert init.args.kw_defaults == [None] * len(init.args.kwonlyargs)
+    assert init.args.vararg is None
+    assert init.args.kwarg is None
+    callback_annotations = {
+        argument.arg: ast.unparse(argument.annotation)
+        for argument in init.args.kwonlyargs
+        if argument.annotation is not None
+    }
+    assert callback_annotations.keys() == FLEET_CONTROLLER_CALLBACKS
+    assert not {
+        name: annotation
+        for name, annotation in callback_annotations.items()
+        if "Callable[...," in annotation
+    }, "fleet constructor callbacks must have explicit arity"
+
+    expected_assignments = {
+        *(f"_{name}" for name in FLEET_CONTROLLER_CALLBACKS),
+        "_console_fleet_survivor_timer",
+        "_console_fleet_unseen_cache",
+    }
+    assert _self_assignments(controller) == expected_assignments
+    stored_callbacks = {
+        (target.attr, node.value.id)
+        for node in ast.walk(init)
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Name)
+        for target in node.targets
+        if isinstance(target, ast.Attribute)
+        and isinstance(target.value, ast.Name)
+        and target.value.id == "self"
+    }
+    assert stored_callbacks == {
+        (f"_{name}", name) for name in FLEET_CONTROLLER_CALLBACKS
+    }
+    assert not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in FLEET_CONTROLLER_CALLBACKS
+        for node in ast.walk(init)
+    )
+    _assert_fleet_method_boundaries(methods)
+    assert methods.keys() - {"__init__"} == expected_methods
+
+
+@pytest.mark.unit
+def test_fleet_family_has_completed_controller_ownership() -> None:
+    """Require all 16 fleet lifecycle methods solely on the controller."""
+    group = WAVE6_GROUPS["fleet"]
+    target_path = _REPO_ROOT / group.target_path
+
+    assert target_path.exists(), "ConsoleFleetLifecycleController module is missing"
+    _, screen_class = _class_node(_SCREEN_PATH, "ChatScreen")
+    _, target_class = _class_node(target_path, group.target_class)
+    screen_methods = _methods_from_class(screen_class)
+    target_methods = _methods_from_class(target_class)
+    _assert_fleet_ownership_contract(screen_methods, target_methods)
+    _assert_fleet_ownership_multiplicity(screen_class, target_class)
+
+    replacement_helpers = {
+        "_displayed_console_composer_draft",
+        "_console_screen_is_displayed",
+    }
+    assert not (replacement_helpers & screen_methods.keys()), (
+        "ChatScreen gained replacement fleet helpers: "
+        f"{sorted(replacement_helpers & screen_methods.keys())}"
+    )
+
+
+@pytest.mark.unit
+def test_fleet_controller_has_only_named_non_dom_dependencies() -> None:
+    """Lock the fleet owner behind its reviewed callback-only boundary."""
+    group = WAVE6_GROUPS["fleet"]
+    _, controller = _class_node(_REPO_ROOT / group.target_path, group.target_class)
+
+    _assert_fleet_controller_boundary(controller)
+
+
+@pytest.mark.unit
+def test_fleet_task_ratchet_is_earned() -> None:
+    """Require the immutable Task 0 and frozen final-rebase ratchets."""
+    group = WAVE6_GROUPS["fleet"]
+    task0_source = _source_at_revision(FLEET_TASK0_IMPLEMENTATION_BASE, _SCREEN_PATH)
+    task0_class = _class_node_from_source(task0_source, "ChatScreen", _SCREEN_PATH)
+    task0_methods = _methods_from_class(task0_class)
+    task0_counts = _method_name_counts(task0_class)
+    final_source = _source_at_revision(FLEET_FINAL_REBASE_BASE, _SCREEN_PATH)
+    final_class = _class_node_from_source(final_source, "ChatScreen", _SCREEN_PATH)
+    final_methods = _methods_from_class(final_class)
+    final_counts = _method_name_counts(final_class)
+    current_source, current_class = _class_node(_SCREEN_PATH, "ChatScreen")
+    current_counts = _method_name_counts(current_class)
+
+    assert len(task0_source.splitlines()) == FLEET_TASK0_BASE_SCREEN_LINES
+    assert _method_count(task0_class) == FLEET_TASK0_BASE_METHODS
+    assert group.moved <= task0_methods.keys()
+    assert sum(_span(task0_methods[name]) for name in group.moved) == (
+        FLEET_TASK0_DEFINITION_LINES
+    )
+    assert len(group.moved) == 16
+
+    assert len(final_source.splitlines()) == FLEET_FINAL_REBASE_BASE_SCREEN_LINES
+    assert _method_count(final_class) == FLEET_FINAL_REBASE_BASE_METHODS
+    assert group.moved <= final_methods.keys()
+    assert sum(_span(final_methods[name]) for name in group.moved) == (
+        FLEET_FINAL_REBASE_DEFINITION_LINES
+    )
+    assert all(task0_counts[name] == final_counts[name] == 1 for name in group.moved)
+    multiplicity_delta = {
+        name: final_counts[name] - task0_counts[name]
+        for name in task0_counts.keys() | final_counts.keys()
+        if final_counts[name] != task0_counts[name]
+    }
+    assert multiplicity_delta == {
+        name: 1 for name in FLEET_FINAL_REBASE_ADDED_SCREEN_METHODS
+    }
+    assert [
+        ast.dump(task0_methods[name], include_attributes=False)
+        for name in sorted(group.moved)
+    ] == [
+        ast.dump(final_methods[name], include_attributes=False)
+        for name in sorted(group.moved)
+    ]
+
+    assert FLEET_TASK0_MAX_SCREEN_LINES == (
+        FLEET_TASK0_BASE_SCREEN_LINES - FLEET_TASK0_DEFINITION_LINES
+    )
+    assert FLEET_TASK0_MAX_METHODS == FLEET_TASK0_BASE_METHODS - len(group.moved)
+    assert FLEET_FINAL_REBASE_MAX_SCREEN_LINES == (
+        FLEET_FINAL_REBASE_BASE_SCREEN_LINES - FLEET_FINAL_REBASE_DEFINITION_LINES
+    )
+    assert FLEET_FINAL_REBASE_MAX_METHODS == (
+        FLEET_FINAL_REBASE_BASE_METHODS - len(group.moved)
+    )
+    assert not any(current_counts[name] for name in group.moved), (
+        "fleet task methods returned to ChatScreen: "
+        f"{sorted(name for name in group.moved if current_counts[name])}"
+    )
+    assert len(current_source.splitlines()) <= FLEET_FINAL_REBASE_MAX_SCREEN_LINES, (
+        "fleet task screen-line ratchet remains RED: "
+        f"{len(current_source.splitlines())} > {FLEET_FINAL_REBASE_MAX_SCREEN_LINES}"
+    )
+    assert _method_count(current_class) <= FLEET_FINAL_REBASE_MAX_METHODS, (
+        "fleet task method ratchet remains RED: "
+        f"{_method_count(current_class)} > {FLEET_FINAL_REBASE_MAX_METHODS}"
+    )
+
+
+@pytest.mark.unit
+def test_fleet_move_oracles_are_non_vacuous() -> None:
+    """Prove fleet ownership, DOM, and sibling checks reject exact mutants."""
+    group = WAVE6_GROUPS["fleet"]
+    target_methods = {
+        name: ast.parse(f"def {name}(self): return None").body[0]
+        for name in group.moved
+    }
+    screen_mutant = ast.parse(
+        "class ChatScreen:\n"
+        "    def _console_fleet_survivors_live(self):\n"
+        "        return True\n"
+    ).body[0]
+    assert isinstance(screen_mutant, ast.ClassDef)
+    with pytest.raises(AssertionError, match="still owned by ChatScreen"):
+        _assert_fleet_ownership_contract(
+            _methods_from_class(screen_mutant),
+            target_methods,
+        )
+
+    duplicate_name = "_console_fleet_survivors_live"
+    controller_duplicate_mutant = ast.parse(
+        "class ConsoleFleetLifecycleController:\n"
+        + "".join(
+            f"    def {name}(self): return None\n" for name in sorted(group.moved)
+        )
+        + f"    def {duplicate_name}(self): return True\n"
+    ).body[0]
+    assert isinstance(controller_duplicate_mutant, ast.ClassDef)
+    empty_screen_mutant = ast.parse("class ChatScreen:\n    pass\n").body[0]
+    assert isinstance(empty_screen_mutant, ast.ClassDef)
+    with pytest.raises(AssertionError, match="exactly once"):
+        _assert_fleet_ownership_multiplicity(
+            empty_screen_mutant,
+            controller_duplicate_mutant,
+        )
+
+    controller_mutant = ast.parse(
+        "class ConsoleFleetLifecycleController:\n"
+        "    def leaked_dom(self):\n"
+        "        return self.query_one('#composer')\n"
+        "    def sibling_reach_through(self):\n"
+        "        return self._workspace._poke_console_wake_retry()\n"
+        "    def leaked_composer_widget(self):\n"
+        "        return self._displayed_composer_draft_accessor().draft_text()\n"
+    ).body[0]
+    assert isinstance(controller_mutant, ast.ClassDef)
+    mutant_methods = _methods_from_class(controller_mutant)
+    with pytest.raises(AssertionError, match="query DOM"):
+        _assert_fleet_method_boundaries({"leaked_dom": mutant_methods["leaked_dom"]})
+
+    with pytest.raises(AssertionError, match="screen/sibling owners"):
+        _assert_fleet_method_boundaries(
+            {"sibling_reach_through": mutant_methods["sibling_reach_through"]}
+        )
+
+    with pytest.raises(AssertionError, match="composer widgets"):
+        _assert_fleet_method_boundaries(
+            {"leaked_composer_widget": mutant_methods["leaked_composer_widget"]}
+        )
 
 
 @pytest.mark.unit

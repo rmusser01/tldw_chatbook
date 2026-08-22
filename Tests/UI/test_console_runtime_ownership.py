@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import inspect
 from pathlib import Path
 
 import pytest
@@ -38,6 +39,9 @@ from tldw_chatbook.Chat.console_runtime import (
 )
 from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
 from tldw_chatbook.Persona_Buddy.controller import PersonaBuddyController
+from tldw_chatbook.UI.Console_Modules.fleet import (
+    ConsoleFleetLifecycleController,
+)
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
@@ -107,8 +111,11 @@ def _construction_sites(class_name: str) -> list[str]:
                 continue
             func = node.func
             called = (
-                func.id if isinstance(func, ast.Name) else func.attr
-                if isinstance(func, ast.Attribute) else None
+                func.id
+                if isinstance(func, ast.Name)
+                else func.attr
+                if isinstance(func, ast.Attribute)
+                else None
             )
             if called == class_name:
                 line = source.splitlines()[node.lineno - 1].strip()
@@ -140,6 +147,16 @@ def test_attach_and_detach_cover_exactly_the_same_slot_set():
     cleared and never bound (a live Console with a silently dead hook).
     """
     screen = ChatScreen.__new__(ChatScreen)
+
+    def no_op(*_args, **_kwargs):
+        return None
+
+    screen._fleet = ConsoleFleetLifecycleController(
+        **{
+            name: no_op
+            for name in inspect.signature(ConsoleFleetLifecycleController).parameters
+        }
+    )
     declared = {slot.name for slot in CONSOLE_VIEW_HOOK_SLOTS}
     provided = set(ChatScreen.console_view_hooks(screen))
 
@@ -242,9 +259,9 @@ async def test_second_console_visit_reuses_the_runtime(tmp_path):
         assert visit_one_event.is_set()
         # The hooks now answer for the LIVE screen, not the dead one.
         assert controller_two.notify_run_outcome is not None
-        assert (
-            controller_two.notify_run_outcome.__self__ is chat_two
-        ), "a hook is still bound to the previous, unmounted screen"
+        assert controller_two.notify_run_outcome.__self__ is chat_two, (
+            "a hook is still bound to the previous, unmounted screen"
+        )
 
 
 @pytest.mark.asyncio
@@ -283,8 +300,8 @@ async def test_a_terminal_run_state_after_leaving_does_not_reach_the_dead_screen
 
         reached: list[tuple[str, ConsoleRunStatus]] = []
         original = chat._notify_console_run_outcome
-        chat._notify_console_run_outcome = (
-            lambda session_id, status: reached.append((session_id, status))
+        chat._notify_console_run_outcome = lambda session_id, status: reached.append(
+            (session_id, status)
         )
         # Re-bind so the recorder is what the runtime holds for THIS visit.
         chat._console_runtime().attach_view(chat)

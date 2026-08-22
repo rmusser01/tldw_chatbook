@@ -16,6 +16,7 @@ its_children`` and by the shutdown->cancel-event link test below) from
 sessions whose only work is survivors, which keep running; and the
 next-mount copy that reports each truthfully.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -86,9 +87,10 @@ async def test_a_survivor_only_teardown_is_reported_as_continuing_not_cancelled(
     copy contradicted)."""
     gate, controller, session = _survivor_controller(tmp_path)
     app, screen, notifications = _screen_with_notify_capture()
+    screen._console_chat_controller = controller
     try:
         # The exact ChatScreen.on_unmount recording, via its extracted seam.
-        await screen._record_console_fleet_teardown(controller)
+        await screen._fleet._record_console_fleet_teardown()
         screen._notify_console_fleet_teardown_if_any()
     finally:
         gate.set()
@@ -96,8 +98,7 @@ async def test_a_survivor_only_teardown_is_reported_as_continuing_not_cancelled(
 
     assert notifications, "a busy teardown must produce a next-mount notice"
     assert not any("cancelled" in message for message, _ in notifications), (
-        "a survivor-only teardown must never be reported as cancelled: "
-        f"{notifications}"
+        f"a survivor-only teardown must never be reported as cancelled: {notifications}"
     )
     assert any("kept running" in message for message, _ in notifications), (
         f"the notice must say the work continues: {notifications}"
@@ -105,11 +106,7 @@ async def test_a_survivor_only_teardown_is_reported_as_continuing_not_cancelled(
     # The ground truth: the run the old copy called cancelled finished
     # done, durably, read through a fresh DB handle.
     fresh = AgentRunsDB(tmp_path / "runs.db", client_id="verifier")
-    rows = [
-        r
-        for r in fresh.list_runs(session.id)
-        if r["agent_kind"] == "subagent"
-    ]
+    rows = [r for r in fresh.list_runs(session.id) if r["agent_kind"] == "subagent"]
     assert [r["status"] for r in rows] == ["done"], (
         f"the survivor must have completed after teardown: {rows}"
     )
@@ -138,11 +135,12 @@ async def test_a_streaming_teardown_keeps_the_cancelled_copy(tmp_path):
     )
     assert controller.in_flight_run_count() == 1
     app, screen, notifications = _screen_with_notify_capture()
-    await screen._record_console_fleet_teardown(controller)
+    screen._console_chat_controller = controller
+    await screen._fleet._record_console_fleet_teardown()
     screen._notify_console_fleet_teardown_if_any()
-    assert [
-        (message, severity) for message, severity in notifications
-    ] == [("1 agent run was cancelled when you left Console.", "warning")]
+    assert [(message, severity) for message, severity in notifications] == [
+        ("1 agent run was cancelled when you left Console.", "warning")
+    ]
 
 
 @pytest.mark.asyncio
@@ -157,12 +155,13 @@ async def test_a_mixed_teardown_reports_both_truthfully(tmp_path):
         session_id=streaming.id,
     )
     app, screen, notifications = _screen_with_notify_capture()
+    screen._console_chat_controller = controller
     try:
         assert controller.fleet_teardown_split() == (1, 1)
         assert controller.busy_fleet_session_count() == 2, (
             "the split must partition the same union the old count reported"
         )
-        await screen._record_console_fleet_teardown(controller)
+        await screen._fleet._record_console_fleet_teardown()
         screen._notify_console_fleet_teardown_if_any()
     finally:
         gate.set()
@@ -316,8 +315,7 @@ async def test_a_superseded_console_leave_stages_no_teardown_notice(tmp_path):
                 "sessions that keep running under the successor screen"
             )
             assert getattr(app, "_console_fleet_survivor_notice", 0) == 0, (
-                "a superseded leave staged a survivor notice — this visit "
-                "never ended"
+                "a superseded leave staged a survivor notice — this visit never ended"
             )
             assert not [n for n in notifications if "cancelled" in n], (
                 f"the false teardown toast fired: {notifications}"
