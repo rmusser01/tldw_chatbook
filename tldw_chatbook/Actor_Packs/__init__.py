@@ -15,6 +15,7 @@ from .export import (
     ActorPackExportResult,
     ActorPackExportService,
     ActorPackExportSnapshot,
+    write_actor_pack_archive,
 )
 
 __all__ = [
@@ -27,5 +28,6 @@ __all__ = [
     "ActorPackExportResult",
     "ActorPackExportService",
     "ActorPackExportSnapshot",
+    "write_actor_pack_archive",
     "validate_actor_pack_document",
 ]

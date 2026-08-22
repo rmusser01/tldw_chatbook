@@ -7,6 +7,8 @@ import io
 import json
 import os
 import uuid
+import zipfile
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -16,6 +18,13 @@ from tldw_chatbook.Actor_Packs.export import (
     ActorPackExportError,
     ActorPackExportService,
     ActorPackExportSnapshot,
+    write_actor_pack_archive,
+)
+from tldw_chatbook.Actor_Packs.contracts import (
+    ZIP_COMPRESSION,
+    ZIP_CREATE_SYSTEM,
+    ZIP_EXTERNAL_ATTR,
+    ZIP_TIMESTAMP,
 )
 from tldw_chatbook.Actor_Packs.repository import ActorPackRepository
 from tldw_chatbook.Character_Chat.local_character_persona_service import (
@@ -28,6 +37,8 @@ from tldw_chatbook.Character_Chat.visual_identity import (
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
 from tldw_chatbook.Persona_Visual.repository import PersonaVisualRepository
+
+from .conftest import PNG_1X1, canonical_json
 
 
 PORTABLE_UUID = "123e4567-e89b-42d3-a456-426614174000"
@@ -357,6 +368,25 @@ def test_persona_visual_section_is_self_contained(
         "shared-visual-identity",
         "persona-runtime",
     )
+    archive_bytes = io.BytesIO()
+    write_actor_pack_archive(both, archive_bytes)
+    assert storage_key.encode() not in archive_bytes.getvalue()
+    assert shared_storage.encode() not in archive_bytes.getvalue()
+    with zipfile.ZipFile(io.BytesIO(archive_bytes.getvalue())) as archive:
+        assert archive.namelist() == [
+            "actor-pack.json",
+            "actor/actor.json",
+            "actor/portrait.png",
+            "persona-runtime/assets/asset-0001.png",
+            "persona-runtime/manifest.json",
+            "shared-visual-identity/assets/asset-0001.png",
+            "shared-visual-identity/manifest.json",
+        ]
+        root = json.loads(archive.read("actor-pack.json"))
+        assert [item["kind"] for item in root["sections"]] == [
+            "shared-visual-identity",
+            "persona-runtime",
+        ]
 
     def change_binding(phase: str) -> None:
         if phase == "visuals_loaded":
@@ -465,3 +495,119 @@ def test_character_shared_visual_section_remaps_private_storage(
     database.get_connection().commit()
     with pytest.raises(ActorPackExportError, match="actor_pack_export_visual_invalid"):
         export.capture_snapshot("character", str(character_id), source="local")
+
+
+def test_archive_bytes_are_deterministic_and_independently_readable(
+    export_components,
+) -> None:
+    export, _repository, _local_service, database = export_components
+    character_id = database.add_character_card(
+        {"name": "Deterministic", "image": _png()}
+    )
+    snapshot = export.capture_snapshot("character", str(character_id), source="local")
+    first = io.BytesIO()
+    second = io.BytesIO()
+
+    first_digest = write_actor_pack_archive(snapshot, first)
+    second_digest = write_actor_pack_archive(snapshot, second)
+
+    assert first.getvalue() == second.getvalue()
+    assert first_digest == hashlib.sha256(first.getvalue()).hexdigest()
+    assert second_digest == first_digest
+    with zipfile.ZipFile(io.BytesIO(first.getvalue())) as archive:
+        assert archive.namelist() == [
+            "actor-pack.json",
+            "actor/actor.json",
+            "actor/portrait.png",
+        ]
+        for info in archive.infolist():
+            assert info.compress_type == ZIP_COMPRESSION
+            assert info.date_time == ZIP_TIMESTAMP
+            assert info.create_system == ZIP_CREATE_SYSTEM
+            assert info.external_attr == ZIP_EXTERNAL_ATTR
+        root = json.loads(archive.read("actor-pack.json"))
+        assert "actor-pack.json" not in {item["path"] for item in root["files"]}
+        declared = {
+            item["path"]: (item["bytes"], item["sha256"]) for item in root["files"]
+        }
+        for name in ("actor/actor.json", "actor/portrait.png"):
+            data = archive.read(name)
+            assert declared[name] == (len(data), hashlib.sha256(data).hexdigest())
+        root_without_digest = dict(root)
+        digest = root_without_digest.pop("content_digest")
+        canonical_root = json.dumps(
+            root_without_digest,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+            allow_nan=False,
+        ).encode()
+        assert digest == hashlib.sha256(canonical_root).hexdigest()
+
+
+@pytest.mark.parametrize("actor_kind", ("character", "persona"))
+def test_archive_matches_independent_golden_bytes(
+    actor_kind: str,
+) -> None:
+    payload = canonical_json(
+        {
+            "schema": "tldw.actor/v1",
+            "actor_kind": actor_kind,
+            "portable_uuid": PORTABLE_UUID,
+            "data": {"name": "Golden"},
+        }
+    )
+    snapshot = ActorPackExportSnapshot(
+        actor_kind=actor_kind,
+        actor_revision=1,
+        portable_uuid=PORTABLE_UUID,
+        identity_version=1,
+        portrait_name="portrait.png",
+        portrait_sha256=hashlib.sha256(PNG_1X1).hexdigest(),
+        local_actor_id="private-local-id",
+        actor_payload=payload,
+        portrait_bytes=PNG_1X1,
+    )
+    output = io.BytesIO()
+
+    write_actor_pack_archive(snapshot, output)
+
+    fixture = (
+        Path(__file__).parent
+        / "fixtures"
+        / "export-golden"
+        / f"minimal-{actor_kind}.tldw-actor-pack"
+    )
+    golden = fixture.read_bytes()
+    assert output.getvalue() == golden
+    assert b"private-local-id" not in golden
+    with zipfile.ZipFile(io.BytesIO(golden)) as archive:
+        root = json.loads(archive.read("actor-pack.json"))
+        assert root["actor"]["kind"] == actor_kind
+        assert set(archive.namelist()) == {
+            "actor-pack.json",
+            "actor/actor.json",
+            "actor/portrait.png",
+        }
+        assert {item["path"] for item in root["files"]} == {
+            "actor/actor.json",
+            "actor/portrait.png",
+        }
+
+
+def test_archive_validation_failure_keeps_assigned_uuid_and_writes_nothing(
+    export_components,
+) -> None:
+    export, repository, _local_service, database = export_components
+    character_id = database.add_character_card(
+        {"name": "Invalid archive", "image": _png()}
+    )
+    snapshot = export.capture_snapshot("character", str(character_id), source="local")
+    invalid = replace(snapshot, actor_payload=b"not canonical actor json")
+    output = io.BytesIO()
+
+    with pytest.raises(ActorPackExportError, match="actor_pack_export_archive_failed"):
+        write_actor_pack_archive(invalid, output)
+
+    assert output.getvalue() == b""
+    assert repository.get_identity("character", character_id) is not None

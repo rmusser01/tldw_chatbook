@@ -6,11 +6,14 @@ import hashlib
 import json
 import os
 import stat
+import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from importlib import resources
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
+
+from tldw_chatbook import __version__
 
 from tldw_chatbook.Character_Chat.local_character_persona_service import (
     LocalCharacterPersonaService,
@@ -33,8 +36,17 @@ from tldw_chatbook.Persona_Visual.repository import (
 
 from .contracts import (
     ActorPackValidationError,
+    ZIP_COMPRESSION,
+    ZIP_CREATE_SYSTEM,
+    ZIP_EXTERNAL_ATTR,
+    ZIP_GENERAL_PURPOSE_FLAGS,
+    ZIP_TIMESTAMP,
+    actor_pack_content_digest,
+    build_file_inventory,
     canonical_json_bytes,
+    canonical_member_order,
     canonicalize_actor_payload,
+    validate_actor_pack_document,
     validate_actor_portrait,
 )
 from .repository import (
@@ -45,6 +57,7 @@ from .repository import (
 
 
 _VALIDATION_UUID = "123e4567-e89b-42d3-a456-426614174000"
+_WRITE_CHUNK_BYTES = 64 * 1024
 
 
 class ActorPackExportError(ValueError):
@@ -389,6 +402,101 @@ class ActorPackExportService:
                 else "actor_pack_actor_invalid"
             )
             raise ActorPackExportError(category) from None
+
+
+def write_actor_pack_archive(snapshot: ActorPackExportSnapshot, sink: BinaryIO) -> str:
+    """Write one deterministic Actor Pack and return its archive SHA-256."""
+
+    if type(snapshot) is not ActorPackExportSnapshot:
+        raise ActorPackExportError("actor_pack_export_snapshot_invalid")
+    try:
+        files = _snapshot_files(snapshot)
+        inventory = build_file_inventory(files)
+        root: dict[str, object] = {
+            "schema": "tldw.actor-pack/v1",
+            "actor": {
+                "kind": snapshot.actor_kind,
+                "portable_uuid": snapshot.portable_uuid,
+                "payload": "actor/actor.json",
+                "portrait": f"actor/{snapshot.portrait_name}",
+            },
+            "sections": [
+                {"kind": section.kind, "manifest": section.manifest_path}
+                for section in snapshot.sections
+            ],
+            "producer": {"name": "tldw_chatbook", "version": __version__},
+            "license": {"value": "unspecified"},
+            "provenance": {"source": "local"},
+            "required_features": [
+                feature
+                for kind, feature in (
+                    (
+                        "shared-visual-identity",
+                        "shared-visual-identity/v1",
+                    ),
+                    ("persona-runtime", "persona-runtime/sprite-frames-v1"),
+                )
+                if any(section.kind == kind for section in snapshot.sections)
+            ],
+            "files": [
+                {"path": item.path, "bytes": item.byte_count, "sha256": item.sha256}
+                for item in inventory
+            ],
+        }
+        root["content_digest"] = actor_pack_content_digest(root)
+        validate_actor_pack_document(root, files)
+        archive_files = {"actor-pack.json": canonical_json_bytes(root), **files}
+        sink.seek(0)
+        sink.truncate(0)
+        with zipfile.ZipFile(
+            sink,
+            mode="w",
+            compression=ZIP_COMPRESSION,
+            allowZip64=True,
+        ) as archive:
+            for path in canonical_member_order(tuple(archive_files)):
+                info = zipfile.ZipInfo(path, date_time=ZIP_TIMESTAMP)
+                info.compress_type = ZIP_COMPRESSION
+                info.create_system = ZIP_CREATE_SYSTEM
+                info.flag_bits = ZIP_GENERAL_PURPOSE_FLAGS
+                info.external_attr = ZIP_EXTERNAL_ATTR
+                with archive.open(info, mode="w", force_zip64=True) as member:
+                    data = archive_files[path]
+                    for offset in range(0, len(data), _WRITE_CHUNK_BYTES):
+                        member.write(data[offset : offset + _WRITE_CHUNK_BYTES])
+        sink.flush()
+        sink.seek(0)
+        digest = hashlib.sha256()
+        while chunk := sink.read(_WRITE_CHUNK_BYTES):
+            digest.update(chunk)
+        sink.seek(0, os.SEEK_END)
+        return digest.hexdigest()
+    except ActorPackExportError:
+        raise
+    except (
+        ActorPackValidationError,
+        OSError,
+        TypeError,
+        ValueError,
+        zipfile.BadZipFile,
+    ):
+        raise ActorPackExportError("actor_pack_export_archive_failed") from None
+
+
+def _snapshot_files(snapshot: ActorPackExportSnapshot) -> dict[str, bytes]:
+    files = {
+        "actor/actor.json": snapshot.actor_payload,
+        f"actor/{snapshot.portrait_name}": snapshot.portrait_bytes,
+    }
+    for section in snapshot.sections:
+        if section.manifest_path in files:
+            raise ActorPackExportError("actor_pack_export_snapshot_invalid")
+        files[section.manifest_path] = section.manifest_bytes
+        for asset in section.assets:
+            if asset.path in files:
+                raise ActorPackExportError("actor_pack_export_snapshot_invalid")
+            files[asset.path] = asset.data
+    return files
 
 
 def _actor_id(actor_kind: object, value: object) -> int | str:
