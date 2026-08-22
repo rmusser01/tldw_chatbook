@@ -344,8 +344,55 @@ def test_duplicate_task_ids_are_caught_in_both_namespaces(tmp_path):
     by_filename, by_frontmatter = backlog_ids.duplicate_ids(tmp_path)
 
     assert by_filename == {}
-    assert by_frontmatter == {"task-42": ["task-42 - First.md", "task-42.1 - Second.md"]}
+    # Paths outside the repo are reported in full: two scratch buckets can both
+    # be named "tasks", and a basename would make the rows indistinguishable.
+    assert by_frontmatter == {
+        "task-42": sorted(
+            [
+                (tmp_path / "task-42 - First.md").resolve().as_posix(),
+                (tmp_path / "task-42.1 - Second.md").resolve().as_posix(),
+            ]
+        )
+    }
     assert backlog_ids.main(["--tasks-dir", str(tmp_path)]) == 1
+
+
+def test_duplicate_task_ids_are_caught_across_buckets(tmp_path):
+    """Archiving a colliding file must not hide it: the id is still taken.
+
+    Upstream Backlog.md reissues an archived task's id to the next
+    ``task create``, so this is how collisions are actually born here -- and
+    scanning only ``backlog/tasks`` let TASK-2157 sit on dev with a green guard
+    while ``backlog task 2157`` resolved to two files.
+    """
+    tasks = tmp_path / "tasks"
+    archive = tmp_path / "archive" / "tasks"
+    tasks.mkdir()
+    archive.mkdir(parents=True)
+    (tasks / "task-9 - Live.md").write_text("id: TASK-9\n", encoding="utf-8")
+    (archive / "task-9 - Archived.md").write_text("id: TASK-9\n", encoding="utf-8")
+
+    by_filename, by_frontmatter = backlog_ids.duplicate_ids(tasks, archive)
+
+    assert set(by_filename) == {"task-9"}
+    assert set(by_frontmatter) == {"task-9"}
+    assert backlog_ids.main(["--tasks-dir", str(tasks), "--tasks-dir", str(archive)]) == 1
+
+
+def test_default_scope_is_every_bucket_the_cli_resolves():
+    """Pin the scope: narrowing it back to tasks/ is the bug this guard had."""
+    assert {
+        path.relative_to(backlog_ids.REPO_ROOT).as_posix() for path in backlog_ids.TASK_DIRS
+    } == {"backlog/tasks", "backlog/completed", "backlog/archive/tasks"}
+
+
+def test_an_absent_optional_bucket_is_not_an_error(tmp_path):
+    """A project with no completed/ or archive/ still passes."""
+    tasks = tmp_path / "tasks"
+    tasks.mkdir()
+    (tasks / "task-1 - A.md").write_text("id: TASK-1\n", encoding="utf-8")
+
+    assert backlog_ids.main(["--tasks-dir", str(tasks), "--tasks-dir", str(tmp_path / "absent")]) == 0
 
 
 def test_unique_task_ids_pass(tmp_path):

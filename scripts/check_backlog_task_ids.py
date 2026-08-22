@@ -12,6 +12,11 @@ a hand-edited rename and the backlog CLI resolves by frontmatter:
 * the filename prefix, and
 * the YAML frontmatter ``id:`` field.
 
+All three directories the CLI resolves an id in are scanned -- ``backlog/tasks``,
+``backlog/completed``, and ``backlog/archive/tasks`` -- because archiving a file
+does not free its id. Scanning only ``backlog/tasks`` made TASK-2157 invisible
+here while ``backlog task 2157`` stayed ambiguous on dev.
+
 Extracted from the inline shell in ``.github/workflows/backlog-guard.yml``
 (TASK-19572) so that workflow and ``derived-artifacts.yml`` cannot drift apart.
 Stdlib-only: it runs with no dependency install, like the other derived-artifact
@@ -27,7 +32,17 @@ from collections import defaultdict
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-TASKS_DIR = REPO_ROOT / "backlog" / "tasks"
+# Every directory the backlog CLI resolves an id in. Scanning only
+# ``backlog/tasks`` let an archived file keep its id while hiding the collision:
+# upstream Backlog.md 1.44.0 hands the id of an archived task straight back to
+# the next ``task create`` (reproduced 2026-08-22), and the resulting pair then
+# passed this guard. TASK-2157 was born exactly that way -- its older claimant
+# was archived at 18:08 and the id reissued at 18:09.
+TASK_DIRS = (
+    REPO_ROOT / "backlog" / "tasks",
+    REPO_ROOT / "backlog" / "completed",
+    REPO_ROOT / "backlog" / "archive" / "tasks",
+)
 
 FILENAME_ID_RE = re.compile(r"^(task-\d+(?:\.\d+)*) - .*\.md$")
 FRONTMATTER_ID_RE = re.compile(r"^id:\s*(\S+)", re.IGNORECASE)
@@ -58,26 +73,45 @@ def _first_frontmatter_id(path: Path) -> str | None:
     return None
 
 
-def duplicate_ids(tasks_dir: Path) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
-    """Collect ids claimed by more than one task file.
+def _label(path: Path) -> str:
+    """Repo-relative path when there is one, else the absolute path.
+
+    With several buckets in scope, a bare name cannot say whether the duplicate
+    is a live task or an archived one -- which is the whole question. Paths
+    outside the repo (``--tasks-dir`` pointed at a scratch directory) keep their
+    full form for the same reason: two external buckets can both be named
+    ``tasks``, and a basename would collapse them into identical rows.
+    """
+    try:
+        return path.relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        return path.resolve().as_posix()
+
+
+def duplicate_ids(*task_dirs: Path) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    """Collect ids claimed by more than one task file, across every bucket given.
 
     Args:
-        tasks_dir: Directory holding ``task-<id> - <Title>.md`` files.
+        *task_dirs: Directories holding ``task-<id> - <Title>.md`` files. A
+            directory that does not exist is skipped, so a project without
+            ``completed/`` or ``archive/tasks/`` is not an error.
 
     Returns:
         tuple: ``(by_filename, by_frontmatter)`` -- each maps a duplicated id to
-            the sorted filenames claiming it. Empty dicts when all ids are
-            unique.
+            the sorted paths claiming it. Empty dicts when all ids are unique.
     """
     by_filename: dict[str, list[str]] = defaultdict(list)
     by_frontmatter: dict[str, list[str]] = defaultdict(list)
-    for path in sorted(tasks_dir.glob("*.md")):
-        match = FILENAME_ID_RE.match(path.name)
-        if match:
-            by_filename[match.group(1)].append(path.name)
-        frontmatter_id = _first_frontmatter_id(path)
-        if frontmatter_id:
-            by_frontmatter[frontmatter_id].append(path.name)
+    for task_dir in task_dirs:
+        if not task_dir.is_dir():
+            continue
+        for path in sorted(task_dir.glob("*.md")):
+            match = FILENAME_ID_RE.match(path.name)
+            if match:
+                by_filename[match.group(1)].append(_label(path))
+            frontmatter_id = _first_frontmatter_id(path)
+            if frontmatter_id:
+                by_frontmatter[frontmatter_id].append(_label(path))
     return (
         {key: sorted(v) for key, v in by_filename.items() if len(v) > 1},
         {key: sorted(v) for key, v in by_frontmatter.items() if len(v) > 1},
@@ -123,16 +157,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--tasks-dir",
         type=Path,
-        default=TASKS_DIR,
-        help="directory of backlog task files (defaults to backlog/tasks)",
+        action="append",
+        dest="tasks_dirs",
+        help=(
+            "directory of backlog task files; repeatable. Defaults to every "
+            "bucket the CLI resolves ids in: backlog/tasks, backlog/completed, "
+            "backlog/archive/tasks"
+        ),
     )
     args = parser.parse_args(argv)
 
-    if not args.tasks_dir.is_dir():
-        print(f"::error::no backlog task directory at {args.tasks_dir}")
+    task_dirs = tuple(args.tasks_dirs) if args.tasks_dirs else TASK_DIRS
+    if not any(task_dir.is_dir() for task_dir in task_dirs):
+        print(f"::error::no backlog task directory at {', '.join(str(d) for d in task_dirs)}")
         return 1
 
-    filename_dupes, frontmatter_dupes = duplicate_ids(args.tasks_dir)
+    filename_dupes, frontmatter_dupes = duplicate_ids(*task_dirs)
     if filename_dupes:
         _report("filenames", filename_dupes)
     if frontmatter_dupes:
@@ -141,9 +181,11 @@ def main(argv: list[str] | None = None) -> int:
         print(RESOLUTION, file=sys.stderr)
         return 1
 
-    total = sum(1 for path in args.tasks_dir.glob("task-*.md"))
+    scanned = [task_dir for task_dir in task_dirs if task_dir.is_dir()]
+    total = sum(1 for task_dir in scanned for _ in task_dir.glob("task-*.md"))
     print(
-        f"No duplicate task IDs across {total} task files "
+        f"No duplicate task IDs across {total} task files in "
+        f"{', '.join(_label(task_dir) for task_dir in scanned)} "
         "(filenames + frontmatter)."
     )
     return 0
