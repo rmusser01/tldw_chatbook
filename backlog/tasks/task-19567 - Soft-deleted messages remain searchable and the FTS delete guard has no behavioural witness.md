@@ -180,6 +180,20 @@ the delete half (the corruption guard). The second is explicitly secondary — a
 source-string assertion is what let `test_uses_messages_fts_match` pass while
 the guard was mutated away.
 
+### The census pattern travelled to the sibling task (2026-08-22)
+
+Worth recording because it closed a real gap. This half derived its covered set
+from the schema (`sqlite_master` → external-content FTS5 tables → which base
+tables carry `deleted`) and so found `chat_dictionaries` and `world_books`,
+which the filing had not named. The `sync_log` half of the same commit did
+*not* do that — it took the six entities the filing listed — and shipped with
+three uncovered writers, **the same two tables plus `world_book_entries`**. So
+the information needed to catch it was already inside this branch; it simply
+did not cross from one half to the other. Qodo's review of PR #1974 flagged it
+independently, and task-19564's notes now carry the fix: a second retention
+rule for those three, plus a `covered == writers` census modelled directly on
+the two census tests here.
+
 ### Modified/added files
 
 * `tldw_chatbook/DB/ChaChaNotes_DB.py` — `search_messages_by_content` joins

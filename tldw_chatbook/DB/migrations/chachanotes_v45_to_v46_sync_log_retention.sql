@@ -34,9 +34,10 @@
 -- turning continuation checkpoints into hard errors. So the log stays; what
 -- goes is everything in it that no reader can reach.
 --
--- THE RETENTION RULE
--- ------------------
--- A `sync_log` row is reachable only through a JOIN to its live entity row on
+-- THE RETENTION RULE (1 of 2): VERSIONED
+-- --------------------------------------
+-- Six of the nine writers are versioned and a `sync_log` row of theirs is
+-- reachable only through a JOIN to its live entity row on
 -- `entity_id` AND `version`:
 --
 --   messages, live     -> versions {v, v-1}.  v is the frontier the intent
@@ -57,32 +58,81 @@
 -- `1 = (SELECT COUNT(*) ...)` single-intent check, which counts rows at the
 -- current version.
 --
+-- THE RETENTION RULE (2 of 2): LATEST-ONLY
+-- ----------------------------------------
+-- The other three writers -- `chat_dictionaries`, `world_books` and
+-- `world_book_entries` -- cannot use the version rule above, and a first cut
+-- of this migration left them uncovered. Qodo's review of PR #1974
+-- independently reached the same finding, so they are covered here:
+--
+--   * `chat_dictionaries` has a `last_modified` timestamp trigger, whose
+--     nested UPDATE fires the `sync_update` emitter again. When the emitted
+--     `last_modified` differs from the one the outer statement wrote, that
+--     produces a FULL-PAYLOAD `update` row at the tombstone's OWN version, so
+--     `version < NEW.version` leaves the deleted dictionary's plaintext
+--     behind. Reproduced directly against a v45 database.
+--   * `world_book_entries` has no `version` column and no `deleted` column --
+--     every one of its sync rows is written at the literal version 1 -- and
+--     its only delete path is a hard `DELETE`
+--     (`world_book_manager.delete_world_book_entry`, wired to Personas > entry
+--     delete), which orphans every content row it wrote. A version rule is
+--     entirely inert for it.
+--   * `world_books` has the same shape as `chat_dictionaries` and takes the
+--     same rule, for uniformity rather than because its own timestamp trigger
+--     exists (it does not).
+--
+-- So their rule is anchored to the log row itself rather than to a version:
+-- at most ONE content-bearing row survives per entity -- the most recently
+-- emitted -- and only while the entity is live. Content-free `delete`
+-- tombstones are kept for the unversioned entity as its only record that the
+-- delete happened.
+--
+-- WHY THAT IS ORDER-INDEPENDENT
+-- -----------------------------
+-- SQLite does not define the firing order of same-kind triggers, and a single
+-- soft delete really does fire two emitters (the `sync_delete` tombstone and,
+-- via the timestamp trigger, `sync_update`) whose relative order was observed
+-- to FLIP when the emitters are recreated in a different order. A rule that
+-- depends on that order would be unsound, so this one does not:
+--
+--   * The rule fires AFTER INSERT ON sync_log -- i.e. once per emission,
+--     whoever emitted it -- and its predicate reads only (a) the base table's
+--     state, which every AFTER trigger sees already final for the statement,
+--     and (b) `change_id`, which is the table maximum at insert time.
+--   * Each firing re-establishes the same post-condition for that entity:
+--     content-bearing rows = {the row just inserted} if the entity is live,
+--     {} otherwise. The last emission of the statement therefore fixes the
+--     final state, and *which* trigger is last does not change it: if the
+--     entity ends deleted the answer is {} either way, and if it ends live the
+--     two candidate payloads are the same row rendered twice.
+--   * The hard-delete companion below deliberately excludes `operation =
+--     'delete'` for `world_book_entries`. Deleting everything there WOULD be
+--     order-dependent: fired before the sibling tombstone emitter it removes
+--     nothing, fired after it removes the tombstone.
+--
+-- Verified by running every scenario under six permutations of the emitters'
+-- creation order, with a control run proving the permutation really does flip
+-- the emission order (see task-19564's notes).
+--
 -- WHAT THIS DOES NOT DO
 -- ---------------------
 -- Soft-deleting a CONVERSATION does not soft-delete its messages (they stay
 -- `deleted = 0` and come back on restore), so their frontier row is retained
 -- -- exactly as `messages.content` itself is retained. After this migration
--- `sync_log` never holds message text that `messages` does not; it is a
+-- `sync_log` never holds entity text that the entity table does not; it is a
 -- bounded frontier, not an unbounded shadow copy. Removing the plaintext for
 -- live rows as well needs the payload to carry a content HASH instead, which
 -- is a format change to a live sync proof; it is recommended as a follow-up in
 -- task-19564's notes, not attempted here.
 --
--- Nor does it cover every writer. `sync_log` is written for NINE entities;
--- retention below covers six. `chat_dictionaries`, `world_books` and
--- `world_book_entries` keep the pre-v45 behaviour: nothing reads them and
--- nothing prunes them, so their payloads still survive deletion and still
--- accumulate per edit. `world_book_entries` is the sharpest -- its payload
--- carries the lorebook prose, and its only delete path is a hard `DELETE`
--- (`world_book_manager.delete_world_book_entry`), which orphans every content
--- row it wrote. Extending the rule to them is NOT a copy of the triggers
--- below: `chat_dictionaries`/`world_books` get a full-payload `sync_update`
--- row written AT the tombstone version (their `last_modified` timestamp
--- trigger fires the update emitter), and `world_book_entries` has no `version`
--- column, so the rule must key on `operation` instead. SQLite leaves the
--- firing order of same-kind triggers undefined, so any such rule has to be
--- order-independent by construction. Recorded in task-19564's notes as work
--- that needs its own task, not silently assumed covered.
+-- One pre-existing defect is deliberately NOT fixed here: hard-deleting a
+-- `world_books` row cascades to `world_book_entries`, whose `sync_delete`
+-- emitter reads `(SELECT client_id FROM world_books WHERE id = OLD.world_book_id)`
+-- -- already gone during the cascade -- and raises `NOT NULL constraint
+-- failed: sync_log.client_id`. No shipped path hard-deletes a world book
+-- (`delete_world_book` is a soft delete), and retention neither causes nor
+-- worsens it; it is recorded in task-19564's notes rather than fixed inside a
+-- retention change.
 --
 -- ALSO IN THIS STEP (task-19567)
 -- -----------------------------
@@ -222,6 +272,100 @@ AFTER DELETE ON keyword_collections
 BEGIN
   DELETE FROM sync_log
    WHERE entity = 'keyword_collections' AND entity_id = CAST(OLD.id AS TEXT);
+END;
+
+/*------------------------------------------------------------------
+  2b. Retention triggers -- the three latest-only writers
+------------------------------------------------------------------*/
+/* See "THE RETENTION RULE (2 of 2)" and "WHY THAT IS ORDER-INDEPENDENT" in
+   this file's header. These fire on the LOG row, not on the entity row, so a
+   statement whose emitters fire in an undefined order still converges: the
+   last emission fixes the state, and the state it fixes does not depend on
+   which emitter that was. */
+
+CREATE TRIGGER sync_log_prune_chat_dictionaries
+AFTER INSERT ON sync_log
+WHEN NEW.entity = 'chat_dictionaries'
+BEGIN
+  DELETE FROM sync_log
+   WHERE entity = 'chat_dictionaries'
+     AND entity_id = NEW.entity_id
+     AND (version < NEW.version
+          OR (operation <> 'delete'
+              AND (change_id < NEW.change_id
+                   OR NOT EXISTS (SELECT 1 FROM chat_dictionaries AS src
+                                   WHERE CAST(src.id AS TEXT) = NEW.entity_id
+                                     AND src.deleted = 0))));
+END;
+
+CREATE TRIGGER sync_log_prune_world_books
+AFTER INSERT ON sync_log
+WHEN NEW.entity = 'world_books'
+BEGIN
+  DELETE FROM sync_log
+   WHERE entity = 'world_books'
+     AND entity_id = NEW.entity_id
+     AND (version < NEW.version
+          OR (operation <> 'delete'
+              AND (change_id < NEW.change_id
+                   OR NOT EXISTS (SELECT 1 FROM world_books AS src
+                                   WHERE CAST(src.id AS TEXT) = NEW.entity_id
+                                     AND src.deleted = 0))));
+END;
+
+/* No version clause: every world_book_entries sync row is written at the
+   literal version 1, and the table has no `deleted` column, so "live" is
+   "the row still exists". Tombstones are kept -- for a hard-delete-only
+   entity the tombstone is the only record that the delete happened, and it
+   carries ids only. */
+CREATE TRIGGER sync_log_prune_world_book_entries
+AFTER INSERT ON sync_log
+WHEN NEW.entity = 'world_book_entries'
+BEGIN
+  DELETE FROM sync_log
+   WHERE entity = 'world_book_entries'
+     AND entity_id = NEW.entity_id
+     AND operation <> 'delete'
+     AND (change_id < NEW.change_id
+          OR NOT EXISTS (SELECT 1 FROM world_book_entries AS src
+                          WHERE CAST(src.id AS TEXT) = NEW.entity_id));
+END;
+
+/* Hard-delete companions. chat_dictionaries/world_books emit nothing on a
+   hard DELETE, so nothing would fire the log-side rule and the rows would be
+   orphaned -- these clear them exactly as the six above do. */
+CREATE TRIGGER sync_log_prune_chat_dictionaries_hard
+AFTER DELETE ON chat_dictionaries
+BEGIN
+  DELETE FROM sync_log
+   WHERE entity = 'chat_dictionaries' AND entity_id = CAST(OLD.id AS TEXT);
+END;
+
+CREATE TRIGGER sync_log_prune_world_books_hard
+AFTER DELETE ON world_books
+BEGIN
+  DELETE FROM sync_log
+   WHERE entity = 'world_books' AND entity_id = CAST(OLD.id AS TEXT);
+END;
+
+/* Unlike the two above, this one is defence in depth rather than the
+   load-bearing path: world_book_entries DOES emit a tombstone on hard delete,
+   and that emission is itself what fires the log-side rule, so the content is
+   already gone without this trigger (the behavioural test still passes with
+   it removed). It exists so the guarantee does not silently depend on that
+   emitter staying unconditional.
+   `operation <> 'delete'` here IS load-bearing: the tombstone comes from a
+   sibling AFTER DELETE trigger whose order relative to this one is undefined,
+   so deleting everything would remove the tombstone when this fires second
+   and keep it when this fires first -- an order-dependent result. Excluding
+   tombstones makes both orders converge on {tombstone}. */
+CREATE TRIGGER sync_log_prune_world_book_entries_hard
+AFTER DELETE ON world_book_entries
+BEGIN
+  DELETE FROM sync_log
+   WHERE entity = 'world_book_entries'
+     AND entity_id = CAST(OLD.id AS TEXT)
+     AND operation <> 'delete';
 END;
 
 /*------------------------------------------------------------------
@@ -377,4 +521,73 @@ DELETE FROM sync_log
                  ON CAST(kc.id AS TEXT) = s.entity_id
          WHERE s.entity = 'keyword_collections'
            AND (kc.id IS NULL OR s.version < kc.version)
+   );
+
+/* The latest-only three. Same converged state the triggers above maintain:
+   orphans keep nothing (except an unversioned entity's tombstones), a live
+   entity keeps its newest content row, a soft-deleted one keeps only its
+   tombstone. */
+
+DELETE FROM sync_log
+ WHERE entity = 'chat_dictionaries'
+   AND change_id IN (
+        SELECT s.change_id
+          FROM sync_log AS s
+          LEFT JOIN chat_dictionaries AS cd
+                 ON CAST(cd.id AS TEXT) = s.entity_id
+         WHERE s.entity = 'chat_dictionaries'
+           AND (
+                cd.id IS NULL
+                OR s.version < cd.version
+                OR (s.operation <> 'delete'
+                    AND (cd.deleted = 1
+                         OR s.change_id < (
+                                SELECT MAX(s2.change_id)
+                                  FROM sync_log AS s2
+                                 WHERE s2.entity = 'chat_dictionaries'
+                                   AND s2.entity_id = s.entity_id
+                                   AND s2.operation <> 'delete')))
+           )
+   );
+
+DELETE FROM sync_log
+ WHERE entity = 'world_books'
+   AND change_id IN (
+        SELECT s.change_id
+          FROM sync_log AS s
+          LEFT JOIN world_books AS wb
+                 ON CAST(wb.id AS TEXT) = s.entity_id
+         WHERE s.entity = 'world_books'
+           AND (
+                wb.id IS NULL
+                OR s.version < wb.version
+                OR (s.operation <> 'delete'
+                    AND (wb.deleted = 1
+                         OR s.change_id < (
+                                SELECT MAX(s2.change_id)
+                                  FROM sync_log AS s2
+                                 WHERE s2.entity = 'world_books'
+                                   AND s2.entity_id = s.entity_id
+                                   AND s2.operation <> 'delete')))
+           )
+   );
+
+DELETE FROM sync_log
+ WHERE entity = 'world_book_entries'
+   AND change_id IN (
+        SELECT s.change_id
+          FROM sync_log AS s
+          LEFT JOIN world_book_entries AS wbe
+                 ON CAST(wbe.id AS TEXT) = s.entity_id
+         WHERE s.entity = 'world_book_entries'
+           AND s.operation <> 'delete'
+           AND (
+                wbe.id IS NULL
+                OR s.change_id < (
+                       SELECT MAX(s2.change_id)
+                         FROM sync_log AS s2
+                        WHERE s2.entity = 'world_book_entries'
+                          AND s2.entity_id = s.entity_id
+                          AND s2.operation <> 'delete')
+           )
    );

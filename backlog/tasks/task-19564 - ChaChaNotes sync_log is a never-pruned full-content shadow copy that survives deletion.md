@@ -141,9 +141,14 @@ row on `entity_id` AND `version`:
   then migrates the same file cleanly once the poison is gone. Mutation-checked
   the same way as the FTS guard: swapping the runner to `cursor.executescript`
   reds it (and the repo's source-level pin).
-* **12 retention triggers** (`sync_log_prune_<entity>` on UPDATE,
-  `sync_log_prune_<entity>_hard` on DELETE, for messages / conversations /
-  notes / character_cards / keywords / keyword_collections). The prefix is
+* **18 retention triggers**, covering all nine entities the schema writes
+  `sync_log` rows for, under two rules. Twelve versioned
+  (`sync_log_prune_<entity>` on UPDATE, `sync_log_prune_<entity>_hard` on
+  DELETE, for messages / conversations / notes / character_cards / keywords /
+  keyword_collections) and six latest-only (`AFTER INSERT ON sync_log` plus a
+  hard-delete companion, for chat_dictionaries / world_books /
+  world_book_entries — see "The three uncovered writers" below for why the
+  version rule cannot bound those three). The prefix is
   deliberate: the `<entity>_sync_%` namespace belongs to the four triggers that
   WRITE the log, and three tests assert its membership exactly — `_` is a
   single-character wildcard in SQL LIKE, so `conversations_sync_log_prune`
@@ -182,6 +187,15 @@ Write cost of having 12 more triggers fire on every mutation, same corpus:
 **1.87 s → 1.94 s (+4.1%)**. The prune is a single indexed `DELETE` per write
 against `idx_sync_log_entity (entity, entity_id)`.
 
+The table above was measured before the six latest-only triggers were added.
+Three of those six are `AFTER INSERT ON sync_log`, so their `WHEN` is evaluated
+on **every** log insert including the six versioned entities' — the case worth
+measuring separately, since the rest of the corpus never touches a dictionary
+or a world book. On a 800-message / 30%-edited corpus, best of three runs each:
+**0.371 s without them → 0.374 s with them (+0.8%)**, i.e. three literal
+string comparisons per emitted row and no extra statement. The size figures
+above are unaffected (that corpus writes none of the three entities).
+
 ### Known residue (deliberate, not an oversight)
 
 Soft-deleting a **conversation** does not soft-delete its messages — they stay
@@ -196,35 +210,115 @@ plus `role` in the payload). **Recommended as a separate follow-up task, not
 yet filed** — it needs an owner call on changing a live sync proof's format,
 and a task id assigned against origin/dev.
 
-### Residue found in independent review, NOT deliberate (2026-08-22)
+### The three uncovered writers — found in review, now CLOSED (2026-08-22)
 
-The retention rule covers six entities. `sync_log` is written by **nine**:
-`chat_dictionaries`, `world_books` and `world_book_entries` have sync-emitting
-triggers and **no retention trigger, and no purge**, so for them the original
-defect is untouched. Nothing reads any of the three, so every row of theirs is
-unreachable by the same argument used for the covered six. Probed on this
-branch, at v45:
+The first cut covered the six entities the filing named. `sync_log` is written
+by **nine**. `chat_dictionaries`, `world_books` and `world_book_entries` had
+sync-emitting triggers and **no retention trigger and no purge**, so for them
+the original defect was untouched. This branch's own review recorded that as a
+documented gap; **Qodo's review of PR #1974 reached the same finding
+independently**, which is a strong signal it should not ship as a gap at all.
+It does not: the rule is extended here rather than deferred.
+
+Reproduced at v45 before the fix, through the shipped public APIs:
 
 | sequence (public API path) | result |
 | --- | --- |
-| soft-delete a chat dictionary | `name`/`description`/`file_path` still in `sync_log` (2 rows) |
+| soft-delete a chat dictionary | `name`/`description`/`file_path` still in `sync_log` (3 rows after 2 edits) |
 | soft-delete a world book | `name`/`description` still in `sync_log` |
 | hard-delete a world-book entry (`world_book_manager.delete_world_book_entry`, wired to Personas ▸ entry delete at `UI/Screens/personas_screen.py:5221`) | the entry's full `keys` + `content` survive as an orphan, forever |
 | 4 edits of a world-book entry | 4/4 old bodies retained (unbounded growth continues) |
 
-`world_book_entries` is the sharpest of the three: its payload carries the
-lorebook prose itself, its only delete path is a **hard** `DELETE`, and its
-tombstone leaves the content rows orphaned with no entity row left to reach
-them from. This is not a regression — it is exactly the base behaviour — but
-the claim "what goes is everything in it that no reader can reach" is not yet
-true of a third of the log's writers. **Extending retention to these three
-needs its own task**: the naive `version < NEW.version` rule is not enough for
-`chat_dictionaries`/`world_books` (their `last_modified` timestamp trigger
-causes a full-payload `sync_update` row to be written *at the tombstone
-version*), and `world_book_entries` has no `version` column at all, so its rule
-has to key on `operation IN ('create','update')` rather than on version.
-SQLite does not define the firing order of same-kind triggers, so any such rule
-must be order-independent by construction.
+**Why the six's rule does not extend to them.** Two findings from probing a
+live v45 database, both of which invalidate a naive `version < NEW.version`
+trigger:
+
+* `world_book_entries` has **no `version` column and no `deleted` column**.
+  Every one of its sync rows is written at the *literal* version 1 (read the
+  emitter: `… , 1, json_object(…)`), so a version predicate is not merely weak
+  there, it is inert — it can never be true. Its only delete path is a hard
+  `DELETE`, which orphans every content row it wrote.
+* `chat_dictionaries` has a `last_modified` timestamp trigger whose nested
+  `UPDATE` re-fires the `sync_update` emitter. With `recursive_triggers` off
+  (the default) a trigger cannot re-enter *itself*, but it does fire the
+  *other* triggers — so when the emitted `last_modified` differs from the one
+  the outer statement wrote, a **full-payload `update` row lands at the
+  tombstone's own version**. Directly observed, prune triggers removed:
+  `[(cid 2,'create',v1,body=True), (cid 3,'update',v2,body=True), (cid
+  4,'delete',v2,body=False)]` — the deleted dictionary's plaintext sitting at
+  the same version as its tombstone, invisible to `version < NEW.version`.
+
+**The rule that shipped.** A second family, `_SYNC_LOG_LATEST_ONLY_SCOPES`,
+anchored to the *log row* rather than to a version — six new triggers, all
+`AFTER INSERT ON sync_log … WHEN NEW.entity = '<E>'` plus an `AFTER DELETE`
+companion on each base table. At most **one** content-bearing row survives per
+entity, the most recently emitted, and only while the entity is live;
+content-free `delete` tombstones are kept as the delete proof. For the two
+versioned entities the rule is "the six's rule, PLUS: while soft-deleted, no
+content-bearing row survives at all".
+
+**Order-independence — the argument, and the experiment.** SQLite leaves the
+firing order of same-kind triggers undefined and a single soft delete really
+does fire two emitters, so the rule must not depend on which fires first:
+
+1. It fires once per *emission*, whoever emitted it, and its predicate reads
+   only (a) the base table's state — already final for the statement, in any
+   `AFTER` trigger — and (b) `change_id`, which is the table maximum at insert
+   time.
+2. Each firing re-establishes the same post-condition for that entity:
+   content-bearing rows = `{the row just inserted}` if the entity is live,
+   `{}` otherwise. The last emission of the statement therefore fixes the
+   final state, and *which* trigger was last cannot change it: if the entity
+   ends deleted the answer is `{}` either way; if it ends live the two
+   candidate payloads are the same row rendered twice.
+3. The `world_book_entries` hard-delete companion deliberately excludes
+   `operation = 'delete'`. Deleting everything there *would* be
+   order-dependent — fired before the sibling tombstone emitter it removes
+   nothing, fired after it removes the tombstone.
+
+The experiment, not just the argument: every scenario was re-run under six
+permutations of the emitters' creation order, with a **control** proving the
+permutation really reaches the firing order (without prune triggers the same
+soft delete emits `update@cid3, delete@cid4` in one order and `delete@cid3,
+update@cid4` in the other). All six permutations produced byte-identical
+retained content. That control is now
+`test_latest_only_retention_is_independent_of_trigger_firing_order`, which
+asserts the two orders *differ* without retention and *agree* with it — so it
+cannot pass vacuously.
+
+**The census, so this cannot recur.** `test_every_sync_log_writer_has_a_
+retention_scope` parses `sqlite_master` for triggers containing
+`INSERT INTO sync_log`, extracts each entity literal, and asserts
+`covered == writers` **both directions**; a sibling asserts every writer has
+both of its `sync_log_prune_*` triggers. There is deliberately **no
+allowlist** — all nine are covered, so an exemption row would have nothing to
+hold. Bite-proof: dropping `world_book_entries` from the scope tuple reds it
+with `sync_log writers with no retention rule: ['world_book_entries']`;
+renaming one trigger in the migration reds both the runtime and the schema
+census.
+
+**Identifier validation (Qodo finding 2).** `prune_sync_log()` interpolated
+`{table}` / `{id_expr}` / `{floor_expr}` straight into an f-string. Now only
+two fragments are identifiers at all — the table and its id column — and the
+scope tuples carry those as *names*, not expressions, routed through
+`sql_validation.validate_table_name` / `validate_column_name` and
+`escape_identifier` by `_sync_log_scope_identifiers()` before the sweep's
+`try:` (so a rejected scope surfaces as itself, not as a generic "failed to
+prune"). Everything else — the version floor, the liveness clause, the
+tombstone exclusion — is a **fixed SQL literal selected by a `bool`**, so
+there is no string for a caller to influence; that is the structural half of
+the answer for the fragments an identifier checker cannot validate.
+`validate_column_name` fails *closed* for a table with no `VALID_COLUMNS`
+entry, so the three new tables were registered there and pinned against a live
+schema by `test_sync_log_latest_only_table_columns_are_live`.
+
+**One pre-existing defect deliberately NOT fixed here.** Hard-deleting a
+`world_books` row cascades to `world_book_entries`, whose `sync_delete`
+emitter reads `(SELECT client_id FROM world_books WHERE id =
+OLD.world_book_id)` — already gone during the cascade — and raises `NOT NULL
+constraint failed: sync_log.client_id`. No shipped path hard-deletes a world
+book (`delete_world_book` is a soft delete), and retention neither causes nor
+worsens it. Recorded rather than fixed inside a retention change.
 
 Also worth recording: `get_sync_log_entries(since_change_id=…)` has **no**
 version filter — it is a change-feed API, and after v45 it returns a frontier
@@ -248,15 +342,33 @@ which is also the honest name: retention is a different concern from emission.
 ### Modified/added files
 
 * `tldw_chatbook/DB/ChaChaNotes_DB.py` — version bump, `_migrate_from_v44_to_v45`,
-  `_SYNC_LOG_RETENTION_SCOPES`, `prune_sync_log`, `delete_sync_log_entries`,
+  `_SYNC_LOG_RETENTION_SCOPES`, `_SYNC_LOG_LATEST_ONLY_SCOPES`,
+  `_sync_log_scope_identifiers`, `prune_sync_log`, `delete_sync_log_entries`,
   `delete_sync_log_entries_before`
 * `tldw_chatbook/DB/migrations/chachanotes_v44_to_v45_sync_log_retention.sql` (new)
+* `tldw_chatbook/DB/sql_validation.py` — `VALID_COLUMNS` entries for
+  `chat_dictionaries` / `world_books` / `world_book_entries`, without which
+  `validate_column_name` fails closed for the retention sweep
 * `Tests/DB/test_chachanotes_sync_log_retention.py` (new)
 * `Tests/DB/test_chachanotes_sync_log_retention_migration.py` (new — carries the
   repo's exact schema-version pin, moved on from the v43→v44 file)
+* `Tests/DB/test_sql_validation.py` — the three new column sets pinned against a
+  live migrated database
 * `Tests/DB/test_chachanotes_sync_conflict_preservation_migration.py` — pin
   relaxed to `>= 44`
 * `Tests/ChaChaNotesDB/test_chachanotes_db.py`,
   `Tests/ChaChaNotesDB/test_provider_continuation.py`,
   `Tests/Notes/test_note_import_executor.py` — three assertions that counted
   superseded `sync_log` history, rewritten to assert the frontier directly
+
+### Verification (final state)
+
+`Tests/DB` + `Tests/ChaChaNotesDB` + `Tests/Sync_Interop`: **1723 passed, 1
+skipped** (1710 → +13 new). `Tests/Notes`: **2847 passed, 5 skipped**.
+`Tests/Character_Chat` + `Tests/Architecture`: 1162 passed, 1 skipped, 4 failed
+— all four in `Tests/Architecture` and about `UI/Screens/chat_screen.py`, a
+file this branch does not touch (pre-existing dev reds). Repo-wide
+`--collect-only -q`: **56182 tests collected**, with
+`Tests/UI/test_library_file_notes_workspace.py` ignored — it errors at
+collection (`function uses no argument 'push_phase'`) on a file identical to
+the merge base, last touched 2026-08-20 by an unrelated commit.

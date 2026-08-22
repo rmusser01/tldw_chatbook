@@ -249,6 +249,64 @@ VALID_COLUMNS = {
         "client_id",
         "version",
     },
+    # task-19564: registered so ``CharactersRAGDB.prune_sync_log()`` can route
+    # its retention-scope identifiers through ``validate_column_name`` for the
+    # three ``sync_log`` writers v45 covers with the latest-only rule. Without
+    # an entry here that call fails CLOSED (see this function's TASK-864 note),
+    # so these three sets are load-bearing, not decorative. Columns verified
+    # against ``PRAGMA table_info`` on a live fully-migrated database and
+    # pinned there by
+    # ``Tests/DB/test_sql_validation.py::test_sync_log_latest_only_table_columns_are_live``.
+    "chat_dictionaries": {
+        "id",
+        "name",
+        "description",
+        "file_path",
+        "content",
+        "entries_json",
+        "strategy",
+        "max_tokens",
+        "enabled",
+        "created_at",
+        "last_modified",
+        "deleted",
+        "client_id",
+        "version",
+    },
+    "world_books": {
+        "id",
+        "name",
+        "description",
+        "scan_depth",
+        "token_budget",
+        "recursive_scanning",
+        "enabled",
+        "created_at",
+        "last_modified",
+        "deleted",
+        "client_id",
+        "version",
+    },
+    # Note there is deliberately no ``deleted``/``version``/``client_id`` here:
+    # ``world_book_entries`` is hard-delete-only and unversioned, which is why
+    # its retention rule cannot key on either (see the v45 migration header).
+    "world_book_entries": {
+        "id",
+        "world_book_id",
+        "keys",
+        "content",
+        "enabled",
+        "position",
+        "insertion_order",
+        "priority",
+        "selective",
+        "secondary_keys",
+        "case_sensitive",
+        "regex",
+        "extensions",
+        "created_at",
+        "last_modified",
+    },
     # Media DB
     "Media": {
         "id",

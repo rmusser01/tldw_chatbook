@@ -6752,3 +6752,34 @@ not cross from one half to the other. Rule: when a change claims to bound a
 shared table, derive the covered set from the table's own writers and assert
 `covered == writers` in a census test, exactly as the FTS half did; otherwise
 the AC's example list silently becomes the scope.
+
+**Follow-on, same branch, after a third-party reviewer converged on the same
+find.** Qodo's review of PR #1974 reported the identical three omissions. Two
+things were learned closing it, both worth carrying:
+
+*A documented gap is not a shipped gap.* The branch had already written the
+residue up honestly, with reasons it was hard. That is better than silence, but
+the docstring still said "Delete every `sync_log` row no reader can reach"
+while three entities' plaintext survived deletion — an untrue contract in a
+*privacy* fix. When an independent reviewer names the same gap, that is the
+signal to price the fix again rather than re-defend the deferral.
+
+*"Order-independent" is a claim that needs a control, not an argument.* The
+rule that shipped had to survive SQLite's undefined firing order for same-kind
+triggers. Re-running every scenario under six permutations of the emitters'
+creation order and getting identical results proves nothing on its own — the
+permutation might not reach the firing order at all. The evidence is the
+**control**: with the retention triggers dropped, the same soft delete emits
+`update@cid3, delete@cid4` in one permutation and `delete@cid3, update@cid4` in
+the other. Only then does "identical with retention" mean something. The shipped
+test asserts both halves — differ without, agree with — so it cannot pass
+vacuously. Generalises: any experiment of the form "X does not depend on Y"
+needs a run showing Y actually varied.
+
+One more concrete trap from the same work: `CURRENT_TIMESTAMP` is constant
+within a single `sqlite3_step()`, so a timestamp trigger's nested UPDATE
+usually writes the *same* value the outer statement did and its emitter's
+`OLD.x IS NOT NEW.x` guard stays false. The hazard only appears when the outer
+statement supplies a different timestamp — which means probing the natural path
+alone would have concluded, wrongly, that there was no same-version content
+row. Construct the hostile input; the friendly one hid the bug.

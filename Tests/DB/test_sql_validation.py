@@ -130,6 +130,32 @@ class TestValidateTableName:
         for column in registered:
             assert validate_column_name(column, "ChunkingTemplates") is True
 
+    def test_sync_log_latest_only_table_columns_are_live(self, tmp_path):
+        """task-19564: the three tables `prune_sync_log` validates against.
+
+        `validate_column_name` fails CLOSED for a table with no `VALID_COLUMNS`
+        entry, so these three sets are what lets the retention sweep route its
+        identifiers through this module at all. Pinned against a live
+        fully-migrated database so a future world-book/dictionary column
+        change cannot leave the registration stale.
+        """
+        from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+        database = CharactersRAGDB(str(tmp_path / "scopes.db"), client_id="test")
+        try:
+            for _, table, id_column, _, _ in CharactersRAGDB._SYNC_LOG_LATEST_ONLY_SCOPES:
+                assert validate_table_name(table, "chachanotes") is True
+                live = {
+                    row["name"]
+                    for row in database.get_connection().execute(
+                        f"PRAGMA table_info({table})"
+                    )
+                }
+                assert VALID_COLUMNS[table] == live, table
+                assert validate_column_name(id_column, table) is True
+        finally:
+            database.close_connection()
+
     def test_valid_prompts_tables(self):
         """Test valid table names for prompts database."""
         valid_tables = [

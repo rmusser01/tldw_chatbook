@@ -51,12 +51,17 @@ SCHEMA_NAME = CharactersRAGDB._SCHEMA_NAME
 RETENTION_TRIGGERS = {
     f"sync_log_prune_{entity}{suffix}"
     for entity in (
+        # versioned rule
         "messages",
         "conversations",
         "notes",
         "character_cards",
         "keywords",
         "keyword_collections",
+        # latest-only rule (added after Qodo's review of PR #1974)
+        "chat_dictionaries",
+        "world_books",
+        "world_book_entries",
     )
     for suffix in ("", "_hard")
 }
@@ -252,6 +257,87 @@ def test_a_failure_mid_step_rewinds_to_v44_with_nothing_applied(
         assert migrated.execute_query(
             "SELECT COUNT(*) FROM sync_log WHERE payload LIKE ?", (f"%{needle}%",)
         ).fetchone()[0] == 0
+    finally:
+        migrated.close_connection()
+
+
+def test_upgrading_a_real_v44_database_purges_the_latest_only_backlog(tmp_path: Path):
+    """The same AC for the three writers the first cut of v45 left uncovered.
+
+    Qodo's review of PR #1974 found `chat_dictionaries`, `world_books` and
+    `world_book_entries` writing `sync_log` with no retention. A v44 database
+    is seeded through the shipped public APIs and must come out the other side
+    holding no deleted or superseded content for any of them --
+    `world_book_entries` in particular, whose payload carries the lorebook
+    prose and whose only delete path is a hard `DELETE` that orphans it.
+    """
+    db_path = tmp_path / "chachanotes.db"
+    with chachanotes_db_at_version(db_path, 44) as historical:
+        from tldw_chatbook.Character_Chat import Chat_Dictionary_Lib as chat_dict_lib
+        from tldw_chatbook.Character_Chat.world_book_manager import WorldBookManager
+
+        dictionary_id = chat_dict_lib.save_chat_dictionary(
+            historical, name="upgrade-dict", description="dict-gone", content="body"
+        )
+        chat_dict_lib.update_chat_dictionary(
+            historical, dictionary_id, description="dict-kept"
+        )
+        chat_dict_lib.delete_chat_dictionary(historical, dictionary_id)
+
+        books = WorldBookManager(historical)
+        book_id = books.create_world_book(name="upgrade-book", description="book-gone")
+        books.update_world_book(book_id, description="book-kept")
+
+        deleted_book = books.create_world_book(
+            name="upgrade-book-2", description="deleted-book"
+        )
+        books.delete_world_book(deleted_book)
+
+        entry_id = books.create_world_book_entry(
+            book_id, keys=["k"], content="lore-superseded"
+        )
+        books.update_world_book_entry(entry_id, content="lore-kept")
+        gone_entry = books.create_world_book_entry(
+            book_id, keys=["g"], content="lore-hard-deleted"
+        )
+        books.delete_world_book_entry(gone_entry)
+
+        connection = historical.get_connection()
+        payloads_before = [
+            row[0] for row in connection.execute("SELECT payload FROM sync_log")
+        ]
+        # The defect, on a real v44 database: every one of these survives.
+        for gone in (
+            "dict-gone",
+            "dict-kept",
+            "book-gone",
+            "deleted-book",
+            "lore-superseded",
+            "lore-hard-deleted",
+        ):
+            assert any(gone in payload for payload in payloads_before), gone
+
+    migrated = CharactersRAGDB(db_path, client_id="v45-upgrade")
+    try:
+        connection = migrated.get_connection()
+        payloads_after = [
+            row[0] for row in connection.execute("SELECT payload FROM sync_log")
+        ]
+        for gone in (
+            "dict-gone",  # superseded edit
+            "dict-kept",  # the frontier of a SOFT-DELETED dictionary
+            "book-gone",  # superseded edit
+            "deleted-book",  # the frontier of a soft-deleted world book
+            "lore-superseded",  # superseded lorebook prose
+            "lore-hard-deleted",  # orphaned lorebook prose
+        ):
+            assert not any(gone in payload for payload in payloads_after), gone
+        # A LIVE entity keeps exactly one content-bearing proof.
+        assert sum("book-kept" in payload for payload in payloads_after) == 1
+        assert sum("lore-kept" in payload for payload in payloads_after) == 1
+        # The converged state matches what the triggers maintain, so the
+        # maintenance sweep finds nothing left to do.
+        assert migrated.prune_sync_log() == 0
     finally:
         migrated.close_connection()
 
