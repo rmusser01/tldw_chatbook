@@ -1,6 +1,6 @@
 ---
 id: TASK-15459
-title: Library: compose once per visit
+title: 'Library: compose once per visit'
 status: Done
 assignee:
   - claude

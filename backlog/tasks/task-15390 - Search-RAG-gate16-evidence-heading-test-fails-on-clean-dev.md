@@ -27,6 +27,7 @@ Nobody in this arc root-caused it (out of scope both times it surfaced); it is N
 long-standing known-ambient list (the old ~45 shell-geometry failures were fixed on dev
 separately), so it is presumably a recent regression or a test drifted from a deliberate
 Search/RAG copy change.
+<!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->

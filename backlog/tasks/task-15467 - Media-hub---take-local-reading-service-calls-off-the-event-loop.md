@@ -1,6 +1,6 @@
 ---
 id: TASK-15467
-title: Media hub: take local reading-service calls off the event loop
+title: 'Media hub: take local reading-service calls off the event loop'
 status: Done
 assignee:
   - '@claude'

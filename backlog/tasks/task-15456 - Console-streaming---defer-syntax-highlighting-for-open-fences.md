@@ -1,6 +1,6 @@
 ---
 id: TASK-15456
-title: Console streaming: defer syntax highlighting for open fences
+title: 'Console streaming: defer syntax highlighting for open fences'
 status: Done
 assignee:
   - '@claude'

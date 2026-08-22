@@ -1,6 +1,6 @@
 ---
 id: TASK-464
-title: Character import: accept integer position in embedded character_book
+title: 'Character import: accept integer position in embedded character_book'
 status: To Do
 assignee: []
 created_date: '2026-07-21 22:00'

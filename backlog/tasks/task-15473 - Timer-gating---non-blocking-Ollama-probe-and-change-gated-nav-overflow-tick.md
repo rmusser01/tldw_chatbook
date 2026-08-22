@@ -1,6 +1,6 @@
 ---
 id: TASK-15473
-title: Timer gating: non-blocking Ollama probe and change-gated nav overflow tick
+title: 'Timer gating: non-blocking Ollama probe and change-gated nav overflow tick'
 status: Done
 assignee: []
 created_date: '2026-08-11 12:05'

@@ -1,6 +1,6 @@
 ---
 id: TASK-15468
-title: Notes ingest: run the import loop off the event loop
+title: 'Notes ingest: run the import loop off the event loop'
 status: Done
 assignee:
   - '@claude'

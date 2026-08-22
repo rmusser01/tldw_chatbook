@@ -1,6 +1,6 @@
 ---
 id: TASK-15454
-title: Console rail search: move DB work inside its debounce and re-guard the workspace tray
+title: 'Console rail search: move DB work inside its debounce and re-guard the workspace tray'
 status: Done
 assignee:
   - '@claude'
