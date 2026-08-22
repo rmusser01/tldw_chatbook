@@ -68,7 +68,7 @@ away".
 - [ ] The `busy_timeout` question is **measured, not assumed**: either a writer
       collision is shown to stall the loop and a timeout is set, or the concern
       is recorded as refuted with the measurement
-- [ ] `transaction()` either supports nesting (savepoints) or
+- [x] `transaction()` either supports nesting (savepoints) or
       `record_check_result` stops nesting it; a test pins that a failure after
       the inner scope rolls the whole unit back
 - [ ] The subscriptions DB connection is closed on shutdown and the `-wal` is
@@ -139,12 +139,26 @@ Red-proofed on behaviour, not vocabulary: against the unfixed code the forced
 interleave fetches the feed **2 times for one overlap**. `Tests/Subscriptions/`
 755 passed.
 
+**C also shipped (2026-08-21).** `transaction()` now tracks nesting depth per
+thread -- only the outermost block commits or rolls back -- mirroring
+`ChaChaNotes_DB`'s `TransactionContextManager` rather than inventing a
+savepoint scheme. Depth is cleared in a `finally`, so a raise cannot strand it
+and silently turn every later transaction into a no-op joiner.
+
+**The specific claim in C is REFUTED by measurement.** `record_check_result`
+does not nest today: instrumenting `transaction()` across a real call observed
+**depth 1, one entry**. The lane's CONFIRMED-LATENT rating was right about the
+hazard and wrong about that call site. The fix stands anyway -- it converts a
+silent-partial-persistence trap into a structural impossibility instead of
+relying on nobody ever nesting -- and is red-proofed: against the unfixed
+context manager, the nested write survives a deliberate failure in the outer
+scope.
+
 **Still open:**
 
 * **B** -- the 22 `async def` methods doing synchronous sqlite on the loop.
   See this task's own busy_timeout measurement above: the 5s stall exposure is
   writer-vs-writer only (WAL), but every one of the 22 still blocks the loop
   for its own query duration.
-* **C** -- `transaction()` is not re-entrant and `record_check_result` nests
-  it, so the inner `commit()` durably commits the outer transaction early;
-  plus the leaked thread-local connection that never checkpoints the `-wal`.
+* **C residue** -- the leaked thread-local connection that is never closed and
+  never checkpoints the `-wal`. Untouched here.
