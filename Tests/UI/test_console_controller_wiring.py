@@ -151,9 +151,19 @@ def test_fleet_controller_is_constructed_with_late_bound_screen_edges() -> None:
 
     assert controller._pending_handoffs_accessor() is pending_handoffs
     assert controller._ensure_chat_store() is store
-    assert controller._chat_store_accessor() is store
     assert controller._active_session_id_accessor() == "late-session"
     assert controller._chat_sessions_accessor() is sessions
+
+    chat_controller = object()
+    screen._ensure_console_chat_controller = lambda: chat_controller
+    assert controller._ensure_chat_controller() is chat_controller
+
+    def raise_controller_error() -> None:
+        raise RuntimeError("replacement controller unavailable")
+
+    screen._ensure_console_chat_controller = raise_controller_error
+    with pytest.raises(RuntimeError, match="replacement controller unavailable"):
+        controller._ensure_chat_controller()
 
     wake_calls: list[object] = []
     wake = SimpleNamespace(

@@ -446,14 +446,14 @@ def build_console_controllers(
     screen._fleet = ConsoleFleetLifecycleController(
         pending_handoffs_accessor=lambda: screen.app_instance.pending_handoffs,
         ensure_chat_store=lambda: screen._ensure_console_chat_store(),
-        chat_store_accessor=lambda: screen._console_chat_store,
+        ensure_chat_controller=lambda: screen._ensure_console_chat_controller(),
         activate_workspace_for_session=(
             lambda session_id: (
                 screen._workspace._set_active_workspace_for_console_session(session_id)
             )
         ),
         switch_chat_session=(
-            lambda session_id: screen._ensure_console_chat_controller().switch_session(
+            lambda session_id: screen._console_chat_controller.switch_session(
                 session_id
             )
         ),

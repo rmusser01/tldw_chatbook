@@ -19,7 +19,7 @@ from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
 _CALLBACK_NAMES = (
     "pending_handoffs_accessor",
     "ensure_chat_store",
-    "chat_store_accessor",
+    "ensure_chat_controller",
     "activate_workspace_for_session",
     "switch_chat_session",
     "schedule_native_console_sync",
@@ -154,6 +154,7 @@ def test_completion_claim_prefers_exact_session_and_acknowledges_once() -> None:
         ("pending_handoffs_accessor", ()),
         ("claim", (HandoffChannel.CONSOLE_FLEET_COMPLETION,)),
         ("ensure_chat_store", ()),
+        ("ensure_chat_controller", ()),
         ("activate_workspace_for_session", ("exact-session",)),
         ("switch_chat_session", ("exact-session",)),
         ("schedule_native_console_sync", ()),
@@ -176,7 +177,8 @@ def test_completion_claim_uses_last_conversation_match() -> None:
     result = edges.controller.consume_pending_console_fleet_completion()
 
     assert result is True
-    assert edges.calls[-4:] == [
+    assert edges.calls[-5:] == [
+        ("ensure_chat_controller", ()),
         ("activate_workspace_for_session", ("last",)),
         ("switch_chat_session", ("last",)),
         ("schedule_native_console_sync", ()),
@@ -225,6 +227,34 @@ def test_completion_exception_releases_claim_without_acknowledging() -> None:
         ("pending_handoffs_accessor", ()),
         ("claim", (HandoffChannel.CONSOLE_FLEET_COMPLETION,)),
         ("ensure_chat_store", ()),
+        ("release", (claim,)),
+    ]
+
+
+def test_completion_controller_failure_releases_before_workspace_activation() -> None:
+    target = _session("target", conversation_id="conversation-a")
+    edges, claim = _completion_edges(
+        sessions=(target,),
+        active_session_id="other-session",
+        target=ConsoleFleetCompletionTarget(
+            conversation_id="conversation-a",
+            session_id=target.id,
+        ),
+    )
+
+    def raise_controller_error() -> None:
+        raise RuntimeError("controller unavailable")
+
+    edges.replace("ensure_chat_controller", raise_controller_error)
+
+    result = edges.controller.consume_pending_console_fleet_completion()
+
+    assert result is False
+    assert edges.calls == [
+        ("pending_handoffs_accessor", ()),
+        ("claim", (HandoffChannel.CONSOLE_FLEET_COMPLETION,)),
+        ("ensure_chat_store", ()),
+        ("ensure_chat_controller", ()),
         ("release", (claim,)),
     ]
 

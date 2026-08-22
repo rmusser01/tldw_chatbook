@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
@@ -13,6 +13,18 @@ from tldw_chatbook.Chat.console_chat_models import (
 )
 from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
 
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from textual.timer import Timer
+    from textual.worker import Worker
+
+    from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+    from tldw_chatbook.Chat.console_chat_store import (
+        ConsoleChatSession,
+        ConsoleChatStore,
+    )
+    from tldw_chatbook.UI.Navigation.pending_handoff_store import PendingHandoffStore
+
 
 class ConsoleFleetLifecycleController:
     """Own Console fleet lifecycle policy without owning screen or DOM state."""
@@ -20,43 +32,43 @@ class ConsoleFleetLifecycleController:
     def __init__(
         self,
         *,
-        pending_handoffs_accessor: Callable[..., Any],
-        ensure_chat_store: Callable[..., Any],
-        chat_store_accessor: Callable[..., Any],
-        activate_workspace_for_session: Callable[..., Any],
-        switch_chat_session: Callable[..., Any],
-        schedule_native_console_sync: Callable[..., Any],
-        ensure_agent_bridge: Callable[..., Any],
-        wire_wake_coordinator: Callable[..., Any],
-        seed_wake_from_marks: Callable[..., Any],
-        retry_wake_soon: Callable[..., Any],
-        wake_has_pending: Callable[..., Any],
-        wake_delivering_conversation_id: Callable[..., Any],
+        pending_handoffs_accessor: Callable[[], PendingHandoffStore],
+        ensure_chat_store: Callable[[], ConsoleChatStore],
+        ensure_chat_controller: Callable[[], ConsoleChatController],
+        activate_workspace_for_session: Callable[[str], None],
+        switch_chat_session: Callable[[str], ConsoleChatSession],
+        schedule_native_console_sync: Callable[[], Worker[None]],
+        ensure_agent_bridge: Callable[[], ConsoleAgentBridge | None],
+        wire_wake_coordinator: Callable[[], bool],
+        seed_wake_from_marks: Callable[[], bool],
+        retry_wake_soon: Callable[[], None],
+        wake_has_pending: Callable[[str], bool],
+        wake_delivering_conversation_id: Callable[[], str | None],
         displayed_composer_draft_accessor: Callable[[], str | None],
-        screen_displayed_accessor: Callable[..., Any],
-        screen_mounted_accessor: Callable[..., Any],
-        active_session_id_accessor: Callable[..., Any],
-        chat_sessions_accessor: Callable[..., Any],
-        defer_on_message_pump: Callable[..., Any],
-        start_transcript_sync_timer: Callable[..., Any],
-        transcript_sync_timer_active: Callable[..., Any],
+        screen_displayed_accessor: Callable[[], bool],
+        screen_mounted_accessor: Callable[[], bool],
+        active_session_id_accessor: Callable[[], str | None],
+        chat_sessions_accessor: Callable[[], tuple[ConsoleChatSession, ...]],
+        defer_on_message_pump: Callable[[Callable[[], None]], bool],
+        start_transcript_sync_timer: Callable[[], None],
+        transcript_sync_timer_active: Callable[[], bool],
         sync_native_console_ui: Callable[[], Awaitable[None]],
-        create_interval: Callable[..., Any],
-        record_timer_created: Callable[..., Any],
-        record_timer_stopped: Callable[..., Any],
-        chat_controller_available: Callable[..., Any],
-        fleet_has_unsettled_children: Callable[..., Any],
-        run_marker_for_session: Callable[..., Any],
-        fleet_teardown_split: Callable[..., Any],
+        create_interval: Callable[[float, Callable[[], Awaitable[None]]], Timer],
+        record_timer_created: Callable[[str], None],
+        record_timer_stopped: Callable[[str], None],
+        chat_controller_available: Callable[[], bool],
+        fleet_has_unsettled_children: Callable[[], bool],
+        run_marker_for_session: Callable[[str], ConsoleRunMarker],
+        fleet_teardown_split: Callable[[], tuple[int, int]],
         leave_runtime: Callable[[], Awaitable[bool]],
-        stage_teardown_notices: Callable[..., Any],
-        fleet_unseen_revision_accessor: Callable[..., Any],
-        read_fleet_unseen_ids: Callable[..., Any],
-        clear_fleet_unseen: Callable[..., Any],
+        stage_teardown_notices: Callable[[int, int], tuple[None, None]],
+        fleet_unseen_revision_accessor: Callable[[], int],
+        read_fleet_unseen_ids: Callable[[], frozenset[str]],
+        clear_fleet_unseen: Callable[[str], bool],
     ) -> None:
         self._pending_handoffs_accessor = pending_handoffs_accessor
         self._ensure_chat_store = ensure_chat_store
-        self._chat_store_accessor = chat_store_accessor
+        self._ensure_chat_controller = ensure_chat_controller
         self._activate_workspace_for_session = activate_workspace_for_session
         self._switch_chat_session = switch_chat_session
         self._schedule_native_console_sync = schedule_native_console_sync
@@ -116,6 +128,7 @@ class ConsoleFleetLifecycleController:
                 pending_handoffs.acknowledge(claim)
                 return False
             if store.active_session_id != match.id:
+                self._ensure_chat_controller()
                 self._activate_workspace_for_session(match.id)
                 self._switch_chat_session(match.id)
                 self._schedule_native_console_sync()
@@ -221,7 +234,7 @@ class ConsoleFleetLifecycleController:
 
     def _console_run_marker_with_unseen(
         self,
-        session: Any,
+        session: ConsoleChatSession,
         unseen_ids: frozenset[str],
     ) -> ConsoleRunMarker:
         """Derive a live run marker with unseen as the lowest precedence."""
@@ -234,7 +247,7 @@ class ConsoleFleetLifecycleController:
 
     def prepare_session_run_markers(
         self,
-        sessions: tuple[Any, ...],
+        sessions: tuple[ConsoleChatSession, ...],
         active_session_id: str | None,
     ) -> dict[str, ConsoleRunMarker] | None:
         """Clear a viewed unseen mark when safe and derive session markers."""

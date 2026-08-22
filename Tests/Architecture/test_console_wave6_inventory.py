@@ -46,7 +46,7 @@ FLEET_CONTROLLER_CALLBACKS = frozenset(
     {
         "pending_handoffs_accessor",
         "ensure_chat_store",
-        "chat_store_accessor",
+        "ensure_chat_controller",
         "activate_workspace_for_session",
         "switch_chat_session",
         "schedule_native_console_sync",
@@ -1881,6 +1881,17 @@ def _assert_fleet_controller_boundary(controller: ast.ClassDef) -> None:
     assert init.args.kw_defaults == [None] * len(init.args.kwonlyargs)
     assert init.args.vararg is None
     assert init.args.kwarg is None
+    callback_annotations = {
+        argument.arg: ast.unparse(argument.annotation)
+        for argument in init.args.kwonlyargs
+        if argument.annotation is not None
+    }
+    assert callback_annotations.keys() == FLEET_CONTROLLER_CALLBACKS
+    assert not {
+        name: annotation
+        for name, annotation in callback_annotations.items()
+        if "Callable[...," in annotation
+    }, "fleet constructor callbacks must have explicit arity"
 
     expected_assignments = {
         *(f"_{name}" for name in FLEET_CONTROLLER_CALLBACKS),
