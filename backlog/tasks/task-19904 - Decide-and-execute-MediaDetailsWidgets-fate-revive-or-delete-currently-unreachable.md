@@ -1,5 +1,5 @@
 ---
-id: TASK-19641
+id: TASK-19904
 title: Decide and execute MediaDetailsWidget's fate — revive or delete (currently unreachable)
 status: To Do
 assignee: []

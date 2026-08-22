@@ -7,7 +7,7 @@
   TASK-19803 (PR B — schema v7 + CRUD), TASK-19804 (PR C — convergence),
   TASK-19805 (PR D — ingest consumers), TASK-19806 (PR E — re-chunk &
   report) — the PR 0/A–E board tasks of the Chunking Template Parity
-  sub-project (#2 of the parity program); §11 follow-ups TASK-19641–19648
+  sub-project (#2 of the parity program); §11 follow-ups TASK-19643–19648 + TASK-19904–19905 (19641/19642 renumbered onto 19904/19905 after a dev-side ID collision at merge time)
 - **Related:** `Docs/superpowers/specs/2026-08-21-chunking-template-parity-design.md`
   (design; §13's eight maintainer rulings are the long-form version of this
   ADR), `Docs/superpowers/plans/2026-08-21-chunking-template-parity.md`
