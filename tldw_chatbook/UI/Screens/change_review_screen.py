@@ -1044,9 +1044,20 @@ def _land_on_ui(app, callback: Callable, *args) -> None:
     try:
         app.call_from_thread(callback, *args)
     except RuntimeError:
+        # Qodo #2 (PR #1958): the exception TYPE alone cannot separate the
+        # two cases this guard straddles. `call_from_thread` raises
+        # RuntimeError for teardown AND re-raises whatever the callback
+        # raised -- so a genuine bug that happens to be a RuntimeError was
+        # read as shutdown and vanished into one misleading debug line.
+        # `App.is_running` is the real discriminator: it is exactly what
+        # `call_from_thread` consults before raising "App is not running",
+        # so a RuntimeError seen while the app is STILL running cannot be
+        # teardown and must stay loud.
+        if getattr(app, "is_running", False):
+            raise
         logger.debug(
-            "change_review: git-action landing skipped -- the app is no "
-            "longer accepting callbacks"
+            "change_review: app is no longer accepting callbacks; "
+            "dropping a worker landing"
         )
 
 
@@ -2353,36 +2364,23 @@ class ChangeReviewScreen(Screen):
             from tldw_chatbook.Workspaces.git_workspace import GitWorkspaceError
 
             def _land(callback, *args) -> None:
-                """Hand a result back to the UI thread, tolerating teardown.
+                """Hand a per-root result back to the UI thread.
 
-                ``call_from_thread`` raises once the app is shutting down
-                -- which a status read can easily outlive, since it is a
-                git subprocess. Unhandled, that surfaces as a logged
-                ``WorkerFailed``; worse, raising out of a PER-ROOT landing
-                mid-loop would abort the roots after it and quietly break
-                the per-root isolation this loop exists to guarantee.
+                Delegates to the module-level :func:`_land_on_ui` rather
+                than repeating its policy. TASK-19703 / Qodo #2 (PR #1958)
+                is why: this helper carried a SECOND copy of the
+                teardown-vs-bug rule, and when that rule was sharpened to
+                consult ``App.is_running`` the copy here was left behind —
+                so a landing bug that raised ``RuntimeError`` still
+                vanished on exactly the path the fix was written for. One
+                implementation, one place to sharpen.
 
-                ``RuntimeError`` ONLY, deliberately (re-review round 2):
-                Textual signals teardown as
-                ``RuntimeError("App is not running")`` (``app.py``; a
-                closed loop reports ``RuntimeError`` too), while
-                ``call_from_thread`` ALSO re-raises whatever the landing
-                callback itself raised -- and the landings do real work
-                (tree queries, ``_populate_tree``, banner math). A bare
-                ``except Exception`` here would downgrade a genuine bug in
-                them to one debug line whose text ("app is no longer
-                accepting callbacks") would be an outright lie, instead of
-                the loud ``WorkerFailed`` traceback Textual gives it.
-                ``CancelledError`` is a ``BaseException`` and was never
-                caught here in either form.
+                The per-root isolation this loop guarantees is unchanged:
+                ``_land_on_ui`` swallows genuine teardown, so a shutdown
+                mid-loop still cannot abort the remaining roots, while a
+                real bug is now loud in both helpers alike.
                 """
-                try:
-                    app.call_from_thread(callback, *args)
-                except RuntimeError:
-                    logger.debug(
-                        "change_review: current-mode landing skipped -- "
-                        "the app is no longer accepting callbacks"
-                    )
+                _land_on_ui(app, callback, *args)
 
             statuses: list["CurrentRootStatus"] = []
             #: TASK-16801 T8 (spec §6): the PR link's availability per root,

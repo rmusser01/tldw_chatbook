@@ -82,6 +82,33 @@ separately with the reason for the difference. Guide stamped honestly: not
 driven live, corrected by reading the shipped code against the page's own
 claim.
 
+**Qodo round (PR #1958):** one substantive finding, and it was right in a
+way that improved the fix. `_land_on_ui` tolerated `RuntimeError` because
+that is Textual's teardown signal — but `call_from_thread` ALSO re-raises
+whatever the callback raised, so a genuine bug that happens to be a
+`RuntimeError` was read as shutdown and vanished. Routing detection through
+that helper (AC #1) therefore narrowed visibility for that one exception
+type. `App.is_running` is the real discriminator — it is exactly what
+`call_from_thread` consults before raising "App is not running" — so the
+guard now re-raises when the app is still alive.
+
+Two consequences worth recording. First, the current-mode worker carried a
+SECOND copy of the same teardown rule in a local `_land` helper, which the
+sharpening would have left behind — so a landing bug still vanished on the
+very path the fix targeted. It now delegates to the one implementation.
+Second, the existing teardown test simulated shutdown by raising
+`RuntimeError("App is not running")` while the app was still running; that
+proxy is exactly what the new discriminator (correctly) treats as a bug, so
+it was rewritten to drive `_land_on_ui` directly against a stub app that is
+genuinely not running.
+
+Declined, with reasoning on the PR: the `Args:`-section docstring request
+(zero tests in these files document pytest fixtures that way) and the
+raw-exception-in-UI concern (this is a single-user local TUI whose banner
+already prints absolute paths and git stderr by design; a generic message
+with detail hidden in a log the user will not find is less honest, not
+more).
+
 **Files:** `tldw_chatbook/UI/Screens/change_review_screen.py`,
 `Docs/superpowers/specs/2026-08-20-console-review-git-modes-design.md`,
 `Docs/User_Guide/console/agent-runs-and-tools.md`,
