@@ -949,7 +949,7 @@ def test_notes_sync_state_inventory_row_is_exact_and_backup_excluded() -> None:
         {
             "id": "C51",
             "module": "tldw_chatbook/Notes/notes_sync_state_schema",
-            "symbol": "_canonical_v2_snapshot",
+            "symbol": "_schema_oracle_connection",
             "owner_id": "notes.sync_state_schema_oracle",
             "classification": "memory",
             "intent": "transient canonical Notes sync-state schema oracle",
@@ -992,7 +992,7 @@ def test_notes_sync_state_inventory_row_is_exact_and_backup_excluded() -> None:
         (
             "notes.sync_state_schema_oracle",
             "tldw_chatbook/Notes/notes_sync_state_schema",
-            "_canonical_v2_snapshot",
+            "_schema_oracle_connection",
         ),
     ]
     assert SQLITE_OWNER_REGISTRY["notes.sync_state"].centralized_backup_allowed is False

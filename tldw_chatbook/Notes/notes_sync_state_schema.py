@@ -676,11 +676,20 @@ def _schema_snapshot(
     )
 
 
+@contextmanager
+def _schema_oracle_connection() -> Iterator[sqlite3.Connection]:
+    connection = connect_private_sqlite(
+        "notes.sync_state_schema_oracle", Path(":memory:")
+    )
+    try:
+        yield connection
+    finally:
+        connection.close()
+
+
 @cache
 def _canonical_v1_snapshot() -> SyncStateSchemaSnapshot:
-    with connect_private_sqlite(
-        "notes.sync_state_schema_oracle", Path(":memory:")
-    ) as connection:
+    with _schema_oracle_connection() as connection:
         connection.execute("PRAGMA foreign_keys = ON")
         for statement in _COMPLETE_V1_STATEMENTS:
             connection.execute(statement)
@@ -694,9 +703,7 @@ def _canonical_v1_snapshot() -> SyncStateSchemaSnapshot:
 
 @cache
 def _canonical_v2_snapshot() -> SyncStateSchemaSnapshot:
-    with connect_private_sqlite(
-        "notes.sync_state_schema_oracle", Path(":memory:")
-    ) as connection:
+    with _schema_oracle_connection() as connection:
         connection.execute("PRAGMA foreign_keys = ON")
         for statement in _COMPLETE_V2_STATEMENTS:
             connection.execute(statement)
