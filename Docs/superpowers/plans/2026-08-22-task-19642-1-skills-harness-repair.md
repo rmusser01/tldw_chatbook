@@ -4,7 +4,7 @@
 
 **Goal:** Restore the 29 assigned Skills Library/import integration failures by aligning their test harness and interactions with the accepted Library lifecycle and Skill-editor contracts.
 
-**Architecture:** Change only the two Skills integration test owners plus task evidence. Reuse the existing returning-user Library app wrapper and bounded Textual wait helpers, make optional Study/Quiz seams inert, and drive the current clean/dirty/delete/create lifecycle instead of changing production behavior.
+**Architecture:** Change only the two Skills integration test owners plus task evidence. Reuse the existing returning-user Library app wrapper and bounded Textual wait helpers, make optional Prompt/Study/Quiz seams inert, and drive the current clean/dirty/delete/create lifecycle instead of changing production behavior.
 
 **Tech Stack:** Python 3.11+, Textual 8.x, pytest/pytest-asyncio, Ruff, Backlog.md.
 
@@ -87,6 +87,7 @@ def _wire_empty_non_skill_services(app) -> None:
     app.notes_scope_service = StaticLibraryNotesListScopeService([])
     app.media_reading_scope_service = StaticLibraryMediaScopeService([])
     app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
+    app.prompt_scope_service = object()
     app.study_scope_service = object()
     app.study_quiz_scope_service = object()
 ```
@@ -149,7 +150,8 @@ Run:
   --tb=short
 ```
 
-Expected: 16 passed. No missing Skills row and no local Study/Quiz backend exception in emitted failure output.
+Expected: 16 passed. No missing Skills row and no local Prompt/Study/Quiz
+backend exception in emitted failure output.
 
 - [ ] **Step 7: Commit the harness repair**
 
@@ -203,7 +205,11 @@ For the clean saved-skill delete paths in:
 replace direct hidden-Delete presses with the real presentation path:
 
 ```python
-screen.query_one("#library-skill-more-actions", Button).press()
+more = await _wait_for_display(
+    screen, pilot, "#library-skill-more-actions"
+)
+assert isinstance(more, Button)
+more.press()
 delete = await _wait_for_display(screen, pilot, "#library-skill-delete")
 assert isinstance(delete, Button)
 delete.press()

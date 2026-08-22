@@ -27,11 +27,11 @@ three test-contract drifts:
    row. The Library test module already provides a wrapper that explicitly
    creates the existing-profile/full-rail posture for tests with this contract.
 2. The shared Skills fixture wires Notes, Media, and Conversations but leaves
-   real Study and Quiz scope services on the app. Their optional decorative
-   count calls can report unavailable backends. Production intentionally catches
-   those errors and degrades the badges to uncounted, so the exceptions are log
-   noise rather than the missing-row cause; the Skills fixture should make its
-   non-owner seams explicitly inert.
+   real Prompt, Study, and Quiz scope services on the app. Their optional
+   decorative count calls can report unavailable backends. Production
+   intentionally catches those errors and degrades the badges to uncounted, so
+   the exceptions are log noise rather than the missing-row cause; the Skills
+   fixture should make its non-owner seams explicitly inert.
 3. TASK-19025 intentionally simplified the Skill editor. A clean saved Skill
    now exposes Back and More actions, Save appears only after a draft changes,
    Delete is revealed under More actions, and the first create-save reports that
@@ -57,18 +57,18 @@ already forwards that argument.
 ### Inert non-Skills owners
 
 `_wire_empty_non_skill_services` will continue to install empty production-
-shaped Notes, Media, and Conversation fakes. It will also replace Study and
-Quiz scope services with objects that expose no optional count seam. This uses
-the production-supported "service unwired" path: the Library renders those
-decorative rows without counts and starts no failing count call.
+shaped Notes, Media, and Conversation fakes. It will also replace Prompt,
+Study, and Quiz scope services with objects that expose no optional count seam.
+This uses the production-supported "service unwired" path: the Library renders
+those decorative rows without counts and starts no failing count call.
 
 The Skills service and, where applicable, the real trust service and real
 `ServicePolicyEnforcer` remain untouched. No trust bypass or fake policy
 enforcer is introduced.
 
-The inert Study/Quiz posture needs no new fake type: assigning plain objects
-to the two optional service slots exercises the already-supported missing-seam
-branch with the smallest possible fixture change.
+The inert Prompt/Study/Quiz posture needs no new fake type: assigning plain
+objects to the three optional service slots exercises the already-supported
+missing-seam branch with the smallest possible fixture change.
 
 ### Observable interaction helpers
 
