@@ -2,7 +2,7 @@
 
 Date: 2026-08-21
 
-Status: Approved; amended after implementation-time RED evidence
+Status: Approved design; production ordering amendment pending spec review
 
 Task: TASK-19642.1
 
@@ -16,7 +16,8 @@ without reverting accepted Library or Skill-editor behavior.
 
 The exact two-file baseline is 29 failed and 5 passed. The initial failures and
 the two latent assertions exposed after repairing the rail fall into four
-test-contract drifts:
+test-contract drifts. Independent closeout verification then exposed one
+production ordering race:
 
 1. Both Skills files import the shared `TldwCli` test factory directly. That
    factory truthfully admits a newly created test profile to the Library
@@ -44,9 +45,20 @@ test-contract drifts:
    actions behind `View details`, and allowed tools now live in the advanced
    editor as a `SelectionList` rather than a basic-mode `Input`. Both failures
    reproduce in isolation and their direct production owner tests pass.
+5. A later clean-HEAD two-file run intermittently timed out waiting for the
+   orphaned-manifest trust header. The list, import action, and blocked Skill
+   row were already visible, while `_sync_library_canvas("skills")` logged a
+   swallowed failure. Five subsequent instrumented ordered runs did not
+   reproduce the exception, but history and lifecycle tracing isolated the
+   race: rail selection starts the off-thread trust-posture worker before the
+   Skills canvas is mounted. If the worker projects after compose captured the
+   old posture but before the replacement canvas mounts, strict targeted sync
+   has no owner and drops `FAILED`, leaving the newly mounted canvas stale.
 
-The focused production owner checks for these lifecycle states pass. The
-repair therefore belongs in the integration harness/tests, not production.
+The first four findings belong in the integration harness/tests. The fifth is
+a production ordering defect at the existing mounted-owner boundary and needs
+one narrow runtime fix; it is not safe to hide it with a longer test timeout or
+an integration-test refresh.
 
 ## Design
 
@@ -115,6 +127,25 @@ The 29 assigned nodes are the regression coverage for this repair. No new test
 module, fixture framework, or production-only seam is added unless an
 implementation-time RED run exposes a contract not represented by those nodes.
 
+### Mounted-owner ordering repair
+
+`_select_library_rail_row_after_source_admission` will start the Skills
+trust-posture refresh only after its targeted route replacement or whole-screen
+recompose has completed and `#library-skills-canvas` owns the destination.
+The refresh remains limited to Browse Skills list mode.
+
+`_load_library_skills_trust_posture` keeps its current route/generation guards,
+focus handoff, and `allow_screen_fallback=False` targeted-sync contract. No
+retry loop, arbitrary delay, swallowed-error suppression, or broad screen
+recompose is added. Service exceptions continue to degrade the posture to the
+existing empty state.
+
+A deterministic owner test will select Browse Skills through the real rail
+route while spying on the refresh boundary. It must observe that the Skills
+canvas is mounted when refresh begins. The existing orphaned-manifest flow will
+continue to prove that a real `needs_resetup` posture renders the header and
+action.
+
 ## Alternatives rejected
 
 - Re-expose full Library navigation to new empty profiles: contradicts accepted
@@ -127,6 +158,11 @@ implementation-time RED run exposes a contract not represented by those nodes.
 - Ignore Prompt/Study/Quiz exceptions because production catches them: leaves hidden
   background noise that can obscure future owner failures and violates this
   task's deterministic-fixture acceptance criterion.
+- Retry a failed posture projection: adds another reconciliation state machine
+  even though the rail-entry caller can satisfy the existing owner precondition.
+- Enable `_sync_library_canvas`'s whole-screen fallback: violates the accepted
+  compose-once/focus-ownership contract for automatic entry workers and masks
+  the ordering defect instead of removing it.
 
 ## Verification
 
@@ -145,16 +181,25 @@ Only tests related to the modified harness/functionality will run:
    - `test_skill_editor_healthy_trust_is_compact_until_details_are_requested`
    - `test_skill_editor_advanced_tool_picker_is_bounded_unique_and_lossless`
    - `test_library_skill_mode_switch_is_targeted_and_remembered`
-4. Run Ruff on the two modified test files and `git diff --check`. The current
+4. Add and run a deterministic entry-owner test proving Skills posture refresh
+   begins only after `#library-skills-canvas` mounts. Re-run the directly
+   related compose-once, stale-route, stale-generation, and callback-composition
+   owner tests.
+5. Run the exact two-file gate three consecutive times from clean HEAD, then
+   repeat the same focused gates after rebasing on current `origin/dev`.
+6. Run Ruff on all modified Python files and a revision-range
+   `git diff --check`. The current
    baseline has two small Ruff findings in `test_skills_library_flow.py`
    (one unused local import and one semicolon-separated pause); because that
    file is already in scope, remove those two findings. Both large files also
    have pre-existing whole-file Ruff-format drift, so do not bulk-reformat or
    claim a green whole-file formatter check; keep every changed hunk formatted
    consistently and record the baseline explicitly.
-5. Perform inverse evidence by temporarily restoring one stale contract at a
+7. Perform inverse evidence by temporarily restoring one stale contract at a
    time (fresh-profile factory, direct clean Delete, or old create-save copy),
-   confirm its named focused test fails, and restore the repair.
+   confirm its named focused test fails, and restore the repair. Temporarily
+   moving the posture refresh back before canvas mounting must also fail the
+   new deterministic owner test.
 
 No repository-wide pytest claim will be made.
 
@@ -164,6 +209,9 @@ ADR required: no new ADR
 
 ADR path: `backlog/decisions/076-library-lifecycle-progressive-disclosure.md`
 
-Reason: this is a test-only realignment with the lifecycle and Skill-editor
-contracts already accepted by ADR-076 and TASK-19025. It changes no storage,
-security, service, runtime, or user-facing architecture.
+Reason: ADR-076 and TASK-19025 already own the Library and Skill-editor
+contracts, and the entry-reconciliation subsystem already requires automatic
+workers to project only into their mounted owner without a whole-screen
+fallback. Moving one existing refresh trigger across that mount boundary is a
+routine sequencing fix within those accepted contracts. It changes no storage,
+security, service interface, or user-facing architecture.
