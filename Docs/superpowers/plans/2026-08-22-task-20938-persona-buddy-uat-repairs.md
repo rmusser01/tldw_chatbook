@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:executing-plans` to implement this plan sequentially. Every production behavior starts with `superpowers:test-driven-development`; use `superpowers:verification-before-completion` before each commit and completion claim. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Restore persisted Persona Buddy preferences on real app startup and size resolved portrait frames to the visible frame slot so restart and full-application UAT are faithful.
+**Goal:** Restore persisted Persona Buddy preferences on real app startup, size resolved portrait frames to the visible frame slot, and clear the project-instructions setup rejection so full-application UAT is faithful and can exercise trusted live states.
 
-**Architecture:** Keep the existing ownership boundaries. `config.py` projects the raw Buddy table but does not parse it; `parse_persona_buddy_preferences()` remains the strict field boundary used by the app-owned controller. `PersonaBuddyWidget` derives one exact visible frame-slot size and uses it both for resolution authority and the controller call. No renderer, schema, CSS, state-priority, or preference-model change is authorized.
+**Architecture:** Keep the existing ownership boundaries. `config.py` projects the raw Buddy table but does not parse it; `parse_persona_buddy_preferences()` remains the strict field boundary used by the app-owned controller. `PersonaBuddyWidget` derives one exact visible frame-slot size and uses it both for resolution authority and the controller call. The Console controller owns terminal run state when project-instructions setup rejects a turn. No renderer, schema, CSS, state-priority, or preference-model change is authorized.
 
 **Tech Stack:** Python 3.11+, Textual 8, TOML, existing Persona Buddy/Persona Visual runtime, pytest/Pilot, tmux for isolated real-app UAT.
 
@@ -22,6 +22,7 @@
 - Create `Tests/Persona_Buddy/test_persona_buddy_config_projection.py` for isolated real-TOML projection, parser defaults, controller startup, and first-write preservation.
 - Modify `tldw_chatbook/Widgets/Persona_Widgets/persona_buddy_widget.py` only to derive resolution dimensions from the mounted, visible `#persona-buddy-frame` content region.
 - Modify `Tests/UI/test_persona_buddy_widget.py` for exact real-CSS frame-region, crop, resize-authority, and hidden/collapsed controls.
+- Modify the focused Console project-instructions/controller test and `tldw_chatbook/Chat/console_chat_controller.py` only if actual-app UAT proves that disabling unavailable project instructions leaves the rejected run non-terminal.
 - Reuse `Tests/UI/test_persona_buddy_app_mount.py`, `Tests/Persona_Buddy/test_persona_buddy_preferences.py`, `Tests/Persona_Buddy/test_persona_buddy_resolution.py`, `Tests/UI/test_personas_workbench_state.py`, and `Tests/Architecture/test_persona_buddy_boundary.py` as regression gates; do not broaden them unless a born-RED test proves an adjacent contract is missing.
 - The existing `/private/tmp/tldw-buddy-uat-profile.GLxMvx` fixture is diagnostic input only. Copy it to a new disposable root before final UAT; never run against it in place or against the real user profile.
 - Do not change `NO_COLOR` behavior. The final child process explicitly unsets it so color evidence is meaningful.
@@ -211,7 +212,34 @@
   git commit -m "fix: size Persona Buddy portraits to frame slot"
   ```
 
-## Task 3: Verify the integrated repair in the actual application
+## Task 3: Terminalize a project-instructions setup rejection
+
+**Files:**
+
+- Modify: `Tests/Chat/test_console_agent_project_instructions.py`
+- Modify: `tldw_chatbook/Chat/console_chat_controller.py`
+
+- [ ] **Step 1: Write the actual disable-path RED**
+
+  Exercise a real controller submission whose enabled project instructions have no eligible binding and whose setup callback returns `disable`. Assert the rejected result is non-accepted, the session preference is disabled, and the run state is terminal rather than `VALIDATING`; then submit again and prove the provider gateway is reached.
+
+- [ ] **Step 2: Run the focused RED**
+
+  ```bash
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/Chat/test_console_agent_project_instructions.py -k 'disable_terminalizes or disable_allows_retry'
+  ```
+
+  Expected: the first result returns `project_instructions_disabled` while the run remains `VALIDATING`, blocking the retry.
+
+- [ ] **Step 3: Apply the narrow controller-owned terminal transition**
+
+  When setup returns `disable`, clear project-instruction delivery and return through the controller's existing blocked/terminal path with fixed content-free copy. Do not auto-resubmit, call the provider, or alter project-instruction persistence ownership.
+
+- [ ] **Step 4: Run GREEN, mutation, and adjacent project-instructions tests**
+
+  Run the focused REDs and the complete project-instructions controller test file. Temporarily restore the raw `ConsoleSubmitResult` return; the terminal-state/retry test must fail. Restore the fix, run scoped Ruff/format/compile/diff checks, and commit the two-file repair.
+
+## Task 4: Verify the integrated repair in the actual application
 
 **Files:**
 
@@ -329,7 +357,7 @@
 
 - [ ] **Step 8: Record closeout truthfully**
 
-  Update TASK-20938 through Backlog CLI: check all six ACs only if every scoped gate is green, replace the provisional plan with the final plan link plus deviations, add concise Implementation Notes with RED/GREEN/mutation/static/full-app evidence, and set status `Done`. If the UAT reveals another independent defect, keep this task In Progress or file a separate collision-safe task before claiming completion.
+  Update TASK-20938 through Backlog CLI: check all seven ACs only if every scoped gate is green, replace the provisional plan with the final plan link plus deviations, add concise Implementation Notes with RED/GREEN/mutation/static/full-app evidence, and set status `Done`. If the UAT reveals another independent defect, keep this task In Progress or file a separate collision-safe task before claiming completion.
 
 - [ ] **Step 9: Verify and commit closeout**
 
@@ -343,4 +371,4 @@
   git status --short --branch
   ```
 
-  Expected: task is Done with six checked ACs, implementation notes and exact evidence; the worktree is clean after commit.
+  Expected: task is Done with seven checked ACs, implementation notes and exact evidence; the worktree is clean after commit.
