@@ -401,6 +401,69 @@ def test_workspace_projection_reconciles_after_restart_without_duplicate_members
     assert _conversation_count(db) == 1
 
 
+def test_shadowed_legacy_persist_cannot_escape_atomic_workspace_promotion(
+    tmp_path, monkeypatch
+):
+    db, registry, service, store = _workspace_store(tmp_path)
+    session = store.create_session(workspace_id="workspace-a", ephemeral=True)
+    session.user_display_name_override = "Rowan"
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hello")
+    before = _memory_state(store, session.id)
+    original_persist = store.persist_session_if_needed
+    shadow_calls = 0
+
+    def unsafe_legacy_shadow(session_id, *, strict_roleplay_context=False):
+        nonlocal shadow_calls
+        shadow_calls += 1
+        original_persist(
+            session_id,
+            strict_roleplay_context=strict_roleplay_context,
+        )
+        raise RuntimeError("strict roleplay/project-context failure")
+
+    monkeypatch.setattr(store, "persist_session_if_needed", unsafe_legacy_shadow)
+    monkeypatch.setattr(
+        service.console_library_policy_repository,
+        "insert",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("atomic policy failure")
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="atomic policy failure"):
+        store.promote_ephemeral_session(session.id)
+
+    assert shadow_calls == 0
+    assert _memory_state(store, session.id) == before
+    assert _bundle_counts(db) == (0, 0, 0, 0, 0)
+    assert registry.list_workspace_conversations("workspace-a") == ()
+    binding = store.library_policy_coordinator._holders[session.id]
+    assert binding.conversation_id is None
+
+
+def test_promotion_without_atomic_adapter_refuses_before_any_write():
+    class NonAtomicPersistence:
+        db = None
+
+        def __init__(self):
+            self.create_calls = 0
+
+        def create_conversation(self, **_kwargs):
+            self.create_calls += 1
+            return "legacy-conversation"
+
+    persistence = NonAtomicPersistence()
+    store = ConsoleChatStore(persistence=persistence)
+    session = store.create_session(title="Temporary", ephemeral=True)
+    before = _memory_state(store, session.id)
+
+    with pytest.raises(RuntimeError, match="atomic promotion"):
+        store.promote_ephemeral_session(session.id)
+
+    assert persistence.create_calls == 0
+    assert _memory_state(store, session.id) == before
+
+
 @pytest.mark.parametrize(
     "failure_point",
     (

@@ -6,13 +6,11 @@ it, so the discarded text was unrecoverable. This migration adds the three
 columns (``losing_side``, ``losing_content``, ``preserved_file_path``) that
 make the row a real second copy behind the on-disk sidecar.
 
-The repo's EXACT current-schema-version pin used to live here. It has since
-moved on twice -- to ``Tests/ChaChaNotesDB/test_actor_pack_migration.py`` with
-v45, and to ``Tests/DB/test_chachanotes_sync_log_retention_migration.py`` with
-v46 -- because the pin belongs to the NEWEST migration's own file, so a schema
-bump touches the file that caused it rather than an unrelated older one
-(TASK-19554's convention, repaired by TASK-19568). This module now asserts
-``>= 44``, which is what an older migration file is entitled to claim.
+This module owns only the v43→v44 floor. The repo's exact current-schema-version
+pin now lives in
+``test_chachanotes_console_library_policy_migration.py::test_real_v47_fixture_gains_exact_v48_local_schema_and_seed_rows``.
+The newest migration owns that deliberate exact assertion while older modules
+remain valid at or beyond their own version.
 """
 
 from __future__ import annotations
@@ -75,7 +73,7 @@ def test_fresh_schema_has_the_preservation_columns(db):
 
 
 def test_migrate_from_v43_to_v44_requires_version_43(db):
-    """A fresh DB is already at 44, so re-entering the step must refuse."""
+    """A fresh DB is already past v44, so re-entering the step must refuse."""
     with pytest.raises(SchemaError, match="requires schema version"):
         db._migrate_from_v43_to_v44(db.get_connection())
 

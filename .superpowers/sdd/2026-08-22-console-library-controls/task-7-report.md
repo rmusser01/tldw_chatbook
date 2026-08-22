@@ -183,3 +183,58 @@ dispatch behavior was introduced.
 - Added the cross-database rollback incident to
   `backlog/docs/lessons-testing-evidence.md`; no deprecated Settings surface,
   profile database, full-suite run, push, or Task-8+ behavior was added.
+
+## Fix round 2 — mandatory atomic promotion adapter
+
+### Review correction and RED
+
+Review found one remaining compatibility escape: an instance-shadowed
+`persist_session_if_needed` could divert temporary promotion away from the
+production atomic bundle path. The valid exact three-file RED was **2 failed,
+316 passed**. A real ChatDB + WorkspaceDB regression proved the shadow was
+called, and a second regression proved an adapter without the atomic promotion
+operation did not refuse before writes.
+
+The Store now has one promotion path. Any configured persistence adapter must
+provide `promote_console_conversation_bundle`; otherwise promotion fails closed
+before identity allocation or durable writes. The legacy conversation/message/
+scope partial-write branch and its instance-shadow condition were deleted.
+Fakes that support promotion now implement the atomic adapter explicitly.
+
+The first-persistence timing regression now intercepts the actual
+`publish_committed_identity` call. Its injected policy failure publishes
+nothing and leaves zero conversations; retry creates exactly one conversation,
+observes the old live ID/title immediately before publication with
+`connection.in_transaction is False`, and observes the committed ID/title only
+after publication. The real two-database shadow regression confirms the shadow
+is never called and a later atomic policy failure leaves zero Chat bundle rows,
+zero workspace memberships, and no holder binding mutation.
+
+### Final verification
+
+- Exact Task-7 Store battery: **318 passed, 1 warning**.
+- Exact eleven-file foundation battery: **227 passed, 4 warnings**.
+- Focused ephemeral/project-context/persistence/hydration/workspace/version
+  group: **150 passed, 1 warning**.
+- The directly edited ephemeral promotion module reran after lint-only cleanup:
+  **17 passed, 1 warning**.
+- Scoped Ruff over every modified Python file and `git diff --check`: passed.
+- Per the review ruling, the unchanged runtime/UI baseline cases and complete DB
+  subtrees were not rerun. Their exact previously verified baseline failures
+  remain recorded above; this round changed no schema or migration fixtures.
+
+### Documentation and self-review
+
+- Corrected the full v44 migration module reference so the v45 test owns the
+  exact current-version pin, and documented `create_conversation` workspace
+  handling as validation only with membership as a separate post-commit
+  projection.
+- Confirmed no production route, instance attribute, contribution shape, or
+  fake can select a non-atomic promotion path; adapter absence is observable
+  before any write.
+- Confirmed project-context post-commit behavior and the durable
+  `workspace_id` projection model remain intact without weakening ChatDB bundle
+  atomicity. No new reusable incident beyond the already documented boundary
+  lessons was found, so no additional lesson entry was added.
+- No full suite, database subtree sweep, profile database, push, deprecated
+  Settings edit, or Task-8+ behavior was introduced.

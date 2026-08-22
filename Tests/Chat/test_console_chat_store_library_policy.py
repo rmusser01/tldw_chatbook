@@ -2,6 +2,8 @@ import asyncio
 import threading
 from types import SimpleNamespace
 
+import pytest
+
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 from tldw_chatbook.Chat.console_library_policy import (
@@ -60,23 +62,59 @@ def test_first_persistence_inserts_even_unedited_policy_and_publishes_after_comm
     store = ConsoleChatStore(persistence=service, library_policy_defaults=_defaults())
     session = store.create_session(title="Atomic policy")
     original_insert = service.console_library_policy_repository.insert
-    observed = []
+    original_publish = store.publish_committed_identity
+    publish_observations = []
+    attempts = 0
 
-    def observe_unpublished_identity(conversation_id, candidate):
-        observed.append(
-            (
-                db.get_connection().in_transaction,
-                session.persisted_conversation_id,
-                session.title,
-            )
-        )
+    def fail_once(conversation_id, candidate):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("injected first-persistence policy failure")
         return original_insert(conversation_id, candidate)
 
     monkeypatch.setattr(
         service.console_library_policy_repository,
         "insert",
-        observe_unpublished_identity,
+        fail_once,
     )
+
+    def observe_publish(session_id, identity):
+        publish_observations.append(
+            (
+                "before",
+                db.get_connection().in_transaction,
+                session.persisted_conversation_id,
+                session.title,
+                identity.conversation_id,
+                identity.title,
+            )
+        )
+        original_publish(session_id, identity)
+        publish_observations.append(
+            (
+                "after",
+                db.get_connection().in_transaction,
+                session.persisted_conversation_id,
+                session.title,
+                identity.conversation_id,
+                identity.title,
+            )
+        )
+
+    monkeypatch.setattr(store, "publish_committed_identity", observe_publish)
+
+    with pytest.raises(
+        RuntimeError, match="injected first-persistence policy failure"
+    ):
+        store.persist_session_if_needed(session.id)
+
+    assert session.persisted_conversation_id is None
+    assert session.title == "Atomic policy"
+    assert db.get_connection().execute(
+        "SELECT COUNT(*) FROM conversations"
+    ).fetchone()[0] == 0
+    assert publish_observations == []
 
     conversation_id = store.persist_session_if_needed(session.id)
 
@@ -87,7 +125,27 @@ def test_first_persistence_inserts_even_unedited_policy_and_publishes_after_comm
     assert row.snapshot.auto_retrieve is ConsoleAutoRetrieve.AUTOMATIC
     assert row.snapshot.assistant_access is ConsoleAssistantLibraryAccess.ALLOWED
     assert session.library_policy_holder.snapshot == row.snapshot
-    assert observed == [(True, None, "Atomic policy")]
+    assert db.get_connection().execute(
+        "SELECT COUNT(*) FROM conversations"
+    ).fetchone()[0] == 1
+    assert publish_observations == [
+        (
+            "before",
+            False,
+            None,
+            "Atomic policy",
+            conversation_id,
+            "Atomic policy",
+        ),
+        (
+            "after",
+            False,
+            conversation_id,
+            "Atomic policy",
+            conversation_id,
+            "Atomic policy",
+        ),
+    ]
 
 
 def test_restored_missing_policy_is_fail_closed_and_write_free_until_explicit_save(

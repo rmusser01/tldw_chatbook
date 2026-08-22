@@ -16,6 +16,7 @@ from tldw_chatbook.Chat.console_library_policy import (
     ConsoleAutoRetrieve,
     ConsoleLibraryPolicyCandidate,
     ConsoleLibraryPolicyDefaults,
+    ConsoleLibraryPolicySnapshot,
 )
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
 from tldw_chatbook.Chat.console_roleplay_identity import (
@@ -1378,6 +1379,33 @@ class FakePersistence:
         self.created_conversations.append(kwargs)
         self.last_create_kwargs = kwargs
         return "conv-1"
+
+    def promote_console_conversation_bundle(
+        self,
+        *,
+        conversation_id,
+        policy_candidate,
+        conversation_kwargs,
+        messages,
+        active_leaf_message_id,
+        context_summary=None,
+        context_summary_boundary_message_id=None,
+        contributions=(),
+    ):
+        if contributions:
+            raise RuntimeError("FakePersistence does not execute contributions")
+        self.created_conversations.append(
+            {"conversation_id": conversation_id, **dict(conversation_kwargs)}
+        )
+        self.last_create_kwargs = dict(conversation_kwargs)
+        for prepared in messages:
+            self.created_messages.append(dict(prepared["create_kwargs"]))
+        return ConsoleLibraryPolicySnapshot(
+            auto_retrieve=policy_candidate.auto_retrieve,
+            assistant_access=policy_candidate.assistant_access,
+            policy_revision=1,
+            source="durable",
+        )
 
     def update_conversation_system_prompt(self, *, conversation_id, system_prompt):
         self.updated_system_prompts.append(
@@ -4980,7 +5008,7 @@ def test_character_roleplay_swap_persists_only_the_final_projection_and_context(
     ]
 
 
-def test_first_persist_context_failure_is_observable_but_promotion_rolls_back():
+def test_first_persist_context_failure_does_not_force_atomic_promotion_legacy_path():
     class RefusingPersistence(FakePersistence):
         def update_conversation_roleplay_context(self, **kwargs):
             return False
@@ -4994,10 +5022,13 @@ def test_first_persist_context_failure_is_observable_but_promotion_rolls_back():
 
     temporary = store.create_session(ephemeral=True)
     temporary.user_display_name_override = "Rowan"
-    with pytest.raises(RuntimeError, match="roleplay context"):
-        store.promote_ephemeral_session(temporary.id)
-    assert temporary.ephemeral is True
-    assert temporary.persisted_conversation_id is None
+    conversation_id = store.promote_ephemeral_session(temporary.id)
+
+    assert conversation_id is not None
+    assert temporary.ephemeral is False
+    assert temporary.persisted_conversation_id == conversation_id
+    roleplay = persistence.last_create_kwargs["metadata"]["console_roleplay_context"]
+    assert roleplay["user_name_override"] == "Rowan"
 
 
 def test_identical_real_seed_does_not_append_a_duplicate_greeting():
@@ -5566,38 +5597,17 @@ def test_presentation_context_resolves_override_identity_and_roleplay_row():
     assert presentation.row_class == "console-transcript-message-roleplay-character"
 
 
-def test_promotion_transaction_rolls_back_created_conversation_on_context_failure():
-    class TransactionalRefusingPersistence(FakePersistence):
-        def __init__(self):
-            super().__init__()
-            self.db = self
+def test_atomic_promotion_adapter_failure_preserves_ephemeral_fake_state():
+    class FailingAtomicPersistence(FakePersistence):
+        def promote_console_conversation_bundle(self, **kwargs):
+            raise RuntimeError("atomic bundle failure")
 
-        def transaction(self):
-            persistence = self
-
-            class _Transaction:
-                def __enter__(self):
-                    self.conversations = list(persistence.created_conversations)
-                    self.messages = list(persistence.created_messages)
-                    return self
-
-                def __exit__(self, exc_type, exc, traceback):
-                    if exc_type is not None:
-                        persistence.created_conversations[:] = self.conversations
-                        persistence.created_messages[:] = self.messages
-                    return False
-
-            return _Transaction()
-
-        def update_conversation_roleplay_context(self, **kwargs):
-            return False
-
-    persistence = TransactionalRefusingPersistence()
+    persistence = FailingAtomicPersistence()
     store = ConsoleChatStore(persistence=persistence)
     session = store.create_session(ephemeral=True)
     session.user_display_name_override = "Rowan"
 
-    with pytest.raises(RuntimeError, match="roleplay context"):
+    with pytest.raises(RuntimeError, match="atomic bundle failure"):
         store.promote_ephemeral_session(session.id)
 
     assert persistence.created_conversations == []

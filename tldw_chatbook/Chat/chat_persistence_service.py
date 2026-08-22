@@ -265,12 +265,12 @@ class ChatPersistenceService:
             discovery_owner: Owner of the assistant discovery record.
             discovery_entity_id: Discovery record identifier for the assistant.
             scope_type: Conversation scope. Only an explicit normalized
-                ``scope_type="workspace"`` validates and links workspace
-                membership here.
+                ``scope_type="workspace"`` validates the workspace target here.
+                Registry membership is a separate post-commit projection.
             workspace_id: Candidate workspace identifier forwarded to the
                 database and resolved for an explicit workspace scope.
                 Non-workspace/global persistence is normalized by the database
-                and may clear it; omitting scope does not create a link.
+                and may clear it; this method never creates registry membership.
             conversation_title: Explicit title, which takes precedence when
                 truthy; otherwise the character or assistant-derived title is used.
             system_prompt: Initial system prompt persisted with the conversation.

@@ -6616,30 +6616,12 @@ class ConsoleChatStore:
     ) -> str | None:
         """Save a temporary conversation to durable storage, all or nothing.
 
-        Clears ``ephemeral`` first -- that is what opens the gate in
-        ``persist_session_if_needed`` -- then mints the conversation and
-        flushes every node in the FULL conversation tree, not just the
-        active-path view: off-path branches left behind by
-        ``create_sibling`` (regenerate / edit-and-resend) are still reachable
-        by swiping back, and a normal (never-temporary) conversation persists
-        them, so a promoted one must too -- otherwise saving would silently
-        discard history the user could see a moment before clicking Save.
-        Nodes are written parent-before-child (``_tree_nodes_parent_first``)
-        since each node's persisted parent is resolved from its
-        already-persisted ancestors. The whole sequence runs inside one
-        database transaction when the adapter exposes a real database, so a
-        failure part-way through leaves NO conversation in history rather
-        than a truncated one.
-
-        On any failure the session is restored to its temporary state
-        (``ephemeral`` back to True, ids cleared, any held RAG retrieval
-        scope restored). A failed save that left the flag cleared would
-        silently start persisting on the next send -- the opposite of what
-        the user asked for. Restoring the RAG scope matters for the same
-        reason: ``persist_session_if_needed`` flushes (and empties) the
-        session's held scope as soon as the conversation row exists, before
-        any message write can fail, so a rollback that only undid the DB
-        write would still leave the user's scope selection gone.
+        The persistence adapter must expose the atomic bundle operation. The
+        Store stages the full tree, policy, scope, summary, attachments, and
+        contributions without mutating live identities, then publishes only
+        after that operation returns from its transaction. An instance-shadowed
+        ``persist_session_if_needed`` cannot divert this path. An adapter without
+        atomic promotion support is refused before identity allocation or writes.
 
         Args:
             session_id: Id of the temporary session to save.
@@ -6650,13 +6632,9 @@ class ConsoleChatStore:
             persistence adapter is configured.
 
         Raises:
-            Exception: Whatever the persistence layer raises, re-raised after
-                the in-memory rollback. Also raised (as ``RuntimeError``) if
-                ``persist_session_if_needed`` unexpectedly returns ``None``
-                after ``ephemeral`` has already been cleared -- today
-                unreachable, but treated as a failure rather than silently
-                leaving the session non-ephemeral with no persisted
-                conversation.
+            RuntimeError: If atomic promotion is unavailable or an unresolved
+                operation owns the session.
+            Exception: Any atomic persistence failure, before live publication.
         """
         session = self._session_or_raise(session_id)
         if not session.ephemeral:
@@ -6674,108 +6652,14 @@ class ConsoleChatStore:
             "promote_console_conversation_bundle",
             None,
         )
-        if callable(atomic_promote) and "persist_session_if_needed" not in self.__dict__:
-            return self._promote_ephemeral_session_atomically(
-                session,
-                contributions=contributions,
-            )
-        if contributions:
+        if not callable(atomic_promote):
             raise RuntimeError(
-                "Persistence adapter cannot atomically store Console contributions."
+                "Persistence adapter cannot perform atomic promotion."
             )
-
-        messages = self._tree_nodes_parent_first(session_id)
-        db = getattr(self.persistence, "db", None)
-        transaction = getattr(db, "transaction", None)
-        # Captured BEFORE any write -- persist_session_if_needed empties the
-        # holder on a successful flush, so this is the only chance to learn
-        # what was held and restore it if the save fails partway through.
-        held_scope = session.rag_scope_holder.scope
-
-        def _write() -> str:
-            conversation_id = self.persist_session_if_needed(
-                session_id, strict_roleplay_context=True
-            )
-            if conversation_id is None:
-                # Unreachable today: persist_session_if_needed's only
-                # None-return branches (ephemeral, already-persisted,
-                # no adapter) are all ruled out by the checks above and by
-                # clearing `ephemeral` before this call. Raising rather than
-                # returning None keeps this on the SAME rollback path as
-                # every other failure, instead of silently leaving the
-                # session non-ephemeral with no persisted conversation.
-                raise RuntimeError(
-                    "promote_ephemeral_session: persist_session_if_needed "
-                    "unexpectedly returned None after ephemeral was cleared; "
-                    "aborting the save."
-                )
-            for message in messages:
-                self.persist_message_if_needed(message.id)
-            # F2 (final review): the `/rewind` context-summary/boundary
-            # pair is a second piece of session-held state, same class as
-            # the RAG scope holder flushed above -- must run AFTER the
-            # message loop so the boundary's native id already has a
-            # `persisted_message_id` for `_persist_context_summary` to map
-            # to. Called unconditionally, same as `rag_scope_holder.flush_
-            # to` in `persist_session_if_needed`: it is a no-op write when
-            # no summary was ever set. It runs inside this same transaction
-            # (nested `db.transaction()` seam, deferred to the outer one),
-            # but `_persist_context_summary` catches and logs its own
-            # write failure rather than re-raising, so this is NOT covered
-            # by the messages/conversation all-or-nothing guarantee above:
-            # a summary-write failure never rolls back the transaction --
-            # the conversation and its messages still commit, just without
-            # the summary. That swallow is intentional (best-effort,
-            # local-only metadata not worth failing an entire save over);
-            # the point of this note is not to claim otherwise.
-            summary, boundary_native_id = self._context_summary_by_session.get(
-                session_id, (None, None)
-            )
-            self._persist_context_summary(session_id, summary, boundary_native_id)
-            return conversation_id
-
-        session.ephemeral = False
-        self._deferred_project_instruction_state_session_ids.add(session_id)
-        try:
-            if callable(transaction):
-                with transaction():
-                    conversation_id = _write()
-            else:
-                # No real database seam to wrap in a transaction (e.g. a
-                # narrower persistence fake) -- production wiring always builds
-                # ChatPersistenceService with a real CharactersRAGDB, so this
-                # branch is not reachable there today, but the loss of the
-                # all-or-nothing guarantee it causes must still be observable
-                # rather than silent, matching the RAG-scope-flush warning just
-                # above in persist_session_if_needed.
-                logger.bind(session_id=session_id).warning(
-                    "Saving Console session {} without a database transaction "
-                    "-- the persistence adapter exposes no `db.transaction()` "
-                    "seam. A failure part-way through this save may leave a "
-                    "partial conversation in history instead of the "
-                    "all-or-nothing guarantee this method normally provides.",
-                    session_id,
-                )
-                conversation_id = _write()
-        except Exception:
-            # persisted_conversation_id cleared BEFORE ephemeral is set back
-            # to True so the two are never simultaneously in the one
-            # combination the rest of the codebase treats as forbidden
-            # (ephemeral=True with a non-None persisted_conversation_id),
-            # even momentarily between statements.
-            session.persisted_conversation_id = None
-            session.ephemeral = True
-            session.rag_scope_holder.set(held_scope)
-            for message in messages:
-                message.persisted_message_id = None
-            logger.bind(session_id=session_id).exception(
-                "Saving a temporary Console conversation failed; it stays temporary."
-            )
-            raise
-        finally:
-            self._deferred_project_instruction_state_session_ids.discard(session_id)
-        self._persist_project_instruction_state(session)
-        return conversation_id
+        return self._promote_ephemeral_session_atomically(
+            session,
+            contributions=contributions,
+        )
 
     def _promote_ephemeral_session_atomically(
         self,
