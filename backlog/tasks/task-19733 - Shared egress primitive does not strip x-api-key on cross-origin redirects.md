@@ -159,13 +159,15 @@ negotiation (`accept`, `accept-charset`, `accept-encoding`,
 `accept-language`), cache validators (`cache-control`, `pragma`, `if-match`,
 `if-none-match`, `if-modified-since`, `if-unmodified-since`), partial content
 (`range`, `if-range`), and `user-agent`. A second, separate frozenset
-`_TRANSPORT_HEADERS` (`host`, `connection`, `content-length`, `content-type`,
+`_TRANSPORT_HEADERS` (`host`, `connection`, `content-length`,
 `transfer-encoding`, …) is exempt: those are framing owned by the HTTP client,
 and stripping `host` off a built request would break the very request the
-guard protects. `_STRIP_HEADERS` is retained but demoted — it is no longer the
-rule, it is the never-cross FLOOR: both exemption sets are constructed by
+guard protects. A third, `_BODY_DESCRIBING_HEADERS` (`content-type`), is
+exempt only *conditionally* — see the Qodo section below. `_STRIP_HEADERS` is
+retained but demoted — it is no longer the
+rule, it is the never-cross FLOOR: all three exemption sets are constructed by
 subtracting it (`frozenset({...}) - frozenset(_STRIP_HEADERS)`), so a careless
-future edit that adds `authorization` to either list cannot take effect.
+future edit that adds `authorization` to any of them cannot take effect.
 `test_allowlist_never_admits_a_credential_shaped_name` asserts that wiring is
 live, and additionally rejects any allowlist entry whose name reads like a
 secret (`key`/`token`/`secret`/`auth`/`cookie`/`password`/`sig`).
@@ -207,11 +209,11 @@ earlier claim that this client downloads *release assets* was wrong, all four
 of its guarded call sites are `api.github.com` JSON endpoints);
 `Model_Artifacts` resume (`Range`, `If-Range`) is allowlisted, which matters
 because catalog→CDN is the normal artifact download. `Confluence` passes
-`Content-Type: application/json` as a CALLER header, and caller headers are
-filtered by `filter_cross_origin_headers`, which does **not** consult
-`_TRANSPORT_HEADERS` — so it is dropped off-origin, not preserved as first
-claimed. Harmless (these are bodyless GETs), but the two layers are
-deliberately asymmetric and the note was wrong about which one applies.
+`Content-Type: application/json` as a CALLER header, and it is dropped
+off-origin. Harmless — these are bodyless GETs, so the type describes
+nothing. (Until the Qodo section below, the two layers reached that same
+outcome by *different* rules — the caller layer dropped it, the built-request
+layer exempted it — which is the asymmetry Qodo's finding closed.)
 Same-origin redirects are untouched — the same-origin
 branch returns the caller's headers verbatim, so authenticated feeds that
 redirect within their own origin keep authenticating (pinned by two tests).
@@ -339,13 +341,13 @@ trustworthy, and the surrounding docstring asserted it was already covered.
    Fetch spec removes the header permanently once an origin boundary is
    crossed. The recipient here is still the credential's own origin, so this
    is hardening, not disclosure to a third party; low severity.
-2. *`content-type` is exempt on the BUILT-request layer.* It is the only
-   exempted header that can carry arbitrary caller text, and a client-default
+2. *`content-type` is exempt on the BUILT-request layer.* **FIXED — see the
+   Qodo section below.** It is the only exempted header that can carry
+   arbitrary caller text, and a client-default
    `Content-Type: application/json; boundary=<secret>` was measured arriving
-   cross-origin. Every guarded helper is GET-only, so nothing needs it today;
-   the code comment keeps it for a hypothetical future body-carrying helper.
-   Low severity, no live exposure — but it is the answer to "construct a leak
-   using only exempted headers".
+   cross-origin. Recorded here as a LOW residual; Qodo independently raised
+   the same thing as a bug on PR #1942, and that convergence is why it was
+   fixed rather than filed.
 
 **Verified independently:** born-red at base reproduces with the defect
 signature; `4012 passed / 4 skipped / 0 failed` across the eight suites and
@@ -361,3 +363,115 @@ Yandex (`:4228`/`:4235`) are genuinely clean because `requests` strips
 `tldw_chatbook/Model_Artifacts/fetch.py`,
 `Tests/Utils/test_egress_cross_origin_header_allowlist.py` (new),
 `Tests/Utils/test_egress.py`, `Tests/Model_Artifacts/test_stream_fetch.py`.
+
+## Qodo review of PR #1942 — `Content-Type` now travels only with a body
+
+Qodo raised as a Bug/Security finding exactly what the review addendum above
+had recorded as LOW residual #2: `strip_cross_origin_request_headers` exempted
+`content-type` via `_TRANSPORT_HEADERS`, so a **client-default** `Content-Type`
+still crossed the origin boundary. `Content-Type` is the one exempted header
+whose value is arbitrary caller-controlled text — a multipart `boundary=`
+parameter is the ready-made carrier — so it violated this branch's own
+"only the allowlist crosses origin" policy. Two independent reviewers
+converging is why it was fixed here rather than filed.
+
+**The rule, exactly.** `Content-Type` describes a body, so it may cross an
+origin boundary **only on a hop that actually carries one**:
+
+* no body on the cross-origin hop → `content-type` is dropped like any other
+  non-allowlisted header;
+* body present → it is preserved, because dropping it corrupts the request.
+
+The in-code comment that argued for the old exemption ("the day one of them
+grows a body, silently dropping Content-Type would corrupt the request") was
+sound reasoning with too broad a conclusion: it protected a hypothetical body
+by leaking on every bodyless request. The conditional form protects both.
+
+**How "has a body" is decided — off the outgoing request, not the status
+code.** `_built_request_carries_body()` reads the request's own framing:
+`Transfer-Encoding` present, or `Content-Length` parsing to > 0. Redirect
+semantics say 301/302/303 convert to GET and drop the body (so `Content-Type`
+must go) while 307/308 preserve both (so it must stay) — but keying off the
+status code would only re-derive what the client library has already decided.
+By the time the guard runs, the client has *built* the request for this hop,
+so its framing is ground truth however it got here. Probe evidence that this
+is safe to rely on (`scratchpad/probe_body_framing.out`): httpx 0.28.1 and
+requests 2.32.5 both emit `Content-Length` for a known-length body and
+`Transfer-Encoding: chunked` for a streamed one at *build* time
+(`Client.build_request` / `Session.prepare_request`), a bodyless GET gets
+neither, and a bodyless POST gets `Content-Length: 0` — which is why the
+value is checked and not merely the header's presence
+(`test_zero_length_body_is_not_a_body`). Anything unparseable is treated as
+"no body": deny-by-default, since a header that describes a body it cannot
+prove exists has no business crossing an origin.
+
+**The asymmetry is gone.** Both layers now call one predicate,
+`_may_cross_origin(name, *, has_body)`. The only difference left is where
+`has_body` comes from, and that difference is structural rather than
+accidental: `strip_cross_origin_request_headers` **infers** it from the built
+request, while `filter_cross_origin_headers` takes it as an explicit keyword
+(default `False`) because a bare `headers` mapping says nothing about a body.
+Every `guarded_fetch_*` helper and `Model_Artifacts.stream_fetch` issue a
+bodyless GET, so they all take the default; a future body-carrying caller must
+pass `has_body=True` or lose its `Content-Type`.
+`test_both_layers_agree_on_content_type` pins both halves.
+
+**Born-red evidence** (run at this branch's HEAD *before* the fix,
+`Tests/Utils/test_egress_cross_origin_header_allowlist.py`: **6 failed, 22
+passed**). The leak, verbatim:
+
+```
+assert 'content-type' not in Headers({'host': 'evil.example', ...,
+    'content-type': 'multipart/form-data; boundary=sentinel-not-a-real-key-19733'})
+```
+
+— i.e. a client-default `Content-Type` carrying the sentinel in its boundary
+parameter arriving at the attacker origin, reproduced on all three transports
+(`httpx.Client`, `httpx.AsyncClient`, `requests.Session`). The bodied-hop
+pins (`test_bodied_cross_origin_{httpx,streamed,prepared}_request_keeps_its_content_type`)
+and `test_framing_headers_survive_the_strip_on_a_real_built_request` **passed**
+before the fix — they are the non-regression half, and they are what stops the
+fix from being "just delete the exemption".
+
+**Mutation-checked, both directions** (Edit-based; no mutation residue —
+`grep MUTATION` clean afterwards):
+
+| mutation | red |
+| --- | --- |
+| A: `return True` for `_BODY_DESCRIBING_HEADERS` (pre-fix, unconditional exemption) | the 3 client-default leak tests, `test_zero_length_body_is_not_a_body`, `test_both_layers_agree_on_content_type` — **5 failed, 136 passed** |
+| B: `return False` (naive "just delete the exemption") | the 3 bodied-hop pins + `test_both_layers_agree_on_content_type` — **4 failed, 137 passed** |
+| C: drop `host` from `_TRANSPORT_HEADERS` | `test_framing_headers_survive_the_strip_on_a_real_built_request` only (`assert None == 'evil.example'`) — **1 failed, 27 passed** |
+
+The two red sets under A and B are disjoint except for the layer-agreement
+test, which is the point: neither the old behaviour nor the naive deletion
+satisfies both halves of the rule. C confirms `host` (and with it the framing
+set) is still genuinely exempt — stripping it breaks the request the guard
+exists to protect.
+
+**Also in this review round** (Qodo findings 1 and 2, both repo-rule
+violations): `filter_cross_origin_headers` and
+`strip_cross_origin_request_headers` were untyped. They are now
+`filter_cross_origin_headers(headers: Mapping[str, str] | None, *, has_body:
+bool = False) -> dict[str, str]` and
+`strip_cross_origin_request_headers(request_headers: MutableMapping[str, str])
+-> None`. `Mapping`/`MutableMapping` is the honest shape rather than `dict`:
+every mapping these are actually called with — plain `dict`, `httpx.Headers`,
+`requests.structures.CaseInsensitiveDict`, `multidict.CIMultiDict` — subclasses
+`typing.MutableMapping[str, str]`, while `dict` would have excluded three of
+the four. `_hop_headers` got the same treatment. Google-style `Args:` sections
+were added to the branch's own new/modified test functions that take
+parameters (`test_stream_fetch.py`'s two new tests and their nested doubles,
+`test_egress.py`'s modified `test_httpx_cross_origin_hop_strips_credentials`,
+and the new allowlist file's fixture/helpers); pre-existing tests this branch
+did not touch were deliberately left alone.
+
+**Verification.** venv `../../.venv/bin/python`, `PYTHONPATH` pinned with a
+`tldw_chatbook.__file__` assert; in-process transports only (`httpx.MockTransport`,
+a `requests` `BaseAdapter` double), no sockets; every credential value is the
+synthetic sentinel `sentinel-not-a-real-key-19733`. Utils + Model_Artifacts +
+Subscriptions + Web_Scraping + Local_Ingestion + Scheduling + tldw_api + Media:
+**4026 passed / 4 skipped / 0 failed** — exactly the pre-fix 4017 plus the 9
+tests this round adds. Repo-wide `--collect-only -q`: **54656 collected, 0
+errors**. `ruff check` on the four changed files reports 9 findings, all
+byte-identical to what `origin/dev` already reports for the same files (1 F821
+in `egress.py`, 8 E402 in `Tests/Utils/test_egress.py`) — no new lint.

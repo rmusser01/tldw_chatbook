@@ -586,6 +586,12 @@ def test_httpx_same_origin_redirect_allowed_and_followed():
 
 
 def test_httpx_cross_origin_hop_strips_credentials(monkeypatch):
+    """Credentials do not follow a redirect off the original origin.
+
+    Args:
+        monkeypatch: pytest fixture -- pins DNS resolution to a public IP so
+            this stays a transport-only test.
+    """
     _resolve_to(monkeypatch, ["93.184.216.34"])
     seen = []
     routes = {

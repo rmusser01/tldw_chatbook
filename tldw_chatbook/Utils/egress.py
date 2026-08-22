@@ -23,7 +23,7 @@ import ipaddress
 import json as _json
 import socket
 from dataclasses import dataclass, field
-from typing import Iterable, List
+from typing import Iterable, List, Mapping, MutableMapping
 from urllib.parse import urljoin, urlparse
 
 from loguru import logger
@@ -403,17 +403,17 @@ CROSS_ORIGIN_SAFE_HEADERS = frozenset(
 #: caller credential. They are exempt from the allowlist so that stripping a
 #: BUILT request cannot break the request it is protecting (dropping ``host``
 #: would be fatal; dropping ``connection`` would silently change keep-alive).
+#:
+#: Every name here has a value drawn from a fixed vocabulary the client library
+#: generates -- none of them can carry arbitrary caller text. That is the
+#: membership test, and it is why ``content-type`` is NOT in this set (see
+#: :data:`_BODY_DESCRIBING_HEADERS`).
 _TRANSPORT_HEADERS = frozenset(
     {
         "host",
         "connection",
         "keep-alive",
         "content-length",
-        # Describes the request BODY, never a credential. Every guarded helper
-        # is GET-only today so this is inert, but it belongs with the framing
-        # headers rather than the allowlist: the day one of them grows a body,
-        # silently dropping Content-Type would corrupt the request.
-        "content-type",
         "transfer-encoding",
         "te",
         "trailer",
@@ -422,8 +422,93 @@ _TRANSPORT_HEADERS = frozenset(
     }
 ) - frozenset(_STRIP_HEADERS)
 
+#: Headers that describe a request BODY. They may cross an origin boundary
+#: only on a hop that actually carries one.
+#:
+#: ``content-type`` sat in :data:`_TRANSPORT_HEADERS` until Qodo's review of
+#: PR #1942 (task-19733) pointed out that it is the one exempted header whose
+#: value is arbitrary caller-controlled text: ``multipart/form-data;
+#: boundary=<anything>`` is a ready-made carrier, and a client-DEFAULT
+#: ``Content-Type`` therefore crossed to the attacker origin on every bodyless
+#: redirect hop. Deleting the exemption outright is also wrong -- dropping
+#: ``Content-Type`` off a request that HAS a body corrupts it. The precise
+#: rule is the conditional one: it describes a body, so it travels with a body.
+_BODY_DESCRIBING_HEADERS = frozenset({"content-type"}) - frozenset(_STRIP_HEADERS)
 
-def filter_cross_origin_headers(headers) -> dict:
+#: Framing headers whose presence on a BUILT request proves it carries a body.
+#: Verified against both clients this module drives: httpx and ``requests``
+#: each emit ``Content-Length`` for a known-length body and
+#: ``Transfer-Encoding: chunked`` for a streamed one, at BUILD time
+#: (``Client.build_request`` / ``Session.prepare_request``), i.e. before this
+#: module inspects the request. A bodyless GET gets neither; a bodyless POST
+#: gets ``Content-Length: 0``, which is why the value is checked, not just the
+#: name.
+_BODY_FRAMING_HEADERS = frozenset({"content-length", "transfer-encoding"})
+
+
+def _built_request_carries_body(request_headers: Mapping[str, str]) -> bool:
+    """Whether a BUILT request actually has a body attached.
+
+    Keys off the outgoing request's own framing headers rather than off the
+    redirect status code. That is the durable form: 301/302/303 convert the
+    method to GET and drop the body while 307/308 preserve both, but by the
+    time this runs the client has already built the request for THIS hop, so
+    its framing is the ground truth regardless of how it got here.
+
+    Deny-by-default on anything unparseable: an unreadable ``Content-Length``
+    is treated as "no body", so a header that describes a body it cannot prove
+    exists does not cross an origin boundary. Neither client library emits
+    such a value.
+
+    Args:
+        request_headers: Header mapping of a request the transport has
+            already assembled (``httpx.Request.headers``,
+            ``requests.PreparedRequest.headers``).
+
+    Returns:
+        ``True`` if the request carries a non-empty body.
+    """
+    for name, value in request_headers.items():
+        lowered = str(name).lower()
+        if lowered not in _BODY_FRAMING_HEADERS:
+            continue
+        text = str(value).strip()
+        if lowered == "transfer-encoding":
+            if text:
+                return True
+            continue
+        try:
+            if int(text) > 0:
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+def _may_cross_origin(name: str, *, has_body: bool) -> bool:
+    """The single cross-origin rule, shared by both filtering layers.
+
+    Args:
+        name: Header name, any casing.
+        has_body: Whether the hop this header would travel on carries a
+            request body. Only :data:`_BODY_DESCRIBING_HEADERS` consult it.
+
+    Returns:
+        ``True`` if the header may be sent to a different origin.
+    """
+    lowered = name.lower()
+    if lowered in CROSS_ORIGIN_SAFE_HEADERS or lowered in _TRANSPORT_HEADERS:
+        return True
+    if lowered in _BODY_DESCRIBING_HEADERS:
+        return has_body
+    return False
+
+
+def filter_cross_origin_headers(
+    headers: Mapping[str, str] | None,
+    *,
+    has_body: bool = False,
+) -> dict[str, str]:
     """Caller-supplied headers reduced to the ones safe to send off-origin.
 
     Deny-by-default: a name absent from :data:`CROSS_ORIGIN_SAFE_HEADERS` is
@@ -431,20 +516,31 @@ def filter_cross_origin_headers(headers) -> dict:
     caller passed in, before it is handed to the transport.
 
     Args:
-        headers: Any mapping of header name -> value (may be ``None``).
+        headers: Any mapping of header name -> value (a plain ``dict``,
+            ``httpx.Headers``, ``requests.structures.CaseInsensitiveDict`` and
+            ``multidict.CIMultiDict`` all satisfy this). May be ``None``.
+        has_body: Whether the request being described will carry a body. This
+            is the same question :func:`strip_cross_origin_request_headers`
+            answers by inspecting the built request; here it must be declared,
+            because a ``headers`` mapping on its own says nothing about a
+            body. Every guarded helper in this module issues a bodyless GET,
+            hence the default. A body-carrying caller must pass ``True`` or
+            its ``Content-Type`` will be dropped off-origin.
 
     Returns:
-        A new plain ``dict`` containing only the allowlisted entries,
+        A new plain ``dict`` containing only the forwardable entries,
         preserving the caller's casing.
     """
     return {
         str(k): v
         for k, v in dict(headers or {}).items()
-        if str(k).lower() in CROSS_ORIGIN_SAFE_HEADERS
+        if _may_cross_origin(str(k), has_body=has_body)
     }
 
 
-def strip_cross_origin_request_headers(request_headers) -> None:
+def strip_cross_origin_request_headers(
+    request_headers: MutableMapping[str, str],
+) -> None:
     """In place, drop every non-forwardable header from a BUILT request.
 
     The complement of :func:`filter_cross_origin_headers`: that one filters
@@ -454,16 +550,23 @@ def strip_cross_origin_request_headers(request_headers) -> None:
     ``headers``/``auth``/cookies). Those are invisible to the caller-side
     filter, and a credential set there leaks exactly the same way.
 
+    Both layers apply the same rule (:func:`_may_cross_origin`); the only
+    difference is where ``has_body`` comes from. Here it is INFERRED from the
+    request's own framing headers, so the answer describes the actual outgoing
+    hop rather than being taken on trust.
+
     Transport/framing headers (:data:`_TRANSPORT_HEADERS`) are left alone;
-    everything else must be on :data:`CROSS_ORIGIN_SAFE_HEADERS` to survive.
+    ``Content-Type`` survives only if the request carries a body; everything
+    else must be on :data:`CROSS_ORIGIN_SAFE_HEADERS`.
 
     Args:
-        request_headers: A mutable, case-insensitive header mapping
-            (``httpx.Headers`` or ``requests.structures.CaseInsensitiveDict``).
+        request_headers: A mutable, case-insensitive header mapping belonging
+            to an already-built request (``httpx.Headers`` or
+            ``requests.structures.CaseInsensitiveDict``). Mutated in place.
     """
+    has_body = _built_request_carries_body(request_headers)
     for name in list(request_headers.keys()):
-        lowered = str(name).lower()
-        if lowered in CROSS_ORIGIN_SAFE_HEADERS or lowered in _TRANSPORT_HEADERS:
+        if _may_cross_origin(str(name), has_body=has_body):
             continue
         request_headers.pop(name, None)
 
@@ -608,13 +711,26 @@ def same_origin(url_a: str, url_b: str) -> bool:
     return origin_a is not None and origin_a == origin_of(url_b)
 
 
-def _hop_headers(headers, same_origin: bool) -> dict:
+def _hop_headers(
+    headers: Mapping[str, str] | None, same_origin: bool
+) -> dict[str, str]:
     """Caller headers for one hop: everything same-origin, allowlist otherwise.
 
     task-19733 inverted the cross-origin branch from a denylist of credential
     names to :func:`filter_cross_origin_headers`. Same-origin hops are
     untouched, so an authenticated feed that redirects within its own origin
     keeps working exactly as before.
+
+    ``has_body`` is left at its default: every ``guarded_fetch_*`` helper in
+    this module issues a bodyless GET, so a caller-supplied ``Content-Type``
+    describes nothing and does not cross an origin boundary.
+
+    Args:
+        headers: The ``headers`` mapping the caller passed to a guarded fetch.
+        same_origin: Whether this hop stays on the original request's origin.
+
+    Returns:
+        A new plain ``dict`` of the headers this hop may carry.
     """
     if same_origin:
         return {str(k): v for k, v in dict(headers or {}).items()}
@@ -699,14 +815,17 @@ async def guarded_fetch_httpx_async(
     """Async capped GET via httpx.AsyncClient with per-hop re-validation.
 
     ``auth`` is applied on same-origin hops only (credential-stripping rule).
-    Cross-origin hops carry only :data:`CROSS_ORIGIN_SAFE_HEADERS`, whether the
-    header came from the ``headers`` argument, from the client object's own
-    default headers (e.g. an ``httpx.AsyncClient(headers=...)``), or from a
-    client-level ``auth=`` (set on the ``httpx.Client``/``AsyncClient`` itself,
-    as opposed to the ``auth`` parameter of this function) — the last of those
-    is applied by httpx inside ``send()``, so it is suppressed by passing an
-    explicit ``auth=None`` on the cross-origin hop rather than by header
-    stripping.
+    A cross-origin hop carries :data:`CROSS_ORIGIN_SAFE_HEADERS` plus the
+    client library's own framing (:data:`_TRANSPORT_HEADERS`) and nothing
+    else — no matter whether the header came from the ``headers`` argument,
+    from the client object's own default headers (e.g. an
+    ``httpx.AsyncClient(headers=...)``), or from a client-level ``auth=`` (set
+    on the ``httpx.Client``/``AsyncClient`` itself, as opposed to the ``auth``
+    parameter of this function). That last one is applied by httpx inside
+    ``send()``, so it is suppressed by passing an explicit ``auth=None`` on the
+    cross-origin hop rather than by header stripping. ``Content-Type`` would
+    be the one conditional exception (:data:`_BODY_DESCRIBING_HEADERS`), but
+    this helper only ever issues a bodyless GET, so it never applies here.
     """
     current = url
     for hop in range(MAX_REDIRECT_HOPS + 1):

@@ -296,14 +296,32 @@ async def test_cross_origin_hop_keeps_range_but_drops_custom_credential(
     while a credential under a name nobody denylisted (``X-Artifact-Token``)
     must NOT. A rule that only drops four known names fails the second half;
     a rule that drops everything fails the first.
+
+    Args:
+        tmp_path: pytest fixture -- destination directory for the download.
+        monkeypatch: pytest fixture -- neutralises the egress DNS check so
+            this stays a transport-only test.
     """
     seen: list[httpx.Request] = []
     body = b"tail-bytes-after-resume"
 
     async def allow_egress(_url: str, *, trusted_origins: frozenset[str]) -> None:
-        """Keep this transport-only test independent of DNS/egress policy."""
+        """Keep this transport-only test independent of DNS/egress policy.
+
+        Args:
+            _url: The URL ``stream_fetch`` is about to fetch; ignored.
+            trusted_origins: Passed through by the caller; ignored.
+        """
 
     def handler(request: httpx.Request) -> httpx.Response:
+        """Record every request, then answer catalog with a redirect to the CDN.
+
+        Args:
+            request: The request the MockTransport was handed.
+
+        Returns:
+            A 302 for the catalog origin, a 206 partial response otherwise.
+        """
         seen.append(request)
         if request.url.host == "catalog.example":
             return httpx.Response(
@@ -394,14 +412,32 @@ async def test_client_level_auth_not_applied_on_cross_origin_hop(
     route because httpx applies a client-level ``auth`` inside ``send()``,
     after ``build_request`` produced the request the guard filtered. The
     same-origin first hop must still authenticate.
+
+    Args:
+        tmp_path: pytest fixture -- destination directory for the download.
+        monkeypatch: pytest fixture -- neutralises the egress DNS check so
+            this stays a transport-only test.
     """
     seen: list[httpx.Request] = []
     body = b"cdn-bytes"
 
     async def allow_egress(_url: str, *, trusted_origins: frozenset[str]) -> None:
-        """Keep this transport-only test independent of DNS/egress policy."""
+        """Keep this transport-only test independent of DNS/egress policy.
+
+        Args:
+            _url: The URL ``stream_fetch`` is about to fetch; ignored.
+            trusted_origins: Passed through by the caller; ignored.
+        """
 
     def handler(request: httpx.Request) -> httpx.Response:
+        """Record every request, then answer catalog with a redirect to the CDN.
+
+        Args:
+            request: The request the MockTransport was handed.
+
+        Returns:
+            A 302 for the catalog origin, the artifact bytes otherwise.
+        """
         seen.append(request)
         if request.url.host == "catalog.example":
             return httpx.Response(
