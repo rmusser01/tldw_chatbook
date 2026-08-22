@@ -753,6 +753,9 @@ def test_receipt_and_direct_initialization_orders_have_v2_parity(
         "changed_predicate",
         "extra_trigger",
         "extra_view",
+        "sqlite_prefix_trigger",
+        "sqlite_prefix_table",
+        "sqlite_prefix_view",
     ),
 )
 def test_claimed_v2_malformed_schema_fails_closed_without_repair(
@@ -787,9 +790,23 @@ def test_claimed_v2_malformed_schema_fails_closed_without_repair(
                     SELECT RAISE(ABORT, 'private trigger sentinel');
                 END"""
             )
-        else:
+        elif malformation == "extra_view":
             connection.execute(
                 """CREATE VIEW private_receipt_view AS
+                SELECT session_id FROM import_sessions"""
+            )
+        elif malformation == "sqlite_prefix_trigger":
+            connection.execute(
+                """CREATE TRIGGER sqliteevil_receipt_trigger
+                BEFORE INSERT ON import_sessions BEGIN
+                    SELECT RAISE(ABORT, 'private trigger sentinel');
+                END"""
+            )
+        elif malformation == "sqlite_prefix_table":
+            connection.execute("CREATE TABLE sqliteevil_receipt_table (value TEXT)")
+        else:
+            connection.execute(
+                """CREATE VIEW sqliteevil_receipt_view AS
                 SELECT session_id FROM import_sessions"""
             )
         connection.commit()

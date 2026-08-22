@@ -523,6 +523,7 @@ _V2_INDEX_NAMES = frozenset(
         "idx_sync_migration_items_outcome",
     }
 )
+_SQLITE_INTERNAL_NAME_PATTERN = r"sqlite\_%"
 
 
 def _normalize_sql(sql: str) -> str:
@@ -537,7 +538,8 @@ def _schema_snapshot(connection: sqlite3.Connection) -> SyncStateSchemaSnapshot:
         (str(row[0]), str(row[1]))
         for row in connection.execute(
             """SELECT type, name FROM sqlite_master
-            WHERE name NOT LIKE 'sqlite_%'"""
+            WHERE name NOT LIKE ? ESCAPE '\\'""",
+            (_SQLITE_INTERNAL_NAME_PATTERN,),
         )
     }
     table_names = {
@@ -545,7 +547,7 @@ def _schema_snapshot(connection: sqlite3.Connection) -> SyncStateSchemaSnapshot:
         for row in connection.execute(
             """SELECT name FROM sqlite_master
             WHERE type = 'table' AND name NOT LIKE ? ESCAPE '\\'""",
-            (r"sqlite\_%",),
+            (_SQLITE_INTERNAL_NAME_PATTERN,),
         )
     }
     if table_names != _V2_TABLE_NAMES or observed_objects != canonical_objects:
