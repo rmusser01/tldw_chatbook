@@ -769,3 +769,29 @@ def test_reads_under_git_are_unchanged_by_this_guard(tmp_path):
     root = _plant_repo(tmp_path)
     out = read_file(".git/HEAD", workspace_root=root)
     assert "refs/heads/main" in out
+
+
+def test_fs_write_refuses_a_case_variant_of_git(tmp_path):
+    """Qodo #1 (PR #1934): macOS and Windows filesystems are
+    case-insensitive by default, so `.GIT/config` IS `.git/config`.
+
+    Verified before the fix: `write_file(".GIT/config", ...)` succeeded and
+    the hostile remote landed in the REAL `.git/config`.
+    """
+    root = _plant_repo(tmp_path)
+    before = (root / ".git" / "config").read_text()
+    for spelling in (".GIT/config", ".Git/config", ".gIt/HEAD"):
+        _refused(
+            lambda s=spelling: write_file(s, "[remote \"--force\"]\n", workspace_root=root),
+            f"fs_write({spelling})",
+        )
+    assert (root / ".git" / "config").read_text() == before
+
+
+def test_case_variants_do_not_over_refuse_gitignore(tmp_path):
+    """The case-insensitive match must still be COMPONENT-exact: `.GITIGNORE`
+    is an ordinary file, not repository metadata."""
+    root = tmp_path / "repo_ci"
+    (root / ".git").mkdir(parents=True)
+    write_file(".GITIGNORE", "build/\n", workspace_root=root)
+    assert (root / ".GITIGNORE").read_text() == "build/\n"

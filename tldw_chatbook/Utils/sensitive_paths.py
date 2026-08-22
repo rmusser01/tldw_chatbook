@@ -866,7 +866,10 @@ def is_git_metadata_write(path: Path) -> bool:
     Matching is on an exact path component, so the near-miss names that
     share the prefix stay writable:
 
-    * refused: ``.git``, ``.git/config``, ``.git/hooks/pre-commit``, and the
+    Matching is case-insensitive (a case-insensitive filesystem makes
+    ``.GIT`` the same directory), but still component-exact:
+
+    * refused: ``.git``, ``.GIT``, ``.git/config``, ``.git/hooks/pre-commit``, and the
       ``.git`` FILE a linked worktree carries (rewriting it redirects the
       whole repository, so a directory-only check would miss it);
     * allowed: ``.gitignore``, ``.gitattributes``, ``.github/workflows/``.
@@ -879,4 +882,11 @@ def is_git_metadata_write(path: Path) -> bool:
     Returns:
         True when any component of ``path`` is exactly ``.git``.
     """
-    return GIT_METADATA_COMPONENT in path.parts
+    # Case-INSENSITIVE component match (Qodo, PR #1934): macOS and Windows
+    # filesystems are case-insensitive by default, so `.GIT/config` opens the
+    # very same file as `.git/config`. Verified before this fix: a
+    # `.GIT/config` write sailed past an exact-match guard and landed a
+    # hostile remote in the real config. Still COMPONENT-exact, so
+    # `.GITIGNORE` stays writable.
+    folded = GIT_METADATA_COMPONENT.casefold()
+    return any(part.casefold() == folded for part in path.parts)
