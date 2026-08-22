@@ -2,7 +2,7 @@
 target: Console bounded Context and Inspector section scrolling spec
 total_score: 24
 max_score: 40
-na_heuristics: 
+na_heuristics:
 p0_count: 1
 p1_count: 2
 timestamp: 2026-08-21T08-41-37Z
