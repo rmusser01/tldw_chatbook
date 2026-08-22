@@ -163,7 +163,14 @@ async def test_empty_state_shows_guidance() -> None:
         assert empty.display is True
         text = str(empty.render())
         assert "No log entries yet" in text
-        assert "share them when asking for help" in text
+        # TASK-19555: the guidance must describe the artifact it is inviting
+        # the user to share. It used to say "copy the logs and share them"
+        # with no mention that the payload carried their file names, note
+        # titles and search terms -- and, before the sink-side redaction, any
+        # API key that had been logged.
+        assert "Copy visible logs" in text
+        assert "file names" in text
+        assert "read before you share" in text
 
 
 # ---------------------------------------------------------------------------

@@ -5829,3 +5829,53 @@ calls instead of reusing a literal. The tell that something is wrong is a
 fixture that passes against a *stronger* claim than it set up: here, deleting
 the entire baseline step would not have changed the test's result, which is the
 definition of a setup step that is not doing anything.
+
+
+
+## A guarantee is only proved for the sink you asserted against — and a test's stand-in is not the shipped one (TASK-19555, 2026-08-21)
+
+**What happened.** ADR-029 says persistent application logs are metadata-only
+with respect to user content. `Tests/test_remaining_diagnostic_sentinel_matrix.py`
+looked like thorough proof: for seven domain owners it injected a private
+sentinel, attached a **filtered** `PrivateRotatingFileHandler` and an
+**unfiltered** `_CollectingHandler`, and asserted the sentinel stayed out of
+the file. Green for months.
+
+The app installs an unfiltered collector too — `TldwCli._setup_buffered_
+logging`'s `PersistentLogHandler`, root logger, level `NOTSET`, no filter,
+feeding an unbounded `deque` that the Logs screen's "Copy all" joined onto the
+system clipboard, under an empty state telling the user to reproduce the
+problem and share their logs. The suite never asserted against it. Its
+`_CollectingHandler` was a test-local stand-in, present to prove the *other*
+half of the design (that payloads stay available to the UI), and its existence
+made the file assertion read as coverage of "the collector" in general. It was
+not. Writing a first assertion against the real handler produced the sentinel,
+an `sk-` key and a full traceback carrying a note title, all on the clipboard
+path, immediately.
+
+**What to do.** When a test proves a security property at a sink, count the
+sinks. `grep` for every `addHandler`/`add` on the same logger and name in the
+test which ones are covered — the filter that enforces the guarantee was
+attached at exactly two call sites here, both the same handler, and that was
+findable in one search. And when a test constructs a second handler as scenery,
+ask whether the *production* object of that kind is asserted anywhere; a
+stand-in beside the thing under test is the most convincing way to look covered
+while covering nothing. The tell is an assertion list where the dangerous
+surface appears only as a positive (`assert sentinel in collector.messages`)
+and never as a negative.
+
+**And then it happened again, to the person writing this entry, in the same
+task.** The fix redacted at `PersistentLogHandler.emit`, which fills two
+stores (`_log_buffer`, `_log_records`) and *then* hands the line to whichever
+on-screen surface is mounted. I pinned both stores, wrote the paragraph above
+about counting sinks, and shipped. Review mutated
+`logs_window.append_record(…, msg)` to `…, formatted` — feeding the
+UNREDACTED line to the mounted widget and therefore into `LogsWindow._records`,
+which is exactly what "Copy visible logs" puts on the clipboard — and the
+suite returned **111 passed, 0 failed**. A *store* is not a *feed*. When one
+function writes the same value to several places, the count that matters is
+the number of **assignments and calls that carry it outward**, not the number
+of collections it lands in; walk the function line by line and pin each one.
+Cheapest reliable check: mutate each outward hand-off in turn and require a
+red for every one — three lines of test closed this, but only after a mutation
+found it.
