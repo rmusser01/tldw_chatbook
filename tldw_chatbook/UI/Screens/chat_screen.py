@@ -6876,11 +6876,11 @@ class ChatScreen(BaseAppScreen):
         if not console_session_id:
             logger.debug("Console realtime loop refused: no active Console session")
             return
-
         idle_timeout = realtime_idle_timeout_seconds()
         buddy_generation = (
-            self._console_runtime()
-            .persona_buddy_sink.next_voice_generation(console_session_id)
+            self._console_runtime().persona_buddy_sink.next_voice_generation(
+                console_session_id
+            )
         )
         if buddy_generation is None:
             return

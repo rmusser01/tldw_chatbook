@@ -700,27 +700,19 @@ def build_console_rail_state(
     # budget the collapse is a rendering override the explicit marker
     # cannot buy its way past -- the stored preference is untouched, so
     # widening back past the budget restores the explicit rail.
-    left_width_budget = (
-        CONSOLE_RAIL_LEFT_MIN_COLUMNS + CONSOLE_RAIL_MAIN_USABLE_COLUMNS
-    )
+    left_width_budget = CONSOLE_RAIL_LEFT_MIN_COLUMNS + CONSOLE_RAIL_MAIN_USABLE_COLUMNS
     right_width_budget = (
         CONSOLE_RAIL_RIGHT_MIN_COLUMNS + CONSOLE_RAIL_MAIN_USABLE_COLUMNS
     )
     right_forced_collapsed = (
         available_columns is not None
         and available_columns < CONSOLE_RAIL_RIGHT_COMPACT_COLLAPSE_COLUMNS
-        and (
-            not preferences.right_open
-            or available_columns < right_width_budget
-        )
+        and (not preferences.right_open or available_columns < right_width_budget)
     )
     left_forced_collapsed = (
         available_columns is not None
         and available_columns < CONSOLE_RAIL_LEFT_COMPACT_COLLAPSE_COLUMNS
-        and (
-            not explicit_left_open
-            or available_columns < left_width_budget
-        )
+        and (not explicit_left_open or available_columns < left_width_budget)
     )
     single_pane = (
         available_columns is not None
