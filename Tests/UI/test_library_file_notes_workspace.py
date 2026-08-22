@@ -3757,7 +3757,11 @@ async def test_library_notes_source_choices_render_and_switch_by_keyboard(
             assert search.has_focus
             assert search.region.right <= screen.size.width
         else:
-            assert rail.display is True
+            # TASK-19602: from 1bda754fa, a wide focused File-Notes task
+            # intentionally hides the rail (the task-return control is the
+            # way back); only the compact size keeps stage "rail" logic, so
+            # the wide sizes assert the canvas-owns-geometry contract.
+            assert rail.display is False
 
         await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
         await _wait_until(
@@ -3781,19 +3785,31 @@ async def test_library_notes_source_choices_render_and_switch_by_keyboard(
         assert files.has_class("-selected")
         assert not files.disabled
 
-        for _ in range(60):
-            if files.has_focus:
-                break
-            await pilot.press("tab")
-        assert files.has_focus
-        assert strip.content_region.contains_region(files.region)
-        await pilot.press("shift+tab")
-        await _wait_until(
-            pilot,
-            lambda: database.has_focus,
-            "Shift+Tab did not move from Files to the visible Database source",
-        )
-        await pilot.press("enter")
+        if size == (40, 20):
+            for _ in range(60):
+                if files.has_focus:
+                    break
+                await pilot.press("tab")
+            assert files.has_focus
+            assert strip.content_region.contains_region(files.region)
+            await pilot.press("shift+tab")
+            await _wait_until(
+                pilot,
+                lambda: database.has_focus,
+                "Shift+Tab did not move from Files to the visible Database source",
+            )
+            await pilot.press("enter")
+        else:
+            # TASK-19602: in wide focused-task mode the source strip's
+            # buttons are hidden by design (1bda754fa) -- the keyboard way
+            # back is the task-return control.
+            task_return = screen.query_one("#library-notes-task-return", Button)
+            for _ in range(60):
+                if task_return.has_focus:
+                    break
+                await pilot.press("tab")
+            assert task_return.has_focus
+            await pilot.press("enter")
         await _wait_until(
             pilot,
             lambda: (
@@ -4151,7 +4167,15 @@ async def test_library_database_files_switch_retains_workspace_and_database_canv
             _static_text(retained, "#file-notes-session-changes")
             == "Review session changes (1)"
         )
-        screen.query_one("#library-notes-source-database", Button).press()
+        # TASK-19602: in wide terminals a focused File-Notes task hides the
+        # source strip's Database button in favor of the task-return control
+        # (both handlers route to _return_to_library_database_notes) --
+        # press whichever is live at this width.
+        database_button = screen.query_one("#library-notes-source-database", Button)
+        if database_button.display:
+            database_button.press()
+        else:
+            screen.query_one("#library-notes-task-return", Button).press()
         await _wait_until(
             pilot,
             lambda: bool(screen.query("#library-notes-canvas")),
