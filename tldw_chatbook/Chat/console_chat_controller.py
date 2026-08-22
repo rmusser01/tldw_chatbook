@@ -11885,9 +11885,7 @@ class ConsoleChatController:
                     )
                     if action == "disable":
                         self._clear_project_instruction_delivery(session_id)
-                        return ConsoleSubmitResult(
-                            False, False, "project_instructions_disabled"
-                        )
+                        return self._block(session_id, "project_instructions_disabled")
                     if action != "select" or project_selection is None:
                         self._clear_project_instruction_delivery(session_id)
                         return ConsoleSubmitResult(False, False, str(exc))
