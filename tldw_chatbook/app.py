@@ -389,6 +389,8 @@ from .Character_Chat.server_character_persona_service import (
 )
 from .Actor_Packs.persona_coordinator import PersonaActorPackCoordinator
 from .Actor_Packs.creation import ActorPackCreationService
+from .Actor_Packs.controller import ActorPackExportController
+from .Actor_Packs.export import ActorPackExportService
 from .Actor_Packs.repository import ActorPackRepository
 # Persona_Buddy is deliberately NOT imported at module scope (TASK-21103):
 # its controller drags Persona_Visual and PIL (1.28 s cold) onto the boot
@@ -6799,6 +6801,18 @@ class TldwCli(
             self.actor_pack_repository,
             self.persona_actor_pack_coordinator,
         )
+        self.actor_pack_export_service = ActorPackExportService(
+            self.chachanotes_db,
+            self.local_character_persona_service,
+            self.actor_pack_repository,
+            persona_visual_repository=PersonaVisualRepository(self.chachanotes_db),
+            visual_identity_repository=VisualIdentityRepository(self.chachanotes_db),
+            profile_root=get_user_data_dir(),
+        )
+        self.actor_pack_export_controller = ActorPackExportController(
+            self.actor_pack_export_service
+        )
+        self._actor_pack_export_shutdown_task: asyncio.Task[None] | None = None
         self.character_persona_scope_service = CharacterPersonaScopeService(
             local_service=self.local_character_persona_service,
             server_service=self.server_character_persona_service,
@@ -12409,6 +12423,21 @@ class TldwCli(
             self._persona_buddy_shutdown_task = task
         await asyncio.shield(task)
 
+    async def _shutdown_actor_pack_export(self) -> None:
+        """Cancel and drain Actor Pack export before profile teardown."""
+
+        controller = getattr(self, "actor_pack_export_controller", None)
+        if controller is None:
+            return
+        task = getattr(self, "_actor_pack_export_shutdown_task", None)
+        if task is None:
+            task = asyncio.create_task(
+                controller.shutdown(),
+                name="shutdown_actor_pack_export",
+            )
+            self._actor_pack_export_shutdown_task = task
+        await asyncio.shield(task)
+
     async def _shutdown_console_runtime(self) -> None:
         """Destroy the app-owned Console runtime exactly once, at exit.
 
@@ -12431,6 +12460,7 @@ class TldwCli(
     async def _shutdown_app_owned_lifecycles(self) -> None:
         """Drain durable app-owned work before Textual closes screen state."""
         await self._shutdown_notes_sync_runtime()
+        await self._shutdown_actor_pack_export()
         # Console shutdown terminally fences every trusted Buddy producer
         # before Buddy itself closes admission and drains owned work.
         await self._shutdown_console_runtime()

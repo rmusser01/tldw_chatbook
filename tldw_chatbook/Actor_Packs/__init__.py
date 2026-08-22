@@ -5,6 +5,12 @@ from .contracts import (
     ActorPackValidationError,
     validate_actor_pack_document,
 )
+from .controller import (
+    ActorPackExportController,
+    ActorPackExportControllerError,
+    ActorPackExportOutcome,
+    ActorPackExportRequest,
+)
 from .creation import (
     ActorPackCreationError,
     ActorPackCreationResult,
@@ -29,9 +35,13 @@ __all__ = [
     "ActorPackCreationError",
     "ActorPackCreationResult",
     "ActorPackCreationService",
+    "ActorPackExportController",
+    "ActorPackExportControllerError",
     "ActorPackValidationError",
     "ActorPackExportError",
     "ActorPackExportResult",
+    "ActorPackExportOutcome",
+    "ActorPackExportRequest",
     "ActorPackExportService",
     "ActorPackExportSnapshot",
     "ActorPackDestinationContract",

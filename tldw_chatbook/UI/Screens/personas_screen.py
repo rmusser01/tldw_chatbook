@@ -73,6 +73,10 @@ from ...Character_Chat.visual_identity import (
 from ...Character_Chat.world_book_import import normalize_world_book_import
 from ...Character_Chat.world_book_manager import CHARACTER_WORLD_BOOKS_KEY
 from ...Actor_Packs.contracts import ActorPackValidationError, validate_actor_portrait
+from ...Actor_Packs.controller import (
+    ActorPackExportOutcome,
+    ActorPackExportRequest,
+)
 from ...Actor_Packs.creation import ActorPackCreationError, ActorPackCreationResult
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Utils.fts5_match_forms import quote_fts5_prefix
@@ -446,6 +450,18 @@ class _PersonaBuddyActionAuthority:
     revision: int
     session_generation: int
     scope_service: object = dataclasses.field(repr=False, compare=False)
+    controller: object = dataclasses.field(repr=False, compare=False)
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _ActorPackExportUIAuthority:
+    """Exact screen and selection authority for one app-owned export."""
+
+    source: str
+    actor_kind: str
+    local_actor_id: str
+    session_generation: int
+    screen: object = dataclasses.field(repr=False, compare=False)
     controller: object = dataclasses.field(repr=False, compare=False)
 
 
@@ -1042,6 +1058,8 @@ class PersonasScreen(BaseAppScreen):
         self._actor_pack_operation_task: asyncio.Task[Any] | None = None
         self._actor_pack_cancel_event: threading.Event | None = None
         self._actor_pack_portrait_generation: int = 0
+        self._actor_pack_export_operation: int | None = None
+        self._actor_pack_export_authority: _ActorPackExportUIAuthority | None = None
         # Image-gen P3 Task 3: (character_id, state) pairs with an expression
         # generation worker currently in flight - refuses a re-entrant
         # generate click for the same slot rather than racing two writes.
@@ -1659,6 +1677,7 @@ class PersonasScreen(BaseAppScreen):
 
     async def on_unmount(self) -> None:
         self._advance_persona_buddy_session()
+        self._cancel_actor_pack_export()
         self._character_tts_request_generation += 1
         self._character_tts_snapshot = None
         self._clear_character_tts_profile_suggestion()
@@ -3916,6 +3935,72 @@ class PersonasScreen(BaseAppScreen):
 
         self._persona_buddy_session_generation += 1
         return self._persona_buddy_session_generation
+
+    def _start_actor_pack_export(
+        self, request: ActorPackExportRequest
+    ) -> tuple[int, _ActorPackExportUIAuthority]:
+        """Submit one immutable request while the app retains task ownership."""
+
+        if self._actor_pack_export_operation is not None:
+            raise ValueError("actor_pack_export_busy")
+        controller = self.app_instance.actor_pack_export_controller
+        authority = _ActorPackExportUIAuthority(
+            source=self.state.runtime_source,
+            actor_kind=self.state.selected_entity_kind,
+            local_actor_id=self.state.selected_entity_id,
+            session_generation=self._persona_buddy_session_generation,
+            screen=self,
+            controller=controller,
+        )
+        operation = controller.start_export(request)
+        self._actor_pack_export_operation = operation
+        self._actor_pack_export_authority = authority
+        return operation, authority
+
+    async def _wait_actor_pack_export(
+        self,
+        operation: int,
+        authority: _ActorPackExportUIAuthority,
+    ) -> ActorPackExportOutcome | None:
+        """Return an outcome only to the unchanged submitting screen authority."""
+
+        controller = authority.controller
+        try:
+            outcome = await controller.wait(operation)
+            if not self._actor_pack_export_authority_is_current(authority):
+                return None
+            return outcome
+        finally:
+            if self._actor_pack_export_operation == operation:
+                self._actor_pack_export_operation = None
+                self._actor_pack_export_authority = None
+
+    def _actor_pack_export_authority_is_current(
+        self, authority: _ActorPackExportUIAuthority
+    ) -> bool:
+        """Check screen identity, exact selection, source, and ABA generation."""
+
+        return (
+            authority.screen is self
+            and self._actor_pack_export_authority is authority
+            and self.app_instance.actor_pack_export_controller
+            is authority.controller
+            and self.state.runtime_source == authority.source
+            and self.state.selected_entity_kind == authority.actor_kind
+            and self.state.selected_entity_id == authority.local_actor_id
+            and self._persona_buddy_session_generation
+            == authority.session_generation
+        )
+
+    def _cancel_actor_pack_export(self) -> None:
+        """Signal the app-owned operation without adopting or awaiting its task."""
+
+        operation = self._actor_pack_export_operation
+        authority = self._actor_pack_export_authority
+        self._actor_pack_export_operation = None
+        self._actor_pack_export_authority = None
+        if operation is not None and authority is not None:
+            authority.controller.cancel(operation)
 
     @on(PersonaEntitySelected)
     async def _handle_entity_selected(self, message: PersonaEntitySelected) -> None:
