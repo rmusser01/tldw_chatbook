@@ -305,6 +305,7 @@ def test_canonical_digest_preserves_unicode_and_json_scalar_types() -> None:
     ("value", "expected"),
     (
         (None, None),
+        (1, 1),
         (1.5, float.hex(1.5)),
         (-0.0, float.hex(-0.0)),
         (math.inf, "invalid_non_finite_real"),
@@ -313,10 +314,16 @@ def test_canonical_digest_preserves_unicode_and_json_scalar_types() -> None:
     ),
 )
 def test_real_value_uses_exact_finite_hex_and_nonfinite_marker(
-    value: float | None,
-    expected: str | None,
+    value: int | float | None,
+    expected: int | str | None,
 ) -> None:
     assert legacy._real_value(value) == expected
+
+
+@pytest.mark.parametrize("value", (True, "1.5", b"1.5"))
+def test_real_value_rejects_non_sqlite_numeric_types(value: object) -> None:
+    with pytest.raises(legacy.LegacyNotesSyncSourceError, match="invalid_source_type"):
+        legacy._real_value(value)
 
 
 def test_real_value_conversion_error_has_no_private_exception_chain() -> None:
@@ -354,6 +361,44 @@ def test_source_revision_encodes_real_fields_in_their_exact_canonical_shape() ->
         source["notes"][1]["last_synced_disk_file_mtime"] == "invalid_non_finite_real"
     )
     assert source["conflicts"][0]["disk_modified_time"] == float.hex(-0.0)
+
+
+def test_integer_to_real_type_drift_changes_a_b_revision_and_terminal_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = {
+        "sync_directory": "root",
+        "sync_direction": "bidirectional",
+        "sync_conflict_resolution": "newer_wins",
+    }
+    source_a = legacy._source_revision(
+        config,
+        (_note_row("note", last_synced_disk_file_mtime=1),),
+        (),
+    )
+    source_b = legacy._source_revision(
+        config,
+        (_note_row("note", last_synced_disk_file_mtime=1.0),),
+        (),
+    )
+    snapshots = iter(
+        (
+            legacy.LegacyNotesSyncSourceSnapshot(source_a, _digest(source_a)),
+            legacy.LegacyNotesSyncSourceSnapshot(source_b, _digest(source_b)),
+        )
+    )
+    monkeypatch.setattr(legacy, "capture_legacy_source", lambda _db: next(snapshots))
+
+    run = legacy.migrate_legacy_notes_sync_state(
+        _migration_repository(tmp_path),
+        object(),  # type: ignore[arg-type]
+    )
+
+    assert source_a["notes"][0]["last_synced_disk_file_mtime"] == 1
+    assert source_b["notes"][0]["last_synced_disk_file_mtime"] == float.hex(1.0)
+    assert _digest(source_a) != _digest(source_b)
+    assert run.state is MigrationState.DRIFTED
 
 
 def test_capture_source_uses_exact_missing_config_defaults(
@@ -453,6 +498,64 @@ def test_capture_source_falls_back_to_legacy_conflict_key(
 
     assert snapshot.source["config"]["sync_conflict_resolution"] == "legacy-only"
     db.close()
+
+
+@pytest.mark.parametrize("boundary", ("config", "source_reader"))
+def test_capture_source_translates_private_external_failures_without_a_chain(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    boundary: str,
+) -> None:
+    from tldw_chatbook import config as config_module
+
+    secret = f"private-{boundary}-sentinel"
+    config_path = tmp_path / "empty.toml"
+    config_path.write_text("", encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    db: object = _new_db(tmp_path)
+
+    if boundary == "config":
+
+        def fail_config() -> object:
+            raise RuntimeError(secret)
+
+        monkeypatch.setattr(config_module, "get_atomic_config_snapshot", fail_config)
+    else:
+
+        class BrokenSourceReader:
+            def read_legacy_notes_sync_source_rows(self) -> object:
+                raise RuntimeError(secret)
+
+        db = BrokenSourceReader()
+
+    with pytest.raises(legacy.LegacyNotesSyncSourceError) as raised:
+        legacy.capture_legacy_source(db)  # type: ignore[arg-type]
+
+    assert str(raised.value) == "legacy_source_read_failed"
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert secret not in repr(raised.value)
+    if isinstance(db, CharactersRAGDB):
+        db.close()
+
+
+def test_capture_source_preserves_a_bounded_source_reader_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "empty.toml"
+    config_path.write_text("", encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    expected = legacy.LegacyNotesSyncSourceError("invalid_source_shape")
+
+    class BoundedSourceReader:
+        def read_legacy_notes_sync_source_rows(self) -> object:
+            raise expected
+
+    with pytest.raises(legacy.LegacyNotesSyncSourceError) as raised:
+        legacy.capture_legacy_source(BoundedSourceReader())  # type: ignore[arg-type]
+
+    assert raised.value is expected
 
 
 @pytest.mark.parametrize(
@@ -696,6 +799,39 @@ def test_capture_source_uses_real_io_but_never_candidate_filesystem_operands(
         )
     assert after_database_rows == before_database_rows
     assert all(not os.path.lexists(value) for value in candidate_operands)
+    db.close()
+
+
+def test_real_chacha_blob_path_is_rejected_beside_a_persisted_valid_sibling(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "empty.toml"
+    config_path.write_text("", encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    db = _new_db(tmp_path)
+    private_blob = b"private-blob-path-sentinel"
+    _add_note(db, "valid", relative_file_path_on_disk="valid.md")
+    _add_note(db, "malformed", relative_file_path_on_disk=private_blob)
+    repository = _migration_repository(tmp_path)
+
+    run = legacy.migrate_legacy_notes_sync_state(repository, db)
+    items = repository.list_migration_items(run.migration_id)
+    bindings = tuple(
+        binding
+        for root in repository.list_roots()
+        for binding in repository.list_bindings(root_id=root.root_id)
+    )
+
+    assert run.state is MigrationState.MATCHED_RECHECK
+    assert [binding.note_id for binding in bindings] == ["valid"]
+    assert any(
+        item.item_kind == "binding"
+        and item.outcome == "rejected"
+        and item.reason_code == "legacy_relative_path_invalid"
+        for item in items
+    )
+    assert private_blob.decode() not in repr(items)
     db.close()
 
 

@@ -6,9 +6,9 @@ import hashlib
 import json
 import math
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, TypeAlias, cast
+from typing import TYPE_CHECKING, TypeAlias, TypeVar, cast
 
 if TYPE_CHECKING:
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 
 
 JsonScalar: TypeAlias = str | int | float | bool | None
+_T = TypeVar("_T")
 _DEFAULT_SYNC_DIRECTORY = "~/Documents/Notes"
 _DEFAULT_SYNC_DIRECTION = "bidirectional"
 _DEFAULT_CONFLICT_RESOLUTION = "newer_wins"
@@ -144,17 +145,14 @@ class LegacyNotesSyncSourceSnapshot:
         return "LegacyNotesSyncSourceSnapshot(redacted=True)"
 
 
-def _real_value(value: object) -> str | None:
+def _real_value(value: object) -> int | str | None:
     if value is None:
         return None
-    number: float | None = None
-    try:
-        number = float(cast(Any, value))
-    except (TypeError, ValueError):
-        pass
-    if number is None:
+    if type(value) is int:
+        return value
+    if type(value) is not float:
         raise LegacyNotesSyncSourceError("invalid_source_type")
-    return number.hex() if math.isfinite(number) else "invalid_non_finite_real"
+    return value.hex() if math.isfinite(value) else "invalid_non_finite_real"
 
 
 def _json_scalar(value: object, *, config: bool = False) -> JsonScalar:
@@ -172,6 +170,27 @@ def _text(value: object, *, nullable: bool = False) -> str | None:
     if type(value) is not str:
         raise LegacyNotesSyncSourceError("invalid_source_type")
     return value
+
+
+def _path_value(value: object) -> object:
+    if type(value) is bytes:
+        return {
+            "digest": hashlib.sha256(value).hexdigest(),
+            "sqlite_type": "blob",
+            "type": "tldw_notes_sync_legacy_hashed_scalar",
+        }
+    return _json_scalar(value)
+
+
+def _is_hashed_scalar(value: object) -> bool:
+    return (
+        type(value) is dict
+        and set(value) == {"digest", "sqlite_type", "type"}
+        and value["sqlite_type"] == "blob"
+        and value["type"] == "tldw_notes_sync_legacy_hashed_scalar"
+        and type(value["digest"]) is str
+        and _DIGEST_PATTERN.fullmatch(value["digest"]) is not None
+    )
 
 
 def _integer(value: object) -> int:
@@ -197,11 +216,9 @@ def _canonical_note(row: Mapping[str, object]) -> dict[str, object]:
     _exact_mapping(row, _NOTE_FIELDS)
     return {
         "id": _text(row["id"]),
-        "file_path_on_disk": _text(row["file_path_on_disk"], nullable=True),
-        "relative_file_path_on_disk": _text(
-            row["relative_file_path_on_disk"], nullable=True
-        ),
-        "sync_root_folder": _text(row["sync_root_folder"], nullable=True),
+        "file_path_on_disk": _path_value(row["file_path_on_disk"]),
+        "relative_file_path_on_disk": _path_value(row["relative_file_path_on_disk"]),
+        "sync_root_folder": _path_value(row["sync_root_folder"]),
         "last_synced_disk_file_hash": _text(
             row["last_synced_disk_file_hash"], nullable=True
         ),
@@ -289,6 +306,16 @@ def _config_projection(values: Mapping[str, object]) -> dict[str, JsonScalar]:
     }
 
 
+def _external_source_read(reader: Callable[[], _T]) -> _T:
+    try:
+        return reader()
+    except LegacyNotesSyncSourceError:
+        raise
+    except Exception:
+        pass
+    raise LegacyNotesSyncSourceError("legacy_source_read_failed")
+
+
 def capture_legacy_source(
     notes_db: CharactersRAGDB,
 ) -> LegacyNotesSyncSourceSnapshot:
@@ -302,8 +329,11 @@ def capture_legacy_source(
     """
     from tldw_chatbook.config import get_atomic_config_snapshot
 
-    config = _config_projection(get_atomic_config_snapshot().values)
-    notes, conflicts = notes_db.read_legacy_notes_sync_source_rows()
+    config_values = _external_source_read(lambda: get_atomic_config_snapshot().values)
+    config = _config_projection(config_values)
+    notes, conflicts = _external_source_read(
+        notes_db.read_legacy_notes_sync_source_rows
+    )
     source = _source_revision(config, notes, conflicts)
     return LegacyNotesSyncSourceSnapshot(
         source,
@@ -334,7 +364,7 @@ def legacy_value_digest(value: object) -> str:
     Returns:
         Lowercase SHA-256 hexadecimal text.
     """
-    scalar = _json_scalar(value)
+    scalar = value if _is_hashed_scalar(value) else _json_scalar(value)
     return _canonical_digest(
         {"type": "tldw_notes_sync_legacy_value", "value": scalar, "version": 1}
     )
