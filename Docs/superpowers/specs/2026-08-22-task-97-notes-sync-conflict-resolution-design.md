@@ -316,25 +316,36 @@ reused. If absent, the caller-owned deterministic ID is used to create them. An
 ID/path mismatch fails closed. Existing manual folders are never automatically
 renamed.
 
-The sync authority exposes one narrow
-`create_or_verify_conflict_copy(request)` seam over the existing local folder,
-note, and membership repositories. It accepts the
-caller-derived parent folder ID, child folder ID, copy note ID, normalized
-manual folder names, bounded title/body, and note-scope owner. It returns the
-actual verified folder, note, and placement identities. It does not accept a
-filesystem path and cannot create sync-managed placements.
+The sync authority exposes three narrow idempotent seams over the existing
+local folder, note, and membership repositories:
 
-For each folder level the seam resolves the normalized active manual path
+- `create_or_verify_manual_folder(request)` performs at most one folder create
+  and handles the parent and child in separate invocations;
+- `create_or_verify_conflict_note(request)` performs at most one note create;
+  and
+- `create_or_verify_manual_placement(request)` performs at most one manual
+  placement create.
+
+The requests carry only the caller-derived object ID, expected parent/owner,
+normalized manual name or bounded title/body, and the prior step's verified
+actual ID. Each call returns the actual verified identity and optimistic
+version. They do not accept filesystem paths and cannot create sync-managed
+placements. Read-only repository observations jointly verify the copy after the
+three mutation seams complete.
+
+For each folder level its invocation resolves the normalized active manual path
 first. If that path exists, it reuses the existing folder and returns its actual
 ID. If absent, it creates the folder with the caller-owned deterministic ID. A
 deterministic ID already attached to a different active path, a non-manual
 folder, a different owner, or a deleted object fails closed. Concurrent create
 losers reread and verify the winning row rather than choosing another identity.
-For the copy, an existing deterministic note and manual placement are reused
+For the copy, existing deterministic note and manual placement calls reuse rows
 only when owner, parent, title, body, deletion state, and placement all match;
 any mismatch fails closed. The authority uses repository optimistic versions
 and returns fresh versions after each create-or-verify step. These are
-idempotent repository operations, not a cross-database transaction.
+idempotent repository operations, not a cross-database transaction. Because
+each invocation performs at most one external effect, the executor persists the
+corresponding substage before invoking the next seam.
 
 After recovery admission the executor performs an idempotent, journaled
 sequence:
@@ -413,6 +424,16 @@ operation. Its ID is the domain-separated SHA-256 of the canonical tuple
 metadata repeats and validates the source operation ID. The linked operation
 follows the existing generic state machine:
 
+Undo admission is self-contained and capacity-accounted. While the source
+recovery is still exact and unexpired, the linked recovery copies every byte and
+typed fact needed to finish or safely refuse the Undo: the pre-resolution
+note/file authority, the post-resolution authority used for optimistic checks
+and rollback, original binding identity/path/serialization/digests, source
+choice and operation ID, and any conflict-copy identity/content/placement
+checks. Once admission commits, startup reconstruction reads only the linked
+Undo recovery; it never depends on the source recovery payload, which may expire
+or be evicted independently.
+
 | Undo boundary | Durable state/checkpoint |
 | --- | --- |
 | exact pre-Undo authority admitted | `recovery_admitted` |
@@ -484,10 +505,15 @@ After successful subset apply:
 - each completed destructive resolution adds an in-place retained receipt at
   the action point with bounded item label, choice, **Undo**, and **Dismiss**;
 - the receipt remains until that item is undone, explicitly dismissed, or
-  superseded by a newer resolution of the same item; navigation/remount
-  reconstructs undismissed receipts from the root's durable operation IDs;
-- Dismiss adds only the opaque operation ID to runtime-owned private per-root
-  receipt state, never deletes operation history or recovery authority;
+  superseded by a newer resolution of the same item;
+- within the current app runtime, navigation or controller remount reconstructs
+  undismissed receipts from runtime-owned private per-root sets of completed and
+  dismissed operation IDs;
+- Dismiss changes only those in-memory opaque-ID sets and never deletes
+  operation history or recovery authority; dismissed receipts cannot reappear
+  during that runtime;
+- a process restart starts with no at-action receipts, dismissed or otherwise;
+  the durable Resolution history remains the restart-spanning recovery surface;
 - if conflicts remain, receipts stay above page 1 of the fresh review, focus
   moves to its first conflict, and the existing status line reports applied and
   remaining counts once;
@@ -562,8 +588,9 @@ and object representations.
   mutation;
 - unsupported Windows write remains blocked;
 - deterministic conflict-copy folder/note replay and mismatch refusal;
-- create-or-verify returns actual reused IDs and rejects owner, path, kind,
-  version, content, placement, and concurrent-create collisions;
+- each single-effect create-or-verify seam returns actual reused IDs and rejects
+  owner, path, kind, version, content, placement, and concurrent-create
+  collisions before the next durable substage;
 - durable operation kinds survive recovery expiry;
 - automatic execution, reviewed apply, recovery, and Undo serialize on one root
   lock and revalidate after acquisition;
@@ -596,6 +623,8 @@ version.
 - edited copy, changed bound note/file, expired recovery, wrong root, duplicate
   delivery, and stale lease all refuse safely;
 - every Undo crash boundary resumes from its linked durable operation;
+- linked Undo resumes after source recovery expiry using only its own
+  capacity-accounted recovery;
 - Undo completion is one-shot and marks the source only after verification;
 - a second resolution after Undo succeeds without stale binding authority;
 - concurrent apply/apply and apply/Undo attempts serialize, and the loser
@@ -615,6 +644,8 @@ version.
 - partial subset status uses the existing status line once;
 - each completed resolution leaves a retained item receipt with working Undo
   and Dismiss even when other conflicts remain;
+- navigation/remount preserves current-runtime receipt dismissal, while process
+  restart shows durable history and no reconstructed at-action receipt;
 - interactive history rows use fresh bounded labels or the short opaque-ID
   fallback without persisting the labels;
 - deletion choices remain disabled;
