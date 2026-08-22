@@ -8,6 +8,7 @@ from rich.markup import escape as escape_markup
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.widgets import Button, Collapsible, Static
 from textual.widget import Widget
 
@@ -45,9 +46,18 @@ from tldw_chatbook.Widgets.Library.library_canvas_sync import (
 class LibrarySearchRagPanel(PostRecomposeCallback, VerticalScroll):
     """Display the source scope, query controls, and evidence results."""
 
+    #: Stable id for the legacy-chunk report line (task-12, spec §10.1) --
+    #: named here so Task 13's re-chunk control can find its sibling.
+    LEGACY_CHUNK_REPORT_LINE_ID = "library-rag-legacy-chunk-line"
+
     def __init__(self, state: LibraryRagPanelState, **kwargs) -> None:
         super().__init__(**kwargs)
         self.state = state
+        # task-12 (spec §10.1): cached copy of the legacy-chunk report line
+        # fetched off the mount path. Compose re-reads this cache on every
+        # rebuild (the ingest canvas's template-name cache pattern), so the
+        # fetched line survives `sync_state` recomposes without re-querying.
+        self._legacy_chunk_report: str = ""
 
     def sync_state(self, state: LibraryRagPanelState) -> None:
         """Rebuild only this mounted Search/RAG panel from ``state``.
@@ -57,6 +67,93 @@ class LibrarySearchRagPanel(PostRecomposeCallback, VerticalScroll):
         """
         self.state = state
         self.refresh(recompose=True)
+
+    def on_show(self) -> None:
+        """Fetch the legacy-chunk report once the canvas is actually visible.
+
+        (task-12, spec §10.1) The report is sourced through the app's
+        ``rag_admin_scope_service`` -- the ``rag.admin.observe.local``
+        action -- scheduled OFF the mount path into a worker (mount-time DB
+        populate is the documented "(0) count" trap; the ingest canvas's
+        template picker established this exact shape). The Library screen
+        remounts this canvas on every destination switch, so each visit
+        re-queries: a re-chunk (Task 13) or new ingest is reflected the
+        next time the user lands here.
+        """
+        self._request_legacy_chunk_report_refresh()
+
+    def _request_legacy_chunk_report_refresh(self) -> None:
+        """Schedule the legacy-chunk report fetch worker (once per show)."""
+        try:
+            self.run_worker(
+                self._fetch_legacy_chunk_report(),
+                group="library-rag-legacy-chunk-report",
+                exclusive=True,
+            )
+        except Exception:
+            # A worker-scheduling failure must never break the canvas.
+            return
+
+    async def _fetch_legacy_chunk_report(self) -> None:
+        """Query the legacy-chunk report line via the scope service.
+
+        Consumes ONLY the payload's ``legacy_chunk_report`` field. The same
+        payload's ``capability`` / ``missing_methods`` / ``fallback_enabled``
+        are HARDCODED upstream (spec §11 item 4) and never render here --
+        surfacing them would be a fabricated health claim. Degrades quietly
+        on every failure shape (missing service, policy denial, store
+        error): the line simply stays omitted, which is also its honest
+        empty state (omit-when-empty, spec §10.1 -- a clean library shows
+        nothing rather than a zero).
+        """
+        service = getattr(self.app, "rag_admin_scope_service", None)
+        get_diagnostics = getattr(service, "get_template_diagnostics", None)
+        if not callable(get_diagnostics):
+            return
+        try:
+            payload = await get_diagnostics(mode="local")
+        except Exception:
+            return
+        report = str((payload or {}).get("legacy_chunk_report") or "").strip()
+        self._legacy_chunk_report = report
+        self._apply_legacy_chunk_report(report)
+
+    def _apply_legacy_chunk_report(self, report: str) -> None:
+        """Show/hide the mounted report line in place (no remove/mount).
+
+        Plain ``Static.update()`` + a ``display`` flip -- the same
+        yield-free class of write the screen's snapshot syncers use, so
+        this can never interleave with the panel's other refresh callers.
+        """
+        try:
+            line = self.query_one(
+                f"#{self.LEGACY_CHUNK_REPORT_LINE_ID}", Static
+            )
+        except NoMatches:
+            # Mid-recompose: the cache is set, so the rebuild renders it.
+            return
+        line.update(report)
+        line.display = bool(report)
+
+    def _legacy_chunk_report_line(self) -> Static:
+        """Build the report line ``Static`` (always mounted, display-gated).
+
+        Always mounted and shown/hidden via ``display`` rather than
+        conditionally composed -- an async-fetched, instance-cached line
+        must never depend on a remove/mount racing the panel's recompose
+        cycle. ``display = False`` removes it from the layout entirely, so
+        omit-when-empty holds visually: no line, no reserved row.
+        """
+        line = Static(
+            self._legacy_chunk_report,
+            id=self.LEGACY_CHUNK_REPORT_LINE_ID,
+            classes="library-rag-quiet-line",
+            # Service-built copy, but interpolated from DB state -- render
+            # literally, matching the panel's other quiet lines.
+            markup=False,
+        )
+        line.display = bool(self._legacy_chunk_report)
+        return line
 
     def compose(self) -> ComposeResult:
         # task-2859 item 7: drop the "Library " prefix (this canvas already
@@ -116,6 +213,14 @@ class LibrarySearchRagPanel(PostRecomposeCallback, VerticalScroll):
             )
             for toggle in library_rag_scope_toggle_children(self.state):
                 yield toggle
+            # task-12 (spec §10.0/§10.1): the legacy-chunk report line --
+            # "Chunked by an older engine: N items" -- lives HERE, on the
+            # Library RAG surface ADR-003 names as the owner (not Settings).
+            # Sits after the source toggles because it describes the state
+            # of those sources' chunk data. Task 13's "Re-chunk older-engine
+            # items" control joins it here (its own worker group + the
+            # §10.3 mutual in-flight guard -- never this fetch's group).
+            yield self._legacy_chunk_report_line()
             for child in library_rag_scope_recovery_children(self.state):
                 yield child
 
