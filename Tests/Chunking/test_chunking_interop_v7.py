@@ -391,19 +391,27 @@ class TestReservedSentinelName:
         with pytest.raises(InvalidTemplateError, match="reserv"):
             svc.create_template(name="auto", description="d", template_json=VALID_BODY)
 
-    def test_reservation_matches_the_stripped_exact_sentinel(self, svc):
-        # The sentinel comparison is on the stripped name; the reservation
-        # is exact-match (no case folding) — "AUTO" remains a legal name,
-        # only the exact sentinel is refused.
+    def test_reservation_matches_the_stripped_case_folded_sentinel(self, svc):
+        # (Qodo #4) The sentinel comparison is on the stripped name,
+        # case-folded: every whole-word casing -- "AUTO", "Auto",
+        # " auto " -- renders indistinguishably from the picker's built-in
+        # Auto option, so all are refused. Only non-sentinel names stay
+        # legal (the contains-case is pinned below).
         with pytest.raises(InvalidTemplateError, match="reserv"):
             svc.create_template(name=" auto ", description="d", template_json=VALID_BODY)
-        svc.create_template(name="AUTO", description="d", template_json=VALID_BODY)
+        with pytest.raises(InvalidTemplateError, match="reserv"):
+            svc.create_template(name="AUTO", description="d", template_json=VALID_BODY)
+        with pytest.raises(InvalidTemplateError, match="reserv"):
+            svc.create_template(name="Auto", description="d", template_json=VALID_BODY)
 
     def test_update_refuses_rename_to_reserved_auto_name(self, svc):
         template_id = svc.create_template("renamable", "d", VALID_BODY)
         with pytest.raises(InvalidTemplateError, match="reserv"):
             svc.update_template(template_id, name="auto")
-        # The row keeps its old name — the refusal left it untouched.
+        # (Qodo #4) The cased whole-word variants are refused too.
+        with pytest.raises(InvalidTemplateError, match="reserv"):
+            svc.update_template(template_id, name="AUTO")
+        # The row keeps its old name — the refusals left it untouched.
         assert svc.get_template_by_id(template_id)["name"] == "renamable"
 
     def test_non_sentinel_names_still_accepted(self, svc):

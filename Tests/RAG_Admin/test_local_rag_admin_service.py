@@ -206,6 +206,27 @@ def test_local_rag_admin_service_flags_reserved_sentinel_name():
     assert service.get_template("auto")["name_reserved"] is True
 
 
+def test_local_rag_admin_service_flags_cased_reserved_sentinel_names():
+    """Qodo #4: the reserved-name rule is case-insensitive on the whole
+    word — legacy "Auto"/"AUTO" rows are flagged ``name_reserved`` exactly
+    like the exact-sentinel row, so surfaces can shadow them."""
+    chunking = FakeChunkingService()
+    for name in ("Auto", "AUTO"):
+        chunking.create_template(
+            name=name,
+            description="legacy cased sentinel row",
+            template_json={
+                "chunking": {"method": "words", "config": {"max_size": 2, "overlap": 0}},
+                "classifier": {"media_types": ["document"]},
+            },
+        )
+    service = LocalRAGAdminService(None, chunking_service=chunking)
+
+    listed = {record["name"]: record for record in service.list_templates()}
+    assert listed["Auto"]["name_reserved"] is True
+    assert listed["AUTO"]["name_reserved"] is True
+
+
 def test_local_rag_admin_service_applies_server_style_template_to_text():
     service = LocalRAGAdminService(None, chunking_service=FakeChunkingService())
     service.create_template(

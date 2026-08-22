@@ -49,10 +49,12 @@ class InvalidTemplateError(ChunkingTemplateError):
     Also raised for the RESERVED sentinel name (auto-selection spec §4.3,
     ruling 8.7/AC 14): ``"auto"`` is the picker's Auto choice riding the
     ``chunk_template`` slot, so no user template may take the name —
-    create and rename both refuse it with this error. A legacy row that
-    already holds the name (minted before this gate) is never deleted:
-    the listing decoration flags it ``name_reserved`` and auto tier 1
-    skips it by name.
+    create and rename both refuse it with this error. The refusal is
+    case-insensitive on the whole word (Qodo #4): "AUTO", "Auto" and
+    ``" auto "`` all render indistinguishably from the picker's built-in
+    Auto option. A legacy row that already holds such a name (minted
+    before this gate) is never deleted: the listing decoration flags it
+    ``name_reserved`` and auto tier 1 skips it by name.
     """
 
     pass
@@ -212,13 +214,14 @@ class ChunkingInteropService:
             InputError: If input validation fails or the name is taken
             InvalidTemplateError: If the body fails server-parity
                 validation, or the name is the reserved sentinel "auto"
-                (auto-selection spec §4.3/AC 14)
+                (case-insensitive on the whole word; auto-selection spec
+                §4.3/AC 14, Qodo #4)
             ChunkingTemplateError: If creation fails
         """
         if not name or not name.strip():
             raise InputError("Template name cannot be empty")
 
-        if name.strip() == AUTO_SENTINEL:
+        if name.strip().lower() == AUTO_SENTINEL:
             raise InvalidTemplateError(
                 f"Template name '{AUTO_SENTINEL}' is reserved for the "
                 "auto-selection sentinel (the picker's 'Auto' choice) and "
@@ -305,8 +308,9 @@ class ChunkingInteropService:
             BuiltinTemplateError: If trying to modify a builtin template
             InputError: If validation fails or the new name is taken
             InvalidTemplateError: If the NEW body fails validation, or the
-                new name is the reserved sentinel "auto" (auto-selection
-                spec §4.3/AC 14)
+                new name is the reserved sentinel "auto"
+                (case-insensitive on the whole word; auto-selection spec
+                §4.3/AC 14, Qodo #4)
         """
         template = self.get_template_by_id(template_id)
 
@@ -319,7 +323,7 @@ class ChunkingInteropService:
         if name is not None:
             if not name.strip():
                 raise InputError("Template name cannot be empty")
-            if name.strip() == AUTO_SENTINEL:
+            if name.strip().lower() == AUTO_SENTINEL:
                 raise InvalidTemplateError(
                     f"Template name '{AUTO_SENTINEL}' is reserved for the "
                     "auto-selection sentinel (the picker's 'Auto' choice) "

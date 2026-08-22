@@ -291,3 +291,27 @@ async def test_legacy_sentinel_named_row_never_duplicates_the_option():
     values = [value for _label, value in options]
     assert values == [NONE_VALUE, AUTO_VALUE, "tiny-words"]
     assert values.count(AUTO_VALUE) == 1
+
+
+@pytest.mark.asyncio
+async def test_legacy_cased_auto_named_rows_never_duplicate_the_option():
+    """Qodo #4: a legacy row named "Auto"/"AUTO" renders indistinguishably
+    from the built-in Auto option, so the duplicate filter matches the
+    sentinel case-insensitively (and honors the listing's widened
+    name_reserved decoration) -- the Auto choice stays unique."""
+    service = _FakeScopeService(
+        [
+            # The decorated shape the real (widened) listing delivers...
+            {"name": "Auto", "name_reserved": True},
+            # ...and the bare name, in case a surface skips the decoration.
+            {"name": "AUTO"},
+            {"name": "tiny-words"},
+        ]
+    )
+    app = _PickerHost(_local_state(), service)
+    async with app.run_test() as pilot:
+        options = await _wait_for_picker_options(pilot, 3)
+
+    values = [value for _label, value in options]
+    assert values == [NONE_VALUE, AUTO_VALUE, "tiny-words"]
+    assert values.count(AUTO_VALUE) == 1

@@ -838,6 +838,61 @@ def test_rechunk_auto_template_still_wins_restamps_the_new_winner(media_db):
     assert in_use.get("new-winner") == 1
 
 
+def test_rechunk_restamp_failure_rolls_back_row_replacement(media_db, monkeypatch):
+    """TASK-19902 (Qodo #3): a raise between row replacement and the config
+    re-stamp leaves NO partial state -- one outer transaction means the old
+    rows AND the old config both survive, and the item is counted failed
+    (never rows-replaced-but-counted-failed)."""
+    import tldw_chatbook.Library.library_rechunk_service as rechunk_module
+
+    _seed_classifier_template(media_db, "still-winner", ["plaintext"])
+    stored = AUTO_TEMPLATE_WIN_CONFIG.replace("stale-winner", "still-winner")
+    media_id = _seed_legacy_item(
+        media_db,
+        " ".join(f"w{i:02d}" for i in range(1, 25)),
+        chunking_config=stored,
+    )
+
+    def _restamp_whose_update_raises(
+        db, item_id, decision, *, template_name, governed_params
+    ):
+        # The forced failure: the re-stamp's OWN UPDATE raises mid-write
+        # (an unbindable parameter), AFTER the chunk rows were replaced.
+        with db.transaction() as conn:
+            conn.execute(
+                "UPDATE Media SET chunking_config = ? WHERE id = ?",
+                (object(), item_id),
+            )
+
+    monkeypatch.setattr(
+        rechunk_module, "_restamp_auto_chunking_config", _restamp_whose_update_raises
+    )
+
+    summary = _run(
+        rechunk_legacy_items(media_db, rag_service=None, indexing_db=None)
+    )
+
+    # The item is counted failed, never rechunked...
+    assert summary["failed"] == 1
+    assert summary["rechunked"] == 0
+    assert summary["errors"]
+
+    # ...and the OLD state is fully intact: the legacy rows survive...
+    rows = _live_chunk_rows(media_db, media_id)
+    assert [row["chunk_text"] for row in rows] == [
+        "OLD legacy chunk one",
+        "OLD legacy chunk two",
+    ]
+    assert all(row["chunk_engine_version"] is None for row in rows)
+
+    # ...and the stored config still says what ingest stamped (no half-flip:
+    # no replaced-rows-without-config, no config-without-rows).
+    config = _stored_config(media_db, media_id)
+    assert config["mode"] == "auto"
+    assert config["auto_tier"] == "template"
+    assert config["template"] == "still-winner"
+
+
 def test_rechunk_stored_explicit_name_leaves_config_untouched(media_db):
     """The pinned NO: a stored EXPLICIT name re-runs the same name and the
     config stays truthful by construction -- re-chunk must NOT rewrite it."""

@@ -123,8 +123,10 @@ class LocalRAGAdminService:
         # minted before the CRUD reservation — is never hidden or deleted:
         # the listing flags it ``name_reserved`` so surfaces can render it
         # as shadowed by the picker sentinel, and auto tier 1 skips it by
-        # name (never selected, never auto-shadowed).
-        if decorated.get("name") == AUTO_SENTINEL:
+        # name (never selected, never auto-shadowed). Case-insensitive on
+        # the whole word (Qodo #4): "Auto"/"AUTO" render indistinguishably
+        # from the picker's built-in Auto option, so they are flagged too.
+        if str(decorated.get("name") or "").strip().lower() == AUTO_SENTINEL:
             decorated["name_reserved"] = True
         # (task 10, AC-24a) The listing surface carries validity DATA: a
         # stored-invalid template is listed WITH a flag rather than hidden

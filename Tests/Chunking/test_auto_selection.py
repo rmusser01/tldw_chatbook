@@ -134,6 +134,18 @@ def test_reserved_legacy_row_never_candidate_never_shadowed():
     assert any("auto" in r for r in d.fallback_reasons)
 
 
+def test_cased_reserved_legacy_row_never_candidate():
+    # (Qodo #4) The cased whole-word variants ("Auto", "AUTO") of a legacy
+    # reserved row are flagged by the widened listing decoration and
+    # skipped by tier 1 exactly like the exact-sentinel row — never
+    # selected, never shadowed.
+    db = _store_with([("Auto", _classifier_body(media_types=["document"]))])
+    d = resolve_auto(db, media_type="document", title="t", filename=None, url=None)
+    assert d.tier == "plan"
+    assert d.template is None
+    assert any("Auto" in r for r in d.fallback_reasons)
+
+
 # ---------------------------------------------------------------------------
 # Tier 1 — the template tier
 # ---------------------------------------------------------------------------

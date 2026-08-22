@@ -107,8 +107,10 @@ INGEST_CHUNK_TEMPLATE_NONE_LABEL = "None (manual settings)"
 #: is duplicated here rather than imported so the canvas keeps its
 #: import-light, Chunking-free import graph; ``Tests/UI/
 #: test_library_ingest_template_picker.py`` pins the equality). No user
-#: template can hold the name (create/rename refuse it), so the sentinel
-#: can never shadow a real row. None stays the DEFAULT (ruling §8.3).
+#: template can hold the name -- create/rename refuse it case-insensitively
+#: on the whole word (Qodo #4), and the populate filter drops any legacy
+#: cased row -- so the sentinel can never shadow a real row. None stays
+#: the DEFAULT (ruling §8.3).
 INGEST_CHUNK_TEMPLATE_AUTO_VALUE = "auto"
 #: The Auto option's LABEL -- plain "Auto" (no markup, no suffix).
 INGEST_CHUNK_TEMPLATE_AUTO_LABEL = "Auto"
@@ -1802,11 +1804,19 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
         names: list[str] = []
         for record in records or []:
             name = str((record or {}).get("name") or "").strip()
-            # (task 4, auto-selection §4.3/AC 14) A legacy row holding the
-            # reserved sentinel name (created before the reservation) is
-            # flagged shadowed by the listing and must NOT appear as a
-            # second option with the Auto sentinel's value.
-            if name and name != INGEST_CHUNK_TEMPLATE_AUTO_VALUE and name not in names:
+            # (task 4, auto-selection §4.3/AC 14; Qodo #4) A legacy row
+            # holding the reserved sentinel name (created before the
+            # reservation) is flagged shadowed by the listing and must NOT
+            # appear as a second option with the Auto sentinel's value.
+            # The match is case-insensitive on the whole word AND honors
+            # the listing's ``name_reserved`` decoration: "Auto"/"AUTO"
+            # render indistinguishably from the built-in Auto option.
+            if (
+                name
+                and name.lower() != INGEST_CHUNK_TEMPLATE_AUTO_VALUE
+                and (record or {}).get("name_reserved") is not True
+                and name not in names
+            ):
                 names.append(name)
         self._chunk_template_names = names
         try:

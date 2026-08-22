@@ -246,6 +246,10 @@ def _replace_chunk_rows(
     written for the replacement either -- accepted deliberately: these are
     derived rows regenerated from an intact source, which is also why this
     is outside ADR-055's destructive-action patterns.
+
+    (TASK-19902) On the auto path the caller wraps this AND the config
+    re-stamp in ONE outer transaction -- ``transaction()`` nests, so the
+    writes here commit only when the re-stamp lands too.
     """
     created = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
     client_id = getattr(media_db, "client_id", "local")
@@ -570,40 +574,48 @@ async def rechunk_legacy_items(
                         if chunker_template_arg is not None
                         else None
                     )
-                    _replace_chunk_rows(
-                        media_db,
-                        media_id,
-                        chunks,
-                        template_name=rows_template_name,
-                        template_params=rows_template_params,
-                    )
-                    if isinstance(resolved, AutoDecision):
-                        # (task 5, the Task-4-review carry) Re-stamp the
-                        # stored choice with the FRESH outcome now that the
-                        # replacement committed: the rows tell the new truth
-                        # and the config must agree with them. The governed
-                        # params are the very dict the rows'
-                        # ``chunking_params`` string was built from (json
-                        # round-trip keeps row/config agreement by
-                        # construction); the lazy import mirrors
-                        # ``_effective_template_params``'s.
-                        if rows_template_params is not None:
-                            governed_params: Dict[str, Any] = json.loads(
-                                rows_template_params
-                            )
-                        else:
-                            from ..Local_Ingestion.local_file_ingestion import (
-                                _effective_chunk_params,
-                            )
-
-                            governed_params = _effective_chunk_params(options)
-                        _restamp_auto_chunking_config(
+                    # (TASK-19902, Qodo #3) ONE outer transaction over the
+                    # row replacement AND the auto re-stamp: the DB's
+                    # ``transaction()`` nests (only the outermost
+                    # commit/rollback matters), so a raise in the re-stamp
+                    # after the rows were replaced rolls BOTH back -- the
+                    # item then fails the per-item handler below with NO
+                    # partial state (never replaced-rows-without-config).
+                    with media_db.transaction():
+                        _replace_chunk_rows(
                             media_db,
                             media_id,
-                            resolved,
+                            chunks,
                             template_name=rows_template_name,
-                            governed_params=governed_params,
+                            template_params=rows_template_params,
                         )
+                        if isinstance(resolved, AutoDecision):
+                            # (task 5, the Task-4-review carry) Re-stamp the
+                            # stored choice with the FRESH outcome, in the
+                            # SAME transaction as the replacement: the rows
+                            # tell the new truth and the config must agree
+                            # with them. The governed params are the very
+                            # dict the rows' ``chunking_params`` string was
+                            # built from (json round-trip keeps row/config
+                            # agreement by construction); the lazy import
+                            # mirrors ``_effective_template_params``'s.
+                            if rows_template_params is not None:
+                                governed_params: Dict[str, Any] = json.loads(
+                                    rows_template_params
+                                )
+                            else:
+                                from ..Local_Ingestion.local_file_ingestion import (
+                                    _effective_chunk_params,
+                                )
+
+                                governed_params = _effective_chunk_params(options)
+                            _restamp_auto_chunking_config(
+                                media_db,
+                                media_id,
+                                resolved,
+                                template_name=rows_template_name,
+                                governed_params=governed_params,
+                            )
                     summary["rechunked"] += 1
                     item_rechunked = True
         except Exception as exc:

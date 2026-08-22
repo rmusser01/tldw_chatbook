@@ -329,9 +329,14 @@ def _select_template(
     best: tuple[tuple[float, int], str] | None = None
     for record in listing:
         name = str(record.get("name") or "")
-        if name == AUTO_SENTINEL:
-            # Legacy sentinel-named row: flagged by the decoration, never
-            # a candidate (never selected, never shadowed — AC 14).
+        if (
+            name.strip().lower() == AUTO_SENTINEL
+            or record.get("name_reserved") is True
+        ):
+            # Legacy sentinel-named row (any whole-word casing — the
+            # decoration's widened flag is the signal; Qodo #4): flagged by
+            # the listing, never a candidate (never selected, never
+            # shadowed — AC 14).
             reasons.append(f"template_name_reserved:{name}")
             continue
         if record.get("template_valid") is False:
