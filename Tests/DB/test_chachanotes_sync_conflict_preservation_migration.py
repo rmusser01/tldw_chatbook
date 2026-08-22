@@ -49,10 +49,10 @@ def db(tmp_path: Path):
     instance.close_connection()
 
 
-def test_schema_version_is_44(db):
-    """The one exact current-version pin (see this module's docstring)."""
-    assert _version(db.get_connection()) == 44
-    assert CharactersRAGDB._CURRENT_SCHEMA_VERSION == 44
+def test_schema_version_includes_v44_preservation(db):
+    """The current schema includes the v44 preservation migration."""
+    assert _version(db.get_connection()) >= 44
+    assert CharactersRAGDB._CURRENT_SCHEMA_VERSION >= 44
 
 
 def test_fresh_schema_has_the_preservation_columns(db):
@@ -108,7 +108,7 @@ def test_upgrade_from_a_real_v43_database_adds_the_columns(tmp_path: Path):
         # here made a schema bump red this test on version arithmetic and
         # short-circuit the column/row assertions below it -- the exact shape
         # task-19568 removed from the persona-visual migration test. The one
-        # deliberate exact pin stays in ``test_schema_version_is_44``.
+        # deliberate exact pin lives in the newest migration's test module.
         assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
         columns = _columns(connection)
         for name in NEW_COLUMNS:

@@ -442,7 +442,7 @@ def test_fresh_schema_contains_console_project_context_column(tmp_path) -> None:
     # file needing to know or care. The exact current-version pin lives in
     # exactly one place -- as of task-19554 that is
     # `Tests/DB/test_chachanotes_sync_conflict_preservation_migration.py`'s
-    # `test_schema_version_is_44` (the pin moves to the newest migration's
+    # the newest migration's exact current-version test (the pin moves to
     # own file on every bump, rather than staying on an older one from
     # which it can only drift) -- this assertion only
     # needs to confirm a fresh schema landed AT OR PAST this migration's

@@ -447,7 +447,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 44  # Recoverable copy of a discarded Notes-sync side (task-19554).
+    _CURRENT_SCHEMA_VERSION = 45  # Portable Actor Pack identity and Persona intents (TASK-19057).
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -5883,6 +5883,56 @@ UPDATE db_schema_version
                 f"Migration from V43 to V44 failed for '{self._SCHEMA_NAME}': {exc}"
             ) from exc
 
+    def _migrate_from_v44_to_v45(self, conn: sqlite3.Connection) -> None:
+        """Install portable Actor Pack identity and bounded Persona intents."""
+
+        self._require_migration_entry_version(conn, 44, "V44→V45")
+        logger.info(
+            f"Migrating schema from V44 to V45 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
+        )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v44_to_v45_actor_packs.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V44→V45",
+                )
+                version_cursor = cursor.execute(
+                    """
+                    UPDATE db_schema_version
+                       SET version = 45
+                     WHERE schema_name = ?
+                       AND version = 44
+                    """,
+                    (self._SCHEMA_NAME,),
+                )
+                if version_cursor.rowcount != 1:
+                    raise SchemaError(
+                        f"[{self._SCHEMA_NAME} V44→V45] Migration version update was not applied"
+                    )
+
+            final_version = self._get_db_version(conn)
+            if final_version != 45:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V44→V45] Migration version check failed. "
+                    f"Expected 45, got: {final_version}"
+                )
+            logger.info(
+                f"[{self._SCHEMA_NAME} V44→V45] Migration completed successfully for DB: {self.db_path_str}."
+            )
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V44→V45] Migration failed: {exc}"
+            )
+            raise SchemaError(
+                f"Migration from V44 to V45 failed for '{self._SCHEMA_NAME}': {exc}"
+            ) from exc
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -6065,6 +6115,7 @@ UPDATE db_schema_version
                     41: self._migrate_from_v41_to_v42,
                     42: self._migrate_from_v42_to_v43,
                     43: self._migrate_from_v43_to_v44,
+                    44: self._migrate_from_v44_to_v45,
                 }
 
                 if current_db_version == 0:

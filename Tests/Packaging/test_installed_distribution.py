@@ -71,6 +71,13 @@ MESSAGE_EXCHANGES_MIGRATION_PATH = (
     "tldw_chatbook/DB/migrations/"
     "chachanotes_v42_to_v43_message_exchanges.sql"
 )
+SYNC_CONFLICT_PRESERVATION_MIGRATION_PATH = (
+    "tldw_chatbook/DB/migrations/"
+    "chachanotes_v43_to_v44_sync_conflict_preservation.sql"
+)
+ACTOR_PACK_MIGRATION_PATH = (
+    "tldw_chatbook/DB/migrations/chachanotes_v44_to_v45_actor_packs.sql"
+)
 SAMIRA_RESOURCE_ROOT = "tldw_chatbook/assets/characters/samira"
 SAMIRA_REACTION_LABELS = (
     "admiration",
@@ -132,6 +139,8 @@ RUNTIME_MIGRATION_PATHS = {
     VISUAL_IDENTITY_MIGRATION_PATH,
     TRANSCRIPT_ANNOTATIONS_MIGRATION_PATH,
     MESSAGE_EXCHANGES_MIGRATION_PATH,
+    SYNC_CONFLICT_PRESERVATION_MIGRATION_PATH,
+    ACTOR_PACK_MIGRATION_PATH,
 }
 _PRIVATE_CHILD_BASELINE_ENV_KEYS = (
     "PATH",

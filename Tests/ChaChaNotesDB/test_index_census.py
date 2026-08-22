@@ -37,6 +37,8 @@ as integrity-bearing:
   trajectory ledger's ordering identity; duplicate seq rows would corrupt
   replay order. Also pinned by a dedicated test below so a mechanical
   literal update cannot silently ride along with a schema downgrade.
+* ``idx_actor_pack_persona_intents_state`` — deterministic startup recovery
+  scans over unresolved Actor Pack Persona intents.
 * ``idx_messages_conversation_id_id`` — message identity within a
   conversation; backs keyset pagination over (conversation_id, id).
 * ``idx_notes_file_path_unique`` — at most one note per on-disk file path
@@ -88,6 +90,9 @@ class IndexPin(NamedTuple):
 #: it only as part of a deliberate schema change, in the same commit as the
 #: migration that adds, drops, renames, or reshapes an index. Sorted by name.
 EXPECTED_CHACHANOTES_INDEXES: dict[str, IndexPin] = {
+    "idx_actor_pack_persona_intents_state": IndexPin(
+        "actor_pack_persona_intents", False, ("state", "created_at", "intent_id")
+    ),
     "idx_char_expr_images_char": IndexPin(
         "character_expression_images", False, ("character_id",)
     ),
