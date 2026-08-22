@@ -1,0 +1,103 @@
+name: Derived Artifacts
+
+# TASK-19572: one small check that actually runs, instead of a comprehensive
+# suite that never reports.
+#
+# The `Tests` workflow has produced no verdict since 2026-06-26: a full pass
+# takes 200-227 minutes, `dev` absorbs 23-50 merges/day, and its
+# cancel-in-progress rule kills every in-flight run long before it finishes.
+# Guards that live only inside that suite -- the diagnostic-inventory pin and
+# the profile-owned-path census -- have therefore never blocked anything, and
+# the same drift has been rediscovered by hand in four separate tasks.
+#
+# Every check below is stdlib-only and needs no dependency install. Measured on
+# an M-series laptop: bundle-sync 0.86 s, profile-owned-path 10.98 s, diagnostic
+# inventory 20.17 s, backlog ids <0.5 s -- ~33 s of work, ~90 s with checkout
+# and setup-python. That budget is the whole point: it is small enough to run on
+# every PR, which is what makes it usable as a REQUIRED status check.
+
+on:
+  pull_request:
+  push:
+    branches: [dev, main]
+
+# Deliberately NOT path-filtered, unlike css-bundle-guard/backlog-guard.
+#
+# A required status check that is skipped by a path filter never reports at all;
+# GitHub leaves the PR sitting on "Expected - waiting for status to be
+# reported", forever. Any PR that touched only docs would be unmergeable. The
+# usual workaround (a twin workflow with the same job name that always passes)
+# buys nothing here, because the job is ~90 s: just run it. If you are tempted
+# to add `paths:` below, you are about to brick merges -- don't.
+
+# One run per workflow per ref: a new push supersedes the previous run instead of
+# queueing another alongside it. Without this, every push to `dev` stacked a full
+# run - 50+ obsolete runs accumulated, all competing for scarce macOS runners.
+# The event name is part of the group so different trigger types (push,
+# pull_request, schedule) never cancel each other, and `main` is never cancelled
+# so its history stays complete. Cancellation is safe for a required check: a
+# merge is gated on the HEAD commit's checks, and the newest run is the one that
+# reports for HEAD.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  derived-artifacts:
+    # This job's name is the string the owner enters under branch protection ->
+    # required status checks. Renaming it silently detaches the gate, so keep it
+    # stable.
+    name: Derived artifacts reproduce from their sources
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # 3.11 is the project floor (pyproject requires-python >=3.11) and the
+          # oldest interpreter these checkers must parse the tree on. No `cache:
+          # pip` -- nothing is installed.
+          python-version: '3.11'
+
+      # Every step below is `if: '!cancelled()'` rather than the default
+      # `success()`: a burn-down run must report ALL of the drift in one pass.
+      # With the default, the first red checker hides the other three and the
+      # fix-and-push loop runs once per checker.
+
+      - name: Generated stylesheets reproduce from their sources
+        if: ${{ !cancelled() }}
+        run: |
+          # Rebuilds both bundles into a temp dir and diffs them against the
+          # committed sheets, naming any drifted MODULE block.
+          python tldw_chatbook/css/check_bundle_sync.py
+
+      - name: Profile-owned path census matches its approved exceptions
+        if: ${{ !cancelled() }}
+        run: |
+          # Prints path:line:context:expression:reason for every unapproved
+          # occurrence of a historical profile-owned path root.
+          python scripts/check_profile_owned_path_inventory.py
+
+      - name: Production diagnostic inventory matches the source tree
+        if: ${{ !cancelled() }}
+        run: |
+          # On drift this prints the full committed-vs-rebuild report -- rows
+          # only-in-committed / only-in-rebuild / changed with
+          # old_count/old_digest -> new_count/new_digest, sink-topology deltas,
+          # and the exact next command. Read the rows before regenerating: the
+          # artifact exists to make an unreviewed --write impossible to do by
+          # accident.
+          python scripts/check_persistent_diagnostic_inventory.py
+
+      - name: Backlog task IDs are unique
+        if: ${{ !cancelled() }}
+        run: |
+          # Same check backlog-guard.yml runs; carried here too so it is covered
+          # by the one required status check rather than by a path-filtered
+          # workflow nobody is gated on.
+          python scripts/check_backlog_task_ids.py

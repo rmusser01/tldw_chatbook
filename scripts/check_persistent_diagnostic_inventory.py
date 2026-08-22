@@ -7,6 +7,14 @@ file it sits.  Moving a logger call is therefore not a review event, while
 adding, deleting, rewording, or re-levelling one still is.  See task-3750: a
 digest that fires on pure line movement trains reviewers to regenerate this
 file without reading it, which is the one failure mode it exists to prevent.
+
+TASK-19572: any non-zero exit now prints the full committed-vs-rebuild report --
+rows only-in-committed / only-in-rebuild / changed with
+``old_count/old_digest -> new_count/new_digest``, per-entry sink-topology
+deltas, metadata deltas, and the exact next command. No flag is needed; ``--diff``
+only forces the same report when the tree is in sync. Reading that report IS the
+review the artifact demands, so it deliberately reports what changed rather than
+regenerating anything.
 """
 
 from __future__ import annotations
@@ -15,6 +23,7 @@ import argparse
 import ast
 import hashlib
 import json
+import os
 import sys
 import warnings
 from pathlib import Path
@@ -323,6 +332,211 @@ def _encoded(inventory: dict[str, Any]) -> str:
     return json.dumps(inventory, indent=2, sort_keys=True) + "\n"
 
 
+NEXT_STEPS = (
+    "Next: read every row above and confirm each change is one you intended.\n"
+    "  - a call_count delta means a diagnostic was added or deleted;\n"
+    "  - an unchanged count with a changed digest means one was reworded,\n"
+    "    re-levelled, or given different arguments -- check it does not now\n"
+    "    interpolate user content, secrets, or paths into a persistent sink;\n"
+    "  - a sink-topology row means a new file/handler destination appeared.\n"
+    "Only then run:  python scripts/check_persistent_diagnostic_inventory.py --write\n"
+    "and commit Docs/security/production-diagnostic-inventory.json with the "
+    "review recorded in the task/PR notes."
+)
+
+_METADATA_KEYS = (
+    "schema_version",
+    "scope",
+    "classification_rules",
+    "reviewed_exclusions",
+)
+
+
+def _sink_key(entry: dict[str, Any]) -> tuple[str, str, str, str]:
+    return (
+        str(entry.get("scope", "")),
+        str(entry.get("kind", "")),
+        str(entry.get("method", "")),
+        str(entry.get("digest", "")),
+    )
+
+
+def _describe_sink(entry: dict[str, Any]) -> str:
+    scope, kind, method, digest = _sink_key(entry)
+    return f"{scope or '<module>'}: {kind}.{method} ({digest})"
+
+
+def _owner_rows(inventory: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {str(row["path"]): row for row in inventory.get("owners", [])}
+
+
+def _sink_rows(inventory: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    return {
+        str(row["path"]): list(row.get("sinks", []))
+        for row in inventory.get("persistent_sink_topology", [])
+    }
+
+
+def _summary_lines(committed: dict[str, Any], rebuilt: dict[str, Any]) -> list[str]:
+    old, new = committed.get("summary", {}), rebuilt.get("summary", {})
+    lines: list[str] = []
+    for key in sorted(set(old) | set(new)):
+        if old.get(key) != new.get(key):
+            lines.append(f"    {key}: {old.get(key)} -> {new.get(key)}")
+    return lines
+
+
+def _owner_lines(committed: dict[str, Any], rebuilt: dict[str, Any]) -> list[str]:
+    old, new = _owner_rows(committed), _owner_rows(rebuilt)
+    lines: list[str] = []
+    for path in sorted(set(old) - set(new)):
+        row = old[path]
+        lines.append(
+            f"  - only in committed (diagnostics gone from this file): {path} "
+            f"[{row.get('owner')}] count={row.get('call_count')} "
+            f"digest={row.get('diagnostic_digest')}"
+        )
+    for path in sorted(set(new) - set(old)):
+        row = new[path]
+        lines.append(
+            f"  + only in rebuild (file now has diagnostics): {path} "
+            f"[{row.get('owner')}] count={row.get('call_count')} "
+            f"digest={row.get('diagnostic_digest')}"
+        )
+    for path in sorted(set(old) & set(new)):
+        before, after = old[path], new[path]
+        if before == after:
+            continue
+        old_count = before.get("call_count")
+        new_count = after.get("call_count")
+        old_digest = before.get("diagnostic_digest")
+        new_digest = after.get("diagnostic_digest")
+        if old_count == new_count:
+            note = "same count, content changed (reworded / re-levelled / new args)"
+        else:
+            delta = (new_count or 0) - (old_count or 0)
+            note = f"{delta:+d} diagnostic call(s)"
+        lines.append(
+            f"  ~ changed: {path} "
+            f"{old_count}/{old_digest} -> {new_count}/{new_digest}  ({note})"
+        )
+        if before.get("owner") != after.get("owner"):
+            lines.append(
+                f"      owner: {before.get('owner')} -> {after.get('owner')}"
+            )
+    return lines
+
+
+def _sink_lines(committed: dict[str, Any], rebuilt: dict[str, Any]) -> list[str]:
+    old, new = _sink_rows(committed), _sink_rows(rebuilt)
+    lines: list[str] = []
+    for path in sorted(set(old) - set(new)):
+        lines.append(
+            f"  - only in committed (no persistent sink left here): {path} "
+            f"({len(old[path])} sink entr{'y' if len(old[path]) == 1 else 'ies'})"
+        )
+        for entry in old[path]:
+            lines.append(f"      - {_describe_sink(entry)}")
+    for path in sorted(set(new) - set(old)):
+        lines.append(
+            f"  + only in rebuild (NEW persistent sink file): {path} "
+            f"({len(new[path])} sink entr{'y' if len(new[path]) == 1 else 'ies'})"
+        )
+        for entry in new[path]:
+            lines.append(f"      + {_describe_sink(entry)}")
+    for path in sorted(set(old) & set(new)):
+        before = {_sink_key(entry): entry for entry in old[path]}
+        after = {_sink_key(entry): entry for entry in new[path]}
+        if before == after:
+            continue
+        lines.append(
+            f"  ~ changed sinks: {path} "
+            f"({len(before)} -> {len(after)} entries)"
+        )
+        for key in sorted(set(before) - set(after)):
+            lines.append(f"      - {_describe_sink(before[key])}")
+        for key in sorted(set(after) - set(before)):
+            lines.append(f"      + {_describe_sink(after[key])}")
+    return lines
+
+
+def _metadata_lines(committed: dict[str, Any], rebuilt: dict[str, Any]) -> list[str]:
+    """Name drift in the inventory's non-row metadata.
+
+    The check compares the whole encoded file, so a changed classification rule
+    or scope fails it just as a new logger call does. Without this section that
+    failure would report zero rows and read as a false alarm.
+    """
+    lines: list[str] = []
+    for key in _METADATA_KEYS:
+        before, after = committed.get(key), rebuilt.get(key)
+        if before == after:
+            continue
+        lines.append(f"  ~ {key}:")
+        lines.append(f"      committed: {json.dumps(before, sort_keys=True)}")
+        lines.append(f"      rebuild:   {json.dumps(after, sort_keys=True)}")
+    return lines
+
+
+def render_diff(committed_text: str, rebuilt: dict[str, Any]) -> str:
+    """Render a reviewable report of how the committed inventory differs.
+
+    Args:
+        committed_text: Raw text of the committed inventory file.
+        rebuilt: Freshly scanned inventory from ``build_inventory``.
+
+    Returns:
+        str: A multi-section report naming rows only-in-committed,
+            only-in-rebuild and changed (with ``old_count/old_digest ->
+            new_count/new_digest``), sink-topology deltas, metadata deltas,
+            and the exact next command. Never empty: a formatting-only drift
+            still yields an explanation rather than silence.
+    """
+    try:
+        committed = json.loads(committed_text)
+    except json.JSONDecodeError as exc:
+        return (
+            f"the committed inventory is not valid JSON ({exc}); it cannot be "
+            "diffed. Restore it from git, or -- if the rebuild is what you "
+            "want -- review the working tree and run --write.\n" + NEXT_STEPS
+        )
+
+    sections = (
+        ("summary", _summary_lines(committed, rebuilt)),
+        ("owners", _owner_lines(committed, rebuilt)),
+        ("persistent sink topology", _sink_lines(committed, rebuilt)),
+        ("inventory metadata", _metadata_lines(committed, rebuilt)),
+    )
+    body = [
+        line
+        for title, lines in sections
+        if lines
+        for line in (f"{title}:", *lines)
+    ]
+    if not body:
+        # Parsed content is identical, so only the serialization differs --
+        # whitespace, key order, or a hand-edit that JSON normalizes away.
+        return (
+            "the committed inventory's CONTENT matches the rebuild; only its "
+            "serialization differs (whitespace, key order, or a hand edit). "
+            "Run --write to re-normalize it.\n" + NEXT_STEPS
+        )
+    return "\n".join(body) + "\n" + NEXT_STEPS
+
+
+def _emit_failure(message: str, detail: str) -> None:
+    """Print the failure headline and its full diff report.
+
+    The report goes to stderr on every non-zero exit -- no flag required. The
+    one-line ``::error::`` annotation goes to stdout only under GitHub Actions,
+    which reads workflow commands from there; locally it would be noise.
+    """
+    print(message, file=sys.stderr)
+    print(detail, file=sys.stderr)
+    if os.environ.get("GITHUB_ACTIONS"):
+        print(f"::error::{message}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -330,8 +544,17 @@ def main() -> int:
         action="store_true",
         help="replace the checked inventory after explicit review",
     )
+    parser.add_argument(
+        "--diff",
+        action="store_true",
+        help=(
+            "print the committed-vs-rebuild report even when in sync; the same "
+            "report is printed automatically on every non-zero exit"
+        ),
+    )
     args = parser.parse_args()
-    actual = _encoded(build_inventory())
+    inventory = build_inventory()
+    actual = _encoded(inventory)
     if args.write:
         INVENTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
         INVENTORY_PATH.write_text(actual, encoding="utf-8")
@@ -340,18 +563,24 @@ def main() -> int:
     try:
         expected = INVENTORY_PATH.read_text(encoding="utf-8")
     except FileNotFoundError:
-        print(
+        _emit_failure(
             "diagnostic inventory is missing; review and run with --write",
-            file=sys.stderr,
+            f"{INVENTORY_PATH.relative_to(REPO_ROOT)} does not exist, so there "
+            "is nothing to diff against. The rebuild found "
+            f"{inventory['summary']['owner_files']} owner files and "
+            f"{inventory['summary']['persistent_sink_files']} sink files.\n"
+            + NEXT_STEPS,
         )
         return 1
     if actual != expected:
-        print(
+        _emit_failure(
             "production diagnostic owners or persistent-sink topology changed; "
-            "review the diff before running --write",
-            file=sys.stderr,
+            "review the diff below before running --write",
+            render_diff(expected, inventory),
         )
         return 1
+    if args.diff:
+        print("no drift: the committed inventory matches the rebuild exactly.")
     inventory = json.loads(actual)
     summary = inventory["summary"]
     print(

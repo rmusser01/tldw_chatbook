@@ -6025,3 +6025,39 @@ credential file was not dirty in that scenario, so the inverted scope had
 nothing to leak. Reading the base-run PASS list rather than only the FAILED list
 is what caught it. A born-red test that passes at base is a defect in the test
 until you have explained why.
+
+---
+
+## A guard that cannot report is not a gate — check where it runs, not just that it runs
+
+**TASK-19572, 2026-08-21.** The repo carried three real derived-artifact
+guards and a nightly full-suite cron, and none of them had produced a verdict
+in weeks. Two separate mechanisms, both invisible from the workflow file:
+
+1. **A cron on a non-default branch never fires.** `.github/workflows/test.yml`
+   on `dev` declares `schedule: cron '30 8 * * *'` with a `nightly-deep` job.
+   `gh run list --workflow=test.yml --event=schedule` returns **`[]`** for the
+   entire retained history. GitHub schedules cron only from the *default*
+   branch's copy of the workflow, and this repo's default branch is `main` —
+   last updated 2026-07-11, **10,933 commits behind `dev`**, with no
+   `schedule:` block in its `test.yml` at all. The nightly the repo believed it
+   had has never run once.
+
+2. **Completion is governed by queue time, not job time.** `css-bundle-guard`
+   is one stdlib script with no install. Its `pull_request` runs over the last
+   100: **61 cancelled, 19 success**, and the successes are bimodal — ten
+   finished in 16–398 s, nine took **1.9–5.6 hours**. The job did not get
+   slower; it waited for a runner. The `Tests` workflow fans out ~20 jobs
+   (2 core legs + 12 UI shards + 3 lease legs + …) on every push and PR, at
+   23–50 merges/day, and starves everything else — including itself.
+
+**What to do.** Before claiming a guard covers something, ask where its verdict
+lands. Check `gh run list --workflow=<f> --event=<e>` for the event you think
+fires it, and read the *default branch's* copy of the file when the trigger is
+`schedule`. When you measure a workflow, measure `createdAt → updatedAt` (wall,
+including queue), not the job's own duration — cheap jobs on a saturated pool
+are not fast verdicts. And if a check is meant to be **required** under branch
+protection, it must not be path-filtered: a skipped run reports nothing, so
+GitHub parks the PR on "Expected — waiting for status to be reported" forever.
+That is why `derived-artifacts.yml` runs unconditionally while
+`css-bundle-guard.yml` beside it does not.
