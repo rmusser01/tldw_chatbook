@@ -301,6 +301,17 @@ reconciled latest-dev changes.
 
 Implementation follows focused TDD; no local full-suite run is authorized.
 
+The completion contract was amended after final specification review. Every
+task-owned, new, or modified functionality test must be green, and the focused
+integration evidence must show zero task-caused regressions. A selected pre-existing
+failure may be accepted only when the exact node fails on the reviewed frozen base by
+the same mechanism, the candidate does not change that mechanism's source path or
+behavior, and the deviation is named in final evidence. Any task-caused failure blocks
+`Done`. An expected `--run-slow` skip may be accepted only when that node is explicitly
+excluded from the user-authorized default affected matrix and documented as skipped;
+it is neither a pass nor executed coverage. This amendment does not authorize a local
+full-suite run or changing raw failure/skip counts.
+
 1. Add no-mount controller tests for defaults, completion claim outcomes (including
    exact-session precedence, last conversation match, and already-active `True` no-op), mount wake
    claim, user-priority/display semantics, retry/delivery hooks, unseen cache/marker
@@ -330,8 +341,22 @@ Implementation follows focused TDD; no local full-suite run is authorized.
 The implementation is complete only when the screen contains none of the 16 moved
 definitions, no production caller targets those names on `ChatScreen`, Workspace is
 wired directly to `_fleet`, the frozen final-rebase 20,065-line/640-method ceilings
-pass without changing the immutable Task 0 evidence, and the focused behavior remains
-green.
+pass without changing the immutable Task 0 evidence, every task-owned/new/modified
+functionality test is green, and focused integration evidence shows no task-caused
+regression under the amended rule above.
+
+The four recorded selected deviations remain red and must stay named exactly:
+`Tests/UI/test_probe_headless_wake_p2_p3_p4.py::test_probe_p2_post_unmount_fanout`,
+`Tests/UI/test_console_runtime_ownership.py::test_app_fences_console_then_drains_buddy_before_profile_teardown`,
+`Tests/UI/test_console_sync_outlives_screen.py::test_a_real_navigation_arriving_mid_tick_is_absorbed`,
+and
+`Tests/Architecture/test_persistent_diagnostic_inventory.py::test_reviewed_diagnostic_changes_are_metadata_only`.
+Each failed identically by mechanism on frozen `02cd80b3`, and the candidate does not
+change the implicated project-instruction, application/Notes teardown, changed-files
+worker, or stale Library-label behavior. The one expected default-matrix skip is
+`Tests/UI/test_probe_headless_wake_p2_p3_p4.py::test_probe_p4_headless_approval_cost`;
+it requires `--run-slow`, is explicitly outside the user-authorized default affected
+matrix, and is not claimed as passed or executed coverage.
 
 ## Scope Exclusions
 

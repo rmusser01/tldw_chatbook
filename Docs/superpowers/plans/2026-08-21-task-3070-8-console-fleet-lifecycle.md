@@ -28,6 +28,15 @@
 - Mount claiming reads marks through the uncached service callback. The revision cache is only for tab/browser projection.
 - Keep the `pilot.press` hidden-screen composer oracle and plain `threading.Thread` delivery-freshness oracle production-shaped.
 - Run only tests related to changed fleet/wake functionality. Do not run the local full suite.
+- Completion requires every task-owned/new/modified functionality test to be green and
+  zero task-caused regressions in the focused integration evidence. A selected
+  pre-existing failure is acceptable only when the exact node fails identically by
+  mechanism on the reviewed frozen base, the candidate does not change that mechanism's
+  source path or behavior, and final evidence names the deviation. Any task-caused
+  failure blocks `Done`.
+- An expected `--run-slow` skip is acceptable only when explicitly excluded from the
+  user-authorized default affected matrix and documented as skipped. It is not a pass
+  or executed coverage and does not authorize a local full-suite run.
 - Use `apply_patch` for source/test/doc edits. Restore every temporary mutation immediately and prove exact candidate-byte restoration.
 
 ## Recorded starting point
@@ -445,7 +454,15 @@ Do not replace `pilot.press` in `test_console_fleet_wake_hidden_screen.py` with 
   Tests/UI/test_console_controller_wiring.py
 ```
 
-Expected: all selected nodes pass. If this exceeds the repository's 20-minute checkpoint, stop, record the completed file boundary, and resume in named file groups; do not narrow the claimed set silently.
+Expected: all task-owned/new/modified functionality nodes pass and the selection shows
+no task-caused regression. An exact frozen-base-identical deviation may remain red only
+under the completion contract above and must be named without narrowing the selected
+set or relabeling the result. The expected
+`Tests/UI/test_probe_headless_wake_p2_p3_p4.py::test_probe_p4_headless_approval_cost`
+`--run-slow` skip is outside the user-authorized default affected matrix and must remain
+reported as skipped, not passed or executed coverage. If this exceeds the repository's
+20-minute checkpoint, stop, record the completed file boundary, and resume in named file
+groups; do not narrow the claimed set silently.
 
 - [x] **Step 5: Commit only ownership-driven fixture changes**
 
@@ -715,7 +732,10 @@ Run the Task 3 affected matrix, the Task 1 architecture/wiring command, and:
   Tests/UI/test_console_sync_outlives_screen.py
 ```
 
-Expected: all selected tests pass; no local full-suite run.
+Expected: every task-owned/new/modified functionality test passes and the focused
+selection shows no task-caused regression. Exact frozen-base-identical deviations are
+accepted only under the completion contract above and remain reported red; no local
+full-suite run.
 
 - [x] **Step 5: Review scope and complete task hygiene**
 
@@ -732,9 +752,10 @@ Expected: diff check clean; no moved definition/call remains on `ChatScreen`; no
 Prepare `## Implementation Notes` and the exact RED/GREEN/mutation/test/static/
 diagnostic evidence, ADR decision, changed files, and user-authorized affected-only
 test scope, but keep the task `In Progress` and final AC/plan closeout boxes open until
-the post-rebase verification below succeeds.
+the post-rebase evidence satisfies the amended completion contract and final
+specification/quality re-review approves it.
 
-- [x] **Step 6: Use the approved frozen final-rebase oracle and re-verify before delivery**
+- [ ] **Step 6: Finalize the frozen-base completion evidence after re-review**
 
 The 2026-08-22 ratchet amendment reviewed and approved
 `02cd80b33004305765b5cd91b3d264aa3664596e` as the frozen final-rebase source.
@@ -773,12 +794,15 @@ git diff -- Docs/security/production-diagnostic-inventory.json
 ```
 
 Then rerun Tasks 1, 3, and the remaining Task 5 focused/static/compile gates. Only after
-all post-rebase gates pass may the executor check all three ACs and remaining plan
-boxes, finalize Implementation Notes, set the task to `Done` through Backlog CLI, and
-commit truthful closeout metadata. PR/Qodo/CI/merge delivery is a separate
-user-authorized action after task completion.
+every task-owned/new/modified functionality test is green, focused integration evidence
+shows zero task-caused regressions, each accepted frozen-base-identical deviation meets
+the amended completion contract, and final specification/quality re-review approves
+the evidence may the executor check AC #3 and this closeout box, set the task to `Done`
+through Backlog CLI, and commit truthful closeout metadata. Any task-caused failure
+blocks `Done`. PR/Qodo/CI/merge delivery is a separate user-authorized action after
+task completion.
 
-### Task 5 closeout evidence (2026-08-22)
+### Task 5 evidence pending amended-contract re-review (2026-08-22)
 
 - Task 1 RED was rechecked from the exact reviewed shell commit `3365a9c3c` in
   an owner-validated `/private/tmp` archive: 18 failed / 2 passed / 2 warnings in
@@ -789,18 +813,28 @@ user-authorized action after task completion.
   2.23s.
 - Task 3's exact 16-file affected matrix completed with 155 passed / 2 failed /
   1 skipped / 10 warnings in 175.17s. The two failures are unrelated frozen-base
-  deviations: P2 opens the project-instruction modal outside a Textual worker, and
-  the synthetic app teardown omits the newly required Notes runtime owner. Both
-  exact nodes fail on archived `02cd80b3` as well. No project-instruction, app
-  teardown, or Notes ownership code was changed.
+  deviations:
+  `Tests/UI/test_probe_headless_wake_p2_p3_p4.py::test_probe_p2_post_unmount_fanout`
+  opens the project-instruction modal outside a Textual worker, and
+  `Tests/UI/test_console_runtime_ownership.py::test_app_fences_console_then_drains_buddy_before_profile_teardown`
+  uses a synthetic app teardown that omits the newly required Notes runtime owner.
+  Both exact nodes fail on archived `02cd80b3` by the same mechanisms. No implicated
+  project-instruction, app teardown, or Notes ownership source path/behavior changed.
+  The one skip was
+  `Tests/UI/test_probe_headless_wake_p2_p3_p4.py::test_probe_p4_headless_approval_cost`:
+  it intentionally requires `--run-slow`, is outside the user-authorized default
+  affected matrix, and is not claimed as passed or executed coverage.
 - The remaining Task 5 selection completed with 6 passed / 1 failed / 2 warnings
-  in 22.58s. The sole failure is the changed-files worker losing its active app in
-  the real-navigation-mid-tick case; that exact node also fails on archived
-  `02cd80b3`. The metadata-only diagnostic node likewise has the exact frozen-base
-  stale Library-label failure. The combined four-node candidate probe was 4 failed /
-  2 warnings in 14.14s; the frozen-base counterfactual was the same four failures /
-  4 warnings in 18.42s. These deviations demonstrate no task regression and were
-  not expanded into unrelated repairs.
+  in 22.58s. Its failure,
+  `Tests/UI/test_console_sync_outlives_screen.py::test_a_real_navigation_arriving_mid_tick_is_absorbed`,
+  is the changed-files worker losing its active app; that exact node also fails on
+  archived `02cd80b3` by the same mechanism. The fourth deviation,
+  `Tests/Architecture/test_persistent_diagnostic_inventory.py::test_reviewed_diagnostic_changes_are_metadata_only`,
+  has the exact frozen-base stale Library-label failure. The candidate changes neither
+  implicated mechanism's source path nor behavior. The combined four-node candidate probe was
+  4 failed / 2 warnings in 14.14s; the frozen-base counterfactual was the same four
+  failures / 4 warnings in 18.42s. These deviations demonstrate no task-caused
+  regression and were not expanded into unrelated repairs or relabeled green.
 - The hardcoded `02cd80b33004305765b5cd91b3d264aa3664596e` three-way diagnostic
   preview passed both the exact `chat_screen.py` + `fleet.py` `(method, digest)`
   multiset and full sink-topology assertions. Checked-to-base staleness was the
@@ -817,6 +851,10 @@ user-authorized action after task completion.
   registry ownership, and added-line privacy/secret/generated-artifact/conflict/
   shim scans are clean. Per the user's restriction, no local full suite ran.
 - `origin/dev` later advanced to `dfae0e816f648b3057be04e38327e088fc05d3d8`.
-  The reviewed amendment keeps this closeout frozen at `02cd80b3`; reconciling that
+  The reviewed amendment keeps this evidence frozen at `02cd80b3`; reconciling that
   later remote movement is a separate delivery rebase/review and is not part of
-  this task-closeout commit.
+  this completion-contract amendment.
+- Final specification review found the prior all-selected-tests-pass wording
+  inconsistent with the unchanged four-failure/one-skip evidence. The contract and
+  expected/closeout wording are now amended without changing any raw result. Task 5
+  closeout, AC #3, and `Done` remain pending final specification/quality re-review.
