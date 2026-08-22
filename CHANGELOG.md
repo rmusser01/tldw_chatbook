@@ -9,6 +9,45 @@ and this project adheres to Some kind of Versioning
 
 ### Added
 - Initial features pending documentation
+- Media chunk agent tools (chunking-agent-tools): Console agents and local MCP
+  clients get five new `library_*` tools over ingested media's stored chunks —
+  the program's student story ("per-chapter notes from an ingested book")
+  delivered without blind character-window walking. `library_get_media_structure`
+  returns a media item's heading/section tree annotated per node with the
+  stored-chunk index span overlapping it, plus an item chunk summary
+  (count, families, engine versions, template, stale flag) and the media
+  version as a revision token; pagination is by nodes (default 200, max 500)
+  through a `node_cursor`, never byte-sliced. `library_get_media_chunk`
+  fetches one unit by `chunk_index` **from the stored
+  `UnvectorizedMediaChunks` rows verbatim** — the reuse-stored-chunks read
+  path; nothing re-chunks implicitly (mutation-tested). Multi-family
+  (hierarchical) items name their `chunk_type` families and refuse ambiguous
+  addresses with the round-trippable list; neighbors arrive under `context`
+  (0–10) inside the 32 KiB result budget with a dropped-neighbor note; a
+  stale revision token is the named `content_changed` error. Items ingested
+  with chunking off keep the heading tree with an availability hint naming
+  `library_rechunk_media`. `library_list_chunk_specs` /
+  `library_save_chunk_spec` expose the v7 chunking-template store to agents
+  (specs ARE templates): a bounded listing with validity/reserved flags, and
+  create-or-update of custom templates through the validated CRUD with the
+  validator's full errors array on refusal (built-ins refused with a
+  duplicate hint; the reserved `auto` name refused case-insensitively).
+  `library_rechunk_media` (opt-in write) re-chunks ONE item synchronously
+  through the same per-item machinery as the Library "Re-chunk older-engine
+  items" action — flat spec override (`{"template": name}` XOR plain
+  `method`/`max_size`/`overlap`; an omitted overlap is 0, not the engine's
+  100 default; omitting `spec` re-runs the item's stored config while
+  `spec: {}` is an explicit plain override; an unresolvable template is a
+  named refusal, never a silent fallback), atomic chunk-row replacement, and
+  a separate `reindex: true` opt-in for the forced vector re-index
+  (default off; outcome vocabulary `reindexed`/`skipped`/`failed`, never a
+  bare "done"; a skipped re-chunk carries no `reindexed` key). The two
+  writing tools are policy-gated under new runtime-policy resources —
+  `library.templates.save` and `library.media.rechunk` — with denials
+  firing before any backend call. Console and MCP advertise identical
+  schemas from the one descriptor table (23 Library tools total); the
+  student story is pinned end to end by
+  `Tests/Library/test_agent_chunk_student_story.py`.
 - UX efficiency cycle (critique follow-up, ADR-016): the Console composer is now a real
   editable text field with a movable caret (arrows, Home/End, Ctrl+W, mid-draft
   insertion, Shift+Enter newline); destination hotkeys ctrl+1..9,0 jump to the first ten
