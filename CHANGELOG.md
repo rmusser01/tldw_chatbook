@@ -67,7 +67,11 @@ and this project adheres to Some kind of Versioning
   ignored. All five packaging sites (pyproject package-data and package
   exclude, MANIFEST.in, `Packaging/check_manifest.py`, and the installed-
   distribution import pin and data contract) moved in the same commit: no
-  `Chunking/templates/` path ships in the wheel or sdist.
+  `Chunking/templates/` path ships in the wheel or sdist. The legacy `Chunker`
+  adapter no longer sets its `.template` / `.pipeline` instance attributes
+  (they held the deleted `ChunkingTemplate` / `ChunkingPipeline` objects);
+  `.template_manager` remains stored for attribute compatibility, never
+  consulted.
 - Rejected, unreachable dictation-history implementations removed:
   `Audio/transcription_history.py`, `Widgets/transcription_history_viewer.py`,
   and `UI/Dictation_Window.py`.

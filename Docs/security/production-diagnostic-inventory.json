@@ -418,24 +418,24 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 31,
-      "diagnostic_digest": "843a41dfe7352f687179",
+      "call_count": 28,
+      "diagnostic_digest": "65556627220e4c324921",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Chunking/Chunk_Lib.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 18,
-      "diagnostic_digest": "002389197abd65ddfec9",
+      "call_count": 1,
+      "diagnostic_digest": "b79534e6114afb532450",
       "owner": "TASK-494",
-      "path": "tldw_chatbook/Chunking/chunking_interop_library.py",
+      "path": "tldw_chatbook/Chunking/_template_conversion.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 17,
-      "diagnostic_digest": "f98a98c58c9a6a2ae297",
+      "call_count": 19,
+      "diagnostic_digest": "38ba6bf89fcfe4cd6f35",
       "owner": "TASK-494",
-      "path": "tldw_chatbook/Chunking/chunking_templates.py",
+      "path": "tldw_chatbook/Chunking/chunking_interop_library.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
@@ -565,6 +565,13 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
+      "call_count": 17,
+      "diagnostic_digest": "f646885f01a5d7aa73ce",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Chunking/engine/templates.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
       "call_count": 2,
       "diagnostic_digest": "ec2f6dd80d0af71ca50b",
       "owner": "TASK-494",
@@ -576,6 +583,13 @@
       "diagnostic_digest": "64154f1d06e52dd3f378",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Chunking/language_chunkers.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 2,
+      "diagnostic_digest": "8bcb0940d994235df79d",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Chunking/template_runtime.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
@@ -600,8 +614,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 339,
-      "diagnostic_digest": "3823eba4549e5fc79d4f",
+      "call_count": 344,
+      "diagnostic_digest": "0caa6900f357703db384",
       "owner": "TASK-494",
       "path": "tldw_chatbook/DB/Client_Media_DB_v2.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -1101,6 +1115,13 @@
       "diagnostic_digest": "0b2aa4663c5d5478cacb",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Library/library_rag_state.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 11,
+      "diagnostic_digest": "7938af9458d11adfbc56",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Library/library_rechunk_service.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
@@ -3267,6 +3288,13 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
+      "call_count": 1,
+      "diagnostic_digest": "f45d8f82786f6ce322a8",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Widgets/Library/library_search_rag_panel.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
       "call_count": 3,
       "diagnostic_digest": "c9c4f277ff1d4c6679a1",
       "owner": "TASK-494",
@@ -3610,8 +3638,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 326,
-      "diagnostic_digest": "0c749a968705085b7df7",
+      "call_count": 327,
+      "diagnostic_digest": "454e02189f97f39420dc",
       "owner": "TASK-494",
       "path": "tldw_chatbook/app.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -3847,9 +3875,9 @@
   "schema_version": 2,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 520,
+    "owner_files": 524,
     "persistent_sink_files": 8,
     "task_492_calls": 1222,
-    "task_494_calls": 7187
+    "task_494_calls": 7206
   }
 }
