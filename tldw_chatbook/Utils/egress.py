@@ -23,7 +23,7 @@ import ipaddress
 import json as _json
 import socket
 from dataclasses import dataclass, field
-from typing import Iterable, List, Mapping, MutableMapping
+from typing import Any, Iterable, List, Mapping, MutableMapping
 from urllib.parse import urljoin, urlparse
 
 import requests
@@ -932,13 +932,48 @@ class DefaultTimeoutSession(requests.Session):
     this only fills the gap when the caller specified neither (task-19830).
     """
 
-    def __init__(self, *args, default_timeout=None, **kwargs) -> None:
+    def __init__(
+        self,
+        *args: Any,
+        default_timeout: float | tuple[float, float] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Build the session.
+
+        Args:
+            *args: Forwarded unchanged to ``requests.Session``.
+            default_timeout: The timeout to fill in for calls that omit one
+                -- a scalar (both halves) or a ``(connect, read)`` tuple.
+                ``None`` means read it from config via
+                ``default_session_timeout()`` at construction time.
+            **kwargs: Forwarded unchanged to ``requests.Session``.
+        """
         super().__init__(*args, **kwargs)
-        self.default_timeout = (
+        self.default_timeout: float | tuple[float, float] = (
             default_session_timeout() if default_timeout is None else default_timeout
         )
 
-    def request(self, method, url, *args, **kwargs):  # type: ignore[override]
+    def request(  # type: ignore[override]
+        self, method: str, url: str, *args: Any, **kwargs: Any
+    ) -> requests.Response:
+        """Dispatch the request, supplying ``default_timeout`` if needed.
+
+        Args:
+            method: HTTP method, as ``requests.Session.request`` takes it.
+            url: The target URL.
+            *args: Positional arguments forwarded to
+                ``requests.Session.request``.
+            **kwargs: Keyword arguments forwarded likewise. An explicit
+                ``timeout`` here (or in the positional slot) is preserved.
+
+        Returns:
+            The ``requests.Response``, unchanged.
+
+        Raises:
+            requests.RequestException: Whatever the underlying request
+                raises, including the ``Timeout`` this default exists to
+                produce instead of blocking forever.
+        """
         # Session.request's positional signature (after method, url) is
         # params, data, headers, cookies, files, auth, timeout -- 6
         # positionals before `timeout`, so a 7th positional argument IS an
@@ -948,7 +983,9 @@ class DefaultTimeoutSession(requests.Session):
         return super().request(method, url, *args, **kwargs)
 
 
-def create_default_session(*, timeout=None) -> "DefaultTimeoutSession":
+def create_default_session(
+    *, timeout: float | tuple[float, float] | None = None
+) -> "DefaultTimeoutSession":
     """Build a ``requests.Session`` whose default timeout is config-driven.
 
     Every call made through the returned session that omits ``timeout=``
@@ -957,6 +994,15 @@ def create_default_session(*, timeout=None) -> "DefaultTimeoutSession":
     that already passes its own ``timeout=`` is completely untouched --
     construction alone never changes behaviour for a deliberate per-call or
     per-provider timeout (task-19830).
+
+    Args:
+        timeout: Override for this session's default -- a scalar (applied
+            to both halves) or a ``(connect, read)`` tuple. ``None`` reads
+            the configured default.
+
+    Returns:
+        A ``DefaultTimeoutSession``. Usable anywhere a
+        ``requests.Session`` is, including as a context manager.
     """
     return DefaultTimeoutSession(default_timeout=timeout)
 

@@ -36,7 +36,8 @@ has to remember one individually -- and 40 of them do not.
 Files: `LLM_Calls/` (LLM_API_Calls, LLM_API_Calls_Local, Local_Summarization_Lib,
 Summarization_General_Lib, hosted_chat, qwencloud), `Embeddings/Embeddings_Lib`,
 `Character_Chat/local_character_persona_service`, `Local_Inference/ollama_model_mgmt`,
-`TTS/backends/kokoro`, `Utils/egress`, `Web_Scraping/Confluence/confluence_auth`.
+`TTS/backends/kokoro` (since fixed by task-19560), `Utils/egress`,
+`Web_Scraping/Confluence/confluence_auth`.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
@@ -105,8 +106,12 @@ flow to catch `session.post(...)` as well as `requests.post(...)`. 3
 assertion tests (`LLM_Calls/` fully clean; whole-package unexempted-violation
 check; exemption-set freshness) + 8 scanner self-tests. `EXEMPT_FILES`:
 `Embeddings/Embeddings_Lib.py`, `Local_Inference/ollama_model_mgmt.py`,
-`TTS/backends/kokoro.py`, `Web_Scraping/Confluence/confluence_auth.py`,
+`Web_Scraping/Confluence/confluence_auth.py`,
 `Web_Scraping/WebSearch_APIs.py`, `Utils/egress.py` (its own internals).
+`TTS/backends/kokoro.py` was on that list until task-19560 shipped its
+download timeouts mid-review; the guard's own stale-exemption check is what
+caught it, which is the argument for naming files individually rather than
+skipping a directory.
 Red-proofed by hand: appended a bare `requests.Session()` to `qwencloud.py`,
 confirmed both assertion tests failed and named the file+line, removed it,
 confirmed green again.

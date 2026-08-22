@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -76,10 +77,11 @@ EXEMPT_FILES: frozenset[str] = frozenset(
         # as the LLM_Calls fix is a regression risk this task isn't taking.
         "Embeddings/Embeddings_Lib.py",
         "Local_Inference/ollama_model_mgmt.py",
-        # task-19560 (open, separate task) already covers the Kokoro
-        # download timeouts specifically -- exempted here rather than fixed
-        # incidentally by this guard's presence.
-        "TTS/backends/kokoro.py",
+        # (task-19560 shipped the Kokoro download timeouts while this branch
+        # was in review -- `TTS/backends/kokoro.py` used to be exempted here
+        # and is now clean, so the entry was removed. This guard's
+        # stale-exemption check is what caught that, which is the point of
+        # naming files individually instead of skipping a whole directory.)
         "Web_Scraping/Confluence/confluence_auth.py",
         "Web_Scraping/WebSearch_APIs.py",
         # Utils/egress.py's OWN internals (`guarded_fetch_requests`'s
@@ -187,8 +189,15 @@ def _scan_source(source: str, *, relative_path: str) -> list[Finding]:
                     session_vars.add(arg.arg)
 
     def has_timeout(call: ast.Call, leaf: str) -> bool:
+        # A `**kwargs` expansion deliberately does NOT count. It MIGHT carry
+        # a timeout, and the AST cannot tell -- but a guard that assumes the
+        # safe case whenever it can't see is a guard that passes on exactly
+        # the call sites hardest to eyeball. `requests.post(url, **opts)` is
+        # the shape most likely to hide a missing timeout, not least likely.
+        # A site that really does forward one through `**kwargs` states it
+        # explicitly (`timeout=opts.get("timeout", ...)`) and stays green.
         for kw in call.keywords:
-            if kw.arg == "timeout" or kw.arg is None:  # `timeout=` or `**kwargs`
+            if kw.arg == "timeout":
                 return True
         idx = _REQUEST_POSITIONAL_TIMEOUT_INDEX.get(leaf)
         return idx is not None and len(call.args) > idx
@@ -231,8 +240,20 @@ def _scan_source(source: str, *, relative_path: str) -> list[Finding]:
     return findings
 
 
+@lru_cache(maxsize=1)
 def _scan_package() -> dict[str, list[Finding]]:
-    """Every finding under ``tldw_chatbook/``, keyed by path relative to it."""
+    """Every finding under ``tldw_chatbook/``, keyed by path relative to it.
+
+    Cached: three tests in this module each need the whole picture, and
+    re-parsing every file in the package three times cost ~9s of a suite
+    run for three identical answers (14.2s -> 5.0s for this module). Safe
+    because nothing here mutates the tree between tests -- the package is
+    read-only input to a pure function of its own source.
+
+    Returns:
+        ``{relative_path: [Finding, ...]}`` for files with at least one
+        finding. Callers must treat the value as read-only; it is shared.
+    """
     by_file: dict[str, list[Finding]] = {}
     for path in sorted(PACKAGE_ROOT.rglob("*.py")):
         relative = path.relative_to(PACKAGE_ROOT).as_posix()
@@ -378,3 +399,30 @@ def test_scanner_ignores_lazy_in_function_import_target_of_confusion() -> None:
     )
     findings = _scan_source(source, relative_path="synthetic.py")
     assert [f.kind for f in findings] == ["bare-session"]
+
+
+def test_scanner_flags_kwargs_expansion_without_an_explicit_timeout() -> None:
+    """`requests.post(url, **opts)` must be flagged, not assumed safe.
+
+    The AST cannot see whether `opts` carries a timeout. Treating the
+    unknowable case as safe would blind the guard to precisely the call
+    shape where a missing timeout is hardest to spot by eye, so the guard
+    resolves the ambiguity the other way and makes the call site say so.
+    """
+    source = "import requests\nrequests.post(url, **opts)\n"
+    findings = _scan_source(source, relative_path="synthetic.py")
+    assert len(findings) == 1, findings
+    assert "timeout" in str(findings[0]).lower()
+
+
+def test_scanner_accepts_a_timeout_forwarded_explicitly_beside_kwargs() -> None:
+    """The escape hatch has to actually work, or the rule above is a wall.
+
+    A site that genuinely forwards a caller-supplied timeout stays green by
+    naming it -- `**kwargs` alongside an explicit `timeout=` is fine.
+    """
+    source = (
+        "import requests\n"
+        "requests.post(url, timeout=opts.get('timeout', 30), **opts)\n"
+    )
+    assert _scan_source(source, relative_path="synthetic.py") == []
