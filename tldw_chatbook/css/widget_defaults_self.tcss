@@ -1012,6 +1012,11 @@
         border: solid $surface-lighten-1;
     }
 
+    InstalledView .installed-model-row.-revealed {
+        border: solid $accent;
+        background: $accent 8%;
+    }
+
     InstalledView .installed-model-title {
         text-style: bold;
     }
@@ -1038,9 +1043,19 @@
     }
 
     RemoteView .remote-header {
-        height: 3;
+        height: 5;
         padding: 0 1;
         background: $panel;
+    }
+
+    RemoteView .remote-source {
+        height: 2;
+        padding: 0;
+        color: $text-muted;
+    }
+
+    RemoteView .remote-search-row {
+        height: 3;
     }
 
     RemoteView #remote-model-query {
@@ -1164,6 +1179,16 @@
         min-width: 22;
     }
 
+    RemoteView .remote-completion-actions {
+        width: auto;
+        height: 3;
+    }
+
+    RemoteView .remote-completion-actions Button {
+        width: auto;
+        margin-left: 1;
+    }
+
     RemoteView.-narrow .remote-results-pane {
         width: 2fr;
         min-width: 0;
@@ -1188,8 +1213,14 @@
     }
 
     RemoteView.-narrow #remote-model-selection,
-    RemoteView.-narrow #remote-model-install {
+    RemoteView.-narrow #remote-model-install,
+    RemoteView.-narrow .remote-completion-actions {
         width: 100%;
+        min-width: 0;
+    }
+
+    RemoteView.-narrow .remote-completion-actions Button {
+        width: 1fr;
         min-width: 0;
     }
 
@@ -1370,6 +1401,42 @@
 
     ModelInstallProgress ProgressBar {
         margin-top: 1;
+    }
+
+
+/* ===== WIDGET: ManagedGGUFRuntimeChoiceModal (Widgets/ModelArtifacts/runtime_choice_modal.py) ===== */
+
+    ManagedGGUFRuntimeChoiceModal {
+        align: center middle;
+    }
+
+    ManagedGGUFRuntimeChoiceModal .managed-gguf-runtime-modal {
+        width: 64;
+        height: auto;
+        border: tall $accent;
+        background: $surface;
+        padding: 1 2;
+    }
+
+    ManagedGGUFRuntimeChoiceModal .managed-gguf-runtime-title {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    ManagedGGUFRuntimeChoiceModal .managed-gguf-runtime-copy {
+        height: auto;
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+
+    ManagedGGUFRuntimeChoiceModal .managed-gguf-runtime-actions {
+        height: 3;
+        align-horizontal: right;
+    }
+
+    ManagedGGUFRuntimeChoiceModal .managed-gguf-runtime-actions Button {
+        width: auto;
+        margin-left: 1;
     }
 
 
