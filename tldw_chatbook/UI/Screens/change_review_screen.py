@@ -4638,13 +4638,22 @@ class ChangeGitPushModal(SafeModalDismissMixin, ModalScreen["dict | None"]):
             ``"<name> (<url>)"``, or just the name when no URL is known.
         """
         try:
-            urls = {
-                name: url for name, url in self._infos[root].remotes
-            }
+            info = self._infos[root]
+            # EVERY destination, not just the first: a remote may configure
+            # several `pushurl`s and a push reaches all of them (Qodo #2,
+            # PR #1959 — naming one of two is a smaller truth than silence,
+            # because the user would believe it).
+            all_urls = dict(getattr(info, "remote_push_urls", ()) or ())
+            urls = tuple(all_urls.get(remote_name) or ())
+            if not urls:
+                urls = tuple(
+                    url for name, url in info.remotes if name == remote_name
+                )
         except (KeyError, AttributeError, TypeError, ValueError):
             return remote_name
-        url = urls.get(remote_name)
-        return f"{remote_name} ({url})" if url else remote_name
+        if not urls:
+            return remote_name
+        return f"{remote_name} ({', '.join(urls)})"
 
     # -- layout -------------------------------------------------------------
 

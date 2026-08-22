@@ -1687,3 +1687,36 @@ async def test_push_dialog_shows_the_plain_url_without_a_redirect(
     assert str(bare) in text, (
         f"the ordinary destination must be named too; got {text!r}"
     )
+
+
+@pytest.mark.asyncio
+async def test_push_dialog_names_every_destination_of_a_multi_pushurl_remote(
+    monkeypatch, tmp_path
+):
+    """Qodo #2 (PR #1959): a remote may push to SEVERAL destinations.
+
+    Naming only the first would make the dialog state a smaller
+    destination set than reality — worse than saying nothing, since the
+    user would believe it.
+    """
+    _patch_git_actions(monkeypatch, True)
+    repo, bare = _repo_with_remote(tmp_path)
+    (repo / "a.txt").write_text("changed\n")
+    second = tmp_path / "second.git"
+    _git(repo, "init", "-q", "--bare", str(second)) if False else subprocess.run(
+        ["git", "init", "-q", "--bare", str(second)], check=True
+    )
+    _git(repo, "config", "--add", "remote.origin.pushurl", str(bare))
+    _git(repo, "config", "--add", "remote.origin.pushurl", str(second))
+
+    provider, _db, _service = _make_provider(tmp_path, "conv-multi-pushurl")
+    app = _Harness(provider, workspace_roots=[str(repo)])
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _enter_current_mode(pilot, app)
+        screen.action_git_push()
+        modal = await _wait_for_push_modal(pilot, app)
+        text = "\n".join(str(w.renderable) for w in modal.query(Static))
+
+    assert str(bare) in text and str(second) in text, (
+        f"BOTH destinations must be named; got {text!r}"
+    )

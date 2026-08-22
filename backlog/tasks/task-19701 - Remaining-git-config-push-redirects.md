@@ -78,6 +78,34 @@ always states the destination just makes the dialog honest.
 control asserting the plain destination is named with no redirect present;
 mutation-proven (dropping the URL from the label fails all three).
 
-**Files:** `tldw_chatbook/UI/Screens/change_review_screen.py`,
+**Qodo round (PR #1959): the disclosure itself was inaccurate.** Two
+parsing defects in `_parse_remotes`, both reproduced against live git
+before fixing, and both of which would have made this dialog state
+something false — worse than the silence it replaced, because a user
+would believe it:
+
+* a URL was recovered by splitting on the first SPACE, so a local-path
+  remote at `/tmp/with space.git` was reported as `/tmp/with`, a path that
+  does not exist. Now the trailing `" (push)"` suffix is stripped instead.
+* only the FIRST `(push)` line per remote was kept, but a remote may
+  configure several `pushurl`s and git emits one line per destination — a
+  push reaches all of them. Now every destination is carried and named.
+
+The de-duplicated `remotes` view is deliberately unchanged in shape:
+`_resolve_push_remote` and the dialog's "must I ask which remote?" check
+both key off its LENGTH, so letting one multi-`pushurl` remote appear twice
+would have made a single remote look like a choice between two. The full
+set lives in a new defaulted `remote_push_urls` field.
+
+Declined, with counts on the PR: extracting a named constant for the
+`(160, 48)` terminal size. It appears 28 times in this one test file and
+across 66 test files repo-wide, with exactly one named-constant precedent
+in the whole suite — so converting only the four new call sites would leave
+28 literals beside 1 constant in the same file and make consistency worse,
+which is the finding's own stated rationale. Offered as a separate
+mechanical sweep instead.
+
+**Files:** `tldw_chatbook/Workspaces/git_workspace.py`,
+`tldw_chatbook/UI/Screens/change_review_screen.py`,
 `Docs/User_Guide/console/agent-runs-and-tools.md`,
 `Tests/UI/test_change_review_push_ui.py`.
