@@ -175,8 +175,10 @@ class BriefingJobHandler:
         `WatchlistCheckHandler.handle`, which calls the service method
         `get_subscription()`, not raw `.conn` SQL, and reads a table this
         handler's own spawned generations never write to concurrently.
-        Both distinctions matter here: `SubscriptionsDB` sets no
-        `busy_timeout` (SQLite's 5s default applies), and THIS handler's
+        Both distinctions matter here: `SubscriptionsDB` waits up to
+        `Subscriptions_DB.BUSY_TIMEOUT_MS` (5 s) for a contended write --
+        pinned explicitly by task-19562, previously the inherited sqlite3
+        default, and measured rather than assumed -- and THIS handler's
         own `generate_briefing` calls write to `watchlists`'/`briefings`'
         shared connection from `asyncio.to_thread` workers -- so a direct,
         synchronous call here could block on a lock its own spawned work

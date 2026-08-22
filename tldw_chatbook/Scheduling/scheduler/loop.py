@@ -69,6 +69,18 @@ class SchedulerLoop:
             allow_zero=True,
         )
         self.running = False
+        #: When this loop last started polling, or None while it is not
+        #: running (task-19562). This is the one fact that distinguishes the
+        #: two causes of a late dispatch, and only the loop has it: if a
+        #: task's scheduled time fell AFTER this instant, the scheduler was
+        #: demonstrably up and watching at that moment, so the lateness came
+        #: from inside the process -- `tick` awaits every handler serially,
+        #: and one slow handler delays every task behind it. If it fell
+        #: before, the app really was away. Nothing downstream can tell
+        #: those apart from the row alone, which is exactly how "missed
+        #: while away" came to be shown for a scheduler that never stopped
+        #: running.
+        self._running_since: datetime | None = None
         self._tick_count = 0
         self._reload_requested = False
         self.queue = PriorityQueue(
@@ -151,6 +163,7 @@ class SchedulerLoop:
     async def run(self) -> None:
         """Run the scheduler until :meth:`stop` is called."""
         self.running = True
+        self._running_since = self.clock()
         await asyncio.to_thread(self.queue.load)
         self.report_configuration()
         while self.running:
@@ -197,6 +210,8 @@ class SchedulerLoop:
         handler: Handler,
         task_type: str,
         now: datetime,
+        *,
+        scheduled: bool = True,
     ) -> bool:
         """Run one task's handler and record the dispatch outcome.
 
@@ -218,8 +233,15 @@ class SchedulerLoop:
             task_type: The task's type key (``"reminder"`` for DB rows).
             now: The dispatch time (the loop's clock for scheduled runs;
                 the caller's "now" for manual runs).
+            scheduled: False for a manual "Run now". Lateness is not
+                attributed for those: a manual run of an overdue task is
+                late by definition and by the user's own choice, so
+                reporting it as a loop-blocking delay would be noise
+                dressed as a diagnostic.
         """
         task_id = task.get("id")
+        if scheduled:
+            self._report_lateness_cause(task, task_type, now)
         timeout = self._effective_timeout_seconds(task)
         timed_out = False
         try:
@@ -266,6 +288,64 @@ class SchedulerLoop:
                 timed_out=timed_out,
             )
         return not timed_out
+
+    def _report_lateness_cause(
+        self, task: dict[str, Any], task_type: str, now: datetime
+    ) -> str | None:
+        """Name why this dispatch is late, while the loop still knows.
+
+        task-19562. `tick` awaits every due handler serially and inline, so
+        one slow handler pushes every task behind it past the missed-fire
+        grace -- a watchlist check may run for the whole 300 s execution
+        timeout against a 60 s grace. The row that results is
+        indistinguishable from one produced by the app being closed, and the
+        UI said so out loud ("the scheduler was not running at the scheduled
+        time") for a scheduler that had never stopped.
+
+        The row cannot carry the difference without a schema change, but the
+        loop can state it here, where `_running_since` is available: a
+        scheduled time that falls after this loop started is a dispatch the
+        scheduler was present for, so any lateness is in-process. The
+        counter makes the two causes separable in metrics; the UI copy no
+        longer claims to know which one it was (see
+        `scheduling/task_detail.py`).
+
+        Returns:
+            ``"busy"`` (late, scheduler was up), ``"away"`` (late, scheduler
+            was not up at the scheduled time), or None when not late.
+        """
+        scheduled_raw = task.get("next_run_at")
+        if not isinstance(scheduled_raw, str) or not scheduled_raw:
+            return None
+        try:
+            scheduled_at = datetime.fromisoformat(scheduled_raw)
+        except ValueError:
+            return None
+        if scheduled_at.tzinfo is None:
+            scheduled_at = scheduled_at.replace(tzinfo=timezone.utc)
+        late_by = (now - scheduled_at).total_seconds()
+        if late_by <= self.missed_fire_grace_seconds:
+            return None
+
+        running_since = self._running_since
+        cause = (
+            "busy"
+            if running_since is not None and scheduled_at >= running_since
+            else "away"
+        )
+        log_counter(
+            "scheduler_dispatch_late",
+            labels={"task_type": task_type, "cause": cause},
+        )
+        if cause == "busy":
+            logger.warning(
+                "Task {task_id} dispatched {late_by:.0f}s after its scheduled "
+                "time while the scheduler was running -- an earlier handler "
+                "in the same tick held the loop. This is NOT a missed fire.",
+                task_id=task.get("id"),
+                late_by=late_by,
+            )
+        return cause
 
     def _effective_timeout_seconds(self, task: dict[str, Any]) -> float | None:
         """Resolve the execution timeout for one task (task-18939).
@@ -322,7 +402,7 @@ class SchedulerLoop:
             return False
 
         succeeded = await self.dispatch_reminder(
-            row, handler, "reminder", self.clock()
+            row, handler, "reminder", self.clock(), scheduled=False
         )
         await asyncio.to_thread(self.queue.load)
         return succeeded
@@ -330,3 +410,7 @@ class SchedulerLoop:
     def stop(self) -> None:
         """Signal the loop to exit after the current tick."""
         self.running = False
+        # Cleared so a task scheduled during the gap before the next `run()`
+        # is correctly attributed to an absent scheduler rather than to a
+        # busy one.
+        self._running_since = None

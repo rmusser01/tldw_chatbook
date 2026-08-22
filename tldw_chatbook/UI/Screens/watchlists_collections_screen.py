@@ -10669,10 +10669,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         outermost coroutine -- and `run_worker` only *schedules* a coroutine
         back onto this SAME event loop, it does not move it to a thread
         (identical shape to `_toggle_briefing_queue`'s fix, whose docstring
-        names this exact trap). `SubscriptionsDB` sets no `busy_timeout`
-        pragma, so a second app instance (or a background check) contending
-        for the same row blocked the UI thread for the length of the lock
-        wait, not just the write.
+        names this exact trap). A second app instance (or a background
+        check) contending for the same row blocked the UI thread for the
+        length of the lock wait, not just the write -- up to
+        `Subscriptions_DB.BUSY_TIMEOUT_MS` (5 s; task-19562 pinned that
+        value explicitly, having previously inherited it, and measured the
+        wait: a 1.0 s lock held cost the second writer 1.07 s).
 
         Mirrors `library_screen.py`'s `_run_library_service_call(...,
         isolate_in_worker=True)`: `asyncio.to_thread` gives the worker thread

@@ -3,7 +3,7 @@ id: TASK-19562
 title: >-
   Watchlists service — the duplicate-check registry misses the feed and API
   arms, 22 async methods do sync sqlite on the loop, and transaction() nests
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-21 20:12'
 labels:
@@ -65,15 +65,15 @@ away".
       of statistics — pinned by a test that actually overlaps the two triggers
 - [x] The 22 `async def` methods no longer execute synchronous sqlite on the
       event loop
-- [ ] The `busy_timeout` question is **measured, not assumed**: either a writer
+- [x] The `busy_timeout` question is **measured, not assumed**: either a writer
       collision is shown to stall the loop and a timeout is set, or the concern
       is recorded as refuted with the measurement
 - [x] `transaction()` either supports nesting (savepoints) or
       `record_check_result` stops nesting it; a test pins that a failure after
       the inner scope rolls the whole unit back
-- [ ] The subscriptions DB connection is closed on shutdown and the `-wal` is
+- [x] The subscriptions DB connection is closed on shutdown and the `-wal` is
       checkpointed
-- [ ] A guard test fails if a new `async def` in this service performs blocking
+- [x] A guard test fails if a new `async def` in this service performs blocking
       database I/O directly
 
 ## Measurement: the busy_timeout question (2026-08-21)
@@ -145,14 +145,11 @@ thread -- only the outermost block commits or rolls back -- mirroring
 savepoint scheme. Depth is cleared in a `finally`, so a raise cannot strand it
 and silently turn every later transaction into a no-op joiner.
 
-**The specific claim in C is REFUTED by measurement.** `record_check_result`
-does not nest today: instrumenting `transaction()` across a real call observed
-**depth 1, one entry**. The lane's CONFIRMED-LATENT rating was right about the
-hazard and wrong about that call site. The fix stands anyway -- it converts a
-silent-partial-persistence trap into a structural impossibility instead of
-relying on nobody ever nesting -- and is red-proofed: against the unfixed
-context manager, the nested write survives a deliberate failure in the outer
-scope.
+**The specific claim in C was recorded as REFUTED by measurement. That
+recording was itself wrong -- see the close-out section below.**
+`record_check_result` DOES nest, on every real check. The original note read:
+"does not nest today: instrumenting `transaction()` across a real call
+observed depth 1, one entry".
 
 **B also shipped (2026-08-21).** All 22 async methods now route their sqlite
 through the existing `db_offload.run_db_off_loop` helper rather than a new
@@ -172,7 +169,176 @@ Red-proofed: reverting `cancel_run`'s offload fails its test with
 `cancel_run's transaction opened on the event-loop thread`. `Tests/
 Subscriptions/` 781 passed (from a 759 baseline, +22 new tests).
 
-**Still open:**
+**Was still open at that point:** the C residue (leaked thread-local
+connection, un-checkpointed `-wal`), the `busy_timeout` AC, and the
+new-`async def` guard test. All three are closed below.
 
-* **C residue** -- the leaked thread-local connection that is never closed and
-  never checkpoints the `-wal`. Untouched here.
+## Close-out (2026-08-22) — the four remaining ACs, and two corrections
+
+### Hygiene: what the pre-ticked boxes were actually worth
+
+The file arrived with four ACs ticked while the status still read To Do.
+Each was re-derived against the code rather than trusted:
+
+| AC | Verdict |
+|---|---|
+| feed/API in the same guard | **Genuinely done.** `_run_guarded_source_check` claims through `_IN_FLIGHT_URL_CHECKS` with a NUL-prefixed sentinel slot; both arms route through it. |
+| one alert + one set of statistics, pinned by an overlapping test | **Partly.** The overlap tests were real, but they asserted the *fetch* count and the skip disposition -- **neither the notification count nor the statistics**, which is what the AC names and what the user sees. Closed here. |
+| 22 async methods off the loop | **Genuinely done**, and re-derived independently: an AST sweep of every `async def` in the service finds **zero** direct database calls. |
+| `transaction()` nesting + rollback pin | **Genuinely done** as a mechanism. The *claim recorded alongside it was false* -- see below. |
+
+### AC2 — the symptom the task names, now pinned where it is visible
+
+`test_overlapping_feed_check_alerts_once_and_counts_statistics_once` drives a
+real overlap (a gated `check_feed`, the second entrant starting inside the
+first's await) with a real alert rule and a recording notification
+dispatcher. Born-red against the unguarded feed arm:
+
+    the alert notification fired 2 times for one overlapping check
+    statistics double-counted the overlap:
+      {'checks_performed': 2, 'successful_checks': 2,
+       'new_items_found': 2, 'items_ingested': 2}
+
+Green after: one dispatch, one set of daily statistics.
+
+### AC4 — busy_timeout: reproduced, and it did not lead where it looked
+
+Measured on a real `SubscriptionsDB` before designing anything:
+
+    busy_timeout (ms): 5000        <- inherited, nothing set it
+    journal_mode     : wal
+    second writer blocked for 1.07s -> acquired   (lock held 1.0s)
+
+The collision is real and the caller does wait, up to the 5 s ceiling. But
+the measurement also refuted the obvious fix: **5000 is already what the
+connection had**, so "set a busy_timeout" changes nothing on its own, and
+*lowering* it would only convert a stall into an earlier `database is
+locked` on a path with no retry. The stall stops mattering because part B
+moved the sqlite off the loop.
+
+What shipped is therefore drift-protection, not a behaviour change:
+`BUSY_TIMEOUT_MS = 5000` is applied explicitly (before the WAL conversion,
+per `AgentRuns_DB`'s ordering rationale) and pinned by a test that survives
+a connector default change -- red at 0 ms with the pragma removed. The value
+assertion alone would pass without the pragma, and the test says so rather
+than posing as a guard.
+
+Two comments elsewhere asserting "`SubscriptionsDB` sets no `busy_timeout`"
+(`watchlists_collections_screen.py`, `briefing_handler.py`) are corrected.
+
+### AC6 — connection close and `-wal` checkpoint, with one half refuted
+
+Shipped: a per-instance connection registry (thread ident -> connection),
+`checkpoint_wal()`, `close_all_connections()`, and a `close()` that now
+checkpoints before closing. `close()`'s single-thread scope is unchanged --
+`app.py`'s FTS backfill depends on it.
+
+Two things were measured rather than assumed:
+
+* **A cross-thread close is refused by sqlite3** (`ProgrammingError: SQLite
+  objects created in a thread can only be used in that same thread`), so
+  `close_all_connections` closes this thread's connection, checkpoints the
+  file for everyone, and *reports* the rest instead of raising during
+  shutdown. Pinned as a fact about the runtime.
+* **The "`-wal` is left behind at exit" half is REFUTED for a clean exit.**
+  A child process wrote a 4.1 MB `-wal` and exited normally; only `subs.db`
+  remained -- identically with the new `atexit` hook enabled and suppressed.
+  CPython finalizes the connections and SQLite removes the `-wal` on last
+  close. What is real is the *standing* 4 MB a long-running app carries
+  (now truncated by `close()`/`close_all_connections`), and the
+  `os._exit(0)` signal path, which no `atexit` hook can reach -- that is
+  task-19561's subject and is recorded, not papered over. The hook stays
+  for a defined settle point with a defined error path, and is tested for
+  what it actually does.
+
+### AC7 — a guard for `async def` that does not exist yet
+
+`test_watchlists_service_no_blocking_db_io.py` parses the service and
+rejects any database call reached directly from an `async def`, resolving
+attribute chains to their root so `db.conn.cursor()` -- the shape the
+original 19-of-22 sweep missed -- is caught too. Proven able to fail three
+ways: on synthetic modules, and on the real file with `list_sources`'
+offload reverted (`list_sources (line 512): db.get_all_subscriptions(...)`).
+
+### Correction: `record_check_result` DOES nest, on every real check
+
+The earlier note recorded C as refuted at the live call site. Re-instrumented
+per argument shape:
+
+    record_check_result WITH stats    -> 2 entries, depths [1, 2]
+    record_check_result WITHOUT stats -> 1 entry,  depths [1]
+
+The route is `record_check_result` -> `_update_subscription_stats` ->
+`update_subscription_stats`, which opens its own transaction for the
+`subscription_stats` upsert. `execute_run` always passes stats, so this is
+the ordinary path; the earlier measurement can only have taken `stats=None`.
+The lane's hazard was **live**, not latent -- the daily-statistics write was
+durably committing the enclosing subscription-health UPDATE. No incident
+followed only because nothing after that point in `record_check_result` can
+fail. Two new pins cover the real call site, red against the unnested
+manager: *"the nested statistics write survived a failure in the enclosing
+transaction"*.
+
+### Folded in: the scheduler's lateness misreport
+
+`SchedulerLoop.tick` awaits every due handler serially and inline, so one
+slow handler (a watchlist check may run to its 300 s execution timeout,
+against a 60 s missed-fire grace) pushes every task behind it past the
+grace. The row that results is identical to one from an app that was closed
+-- and the UI said *"Missed while away ... (the scheduler was not running at
+the scheduled time)"*, a cause the app cannot know and which is simply false
+in that case.
+
+Repaired without a schema change, because the row's facts were never the
+problem:
+
+* `missed_at`/`missed_count` stay -- the occurrence WAS owed late and
+  earlier ones really were skipped, whichever cause it was.
+* The UI copy becomes "Ran late: ... (the app was closed, or the scheduler
+  was busy with an earlier task)". A test asserts the notice never contains
+  "Missed while away" or "was not running", across all three branches.
+* The cause is recorded where it is actually known: `SchedulerLoop` tracks
+  `_running_since` and `_report_lateness_cause` logs and counts
+  `scheduler_dispatch_late{cause=busy|away}`. A test drives the real
+  head-of-line block -- a slow handler advancing the clock ten minutes --
+  and asserts the following dispatch is attributed `busy`.
+* The docstring on `mark_reminder_dispatched`, the `[scheduling]` config
+  comment and `Docs/User_Guide/schedules.md` all asserted the false premise
+  and are corrected.
+
+The blocking itself is deliberately NOT changed to concurrent dispatch: the
+codebase already chose per-handler spawning for the slow case (see
+`BriefingJobHandler`'s Locked Decision 3), and making every handler
+concurrent is a semantics change this task has no mandate for.
+
+### Tests
+
+* `Tests/Subscriptions/` + `Tests/Scheduling/` +
+  `Tests/UI/test_schedules_missed_notice.py` — **1187 passed, 1 skipped**,
+  against **1156 passed, 1 skipped** for the same selection in a clean
+  `origin/dev` (`da4e828af`) worktree: +31 tests, no regressions.
+* `Tests/Watchlists/` + the three `Tests/UI/test_schedules_*` files — 758
+  passed.
+* `Tests/DB/` — 1071 passed, 1 skipped, and 6 failures in
+  `test_core_sqlite_owner_privacy.py[media-*]`. Those 6 fail identically on
+  `origin/dev` in the clean worktree — pre-existing dev reds, not from this
+  branch.
+* Repo-wide `pytest --collect-only -q` — 55,026 tests collected, 0
+  collection errors.
+* `ruff check` clean on every changed module.
+
+### Files
+
+`tldw_chatbook/DB/Subscriptions_DB.py`,
+`tldw_chatbook/Scheduling/scheduler/loop.py`,
+`tldw_chatbook/Scheduling/db/scheduled_tasks_db.py`,
+`tldw_chatbook/Scheduling/scheduler/handlers/briefing_handler.py`,
+`tldw_chatbook/UI/Screens/scheduling/task_detail.py`,
+`tldw_chatbook/UI/Screens/watchlists_collections_screen.py`,
+`tldw_chatbook/config.py`, `Docs/User_Guide/schedules.md`, and tests:
+`Tests/Subscriptions/test_subscriptions_db_connection_lifecycle.py` (new),
+`Tests/Subscriptions/test_watchlists_service_no_blocking_db_io.py` (new),
+`Tests/Scheduling/test_scheduler_lateness_cause.py` (new),
+`Tests/Subscriptions/test_watchlist_feed_api_in_flight_guard.py`,
+`Tests/Subscriptions/test_subscriptions_transaction_nesting.py`,
+`Tests/UI/test_schedules_missed_notice.py`.
