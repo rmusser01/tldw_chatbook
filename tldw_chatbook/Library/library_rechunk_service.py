@@ -173,6 +173,63 @@ def _effective_template_params(template: Dict[str, Any]) -> str:
     return json.dumps(_effective_chunk_params(options))
 
 
+def _restamp_auto_chunking_config(
+    media_db: MediaDatabase,
+    media_id: int,
+    decision: AutoDecision,
+    *,
+    template_name: Optional[str],
+    governed_params: Optional[Dict[str, Any]],
+) -> None:
+    """Re-stamp ``Media.chunking_config`` after an AUTO re-chunk (task 5, the
+    Task-4-review carry).
+
+    Re-chunk RE-RESOLVES a stored ``mode: "auto"`` -- and once the chunk
+    rows are replaced, the stored decision must say what the RE-CHUNK
+    derived, not what ingest derived. Without this re-stamp, a template-tier
+    decision whose store later changed (the winning template soft-deleted, a
+    higher-scoring classifier block added) leaves a STALE ``template`` key
+    on the Media row while the new rows carry NULL ``chunking_template`` --
+    and both #2 readers (``get_documents_using_template``'s LIKE,
+    ``get_template_statistics``' ``json_extract``) keep counting the item
+    under a template it no longer uses.
+
+    The shape and the dump spelling mirror the ingest writer's
+    ``_persist_chunking_template_columns`` exactly: ``mode`` stays
+    ``"auto"``, ``auto_tier``/``auto_rationale`` refresh, the ``template``
+    key appears ONLY on a template-tier win (both readers' contract), and
+    the method/chunk_size/chunk_overlap continuity keys carry what actually
+    governed. DEFAULT json separators + ``ensure_ascii=False`` are
+    load-bearing for the LIKE reader (that writer's docstring); the UPDATE
+    bumps ``last_modified``/``version`` for the Media table's
+    sync-validation triggers, the same shape every other ``Media`` UPDATE
+    here uses. The stored-NAME path never passes through here: it re-runs
+    the same name, so its config stays truthful by construction.
+    """
+    config: Dict[str, Any] = {
+        "mode": "auto",
+        "auto_tier": str(decision.tier),
+        "auto_rationale": list(decision.rationale or []),
+    }
+    if template_name:
+        config["template"] = template_name
+    params = governed_params or {}
+    if "method" in params:
+        config["method"] = params["method"]
+    if "size" in params:
+        config["chunk_size"] = params["size"]
+    if "overlap" in params:
+        config["chunk_overlap"] = params["overlap"]
+    chunking_config_json = json.dumps(config, ensure_ascii=False)
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+    with media_db.transaction() as conn:
+        conn.execute(
+            "UPDATE Media SET chunking_config = ?, last_modified = ?, "
+            "version = version + 1 WHERE id = ?",
+            (chunking_config_json, now, media_id),
+        )
+
+
 def _replace_chunk_rows(
     media_db: MediaDatabase,
     media_id: int,
@@ -500,24 +557,53 @@ async def rechunk_legacy_items(
                     chunks = improved_chunking_process(
                         content, options, template=chunker_template_arg
                     )
+                    rows_template_name: Optional[str] = (
+                        str(
+                            (chunker_template_arg or {}).get("name") or ""
+                        ).strip()
+                        or None
+                        if chunker_template_arg is not None
+                        else None
+                    )
+                    rows_template_params: Optional[str] = (
+                        _effective_template_params(chunker_template_arg)
+                        if chunker_template_arg is not None
+                        else None
+                    )
                     _replace_chunk_rows(
                         media_db,
                         media_id,
                         chunks,
-                        template_name=(
-                            str(
-                                (chunker_template_arg or {}).get("name") or ""
-                            ).strip()
-                            or None
-                            if chunker_template_arg is not None
-                            else None
-                        ),
-                        template_params=(
-                            _effective_template_params(chunker_template_arg)
-                            if chunker_template_arg is not None
-                            else None
-                        ),
+                        template_name=rows_template_name,
+                        template_params=rows_template_params,
                     )
+                    if isinstance(resolved, AutoDecision):
+                        # (task 5, the Task-4-review carry) Re-stamp the
+                        # stored choice with the FRESH outcome now that the
+                        # replacement committed: the rows tell the new truth
+                        # and the config must agree with them. The governed
+                        # params are the very dict the rows'
+                        # ``chunking_params`` string was built from (json
+                        # round-trip keeps row/config agreement by
+                        # construction); the lazy import mirrors
+                        # ``_effective_template_params``'s.
+                        if rows_template_params is not None:
+                            governed_params: Dict[str, Any] = json.loads(
+                                rows_template_params
+                            )
+                        else:
+                            from ..Local_Ingestion.local_file_ingestion import (
+                                _effective_chunk_params,
+                            )
+
+                            governed_params = _effective_chunk_params(options)
+                        _restamp_auto_chunking_config(
+                            media_db,
+                            media_id,
+                            resolved,
+                            template_name=rows_template_name,
+                            governed_params=governed_params,
+                        )
                     summary["rechunked"] += 1
                     item_rechunked = True
         except Exception as exc:
