@@ -458,7 +458,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 47  # `messages` FTS delete halves guarded on index membership (task-21100).
+    _CURRENT_SCHEMA_VERSION = 48  # Device-local Console Library policy and dispatch recovery.
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -6116,6 +6116,89 @@ UPDATE db_schema_version
                 f"Migration from V46 to V47 failed for '{self._SCHEMA_NAME}': {exc}"
             ) from exc
 
+    def _migrate_from_v47_to_v48(self, conn: sqlite3.Connection) -> None:
+        """Add device-local Console Library policy and dispatch recovery schema.
+
+        Existing conversations, including soft-deleted rows, receive the one
+        sanitized legacy automatic-retrieval value supplied by the config
+        layer and assistant Library access Allowed. A fresh database may enter
+        this step without a seed because it has no legacy conversations.
+
+        Args:
+            conn: The active connection, inside ``_initialize_schema``'s
+                outer immediate transaction.
+
+        Raises:
+            SchemaError: If the entry version or seed is invalid, the migration
+                file cannot be applied, or the guarded version update fails.
+        """
+        self._require_migration_entry_version(conn, 47, "V47→V48")
+        from tldw_chatbook.Chat.console_library_policy import (
+            ConsoleLibraryMigrationSeed,
+        )
+
+        seed = self.console_library_migration_seed
+        fresh_without_seed = (
+            seed is None and getattr(self, "_schema_initial_version", None) == 0
+        )
+        if not isinstance(seed, ConsoleLibraryMigrationSeed) and not fresh_without_seed:
+            raise SchemaError(
+                "Console library migration seed is required for v47 upgrade."
+            )
+        auto_retrieve_on_send = (
+            int(seed.auto_retrieve_on_send)
+            if isinstance(seed, ConsoleLibraryMigrationSeed)
+            else 0
+        )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v47_to_v48_console_library_policy.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V47→V48",
+                )
+                cursor.execute(
+                    """
+                    INSERT INTO console_conversation_library_policy(
+                        conversation_id,
+                        auto_retrieve_on_send,
+                        assistant_library_access
+                    )
+                    SELECT id, ?, 1
+                      FROM conversations
+                    """,
+                    (auto_retrieve_on_send,),
+                )
+                version_cursor = cursor.execute(
+                    """
+                    UPDATE db_schema_version
+                       SET version = 48
+                     WHERE schema_name = ?
+                       AND version = 47
+                    """,
+                    (self._SCHEMA_NAME,),
+                )
+                if version_cursor.rowcount != 1:
+                    raise SchemaError(
+                        f"[{self._SCHEMA_NAME} V47→V48] Migration version update was not applied"
+                    )
+
+            final_version = self._get_db_version(conn)
+            if final_version != 48:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V47→V48] Migration version check failed. "
+                    f"Expected 48, got: {final_version}"
+                )
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            raise SchemaError(
+                f"Migration from V47 to V48 failed for '{self._SCHEMA_NAME}': {exc}"
+            ) from exc
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -6235,21 +6318,19 @@ UPDATE db_schema_version
         current_initial_version = 0
         try:
             with TransactionContextManager(
-                self
+                self, immediate=True
             ):  # Ensures atomicity for schema changes
                 current_db_version = self._get_db_version(conn)
                 current_initial_version = (
                     current_db_version  # Store initial for messages
                 )
+                self._schema_initial_version = current_initial_version
                 target_version = self._CURRENT_SCHEMA_VERSION
                 logger.info(
                     f"Checking DB schema '{self._SCHEMA_NAME}'. Current version: {current_db_version}. Code supports: {target_version}"
                 )
 
-                if (
-                    current_db_version == 44
-                    and target_version > 44
-                ):
+                if current_db_version == 47 and target_version > 47:
                     from tldw_chatbook.Chat.console_library_policy import (
                         ConsoleLibraryMigrationSeed,
                     )
@@ -6259,7 +6340,7 @@ UPDATE db_schema_version
                         ConsoleLibraryMigrationSeed,
                     ):
                         raise SchemaError(
-                            "Console library migration seed is required for v44 upgrade."
+                            "Console library migration seed is required for v47 upgrade."
                         )
 
                 if current_db_version == target_version:
@@ -6317,6 +6398,7 @@ UPDATE db_schema_version
                     44: self._migrate_from_v44_to_v45,
                     45: self._migrate_from_v45_to_v46,
                     46: self._migrate_from_v46_to_v47,
+                    47: self._migrate_from_v47_to_v48,
                 }
 
                 if current_db_version == 0:
@@ -6341,7 +6423,7 @@ UPDATE db_schema_version
                     # that any future step which does commit cannot silently
                     # make the following steps non-rollback-safe.
                     if not conn.in_transaction:
-                        conn.execute("BEGIN")
+                        conn.execute("BEGIN IMMEDIATE")
                     migration(conn)
                     current_db_version = self._get_db_version(conn)
 

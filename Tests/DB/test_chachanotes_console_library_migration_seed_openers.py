@@ -90,30 +90,32 @@ def test_current_database_accepts_no_console_library_migration_seed(tmp_path: Pa
 
 
 @pytest.mark.parametrize("migration_seed", [None, object()])
-def test_v44_upgrade_rejects_missing_or_invalid_seed_before_ddl(
+def test_v47_upgrade_rejects_missing_or_invalid_seed_before_ddl(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     migration_seed: object,
 ) -> None:
-    """A legacy v44 database must not start the v45 migration without a typed seed."""
+    """A legacy v47 database must not start the v48 migration without a typed seed."""
 
-    path = tmp_path / "v44.sqlite"
-    seeded = CharactersRAGDB(path, client_id="v44-seed")
-    seeded.close_connection()
-    assert _db_version(path) == 44
+    path = tmp_path / "v47.sqlite"
+    with monkeypatch.context() as v47_patch:
+        v47_patch.setattr(CharactersRAGDB, "_CURRENT_SCHEMA_VERSION", 47)
+        seeded = CharactersRAGDB(path, client_id="v47-seed")
+        seeded.close_connection()
+    assert _db_version(path) == 47
     before = _schema_snapshot(path)
 
     with monkeypatch.context() as target_patch:
-        target_patch.setattr(CharactersRAGDB, "_CURRENT_SCHEMA_VERSION", 45)
+        target_patch.setattr(CharactersRAGDB, "_CURRENT_SCHEMA_VERSION", 48)
         with pytest.raises(
             SchemaError,
-            match="Console library migration seed is required for v44 upgrade",
+            match="Console library migration seed is required for v47 upgrade",
         ):
             CharactersRAGDB(
                 path,
-                client_id="v45-upgrade",
+                client_id="v48-upgrade",
                 console_library_migration_seed=migration_seed,  # type: ignore[arg-type]
             )
 
-    assert _db_version(path) == 44
+    assert _db_version(path) == 47
     assert _schema_snapshot(path) == before
