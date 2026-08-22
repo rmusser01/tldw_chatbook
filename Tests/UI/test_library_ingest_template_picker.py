@@ -35,6 +35,9 @@ from tldw_chatbook.Widgets.Library.library_ingest_canvas import LibraryIngestCan
 PICKER_ID = "opt-generic-chunk_template"
 NONE_LABEL = "None (manual settings)"
 NONE_VALUE = ""
+#: Task 4: the Auto option's value -- the reserved sentinel (pinned equal
+#: to auto_selection.AUTO_SENTINEL by test_auto_option_value_is_the_reserved_sentinel).
+AUTO_VALUE = "auto"
 
 
 class _FakeScopeService:
@@ -110,9 +113,14 @@ async def test_picker_lists_db_templates_via_scope_service():
     )
     app = _PickerHost(_local_state(), service)
     async with app.run_test() as pilot:
-        options = await _wait_for_picker_options(pilot, 3)
+        options = await _wait_for_picker_options(pilot, 4)
 
-    assert [value for _label, value in options] == ["", "tiny-words", "big-words"]
+    assert [value for _label, value in options] == [
+        "",
+        AUTO_VALUE,
+        "tiny-words",
+        "big-words",
+    ]
     assert service.calls, "the picker never consulted the scope service"
     assert service.calls[0].get("mode") == "local"
 
@@ -138,7 +146,7 @@ async def test_picker_escapes_markup_in_labels():
     service = _FakeScopeService([{"name": adversarial}])
     app = _PickerHost(_local_state(), service)
     async with app.run_test() as pilot:
-        options = await _wait_for_picker_options(pilot, 2)
+        options = await _wait_for_picker_options(pilot, 3)
 
     labels = {value: label for label, value in options}
     assert adversarial in labels, f"options were {options}"
@@ -183,7 +191,7 @@ async def test_picker_choice_flows_into_the_chunk_template_slot():
     service = _FakeScopeService([{"name": "tiny-words"}])
     app = _PickerHost(_local_state(), service)
     async with app.run_test() as pilot:
-        await _wait_for_picker_options(pilot, 2)
+        await _wait_for_picker_options(pilot, 3)
         select = pilot.app.query_one(f"#{PICKER_ID}", Select)
         select.value = "tiny-words"
         await pilot.pause()
@@ -202,12 +210,84 @@ async def test_picker_choice_flows_into_the_chunk_template_slot():
 
 
 @pytest.mark.asyncio
-async def test_picker_without_scope_service_stays_default_only():
-    """A host with no service (or a failing one) degrades to the None option."""
+async def test_picker_without_scope_service_stays_static_options_only():
+    """A host with no service (or a failing one) degrades to the static
+    None + Auto options (never a stale template list)."""
     app = _PickerHost(_local_state(), service=None)
     async with app.run_test() as pilot:
         await pilot.pause()
         await pilot.pause()
         select = pilot.app.query_one(f"#{PICKER_ID}", Select)
 
-    assert [value for _label, value in select._options] == [NONE_VALUE]
+    assert [value for _label, value in select._options] == [NONE_VALUE, AUTO_VALUE]
+
+
+# ---------------------------------------------------------------------------
+# Task 4 (auto-selection spec §4.3, AC 7): the Auto option
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_picker_offers_auto_beside_none():
+    """The Auto option rides the same chunk_template flow with the reserved
+    sentinel value; None stays the default."""
+    service = _FakeScopeService([{"name": "tiny-words"}])
+    app = _PickerHost(_local_state(), service)
+    async with app.run_test() as pilot:
+        select = pilot.app.query_one(f"#{PICKER_ID}", Select)
+        options = await _wait_for_picker_options(pilot, 3)
+
+    assert [value for _label, value in options] == [NONE_VALUE, AUTO_VALUE, "tiny-words"]
+    # The label is plain "Auto" (no markup, no suffix).
+    labels = {value: label for label, value in options}
+    assert Content.from_markup(labels[AUTO_VALUE]).plain == "Auto"
+    # None remains the DEFAULT even with Auto offered.
+    assert select.value == NONE_VALUE
+
+
+def test_auto_option_value_is_the_reserved_sentinel():
+    """The picker's Auto value IS auto_selection.AUTO_SENTINEL -- the
+    reserved name no user template can hold (AC 14)."""
+    from tldw_chatbook.Chunking.auto_selection import AUTO_SENTINEL
+    from tldw_chatbook.Widgets.Library.library_ingest_canvas import (
+        INGEST_CHUNK_TEMPLATE_AUTO_VALUE,
+    )
+
+    assert INGEST_CHUNK_TEMPLATE_AUTO_VALUE == AUTO_SENTINEL == "auto"
+
+
+@pytest.mark.asyncio
+async def test_auto_choice_flows_into_the_chunk_template_slot():
+    service = _FakeScopeService([{"name": "tiny-words"}])
+    app = _PickerHost(_local_state(), service)
+    async with app.run_test() as pilot:
+        await _wait_for_picker_options(pilot, 3)
+        select = pilot.app.query_one(f"#{PICKER_ID}", Select)
+        select.value = AUTO_VALUE
+        await pilot.pause()
+
+    chunk_template_events = [
+        event
+        for event in app.option_changes
+        if event.group == "generic" and event.name == "chunk_template"
+    ]
+    assert [event.value for event in chunk_template_events] == [AUTO_VALUE]
+
+
+@pytest.mark.asyncio
+async def test_legacy_sentinel_named_row_never_duplicates_the_option():
+    """A legacy row named "auto" (pre-reservation) is flagged shadowed by the
+    listing and must not appear as a second option with the sentinel value."""
+    service = _FakeScopeService(
+        [
+            {"name": "auto", "name_reserved": True},
+            {"name": "tiny-words"},
+        ]
+    )
+    app = _PickerHost(_local_state(), service)
+    async with app.run_test() as pilot:
+        options = await _wait_for_picker_options(pilot, 3)
+
+    values = [value for _label, value in options]
+    assert values == [NONE_VALUE, AUTO_VALUE, "tiny-words"]
+    assert values.count(AUTO_VALUE) == 1

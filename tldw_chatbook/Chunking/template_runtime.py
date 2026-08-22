@@ -21,7 +21,7 @@ production module constructs the fenced classes.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from loguru import logger
 
@@ -29,10 +29,14 @@ from .Chunk_Lib import _synthesize_flat_offsets
 from .engine.exceptions import TemplateError
 from .engine.templates import ChunkingTemplate, TemplateProcessor, TemplateStage
 
+if TYPE_CHECKING:  # runtime import is lazy (circular with auto_selection)
+    from .auto_selection import AutoDecision
+
 __all__ = [
     "template_from_record",
     "resolve_template",
     "resolve_ingest_template",
+    "resolve_for_rechunk",
     "materialize_template_chunk_options",
     "apply_template",
     "TemplateResolutionError",
@@ -224,8 +228,13 @@ def resolve_ingest_template(
     picker_choice: Optional[str] = None,
     *,
     per_media: Optional[str] = None,
-) -> Optional[Dict[str, Any]]:
-    """Resolve the template a chunking run should use (spec §9.1, AC 34).
+    media_type: Optional[str] = None,
+    title: Optional[str] = None,
+    filename: Optional[str] = None,
+    url: Optional[str] = None,
+) -> Optional[Union[Dict[str, Any], "AutoDecision"]]:
+    """Resolve the template a chunking run should use (spec §9.1, AC 34;
+    auto-selection spec §4.3, ACs 8/11).
 
     One resolution helper for both paths, because they differ ONLY in what
     sits at the top of the order:
@@ -237,12 +246,27 @@ def resolve_ingest_template(
     * **re-chunk** (``per_media`` given): the stored per-media choice
       (``Media.chunking_config["template"]``) → config default → ``None``.
 
+    **The Auto sentinel** (auto-selection spec §4.3): a ``picker_choice``
+    equal to :data:`~tldw_chatbook.Chunking.auto_selection.AUTO_SENTINEL`
+    (``"auto"``) routes through
+    :func:`~tldw_chatbook.Chunking.auto_selection.resolve_auto` and returns
+    its :class:`AutoDecision` — whichever tier won. The sentinel fires at
+    the PICKER tier only: it is the user's terminating choice (never
+    falling through to the config default), and the config
+    ``default_template`` NEVER triggers auto (AC 11 — a configured sentinel
+    value is an unresolvable template name and raises, exactly as any other
+    configured name that no longer resolves). The stored per-media path is
+    untouched: a stored ``mode: "auto"`` is ``resolve_for_rechunk``'s to
+    re-resolve, and a stored *name* keeps this function's #2 behavior.
+
     Not-found is NEVER a silent fallback (AC 37, spec §9.1): a NON-EMPTY
     choice at any level that no longer resolves (soft-deleted, renamed)
     raises :class:`TemplateResolutionError` instead of falling through to
     the next level or to plain chunking — the ingest dispatch fails the
     item with it; the re-chunk worker (PR E) catches it and
-    skips-and-counts.
+    skips-and-counts. The Auto choice itself is exempt by construction: it
+    never names a template, and ``resolve_auto`` always terminates (plan or
+    plain) without raising.
 
     Stored-invalid bodies are refused here too (AC-24b ingest half): the
     resolved template is run through the server-parity validator so an
@@ -253,14 +277,25 @@ def resolve_ingest_template(
         db: Media DB handle exposing ``get_connection()`` (the template
             store). ``None`` means no local store: resolution returns
             ``None`` unless a choice was actually made, in which case the
-            named error fires (a made choice must never silently vanish).
-        picker_choice: The ingest picker/batch choice, if any.
+            named error fires (a made choice must never silently vanish);
+            the Auto sentinel still decides (tier 1 vacuous, the planner
+            answers).
+        picker_choice: The ingest picker/batch choice, if any. The reserved
+            value ``"auto"`` selects the Auto decision path.
         per_media: The stored per-media template name (re-chunk path).
+        media_type: The ingest job's media-type string (Auto tier 1's
+            classifier input; the planner's type switch). Optional —
+            callers without metadata still get a decision (the generic
+            plan).
+        title: The item's title, if known (classifier ``title_regex``).
+        filename: The item's filename, if known (``filename_regex``).
+        url: The item's URL, if known (``url_regex``).
 
     Returns:
-        The resolved flat template dict (name + body), or ``None`` when no
-        choice exists at any level and no config default is set (plain
-        options).
+        The resolved flat template dict (name + body), or an
+        :class:`AutoDecision` when the picker sentinel fired, or ``None``
+        when no choice exists at any level and no config default is set
+        (plain options).
 
     Raises:
         TemplateResolutionError: A non-empty choice (or config default)
@@ -268,10 +303,23 @@ def resolve_ingest_template(
         InvalidTemplateError: The resolved stored body fails validation
             (imported from ``chunking_interop_library`` lazily).
     """
-    if per_media is not None:
-        choice, source = str(per_media).strip(), "stored per-media"
+    if per_media is None:
+        picked = str(picker_choice or "").strip()
+        if picked == _auto_sentinel():
+            # Lazy: auto_selection imports this module at ITS module scope,
+            # so this import must stay inside the function.
+            from .auto_selection import resolve_auto
+
+            return resolve_auto(
+                db,
+                media_type=media_type,
+                title=title,
+                filename=filename,
+                url=url,
+            )
+        choice, source = picked, "picker/batch"
     else:
-        choice, source = str(picker_choice or "").strip(), "picker/batch"
+        choice, source = str(per_media).strip(), "stored per-media"
     if not choice:
         # config import at call time: module scope would make this
         # import-light runtime module depend on the config machinery.
@@ -296,6 +344,85 @@ def resolve_ingest_template(
         )
     _refuse_invalid_body(resolved)
     return resolved
+
+
+def resolve_for_rechunk(
+    db: Any,
+    chunking_config: Union[Dict[str, Any], str, None],
+    *,
+    media_type: Optional[str] = None,
+    title: Optional[str] = None,
+    filename: Optional[str] = None,
+    url: Optional[str] = None,
+) -> Optional[Union[Dict[str, Any], "AutoDecision"]]:
+    """Resolve the chunking a RE-CHUNK run should use (auto-selection spec
+    §4.3 re-chunk half, AC 10).
+
+    A stored ``mode: "auto"`` RE-RESOLVES — the decision is re-derived from
+    the current template store (a classifier block added since ingest flips
+    the tier), never replayed from the stored ``auto_tier``. Anything else
+    keeps #2's behavior byte-for-byte: the stored ``template`` name runs
+    through :func:`resolve_ingest_template`'s per-media path (config
+    default fallback, named refusals, invalid-body refusal).
+
+    Args:
+        db: Media DB handle exposing ``get_connection()`` (the template
+            store). ``None`` still decides for ``mode: "auto"`` (tier 1
+            vacuous, the planner answers).
+        chunking_config: The item's stored ``Media.chunking_config`` — a
+            dict, its JSON-string spelling, or ``None``/absent.
+        media_type: The media row's type (``Media.type``) — the re-resolved
+            decision's classifier input and planner type switch.
+        title: The media row's title, if known.
+        filename: The item's filename, if known (the Media table carries no
+            filename column; pass ``None`` unless a caller knows better).
+        url: The media row's URL, if known.
+
+    Returns:
+        An :class:`AutoDecision` for a stored ``mode: "auto"``; otherwise
+        whatever :func:`resolve_ingest_template` returns for the stored
+        name (flat template dict, or ``None`` for plain options).
+
+    Raises:
+        TemplateResolutionError / InvalidTemplateError: A stored (or
+            configured) explicit name that does not resolve or fails
+            validation — exactly #2's re-chunk refusal behavior.
+    """
+    config: Optional[Dict[str, Any]] = None
+    if isinstance(chunking_config, dict):
+        config = chunking_config
+    elif isinstance(chunking_config, str):
+        try:
+            parsed = json.loads(chunking_config)
+        except (TypeError, ValueError):
+            parsed = None
+        config = parsed if isinstance(parsed, dict) else None
+    if config is not None and str(config.get("mode") or "").strip() == (
+        _auto_sentinel()
+    ):
+        from .auto_selection import resolve_auto
+
+        return resolve_auto(
+            db,
+            media_type=media_type,
+            title=title,
+            filename=filename,
+            url=url,
+        )
+    stored_name: Optional[str] = None
+    if config is not None:
+        value = config.get("template")
+        name = str(value).strip() if value else ""
+        stored_name = name or None
+    return resolve_ingest_template(db, per_media=stored_name)
+
+
+def _auto_sentinel() -> str:
+    """The reserved picker-sentinel name (lazy: circular import with
+    ``auto_selection``, which imports this module at ITS module scope)."""
+    from .auto_selection import AUTO_SENTINEL
+
+    return AUTO_SENTINEL
 
 
 def _refuse_invalid_body(template: Dict[str, Any]) -> None:

@@ -14,6 +14,7 @@ chunker the re-chunk itself runs), stores the chunk texts, and its
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -529,3 +530,101 @@ def test_all_exports_resolve_to_real_module_attributes():
     # the previously-broken export, pinned by its real name
     assert "REINDEX_PENDING_SENTINEL" in svc_module.__all__
     assert hasattr(svc_module, "REINDEX_PENDING_SENTINEL")
+
+
+# Task 4 (auto-selection spec §4.3, AC 10): re-chunk RE-RESOLVES a stored
+# mode:"auto" -- the decision is re-derived from the current store, never
+# replayed from the stored tier
+# ---------------------------------------------------------------------------
+
+
+AUTO_PLAN_CONFIG = '{"mode": "auto", "auto_tier": "plan", "auto_rationale": ["The auto planner produced options."]}'
+
+
+def _seed_classifier_template(db: MediaDatabase, name: str, media_types: list[str]) -> None:
+    from tldw_chatbook.Chunking.chunking_interop_library import (
+        get_chunking_service,
+    )
+
+    get_chunking_service(db).create_template(
+        name=name,
+        description="classifier fixture",
+        template_json={
+            "chunking": {"method": "words", "config": {"max_size": 3, "overlap": 0}},
+            "classifier": {"media_types": media_types, "min_score": 0.4},
+        },
+        tags=None,
+    )
+
+
+def test_rechunk_stored_auto_without_candidates_uses_plan_tier(media_db):
+    """mode:"auto" re-resolves: no classifier candidates -> the planner's
+    options govern (NOT the stored plan-tier label, NOT plain replay)."""
+    media_id = _seed_legacy_item(
+        media_db,
+        "one two three four five six seven eight nine ten. " * 6,
+        chunking_config=AUTO_PLAN_CONFIG,
+    )
+    summary = _run(
+        rechunk_legacy_items(media_db, rag_service=None, indexing_db=None)
+    )
+    assert summary["rechunked"] == 1
+    rows = _live_chunk_rows(media_db, media_id)
+    assert rows
+    assert all(row["chunk_engine_version"] == ENGINE_VERSION for row in rows)
+    assert all("OLD legacy" not in row["chunk_text"] for row in rows)
+    # Plan tier: no template columns (template-tier-only record, spec §4.4).
+    assert all(row["chunking_template"] is None for row in rows)
+
+
+def test_rechunk_stored_auto_classifier_flip_changes_the_tier(media_db):
+    """The decision was plan-tier at ingest; a classifier block has since
+    opted in -> re-chunk RE-resolves to the template tier and honors it."""
+    from tldw_chatbook.Chunking.auto_selection import AutoDecision
+    from tldw_chatbook.Chunking.template_runtime import resolve_for_rechunk
+
+    _seed_classifier_template(media_db, "plaint-tiny", ["plaintext"])
+    media_id = _seed_legacy_item(
+        media_db,
+        " ".join(f"w{i:02d}" for i in range(1, 25)),
+        chunking_config=AUTO_PLAN_CONFIG,
+    )
+
+    # The re-resolution itself: mode:"auto" now lands on the template tier.
+    media = media_db.get_media_by_id(media_id)
+    decision = resolve_for_rechunk(
+        media_db,
+        json.loads(media["chunking_config"]),
+        media_type=media.get("type"),
+        title=media.get("title"),
+        url=media.get("url"),
+    )
+    assert isinstance(decision, AutoDecision)
+    assert decision.tier == "template"
+    assert decision.template["name"] == "plaint-tiny"
+
+    summary = _run(
+        rechunk_legacy_items(media_db, rag_service=None, indexing_db=None)
+    )
+    assert summary["rechunked"] == 1
+    rows = _live_chunk_rows(media_db, media_id)
+    assert rows
+    # The classifier template's 3-word scheme chunked the item...
+    assert [row["chunk_text"] for row in rows] == [
+        " ".join(f"w{i:02d}" for i in range(start, start + 3))
+        for start in range(1, 25, 3)
+    ]
+    # ...and the rows carry the winning template's name (AC 38 shape).
+    assert all(row["chunking_template"] == "plaint-tiny" for row in rows)
+
+
+def test_rechunk_stored_auto_json_string_config_re_resolves(media_db):
+    """The worker hands the stored JSON string through; both spellings work."""
+    media_id = _seed_legacy_item(
+        media_db, "alpha beta gamma. " * 20, chunking_config=AUTO_PLAN_CONFIG
+    )
+    summary = _run(
+        rechunk_legacy_items(media_db, rag_service=None, indexing_db=None)
+    )
+    assert summary["rechunked"] == 1
+    assert _live_chunk_rows(media_db, media_id)

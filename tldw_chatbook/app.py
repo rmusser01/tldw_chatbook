@@ -89,7 +89,7 @@ from textual.timer import Timer
 from textual.css.query import NoMatches, QueryError
 from textual.command import Hit, Hits, Provider
 from functools import partial
-from pathlib import Path
+from pathlib import Path, PurePath
 
 from tldw_chatbook.css import build_css, widget_css
 from tldw_chatbook.css.Themes.themes import ALL_THEMES
@@ -2921,23 +2921,61 @@ class LibraryIngestQueueMixin:
         # InvalidTemplateError, AC 37 / AC-24b) -- the ingest dispatch
         # catches both and fails THIS item; there is never a silent
         # fallback to plain chunking.
+        # (task 4, auto-selection spec §4.3) A picker choice of the Auto
+        # sentinel ("auto") resolves to an AutoDecision instead: the job's
+        # ALREADY-KNOWN metadata (detected type / title / filename / URL)
+        # feeds resolve_auto -- nothing re-reads file contents at selection
+        # time. A template-tier win is consumed exactly like a manual pick;
+        # a plan-tier win materializes the planner's options as this
+        # parse's defaults; a plain-tier win changes nothing below.
         ingest_template: dict[str, Any] | None = None
+        auto_decision: Any = None
+        plan_options: dict[str, Any] | None = None
         if chunk_enabled:
             from .Chunking.template_runtime import resolve_ingest_template
 
-            ingest_template = resolve_ingest_template(
+            source_is_url = str(job.source_path or "").lower().startswith(
+                ("http://", "https://")
+            )
+            resolved = resolve_ingest_template(
                 getattr(self, "media_db", None),
                 str(flat_opts.get("chunk_template") or "").strip() or None,
+                media_type=str(job.detected_type or "").strip() or None,
+                title=str(job.title or "").strip() or None,
+                filename=(
+                    None
+                    if source_is_url
+                    else PurePath(job.source_path).name
+                ),
+                url=str(job.source_path) if source_is_url else None,
             )
+            from .Chunking.auto_selection import AutoDecision
 
-        if ingest_template is not None:
+            if isinstance(resolved, AutoDecision):
+                auto_decision = resolved
+                if resolved.tier == "template" and isinstance(
+                    resolved.template, dict
+                ):
+                    ingest_template = resolved.template
+                elif resolved.tier == "plan" and isinstance(
+                    resolved.chunk_options, dict
+                ):
+                    plan_options = dict(resolved.chunk_options)
+                # plain tier: fall through to today's default options
+            else:
+                ingest_template = resolved
+
+        if ingest_template is not None or plan_options is not None:
             # (task 10, spec §9.1 AC 35 -- the precedence ruling) A resolved
-            # template's chunk-stage options beat the builder's DEFAULTS;
-            # only a value the user explicitly CHANGED in the ingest form
-            # beats the template. Left as-is, the builder's always-on
-            # size/overlap (+ per-group method injection) would arrive at
-            # the Chunker as explicit options that override the template on
-            # every path -- the picker would be inert.
+            # template's chunk-stage options beat the ingest builder's
+            # DEFAULTS; only a value the user explicitly CHANGED in the
+            # ingest form beats the template. Left as-is, the builder's
+            # always-on size/overlap (+ per-group method injection) would
+            # arrive at the Chunker as explicit options that override the
+            # template on every path -- the picker would be inert.
+            # (task 4, auto-selection §4.3) The plan tier rides the SAME
+            # ruling: the planner's options are the defaults, a
+            # user-changed form value still wins.
             #
             # Mechanism: the form snapshot ALWAYS carries explicit values
             # (``_build_ingest_options_snapshot`` seeds every schema
@@ -2954,7 +2992,16 @@ class LibraryIngestQueueMixin:
                 DEFAULT_CHUNK_SIZE,
             )
             overlap_schema_default = overlap_default
-            chunk_options: dict[str, Any] = {"template": ingest_template}
+            if ingest_template is not None:
+                chunk_options: dict[str, Any] = {"template": ingest_template}
+            else:
+                # Plan tier: the planner's options travel as this parse's
+                # chunk-stage defaults; ``size`` mirrors ``max_size`` for
+                # the audio/video key-by-key re-projection (the same alias
+                # ``materialize_template_chunk_options`` fills).
+                chunk_options = dict(plan_options)
+                if "max_size" in chunk_options:
+                    chunk_options.setdefault("size", chunk_options["max_size"])
             if "chunk_size" in flat_opts and chunk_size != size_schema_default:
                 chunk_options["size"] = chunk_size
                 chunk_options["max_size"] = chunk_size
@@ -2979,6 +3026,17 @@ class LibraryIngestQueueMixin:
                 if chunk_enabled
                 else None
             )
+        if auto_decision is not None and chunk_options is not None:
+            # (task 4, auto-selection spec §4.4) The decision's travel
+            # ticket to the persist seam (mode/auto_tier/auto_rationale).
+            # The parse seam POPS this key before any branch dispatch, so
+            # no processor or the Chunker ever sees it.
+            chunk_options["auto"] = {
+                "tier": str(auto_decision.tier),
+                "rationale": [
+                    str(line) for line in (auto_decision.rationale or [])
+                ],
+            }
 
         options: dict[str, Any] = {
             "title": job.title or None,
@@ -3010,8 +3068,13 @@ class LibraryIngestQueueMixin:
         # so under a resolved template they must not be injected -- the
         # template's method wins via materialization. A user-changed ebook
         # chunk_method (differs from the select's schema default) still
-        # travels.
-        template_active = ingest_template is not None
+        # travels. (task 4, auto-selection §4.3) An auto PLAN-tier win
+        # governs identically: its method is a derived default, not a user
+        # choice, so the injection is skipped for it too; the auto PLAIN
+        # tier keeps today's injections (it changes nothing).
+        template_active = (
+            ingest_template is not None or plan_options is not None
+        )
 
         if perform_analysis:
             # Prompts remain in the persisted generic snapshot while analysis

@@ -37,9 +37,10 @@ from typing import Any, Callable, Dict, List, Optional
 from loguru import logger
 
 from ..Chunking.Chunk_Lib import ENGINE_VERSION
+from ..Chunking.auto_selection import AutoDecision
 from ..Chunking.template_runtime import (
     materialize_template_chunk_options,
-    resolve_ingest_template,
+    resolve_for_rechunk,
 )
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..RAG_Search.chunking_service import improved_chunking_process
@@ -139,20 +140,23 @@ def list_legacy_media_ids(media_db: MediaDatabase) -> List[int]:
     return [int(row["media_id"]) for row in cursor.fetchall()]
 
 
-def _stored_per_media_template(media: Optional[Dict[str, Any]]) -> Optional[str]:
-    """The stored per-media template name (``Media.chunking_config``), if any."""
+def _stored_chunking_config(media: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """The stored per-media chunking config (``Media.chunking_config``), if any.
+
+    Tolerant of both spellings the column can hold (a JSON string from the
+    DB, a dict from tests/callers) and of absent/corrupt values -- the
+    resolution chain treats those as "no stored choice" exactly as #2 did.
+    """
     if not media:
         return None
     raw = media.get("chunking_config")
     if isinstance(raw, dict):
-        value = raw.get("template")
-    else:
-        try:
-            value = (json.loads(raw) or {}).get("template")
-        except (TypeError, ValueError):
-            return None
-    name = str(value).strip() if value else ""
-    return name or None
+        return raw
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
 
 
 def _effective_template_params(template: Dict[str, Any]) -> str:
@@ -439,9 +443,25 @@ async def rechunk_legacy_items(
             else:
                 template: Optional[Dict[str, Any]] = None
                 try:
-                    template = resolve_ingest_template(
+                    # (task 4, auto-selection spec §4.3 / AC 10)
+                    # RE-RESOLUTION, never replay: a stored ``mode:"auto"``
+                    # runs resolve_auto again against the CURRENT store (a
+                    # classifier block added since ingest flips the tier);
+                    # a stored explicit name keeps #2's behavior exactly
+                    # (per-media name -> config default -> named refusal).
+                    # The media row's own metadata feeds the decision
+                    # (``Media.type`` / ``title`` / ``url``; the table has
+                    # no filename column).
+                    resolved = resolve_for_rechunk(
                         media_db,
-                        per_media=_stored_per_media_template(media),
+                        _stored_chunking_config(media),
+                        media_type=str(
+                            media.get("type") or media.get("media_type") or ""
+                        ).strip()
+                        or None,
+                        title=str(media.get("title") or "").strip() or None,
+                        filename=None,
+                        url=str(media.get("url") or "").strip() or None,
                     )
                 except Exception as exc:
                     # Spec §9.1: an unresolvable/invalid per-media or
@@ -451,12 +471,32 @@ async def rechunk_legacy_items(
                     summary["skipped_reasons"][str(media_id)] = str(exc)
                     logger.warning(f"Re-chunk skipped media {media_id}: {exc}")
                 else:
-                    if template is not None:
-                        options: Dict[str, Any] = {}
-                        chunker_template_arg: Optional[Dict[str, Any]] = template
+                    options: Dict[str, Any]
+                    chunker_template_arg: Optional[Dict[str, Any]]
+                    if isinstance(resolved, AutoDecision):
+                        if (
+                            resolved.tier == "template"
+                            and isinstance(resolved.template, dict)
+                        ):
+                            chunker_template_arg = resolved.template
+                            options = {}
+                        elif (
+                            resolved.tier == "plan"
+                            and isinstance(resolved.chunk_options, dict)
+                        ):
+                            # The planner's options govern this run.
+                            chunker_template_arg = None
+                            options = dict(resolved.chunk_options)
+                        else:
+                            # Plain tier: Auto declined -- today's defaults.
+                            chunker_template_arg = None
+                            options = dict(PLAIN_RECHUNK_OPTIONS)
+                    elif resolved is not None:
+                        chunker_template_arg = resolved
+                        options = {}
                     else:
-                        options = dict(PLAIN_RECHUNK_OPTIONS)
                         chunker_template_arg = None
+                        options = dict(PLAIN_RECHUNK_OPTIONS)
                     chunks = improved_chunking_process(
                         content, options, template=chunker_template_arg
                     )
@@ -465,11 +505,16 @@ async def rechunk_legacy_items(
                         media_id,
                         chunks,
                         template_name=(
-                            str(template.get("name") or "") if template else None
+                            str(
+                                (chunker_template_arg or {}).get("name") or ""
+                            ).strip()
+                            or None
+                            if chunker_template_arg is not None
+                            else None
                         ),
                         template_params=(
-                            _effective_template_params(template)
-                            if template
+                            _effective_template_params(chunker_template_arg)
+                            if chunker_template_arg is not None
                             else None
                         ),
                     )
