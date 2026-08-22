@@ -43,6 +43,7 @@ from ...Chatbooks.chatbook_importer import (
     IMPORT_OUTCOME_NONE,
     IMPORT_OUTCOME_PARTIAL,
     IMPORT_OUTCOME_SKIPPED,
+    UNSUPPORTED_BY_IMPORTER_NOUN,
     ChatbookImporter,
     ImportStatus,
     ImportTypeResult,
@@ -87,6 +88,10 @@ _OUTCOME_TITLES = {
     IMPORT_OUTCOME_PARTIAL: "⚠️ Import Finished With Issues",
     IMPORT_OUTCOME_SKIPPED: "⊘ Nothing Imported",
     IMPORT_OUTCOME_EMPTY: "⊘ Nothing to Import",
+    # Distinct from EMPTY on purpose: "there was nothing to import" and "there
+    # was something and none of it was attempted" are different facts, and the
+    # first is a claim about the user's file (Qodo review of PR #1945).
+    IMPORT_OUTCOME_EXCLUDED: "⊘ All Items Left Out",
     IMPORT_OUTCOME_FAILED: "❌ Import Failed",
 }
 
@@ -108,11 +113,20 @@ def describe_type_result(result: ImportTypeResult, noun: str) -> Tuple[str, str]
         return "", f"— No {noun} in this chatbook"
 
     if outcome == IMPORT_OUTCOME_EXCLUDED:
-        return (
-            "",
-            f"— {result.excluded} {noun} in this chatbook were not imported "
-            "(you turned this option off)",
-        )
+        # Two different reasons an item was never attempted, reported apart:
+        # the user's own choice, and this importer's limit.
+        reasons = []
+        if result.excluded > 0:
+            reasons.append(
+                f"{result.excluded} {noun} in this chatbook were not imported "
+                "(you turned this option off)"
+            )
+        if result.unsupported > 0:
+            reasons.append(
+                f"{result.unsupported} {noun} in this chatbook were not imported "
+                "(not supported by this importer)"
+            )
+        return "", "— " + "; ".join(reasons)
 
     if outcome == IMPORT_OUTCOME_IMPORTED:
         return "completed", f"✓ Imported {result.successful} {noun}"
@@ -156,16 +170,27 @@ def describe_import_outcome(status: ImportStatus) -> Tuple[str, str, str]:
     title = _OUTCOME_TITLES.get(outcome, _OUTCOME_TITLES[IMPORT_OUTCOME_FAILED])
     state = f"outcome-{outcome}"
 
+    # Items of a type this importer cannot write are named on screen wherever
+    # they exist. They used to go only into ``status.warnings``, which this
+    # panel renders nowhere, so a chatbook of 8 items with 2 importable ones
+    # said "2 of 2 item(s) imported" and the other 6 were never mentioned
+    # (Qodo review of PR #1945). Items the USER excluded are not repeated
+    # here -- their own per-type row already names them.
+    unsupported = (status.unsupported_items, UNSUPPORTED_BY_IMPORTER_NOUN)
+
     if outcome == IMPORT_OUTCOME_IMPORTED:
+        detail = _count_detail(unsupported)
         banner = (
             f"✅ Import completed — {status.successful_items} of "
-            f"{status.total_items} item(s) imported."
+            f"{status.total_items} item(s) imported"
         )
+        banner += f" ({detail})." if detail else "."
     elif outcome == IMPORT_OUTCOME_PARTIAL:
         detail = _count_detail(
             (status.skipped_items, "skipped"),
             (status.failed_items, "failed"),
             (status.unaccounted_items, "unaccounted for"),
+            unsupported,
         )
         banner = (
             f"⚠️ Import finished — {status.successful_items} of "
@@ -173,13 +198,21 @@ def describe_import_outcome(status: ImportStatus) -> Tuple[str, str, str]:
         )
         banner += f" ({detail})." if detail else "."
     elif outcome == IMPORT_OUTCOME_SKIPPED:
-        detail = _count_detail((status.unaccounted_items, "unaccounted for"))
+        detail = _count_detail((status.unaccounted_items, "unaccounted for"), unsupported)
         banner = (
             f"⊘ Nothing was imported — {status.skipped_items} of "
             f"{status.attempted_items} item(s) were already present and were "
             "skipped"
         )
         banner += f" ({detail})." if detail else "."
+    elif outcome == IMPORT_OUTCOME_EXCLUDED:
+        # The chatbook was NOT empty. It held items and this run attempted
+        # none of them; say which reason kept each of them out.
+        banner = (
+            "⊘ Nothing was imported — none of this chatbook's "
+            f"{status.left_out_items} item(s) were attempted: "
+            f"{status.left_out_detail()}."
+        )
     elif outcome == IMPORT_OUTCOME_EMPTY:
         banner = "⊘ Nothing was imported — this chatbook contained no items."
     else:
@@ -187,6 +220,7 @@ def describe_import_outcome(status: ImportStatus) -> Tuple[str, str, str]:
             (status.failed_items, "failed"),
             (status.skipped_items, "skipped"),
             (status.unaccounted_items, "unaccounted for"),
+            unsupported,
         )
         banner = "❌ Nothing was imported"
         banner += f" — {detail}." if detail else " and the import reported no results."

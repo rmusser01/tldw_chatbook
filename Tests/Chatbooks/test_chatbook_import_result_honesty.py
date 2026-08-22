@@ -26,7 +26,9 @@ a real chatbook through the real wizard step and fails at base on the four
 
 import ast
 import inspect
+import json
 import shutil
+import zipfile
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -141,6 +143,7 @@ def _status(
         result = status.result_for(content_type)
         result.attempted = counts.get("attempted", 0)
         result.excluded = counts.get("excluded", 0)
+        result.unsupported = counts.get("unsupported", 0)
         result.successful = counts.get("successful", 0)
         result.skipped = counts.get("skipped", 0)
         result.failed = counts.get("failed", 0)
@@ -893,3 +896,375 @@ def test_the_completion_banner_is_derived_and_never_shipped_pre_written():
     compose_source = inspect.getsource(ImportProgressStep.compose)
     assert 'id="completion-message"' in compose_source
     assert "✅" not in compose_source, compose_source
+
+
+# ---------------------------------------------------------------------------
+# Qodo review of PR #1945: "empty" was claimed for chatbooks that were not
+# empty
+#
+# Making ``total_items`` count only what the run ATTEMPTS moved the same lie
+# one level up. ``ImportStatus.outcome`` returned ``empty`` whenever
+# ``attempted_items == 0``, and ``attempted_items`` deliberately excludes
+# media the user opted out of and content types this importer cannot write.
+# So a chatbook whose every item was left out was reported as
+# "this chatbook contained no items" / "No items to import" -- an assertion
+# about the FILE, made from a fact about the RUN, and contradicted by the
+# per-type rows and warnings the same run produced.
+# ---------------------------------------------------------------------------
+
+
+def _manifest_payload(content_items: list, **statistics) -> dict:
+    """A minimal, schema-complete chatbook manifest."""
+    stats = {
+        "total_conversations": 0,
+        "total_notes": 0,
+        "total_characters": 0,
+        "total_media_items": 0,
+        "total_prompts": 0,
+        "total_kept_briefings": 0,
+        "total_size_bytes": 0,
+    }
+    stats.update(statistics)
+    now = datetime.now().isoformat()
+    return {
+        "version": ChatbookVersion.V1.value,
+        "name": "Hand-built bundle",
+        "description": "A chatbook the exporter cannot produce",
+        "author": "Tests",
+        "created_at": now,
+        "updated_at": now,
+        "content_items": content_items,
+        "relationships": [],
+        "include_media": False,
+        "include_embeddings": False,
+        "media_quality": "thumbnail",
+        "statistics": stats,
+        "tags": [],
+        "categories": [],
+        "language": "en",
+        "license": None,
+    }
+
+
+def _content_item(item_id: str, content_type: ContentType, title: str) -> dict:
+    return {
+        "id": item_id,
+        "type": content_type.value,
+        "title": title,
+        "description": None,
+        "created_at": None,
+        "updated_at": None,
+        "tags": [],
+        "metadata": {},
+        "file_path": None,
+    }
+
+
+def _write_chatbook(path: Path, manifest: dict) -> Path:
+    """Write a chatbook archive holding just this manifest."""
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("manifest.json", json.dumps(manifest))
+    return path
+
+
+def _add_content_items(source: Path, destination: Path, extra_items: list) -> Path:
+    """Copy a real chatbook, adding content items to its manifest."""
+    with zipfile.ZipFile(source, "r") as reader:
+        members = [(info, reader.read(info.filename)) for info in reader.infolist()]
+
+    with zipfile.ZipFile(destination, "w") as writer:
+        for info, payload in members:
+            if info.filename == "manifest.json":
+                manifest = json.loads(payload)
+                manifest["content_items"].extend(extra_items)
+                payload = json.dumps(manifest).encode("utf-8")
+            writer.writestr(info.filename, payload)
+    return destination
+
+
+@pytest.fixture
+def media_only_chatbook_zip(tmp_path, chachanotes_template_db) -> Path:
+    """A real exported chatbook whose only content is media."""
+    source_paths = _make_db_paths(tmp_path / "media-source")
+    shutil.copyfile(chachanotes_template_db, source_paths["ChaChaNotes"])
+    CharactersRAGDB(source_paths["ChaChaNotes"], "test_client")
+
+    media_db = MediaDatabase(source_paths["Media"], "test_client")
+    media_db.add_media_with_keywords(
+        url="https://example.com/only-media",
+        title="Only Media",
+        media_type="video",
+        content="A transcript.",
+        keywords=["solo"],
+        prompt="Summarize",
+        analysis_content="Only media",
+        transcription_model="whisper",
+    )
+    media_row = media_db.get_media_by_url("https://example.com/only-media")
+    assert media_row, "the media fixture must produce a media row to export"
+
+    export_path = tmp_path / "media-only.zip"
+    success, message, _deps = ChatbookCreator(db_paths=source_paths).create_chatbook(
+        name="Media Only",
+        description="Media and nothing else",
+        content_selections={ContentType.MEDIA: [str(media_row["id"])]},
+        output_path=export_path,
+        author="Tests",
+        include_media=True,
+    )
+    assert success is True, message
+    return export_path
+
+
+@pytest.fixture
+def unsupported_only_chatbook_zip(tmp_path) -> Path:
+    """A chatbook holding only content types this importer cannot write."""
+    items = [
+        _content_item(f"emb-{index}", ContentType.EMBEDDING, f"Embedding {index}")
+        for index in range(1, 4)
+    ] + [
+        _content_item(f"eval-{index}", ContentType.EVALUATION, f"Evaluation {index}")
+        for index in range(1, 6)
+    ]
+    return _write_chatbook(tmp_path / "unsupported-only.zip", _manifest_payload(items))
+
+
+@pytest.fixture
+def empty_chatbook_zip(tmp_path) -> Path:
+    """A genuinely empty chatbook: a valid manifest listing nothing at all."""
+    return _write_chatbook(tmp_path / "empty.zip", _manifest_payload([]))
+
+
+@pytest.mark.asyncio
+async def test_a_chatbook_left_out_by_the_user_is_never_called_empty(
+    media_only_chatbook_zip, destination_paths, monkeypatch
+):
+    """Media-only chatbook + "Import media files" OFF.
+
+    The chatbook had an item. The run attempted none of them. Saying "this
+    chatbook contained no items" is a claim about the file, and it is false.
+    """
+    step, rows, headline, banner, stats = await _run_progress_step(
+        media_only_chatbook_zip, destination_paths, monkeypatch, import_media=False
+    )
+
+    assert "contained no items" not in banner, banner
+    assert "Nothing to Import" not in headline, headline
+    assert "left out by your import options" in banner, banner
+    assert step.import_status.outcome == IMPORT_OUTCOME_EXCLUDED, (
+        step.import_status.to_dict()
+    )
+    # The banner and the per-type row tell the same story.
+    assert "were not imported" in rows["status-media"], rows["status-media"]
+
+
+def test_the_importer_does_not_report_an_excluded_chatbook_as_having_no_items(
+    media_only_chatbook_zip, destination_paths
+):
+    """The caller-visible half of the same claim."""
+    status = ImportStatus()
+    success, message = ChatbookImporter(destination_paths).import_chatbook(
+        chatbook_path=media_only_chatbook_zip,
+        conflict_resolution=ConflictResolution.SKIP,
+        import_media=False,
+        import_status=status,
+    )
+
+    assert success is True, message
+    assert message != "No items to import", message
+    assert "No items were imported" in message, message
+    assert "left out by your import options" in message, message
+    assert status.outcome == IMPORT_OUTCOME_EXCLUDED, status.to_dict()
+    assert status.excluded_items == 1, status.to_dict()
+
+
+@pytest.mark.asyncio
+async def test_a_chatbook_of_only_unsupported_types_is_never_called_empty(
+    unsupported_only_chatbook_zip, destination_paths, monkeypatch
+):
+    """Eight items this importer cannot write is not "no items"."""
+    step, rows, headline, banner, stats = await _run_progress_step(
+        unsupported_only_chatbook_zip, destination_paths, monkeypatch
+    )
+
+    assert "contained no items" not in banner, banner
+    assert "Nothing to Import" not in headline, headline
+    assert "8 not supported by this importer" in banner, banner
+    assert step.import_status.outcome == IMPORT_OUTCOME_EXCLUDED, (
+        step.import_status.to_dict()
+    )
+    assert step.import_status.unsupported_items == 8, step.import_status.to_dict()
+
+
+def test_the_importer_does_not_report_an_unsupported_chatbook_as_having_no_items(
+    unsupported_only_chatbook_zip, destination_paths
+):
+    status = ImportStatus()
+    success, message = ChatbookImporter(destination_paths).import_chatbook(
+        chatbook_path=unsupported_only_chatbook_zip,
+        conflict_resolution=ConflictResolution.SKIP,
+        import_status=status,
+    )
+
+    assert success is True, message
+    assert message != "No items to import", message
+    assert "8 not supported by this importer" in message, message
+    assert status.outcome == IMPORT_OUTCOME_EXCLUDED, status.to_dict()
+    # The warnings the run already produced are still there and now agree with
+    # the headline instead of contradicting it.
+    assert any("not supported by the importer" in warning for warning in status.warnings)
+
+
+@pytest.mark.asyncio
+async def test_a_genuinely_empty_chatbook_is_still_reported_as_empty(
+    empty_chatbook_zip, destination_paths, monkeypatch
+):
+    """The non-regression half: a fix that makes "empty" unreachable is as
+    wrong as the bug it replaces."""
+    step, rows, headline, banner, stats = await _run_progress_step(
+        empty_chatbook_zip, destination_paths, monkeypatch
+    )
+
+    assert step.import_status.outcome == IMPORT_OUTCOME_EMPTY, (
+        step.import_status.to_dict()
+    )
+    assert banner == "⊘ Nothing was imported — this chatbook contained no items."
+    assert headline == "⊘ Nothing to Import"
+    assert all(
+        "No " in rows[row_id] and "in this chatbook" in rows[row_id]
+        for row_id in PER_TYPE_ROW_IDS
+    ), rows
+
+
+def test_the_importer_still_says_no_items_to_import_for_an_empty_chatbook(
+    empty_chatbook_zip, destination_paths
+):
+    status = ImportStatus()
+    success, message = ChatbookImporter(destination_paths).import_chatbook(
+        chatbook_path=empty_chatbook_zip,
+        conflict_resolution=ConflictResolution.SKIP,
+        import_status=status,
+    )
+
+    assert success is True
+    assert message == "No items to import"
+    assert status.outcome == IMPORT_OUTCOME_EMPTY, status.to_dict()
+
+
+@pytest.mark.asyncio
+async def test_a_mixed_chatbook_with_one_type_left_out_is_unchanged(
+    chatbook_zip, destination_paths, monkeypatch
+):
+    """A chatbook where media is excluded and everything else imports keeps
+    reporting a clean import: the exclusion is disclosed by media's own row,
+    so the banner does not repeat it."""
+    step, rows, headline, banner, stats = await _run_progress_step(
+        chatbook_zip, destination_paths, monkeypatch, import_media=False
+    )
+
+    assert step.import_status.outcome == IMPORT_OUTCOME_IMPORTED
+    assert headline == "✅ Import Complete!"
+    assert banner == "✅ Import completed — 3 of 3 item(s) imported."
+    assert "left out" not in banner, banner
+    assert rows["status-media"] == (
+        "— 1 media items in this chatbook were not imported "
+        "(you turned this option off)"
+    )
+
+
+@pytest.mark.asyncio
+async def test_unsupported_items_are_named_when_the_rest_of_the_import_lands(
+    chatbook_zip, destination_paths, monkeypatch, tmp_path
+):
+    """The neighbouring half of the same finding: unsupported items went into
+    ``status.warnings``, which the wizard renders nowhere, so an 8-item file
+    with 4 importable items reported "4 of 4 item(s) imported" and named no
+    shortfall at all."""
+    mixed = _add_content_items(
+        chatbook_zip,
+        tmp_path / "mixed-unsupported.zip",
+        [
+            _content_item(f"eval-{index}", ContentType.EVALUATION, f"Eval {index}")
+            for index in range(1, 5)
+        ],
+    )
+
+    step, rows, headline, banner, stats = await _run_progress_step(
+        mixed, destination_paths, monkeypatch
+    )
+
+    assert step.import_status.outcome == IMPORT_OUTCOME_IMPORTED
+    assert step.import_status.unsupported_items == 4, step.import_status.to_dict()
+    assert "4 not supported by this importer" in banner, banner
+    assert stats["stat-total"] == "4"
+    assert stats["stat-imported"] == "4"
+
+
+# ---------------------------------------------------------------------------
+# The vocabulary, at the unit level
+# ---------------------------------------------------------------------------
+
+
+def test_whole_import_outcome_separates_nothing_there_from_nothing_attempted():
+    """``empty`` means the chatbook held nothing; ``excluded`` means it held
+    something and the run attempted none of it."""
+    assert _status().outcome == IMPORT_OUTCOME_EMPTY
+
+    opted_out = _status(by_type={ContentType.MEDIA: {"excluded": 3}})
+    assert opted_out.outcome == IMPORT_OUTCOME_EXCLUDED
+    assert opted_out.excluded_items == 3
+    assert opted_out.unsupported_items == 0
+
+    unsupported = _status(by_type={ContentType.EVALUATION: {"unsupported": 5}})
+    assert unsupported.outcome == IMPORT_OUTCOME_EXCLUDED
+    assert unsupported.unsupported_items == 5
+    assert unsupported.left_out_items == 5
+
+
+def test_describe_import_outcome_renders_empty_and_excluded_differently():
+    empty_title, empty_banner, empty_state = describe_import_outcome(_status())
+    excluded_title, excluded_banner, excluded_state = describe_import_outcome(
+        _status(
+            by_type={
+                ContentType.MEDIA: {"excluded": 2},
+                ContentType.EVALUATION: {"unsupported": 3},
+            }
+        )
+    )
+
+    assert empty_state == "outcome-empty"
+    assert empty_banner == "⊘ Nothing was imported — this chatbook contained no items."
+
+    assert excluded_state == "outcome-excluded"
+    assert excluded_title != empty_title
+    assert "contained no items" not in excluded_banner
+    assert "5 item(s)" in excluded_banner, excluded_banner
+    assert "2 left out by your import options" in excluded_banner, excluded_banner
+    assert "3 not supported by this importer" in excluded_banner, excluded_banner
+    assert "✅" not in excluded_title
+
+
+def test_a_type_row_names_why_its_items_were_left_out():
+    """``excluded`` and ``unsupported`` are different reasons and must not be
+    reported with each other's words."""
+    opted_out = ImportTypeResult(ContentType.MEDIA)
+    opted_out.excluded = 2
+    unsupported = ImportTypeResult(ContentType.EVALUATION)
+    unsupported.unsupported = 3
+
+    opted_state, opted_text = describe_type_result(opted_out, "media items")
+    unsupported_state, unsupported_text = describe_type_result(
+        unsupported, "evaluations"
+    )
+
+    assert opted_state == "" and unsupported_state == ""
+    assert opted_out.outcome == IMPORT_OUTCOME_EXCLUDED
+    assert unsupported.outcome == IMPORT_OUTCOME_EXCLUDED
+    assert opted_text == (
+        "— 2 media items in this chatbook were not imported "
+        "(you turned this option off)"
+    )
+    assert unsupported_text == (
+        "— 3 evaluations in this chatbook were not imported "
+        "(not supported by this importer)"
+    )

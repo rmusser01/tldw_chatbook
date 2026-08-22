@@ -953,6 +953,13 @@ ImportProgressStep .completion-message.outcome-empty {
     border: round $background-darken-1;
 }
 
+/* A chatbook that HAD items none of which were attempted is not the same as
+ * an empty one, and it is not a success either (task-19734). */
+ImportProgressStep .completion-message.outcome-excluded {
+    background: $warning 20%;
+    border: round $warning;
+}
+
 ImportProgressStep .completion-message.outcome-failed {
     background: $error 20%;
     border: round $error;

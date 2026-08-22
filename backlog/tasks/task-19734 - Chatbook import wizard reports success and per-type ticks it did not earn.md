@@ -231,6 +231,53 @@ did not survive being probed:
    assertion that the banner must name any difference between Total and the
    three counters.
 
+**Qodo review of PR #1945 — the outcome vocabulary (empty vs excluded).**
+The fix above made `total_items` count only what the run *attempts*, which
+moved this task's own theme one level up: `ImportStatus.outcome` returned
+`empty` whenever `attempted_items == 0`, so a chatbook whose items were all
+opted out of, or all of types this importer cannot write, was reported as
+**"⊘ Nothing was imported — this chatbook contained no items."** and
+`"No items to import"`. That is an assertion about the FILE derived from a
+fact about the RUN, and it contradicted the per-type "were not imported" row
+and the `status.warnings` the same run produced.
+
+The rule now: `empty` is reserved for a chatbook that held nothing at all.
+When nothing was attempted but the chatbook *did* hold items, the outcome is
+`excluded` — the vocabulary term that already existed at the per-type level
+for exactly this ("present in the chatbook, not attempted"). `none` stays
+per-type only ("this type was not part of the import at all"). Rendered:
+
+| outcome | title | banner |
+|---|---|---|
+| `empty` | `⊘ Nothing to Import` | `⊘ Nothing was imported — this chatbook contained no items.` |
+| `excluded` | `⊘ All Items Left Out` | `⊘ Nothing was imported — none of this chatbook's 8 item(s) were attempted: 2 left out by your import options, 6 not supported by this importer.` |
+| `none` (per-type row) | — | `— No media items in this chatbook` |
+
+**The unsupported half: fixed here, not filed.** The review noted the
+neighbouring defect — unsupported types were excluded from `total_items` and
+reported only into `status.warnings`, which the wizard renders nowhere, so an
+8-item chatbook with 2 importable items said `✅ Import Complete! — 2 of 2
+item(s) imported` and the other 6 vanished silently. It is fixed in the same
+change rather than filed, for three reasons: (1) the all-unsupported outcome
+cannot be told from `empty` without counting unsupported items, so the data
+had to exist anyway; (2) leaving it would be the identical lie one branch
+over, which this task exists to remove; (3) the fix is one clause in the
+existing detail builder, not a new mechanism. `ImportTypeResult` gained an
+`unsupported` counter beside `excluded` (two different reasons, deliberately
+counted and worded apart), `ImportStatus` exposes
+`excluded_items`/`unsupported_items`/`left_out_items`/`left_out_detail()`,
+and every banner and importer message that can coexist with unsupported items
+now names them.
+
+What deliberately did **not** change: the user-excluded count is not repeated
+in the imported/partial/skipped banners, because its own per-type row already
+says so — the mixed case ("media off, everything else imported") renders
+byte-identically to before, pinned by a test. And an import with unsupported
+items still reads `imported` rather than being demoted to `partial`: the run
+did land everything it attempted, and demoting it would have been
+inconsistent with the excluded case, which the same review requires to stay
+unchanged.
+
 **Modified/added files.** `tldw_chatbook/Chatbooks/chatbook_importer.py`,
 `tldw_chatbook/UI/Wizards/ChatbookImportWizard.py`,
 `tldw_chatbook/css/features/_wizards.tcss` (+ regenerated bundle),

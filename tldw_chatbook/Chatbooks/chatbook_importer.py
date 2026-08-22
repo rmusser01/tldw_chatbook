@@ -69,10 +69,23 @@ _MAX_V2_GRAPH_DEPTH = 2_048
 IMPORT_OUTCOME_NONE = "none"  # this type was not part of the import at all
 IMPORT_OUTCOME_EXCLUDED = "excluded"  # present in the chatbook, not attempted
 IMPORT_OUTCOME_EMPTY = "empty"  # nothing to import (an empty chatbook)
+#
+# ``empty`` is a claim about the FILE and ``excluded`` a claim about the RUN,
+# and they must never be swapped (Qodo review of PR #1945): making
+# ``total_items`` count only what the run attempts meant a chatbook whose
+# items were all opted out of, or all of types this importer cannot write,
+# reported "this chatbook contained no items" -- false, and contradicted by
+# the per-type rows and warnings the same run produced.
 IMPORT_OUTCOME_IMPORTED = "imported"  # every attempted item landed
 IMPORT_OUTCOME_PARTIAL = "partial"  # some landed, some did not
 IMPORT_OUTCOME_SKIPPED = "skipped"  # nothing landed; everything already present
 IMPORT_OUTCOME_FAILED = "failed"  # nothing landed and something went wrong
+
+# The two reasons an item present in a chatbook is never attempted. Defined
+# once here so the importer's return message and the wizard's banner name them
+# with the same words (task-19734).
+LEFT_OUT_BY_OPTIONS_NOUN = "left out by your import options"
+UNSUPPORTED_BY_IMPORTER_NOUN = "not supported by this importer"
 
 # The content types this importer can actually write, in dispatch order.
 # Anything else in a chatbook's selections is reported as unsupported rather
@@ -101,6 +114,7 @@ class ImportTypeResult:
         self.content_type = content_type
         self.attempted = 0
         self.excluded = 0
+        self.unsupported = 0
         self.successful = 0
         self.skipped = 0
         self.failed = 0
@@ -109,6 +123,16 @@ class ImportTypeResult:
     def accounted(self) -> int:
         """Items whose fate is known (some paths can bail before recording)."""
         return self.successful + self.skipped + self.failed
+
+    @property
+    def left_out(self) -> int:
+        """Items present in the chatbook that this run never attempted.
+
+        Two different reasons, deliberately counted apart: ``excluded`` is the
+        user's own choice and ``unsupported`` is this importer's limit. They
+        must not be reported with each other's words.
+        """
+        return self.excluded + self.unsupported
 
     @property
     def outcome(self) -> str:
@@ -120,7 +144,7 @@ class ImportTypeResult:
         as success.
         """
         if self.attempted <= 0:
-            if self.excluded > 0:
+            if self.left_out > 0:
                 return IMPORT_OUTCOME_EXCLUDED
             return IMPORT_OUTCOME_NONE
         if self.successful <= 0:
@@ -137,6 +161,7 @@ class ImportTypeResult:
             "content_type": self.content_type.value,
             "attempted": self.attempted,
             "excluded": self.excluded,
+            "unsupported": self.unsupported,
             "successful": self.successful,
             "skipped": self.skipped,
             "failed": self.failed,
@@ -182,6 +207,19 @@ class ImportStatus:
         result.excluded += max(0, int(count))
         return result
 
+    def mark_unsupported(
+        self, content_type: "ContentType", count: int
+    ) -> ImportTypeResult:
+        """Record items of a type this importer cannot write.
+
+        Counted, not just warned about: these items were in the chatbook and
+        did not arrive, and a run that attempted nothing else must be able to
+        say so rather than calling the chatbook empty (task-19734).
+        """
+        result = self.result_for(content_type)
+        result.unsupported += max(0, int(count))
+        return result
+
     def record_processed(self, content_type: "ContentType") -> None:
         """Count one item of ``content_type`` as having been reached."""
         self.processed_items += 1
@@ -206,6 +244,29 @@ class ImportStatus:
     def planned_items(self) -> int:
         """Total items the run was asked to attempt, summed over types."""
         return sum(result.attempted for result in self.by_type.values())
+
+    @property
+    def excluded_items(self) -> int:
+        """Items the user's own options kept out of this run."""
+        return sum(result.excluded for result in self.by_type.values())
+
+    @property
+    def unsupported_items(self) -> int:
+        """Items of a type this importer cannot write."""
+        return sum(result.unsupported for result in self.by_type.values())
+
+    @property
+    def left_out_items(self) -> int:
+        """Items the chatbook contained and this run never attempted."""
+        return self.excluded_items + self.unsupported_items
+
+    def left_out_detail(self) -> str:
+        """Name why items were left out, in the words both surfaces use."""
+        parts = [
+            (self.excluded_items, LEFT_OUT_BY_OPTIONS_NOUN),
+            (self.unsupported_items, UNSUPPORTED_BY_IMPORTER_NOUN),
+        ]
+        return ", ".join(f"{count} {noun}" for count, noun in parts if count > 0)
 
     @property
     def accounted_items(self) -> int:
@@ -234,9 +295,17 @@ class ImportStatus:
 
         Mirrors :attr:`ImportTypeResult.outcome`, so a run and each of its
         types are described in the same vocabulary.
+
+        ``EMPTY`` is reserved for a chatbook that held nothing at all.  A
+        chatbook that held items this run never attempted -- media the user
+        opted out of, or types this importer cannot write -- is ``EXCLUDED``:
+        "there was nothing" and "there was something and we attempted none of
+        it" are different facts, and only one of them is about the file.
         """
         attempted = self.attempted_items
         if attempted <= 0:
+            if self.left_out_items > 0:
+                return IMPORT_OUTCOME_EXCLUDED
             return IMPORT_OUTCOME_EMPTY
         if self.successful_items <= 0:
             if self.failed_items > 0 or self.skipped_items <= 0:
@@ -262,6 +331,8 @@ class ImportStatus:
             "successful_items": self.successful_items,
             "failed_items": self.failed_items,
             "skipped_items": self.skipped_items,
+            "excluded_items": self.excluded_items,
+            "unsupported_items": self.unsupported_items,
             "outcome": self.outcome,
             "by_type": {
                 content_type.value: result.to_dict()
@@ -528,6 +599,7 @@ class ChatbookImporter:
             for unsupported_type, unsupported_ids in content_selections.items():
                 if unsupported_type in _IMPORTABLE_CONTENT_TYPES or not unsupported_ids:
                     continue
+                status.mark_unsupported(unsupported_type, len(unsupported_ids))
                 status.add_warning(
                     f"{len(unsupported_ids)} {unsupported_type.value} item(s) in this "
                     "chatbook are not supported by the importer and were not imported"
@@ -604,14 +676,34 @@ class ChatbookImporter:
             outcome = status.outcome
             success = outcome != IMPORT_OUTCOME_FAILED
 
+            # Items this importer cannot write are named in every message, not
+            # only logged into ``warnings`` -- otherwise a chatbook of 8 items
+            # of which 2 are importable reports "Successfully imported 2/2"
+            # and the other 6 vanish without a word (task-19734).
+            unsupported_note = (
+                f"{status.unsupported_items} {UNSUPPORTED_BY_IMPORTER_NOUN}"
+                if status.unsupported_items > 0
+                else ""
+            )
+
             if outcome == IMPORT_OUTCOME_EMPTY:
                 message = "No items to import"
+            elif outcome == IMPORT_OUTCOME_EXCLUDED:
+                # Not "no items": the chatbook had items and this run
+                # attempted none of them.
+                message = (
+                    "No items were imported: none of the "
+                    f"{status.left_out_items} item(s) in this chatbook were "
+                    f"attempted ({status.left_out_detail()})"
+                )
             elif outcome in (IMPORT_OUTCOME_IMPORTED, IMPORT_OUTCOME_PARTIAL):
                 details = []
                 if status.skipped_items > 0:
                     details.append(f"{status.skipped_items} skipped")
                 if status.failed_items > 0:
                     details.append(f"{status.failed_items} failed")
+                if unsupported_note:
+                    details.append(unsupported_note)
 
                 message = f"Successfully imported {status.successful_items}/{status.total_items} items"
                 if details:
@@ -622,8 +714,12 @@ class ChatbookImporter:
                     f"{status.skipped_items}/{status.total_items} items were already "
                     "present and were skipped"
                 )
+                if unsupported_note:
+                    message += f" ({unsupported_note})"
             else:
                 message = "Failed to import any items from chatbook"
+                if unsupported_note:
+                    message += f" ({unsupported_note})"
 
             if success:
                 logger.info(message)
