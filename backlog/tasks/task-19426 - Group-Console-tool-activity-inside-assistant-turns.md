@@ -1,9 +1,10 @@
 ---
 id: TASK-19426
 title: Group Console tool activity inside assistant turns
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-21 15:56'
+updated_date: '2026-08-22 04:43'
 labels: []
 dependencies: []
 priority: high
@@ -17,14 +18,14 @@ Make Console transcripts clearly attribute reasoning and tool activity to the as
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Each user query is followed by one visually coherent Assistant turn container.
-- [ ] #2 Tool and reasoning activity is rendered inside its owning Assistant turn.
-- [ ] #3 Tool and reasoning details are collapsed by default and can be expanded independently.
-- [ ] #4 The final assistant answer remains visible in the same Assistant turn after its activity rows.
-- [ ] #5 Existing tool-output expansion and message actions remain usable.
-- [ ] #6 Focused transcript tests and live visual verification cover completed, streaming, failed, and resumed turn shapes.
-- [ ] #7 Thinking rows never expose hidden chain-of-thought; absent or unsafe summaries render without a dead disclosure control.
-- [ ] #8 Keyboard selection and transcript pruning follow the rendered turn hierarchy without splitting or reversing a turn.
+- [x] #1 Each user query is followed by one visually coherent Assistant turn container.
+- [x] #2 Tool and reasoning activity is rendered inside its owning Assistant turn.
+- [x] #3 Tool and reasoning details are collapsed by default and can be expanded independently.
+- [x] #4 The final assistant answer remains visible in the same Assistant turn after its activity rows.
+- [x] #5 Existing tool-output expansion and message actions remain usable.
+- [x] #6 Focused transcript tests and live visual verification cover completed, streaming, failed, and resumed turn shapes.
+- [x] #7 Thinking rows never expose hidden chain-of-thought; absent or unsafe summaries render without a dead disclosure control.
+- [x] #8 Keyboard selection and transcript pruning follow the rendered turn hierarchy without splitting or reversing a turn.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -43,3 +44,30 @@ ADR required: yes
 ADR path: backlog/decisions/078-structured-agent-tool-outcome-provenance.md
 Reason: collision-safe status adds an optional internal provider/runtime fact that is serialized by the existing `dataclasses.asdict` -> schemaless steps-JSON path. ADR-078 records the status precedence, safe fallback for old/malformed step dictionaries, and why no SQLite or external provider-wire migration is required. Conversation marker persistence stays unchanged; ADR-031 still applies to keybinding/footer-hint truthfulness.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented a single Assistant-owned Console turn surface that renders collapsed Thinking and tool activity before the visible answer while preserving original message identities, actions, Inspector selection, streaming reconciliation, branch ownership, navigation, pruning, export bounds, and resume behavior. Added privacy-safe Thinking derivation, session-only activity presentation, structured tool outcome provenance under ADR-078, and source/generated TCSS for a left-rail grouped surface with readable status and narrow-layout ellipsis.
+
+Key decisions and tradeoffs:
+- TOOL markers remain display-only and the persisted conversation tree remains unchanged.
+- AgentStep tool outcome is an optional additive fact in existing schemaless run-step JSON; old or malformed rows use a safe compatibility classifier. No SQLite or external provider-wire migration.
+- Activity headers use separate literal label/status children so the status stays readable while labels ellipsize.
+- Transcript set_messages accepts optional session identity so recycled marker ids cannot retain expansion across session switches.
+- Inspector resolves active-session display-only markers through the transcript only after the authoritative store lookup misses.
+
+Verification on latest dev base d01f4cc52 and final feature head e2e4febb6:
+- Complete focused changed-functionality suite: 856 passed, 2 warnings.
+- Additional modified-code coverage for continuation persistence, models/review hook, local-server blocked outcomes, Inspector activity selection, and CSS integrity: 127 passed, 2 warnings.
+- Adjacent Console suite: 322 passed. One settings SelectOverlay mount race passed alone on the feature branch and on clean dev. The two marker E2E binding_unavailable failures reproduced exactly on clean dev.
+- Changed Python compileall, Ruff lint, intentional new-file Ruff format gate, git diff check, and CSS source/bundle integrity all passed.
+- Isolated live Console UAT exercised real fs_list/fs_read activity at wide and narrow sizes, mouse/Enter/Space/o disclosure parity, failed and successful runs, stable selection and scroll during streaming, Ctrl+K resume with identical collapsed ordering, and Inspector attribution for expanded and collapsed display-only activities. Evidence manifest: /private/tmp/task19426-uat-r2zoEDPZ/evidence/manifest.md.
+
+Plan deviations discovered through review:
+- Added ADR-078 and structured runtime outcome provenance after proving arbitrary successful tool content can collide with ERROR or denial copy.
+- Added the active-session Inspector fallback after live UAT showed display-only marker selection had no Selected Message section.
+- Per the final user direction, verification was limited to tests relevant to changed functionality and modified code; the repository-wide suite was not used as completion evidence.
+
+No reusable lesson document was added: the privacy, live-verification, and test-evidence incidents are already covered by existing lessons, while the lasting runtime boundary decision is recorded in ADR-078.
+<!-- SECTION:NOTES:END -->
