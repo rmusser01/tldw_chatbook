@@ -68,8 +68,14 @@ def _notes_service() -> NotesInteropService:
 
     from ..config import chachanotes_db
 
-    base_dir = _notes_db_base_dir()
-    key = str(get_chachanotes_db_path())
+    # Resolved ONCE and derived from that single value (Qodo #5): calling
+    # `get_chachanotes_db_path()` twice -- once inside `_notes_db_base_dir()`
+    # and once for the key -- lets a profile switch or config rewrite between
+    # them cache a service under a key that does not describe the database it
+    # was actually bound to.
+    db_path = get_chachanotes_db_path()
+    base_dir = db_path.parent
+    key = str(db_path)
 
     cached = _SERVICE_CACHE
     if cached is not None and cached[0] == key:

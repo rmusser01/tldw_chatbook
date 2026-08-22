@@ -6664,8 +6664,8 @@ class TestLlamaCppExchangeCapture:
 
     @pytest.mark.asyncio
     async def test_llamacpp_stream_to_complete_fallback_gets_its_own_capture(
-        self, monkeypatch
-    ):
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """task-19324: the stream->complete retry is a SECOND HTTP request.
 
         It is issued inside ``stream_llamacpp_chat``, below the seam that

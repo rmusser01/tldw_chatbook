@@ -38,10 +38,24 @@ _FILENAME_ID = re.compile(r"^(task-[0-9]+(?:\.[0-9]+)*) - .*\.md$")
 
 
 def _task_files() -> list[Path]:
+    """Return every backlog task file, sorted for stable failure output.
+
+    Returns:
+        Sorted ``backlog/tasks/task-*.md`` paths.
+    """
     return sorted(TASKS_DIR.glob("task-*.md"))
 
 
 def _format(dupes: dict[str, list[str]]) -> str:
+    """Render duplicate ids and their files as an actionable failure message.
+
+    Args:
+        dupes: Task id -> the file names that claim it.
+
+    Returns:
+        A multi-line message naming every colliding file plus the owner rule
+        for resolving it.
+    """
     lines = []
     for task_id, names in sorted(dupes.items()):
         lines.append(f"--- {task_id} ---")
@@ -57,6 +71,11 @@ def _format(dupes: dict[str, list[str]]) -> str:
 
 @pytest.fixture(scope="module")
 def task_files() -> list[Path]:
+    """Every task file, with a guard against a mis-resolved project root.
+
+    Returns:
+        Sorted ``backlog/tasks/task-*.md`` paths.
+    """
     files = _task_files()
     # Guard the guard: a wrong PROJECT_ROOT would make every assertion below
     # vacuously true, which is how a green gate hides a real collision.
@@ -65,6 +84,11 @@ def task_files() -> list[Path]:
 
 
 def test_no_duplicate_task_ids_in_filenames(task_files: list[Path]) -> None:
+    """Fail when two task files share an id in their FILENAME prefix.
+
+    Args:
+        task_files: Every ``backlog/tasks/task-*.md`` file, from the fixture.
+    """
     by_id: dict[str, list[str]] = defaultdict(list)
     for path in task_files:
         match = _FILENAME_ID.match(path.name)
@@ -75,6 +99,14 @@ def test_no_duplicate_task_ids_in_filenames(task_files: list[Path]) -> None:
 
 
 def test_no_duplicate_task_ids_in_frontmatter(task_files: list[Path]) -> None:
+    """Fail when two task files share an id in their frontmatter.
+
+    Checked separately from the filename because the two can disagree after a
+    hand-edited rename, and the backlog CLI resolves by frontmatter.
+
+    Args:
+        task_files: Every ``backlog/tasks/task-*.md`` file, from the fixture.
+    """
     by_id: dict[str, list[str]] = defaultdict(list)
     for path in task_files:
         for line in path.read_text(encoding="utf-8", errors="replace").splitlines():

@@ -254,12 +254,14 @@ async def test_service_cache_rebuilds_when_the_db_path_changes(
     first.parent.mkdir(parents=True)
     second.parent.mkdir(parents=True)
 
+    # Only `get_chachanotes_db_path` is patched: `_notes_service` now resolves
+    # the path ONCE and derives the base directory from it (Qodo #5), so
+    # patching `_notes_db_base_dir` here would be inert and would imply a
+    # coupling that no longer exists.
     monkeypatch.setattr(nmt, "get_chachanotes_db_path", lambda: first)
-    monkeypatch.setattr(nmt, "_notes_db_base_dir", lambda: first.parent)
     await nmt.CreateNoteTool().execute(title="a", content="c")
     assert len(built) == 1
 
     monkeypatch.setattr(nmt, "get_chachanotes_db_path", lambda: second)
-    monkeypatch.setattr(nmt, "_notes_db_base_dir", lambda: second.parent)
     await nmt.CreateNoteTool().execute(title="b", content="c")
     assert len(built) == 2, "a new DB path must rebuild the cached service"

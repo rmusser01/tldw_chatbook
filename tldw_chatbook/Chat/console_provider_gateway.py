@@ -2140,10 +2140,15 @@ class ConsoleProviderGateway:
                     ),
                     fallback or "",
                 )
-            except Exception:
-                # Capture must never break a send (task-18300 contract).
-                logger.opt(exception=False).warning(
-                    "exchange_capture_fallback_failed"
+            except Exception as exc:
+                # Capture must never break a send (task-18300 contract) -- but
+                # a constant message made the degraded path this exists to
+                # EXPLAIN undiagnosable (Qodo #6). The type name is enough to
+                # act on and, unlike a traceback, cannot carry payload from
+                # the frame's locals.
+                logger.warning(
+                    "exchange_capture_fallback_failed: "
+                    f"{type(exc).__name__}"
                 )
         if fallback:
             yield fallback
@@ -2612,6 +2617,14 @@ class ConsoleProviderGateway:
                     if text:
                         retry_signals.record_exchange_content(text)
                     retry_signals.close_exchange(status="complete")
+                    # Qodo #4: `new_usage_call()` registers this call in the
+                    # aggregate's `_active_usage_payloads`; without the
+                    # matching close it stays there forever. Harmless while
+                    # the retry records no usage, but the moment one is added
+                    # the stuck entry is billed by `usage_payloads()`'s
+                    # in-flight tail. Closing here keeps the pairing local and
+                    # obvious instead of load-bearing on a future reader.
+                    retry_signals.close_usage_call()
 
                 try:
                     async for chunk in self.stream_llamacpp_chat(
