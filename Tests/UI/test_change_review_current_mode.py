@@ -1097,3 +1097,72 @@ async def test_every_root_failing_never_claims_the_tree_is_clean(
             f"the pane must point at the failure instead; got {pane!r}"
         )
         assert screen._leaves == []
+
+
+@pytest.mark.asyncio
+async def test_unborn_head_renders_a_STAGED_add_through_the_preview_path(
+    monkeypatch, tmp_path
+):
+    """Qodo #3 (High): on an unborn HEAD a STAGED add is `A `, not `??`.
+
+    The sibling test above only ever created UNTRACKED files, so the
+    "unborn means everything is untracked" assumption held there by
+    accident. `git add` on a fresh repo produces `A  staged.txt`, which is
+    absent from `CurrentRootStatus.untracked` -- so the pre-fix routing
+    sent it to `git diff HEAD`, which is fatal before the first commit,
+    and the pane rendered "diff unavailable" for a file the tree lists as
+    changed.
+    """
+    _patch_git_actions(monkeypatch, True)
+    repo = _init_repo(tmp_path / "unborn_staged", commit=False)
+    (repo / "staged.txt").write_text("staged before any commit\n")
+    _git(repo, "add", "staged.txt")
+    (repo / "loose.txt").write_text("never staged\n")
+
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    service = ShadowRepoService(data_dir=tmp_path / "appdata")
+    provider = AgentRunsChangeReviewProvider(
+        db=db, service=service, conversation_id="conv-unborn-staged"
+    )
+    diff_calls: list[str] = []
+    real_diff = provider.current_diff_text
+
+    def counting_diff(root, change):
+        diff_calls.append(change.path)
+        return real_diff(root, change)
+
+    provider.current_diff_text = counting_diff
+
+    app = _Harness(provider, workspace_roots=[str(repo)])
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen = await _open_screen(pilot, app)
+        await _wait_for_detection(pilot, screen)
+        screen.query_one(
+            "#change-review-turn-select", Select
+        ).value = CURRENT_MODE_SENTINEL
+        await _wait_for(
+            pilot,
+            lambda: (
+                lambda ls: ls if any("staged.txt" in item for item in ls) else None
+            )(_tree_labels(screen.query_one(Tree))),
+            "the unborn tree's staged file",
+        )
+
+        screen.select_file("staged.txt")
+        text = await _wait_for(
+            pilot,
+            lambda: (
+                lambda t: t if t.strip() else None
+            )(screen.diff_pane_text()),
+            "the staged file's rendered pane",
+        )
+
+    assert "diff unavailable" not in text, (
+        f"a staged add on an unborn HEAD must not render as unavailable: {text!r}"
+    )
+    assert "new file: staged.txt" in text, (
+        f"it must render through the preview path: {text!r}"
+    )
+    assert diff_calls == [], (
+        f"`git diff HEAD` must never run on an unborn HEAD; got {diff_calls}"
+    )

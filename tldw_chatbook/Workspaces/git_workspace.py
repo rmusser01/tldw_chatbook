@@ -661,6 +661,19 @@ def untracked_preview(root: Path, path: str, max_lines: int) -> str:
         honest one-line error message. Never raises.
     """
     target = root / path
+    # Qodo #1 (PR #1914): git lists a SYMLINK as an ordinary untracked
+    # entry, and `read`/`stat` follow it -- so a link planted inside the
+    # root (agent write tools can create one) would render an
+    # out-of-workspace file's content into the review pane, which the
+    # V1.5 annotate/delivery loop then feeds back to the model. Validate
+    # through the repo's shared boundary helper (CLAUDE.md: "Use
+    # path_validation.py for file paths") rather than an ad-hoc check;
+    # `validate_path` resolves symlinks before comparing, so this covers
+    # both traversal segments and link escapes.
+    from tldw_chatbook.Utils.path_validation import is_safe_path
+
+    if not is_safe_path(target, root):
+        return f"could not read {path}: resolves outside the workspace root"
     try:
         size = target.stat().st_size
         cap = max_lines * 400

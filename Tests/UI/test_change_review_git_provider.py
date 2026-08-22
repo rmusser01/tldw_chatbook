@@ -331,3 +331,39 @@ def test_pr_url_builds_github_compare_url(monkeypatch, provider, repo):
 
     result = provider.pr_url(str(repo), info)
     assert result == "https://github.com/acme/proj/compare/main?expand=1"
+
+
+def test_git_actions_enabled_coerces_a_string_false(monkeypatch):
+    """Qodo #2: a hand-edited TOML string must not defeat the kill switch.
+
+    `bool("false")` is True, so the pre-fix code left git actions ENABLED
+    for a user who wrote `git_actions = "false"`. The repo's own
+    `coerce_bool_setting` is the standard coercion for this.
+    """
+    for raw in ("false", "False", "no", "off", "0"):
+        _patch_git_actions(monkeypatch, raw)
+        assert (
+            AgentRunsChangeReviewProvider.git_actions_enabled() is False
+        ), f"{raw!r} must disable git actions"
+
+
+def test_git_actions_enabled_coerces_a_string_true(monkeypatch):
+    # NB `coerce_bool_setting` is deliberately asymmetric: it reads "off"
+    # as False but does NOT read "on" as True (verified against the real
+    # helper). That is the repo's vocabulary, not this feature's, so this
+    # test pins what the shared coercion actually does rather than a wider
+    # set this feature would have invented for itself.
+    for raw in ("true", "True", "yes", "1"):
+        _patch_git_actions(monkeypatch, raw)
+        assert (
+            AgentRunsChangeReviewProvider.git_actions_enabled() is True
+        ), f"{raw!r} must keep git actions enabled"
+
+
+def test_git_actions_enabled_treats_none_as_on(monkeypatch):
+    """`coerce_bool_setting(None, True)` returns None, not a bool -- which
+    would leave `git_actions_enabled()` violating its own `-> bool`
+    annotation and reading as falsy, silently disabling a feature that
+    ships ON."""
+    _patch_git_actions(monkeypatch, None)
+    assert AgentRunsChangeReviewProvider.git_actions_enabled() is True

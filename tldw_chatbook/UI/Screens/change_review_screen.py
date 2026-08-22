@@ -254,10 +254,22 @@ class AgentRunsChangeReviewProvider:
             True unless config explicitly disables git actions.
         """
         try:
-            from tldw_chatbook.config import get_cli_setting
+            from tldw_chatbook.config import (
+                coerce_bool_setting,
+                get_cli_setting,
+            )
 
             value = get_cli_setting("change_review", "git_actions", True)
-            return bool(value)
+            if value is None:
+                # `coerce_bool_setting(None, ...)` returns None unchanged,
+                # which would read as falsy and silently disable a feature
+                # that ships ON.
+                return True
+            # Qodo #2 (PR #1914): `bool(value)` left the switch ON for a
+            # hand-edited `git_actions = "false"` -- every non-empty string
+            # is truthy. `coerce_bool_setting` is the repo's standard
+            # coercion and understands the usual string/number spellings.
+            return coerce_bool_setting(value, True)
         except Exception:  # noqa: BLE001 -- a bad config never breaks review
             return True
 
@@ -3996,9 +4008,16 @@ class ChangeReviewScreen(Screen):
         Routes on untracked-ness, which is why
         :attr:`CurrentRootStatus.untracked` is carried separately from the
         collapsed status letter: ``git diff HEAD`` is a FATAL error against
-        an untracked path and against an unborn HEAD (spec §2 probe 4),
-        where EVERY file is untracked and the whole tree therefore renders
-        through the synthesized preview.
+        an untracked path and against an unborn HEAD (spec §2 probe 4).
+
+        The unborn case is checked on :attr:`GitWorkspaceInfo.unborn`, NOT
+        by assuming every file is untracked -- Qodo #3 (PR #1914) caught
+        that assumption: `git add` before the first commit yields
+        ``A  staged.txt``, which is not ``??`` and therefore absent from
+        ``untracked``, so it reached ``git diff HEAD`` and rendered as
+        "diff unavailable" for a file the tree lists as changed. Before
+        the first commit there is nothing to diff AGAINST, so every path
+        renders through the synthesized preview.
 
         Args:
             row: The leaf's pseudo row (``kind == "git_current"``).
@@ -4019,7 +4038,11 @@ class ChangeReviewScreen(Screen):
         from tldw_chatbook.Workspaces.git_workspace import GitWorkspaceError
 
         root = str(row.get("root") or "")
-        if change.path in self._current_untracked.get(root, frozenset()):
+        info = self._current_infos.get(root)
+        unborn = bool(info is not None and info.unborn)
+        if unborn or change.path in self._current_untracked.get(
+            root, frozenset()
+        ):
             return self._provider.untracked_preview(root, change.path)
         try:
             return self._provider.current_diff_text(root, change)

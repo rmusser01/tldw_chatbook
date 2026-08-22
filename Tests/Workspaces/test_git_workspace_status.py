@@ -296,3 +296,33 @@ def test_status_root_matches_info_root_for_a_symlinked_caller_path(repo, tmp_pat
     info = detect_git_workspace(link)
     status = working_tree_status(link, info)
     assert status.root == status.info.root
+
+
+def test_untracked_preview_refuses_a_symlink_escaping_the_root(repo, tmp_path):
+    """Qodo #1: an untracked SYMLINK pointing outside the workspace must not
+    have its target's content rendered into the review pane.
+
+    Reachable because agent write tools can create files (and symlinks) in a
+    workspace root, and the review pane's text flows back to the model
+    through the V1.5 annotate/delivery loop -- so a rendered `~/.ssh/id_rsa`
+    is an exfiltration path, not just a display bug.
+    """
+    secret = tmp_path / "outside_secret.txt"
+    secret.write_text("SECRET-OUTSIDE-CONTENT\n")
+    (repo / "escape_link").symlink_to(secret)
+
+    # git really does list it as an ordinary untracked entry.
+    status = working_tree_status(repo, detect_git_workspace(repo))
+    assert "escape_link" in status.untracked
+
+    out = untracked_preview(repo, "escape_link", 20)
+    assert "SECRET-OUTSIDE-CONTENT" not in out
+    assert "outside the workspace" in out
+
+
+def test_untracked_preview_still_renders_a_normal_nested_file(repo):
+    """The refusal must not swallow legitimate nested paths."""
+    (repo / "sub").mkdir()
+    (repo / "sub" / "ok.txt").write_text("hello\n")
+    out = untracked_preview(repo, "sub/ok.txt", 20)
+    assert "+hello" in out
