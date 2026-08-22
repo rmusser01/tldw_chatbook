@@ -11974,6 +11974,47 @@ UPDATE db_schema_version
         row = cursor.fetchone()
         return int(row["cnt"] if row else 0)
 
+    def read_legacy_notes_sync_source_rows(
+        self,
+    ) -> tuple[tuple[Dict[str, Any], ...], tuple[Dict[str, Any], ...]]:
+        """Read the exact legacy Notes sync metadata projection atomically.
+
+        Returns:
+            Frozen note and unresolved-conflict row sequences as plain mappings.
+        """
+        with self.transaction() as connection:
+            note_rows = connection.execute(
+                """SELECT id, file_path_on_disk, relative_file_path_on_disk,
+                          sync_root_folder, last_synced_disk_file_hash,
+                          last_synced_disk_file_mtime, is_externally_synced,
+                          sync_strategy, sync_excluded, file_extension, version,
+                          deleted
+                   FROM notes
+                   WHERE is_externally_synced = 1
+                      OR sync_excluded = 1
+                      OR file_path_on_disk IS NOT NULL
+                      OR relative_file_path_on_disk IS NOT NULL
+                      OR sync_root_folder IS NOT NULL
+                      OR last_synced_disk_file_hash IS NOT NULL
+                      OR last_synced_disk_file_mtime IS NOT NULL
+                      OR sync_strategy IS NOT NULL
+                   ORDER BY id"""
+            ).fetchall()
+            conflict_rows = connection.execute(
+                """SELECT id, session_id, note_id, file_path, conflict_type,
+                          db_content_hash, disk_content_hash,
+                          CAST(db_modified_time AS TEXT) AS db_modified_time,
+                          disk_modified_time, resolution,
+                          CAST(resolved_at AS TEXT) AS resolved_at
+                   FROM sync_conflicts
+                   WHERE resolution IS NULL OR resolution = 'skip'
+                   ORDER BY id"""
+            ).fetchall()
+        return (
+            tuple(dict(row) for row in note_rows),
+            tuple(dict(row) for row in conflict_rows),
+        )
+
     # ============================= Library read seams (task-1337) =========================================
     #
     # Additive, read-only queries backing the local Library agent tools. They
