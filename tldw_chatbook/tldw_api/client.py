@@ -1043,6 +1043,14 @@ class ChatQueueActivityResponse(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
 
+# task-19557 Qodo round: actual redirect statuses only. The whole 3xx band
+# also contains 304 Not Modified, which is a cache-validation response (no
+# `Location`, not a redirect) that conditional-GET callers rely on reaching
+# normal processing -- e.g. `get_user_profile_catalog(if_none_match=...)`.
+# Treating 304 as a refused redirect would break that path.
+_REDIRECT_STATUS_CODES = frozenset({301, 302, 303, 307, 308})
+
+
 class TLDWAPIClient:
     # Ceiling on how long a *connection* may take to establish.
     #
@@ -1163,31 +1171,51 @@ class TLDWAPIClient:
         return self._client
 
     @staticmethod
-    def _raise_if_redirected(response: httpx.Response, endpoint: str) -> None:
+    async def _raise_if_redirected(response: httpx.Response, endpoint: str) -> None:
         """Refuse a redirect response rather than following it with credentials.
 
         The shared client carries the ``X-API-KEY`` (and possibly bearer
         ``Authorization``) header and is constructed with
         ``follow_redirects=False`` (see ``_get_client``) specifically so a
-        3xx response lands here instead of httpx silently completing the
-        hop. There is no legitimate reason for this client to follow a
+        redirect response lands here instead of httpx silently completing
+        the hop. There is no legitimate reason for this client to follow a
         redirect -- ``base_url`` is the server the caller explicitly
-        configured -- so any 3xx is treated as hostile/misconfigured and
-        refused outright.
+        configured -- so an actual redirect is treated as hostile/
+        misconfigured and refused outright.
+
+        Only ``_REDIRECT_STATUS_CODES`` (301/302/303/307/308) trigger the
+        refusal -- NOT the whole 3xx band. 304 Not Modified is a
+        cache-validation response, not a redirect (no ``Location``), and
+        conditional-GET callers (e.g. ``get_user_profile_catalog``'s
+        ``if_none_match``) rely on it reaching normal processing rather
+        than being refused here.
+
+        The redirect ``Location`` is deliberately never echoed in the
+        raised message -- it is server- (and on a hostile/compromised
+        endpoint, attacker-) controlled data, same reasoning as the
+        Anthropic/Google redirect-refusal sites in ``LLM_API_Calls.py``.
+
+        Explicitly closes ``response`` before raising. httpx's own
+        ``send()``/``stream()`` already release the connection on the
+        paths that reach here (an eagerly-read non-streaming response, or
+        the ``stream()`` context manager's own ``finally: aclose()``), but
+        ``aclose()`` is idempotent and this makes the guarantee explicit
+        here rather than resting on a reader's trust of that internal
+        contract.
 
         Args:
             response: The response to inspect.
             endpoint: The request path, used only for the error message.
 
         Raises:
-            APIConnectionError: If ``response`` is a 3xx redirect.
+            APIConnectionError: If ``response`` is an actual redirect.
         """
-        if not (300 <= response.status_code < 400):
+        if response.status_code not in _REDIRECT_STATUS_CODES:
             return
-        location = response.headers.get("location", "<no Location header>")
+        await response.aclose()
         raise APIConnectionError(
-            f"Server returned a redirect ({response.status_code} -> {location}) "
-            f"for {endpoint}; refusing to follow with the X-API-KEY/Authorization "
+            f"Server returned a redirect ({response.status_code}) for "
+            f"{endpoint}; refusing to follow with the X-API-KEY/Authorization "
             "credential."
         )
 
@@ -1270,7 +1298,7 @@ class TLDWAPIClient:
                 params=params,
                 headers=headers,
             )  # Pass endpoint directly
-            self._raise_if_redirected(response, endpoint)
+            await self._raise_if_redirected(response, endpoint)
             response.raise_for_status()  # Raises HTTPStatusError for 4xx/5xx
             if response.status_code in {204, 205}:
                 return {}
@@ -1352,7 +1380,7 @@ class TLDWAPIClient:
                 params=params,
                 headers=headers,
             )
-            self._raise_if_redirected(response, endpoint)
+            await self._raise_if_redirected(response, endpoint)
             response.raise_for_status()
             content_disposition = response.headers.get("content-disposition")
             return ReadingExportResponse(
@@ -1422,7 +1450,7 @@ class TLDWAPIClient:
             response = await client.request(
                 method, endpoint, params=params, headers=headers
             )
-            self._raise_if_redirected(response, endpoint)
+            await self._raise_if_redirected(response, endpoint)
             response.raise_for_status()
             return {
                 str(key).lower(): str(value) for key, value in response.headers.items()
@@ -1467,7 +1495,7 @@ class TLDWAPIClient:
             async with client.stream(
                 method, endpoint, data=data, files=files
             ) as response:
-                self._raise_if_redirected(response, endpoint)
+                await self._raise_if_redirected(response, endpoint)
                 response.raise_for_status()
                 async for line in response.aiter_lines():
                     if line:
@@ -1540,7 +1568,7 @@ class TLDWAPIClient:
                 params=params,
                 headers=headers,
             ) as response:
-                self._raise_if_redirected(response, endpoint)
+                await self._raise_if_redirected(response, endpoint)
                 response.raise_for_status()
                 async for line in response.aiter_lines():
                     if line == "":

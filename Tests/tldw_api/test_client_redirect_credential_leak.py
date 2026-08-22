@@ -17,6 +17,13 @@ Born-red: reverting ``follow_redirects=False`` back to ``True`` (and/or
 removing the ``_raise_if_redirected`` calls) makes
 ``test_x_api_key_absent_on_cross_origin_redirect_hop`` fail by showing the
 sentinel key delivered to the cross-origin host.
+
+Also pins three Qodo-round fixes to ``_raise_if_redirected`` itself:
+unclosed redirect responses (a connection leak, worse on the streaming
+paths), 304 Not Modified mis-treated as a redirect (breaks conditional
+GETs like ``get_user_profile_catalog(if_none_match=...)``), and the raw
+``Location`` header being reflected into the exception message (server-
+and, on a hostile endpoint, attacker-controlled data).
 """
 
 from __future__ import annotations
@@ -105,3 +112,132 @@ async def test_x_api_key_absent_on_cross_origin_redirect_hop(
     # And the redirect must actually be refused, not merely have its
     # credential incidentally dropped by some other mechanism.
     assert raised is not None, "expected APIConnectionError on redirect refusal"
+
+    # Qodo round: the raw Location must never be reflected into the raised
+    # message -- it is server- (and on a hostile/compromised endpoint,
+    # attacker-) controlled data.
+    assert "evil.example" not in str(raised), (
+        f"redirect Location leaked into the exception message: {raised}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_304_not_modified_is_not_treated_as_redirect() -> None:
+    """304 is cache-validation, not a redirect -- must not be refused.
+
+    Real caller this protects: ``get_user_profile_catalog(if_none_match=
+    ...)`` sends a conditional GET and expects a legitimate 304 back from
+    the server, not an ``APIConnectionError``. 304 has no ``Location``
+    and httpx itself never treats it as `is_redirect`.
+    """
+    response = httpx.Response(304)
+    try:
+        # Must return None without raising.
+        await TLDWAPIClient._raise_if_redirected(
+            response, "/api/v1/users/profile/catalog"
+        )
+    finally:
+        await response.aclose()
+
+
+def _handler_with_counting_close(
+    captured: dict[str, httpx.Response], close_calls: list[int]
+):
+    """Build a MockTransport handler whose 302 response's ``aclose`` is spied.
+
+    ``response.is_closed`` alone can't discriminate "``_raise_if_redirected``
+    explicitly closed it" from "httpx's own ``stream()`` context manager
+    closed it during unwind" -- both leave ``is_closed`` True, and in fact
+    the latter closes it regardless of whether the explicit call exists
+    (verified: removing the explicit ``await response.aclose()`` from
+    ``_raise_if_redirected`` still left ``is_closed`` True, because the
+    ``async with client.stream(...)`` block's own ``finally: aclose()``
+    covers it -- so an ``is_closed``-only assertion doesn't pin this fix).
+
+    Instead this wraps the instance's ``aclose`` in a counting spy *before*
+    the response is returned from the handler, so both the explicit call in
+    ``_raise_if_redirected`` and the automatic one on ``async with`` exit are
+    independently recorded. Two calls means both fired (the explicit one
+    included); one call means only the automatic one did.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        response = httpx.Response(
+            302, headers={"Location": "https://evil.example/steal"}
+        )
+        original_aclose = response.aclose
+
+        async def _counting_aclose() -> None:
+            close_calls.append(1)
+            await original_aclose()
+
+        response.aclose = _counting_aclose
+        captured["response"] = response
+        return response
+
+    return handler
+
+
+@pytest.mark.asyncio
+async def test_streaming_redirect_response_is_closed_before_raising(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A redirect reached via ``_stream_request`` must not leak the connection.
+
+    ``_stream_request``/``_sse_request`` obtain their response via
+    ``client.stream(...)`` (not the eagerly-read ``client.request(...)``),
+    so an unclosed response here is a real leaked streaming connection --
+    worse than the non-streaming methods, where httpx already reads (and
+    thereby releases) the body before ``_raise_if_redirected`` ever runs.
+    """
+    captured: dict[str, httpx.Response] = {}
+    close_calls: list[int] = []
+    _install_mock_transport(
+        monkeypatch, _handler_with_counting_close(captured, close_calls)
+    )
+
+    client = TLDWAPIClient("https://good.example", token=_SENTINEL_KEY)
+    try:
+        with pytest.raises(APIConnectionError):
+            async for _ in client._stream_request("POST", "/api/v1/media/ingest"):
+                pass
+    finally:
+        await client.close()
+
+    assert "response" in captured
+    assert captured["response"].is_closed
+    # The load-bearing count: 1 means only httpx's own stream()-exit close
+    # ran; 2 means _raise_if_redirected's explicit close ran too.
+    assert len(close_calls) == 2, (
+        f"expected _raise_if_redirected to explicitly close the redirect "
+        f"response before raising (in addition to httpx's own stream-exit "
+        f"close); observed {len(close_calls)} aclose() call(s)"
+    )
+
+
+@pytest.mark.asyncio
+async def test_sse_redirect_response_is_closed_before_raising(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Same as above, for the SSE path (``_sse_request``)."""
+    captured: dict[str, httpx.Response] = {}
+    close_calls: list[int] = []
+    _install_mock_transport(
+        monkeypatch, _handler_with_counting_close(captured, close_calls)
+    )
+
+    client = TLDWAPIClient("https://good.example", token=_SENTINEL_KEY)
+    try:
+        with pytest.raises(APIConnectionError):
+            async for _ in client._sse_request("GET", "/api/v1/events"):
+                pass
+    finally:
+        await client.close()
+
+    assert "response" in captured
+    assert captured["response"].is_closed
+    assert len(close_calls) == 2, (
+        f"expected _raise_if_redirected to explicitly close the redirect "
+        f"response before raising (in addition to httpx's own stream-exit "
+        f"close); observed {len(close_calls)} aclose() call(s)"
+    )
