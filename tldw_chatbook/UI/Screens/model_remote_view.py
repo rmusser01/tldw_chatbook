@@ -931,6 +931,8 @@ class RemoteView(Widget):
             and self._selected_candidate == candidate
             and self._operation_reference == descriptor.reference
         ):
+            self._set_status(status_message)
+            self._set_metadata_controls_disabled(True)
             return True
         self._resolved = resolved
         self._selected_repository = repository

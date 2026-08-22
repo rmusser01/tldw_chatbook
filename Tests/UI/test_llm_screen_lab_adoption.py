@@ -2773,6 +2773,44 @@ async def test_remote_context_survives_recompose_before_the_first_progress_tick(
 
 
 @pytest.mark.asyncio
+async def test_restored_remote_context_updates_phase_copy_without_another_recompose(
+    monkeypatch,
+):
+    """An identical retained context still accepts later lifecycle copy."""
+    from tldw_chatbook.UI.Screens.model_remote_view import RemoteView
+
+    monkeypatch.setattr(
+        LLMManagementWindow,
+        "_refresh_managed_gguf_inventory",
+        lambda _self: None,
+    )
+    catalog = _remote_catalog()
+    candidate = _resolved_remote_model().candidates[0]
+    app = _app()
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        screen = await _models_screen(app)
+        assert await _wait_for(lambda: bool(screen.query(RemoteView)), pilot)
+        remote = screen.query_one(RemoteView)
+
+        for expected_status in (
+            "Preparing the managed install plan…",
+            "Awaiting review; no download has started.",
+            "Installing the selected GGUF variant…",
+        ):
+            assert remote.restore_install_context(
+                catalog,
+                candidate,
+                status_message=expected_status,
+            )
+            await pilot.pause()
+            assert (
+                str(remote.query_one("#remote-model-status", Static).renderable)
+                == expected_status
+            )
+
+
+@pytest.mark.asyncio
 async def test_remote_install_progress_after_recompose_still_mirrors_into_installed_view(
     monkeypatch,
 ):
@@ -3038,6 +3076,7 @@ def test_apply_remote_preflight_result_requires_acknowledgment_only_for_unknown_
     monkeypatch.setattr(module.LLMScreen, "app", property(lambda self: fake_app))
 
     screen = module.LLMScreen.__new__(module.LLMScreen)
+    screen._remote_view = MagicMock(return_value=None)
     screen._model_install_worker = MagicMock()
     screen._model_install_catalog = catalog
     screen._model_install_candidate = candidate
@@ -3062,6 +3101,54 @@ def test_apply_remote_preflight_result_requires_acknowledgment_only_for_unknown_
     )
     assert callback == screen._confirm_remote_install
     assert screen._model_install_pending_report is report
+
+
+def test_remote_phase_copy_tracks_preflight_consent_and_active_transitions(
+    tmp_path, monkeypatch
+):
+    """Mounted Remote detail follows the host-owned install lifecycle."""
+    from unittest.mock import MagicMock, call
+
+    from tldw_chatbook.UI.Screens import llm_screen as module
+
+    catalog = _remote_catalog()
+    candidate = _resolved_remote_model().candidates[0]
+    report = _remote_report_for(catalog, tmp_path / "managed")
+    fake_app = MagicMock()
+    monkeypatch.setattr(module.LLMScreen, "app", property(lambda self: fake_app))
+
+    view = MagicMock()
+    view.is_mounted = True
+    screen = module.LLMScreen.__new__(module.LLMScreen)
+    screen._remote_view = MagicMock(return_value=view)
+    screen.refresh_lab_status = MagicMock()
+    screen._model_install_worker = MagicMock()
+    screen._model_install_catalog = catalog
+    screen._model_install_candidate = candidate
+    screen._model_install_pending_report = None
+    screen._model_install_active = False
+    screen._model_install_succeeded = None
+    screen._model_install_phase = None
+    screen._model_install_kind = "remote"
+
+    module.LLMScreen._apply_remote_preflight_result(screen, report, None)
+    module.LLMScreen._model_install_status_changed(
+        screen,
+        module.InstallStatusChanged(catalog.artifact.reference, active=True),
+    )
+
+    assert view.restore_install_context.call_args_list == [
+        call(
+            catalog,
+            candidate,
+            status_message="Awaiting review; no download has started.",
+        ),
+        call(
+            catalog,
+            candidate,
+            status_message="Installing the selected GGUF variant…",
+        ),
+    ]
 
 
 @pytest.mark.parametrize("operation", ("preflight", "installation"))

@@ -466,6 +466,8 @@ class LLMScreen(LabScreen):
             self._model_install_phase = None
             self._model_install_last_progress = None
         self.refresh_lab_status()
+        if event.active and getattr(self, "_model_install_kind", None) == "remote":
+            self._sync_remote_install_context_status()
 
     def _curated_view(self) -> "CuratedView | None":
         """Return the mounted ``CuratedView``, or None if it cannot be found.
@@ -2471,6 +2473,7 @@ class LLMScreen(LabScreen):
             self._clear_remote_install_state(message)
             return
         self._model_install_pending_report = report
+        self._sync_remote_install_context_status()
         acknowledgment = (
             "No license was declared. I reviewed the source and want to continue."
             if catalog.artifact.license_id == "NOASSERTION"
@@ -2724,6 +2727,23 @@ class LLMScreen(LabScreen):
         if self._model_install_pending_report is not None:
             return "Awaiting review; no download has started."
         return "Preparing the managed install plan…"
+
+    def _sync_remote_install_context_status(self) -> bool:
+        """Apply the current host lifecycle copy to the mounted Remote detail."""
+        catalog = self._model_install_catalog
+        candidate = self._model_install_candidate
+        if not isinstance(catalog, ResolvedRemoteCatalog) or not isinstance(
+            candidate, RemoteGGUFCandidate
+        ):
+            return False
+        view = self._remote_view()
+        if view is None or not view.is_mounted:
+            return False
+        return view.restore_install_context(
+            catalog,
+            candidate,
+            status_message=self._remote_install_context_status(),
+        )
 
     def compose_lab_rail(self) -> ComposeResult:
         """Yield the two rail sections and their nine provider rows."""
