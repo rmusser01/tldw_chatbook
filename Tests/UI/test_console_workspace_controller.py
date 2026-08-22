@@ -409,6 +409,67 @@ async def test_workspace_page_retry_generation_rejects_stale_failure() -> None:
 
 
 @pytest.mark.asyncio
+async def test_page_completion_with_unknown_membership_preserves_settled_retry() -> (
+    None
+):
+    membership_unavailable = False
+
+    def list_memberships(workspace_id):
+        if workspace_id == "workspace-7" and membership_unavailable:
+            raise RuntimeError("registry unavailable")
+        conversation_id = "existing" if workspace_id == "workspace-7" else "steady"
+        return (SimpleNamespace(item_id=conversation_id),)
+
+    controller = _workspace_controller(
+        app_instance=SimpleNamespace(
+            workspace_registry_service=SimpleNamespace(
+                list_workspace_conversations=list_memberships
+            )
+        )
+    )
+    settled = (_browser_row("existing", "Existing"),)
+    other_rows = (_browser_row("steady", "Steady", workspace_id="workspace-8"),)
+    controller._workspace_page_attempts["workspace-7"] = (
+        controller._new_workspace_page_state(rows=settled, next_cursor=75)
+    )
+    other_attempt = controller._new_workspace_page_state(
+        rows=other_rows, next_cursor=None
+    )
+    controller._workspace_page_attempts["workspace-8"] = other_attempt
+    workspace_rows = (_browser_row("workspace-hit", "Workspace hit"),)
+    flat_rows = (
+        _browser_row("flat-hit", "Flat hit", workspace_id=DEFAULT_WORKSPACE_ID),
+    )
+    controller._workspace_tree_search.rows = workspace_rows
+    controller._flat_conversation_search.rows = flat_rows
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def fetch(_workspace_id, _cursor):
+        started.set()
+        await release.wait()
+        return (_browser_row("incoming", "Incoming"),), None
+
+    controller._fetch_workspace_tree_page = fetch
+    page = asyncio.create_task(controller.load_workspace_tree_page("workspace-7", 75))
+    await started.wait()
+    membership_unavailable = True
+    release.set()
+    await page
+
+    attempt = controller._workspace_page_attempts["workspace-7"]
+    assert attempt.rows == settled
+    assert attempt.next_cursor == 75
+    assert attempt.membership_unknown is True
+    assert attempt.error == "Workspace conversations are unavailable."
+    assert attempt.retry_cursor == 75
+    assert controller._workspace_page_attempts["workspace-8"] is other_attempt
+    assert other_attempt.rows == other_rows
+    assert controller._workspace_tree_search.rows == workspace_rows
+    assert controller._flat_conversation_search.rows == flat_rows
+
+
+@pytest.mark.asyncio
 async def test_overlapping_same_cursor_page_commits_once_by_conversation_id() -> None:
     controller = _workspace_controller(
         app_instance=SimpleNamespace(
@@ -520,7 +581,11 @@ async def test_membership_move_discards_inflight_page_and_projects_new_owner_onc
         if any(row.conversation_id == "moving" for row in node.conversations)
     ]
     assert owners == ["workspace-8"]
-    assert controller._workspace_page_attempts["workspace-7"].rows == ()
+    stale_attempt = controller._workspace_page_attempts["workspace-7"]
+    assert stale_attempt.rows == ()
+    assert stale_attempt.membership_unknown is False
+    assert stale_attempt.error == ""
+    assert stale_attempt.retry_cursor is None
 
 
 @pytest.mark.asyncio

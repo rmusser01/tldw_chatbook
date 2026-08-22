@@ -907,18 +907,23 @@ class ConsoleWorkspaceController:
         request_key: tuple[str, tuple[str, ...], int, int] | None,
     ) -> bool:
         attempt = self._workspace_page_attempts.get(workspace_id)
-        return bool(
+        structurally_current = bool(
             request_key is not None
             and attempt is not None
             and self._screen_running_accessor()
             and attempt.generation == generation
             and attempt.request_key == request_key
-            and (current_membership := self._workspace_membership_token(workspace_id))
-            is not _MEMBERSHIP_UNKNOWN
-            and request_key[1] == current_membership
             and request_key[2] == self._workspace_tree_search.generation
             and attempt.owner_token is self._workspace_tree_owner_token()
         )
+        if not structurally_current:
+            return False
+        current_membership = self._workspace_membership_token(workspace_id)
+        if current_membership is _MEMBERSHIP_UNKNOWN:
+            self._mark_workspace_membership_unknown(workspace_id)
+            self._sync_console_workspace_context()
+            return False
+        return request_key[1] == current_membership
 
     def _commit_workspace_page_failure(
         self,
