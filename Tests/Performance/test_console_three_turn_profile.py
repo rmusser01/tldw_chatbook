@@ -881,6 +881,110 @@ def test_campaign_lock_refuses_second_owner_and_releases_only_exact_token(
 
     profile.release_campaign_lock(tmp_path, owner)
     assert not (tmp_path / ".campaign-lock").exists()
+    assert not (tmp_path / ".campaign-release").exists()
+
+
+def _write_campaign_owner(lock_root: Path, owner) -> None:
+    lock_root.mkdir()
+    (lock_root / "owner.json").write_text(
+        json.dumps(
+            {
+                "owner_token": owner.owner_token,
+                "pid": owner.pid,
+                "process_start_sha256": owner.process_start_sha256,
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def test_campaign_release_never_deletes_replacement_owner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = _acquire_lock(tmp_path)
+    replacement = profile.CampaignLockOwner(
+        pid=456,
+        process_start_sha256="f" * 64,
+        owner_token="1" * 64,
+    )
+    real_read_owner = profile._read_lock_owner
+    replaced = False
+
+    def replace_after_validation(lock_root: Path):
+        nonlocal replaced
+        observed = real_read_owner(lock_root)
+        if not replaced:
+            replaced = True
+            if lock_root.name == ".campaign-lock":
+                (lock_root / "owner.json").unlink()
+                lock_root.rmdir()
+            _write_campaign_owner(tmp_path / ".campaign-lock", replacement)
+        return observed
+
+    monkeypatch.setattr(profile, "_read_lock_owner", replace_after_validation)
+
+    profile.release_campaign_lock(tmp_path, original)
+
+    assert real_read_owner(tmp_path / ".campaign-lock") == replacement
+    assert not (tmp_path / ".campaign-release").exists()
+
+
+def test_campaign_wrong_release_token_restores_original_canonical_lock(
+    tmp_path: Path,
+) -> None:
+    owner = _acquire_lock(tmp_path)
+    wrong = profile.CampaignLockOwner(
+        pid=owner.pid,
+        process_start_sha256=owner.process_start_sha256,
+        owner_token="2" * 64,
+    )
+
+    with pytest.raises(RuntimeError, match="campaign_lock_owner_mismatch"):
+        profile.release_campaign_lock(tmp_path, wrong)
+
+    assert profile._read_lock_owner(tmp_path / ".campaign-lock") == owner
+    assert not (tmp_path / ".campaign-release").exists()
+
+
+def test_campaign_release_conflict_remains_recoverable_by_exact_owner(
+    tmp_path: Path,
+) -> None:
+    original = _acquire_lock(tmp_path)
+    replacement = profile.CampaignLockOwner(
+        pid=456,
+        process_start_sha256="f" * 64,
+        owner_token="4" * 64,
+    )
+    (tmp_path / ".campaign-lock").rename(tmp_path / ".campaign-release")
+    _write_campaign_owner(tmp_path / ".campaign-lock", replacement)
+
+    with pytest.raises(RuntimeError, match="campaign_release_in_progress"):
+        profile.release_campaign_lock(tmp_path, original)
+    profile._delete_exact_lock_root(tmp_path / ".campaign-lock", replacement)
+
+    profile.release_campaign_lock(tmp_path, original)
+
+    assert not (tmp_path / ".campaign-lock").exists()
+    assert not (tmp_path / ".campaign-release").exists()
+
+
+def test_campaign_release_marker_blocks_acquisition_and_recovery(
+    tmp_path: Path,
+) -> None:
+    _acquire_attempt(tmp_path)
+    (tmp_path / ".campaign-lock").rename(tmp_path / ".campaign-release")
+
+    with pytest.raises(RuntimeError, match="campaign_release_in_progress"):
+        _acquire_attempt(tmp_path, pid=456)
+    with pytest.raises(RuntimeError, match="campaign_release_in_progress"):
+        profile.recover_interrupted_attempt(
+            tmp_path, process_start_probe=lambda _pid: None
+        )
+
+    assert (tmp_path / ".campaign-release").is_dir()
+    assert not (tmp_path / ".campaign-lock").exists()
 
 
 def test_campaign_attempt_acquisition_leaves_running_lock_and_staging_evidence(
@@ -936,6 +1040,124 @@ def test_campaign_process_probe_failures_use_stable_codes_and_preserve_lock(
         )
     assert (tmp_path / "existing" / ".campaign-lock").is_dir()
     assert (tmp_path / "existing" / "attempts.jsonl").read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "observed_identity",
+    (None, 7, True, "", "not-a-hash", "g" * 64),
+)
+def test_campaign_acquisition_rejects_malformed_process_identity(
+    tmp_path: Path, observed_identity: object
+) -> None:
+    with pytest.raises(RuntimeError, match="^campaign_process_identity_invalid$"):
+        profile.acquire_campaign_lock(
+            tmp_path,
+            pid=123,
+            process_start_probe=lambda _pid: observed_identity,
+            owner_token_factory=lambda: _OWNER_TOKEN,
+        )
+
+    assert not (tmp_path / ".campaign-lock").exists()
+    assert not (tmp_path / ".campaign-recovery").exists()
+    assert not (tmp_path / ".campaign-release").exists()
+
+
+@pytest.mark.parametrize("observed_identity", (7, True, "", "bad", "g" * 64))
+def test_campaign_recovery_rejects_malformed_pre_takeover_identity(
+    tmp_path: Path, observed_identity: object
+) -> None:
+    _acquire_attempt(tmp_path)
+    before = (tmp_path / "attempts.jsonl").read_bytes()
+
+    with pytest.raises(RuntimeError, match="^campaign_process_identity_invalid$"):
+        profile.recover_interrupted_attempt(
+            tmp_path,
+            process_start_probe=lambda _pid: observed_identity,
+        )
+
+    assert profile._read_lock_owner(tmp_path / ".campaign-lock").owner_token == (
+        _OWNER_TOKEN
+    )
+    assert not (tmp_path / ".campaign-recovery").exists()
+    assert (tmp_path / "attempts.jsonl").read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    ("second_outcome", "code"),
+    (
+        (_OWNER_START, "campaign_lock_owner_live"),
+        (7, "campaign_process_identity_invalid"),
+        ("bad", "campaign_process_identity_invalid"),
+        (RuntimeError("probe-failed"), "campaign_process_identity_failed"),
+    ),
+)
+def test_campaign_recovery_rolls_back_after_second_probe_failure(
+    tmp_path: Path, second_outcome: object, code: str
+) -> None:
+    _acquire_attempt(tmp_path)
+    before = (tmp_path / "attempts.jsonl").read_bytes()
+    calls = 0
+
+    def probe(_pid: int):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return None
+        if isinstance(second_outcome, BaseException):
+            raise second_outcome
+        return second_outcome
+
+    with pytest.raises(RuntimeError, match=f"^{code}$"):
+        profile.recover_interrupted_attempt(tmp_path, process_start_probe=probe)
+
+    assert profile._read_lock_owner(tmp_path / ".campaign-lock").owner_token == (
+        _OWNER_TOKEN
+    )
+    assert not (tmp_path / ".campaign-recovery").exists()
+    assert (tmp_path / "attempts.jsonl").read_bytes() == before
+
+
+def test_campaign_recovery_rollback_conflict_preserves_both_locked_owners(
+    tmp_path: Path,
+) -> None:
+    _acquire_attempt(tmp_path)
+    before = (tmp_path / "attempts.jsonl").read_bytes()
+    replacement = profile.CampaignLockOwner(
+        pid=456,
+        process_start_sha256="f" * 64,
+        owner_token="3" * 64,
+    )
+    calls = 0
+
+    def probe(_pid: int):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            _write_campaign_owner(tmp_path / ".campaign-lock", replacement)
+            return _OWNER_START
+        return None
+
+    with pytest.raises(RuntimeError, match="^campaign_lock_owner_live$"):
+        profile.recover_interrupted_attempt(tmp_path, process_start_probe=probe)
+
+    assert profile._read_lock_owner(tmp_path / ".campaign-lock") == replacement
+    assert profile._read_lock_owner(tmp_path / ".campaign-rollback").owner_token == (
+        _OWNER_TOKEN
+    )
+    assert (tmp_path / "attempts.jsonl").read_bytes() == before
+    with pytest.raises(RuntimeError, match="campaign_recovery_in_progress"):
+        _acquire_attempt(tmp_path, pid=789)
+
+    profile._delete_exact_lock_root(tmp_path / ".campaign-lock", replacement)
+    with pytest.raises(RuntimeError, match="^campaign_recovery_rolled_back$"):
+        _acquire_attempt(tmp_path, pid=789)
+
+    assert profile._read_lock_owner(tmp_path / ".campaign-lock").owner_token == (
+        _OWNER_TOKEN
+    )
+    assert not (tmp_path / ".campaign-recovery").exists()
+    assert not (tmp_path / ".campaign-rollback").exists()
+    assert (tmp_path / "attempts.jsonl").read_bytes() == before
 
 
 def test_campaign_dead_owner_recovery_appends_interrupted_and_preserves_raw(

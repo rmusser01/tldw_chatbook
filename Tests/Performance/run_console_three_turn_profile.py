@@ -1784,6 +1784,98 @@ def _read_lock_owner(lock_root: Path) -> CampaignLockOwner:
         raise RuntimeError("campaign_lock_owner_invalid") from exc
 
 
+def _campaign_marker_error(campaign_root: Path) -> str | None:
+    if (campaign_root / ".campaign-release").exists() or (
+        campaign_root / ".campaign-release"
+    ).is_symlink():
+        return "campaign_release_in_progress"
+    if (campaign_root / ".campaign-recovery").exists() or (
+        campaign_root / ".campaign-recovery"
+    ).is_symlink():
+        return "campaign_recovery_in_progress"
+    if (campaign_root / ".campaign-rollback").exists() or (
+        campaign_root / ".campaign-rollback"
+    ).is_symlink():
+        return "campaign_recovery_in_progress"
+    return None
+
+
+def _delete_exact_lock_root(
+    lock_root: Path, owner: CampaignLockOwner
+) -> None:
+    if _read_lock_owner(lock_root) != owner:
+        raise RuntimeError("campaign_lock_owner_mismatch")
+    (lock_root / "owner.json").unlink()
+    lock_root.rmdir()
+
+
+def _write_lock_owner(lock_root: Path, owner: CampaignLockOwner) -> None:
+    with (lock_root / "owner.json").open("x", encoding="utf-8") as stream:
+        stream.write(
+            json.dumps(
+                {
+                    "pid": owner.pid,
+                    "process_start_sha256": owner.process_start_sha256,
+                    "owner_token": owner.owner_token,
+                },
+                sort_keys=True,
+            )
+            + "\n"
+        )
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
+def _restore_marker_to_canonical(
+    campaign_root: Path,
+    marker_root: Path,
+    owner: CampaignLockOwner,
+) -> bool:
+    """Restore without replacing a concurrently created canonical lock."""
+    lock_root = campaign_root / ".campaign-lock"
+    try:
+        lock_root.mkdir()
+    except FileExistsError:
+        return False
+    try:
+        _write_lock_owner(lock_root, owner)
+        _delete_exact_lock_root(marker_root, owner)
+    except BaseException:
+        return False
+    return True
+
+
+def _preserve_recovery_rollback(
+    campaign_root: Path,
+    recovery_root: Path,
+    owner: CampaignLockOwner,
+) -> None:
+    """Restore the owner, or preserve its marker when another lock won."""
+    if _restore_marker_to_canonical(campaign_root, recovery_root, owner):
+        return
+    try:
+        recovery_root.rename(campaign_root / ".campaign-rollback")
+    except OSError:
+        pass
+
+
+def _probe_process_start_identity(
+    process_start_probe: Callable[[int], str | None],
+    pid: int,
+    *,
+    allow_dead: bool,
+) -> str | None:
+    try:
+        observed = process_start_probe(pid)
+    except BaseException as exc:
+        raise RuntimeError("campaign_process_identity_failed") from exc
+    if observed is None and allow_dead:
+        return None
+    if not isinstance(observed, str) or not _SHA256.fullmatch(observed):
+        raise RuntimeError("campaign_process_identity_invalid")
+    return observed
+
+
 def acquire_campaign_lock(
     campaign_root: Path,
     *,
@@ -1796,12 +1888,24 @@ def acquire_campaign_lock(
         raise RuntimeError("campaign_root_invalid")
     campaign_root.mkdir(parents=True, exist_ok=True)
     lock_root = campaign_root / ".campaign-lock"
-    recovery_root = campaign_root / ".campaign-recovery"
-    if recovery_root.exists() or recovery_root.is_symlink():
+    rollback_root = campaign_root / ".campaign-rollback"
+    if rollback_root.exists() or rollback_root.is_symlink():
+        if lock_root.exists() or lock_root.is_symlink():
+            raise RuntimeError("campaign_recovery_in_progress")
+        rollback_owner = _read_lock_owner(rollback_root)
+        if _restore_marker_to_canonical(
+            campaign_root, rollback_root, rollback_owner
+        ):
+            raise RuntimeError("campaign_recovery_rolled_back")
         raise RuntimeError("campaign_recovery_in_progress")
+    marker_error = _campaign_marker_error(campaign_root)
+    if marker_error is not None:
+        raise RuntimeError(marker_error)
     owner_pid = os.getpid() if pid is None else pid
+    start_identity = _probe_process_start_identity(
+        process_start_probe, owner_pid, allow_dead=False
+    )
     try:
-        start_identity = process_start_probe(owner_pid)
         owner_token = owner_token_factory()
     except BaseException as exc:
         raise RuntimeError("campaign_process_identity_failed") from exc
@@ -1816,34 +1920,47 @@ def acquire_campaign_lock(
         lock_root.mkdir()
     except FileExistsError as exc:
         raise RuntimeError("campaign_lock_held") from exc
-    owner_path = lock_root / "owner.json"
-    with owner_path.open("x", encoding="utf-8") as stream:
-        stream.write(
-            json.dumps(
-                {
-                    "pid": owner.pid,
-                    "process_start_sha256": owner.process_start_sha256,
-                    "owner_token": owner.owner_token,
-                },
-                sort_keys=True,
-            )
-            + "\n"
-        )
-        stream.flush()
-        os.fsync(stream.fileno())
-    if recovery_root.exists() or recovery_root.is_symlink():
-        release_campaign_lock(campaign_root, owner)
-        raise RuntimeError("campaign_recovery_in_progress")
+    marker_error = _campaign_marker_error(campaign_root)
+    if marker_error is not None:
+        lock_root.rmdir()
+        raise RuntimeError(marker_error)
+    _write_lock_owner(lock_root, owner)
+    marker_error = _campaign_marker_error(campaign_root)
+    if marker_error is not None:
+        _delete_exact_lock_root(lock_root, owner)
+        raise RuntimeError(marker_error)
     return owner
 
 
 def release_campaign_lock(campaign_root: Path, owner: CampaignLockOwner) -> None:
-    """Release only the exact lock whose private metadata matches ``owner``."""
+    """Atomically own, validate, and remove only the exact caller-owned lock."""
     lock_root = campaign_root / ".campaign-lock"
-    if _read_lock_owner(lock_root) != owner:
+    release_root = campaign_root / ".campaign-release"
+    if release_root.exists() or release_root.is_symlink():
+        if lock_root.exists() or lock_root.is_symlink():
+            raise RuntimeError("campaign_release_in_progress")
+        observed_owner = _read_lock_owner(release_root)
+        if observed_owner != owner:
+            _restore_marker_to_canonical(
+                campaign_root, release_root, observed_owner
+            )
+            raise RuntimeError("campaign_lock_owner_mismatch")
+        _delete_exact_lock_root(release_root, owner)
+        return
+    marker_error = _campaign_marker_error(campaign_root)
+    if marker_error is not None:
+        raise RuntimeError(marker_error)
+    try:
+        lock_root.rename(release_root)
+    except FileNotFoundError as exc:
+        raise RuntimeError("campaign_lock_owner_invalid") from exc
+    except OSError as exc:
+        raise RuntimeError("campaign_release_in_progress") from exc
+    observed_owner = _read_lock_owner(release_root)
+    if observed_owner != owner:
+        _restore_marker_to_canonical(campaign_root, release_root, observed_owner)
         raise RuntimeError("campaign_lock_owner_mismatch")
-    (lock_root / "owner.json").unlink()
-    lock_root.rmdir()
+    _delete_exact_lock_root(release_root, owner)
 
 
 def acquire_campaign_attempt(
@@ -1891,8 +2008,9 @@ def recover_interrupted_attempt(
     """Atomically own a dead running lock and append only ``failed:interrupted``."""
     lock_root = campaign_root / ".campaign-lock"
     recovery_root = campaign_root / ".campaign-recovery"
-    if recovery_root.exists() or recovery_root.is_symlink():
-        raise RuntimeError("campaign_recovery_in_progress")
+    marker_error = _campaign_marker_error(campaign_root)
+    if marker_error is not None:
+        raise RuntimeError(marker_error)
     owner = _read_lock_owner(lock_root)
     ledger = campaign_root / "attempts.jsonl"
     lineage = attempt_lineage(ledger)
@@ -1905,10 +2023,9 @@ def recover_interrupted_attempt(
                 f"campaign_recovery_state_blocked:{latest['state']}"
             )
         raise RuntimeError("campaign_recovery_state_invalid")
-    try:
-        observed_start = process_start_probe(owner.pid)
-    except BaseException as exc:
-        raise RuntimeError("campaign_process_identity_failed") from exc
+    observed_start = _probe_process_start_identity(
+        process_start_probe, owner.pid, allow_dead=True
+    )
     if observed_start == owner.process_start_sha256:
         raise RuntimeError("campaign_lock_owner_live")
     try:
@@ -1917,16 +2034,22 @@ def recover_interrupted_attempt(
         raise RuntimeError("campaign_recovery_lost") from exc
     taken_owner = _read_lock_owner(recovery_root)
     if taken_owner != owner:
+        _preserve_recovery_rollback(
+            campaign_root, recovery_root, taken_owner
+        )
         raise RuntimeError("campaign_lock_owner_mismatch")
     try:
-        observed_start = process_start_probe(owner.pid)
-    except BaseException as exc:
-        raise RuntimeError("campaign_process_identity_failed") from exc
-    if observed_start == owner.process_start_sha256:
-        raise RuntimeError("campaign_lock_owner_live")
-    current = attempt_lineage(ledger)
-    if current != lineage or current[-1]["state"] != "running":
-        raise RuntimeError("campaign_recovery_state_changed")
+        observed_start = _probe_process_start_identity(
+            process_start_probe, owner.pid, allow_dead=True
+        )
+        if observed_start == owner.process_start_sha256:
+            raise RuntimeError("campaign_lock_owner_live")
+        current = attempt_lineage(ledger)
+        if current != lineage or current[-1]["state"] != "running":
+            raise RuntimeError("campaign_recovery_state_changed")
+    except BaseException:
+        _preserve_recovery_rollback(campaign_root, recovery_root, owner)
+        raise
     event = {
         "attempt_id": latest["attempt_id"],
         "state": "failed",
