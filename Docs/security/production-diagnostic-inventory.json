@@ -593,8 +593,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 338,
-      "diagnostic_digest": "445a3433663793c51d8e",
+      "call_count": 341,
+      "diagnostic_digest": "8d13c4bf654f81999035",
       "owner": "TASK-494",
       "path": "tldw_chatbook/DB/ChaChaNotes_DB.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -1377,8 +1377,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 18,
-      "diagnostic_digest": "051847e5abc212136e80",
+      "call_count": 20,
+      "diagnostic_digest": "b597ae206b3e2b1ddfd3",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Notes/sync_engine.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2490,8 +2490,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 13,
-      "diagnostic_digest": "003a1b7bcf88e43ebf39",
+      "call_count": 36,
+      "diagnostic_digest": "98b4672724ed97e2ea44",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Screens/change_review_screen.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -3603,6 +3603,13 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
+      "call_count": 1,
+      "diagnostic_digest": "3b62237e439a1aafa3a8",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Workspaces/git_workspace.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
       "call_count": 4,
       "diagnostic_digest": "57cd98b5b30e53dba161",
       "owner": "TASK-494",
@@ -3611,7 +3618,7 @@
     },
     {
       "call_count": 325,
-      "diagnostic_digest": "bb5156c2be2e60286533",
+      "diagnostic_digest": "14fba1fb194bef30c90b",
       "owner": "TASK-494",
       "path": "tldw_chatbook/app.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -3830,9 +3837,9 @@
   "schema_version": 2,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 520,
+    "owner_files": 521,
     "persistent_sink_files": 7,
     "task_492_calls": 1221,
-    "task_494_calls": 7179
+    "task_494_calls": 7208
   }
 }
