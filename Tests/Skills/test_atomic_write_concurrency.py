@@ -298,9 +298,7 @@ class TestOwnerOnlyTempCreation:
         temp.write_bytes(sentinel)
         written_paths: list[Path] = []
 
-        monkeypatch.setattr(
-            secrets, "token_hex", lambda size: "0123456789abcdef"
-        )
+        monkeypatch.setattr(secrets, "token_hex", lambda size: "0123456789abcdef")
 
         def write(path: Path) -> None:
             written_paths.append(path)
@@ -325,16 +323,12 @@ class TestOwnerOnlyTempCreation:
         writer_calls: list[Path] = []
         cleanup_calls: list[Path] = []
 
-        monkeypatch.setattr(
-            secrets, "token_hex", lambda size: f"{len(opened):016x}"
-        )
+        monkeypatch.setattr(secrets, "token_hex", lambda size: f"{len(opened):016x}")
 
         def collide(path, flags, mode):
             del flags, mode
             opened.append(Path(path))
-            error = FileExistsError(
-                errno.EEXIST, f"collision-{len(opened)}", path
-            )
+            error = FileExistsError(errno.EEXIST, f"collision-{len(opened)}", path)
             collisions.append(error)
             raise error
 
@@ -366,9 +360,7 @@ class TestOwnerOnlyTempCreation:
         alternate = temp.with_name(f"{temp.name}.fedcba9876543210")
         sentinel = b"unowned"
         temp.write_bytes(sentinel)
-        monkeypatch.setattr(
-            secrets, "token_hex", lambda size: "fedcba9876543210"
-        )
+        monkeypatch.setattr(secrets, "token_hex", lambda size: "fedcba9876543210")
 
         def fail(path: Path) -> None:
             assert path == alternate
