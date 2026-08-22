@@ -21,8 +21,9 @@ steady-state effects that are not removed by one warmup per arm.
 
 This task performs one separate, pre-registered confirmation. It introduces five
 complete balanced burn-in blocks before a fresh 30-block measurement. Burn-in validates
-the full product contract and is retained for audit, but it is never used in a summary,
-bootstrap, verdict, improvement claim, or replacement analysis of TASK-19641.
+the full product contract and is retained for audit, but it is never used in a
+performance-summary calculation, bootstrap, verdict, improvement claim, or replacement
+analysis of TASK-19641.
 
 ## Goals
 
