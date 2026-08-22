@@ -289,7 +289,16 @@ class _CapturedSession:
         self.closed = True
         return None
 
-    def post(self, url, *, headers=None, json=None, stream=False, timeout=None):
+    def post(
+        self,
+        url,
+        *,
+        headers=None,
+        json=None,
+        stream=False,
+        timeout=None,
+        allow_redirects=None,
+    ):
         self._captured.update(
             {
                 "url": url,

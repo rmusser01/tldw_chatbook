@@ -2196,6 +2196,13 @@ async def test_media_ingest_job_routes_wire_form_payload_and_status_controls(
 @pytest.mark.asyncio
 async def test_media_ingest_job_events_stream_parses_sse(monkeypatch):
     class FakeStreamResponse:
+        # task-19557: a real httpx.Response always carries status_code --
+        # TLDWAPIClient._raise_if_redirected reads it before raise_for_status
+        # to refuse a 3xx rather than follow it with the X-API-KEY/
+        # Authorization credential. 200 matches this fixture's raise_for_status
+        # no-op (a real success response).
+        status_code = 200
+
         def raise_for_status(self):
             return None
 
