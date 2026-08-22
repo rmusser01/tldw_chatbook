@@ -10,7 +10,7 @@ import sqlite3
 import threading
 import time
 from datetime import datetime, timezone
-from typing import Any, Callable, Mapping
+from typing import Any, Awaitable, Callable, Mapping
 
 from loguru import logger
 
@@ -274,7 +274,11 @@ def _entirely_skipped_dispositions(
     Args:
         dispositions_counts: The run's `_disposition_counts()` output, or
             `None`/absent for source types with no dispositions (feed/API
-            runs, which can never skip and always return False here).
+            runs, whose dispositions are ``None`` on the ordinary path).
+            task-19562: feed/API runs CAN now skip -- when they do they carry
+            a single `DISPOSITION_SKIPPED_IN_FLIGHT` disposition precisely so
+            they match here and `execute_run` skips the health accounting,
+            exactly like an entirely-skipped url-family run.
 
     Returns:
         True only for a non-empty counts mapping that is all zeros except
@@ -1745,11 +1749,19 @@ class LocalWatchlistsService:
 
         subscription_config = self._subscription_execution_config(subscription)
         source_type = str(subscription_config.get("type") or "").strip()
-        # `None` for the feed and API arms, which have no dispositions at all
-        # (spec §4) -- distinguished from `[]`, which would record four zeros.
+        # `None` for the feed and API arms on the ordinary path, which have
+        # no dispositions at all (spec §4) -- distinguished from `[]`, which
+        # would record four zeros. task-19562: those arms now REASSIGN this
+        # to a one-element skip list when the in-flight guard turns them
+        # away, so a skipped check is not mistaken for a clean zero-item run.
         dispositions: list[dict[str, Any]] | None = None
         if source_type in _FEED_SOURCE_TYPES:
-            items = await FeedMonitor().check_feed(subscription_config)
+            items, dispositions = await self._run_guarded_source_check(
+                db,
+                subscription_config,
+                "feed",
+                lambda: FeedMonitor().check_feed(subscription_config),
+            )
         elif source_type == "url":
             result, disposition = await self._check_url_guarded(
                 URLMonitor(db),
@@ -1789,7 +1801,12 @@ class LocalWatchlistsService:
                 if result:
                     items.append(result)
         elif source_type == "api":
-            items = await self._items_for_api_source(subscription_config)
+            items, dispositions = await self._run_guarded_source_check(
+                db,
+                subscription_config,
+                "api",
+                lambda: self._items_for_api_source(subscription_config),
+            )
         else:
             raise ValueError(
                 f"Unsupported local watchlist source type for execution: {source_type}"
@@ -1815,6 +1832,79 @@ class LocalWatchlistsService:
                 run_stats["max_withheld_pct"] = max_withheld
             result_payload["stats"] = run_stats
         return result_payload
+
+    async def _run_guarded_source_check(
+        self,
+        db: Any,
+        subscription_config: Mapping[str, Any],
+        claim_kind: str,
+        check: "Callable[[], Awaitable[list[Any]]]",
+    ) -> tuple[list[Any], list[dict[str, Any]] | None]:
+        """A whole-source check behind the same in-flight guard the URL arms use.
+
+        task-19562 part A: only the url-family arms went through
+        `_check_url_guarded`. The **feed** and **API** arms -- and feeds are
+        the commonest source type -- ran unguarded, so a scheduler tick
+        overlapping a manual "Check Now" ran the check twice: the alert
+        notification fired twice and statistics double-counted.
+
+        These arms have no per-URL granularity, so the claim is scoped to the
+        whole source with a ``claim_kind`` sentinel in the URL slot. The
+        sentinel is NUL-prefixed, which no real URL can contain, so it can
+        never collide with a url-family claim for the same subscription.
+
+        A skip returns a single `DISPOSITION_SKIPPED_IN_FLIGHT` disposition
+        rather than the arm's usual ``None``. That is load-bearing, not
+        cosmetic: `_entirely_skipped_dispositions` -> `execute_run` uses it to
+        short-circuit source-health accounting, so a skipped check cannot take
+        `record_check_result`'s SUCCESS branch and reset the auto-pause
+        breaker, clear `last_error` and stamp `last_successful_check` for a
+        run that never contacted the source. Returning ``[]`` items with
+        ``None`` dispositions would have reported "nothing new" for a check
+        that never happened.
+
+        ``db`` is taken as a parameter and held in THIS frame across the
+        await on purpose: the claim key stores ``id(db)`` and no reference to
+        it, so it is the live parameter that stops the object being collected
+        and its id reused while the claim is registered (see
+        `_IN_FLIGHT_URL_CHECKS`).
+
+        Args:
+            db: The database this run writes to; part of the claim key.
+            subscription_config: The source's execution config; must carry ``id``.
+            claim_kind: Short arm name (``"feed"``/``"api"``) used to build
+                the sentinel claim slot.
+            check: Zero-arg coroutine factory performing the actual check.
+
+        Returns:
+            ``(items, dispositions)`` -- the check's items with ``None``
+            dispositions when this entrant won the claim, or ``([], [skip])``
+            when a concurrent check of the same source already held it.
+        """
+        from .monitoring_engine import DISPOSITION_SKIPPED_IN_FLIGHT
+
+        subscription_id = subscription_config.get("id")
+        claim_slot = f"\x00{claim_kind}"
+        key = (id(db), subscription_id, claim_slot)
+        if key in _IN_FLIGHT_URL_CHECKS:
+            logger.info(
+                f"watchlist check skipped: subscription {subscription_id} "
+                f"already has a {claim_kind} check in flight"
+            )
+            return [], [
+                {
+                    "kind": DISPOSITION_SKIPPED_IN_FLIGHT,
+                    "reason": None,
+                    "withheld_percentage": None,
+                }
+            ]
+        _IN_FLIGHT_URL_CHECKS.add(key)
+        try:
+            return await check(), None
+        finally:
+            # `finally` so a raise or a cancellation (the user navigating away
+            # mid-check) can never strand the source as permanently in flight.
+            _IN_FLIGHT_URL_CHECKS.discard(key)
 
     async def _check_url_guarded(
         self,
