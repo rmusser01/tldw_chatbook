@@ -8,6 +8,10 @@ from tldw_chatbook.Chat.provider_continuation import (
     dump_provider_continuation_json,
     read_provider_continuation_json,
 )
+from tldw_chatbook.Chat.assistant_generation_state import (
+    AssistantGenerationState,
+    normalize_assistant_generation_state,
+)
 from tldw_chatbook.Sync_Interop.domain_adapters import (
     ChatSyncAdapter,
     MediaSyncAdapter,
@@ -73,12 +77,19 @@ class SyncEnvelopeApplier:
         if envelope.domain == "chat":
             chat_store = _ContinuationValidatingChatStore(local_store)
             local_store = chat_store
-        result = adapter.apply(
-            envelope,
-            dataset_key=self.dataset_key,
-            local_store=local_store,
-            record_conflict=self._record_conflict,
-        )
+        try:
+            result = adapter.apply(
+                envelope,
+                dataset_key=self.dataset_key,
+                local_store=local_store,
+                record_conflict=self._record_conflict,
+            )
+        except _InvalidChatMessagePayload:
+            return self._record_conflict(
+                envelope,
+                conflict_type="invalid_chat_message_payload",
+                message="The chat message payload is invalid.",
+            )
         if chat_store is not None and chat_store.warning is not None:
             return {**result, "warning": chat_store.warning}
         return result
@@ -128,10 +139,24 @@ class _ContinuationValidatingChatStore:
         payload: dict[str, Any],
         payload_hash: str,
     ) -> None:
+        payload = dict(payload)
+        payload.setdefault("assistant_generation_state", None)
+        allowed_keys = {"assistant_generation_state", "content", "role"}
+        if "provider_continuation_json" in payload:
+            allowed_keys.add("provider_continuation_json")
+        if (
+            set(payload) != allowed_keys
+            or type(payload.get("content")) is not str
+            or type(payload.get("role")) is not str
+        ):
+            raise _InvalidChatMessagePayload
+
         private_value = payload.get("provider_continuation_json")
+        active_continuation = False
         if "provider_continuation_json" in payload and private_value is not None:
             safe_read = read_provider_continuation_json(private_value)
             if payload.get("role") == "assistant" and safe_read.checkpoint is not None:
+                active_continuation = safe_read.checkpoint.state == "active"
                 payload = {
                     **payload,
                     "provider_continuation_json": dump_provider_continuation_json(
@@ -145,9 +170,32 @@ class _ContinuationValidatingChatStore:
                     "Exact tool continuation was discarded."
                 )
         elif "provider_continuation_json" in payload:
-            payload = dict(payload)
             payload.pop("provider_continuation_json", None)
+
+        raw_state = payload["assistant_generation_state"]
+        if raw_state is not None and payload["role"] != "assistant":
+            raise _InvalidChatMessagePayload
+        try:
+            state = normalize_assistant_generation_state(
+                role=payload["role"],
+                raw_state=raw_state,
+                has_valid_active_continuation=active_continuation,
+            )
+        except ValueError:
+            raise _InvalidChatMessagePayload from None
+        if (
+            state is AssistantGenerationState.CONTINUATION_ACTIVE
+            and not active_continuation
+        ):
+            raise _InvalidChatMessagePayload
+        payload["assistant_generation_state"] = (
+            state.value if state is not None else None
+        )
 
         writer = getattr(self.store, "append_chat_message", None)
         if callable(writer):
             writer(stable_key, payload, payload_hash)
+
+
+class _InvalidChatMessagePayload(Exception):
+    """Pulled Chat payload failed its exact compatibility contract."""

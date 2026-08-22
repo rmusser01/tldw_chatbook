@@ -174,6 +174,7 @@ def test_chat_applier_appends_by_stable_id_and_conflicts_on_hash_mismatch() -> N
     assert first["status"] == "applied"
     assert second["status"] == "noop"
     assert store.chat_messages["conversation-1:message-1"] == {
+        "assistant_generation_state": None,
         "content": "hello",
         "role": "user",
     }
@@ -209,6 +210,7 @@ def test_chat_applier_allows_versioned_message_update() -> None:
     assert first["status"] == "applied"
     assert second["status"] == "applied"
     assert store.chat_messages["conversation-1:message-1"] == {
+        "assistant_generation_state": None,
         "content": "second",
         "role": "assistant",
     }
@@ -278,6 +280,7 @@ def test_chat_applier_drops_invalid_private_data_but_applies_visible_message() -
     assert result["status"] == "applied"
     assert result["warning"] == "Exact tool continuation was discarded."
     assert store.chat_messages["conversation-1:message-1"] == {
+        "assistant_generation_state": None,
         "content": "visible survives",
         "role": "assistant",
     }
@@ -330,6 +333,7 @@ def test_chat_applier_warns_for_present_falsey_invalid_private_data(
         "warning": "Exact tool continuation was discarded.",
     }
     assert store.chat_messages["conversation-1:message-1"] == {
+        "assistant_generation_state": None,
         "content": "visible survives",
         "role": "assistant",
     }
@@ -365,9 +369,83 @@ def test_chat_applier_accepts_legacy_missing_private_data_without_warning(
 
     assert applier.apply(envelope) == {"status": "applied"}
     assert store.chat_messages["conversation-1:message-1"] == {
+        "assistant_generation_state": None,
         "content": "legacy visible",
         "role": "assistant",
     }
+
+
+@pytest.mark.parametrize(
+    ("role", "state"),
+    [
+        ("assistant", "unknown"),
+        ("user", "accepted"),
+    ],
+)
+def test_chat_applier_rejects_invalid_generation_state_payloads(
+    role: str, state: str
+) -> None:
+    dataset_key = generate_dataset_key()
+    builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1", device_id="device-1", dataset_key=dataset_key
+    )
+    store = RecordingLocalStore()
+    applier = SyncEnvelopeApplier(dataset_key=dataset_key, local_store=store)
+    envelope = builder.build_chat_message(
+        conversation_id="conversation-1",
+        message_id="message-1",
+        role="assistant",
+        content="visible",
+    )
+    payload = {
+        "assistant_generation_state": state,
+        "content": "visible",
+        "role": role,
+    }
+    envelope = envelope.model_copy(
+        update={
+            "payload_ciphertext": encrypt_sync_payload(
+                payload, key=dataset_key
+            ).model_dump_json(),
+            "payload_hash": builder._payload_hash(payload),
+        }
+    )
+
+    result = applier.apply(envelope)
+
+    assert result["status"] == "conflict"
+    assert result["conflict"]["conflict_type"] == "invalid_chat_message_payload"
+    assert store.chat_messages == {}
+
+
+def test_chat_applier_rejects_unknown_payload_keys_after_legacy_normalization() -> None:
+    dataset_key = generate_dataset_key()
+    builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1", device_id="device-1", dataset_key=dataset_key
+    )
+    store = RecordingLocalStore()
+    applier = SyncEnvelopeApplier(dataset_key=dataset_key, local_store=store)
+    envelope = builder.build_chat_message(
+        conversation_id="conversation-1",
+        message_id="message-1",
+        role="assistant",
+        content="visible",
+    )
+    payload = {"content": "visible", "role": "assistant", "unexpected": True}
+    envelope = envelope.model_copy(
+        update={
+            "payload_ciphertext": encrypt_sync_payload(
+                payload, key=dataset_key
+            ).model_dump_json(),
+            "payload_hash": builder._payload_hash(payload),
+        }
+    )
+
+    result = applier.apply(envelope)
+
+    assert result["status"] == "conflict"
+    assert result["conflict"]["conflict_type"] == "invalid_chat_message_payload"
+    assert store.chat_messages == {}
 
 
 def test_chat_conflict_never_field_merges_content_and_continuation() -> None:

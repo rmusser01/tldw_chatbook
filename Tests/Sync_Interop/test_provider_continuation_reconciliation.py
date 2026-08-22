@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
+from tldw_chatbook.Chat.assistant_generation_state import AssistantGenerationState
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.provider_continuation import (
@@ -15,6 +18,109 @@ from tldw_chatbook.Sync_Interop.envelope_applier import SyncEnvelopeApplier
 from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
 from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
 from tldw_chatbook.tldw_api import SyncV2Envelope
+
+
+@pytest.mark.parametrize(
+    "state", [None, *(item.value for item in AssistantGenerationState)]
+)
+def test_state_survives_create_update_delete_and_undelete_projection(
+    tmp_path, state: str | None
+) -> None:
+    db = CharactersRAGDB(tmp_path / f"lifecycle-{state}.db", client_id="source")
+    try:
+        conversation_id = db.add_conversation({"title": "Lifecycle"})
+        message_id = db.add_message(
+            {
+                "conversation_id": conversation_id,
+                "sender": "assistant",
+                "role": "assistant",
+                "content": "visible",
+                "assistant_generation_state": state,
+            }
+        )
+        assert message_id is not None
+        dataset_key = generate_dataset_key()
+        repo = _configured_repo(tmp_path / f"lifecycle-sync-{state}.db")
+        producer = ChatSyncV2OutboxProducer(
+            state_repository=repo,
+            dataset_keys={"dataset-1": dataset_key},
+            source=db,
+        )
+        scope = {
+            "server_profile_id": "server-a",
+            "authenticated_principal_id": "user-a",
+            "workspace_scope": "workspace-1",
+        }
+        upsert_hash = canonical_payload_hash(
+            {
+                "assistant_generation_state": state,
+                "content": "visible",
+                "role": "assistant",
+            }
+        )
+
+        created = producer.reconcile_chat_message_intent(
+            **scope,
+            message_id=str(message_id),
+            message_version=1,
+            payload_hash=upsert_hash,
+        )
+        assert db.update_message(
+            str(message_id), {"ranking": 1}, expected_version=1
+        )
+        updated = producer.reconcile_chat_message_intent(
+            **scope,
+            message_id=str(message_id),
+            message_version=2,
+            payload_hash=upsert_hash,
+        )
+        assert db.soft_delete_message(str(message_id), expected_version=2)
+        deleted = producer.reconcile_chat_message_delete_intent(
+            **scope,
+            message_id=str(message_id),
+            message_version=3,
+            payload_hash=canonical_payload_hash({"deleted": True}),
+        )
+        with db.transaction() as conn:
+            conn.execute("DROP TRIGGER messages_au")
+            conn.execute(
+                "UPDATE messages SET deleted = 0, version = 4, last_modified = ? "
+                "WHERE id = ?",
+                (db._get_current_utc_timestamp_iso(), message_id),
+            )
+        undeleted = producer.reconcile_chat_message_intent(
+            **scope,
+            message_id=str(message_id),
+            message_version=4,
+            payload_hash=upsert_hash,
+        )
+
+        assert [
+            created["status"],
+            updated["status"],
+            deleted["status"],
+            undeleted["status"],
+        ] == ["enqueued"] * 4
+        entries = repo.list_sync_v2_outbox_entries(
+            **scope, dataset_id="dataset-1"
+        )
+        projected = [
+            decrypt_sync_payload(
+                json.loads(entry["envelope"]["payload_ciphertext"]), key=dataset_key
+            )
+            for entry in entries
+            if entry["envelope"]["operation"] == "upsert"
+        ]
+        assert projected == [
+            {
+                "assistant_generation_state": state,
+                "content": "visible",
+                "role": "assistant",
+            }
+        ] * 3
+        assert entries[2]["envelope"]["base_version"] == upsert_hash
+    finally:
+        db.close_connection()
 
 
 class _RemoteChatStore:
@@ -227,7 +333,11 @@ def test_clear_and_later_edit_project_distinct_whole_message_versions(tmp_path) 
             provider_continuation_json=None,
         )
         cleared_hash = canonical_payload_hash(
-            {"content": "visible answer", "role": "assistant"}
+            {
+                "assistant_generation_state": None,
+                "content": "visible answer",
+                "role": "assistant",
+            }
         )
         producer.reconcile_chat_message_intent(
             **scope,
@@ -245,8 +355,13 @@ def test_clear_and_later_edit_project_distinct_whole_message_versions(tmp_path) 
         ]
         assert len(entries) == 2
         assert "provider_continuation_json" in payloads[0]
+        assert payloads[0]["assistant_generation_state"] == "continuation_active"
         assert payloads[0]["content"] == "visible answer"
-        assert payloads[1] == {"content": "visible answer", "role": "assistant"}
+        assert payloads[1] == {
+            "assistant_generation_state": None,
+            "content": "visible answer",
+            "role": "assistant",
+        }
         with repo._get_connection() as conn:
             assert [
                 row[0]
@@ -328,6 +443,7 @@ def test_restore_reconciles_committed_visible_clear_after_projection_failure(
         stable_key = first_envelope.stable_key
         assert stable_key is not None
         assert remote.messages[stable_key] == {
+            "assistant_generation_state": None,
             "content": "visible answer",
             "role": "assistant",
         }
@@ -686,6 +802,7 @@ def _source_message(tmp_path) -> tuple[CharactersRAGDB, str, str]:
         message_id,
         canonical_payload_hash(
             {
+                "assistant_generation_state": "continuation_active",
                 "content": "visible answer",
                 "provider_continuation_json": canonical_private,
                 "role": "assistant",
@@ -709,7 +826,14 @@ def _configured_repo(path) -> SyncStateRepository:
 
 def _current_message_payload_hash(db: CharactersRAGDB, message_id: str) -> str:
     row = db.get_message_by_id(message_id)
-    payload = {"content": row["content"], "role": "assistant"}
+    state = row["assistant_generation_state"]
+    if row["provider_continuation_json"] is not None:
+        state = "continuation_active"
+    payload = {
+        "assistant_generation_state": state,
+        "content": row["content"],
+        "role": "assistant",
+    }
     if row["provider_continuation_json"] is not None:
         payload["provider_continuation_json"] = row["provider_continuation_json"]
     return canonical_payload_hash(payload)

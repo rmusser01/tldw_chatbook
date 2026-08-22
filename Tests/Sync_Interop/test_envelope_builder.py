@@ -5,6 +5,7 @@ import json
 import pytest
 
 from tldw_chatbook.Chat.provider_continuation import ContinuationValidationError
+from tldw_chatbook.Chat.assistant_generation_state import AssistantGenerationState
 from tldw_chatbook.Sync_Interop.crypto import decrypt_sync_payload, generate_dataset_key
 from tldw_chatbook.Sync_Interop.envelope_builder import SyncEnvelopeBuilder
 from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
@@ -87,9 +88,75 @@ def test_chat_message_uses_stable_message_identity() -> None:
         "entity_kind": "message",
     }
     assert decrypt_sync_payload_json(envelope.payload_ciphertext, dataset_key) == {
+        "assistant_generation_state": None,
         "content": "private answer",
         "role": "assistant",
     }
+
+
+@pytest.mark.parametrize("state", list(AssistantGenerationState))
+def test_chat_message_carries_each_closed_assistant_generation_state(
+    state: AssistantGenerationState,
+) -> None:
+    dataset_key = generate_dataset_key()
+    builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1", device_id="device-1", dataset_key=dataset_key
+    )
+
+    envelope = builder.build_chat_message(
+        conversation_id="conversation-1",
+        message_id="message-1",
+        role="assistant",
+        content="",
+        assistant_generation_state=state.value,
+    )
+
+    assert decrypt_sync_payload_json(envelope.payload_ciphertext, dataset_key) == {
+        "assistant_generation_state": state.value,
+        "content": "",
+        "role": "assistant",
+    }
+
+
+@pytest.mark.parametrize(
+    ("role", "state"),
+    [("assistant", "unknown"), ("user", "accepted")],
+)
+def test_chat_message_rejects_malformed_or_wrong_role_generation_state(
+    role: str, state: str
+) -> None:
+    builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1",
+        device_id="device-1",
+        dataset_key=generate_dataset_key(),
+    )
+
+    with pytest.raises(ValueError, match="assistant generation state"):
+        builder.build_chat_message(
+            conversation_id="conversation-1",
+            message_id="message-1",
+            role=role,
+            content="visible",
+            assistant_generation_state=state,
+        )
+
+
+def test_chat_message_rejects_malformed_state_even_with_active_continuation() -> None:
+    builder = SyncEnvelopeBuilder(
+        dataset_id="dataset-1",
+        device_id="device-1",
+        dataset_key=generate_dataset_key(),
+    )
+
+    with pytest.raises(ValueError, match="assistant generation state"):
+        builder.build_chat_message(
+            conversation_id="conversation-1",
+            message_id="message-1",
+            role="assistant",
+            content="visible",
+            provider_continuation_json=_provider_continuation_json(),
+            assistant_generation_state="unknown",
+        )
 
 
 def test_chat_message_preserves_restore_metadata_without_plaintext_leak() -> None:
@@ -128,6 +195,7 @@ def test_chat_message_preserves_restore_metadata_without_plaintext_leak() -> Non
         "variant_turn_id": "turn-1",
     }
     assert decrypt_sync_payload_json(envelope.payload_ciphertext, dataset_key) == {
+        "assistant_generation_state": None,
         "content": "private regenerated answer",
         "role": "assistant",
     }
@@ -206,6 +274,7 @@ def test_chat_message_omits_empty_continuation_for_legacy_compatibility(
     )
 
     assert decrypt_sync_payload_json(envelope.payload_ciphertext, dataset_key) == {
+        "assistant_generation_state": None,
         "content": "visible answer",
         "role": "assistant",
     }

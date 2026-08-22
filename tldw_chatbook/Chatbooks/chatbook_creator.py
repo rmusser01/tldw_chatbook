@@ -38,6 +38,7 @@ from ..Chat.provider_continuation import (
     dump_provider_continuation_json,
     parse_provider_continuation_json,
 )
+from ..Chat.assistant_generation_state import normalize_assistant_generation_state
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..DB.Prompts_DB import PromptsDatabase
@@ -671,7 +672,8 @@ class ChatbookCreator:
             SELECT id, conversation_id, parent_message_id, sender, content,
                    image_data, image_mime_type, timestamp, role, deleted,
                    variant_of, variant_number, is_selected_variant,
-                   total_variants, provider_continuation_json
+                   total_variants, provider_continuation_json,
+                   assistant_generation_state
               FROM messages
              WHERE conversation_id = ?
              ORDER BY timestamp ASC, rowid ASC
@@ -749,12 +751,33 @@ class ChatbookCreator:
                 "total_variants": int(msg.get("total_variants") or 1),
             }
             private_json = msg.get("provider_continuation_json")
+            checkpoint = None
             if private_json is not None:
                 checkpoint = parse_provider_continuation_json(private_json)
                 canonical = dump_provider_continuation_json(checkpoint)
                 message_data["_private"] = {
                     "provider_continuation": json.loads(canonical or "null")
                 }
+            raw_state = msg.get("assistant_generation_state")
+            if raw_state is not None and message_data["role"] != "assistant":
+                raise _ConversationGraphProjectionError(
+                    "Conversation graph projection unavailable."
+                )
+            try:
+                generation_state = normalize_assistant_generation_state(
+                    role=message_data["role"],
+                    raw_state=raw_state,
+                    has_valid_active_continuation=(
+                        checkpoint is not None and checkpoint.state == "active"
+                    ),
+                )
+            except ValueError:
+                raise _ConversationGraphProjectionError(
+                    "Conversation graph projection unavailable."
+                ) from None
+            message_data["assistant_generation_state"] = (
+                generation_state.value if generation_state is not None else None
+            )
             attachment_entries = self._export_message_attachments(
                 msg,
                 extra_attachments.get(str(message_id), []),

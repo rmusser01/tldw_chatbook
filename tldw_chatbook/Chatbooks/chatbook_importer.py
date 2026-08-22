@@ -33,6 +33,10 @@ from ..Chat.provider_continuation import (
     dump_provider_continuation_json,
     read_provider_continuation_json,
 )
+from ..Chat.assistant_generation_state import (
+    AssistantGenerationState,
+    normalize_assistant_generation_state,
+)
 from ..model_capabilities import moonshot_model_returns_reasoning_content
 from ..DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
 from ..DB.Client_Media_DB_v2 import MediaDatabase
@@ -945,6 +949,32 @@ class ChatbookImporter:
                                     msg_dict["provider_continuation_json"] = (
                                         continuation
                                     )
+                                raw_state = msg.get("assistant_generation_state")
+                                try:
+                                    generation_state = (
+                                        normalize_assistant_generation_state(
+                                            role=msg["role"],
+                                            raw_state=raw_state,
+                                            has_valid_active_continuation=(
+                                                continuation is not None
+                                            ),
+                                        )
+                                    )
+                                except ValueError:
+                                    raise ValueError(
+                                        "Invalid V2 conversation graph."
+                                    ) from None
+                                if (
+                                    generation_state
+                                    is AssistantGenerationState.CONTINUATION_ACTIVE
+                                    and continuation is None
+                                ):
+                                    generation_state = None
+                                msg_dict["assistant_generation_state"] = (
+                                    generation_state.value
+                                    if generation_state is not None
+                                    else None
+                                )
                             elif msg.get("_private") is not None:
                                 status.add_warning(
                                     "Exact tool continuation was discarded for "
@@ -1078,8 +1108,9 @@ class ChatbookImporter:
                 or total_content_chars > _MAX_V2_TOTAL_CONTENT_CHARS
             ):
                 raise ValueError("Invalid V2 conversation graph.")
-            item = raw
+            item = dict(raw)
             private = raw.get("_private")
+            checkpoint = None
             if (
                 isinstance(private, dict)
                 and set(private) == {"provider_continuation"}
@@ -1097,10 +1128,25 @@ class ChatbookImporter:
                         total_private_bytes + private_bytes
                         > _MAX_V2_TOTAL_PRIVATE_BYTES
                     ):
-                        item = dict(raw)
                         item["_private"] = {"provider_continuation": None}
                     else:
                         total_private_bytes += private_bytes
+            raw_state = raw.get("assistant_generation_state")
+            if raw_state is not None and role != "assistant":
+                raise ValueError("Invalid V2 conversation graph.")
+            try:
+                generation_state = normalize_assistant_generation_state(
+                    role=role,
+                    raw_state=raw_state,
+                    has_valid_active_continuation=(
+                        checkpoint is not None and checkpoint.state == "active"
+                    ),
+                )
+            except ValueError:
+                raise ValueError("Invalid V2 conversation graph.") from None
+            item["assistant_generation_state"] = (
+                generation_state.value if generation_state is not None else None
+            )
             messages.append(item)
             by_id[message_id] = item
             orders.add(order)

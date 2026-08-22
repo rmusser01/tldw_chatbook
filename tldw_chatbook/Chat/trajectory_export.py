@@ -82,6 +82,7 @@ _MESSAGE_KEYS = (
     "timestamp",
     "parent_message_id",
     "usage_json",
+    "assistant_generation_state",
 )
 
 #: Exported sidecar fields, mirroring ``TrajectoryRowRead``.
@@ -1381,16 +1382,20 @@ def validate_trajectory_export(payload: Any) -> dict:
         )
 
     messages = _require(payload, "messages", list, "messages")
+    normalized_messages: list[dict[str, Any]] = []
     for index, message in enumerate(messages):
         if not isinstance(message, Mapping):
             raise TrajectoryExportError(
                 f"Invalid trajectory export: 'messages[{index}]' must be an object"
             )
+        normalized_message = dict(message)
+        normalized_message.setdefault("assistant_generation_state", None)
         for key in _MESSAGE_KEYS:
-            if key not in message:
+            if key not in normalized_message:
                 raise TrajectoryExportError(
                     f"Invalid trajectory export: 'messages[{index}].{key}' is missing"
                 )
+        normalized_messages.append(normalized_message)
 
     rows = _require(payload, "trajectory_rows", list, "trajectory_rows")
     for index, row in enumerate(rows):
@@ -1416,6 +1421,7 @@ def validate_trajectory_export(payload: Any) -> dict:
         )
 
     normalized = dict(payload)
+    normalized["messages"] = normalized_messages
     normalized.setdefault("compaction_records", [])
     normalized.setdefault("variants", [])
     normalized.setdefault("active_leaf_message_id", None)

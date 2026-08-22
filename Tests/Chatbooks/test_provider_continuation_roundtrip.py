@@ -208,6 +208,7 @@ def _source_graph(
             "content": "same visible answer",
             "timestamp": "2026-08-12T00:00:02+00:00",
             "provider_continuation_json": _checkpoint_json(),
+            "assistant_generation_state": "accepted",
         }
     )
     assert db.add_message(
@@ -320,6 +321,11 @@ def test_v2_export_preserves_graph_and_private_owner(
     assert by_id[ids["selected"]]["_private"]["provider_continuation"] == json.loads(
         _checkpoint_json()
     )
+    assert by_id[ids["selected"]]["assistant_generation_state"] == (
+        "continuation_active"
+    )
+    assert by_id[ids["user"]]["assistant_generation_state"] is None
+    assert "console_dispatch_checkpoints" not in json.dumps(conversation)
     assert "_private" not in by_id[ids["base"]]
     for member in (manifest, readme):
         serialized = json.dumps(member)
@@ -382,6 +388,7 @@ def test_v2_import_remaps_complete_graph_before_attaching_private_owner(
     base = next(row for row in siblings if not row["is_selected_variant"])
     assert selected["variant_of"] == base["id"]
     assert selected["provider_continuation_json"] == _checkpoint_json()
+    assert selected["assistant_generation_state"] == "continuation_active"
     checkpoint = parse_provider_continuation_json(
         selected["provider_continuation_json"]
     )
@@ -757,3 +764,11 @@ def test_v1_flat_import_without_private_data_remains_supported(
 
     assert success, message
     assert status.warnings == []
+    destination = CharactersRAGDB(str(destination_path), "verify-legacy-state")
+    imported_id = str(destination.get_conversation_by_name("Graph")[0]["id"])
+    rows = destination.execute_query(
+        "SELECT assistant_generation_state FROM messages WHERE conversation_id = ?",
+        (imported_id,),
+    ).fetchall()
+    assert len(rows) == 2
+    assert all(row["assistant_generation_state"] is None for row in rows)

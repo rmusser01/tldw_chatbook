@@ -37,11 +37,12 @@ def normalize_assistant_generation_state(
     """
     if str(role or "").lower() != "assistant":
         return None
+    normalized = (
+        None if raw_state is None else AssistantGenerationState(str(raw_state))
+    )
     if has_valid_active_continuation:
         return AssistantGenerationState.CONTINUATION_ACTIVE
-    if raw_state is None:
-        return None
-    return AssistantGenerationState(str(raw_state))
+    return normalized
 
 
 def unresolved_imported_generation_state_copy(state: object) -> str | None:
@@ -55,3 +56,22 @@ def unresolved_imported_generation_state_copy(state: object) -> str | None:
     except ValueError:
         return None
     return _UNRESOLVED_IMPORTED_STATE_COPY.get(normalized)
+
+
+def render_exported_assistant_content(
+    *, role: object, content: object, state: object
+) -> str:
+    """Render bounded literal copy for an otherwise-empty assistant owner."""
+    rendered = content if isinstance(content, str) else str(content or "")
+    if str(role or "").lower() != "assistant" or rendered:
+        return rendered
+    pending = unresolved_imported_generation_state_copy(state)
+    if pending is not None:
+        return pending
+    try:
+        normalized = AssistantGenerationState(str(state))
+    except ValueError:
+        return rendered
+    if normalized is AssistantGenerationState.COMPLETE:
+        return "No response was generated."
+    return rendered

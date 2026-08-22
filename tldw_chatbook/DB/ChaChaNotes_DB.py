@@ -95,6 +95,58 @@ _UNSET = object()
 # Conversations snapshot so Console workspace chats are listed and counted.
 CONVERSATION_SCOPE_ALL = "all"
 
+_CHAT_SYNC_INTENT_PAYLOAD_KEYS = frozenset(
+    {
+        "id",
+        "conversation_id",
+        "parent_message_id",
+        "sender",
+        "content",
+        "image_mime_type",
+        "provider_continuation_json",
+        "assistant_generation_state",
+        "timestamp",
+        "ranking",
+        "last_modified",
+        "deleted",
+        "client_id",
+        "version",
+    }
+)
+
+
+def _normalize_legacy_chat_sync_intent_payload(
+    payload: object,
+) -> dict[str, Any] | None:
+    """Add only the v45 state key, then enforce the exact Sync-v1 shape."""
+    if type(payload) is not dict:
+        return None
+    normalized = dict(payload)
+    normalized.setdefault("assistant_generation_state", None)
+    if set(normalized) != _CHAT_SYNC_INTENT_PAYLOAD_KEYS:
+        return None
+    return normalized
+
+
+def _normalize_legacy_chat_delete_intent_payload(
+    payload: object,
+) -> dict[str, Any] | None:
+    """Add only the v45 state key, then enforce the delete intent shape."""
+    if type(payload) is not dict:
+        return None
+    normalized = dict(payload)
+    normalized.setdefault("assistant_generation_state", None)
+    if set(normalized) != {
+        "id",
+        "deleted",
+        "last_modified",
+        "assistant_generation_state",
+        "version",
+        "client_id",
+    }:
+        return None
+    return normalized
+
 
 def _validated_provider_continuation(value: object) -> tuple[Any, str]:
     """Return a parsed checkpoint and canonical private JSON."""
@@ -9469,7 +9521,8 @@ UPDATE db_schema_version
             "m.image_data, m.image_mime_type, m.timestamp, m.ranking, m.last_modified, "
             "m.version, m.client_id, m.deleted, m.feedback, m.role, "
             "m.variant_of, m.variant_number, m.is_selected_variant, m.total_variants, "
-            "m.usage_json, m.metadata_json, m.provider_continuation_json "
+            "m.usage_json, m.metadata_json, m.provider_continuation_json, "
+            "m.assistant_generation_state "
             "FROM messages m "
             "JOIN conversations c ON m.conversation_id = c.id "
             "WHERE m.conversation_id = ? AND m.deleted = 0 "
@@ -9516,7 +9569,8 @@ UPDATE db_schema_version
                    m.image_data, m.image_mime_type, m.timestamp, m.ranking, m.last_modified,
                    m.version, m.client_id, m.deleted, m.feedback, m.role,
                    m.variant_of, m.variant_number, m.is_selected_variant, m.total_variants,
-                   m.usage_json, m.metadata_json, m.provider_continuation_json
+                   m.usage_json, m.metadata_json, m.provider_continuation_json,
+                   m.assistant_generation_state
             FROM messages m
             JOIN conversations c ON m.conversation_id = c.id
             WHERE m.conversation_id = ?
@@ -9550,7 +9604,8 @@ UPDATE db_schema_version
                    m.image_data, m.image_mime_type, m.timestamp, m.ranking, m.last_modified,
                    m.version, m.client_id, m.deleted, m.feedback, m.role,
                    m.variant_of, m.variant_number, m.is_selected_variant, m.total_variants,
-                   m.usage_json, m.metadata_json, m.provider_continuation_json
+                   m.usage_json, m.metadata_json, m.provider_continuation_json,
+                   m.assistant_generation_state
             FROM messages m
             JOIN conversations c ON m.conversation_id = c.id
             WHERE m.conversation_id = ?
@@ -10433,6 +10488,7 @@ UPDATE db_schema_version
                 role = "assistant"  # Default for character names
 
         provider_continuation_json = None
+        checkpoint = None
         if msg_data.get("provider_continuation_json") is not None:
             if role != "assistant":
                 raise InputError(
@@ -10444,11 +10500,31 @@ UPDATE db_schema_version
             _validate_continuation_owner_content(
                 checkpoint, msg_data.get("content", "")
             )
+        raw_generation_state = msg_data.get("assistant_generation_state")
+        if raw_generation_state is not None and role != "assistant":
+            raise InputError(
+                "Assistant generation state requires an assistant message."
+            ) from None
+        from tldw_chatbook.Chat.assistant_generation_state import (
+            normalize_assistant_generation_state,
+        )
+
+        try:
+            normalized_generation_state = normalize_assistant_generation_state(
+                role=role,
+                raw_state=raw_generation_state,
+                has_valid_active_continuation=(
+                    checkpoint is not None and checkpoint.state == "active"
+                ),
+            )
+        except ValueError:
+            raise InputError("Invalid assistant generation state.") from None
 
         if (
             not msg_data.get("content")
             and not msg_data.get("image_data")
             and provider_continuation_json is None
+            and normalized_generation_state is None
         ):
             raise InputError(
                 "Message must have text content, image data, or assistant continuation."
@@ -10467,8 +10543,9 @@ UPDATE db_schema_version
                 INSERT INTO messages (id, conversation_id, parent_message_id, sender, content,
                                       image_data, image_mime_type,
                                       timestamp, ranking, last_modified, client_id, version, deleted, role,
-                                      usage_json, metadata_json, provider_continuation_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?)
+                                      usage_json, metadata_json, provider_continuation_json,
+                                      assistant_generation_state)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, ?)
                 """
         params = (
             msg_id,
@@ -10486,6 +10563,9 @@ UPDATE db_schema_version
             msg_data.get("usage_json"),
             msg_data.get("metadata_json"),
             provider_continuation_json,
+            normalized_generation_state.value
+            if normalized_generation_state is not None
+            else None,
         )
         try:
             # IMMEDIATE (task-21100 review): every hot `messages` writer reserves the
@@ -10762,7 +10842,7 @@ UPDATE db_schema_version
         Raises:
             CharactersRAGDBError: For database errors.
         """
-        query = "SELECT id, conversation_id, parent_message_id, sender, content, image_data, image_mime_type, timestamp, ranking, last_modified, version, client_id, deleted, feedback, usage_json, metadata_json, provider_continuation_json FROM messages WHERE id = ? AND deleted = 0"
+        query = "SELECT id, conversation_id, parent_message_id, sender, role, content, image_data, image_mime_type, timestamp, ranking, last_modified, version, client_id, deleted, feedback, usage_json, metadata_json, provider_continuation_json, assistant_generation_state FROM messages WHERE id = ? AND deleted = 0"
         try:
             cursor = self.execute_query(query, (message_id,))
             row = cursor.fetchone()
@@ -11168,7 +11248,8 @@ UPDATE db_schema_version
                    {image_col}, m.image_mime_type, m.timestamp, m.ranking,
                    m.last_modified, m.version, m.client_id, m.deleted, m.feedback, m.role,
                    m.variant_of, m.variant_number, m.is_selected_variant, m.total_variants,
-                   m.usage_json, m.metadata_json, m.provider_continuation_json
+                   m.usage_json, m.metadata_json, m.provider_continuation_json,
+                   m.assistant_generation_state
             FROM messages m
             JOIN conversations c ON m.conversation_id = c.id
             WHERE m.conversation_id = ?
@@ -11226,7 +11307,7 @@ UPDATE db_schema_version
                 SELECT m.id, m.conversation_id, m.parent_message_id, m.sender, m.content, 
                        {image_col}, m.image_mime_type, m.timestamp, m.ranking, 
                        m.last_modified, m.version, m.client_id, m.deleted, m.feedback, m.role,
-                       m.provider_continuation_json,
+                       m.provider_continuation_json, m.assistant_generation_state,
                        ROW_NUMBER() OVER (PARTITION BY m.conversation_id ORDER BY m.timestamp {order_by_timestamp}) as row_num
                 FROM messages m
                 JOIN conversations c ON m.conversation_id = c.id
@@ -14970,6 +15051,9 @@ UPDATE db_schema_version
             dump_provider_continuation_json,
             parse_provider_continuation_json,
         )
+        from tldw_chatbook.Chat.assistant_generation_state import (
+            normalize_assistant_generation_state,
+        )
         from tldw_chatbook.Sync_Interop.chat_outbox_producer import (
             ChatSyncIntentRecord,
         )
@@ -14991,7 +15075,8 @@ UPDATE db_schema_version
             query = """
                 SELECT m.id, m.conversation_id, m.parent_message_id, m.sender,
                        m.role, m.content, m.image_mime_type,
-                       m.provider_continuation_json, m.timestamp, m.ranking,
+                       m.provider_continuation_json,
+                       m.assistant_generation_state, m.timestamp, m.ranking,
                        m.last_modified, m.deleted, m.client_id, m.version,
                        intent.operation, intent.payload
                   FROM messages AS m
@@ -15019,8 +15104,10 @@ UPDATE db_schema_version
                 )
             if row["deleted"] or row["operation"] not in {"create", "update"}:
                 return None
-            intent_payload = json.loads(row["payload"])
-            if type(intent_payload) is not dict:
+            intent_payload = _normalize_legacy_chat_sync_intent_payload(
+                json.loads(row["payload"])
+            )
+            if intent_payload is None:
                 return None
 
             def intent_value(value: Any) -> Any:
@@ -15032,6 +15119,35 @@ UPDATE db_schema_version
                     )
                 return value
 
+            role = row["role"]
+            content = row["content"]
+            if type(role) is not str or type(content) is not str:
+                return None
+            private_json = row["provider_continuation_json"]
+            has_active_continuation = False
+            if private_json is not None:
+                if role != "assistant" or type(private_json) is not str:
+                    return None
+                checkpoint = parse_provider_continuation_json(private_json)
+                private_json = dump_provider_continuation_json(checkpoint)
+                if private_json != row["provider_continuation_json"]:
+                    return None
+                has_active_continuation = checkpoint.state == "active"
+            row_state = normalize_assistant_generation_state(
+                role=role,
+                raw_state=row["assistant_generation_state"],
+                has_valid_active_continuation=has_active_continuation,
+            )
+            intent_state = normalize_assistant_generation_state(
+                role=role,
+                raw_state=intent_payload["assistant_generation_state"],
+                has_valid_active_continuation=has_active_continuation,
+            )
+            if (
+                intent_payload["assistant_generation_state"] is not None
+                and role != "assistant"
+            ):
+                return None
             expected_intent = {
                 "id": row["id"],
                 "conversation_id": row["conversation_id"],
@@ -15040,6 +15156,9 @@ UPDATE db_schema_version
                 "content": row["content"],
                 "image_mime_type": row["image_mime_type"],
                 "provider_continuation_json": row["provider_continuation_json"],
+                "assistant_generation_state": row_state.value
+                if row_state is not None
+                else None,
                 "timestamp": intent_value(row["timestamp"]),
                 "ranking": row["ranking"],
                 "last_modified": intent_value(row["last_modified"]),
@@ -15047,22 +15166,19 @@ UPDATE db_schema_version
                 "client_id": row["client_id"],
                 "version": row["version"],
             }
+            intent_payload["assistant_generation_state"] = (
+                intent_state.value if intent_state is not None else None
+            )
             if intent_payload != expected_intent:
                 return None
 
-            role = row["role"]
-            content = row["content"]
-            if type(role) is not str or type(content) is not str:
-                return None
-            private_json = row["provider_continuation_json"]
-            if private_json is not None:
-                if role != "assistant" or type(private_json) is not str:
-                    return None
-                checkpoint = parse_provider_continuation_json(private_json)
-                private_json = dump_provider_continuation_json(checkpoint)
-                if private_json != row["provider_continuation_json"]:
-                    return None
-            envelope_payload = {"content": content, "role": role}
+            envelope_payload = {
+                "assistant_generation_state": row_state.value
+                if row_state is not None
+                else None,
+                "content": content,
+                "role": role,
+            }
             if private_json is not None:
                 envelope_payload["provider_continuation_json"] = private_json
             if canonical_payload_hash(envelope_payload) != payload_hash:
@@ -15074,11 +15190,19 @@ UPDATE db_schema_version
                 content=content,
                 parent_message_id=row["parent_message_id"],
                 provider_continuation_json=private_json,
+                assistant_generation_state=row_state.value
+                if row_state is not None
+                else None,
                 message_version=message_version,
                 payload_hash=payload_hash,
                 base_payload_hash=base_payload_hash,
             )
-        except (ContinuationValidationError, json.JSONDecodeError, sqlite3.Error):
+        except (
+            ContinuationValidationError,
+            ValueError,
+            json.JSONDecodeError,
+            sqlite3.Error,
+        ):
             return None
 
     @staticmethod
@@ -15094,6 +15218,9 @@ UPDATE db_schema_version
         from tldw_chatbook.Chat.provider_continuation import (
             dump_provider_continuation_json,
             parse_provider_continuation_json,
+        )
+        from tldw_chatbook.Chat.assistant_generation_state import (
+            normalize_assistant_generation_state,
         )
         from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
 
@@ -15113,18 +15240,21 @@ UPDATE db_schema_version
         if len(rows) != 1:
             return None
         operation = rows[0]["operation"]
-        payload = json.loads(rows[0]["payload"])
-        if type(payload) is not dict:
-            return None
+        raw_payload = json.loads(rows[0]["payload"])
         if operation == "delete":
+            delete_payload = _normalize_legacy_chat_delete_intent_payload(raw_payload)
             if (
-                payload.get("id") != message_id
-                or payload.get("version") != message_version - 1
-                or payload.get("deleted") != 1
+                delete_payload is None
+                or delete_payload.get("id") != message_id
+                or delete_payload.get("version") != message_version - 1
+                or delete_payload.get("deleted") != 1
             ):
                 return None
             return canonical_payload_hash({"deleted": True})
         if operation not in {"create", "update"}:
+            return None
+        payload = _normalize_legacy_chat_sync_intent_payload(raw_payload)
+        if payload is None:
             return None
         if (
             payload.get("id") != message_id
@@ -15134,16 +15264,28 @@ UPDATE db_schema_version
             or type(payload.get("content")) is not str
         ):
             return None
-        private_json = payload.get("provider_continuation_json")
+        private_json = payload["provider_continuation_json"]
+        has_active_continuation = False
         if private_json is not None:
             if role != "assistant" or type(private_json) is not str:
                 return None
-            private_json = dump_provider_continuation_json(
-                parse_provider_continuation_json(private_json)
-            )
+            checkpoint = parse_provider_continuation_json(private_json)
+            private_json = dump_provider_continuation_json(checkpoint)
             if private_json != payload.get("provider_continuation_json"):
                 return None
-        base_payload = {"content": payload["content"], "role": role}
+            has_active_continuation = checkpoint.state == "active"
+        if payload["assistant_generation_state"] is not None and role != "assistant":
+            return None
+        state = normalize_assistant_generation_state(
+            role=role,
+            raw_state=payload["assistant_generation_state"],
+            has_valid_active_continuation=has_active_continuation,
+        )
+        base_payload = {
+            "assistant_generation_state": state.value if state is not None else None,
+            "content": payload["content"],
+            "role": role,
+        }
         if private_json is not None:
             base_payload["provider_continuation_json"] = private_json
         return canonical_payload_hash(base_payload)
@@ -15171,6 +15313,9 @@ UPDATE db_schema_version
             dump_provider_continuation_json,
             parse_provider_continuation_json,
         )
+        from tldw_chatbook.Chat.assistant_generation_state import (
+            normalize_assistant_generation_state,
+        )
         from tldw_chatbook.Sync_Interop.chat_outbox_producer import (
             ChatSyncDeleteIntentRecord,
         )
@@ -15193,6 +15338,7 @@ UPDATE db_schema_version
                 SELECT m.id, m.conversation_id, m.deleted, m.version,
                        m.last_modified, m.client_id, m.role, m.content,
                        m.provider_continuation_json,
+                       m.assistant_generation_state,
                        intent.operation, intent.payload
                   FROM messages AS m
                   JOIN sync_log AS intent
@@ -15212,11 +15358,51 @@ UPDATE db_schema_version
                 row = rows[0]
             if not row["deleted"] or row["operation"] != "delete":
                 return None
-            intent_payload = json.loads(row["payload"])
+            intent_payload = _normalize_legacy_chat_delete_intent_payload(
+                json.loads(row["payload"])
+            )
+            if intent_payload is None or canonical_payload_hash(
+                {"deleted": True}
+            ) != payload_hash:
+                return None
+            role = row["role"]
+            content = row["content"]
+            if type(role) is not str or type(content) is not str:
+                return None
+            private_json = row["provider_continuation_json"]
+            has_active_continuation = False
+            if private_json is not None:
+                if role != "assistant" or type(private_json) is not str:
+                    return None
+                checkpoint = parse_provider_continuation_json(private_json)
+                private_json = dump_provider_continuation_json(checkpoint)
+                if private_json != row["provider_continuation_json"]:
+                    return None
+                has_active_continuation = checkpoint.state == "active"
+            if row["assistant_generation_state"] is not None and role != "assistant":
+                return None
+            state = normalize_assistant_generation_state(
+                role=role,
+                raw_state=row["assistant_generation_state"],
+                has_valid_active_continuation=has_active_continuation,
+            )
+            intent_state = normalize_assistant_generation_state(
+                role=role,
+                raw_state=intent_payload["assistant_generation_state"],
+                has_valid_active_continuation=has_active_continuation,
+            )
+            if (
+                intent_payload["assistant_generation_state"] is not None
+                and role != "assistant"
+            ):
+                return None
             expected_intent = {
                 "id": row["id"],
                 "deleted": 1,
                 "last_modified": row["last_modified"],
+                "assistant_generation_state": state.value
+                if state is not None
+                else None,
                 "version": row["version"],
                 "client_id": row["client_id"],
             }
@@ -15227,23 +15413,18 @@ UPDATE db_schema_version
                     .isoformat(timespec="milliseconds")
                     .replace("+00:00", "Z")
                 )
-            if intent_payload != expected_intent or canonical_payload_hash(
-                {"deleted": True}
-            ) != payload_hash:
+            intent_payload["assistant_generation_state"] = (
+                intent_state.value if intent_state is not None else None
+            )
+            if intent_payload != expected_intent:
                 return None
-            role = row["role"]
-            content = row["content"]
-            if type(role) is not str or type(content) is not str:
-                return None
-            private_json = row["provider_continuation_json"]
-            if private_json is not None:
-                if role != "assistant" or type(private_json) is not str:
-                    return None
-                checkpoint = parse_provider_continuation_json(private_json)
-                private_json = dump_provider_continuation_json(checkpoint)
-                if private_json != row["provider_continuation_json"]:
-                    return None
-            base_payload = {"content": content, "role": role}
+            base_payload = {
+                "assistant_generation_state": state.value
+                if state is not None
+                else None,
+                "content": content,
+                "role": role,
+            }
             if private_json is not None:
                 base_payload["provider_continuation_json"] = private_json
             return ChatSyncDeleteIntentRecord(
@@ -15253,7 +15434,12 @@ UPDATE db_schema_version
                 payload_hash=payload_hash,
                 base_payload_hash=canonical_payload_hash(base_payload),
             )
-        except (ContinuationValidationError, json.JSONDecodeError, sqlite3.Error):
+        except (
+            ContinuationValidationError,
+            ValueError,
+            json.JSONDecodeError,
+            sqlite3.Error,
+        ):
             return None
 
     def list_current_committed_chat_sync_intents(
@@ -15274,6 +15460,9 @@ UPDATE db_schema_version
             dump_provider_continuation_json,
             parse_provider_continuation_json,
         )
+        from tldw_chatbook.Chat.assistant_generation_state import (
+            normalize_assistant_generation_state,
+        )
         from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
 
         if type(conversation_id) is not str or not conversation_id:
@@ -15284,7 +15473,8 @@ UPDATE db_schema_version
         try:
             query = """
                 SELECT m.id, m.conversation_id, m.role, m.content,
-                       m.provider_continuation_json, m.deleted, m.version,
+                       m.provider_continuation_json,
+                       m.assistant_generation_state, m.deleted, m.version,
                        intent.operation
                   FROM messages AS m
                   JOIN conversations AS c
@@ -15330,15 +15520,32 @@ UPDATE db_schema_version
                     if type(role) is not str or type(content) is not str:
                         continue
                     private_json = row["provider_continuation_json"]
+                    has_active_continuation = False
                     if private_json is not None:
                         if role != "assistant" or type(private_json) is not str:
                             continue
-                        private_json = dump_provider_continuation_json(
-                            parse_provider_continuation_json(private_json)
-                        )
+                        checkpoint = parse_provider_continuation_json(private_json)
+                        private_json = dump_provider_continuation_json(checkpoint)
                         if private_json != row["provider_continuation_json"]:
                             continue
-                    payload = {"content": content, "role": role}
+                        has_active_continuation = checkpoint.state == "active"
+                    if (
+                        row["assistant_generation_state"] is not None
+                        and role != "assistant"
+                    ):
+                        continue
+                    state = normalize_assistant_generation_state(
+                        role=role,
+                        raw_state=row["assistant_generation_state"],
+                        has_valid_active_continuation=has_active_continuation,
+                    )
+                    payload = {
+                        "assistant_generation_state": state.value
+                        if state is not None
+                        else None,
+                        "content": content,
+                        "role": role,
+                    }
                     if private_json is not None:
                         payload["provider_continuation_json"] = private_json
                     payload_hash = canonical_payload_hash(payload)
@@ -15359,7 +15566,12 @@ UPDATE db_schema_version
                     }
                 )
             return intents
-        except (ContinuationValidationError, json.JSONDecodeError, sqlite3.Error):
+        except (
+            ContinuationValidationError,
+            ValueError,
+            json.JSONDecodeError,
+            sqlite3.Error,
+        ):
             return []
 
     def get_sync_log_entries(
