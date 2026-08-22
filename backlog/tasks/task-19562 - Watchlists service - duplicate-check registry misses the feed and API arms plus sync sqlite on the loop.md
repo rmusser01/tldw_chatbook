@@ -58,17 +58,17 @@ away".
 
 ## Acceptance Criteria
 
-- [ ] The feed and API arms register in the same in-flight guard the URL arm
+- [x] The feed and API arms register in the same in-flight guard the URL arm
       uses, so a scheduler tick overlapping a manual "Check Now" runs the check
       once
-- [ ] An overlapping check produces exactly one alert notification and one set
+- [x] An overlapping check produces exactly one alert notification and one set
       of statistics — pinned by a test that actually overlaps the two triggers
-- [ ] The 22 `async def` methods no longer execute synchronous sqlite on the
+- [x] The 22 `async def` methods no longer execute synchronous sqlite on the
       event loop
 - [ ] The `busy_timeout` question is **measured, not assumed**: either a writer
       collision is shown to stall the loop and a timeout is set, or the concern
       is recorded as refuted with the measurement
-- [ ] `transaction()` either supports nesting (savepoints) or
+- [x] `transaction()` either supports nesting (savepoints) or
       `record_check_result` stops nesting it; a test pins that a failure after
       the inner scope rolls the whole unit back
 - [ ] The subscriptions DB connection is closed on shutdown and the `-wal` is
@@ -115,3 +115,64 @@ bundling a user-visible correctness bug (duplicate alert notifications), the
 `record_check_result` nests, and a leaked thread-local connection. Recommend
 splitting: (A) the in-flight guard + duplicate-alert test, (B) the sqlite
 offload, (C) transaction nesting + connection close.
+
+## Part A shipped (2026-08-21) — B and C still open
+
+**A (feed/API in-flight guard) is done.** Both arms now claim through the same
+`_IN_FLIGHT_URL_CHECKS` registry the url-family arms use, scoped to the whole
+source with a NUL-prefixed sentinel in the URL slot (no real URL can contain
+NUL, so it cannot collide with a url-family claim for the same subscription).
+
+The skip returns a `DISPOSITION_SKIPPED_IN_FLIGHT` disposition rather than the
+arm's usual `None`. That turned out to be the load-bearing half: without it,
+`_entirely_skipped_dispositions` would not match, `execute_run` would run the
+ordinary health path, and a turned-away check would take
+`record_check_result`'s SUCCESS branch -- resetting the auto-pause breaker,
+clearing `last_error` and stamping `last_successful_check` for a run that
+never contacted the source. Returning `[]` items with `None` dispositions
+would have been indistinguishable from a clean "nothing new" check.
+
+Two comments in the file asserted the old invariant ("feed/API runs can never
+skip", "`None` for the feed and API arms") and are corrected, not left to rot.
+
+Red-proofed on behaviour, not vocabulary: against the unfixed code the forced
+interleave fetches the feed **2 times for one overlap**. `Tests/Subscriptions/`
+755 passed.
+
+**C also shipped (2026-08-21).** `transaction()` now tracks nesting depth per
+thread -- only the outermost block commits or rolls back -- mirroring
+`ChaChaNotes_DB`'s `TransactionContextManager` rather than inventing a
+savepoint scheme. Depth is cleared in a `finally`, so a raise cannot strand it
+and silently turn every later transaction into a no-op joiner.
+
+**The specific claim in C is REFUTED by measurement.** `record_check_result`
+does not nest today: instrumenting `transaction()` across a real call observed
+**depth 1, one entry**. The lane's CONFIRMED-LATENT rating was right about the
+hazard and wrong about that call site. The fix stands anyway -- it converts a
+silent-partial-persistence trap into a structural impossibility instead of
+relying on nobody ever nesting -- and is red-proofed: against the unfixed
+context manager, the nested write survives a deliberate failure in the outer
+scope.
+
+**B also shipped (2026-08-21).** All 22 async methods now route their sqlite
+through the existing `db_offload.run_db_off_loop` helper rather than a new
+mechanism. The four `transaction()` sites were handled differently on purpose:
+that helper's contract forbids holding a transaction open across the thread
+boundary, so each block was extracted whole into an offloaded function rather
+than offloading statements inside an open transaction.
+
+Count note: an AST sweep for `db.<method>()` / `self._db().<method>()` found
+19 methods; three more (`get_alert_rule`, `list_runs`, `list_alert_rules`)
+reach the database through a bare `db.conn.cursor()` and were invisible to
+that pattern. Adding them gives 22 -- matching this task's original figure,
+which the narrower scan would have under-reported. Verified after the change:
+**zero** inline db calls remain in any `async def` in the file.
+
+Red-proofed: reverting `cancel_run`'s offload fails its test with
+`cancel_run's transaction opened on the event-loop thread`. `Tests/
+Subscriptions/` 781 passed (from a 759 baseline, +22 new tests).
+
+**Still open:**
+
+* **C residue** -- the leaked thread-local connection that is never closed and
+  never checkpoints the `-wal`. Untouched here.
