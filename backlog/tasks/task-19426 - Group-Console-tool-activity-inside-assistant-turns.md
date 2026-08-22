@@ -57,11 +57,12 @@ Key decisions and tradeoffs:
 - Transcript set_messages accepts optional session identity so recycled marker ids cannot retain expansion across session switches.
 - Inspector resolves active-session display-only markers through the transcript only after the authoritative store lookup misses.
 
-Scoped verification, followed by a clean final rebase onto dev base bfc9c5c08:
+Scoped verification, followed by a clean final rebase onto dev base f278a43c1:
 - Complete focused changed-functionality suite: 856 passed, 2 warnings.
 - Additional modified-code coverage for continuation persistence, models/review hook, local-server blocked outcomes, Inspector activity selection, and CSS integrity: 127 passed, 2 warnings.
 - Adjacent Console suite: 323 passed. The two marker E2E `binding_unavailable` failures reproduced exactly on clean dev before any feature assertion runs.
 - Post-rebase presentation, grouping, widget, all-theme contrast, and CSS bundle-integrity smoke: 203 passed, 1 warning.
+- Final overlap-sensitive rebase checks for grouped turns, Inspector/session handoff, CSS parity, and the shared ChatScreen Change Review opener: 223 passed.
 - Changed Python compileall, Ruff lint, intentional new-file Ruff format gate, git diff check, and CSS source/bundle integrity all passed.
 - Isolated live Console UAT exercised real fs_list/fs_read activity at wide and narrow sizes, mouse/Enter/Space/o disclosure parity, failed and successful runs, stable selection and scroll during streaming, Ctrl+K resume with identical collapsed ordering, and Inspector attribution for expanded and collapsed display-only activities. Evidence manifest: /private/tmp/task19426-uat-r2zoEDPZ/evidence/manifest.md.
 
