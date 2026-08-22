@@ -124,9 +124,11 @@ still mounted.
 
 ## Error Handling and Privacy
 
-All existing lifecycle boundaries remain contained so mount/resume cannot fail
-because notification, release, rollback, guarded acknowledgement, or config
-inspection raised.
+The exact existing lifecycle boundaries remain unchanged. Notification,
+release, rollback, and guarded acknowledgement exceptions are contained so
+those retry paths do not fail mount/resume. Initial claim, configuration
+inspection/default construction, and core session-store mutation exceptions do
+not gain new broad containment in this extraction.
 
 Logs include only an allowlisted operation category and exception type. They do
 not include exception text, provider credentials, endpoints, handoff values, or
@@ -134,8 +136,9 @@ session contents. A failing instance-level release wrapper may use the existing
 `PendingHandoffStore.release` fallback, preserving exact-claim and replacement
 invariants.
 
-No broad exception swallowing is added around core session-store mutations;
-their current rollback/retry semantics remain unchanged.
+No broad exception swallowing is added around claim acquisition, configuration
+inspection, or core session-store mutations; their current propagation and
+rollback/retry semantics remain unchanged.
 
 ## Testing Strategy
 
