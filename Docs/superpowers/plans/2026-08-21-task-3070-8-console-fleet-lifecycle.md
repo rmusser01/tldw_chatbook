@@ -153,7 +153,7 @@ git commit -m "docs(console): rebase fleet lifecycle baseline"
 - Modify: `Tests/Architecture/test_console_wave6_inventory.py`
 - Modify: `Tests/UI/test_console_controller_wiring.py`
 
-- [ ] **Step 1: Add no-mount controller policy tests**
+- [x] **Step 1: Add no-mount controller policy tests**
 
 Build a small callable-backed fixture that records calls and supports post-construction replacement. Add named tests for:
 
@@ -181,7 +181,7 @@ each behavior test reach its own assertion. Record the contract-specific failure
 every node; a shared file-exists assertion, `NotImplementedError`, collection/import/
 fixture error, skip, or xfail is not acceptable RED evidence.
 
-- [ ] **Step 2: Add the historical Task 0 structural ratchet**
+- [x] **Step 2: Add the historical Task 0 structural ratchet**
 
 Keep the historical fleet `Wave6Group(raw_lines=401, source_revision=POST_IMAGE_IMPLEMENTATION_BASE)` unchanged. Add task-local constants and assertions for:
 
@@ -203,7 +203,7 @@ then-current screen met the historical Task 0 ceilings after extraction. Those d
 constants remain immutable source evidence; current delivery counts are evaluated only
 by Task 5's frozen-final-base gate.
 
-- [ ] **Step 3: Add synthetic non-vacuity oracles**
+- [x] **Step 3: Add synthetic non-vacuity oracles**
 
 Use in-memory AST fixtures to prove the structural checker rejects:
 
@@ -222,7 +222,7 @@ class ConsoleFleetLifecycleController:
 
 Each mutation must fail for its intended ownership/DOM/sibling reason.
 
-- [ ] **Step 4: Extend wiring tests**
+- [x] **Step 4: Extend wiring tests**
 
 Keep the existing six-controller `_EXPECTED_SLOTS` common-contract subset unchanged;
 its later tests intentionally assume every member has `app_instance` and
@@ -231,7 +231,7 @@ for all fourteen controllers, with `_fleet` after `_character` and before `_sess
 Add a focused construction test that monkeypatches a screen dependency after
 `build_console_controllers` and proves the next `_fleet` call observes the replacement.
 
-- [ ] **Step 5: Run the exact RED set**
+- [x] **Step 5: Run the exact RED set**
 
 ```bash
 ../../.venv/bin/python -m pytest -q \
@@ -249,7 +249,7 @@ exception assertion against the importable no-op shell; wiring fails because `_f
 is not constructed; ownership reports the exact 16 duplicate screen methods;
 task-local ratchets remain RED; synthetic non-vacuity nodes pass.
 
-- [ ] **Step 6: Run targeted Ruff and commit the reviewed RED contract**
+- [x] **Step 6: Run targeted Ruff and commit the reviewed RED contract**
 
 ```bash
 ../../.venv/bin/python -m ruff check \
@@ -285,7 +285,7 @@ git commit -m "test(console): lock fleet lifecycle extraction"
 - Modify: `tldw_chatbook/UI/Screens/chat_screen.py`
 - Modify: `Tests/Architecture/test_persistent_diagnostic_inventory.py`
 
-- [ ] **Step 1: Create the controller shell and exact state defaults**
+- [x] **Step 1: Create the controller shell and exact state defaults**
 
 Implement the reviewed keyword-only constructor. Store each callable without invoking it, then initialize only:
 
@@ -296,7 +296,7 @@ self._console_fleet_unseen_cache: tuple[int, frozenset[str]] | None = None
 
 Do not accept `screen`, `app_instance`, a chat controller, a wake coordinator, or a generic dependency object.
 
-- [ ] **Step 2: Move completion and wake methods with exact branches**
+- [x] **Step 2: Move completion and wake methods with exact branches**
 
 Move the completion claim and wake methods. Preserve:
 
@@ -321,7 +321,7 @@ def _console_screen_is_displayed(screen: Any) -> bool: ...
 
 They may capture the screen only in wiring; the controller receives their returned plain values.
 
-- [ ] **Step 3: Move unseen-marker and teardown policy**
+- [x] **Step 3: Move unseen-marker and teardown policy**
 
 Move the cached unseen read, marker precedence, and teardown split/leave/stage logic. Add one controller operation:
 
@@ -336,11 +336,11 @@ def prepare_session_run_markers(
 
 Return `None` when no chat controller exists. Defer clear when wake is pending or the screen is hidden. Clear through the service, refresh the cache, then derive markers. Do not return `{}` for the missing-controller branch.
 
-- [ ] **Step 4: Move survivor timer ownership**
+- [x] **Step 4: Move survivor timer ownership**
 
 Create/stop the one-second interval through the injected timer factory. Preserve idempotence, liveness exception containment, transcript-timer skip, stop-before-final-paint ordering, and the idle no-timer path.
 
-- [ ] **Step 5: Wire `_fleet` and direct consumers**
+- [x] **Step 5: Wire `_fleet` and direct consumers**
 
 In `wiring.py`, import/construct `_fleet` after `_character`, update thirteen→fourteen docs, and wire every dependency as a late-bound lambda. Point Workspace's existing `fleet_unseen_ids_accessor`, `run_marker_with_unseen`, and `wake_retry_poke` directly to `screen._fleet`.
 
@@ -355,7 +355,7 @@ In `chat_screen.py`:
 
 No one-line screen helper or method alias is permitted.
 
-- [ ] **Step 6: Transfer the hand-reviewed diagnostic labels**
+- [x] **Step 6: Transfer the hand-reviewed diagnostic labels**
 
 In `Tests/Architecture/test_persistent_diagnostic_inventory.py`, move exactly these entries from `chat_screen.py` to a new `fleet.py` owner entry with unchanged field allowlists:
 
@@ -370,14 +370,14 @@ In `Tests/Architecture/test_persistent_diagnostic_inventory.py`, move exactly th
 
 Leave `Pending sidebar-state write failed` under `chat_screen.py`.
 
-- [ ] **Step 7: Run the core GREEN set**
+- [x] **Step 7: Run the core GREEN set**
 
 Historical result: the exact Task 1 command passed against the pre-final-rebase
 candidate, which met the d4f3 20,007-line / 637-method projection while both immutable
 earlier oracles remained green. Do not use that historical absolute projection as a
 current candidate gate; run Task 5 Step 6 against frozen `02cd80b3` instead.
 
-- [ ] **Step 8: Commit the production move**
+- [x] **Step 8: Commit the production move**
 
 ```bash
 git add \
@@ -399,7 +399,7 @@ git commit -m "refactor(console): extract fleet lifecycle controller"
 - Modify: `Tests/UI/test_console_fleet_wake_wiring.py`
 - Modify only additional files returned by the exact moved-name scan.
 
-- [ ] **Step 1: Scan every stale moved-name caller**
+- [x] **Step 1: Scan every stale moved-name caller**
 
 ```bash
 rg -n "consume_pending_console_fleet_completion|_claim_console_fleet_wake_marks|_console_wake_user_priority|_console_wake_probe_composer|_console_screen_displayed|_console_wake_conversation_in_view|_poke_console_wake_retry|_on_console_wake_delivery_started|_console_wake_turn_active|_record_console_fleet_teardown|_console_fleet_unseen_ids|_console_run_marker_with_unseen|_console_fleet_survivors_live|_maybe_start_console_fleet_survivor_tick|_stop_console_fleet_survivor_tick|_console_fleet_survivor_tick|_console_fleet_survivor_timer|_console_fleet_unseen_cache" Tests tldw_chatbook
@@ -407,7 +407,7 @@ rg -n "consume_pending_console_fleet_completion|_claim_console_fleet_wake_marks|
 
 Classify every hit as controller ownership, direct `_fleet` production/test use, approved Workspace adapter, architecture string, or stale screen call. No unexplained screen call may remain.
 
-- [ ] **Step 2: Repoint direct test calls without weakening assertions**
+- [x] **Step 2: Repoint direct test calls without weakening assertions**
 
 Change only ownership, for example:
 
@@ -419,11 +419,11 @@ assert console._fleet._console_fleet_survivor_timer is None
 
 Use real controller construction where a bare-screen fixture bypasses wiring. Do not add a production fallback for incomplete `ChatScreen.__new__` fixtures.
 
-- [ ] **Step 3: Preserve mounted entry paths**
+- [x] **Step 3: Preserve mounted entry paths**
 
 Do not replace `pilot.press` in `test_console_fleet_wake_hidden_screen.py` with direct draft/controller mutation. Do not replace the plain `threading.Thread` drain injection in `test_console_fleet_wake_ui_freshness.py` with an app-loop call.
 
-- [ ] **Step 4: Run the focused affected matrix**
+- [x] **Step 4: Run the focused affected matrix**
 
 ```bash
 ../../.venv/bin/python -m pytest -q \
@@ -447,7 +447,7 @@ Do not replace `pilot.press` in `test_console_fleet_wake_hidden_screen.py` with 
 
 Expected: all selected nodes pass. If this exceeds the repository's 20-minute checkpoint, stop, record the completed file boundary, and resume in named file groups; do not narrow the claimed set silently.
 
-- [ ] **Step 5: Commit only ownership-driven fixture changes**
+- [x] **Step 5: Commit only ownership-driven fixture changes**
 
 ```bash
 git add Tests/Chat/test_fleet_teardown_notice.py \
@@ -466,7 +466,7 @@ Add any additional changed test returned by the scan explicitly to both the comm
 
 - Temporarily modify only one named candidate path per probe; restore immediately.
 
-- [ ] **Step 1: Record the candidate diff checksum before every probe**
+- [x] **Step 1: Record the candidate diff checksum before every probe**
 
 ```bash
 git diff --binary -- <mutated-paths> | shasum -a 256
@@ -474,27 +474,27 @@ git diff --binary -- <mutated-paths> | shasum -a 256
 
 Use `apply_patch` for the mutation and inverse. After restoration, require the identical checksum, `git diff --check`, and no mutation-token residue.
 
-- [ ] **Step 2: Probe completion semantics**
+- [x] **Step 2: Probe completion semantics**
 
 Mutate exact-session precedence, already-active `True`, or release-vs-acknowledge. The corresponding no-mount controller node must fail with a value/call-order discriminator, not an import/fixture error. Restore and rerun green.
 
-- [ ] **Step 3: Probe wake uncertainty and late binding**
+- [x] **Step 3: Probe wake uncertainty and late binding**
 
 Swallow a selected composer draft exception or eagerly capture one dependency. The raising-probe/late-bound node must fail. Restore and rerun green.
 
-- [ ] **Step 4: Probe mark policy**
+- [x] **Step 4: Probe mark policy**
 
 Return `{}` instead of `None` for a missing controller, reuse the cached read during mount, or clear while `wake_has_pending` is true. The focused marker/mount node must fail. Restore and rerun green.
 
-- [ ] **Step 5: Probe teardown and survivor ordering**
+- [x] **Step 5: Probe teardown and survivor ordering**
 
 Stage notices when `leave_runtime` is false, or paint before stopping the final survivor timer. The exact teardown/timer node must fail. Restore and rerun green.
 
-- [ ] **Step 6: Probe the structural boundary**
+- [x] **Step 6: Probe the structural boundary**
 
 Use the synthetic AST fixture to reintroduce one screen-owned fleet method, one DOM query, and one sibling reach-through. Each intended architecture message must appear. No production source mutation is needed for this probe.
 
-- [ ] **Step 7: Re-run the combined no-mount/architecture GREEN set**
+- [x] **Step 7: Re-run the combined no-mount/architecture GREEN set**
 
 Run the Task 1 command plus `git diff --check`. Expected: all selected tests pass and the pre/post candidate diff checksum is identical.
 
@@ -505,7 +505,7 @@ Run the Task 1 command plus `git diff --check`. Expected: all selected tests pas
 - Modify: `Docs/security/production-diagnostic-inventory.json` after reviewed reconciliation only.
 - Modify: task/plan docs for evidence and closeout.
 
-- [ ] **Step 1: Run Ruff on every changed Python file**
+- [x] **Step 1: Run Ruff on every changed Python file**
 
 Initial exact set:
 
@@ -541,7 +541,7 @@ Initial exact set:
 
 Add every additional changed Python path explicitly. Expected: both commands exit 0; do not accept baseline attribution for a changed file.
 
-- [ ] **Step 2: Compile changed production modules in an isolated temporary cache**
+- [x] **Step 2: Compile changed production modules in an isolated temporary cache**
 
 ```bash
 ../../.venv/bin/python - <<'PY'
@@ -567,7 +567,7 @@ PY
 
 Expected: exit 0 and the temporary directory is removed by its context manager.
 
-- [ ] **Step 3: Preview diagnostic reconciliation without mutating the manifest**
+- [x] **Step 3: Preview diagnostic reconciliation without mutating the manifest**
 
 Run this exact three-way inventory preview. It writes only inside a validated
 `TemporaryDirectory`, emits checked→pinned-base and pinned-base→candidate diffs, and
@@ -704,7 +704,7 @@ base→candidate diff contains the reviewed owner redistribution; the exact mult
 topology assertions pass; the metadata registry finds each moved label once under
 `fleet.py`. Preserve this output as pre-rebase evidence. Do not write the manifest yet.
 
-- [ ] **Step 4: Run final focused behavior and architecture gates**
+- [x] **Step 4: Run final focused behavior and architecture gates**
 
 Run the Task 3 affected matrix, the Task 1 architecture/wiring command, and:
 
@@ -717,7 +717,7 @@ Run the Task 3 affected matrix, the Task 1 architecture/wiring command, and:
 
 Expected: all selected tests pass; no local full-suite run.
 
-- [ ] **Step 5: Review scope and complete task hygiene**
+- [x] **Step 5: Review scope and complete task hygiene**
 
 ```bash
 git diff --check
@@ -734,7 +734,7 @@ diagnostic evidence, ADR decision, changed files, and user-authorized affected-o
 test scope, but keep the task `In Progress` and final AC/plan closeout boxes open until
 the post-rebase verification below succeeds.
 
-- [ ] **Step 6: Use the approved frozen final-rebase oracle and re-verify before delivery**
+- [x] **Step 6: Use the approved frozen final-rebase oracle and re-verify before delivery**
 
 The 2026-08-22 ratchet amendment reviewed and approved
 `02cd80b33004305765b5cd91b3d264aa3664596e` as the frozen final-rebase source.
@@ -777,3 +777,46 @@ all post-rebase gates pass may the executor check all three ACs and remaining pl
 boxes, finalize Implementation Notes, set the task to `Done` through Backlog CLI, and
 commit truthful closeout metadata. PR/Qodo/CI/merge delivery is a separate
 user-authorized action after task completion.
+
+### Task 5 closeout evidence (2026-08-22)
+
+- Task 1 RED was rechecked from the exact reviewed shell commit `3365a9c3c` in
+  an owner-validated `/private/tmp` archive: 18 failed / 2 passed / 2 warnings in
+  6.79s, with collection succeeding and the intended behavior/ownership/wiring
+  contracts reaching their assertions. The frozen-candidate GREEN command passed
+  21 / 21 with 2 dependency warnings in 3.35s. The structural subset, including
+  multiplicity and non-vacuity mutation oracles, passed 6 / 6 with 2 warnings in
+  2.23s.
+- Task 3's exact 16-file affected matrix completed with 155 passed / 2 failed /
+  1 skipped / 10 warnings in 175.17s. The two failures are unrelated frozen-base
+  deviations: P2 opens the project-instruction modal outside a Textual worker, and
+  the synthetic app teardown omits the newly required Notes runtime owner. Both
+  exact nodes fail on archived `02cd80b3` as well. No project-instruction, app
+  teardown, or Notes ownership code was changed.
+- The remaining Task 5 selection completed with 6 passed / 1 failed / 2 warnings
+  in 22.58s. The sole failure is the changed-files worker losing its active app in
+  the real-navigation-mid-tick case; that exact node also fails on archived
+  `02cd80b3`. The metadata-only diagnostic node likewise has the exact frozen-base
+  stale Library-label failure. The combined four-node candidate probe was 4 failed /
+  2 warnings in 14.14s; the frozen-base counterfactual was the same four failures /
+  4 warnings in 18.42s. These deviations demonstrate no task regression and were
+  not expanded into unrelated repairs.
+- The hardcoded `02cd80b33004305765b5cd91b3d264aa3664596e` three-way diagnostic
+  preview passed both the exact `chat_screen.py` + `fleet.py` `(method, digest)`
+  multiset and full sink-topology assertions. Checked-to-base staleness was the
+  inherited one-call `console_run_inspector.py` owner; base-to-candidate was only
+  the reviewed three-call redistribution from `chat_screen.py` to `fleet.py`.
+  The canonical frozen-base writer produced 522 owners / 1,222 TASK-492 calls /
+  7,189 TASK-494 calls / 8 sink files; its non-write check and topology node pass.
+  This was writer invocation two overall because the earlier 22d4 output was
+  invalidated, restored byte-for-byte, and never committed after `dev` advanced.
+- Ruff check and format-check passed all 14 Python paths changed from the frozen
+  base. `fleet.py`, `wiring.py`, `chat_screen.py`, and `workspace.py` compiled in
+  an owner-validated, symlink-free `/private/tmp/task-3070-8-pycache.*` directory,
+  which was removed exactly. Diff checks, moved-definition ownership, diagnostic
+  registry ownership, and added-line privacy/secret/generated-artifact/conflict/
+  shim scans are clean. Per the user's restriction, no local full suite ran.
+- `origin/dev` later advanced to `dfae0e816f648b3057be04e38327e088fc05d3d8`.
+  The reviewed amendment keeps this closeout frozen at `02cd80b3`; reconciling that
+  later remote movement is a separate delivery rebase/review and is not part of
+  this task-closeout commit.
