@@ -20,12 +20,14 @@ integration surface.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 from textual.app import App, ComposeResult
 from textual.screen import Screen
 from textual.widgets import DataTable, Static
 
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.Chat.citation_trace_repository import ActiveCitationTraceState
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_context_repository import (
@@ -90,11 +92,23 @@ def snapshot_with_turns(turn_count: int):
         assistant_id = f"a{index}"
         turn_id = f"t{index}"
         messages.append(
-            msg(user_id, "user", content=f"question {index}", ts=_T0 + index * 10.0, parent=parent)
+            msg(
+                user_id,
+                "user",
+                content=f"question {index}",
+                ts=_T0 + index * 10.0,
+                parent=parent,
+            )
         )
         seq += 1
         rows.append(
-            TrajRow(user_id, turn_id=turn_id, seq=seq, event_kind="user", step_started_at=_T0 + index * 10.0)
+            TrajRow(
+                user_id,
+                turn_id=turn_id,
+                seq=seq,
+                event_kind="user",
+                step_started_at=_T0 + index * 10.0,
+            )
         )
         messages.append(
             msg(
@@ -221,9 +235,7 @@ async def test_live_revision_change_appends_rows_and_follows_tail():
             await pilot.pause(0.01)
         assert table.scroll_y == table.max_scroll_y
         # live screen advertises the follow key
-        assert "follow" in str(
-            screen.query_one("#trajectory-hints").render()
-        )
+        assert "follow" in str(screen.query_one("#trajectory-hints").render())
 
 
 async def test_scrolling_up_suspends_follow_until_f_resumes():
@@ -374,6 +386,102 @@ def test_build_trajectory_snapshot_renders_compaction_and_variants(tmp_path):
         assert "second draft wins" not in superseded  # selected == current
     finally:
         db.close()
+
+
+def test_build_trajectory_snapshot_threads_agent_and_retrieval_owners():
+    """The off-thread builder joins public durable owner read seams."""
+
+    class _DB:
+        def get_messages_for_conversation(self, *_args, **_kwargs):
+            return [
+                {
+                    "id": "a1",
+                    "sender": "assistant",
+                    "content": "answer",
+                    "timestamp": 1.0,
+                    "parent_message_id": None,
+                    "deleted": False,
+                    "usage_json": None,
+                }
+            ]
+
+        def get_trajectory_rows(self, _conversation_id):
+            return [TrajRow("a1", turn_id="t1", seq=1, event_kind="assistant")]
+
+        def get_conversation_active_leaf(self, _conversation_id):
+            return "a1"
+
+    evidence_run = SimpleNamespace(
+        model_dump=lambda mode="python": {
+            "run_id": "rag-1",
+            "run_ordinal": 1,
+            "stage": "search",
+            "started_at": "2026-08-22T12:00:00Z",
+            "ended_at": "2026-08-22T12:00:01Z",
+        }
+    )
+    active_result = SimpleNamespace(
+        state=ActiveCitationTraceState.ACTIVE,
+        summary=SimpleNamespace(trace=SimpleNamespace(evidence_runs=(evidence_run,))),
+    )
+
+    class _CitationRepository:
+        def get_active_trace_for_current_message(self, message_id, current_body):
+            assert (message_id, current_body) == ("a1", "answer")
+            return active_result
+
+        def verify_active_trace_result(self, result):
+            return result is active_result
+
+    class _RunsDB:
+        def list_runs(self, conversation_id):
+            assert conversation_id == "conv-1"
+            return [
+                {
+                    "id": "run-1",
+                    "conversation_id": conversation_id,
+                    "agent_kind": "primary",
+                    "status": "done",
+                    "created_at": "2026-08-22T12:00:02Z",
+                    "assistant_message_id": "a1",
+                    "steps": [
+                        {
+                            "index": 0,
+                            "kind": "model",
+                            "summary": "answered",
+                            "created_at": "2026-08-22T12:00:03Z",
+                        }
+                    ],
+                }
+            ]
+
+    persistence = SimpleNamespace(
+        db=_DB(),
+        context_repository=None,
+        citation_repository=_CitationRepository(),
+    )
+    store = SimpleNamespace(
+        persistence=persistence,
+        variant_sets_for_conversation=lambda _conversation_id: (),
+    )
+
+    snapshot = _build_trajectory_snapshot(
+        store,
+        "conv-1",
+        agent_runs_db=_RunsDB(),
+    )
+    event_ids = {record.event_id for turn in snapshot.turns for record in turn.records}
+
+    assert "agent-run:run-1" in event_ids
+    assert "agent-step:run-1:0" in event_ids
+    assert "retrieval-run:rag-1" in event_ids
+    agent_run = next(
+        record
+        for turn in snapshot.turns
+        for record in turn.records
+        if record.event_id == "agent-run:run-1"
+    )
+    assert agent_run.turn_id == "t1"
 
 
 async def test_trajectory_launch_action_presents_screen():

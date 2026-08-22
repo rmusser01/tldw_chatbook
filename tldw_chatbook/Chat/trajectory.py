@@ -29,6 +29,8 @@ Purity contract
     - ``compaction_records``: ``list_auxiliary_attempts``-shaped mappings
       (``purpose``, ``status``, ``started_at``, ``finished_at``,
       ``provider``, ``model``, ``provider_usage_json``).
+    - ``agent_runs`` / ``agent_steps``: AgentRunsDB-shaped plain rows.
+    - ``retrieval_runs``: safe citation-provenance ``EvidenceRun`` summaries.
 
 Never-fabricate contract
     Timing is surfaced exactly as stored. NULL sidecar timing becomes
@@ -39,8 +41,9 @@ Never-fabricate contract
 
 from __future__ import annotations
 
+import heapq
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
 
@@ -69,7 +72,6 @@ _TOOL_KINDS = frozenset({KIND_TOOL_CALL, KIND_TOOL_RESULT})
 # message's own sidecar row. Feedback (task-17169) is keyed to the message
 # it critiques, so treating it as that message's row would displace the
 # real one -- taking its timing and turn attribution with it.
-_NESTED_KINDS = _TOOL_KINDS | {KIND_USER_FEEDBACK}
 _RENDERED_ROLES = frozenset({KIND_USER, KIND_ASSISTANT})
 _COMPACTION_PURPOSE = "conversation_compaction"
 
@@ -108,6 +110,11 @@ class TrajectoryRecord:
             adding ledger rows. Empty tuple when none.
         depth: 0 for top-level records, 1 for tool records nested under
             their owning assistant step.
+        event_id: Stable source-owner identity, independent of display order.
+        source_seq: Immutable position within the source owner, when known.
+        label: Human sentence-case event label.
+        field_states: Per-field observed/redacted/missing-state metadata.
+        sensitivity: Structured export-preflight classification.
     """
 
     seq: int
@@ -124,6 +131,20 @@ class TrajectoryRecord:
     payload: dict | None
     variants: tuple[str, ...]
     depth: int
+    event_id: str = ""
+    conversation_id: str | None = None
+    source_seq: int | None = None
+    label: str = ""
+    status: str | None = None
+    actor_kind: str | None = None
+    actor_id: str | None = None
+    run_id: str | None = None
+    parent_event_id: str | None = None
+    source_event_id: str | None = None
+    replacement_event_id: str | None = None
+    observed_at: float | None = None
+    field_states: dict[str, str] = field(default_factory=dict)
+    sensitivity: str | None = None
 
 
 @dataclass(frozen=True)
@@ -170,6 +191,10 @@ def _parse_timestamp(value: Any) -> float | None:
     """
     if value is None:
         return None
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.timestamp()
     if isinstance(value, (int, float)):
         return float(value)
     if isinstance(value, str):
@@ -194,6 +219,8 @@ def _parse_payload(raw: Any) -> dict | None:
     """Parse a sidecar ``payload_json`` string; ``None`` when absent/bad."""
     if not raw:
         return None
+    if isinstance(raw, Mapping):
+        return dict(raw)
     try:
         data = json.loads(raw)
     except (json.JSONDecodeError, TypeError):
@@ -218,6 +245,7 @@ class _Msg:
     deleted: bool
     ts: float | None
     turn_hint: str | None
+    conversation_id: str | None
     index: int
 
 
@@ -237,6 +265,11 @@ def _normalize_message(raw: Any, index: int) -> _Msg | None:
         deleted=bool(_field(raw, "deleted") or False),
         ts=_parse_timestamp(_field(raw, "timestamp")),
         turn_hint=_field(raw, "turn_id") or None,
+        conversation_id=(
+            str(_field(raw, "conversation_id"))
+            if _field(raw, "conversation_id")
+            else None
+        ),
         index=index,
     )
 
@@ -253,6 +286,9 @@ def derive_trajectory(
     variant_sets: Iterable[Any],
     compaction_records: Iterable[Any],
     active_leaf_message_id: str | None = None,
+    agent_runs: Iterable[Any] = (),
+    agent_steps: Iterable[Any] = (),
+    retrieval_runs: Iterable[Any] = (),
 ) -> TrajectorySnapshot:
     """Project a conversation's persisted facts into a trajectory snapshot.
 
@@ -293,6 +329,9 @@ def derive_trajectory(
             argument; the projection never queries the DB). ``None`` or a
             dangling id degrades to rendering every non-deleted message in
             order, with no tree-derived variant suppression.
+        agent_runs: Optional durable agent-run metadata rows.
+        agent_steps: Optional append-only agent-step rows.
+        retrieval_runs: Optional safe retrieval-provenance run summaries.
 
     Returns:
         The snapshot; ``turns`` is empty for an empty conversation.
@@ -310,18 +349,20 @@ def derive_trajectory(
 
     active_ids = _active_path_ids(by_id, active_leaf_message_id)
 
-    # Sidecar rows: message rows by message id, tool rows by owning id.
+    # Sidecar rows: message rows by message id, all other observable rows
+    # by owner. Unknown kinds stay generic instead of silently displacing
+    # the owning message row.
     message_rows: dict[str, Any] = {}
-    tool_rows: dict[str, list[Any]] = {}
+    sidecar_rows: dict[str, list[Any]] = {}
     for row in traj_rows:
         mid = _field(row, "message_id")
         kind = str(_field(row, "event_kind") or "")
         if not mid:
             continue
-        if kind in _NESTED_KINDS:
-            tool_rows.setdefault(str(mid), []).append(row)
-        else:
+        if kind in _RENDERED_ROLES:
             message_rows[str(mid)] = row
+        else:
+            sidecar_rows.setdefault(str(mid), []).append(row)
 
     rendered = [
         m
@@ -377,20 +418,38 @@ def derive_trajectory(
                 ),
             )
         )
-        for tool_row in sorted(
-            tool_rows.get(m.mid, ()),
+        for sidecar_row in sorted(
+            sidecar_rows.get(m.mid, ()),
             key=lambda r: _as_int(_field(r, "seq")),
         ):
             events.append(
                 (
                     turn_id,
-                    _tool_record(tool_row, turn_id=turn_id),
+                    _record_from_sidecar_event(
+                        sidecar_row,
+                        turn_id=turn_id,
+                        owner=m,
+                    ),
                 )
             )
 
     turns = _group_turns(events)
     turns = _insert_compaction_markers(turns, compaction_records, turn_msg_times)
     turns = _apply_variant_sets(turns, variant_sets)
+    extra_records = [
+        *_records_from_agent_runs(agent_runs),
+        *_records_from_agent_steps(agent_steps),
+        *_records_from_retrieval_runs(retrieval_runs),
+    ]
+    if extra_records:
+        records = [record for turn in turns for record in turn.records]
+        ordered = _causal_order([*records, *extra_records])
+        turns = _group_turns(
+            [
+                (record.turn_id or record.conversation_id or "trace", record)
+                for record in ordered
+            ]
+        )
     turns = _assign_ledger_seq(turns)
     return TrajectorySnapshot(turns=tuple(turns))
 
@@ -410,22 +469,7 @@ def _assign_ledger_seq(turns: list[TrajectoryTurn]) -> list[TrajectoryTurn]:
 
 def _with_seq(record: TrajectoryRecord, seq: int) -> TrajectoryRecord:
     """Return a copy of ``record`` carrying the given ledger ``seq``."""
-    return TrajectoryRecord(
-        seq=seq,
-        kind=record.kind,
-        turn_id=record.turn_id,
-        message_id=record.message_id,
-        content_preview=record.content_preview,
-        usage=record.usage,
-        step_started_at=record.step_started_at,
-        first_token_at=record.first_token_at,
-        completed_at=record.completed_at,
-        model=record.model,
-        provider=record.provider,
-        payload=record.payload,
-        variants=record.variants,
-        depth=record.depth,
-    )
+    return replace(record, seq=seq)
 
 
 def _as_int(value: Any) -> int:
@@ -529,6 +573,9 @@ def _message_record(
     variants: tuple[str, ...],
 ) -> TrajectoryRecord:
     """Build a top-level user/assistant record from a message + its row."""
+    conversation_id = (
+        _optional_text(_field(row, "conversation_id")) or m.conversation_id
+    )
     return TrajectoryRecord(
         seq=0,  # assigned by the final pass
         kind=kind,
@@ -544,30 +591,61 @@ def _message_record(
         payload=None,
         variants=variants,
         depth=0,
+        event_id=f"message:{m.mid}",
+        conversation_id=conversation_id,
+        source_seq=_optional_int(_field(row, "seq")),
+        label=_event_label(kind),
+        status=_optional_text(_field(row, "status")) or "complete",
+        actor_kind=kind,
+        actor_id=kind,
+        parent_event_id=f"message:{m.parent}" if m.parent else None,
+        source_event_id=_optional_text(_field(row, "source_event_id")),
+        replacement_event_id=_optional_text(_field(row, "replacement_event_id")),
+        observed_at=m.ts,
+        field_states=_field_state_map(
+            row,
+            default={"content_preview": "observed"},
+        ),
+        sensitivity=(
+            _optional_text(_field(row, "sensitivity")) or "conversation_content"
+        ),
     )
 
 
-def _tool_record(row: Any, *, turn_id: str) -> TrajectoryRecord:
-    """Build a depth-1 tool record from a sidecar ``tool_*`` row.
-
-    ``message_id`` is the OWNING assistant message's id (both tool kinds
-    key on it). Timing is surfaced exactly as stored -- append-time
-    zero-duration stamps stay verbatim. The preview shows the tool name
-    and result text (marker convention: ``name -> result``), never the
-    raw ``payload_json`` envelope.
-    """
+def _record_from_sidecar_event(
+    row: Any,
+    *,
+    turn_id: str | None = None,
+    owner: _Msg | None = None,
+) -> TrajectoryRecord:
+    """Normalize one known or future trajectory-sidecar event."""
     payload = _parse_payload(_field(row, "payload_json"))
-    kind = str(_field(row, "event_kind") or "")
-    preview = (
-        _feedback_preview(payload)
-        if kind == KIND_USER_FEEDBACK
-        else _tool_preview(payload)
+    kind = str(_field(row, "event_kind") or "event")
+    message_id = _optional_text(_field(row, "message_id"))
+    conversation_id = _optional_text(_field(row, "conversation_id"))
+    source_seq = _optional_int(_field(row, "seq"))
+    actual_turn_id = (
+        _optional_text(_field(row, "turn_id"))
+        or turn_id
+        or message_id
+        or conversation_id
+        or "trace"
     )
+    if kind == KIND_USER_FEEDBACK:
+        preview = _feedback_preview(payload)
+    elif kind in _TOOL_KINDS:
+        preview = _tool_preview(payload)
+    else:
+        preview = _preview(
+            _field(row, "summary")
+            or (payload.get("summary") if payload else "")
+            or kind.replace("_", " ")
+        )
     return TrajectoryRecord(
         seq=0,  # assigned by the final pass
         kind=kind,
-        turn_id=turn_id,
-        message_id=str(_field(row, "message_id") or "") or None,
+        turn_id=actual_turn_id,
+        message_id=message_id,
         content_preview=preview,
         usage=None,
         step_started_at=_field(row, "step_started_at"),
@@ -577,7 +655,32 @@ def _tool_record(row: Any, *, turn_id: str) -> TrajectoryRecord:
         provider=_field(row, "provider"),
         payload=payload,
         variants=(),
-        depth=1,
+        depth=1 if message_id else 0,
+        event_id=_sidecar_event_id(row),
+        conversation_id=conversation_id,
+        source_seq=source_seq,
+        label=_event_label(kind),
+        status=_optional_text(_field(row, "status")) or "observed",
+        actor_kind=_optional_text(_field(row, "actor_kind")),
+        actor_id=_optional_text(_field(row, "actor_id")),
+        run_id=_optional_text(_field(row, "run_id")),
+        parent_event_id=(
+            _optional_text(_field(row, "parent_event_id"))
+            or (f"message:{message_id}" if message_id else None)
+        ),
+        source_event_id=_optional_text(_field(row, "source_event_id")),
+        replacement_event_id=_optional_text(_field(row, "replacement_event_id")),
+        observed_at=_first_timestamp(
+            _field(row, "step_started_at"),
+            _field(row, "first_token_at"),
+            _field(row, "completed_at"),
+            owner.ts if owner is not None else None,
+        ),
+        field_states=_field_state_map(
+            row,
+            default={"payload": "observed" if payload is not None else "not_available"},
+        ),
+        sensitivity=_optional_text(_field(row, "sensitivity")) or "diagnostic",
     )
 
 
@@ -617,6 +720,364 @@ def _tool_preview(payload: dict | None) -> str:
     return body or name[:PREVIEW_MAX_CHARS]
 
 
+_EVENT_LABELS = {
+    KIND_USER: "User message",
+    KIND_ASSISTANT: "Assistant message",
+    KIND_TOOL_CALL: "Tool call",
+    KIND_TOOL_RESULT: "Tool result",
+    KIND_COMPACTION: "Compaction",
+    KIND_USER_FEEDBACK: "User feedback",
+    "model": "Model response",
+    "spawn": "Agent spawn",
+    "agent_run": "Agent run",
+    "retrieval_run": "Retrieval run",
+}
+
+
+def _event_label(kind: str) -> str:
+    """Human sentence-case label for one storage event kind."""
+    return _EVENT_LABELS.get(kind, kind.replace("_", " ").strip().capitalize())
+
+
+def _optional_text(value: Any) -> str | None:
+    """Return a non-empty string, or ``None``."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _optional_int(value: Any) -> int | None:
+    """Return an integer owner sequence, or ``None`` when unavailable."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _first_timestamp(*values: Any) -> float | None:
+    """Return the first observed timestamp in the supplied precedence."""
+    for value in values:
+        parsed = _parse_timestamp(value)
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _field_state_map(
+    source: Any,
+    *,
+    default: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    """Copy structured per-field states from a plain source object."""
+    states = _field(source, "field_states")
+    if isinstance(states, Mapping):
+        return {str(key): str(value) for key, value in states.items()}
+    return dict(default or {})
+
+
+def _sidecar_event_id(row: Any) -> str:
+    """Stable identifier for a trajectory-sidecar owner row."""
+    explicit = _optional_text(_field(row, "event_id"))
+    if explicit:
+        return explicit
+    conversation_id = _optional_text(_field(row, "conversation_id"))
+    message_id = _optional_text(_field(row, "message_id")) or "unknown"
+    source_seq = _optional_int(_field(row, "seq"))
+    owner = conversation_id or message_id
+    suffix = (
+        str(source_seq)
+        if source_seq is not None
+        else str(_field(row, "event_kind") or "event")
+    )
+    return f"trajectory:{owner}:{suffix}"
+
+
+def _records_from_agent_runs(runs: Iterable[Any]) -> list[TrajectoryRecord]:
+    """Adapt durable AgentRunsDB run metadata into Trace records."""
+    records: list[TrajectoryRecord] = []
+    for run in runs:
+        run_id = _optional_text(_field(run, "id") or _field(run, "run_id"))
+        if not run_id:
+            continue
+        conversation_id = _optional_text(_field(run, "conversation_id"))
+        actor_kind = _optional_text(_field(run, "agent_kind")) or "agent"
+        parent_run_id = _optional_text(_field(run, "parent_run_id"))
+        task = _optional_text(_field(run, "task")) or ""
+        created_at = _parse_timestamp(_field(run, "created_at"))
+        status = _optional_text(_field(run, "status")) or "unknown"
+        records.append(
+            TrajectoryRecord(
+                seq=0,
+                kind="agent_run",
+                turn_id=(
+                    _optional_text(_field(run, "turn_id"))
+                    or conversation_id
+                    or f"run:{run_id}"
+                ),
+                message_id=_optional_text(_field(run, "assistant_message_id")),
+                content_preview=_preview(task or f"{actor_kind} run"),
+                usage=None,
+                step_started_at=created_at,
+                first_token_at=None,
+                completed_at=_parse_timestamp(_field(run, "updated_at")),
+                model=_optional_text(_field(run, "model")),
+                provider=_optional_text(_field(run, "provider")),
+                payload={"task": task} if task else None,
+                variants=(),
+                depth=0,
+                event_id=f"agent-run:{run_id}",
+                conversation_id=conversation_id,
+                source_seq=_optional_int(_field(run, "source_seq")),
+                label="Agent run",
+                status=status,
+                actor_kind=actor_kind,
+                actor_id=(_optional_text(_field(run, "agent_definition_id")) or run_id),
+                run_id=run_id,
+                parent_event_id=(
+                    _optional_text(_field(run, "parent_event_id"))
+                    or _optional_text(_field(run, "spawn_event_id"))
+                    or (f"agent-run:{parent_run_id}" if parent_run_id else None)
+                ),
+                source_event_id=(
+                    _optional_text(_field(run, "source_event_id"))
+                    or (
+                        f"agent-run:{_field(run, 'resumed_from_run_id')}"
+                        if _field(run, "resumed_from_run_id")
+                        else None
+                    )
+                ),
+                replacement_event_id=_optional_text(
+                    _field(run, "replacement_event_id")
+                ),
+                observed_at=created_at,
+                field_states=_field_state_map(
+                    run,
+                    default={
+                        "result": (
+                            "observed"
+                            if _field(run, "result") is not None
+                            else "not_available"
+                        )
+                    },
+                ),
+                sensitivity=_optional_text(_field(run, "sensitivity")) or "diagnostic",
+            )
+        )
+    return records
+
+
+def _records_from_agent_steps(steps: Iterable[Any]) -> list[TrajectoryRecord]:
+    """Adapt append-only AgentRunsDB step rows into Trace records."""
+    records: list[TrajectoryRecord] = []
+    for step in steps:
+        run_id = _optional_text(_field(step, "run_id"))
+        source_seq = _optional_int(_field(step, "index"))
+        if source_seq is None:
+            source_seq = _optional_int(_field(step, "seq"))
+        if not run_id or source_seq is None:
+            continue
+        kind = _optional_text(_field(step, "kind")) or "agent_step"
+        summary = _optional_text(_field(step, "summary")) or ""
+        created_at = _parse_timestamp(_field(step, "created_at"))
+        payload = _field(step, "payload")
+        records.append(
+            TrajectoryRecord(
+                seq=0,
+                kind=kind,
+                turn_id=(
+                    _optional_text(_field(step, "turn_id"))
+                    or _optional_text(_field(step, "conversation_id"))
+                    or f"run:{run_id}"
+                ),
+                message_id=_optional_text(_field(step, "message_id")),
+                content_preview=_preview(summary or kind.replace("_", " ")),
+                usage=None,
+                step_started_at=created_at,
+                first_token_at=None,
+                completed_at=created_at,
+                model=_optional_text(_field(step, "model")),
+                provider=_optional_text(_field(step, "provider")),
+                payload=dict(payload) if isinstance(payload, Mapping) else None,
+                variants=(),
+                depth=1,
+                event_id=f"agent-step:{run_id}:{source_seq}",
+                conversation_id=_optional_text(_field(step, "conversation_id")),
+                source_seq=source_seq,
+                label=_event_label(kind),
+                status=_optional_text(_field(step, "status")) or "observed",
+                actor_kind=_optional_text(_field(step, "actor_kind")) or "agent",
+                actor_id=_optional_text(_field(step, "actor_id")) or run_id,
+                run_id=run_id,
+                parent_event_id=(
+                    _optional_text(_field(step, "parent_event_id"))
+                    or f"agent-run:{run_id}"
+                ),
+                source_event_id=_optional_text(_field(step, "source_event_id")),
+                replacement_event_id=_optional_text(
+                    _field(step, "replacement_event_id")
+                ),
+                observed_at=created_at,
+                field_states=_field_state_map(
+                    step,
+                    default={"summary": "observed" if summary else "not_available"},
+                ),
+                sensitivity=_optional_text(_field(step, "sensitivity")) or "diagnostic",
+            )
+        )
+    return records
+
+
+def _records_from_retrieval_runs(runs: Iterable[Any]) -> list[TrajectoryRecord]:
+    """Adapt safe citation/retrieval run summaries into Trace records."""
+    records: list[TrajectoryRecord] = []
+    for run in runs:
+        run_id = _optional_text(_field(run, "run_id") or _field(run, "id"))
+        if not run_id:
+            continue
+        started_at = _parse_timestamp(
+            _field(run, "started_at") or _field(run, "created_at")
+        )
+        ended_at = _parse_timestamp(_field(run, "ended_at"))
+        stage = _optional_text(_field(run, "stage")) or "retrieval"
+        conversation_id = _optional_text(_field(run, "conversation_id"))
+        records.append(
+            TrajectoryRecord(
+                seq=0,
+                kind="retrieval_run",
+                turn_id=(
+                    _optional_text(_field(run, "turn_id"))
+                    or conversation_id
+                    or f"retrieval:{run_id}"
+                ),
+                message_id=_optional_text(_field(run, "message_id")),
+                content_preview=_preview(stage.replace("_", " ")),
+                usage=None,
+                step_started_at=started_at,
+                first_token_at=None,
+                completed_at=ended_at,
+                model=None,
+                provider=None,
+                payload={"stage": stage},
+                variants=(),
+                depth=0,
+                event_id=f"retrieval-run:{run_id}",
+                conversation_id=conversation_id,
+                source_seq=_optional_int(
+                    _field(run, "run_ordinal") or _field(run, "source_seq")
+                ),
+                label="Retrieval run",
+                status=(
+                    _optional_text(_field(run, "status"))
+                    or ("complete" if ended_at is not None else "running")
+                ),
+                actor_kind="retrieval",
+                actor_id=_optional_text(_field(run, "actor_id")) or "retrieval",
+                run_id=run_id,
+                parent_event_id=_optional_text(_field(run, "parent_event_id")),
+                source_event_id=_optional_text(_field(run, "source_event_id")),
+                replacement_event_id=_optional_text(
+                    _field(run, "replacement_event_id")
+                ),
+                observed_at=started_at,
+                field_states=_field_state_map(
+                    run,
+                    default={"payload": "omitted"},
+                ),
+                sensitivity=_optional_text(_field(run, "sensitivity"))
+                or "retrieval_metadata",
+            )
+        )
+    return records
+
+
+def _causal_order(records: Iterable[TrajectoryRecord]) -> list[TrajectoryRecord]:
+    """Deterministically order records while keeping causes before effects."""
+    by_id = {record.event_id: record for record in records if record.event_id}
+    if not by_id:
+        return list(records)
+
+    edges: dict[str, set[str]] = {event_id: set() for event_id in by_id}
+    indegree = {event_id: 0 for event_id in by_id}
+
+    def add_edge(before: str | None, after: str | None) -> None:
+        if (
+            not before
+            or not after
+            or before == after
+            or before not in by_id
+            or after not in by_id
+            or after in edges[before]
+        ):
+            return
+        edges[before].add(after)
+        indegree[after] += 1
+
+    for record in by_id.values():
+        # Message parent ids describe branch ancestry. The message sidecar's
+        # immutable source sequence remains authoritative when historical
+        # rows disagree (legacy v1 compatibility).
+        if not (
+            record.event_id.startswith("message:")
+            and (record.parent_event_id or "").startswith("message:")
+        ):
+            add_edge(record.parent_event_id, record.event_id)
+        add_edge(record.source_event_id, record.event_id)
+        add_edge(record.event_id, record.replacement_event_id)
+
+    owner_sequences: dict[tuple[str, str], list[TrajectoryRecord]] = {}
+    for record in by_id.values():
+        if record.source_seq is None:
+            continue
+        if record.event_id.startswith("agent-step:") and record.run_id:
+            owner = ("agent-step", record.run_id)
+        elif record.event_id.startswith("trajectory:") and record.conversation_id:
+            owner = ("trajectory", record.conversation_id)
+        else:
+            continue
+        owner_sequences.setdefault(owner, []).append(record)
+    for owner_records in owner_sequences.values():
+        owner_records.sort(key=lambda record: (record.source_seq, record.event_id))
+        for before, after in zip(owner_records, owner_records[1:]):
+            add_edge(before.event_id, after.event_id)
+
+    def key(event_id: str) -> tuple[Any, ...]:
+        record = by_id[event_id]
+        return (
+            record.observed_at is None,
+            record.observed_at or 0.0,
+            0
+            if record.event_id.startswith("message:") and record.kind == KIND_USER
+            else 1,
+            record.source_seq is None,
+            record.source_seq or 0,
+            event_id,
+        )
+
+    ready = [
+        (key(event_id), event_id)
+        for event_id, degree in indegree.items()
+        if degree == 0
+    ]
+    heapq.heapify(ready)
+    ordered_ids: list[str] = []
+    while ready:
+        _, event_id = heapq.heappop(ready)
+        ordered_ids.append(event_id)
+        for child_id in sorted(edges[event_id]):
+            indegree[child_id] -= 1
+            if indegree[child_id] == 0:
+                heapq.heappush(ready, (key(child_id), child_id))
+
+    if len(ordered_ids) != len(by_id):
+        # A malformed cycle has no honest causal serialization. Fall back
+        # to the stable concurrent key for the whole set; preserve every row.
+        ordered_ids = sorted(by_id, key=key)
+    return [by_id[event_id] for event_id in ordered_ids]
+
+
 def _group_turns(events: list[tuple[str, TrajectoryRecord]]) -> list[TrajectoryTurn]:
     """Fold the ordered event stream into contiguous turns."""
     turns: list[TrajectoryTurn] = []
@@ -650,15 +1111,17 @@ def _insert_compaction_markers(
     markers = [
         rec
         for rec in compaction_records
-        if str(_field(rec, "purpose") or _COMPACTION_PURPOSE)
-        == _COMPACTION_PURPOSE
+        if str(_field(rec, "purpose") or _COMPACTION_PURPOSE) == _COMPACTION_PURPOSE
     ]
     if not markers or not turns:
         return turns
 
     markers = sorted(
         enumerate(markers),
-        key=lambda pair: (_parse_timestamp(_field(pair[1], "started_at")) or 0.0, pair[0]),
+        key=lambda pair: (
+            _parse_timestamp(_field(pair[1], "started_at")) or 0.0,
+            pair[0],
+        ),
     )
     turn_ends = [turn_msg_times.get(turn.turn_id) for turn in turns]
 
@@ -690,6 +1153,9 @@ def _marker_record(rec: Any, *, turn_id: str) -> TrajectoryRecord:
     """Build a between-turn compaction marker record."""
     status = str(_field(rec, "status") or "")
     usage = ProviderUsage.from_json(_field(rec, "provider_usage_json"))
+    operation_id = _optional_text(_field(rec, "operation_id")) or "unknown"
+    conversation_id = _optional_text(_field(rec, "conversation_id"))
+    started_at = _parse_timestamp(_field(rec, "started_at"))
     return TrajectoryRecord(
         seq=0,  # assigned by the final pass
         kind=KIND_COMPACTION,
@@ -697,7 +1163,7 @@ def _marker_record(rec: Any, *, turn_id: str) -> TrajectoryRecord:
         message_id=None,
         content_preview=f"compaction: {status}" if status else "compaction",
         usage=usage,
-        step_started_at=_parse_timestamp(_field(rec, "started_at")),
+        step_started_at=started_at,
         first_token_at=None,  # compaction has no token boundary
         completed_at=_parse_timestamp(_field(rec, "finished_at")),
         model=_field(rec, "model") or None,
@@ -705,6 +1171,15 @@ def _marker_record(rec: Any, *, turn_id: str) -> TrajectoryRecord:
         payload=None,
         variants=(),
         depth=0,
+        event_id=f"compaction:{operation_id}",
+        conversation_id=conversation_id,
+        label="Compaction",
+        status=status or "unknown",
+        actor_kind="context",
+        actor_id="compaction",
+        observed_at=started_at,
+        field_states={"payload": "not_available"},
+        sensitivity="diagnostic",
     )
 
 
@@ -735,9 +1210,7 @@ def _apply_variant_sets(
             if content is not None
         )
         superseded_by_turn.setdefault(str(turn_id), ())
-        superseded_by_turn[str(turn_id)] = (
-            superseded_by_turn[str(turn_id)] + contents
-        )
+        superseded_by_turn[str(turn_id)] = superseded_by_turn[str(turn_id)] + contents
 
     if not superseded_by_turn:
         return turns
@@ -749,9 +1222,7 @@ def _apply_variant_sets(
             result.append(turn)
             continue
         records = tuple(
-            _merge_variants(record, extra)
-            if record.kind == KIND_ASSISTANT
-            else record
+            _merge_variants(record, extra) if record.kind == KIND_ASSISTANT else record
             for record in turn.records
         )
         result.append(TrajectoryTurn(turn.turn_id, records))
@@ -774,19 +1245,4 @@ def _merge_variants(
     for content in extra:
         if content not in merged:
             merged.append(content)
-    return TrajectoryRecord(
-        seq=record.seq,
-        kind=record.kind,
-        turn_id=record.turn_id,
-        message_id=record.message_id,
-        content_preview=record.content_preview,
-        usage=record.usage,
-        step_started_at=record.step_started_at,
-        first_token_at=record.first_token_at,
-        completed_at=record.completed_at,
-        model=record.model,
-        provider=record.provider,
-        payload=record.payload,
-        variants=tuple(merged),
-        depth=record.depth,
-    )
+    return replace(record, variants=tuple(merged))
