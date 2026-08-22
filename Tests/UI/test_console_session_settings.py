@@ -698,6 +698,88 @@ def test_first_chat_reserved_target_never_adopts_preexisting_pristine_id(
     assert _pending_first_chat(app) == intent
 
 
+def test_first_chat_reserved_create_preserves_concurrent_active_session_switch(
+    monkeypatch,
+) -> None:
+    app = _build_test_app()
+    console = ChatScreen(app)
+    store = ConsoleChatStore()
+    console._console_chat_store = store
+    prior = store.create_session(
+        title="Prior user work",
+        settings=ConsoleSessionSettings(
+            provider="openai",
+            model="prior-user-model",
+            source="user",
+        ),
+    )
+    store.set_session_draft(prior.id, "preserve prior draft")
+    competing = store.create_session(
+        title="Competing user work",
+        settings=ConsoleSessionSettings(
+            provider="openai",
+            model="competing-user-model",
+            source="user",
+        ),
+    )
+    store.set_session_draft(competing.id, "preserve competing draft")
+    store.switch_session(prior.id)
+    user_sessions_before = {
+        item.id: _first_chat_session_snapshot(item) for item in store.sessions()
+    }
+    snapshot = RuntimeConfigSnapshot(42, _first_chat_config())
+    monkeypatch.setattr(
+        session_module,
+        "get_runtime_config_snapshot",
+        lambda: snapshot,
+        raising=False,
+    )
+    intent = ConsoleFirstChatIntent(
+        "reserved-active-session-race",
+        "openai",
+        "model-a",
+        snapshot.generation,
+    )
+    app.pending_handoffs.stage_reserved_console_first_chat(intent)
+    original_create = store.create_session
+
+    def create_then_select_competing_session(**kwargs):
+        created = original_create(**kwargs)
+        if kwargs.get("session_id") == intent.session_id:
+            store.switch_session(competing.id)
+        return created
+
+    monkeypatch.setattr(
+        store,
+        "create_session",
+        create_then_select_competing_session,
+    )
+    owner = _first_chat_owner(console)
+    real_apply = owner._apply_first_chat_control_selection_fn
+    presentation = MagicMock(side_effect=real_apply)
+    acknowledgement = MagicMock(
+        wraps=app.pending_handoffs.acknowledge_current,
+    )
+    owner._apply_first_chat_control_selection_fn = presentation
+    monkeypatch.setattr(
+        app.pending_handoffs,
+        "acknowledge_current",
+        acknowledgement,
+    )
+
+    assert owner.consume_pending_console_first_chat_intent() is False
+    assert all(item.id != intent.session_id for item in store.sessions())
+    assert {
+        item.id: _first_chat_session_snapshot(item) for item in store.sessions()
+    } == user_sessions_before
+    assert store.session_draft(prior.id) == "preserve prior draft"
+    assert store.session_draft(competing.id) == "preserve competing draft"
+    assert store.active_session_id == competing.id
+    assert _pending_first_chat(app) == intent
+    presentation.assert_called_once_with(None, None)
+    acknowledgement.assert_not_called()
+
+
 def test_first_chat_generation_change_during_reserved_create_rolls_back(
     monkeypatch,
 ) -> None:
@@ -709,6 +791,8 @@ def test_first_chat_generation_change_during_reserved_create_rolls_back(
         lambda message, **_kwargs: notifications.append(str(message)),
     )
     console = ChatScreen(app)
+    console._console_control_provider = "prior-control-provider"
+    console._console_control_model = "prior-control-model"
     store = ConsoleChatStore()
     console._console_chat_store = store
     user_settings = ConsoleSessionSettings(
@@ -740,10 +824,18 @@ def test_first_chat_generation_change_during_reserved_create_rolls_back(
         return created
 
     monkeypatch.setattr(store, "create_session", create_then_advance_generation)
+    owner = _first_chat_owner(console)
+    real_apply = owner._apply_first_chat_control_selection_fn
+    projections: list[tuple[object, object]] = []
 
-    assert (
-        _first_chat_owner(console).consume_pending_console_first_chat_intent() is False
-    )
+    def apply_and_record(provider, model) -> None:
+        projections.append((provider, model))
+        real_apply(provider, model)
+
+    owner._apply_first_chat_control_selection_fn = apply_and_record
+
+    assert owner.consume_pending_console_first_chat_intent() is False
+    assert projections == [("prior-control-provider", "prior-control-model")]
     assert all(item.id != intent.session_id for item in store.sessions())
     assert store.active_session_id == user_session.id
     preserved = next(item for item in store.sessions() if item.id == user_session.id)
@@ -1750,6 +1842,9 @@ async def test_mounted_first_chat_ack_exception_during_resume_restores_ui(
         await console._sync_native_console_chat_ui()
         console._focus_console_composer_if_needed(force=True)
         await pilot.pause()
+        prior_focused_widget = console.app.focused
+        assert prior_focused_widget is not None
+        assert prior_focused_widget.is_mounted is True
         sessions_before = [
             _first_chat_session_snapshot(item) for item in store.sessions()
         ]
@@ -1767,9 +1862,19 @@ async def test_mounted_first_chat_ack_exception_during_resume_restores_ui(
             "acknowledge_current",
             lambda _claim: (_ for _ in ()).throw(RuntimeError("PRIVATE_RESUME")),
         )
+        owner = _first_chat_owner(console)
+        real_restore_focus = owner._restore_first_chat_focus_fn
+        restore_focus = MagicMock(side_effect=real_restore_focus)
+        owner._restore_first_chat_focus_fn = restore_focus
 
         console.on_screen_resume()
         await _wait_for_first_chat_projection(console, pilot, mounted_before)
+        for _ in range(80):
+            if restore_focus.call_count:
+                break
+            await pilot.pause(0.05)
+        restore_focus.assert_called_once_with(prior_focused_widget)
+        assert console.app.focused is prior_focused_widget
         assert [
             _first_chat_session_snapshot(item) for item in store.sessions()
         ] == sessions_before
