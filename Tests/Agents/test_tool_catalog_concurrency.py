@@ -34,6 +34,14 @@ def test_invoke_by_name_takes_exactly_one_catalog_snapshot():
     registry.register_provider(BuiltinToolProvider())
     registry._ensure_catalog_cache()  # warm the cache first
 
+    # Resolve the name BEFORE the counter is installed. `list_catalog()`
+    # routes through `_ensure_catalog_cache()` itself, so taking the name
+    # inside the counting window charges the test's own setup to the
+    # subject and the assertion reads 2 no matter how `invoke_by_name`
+    # behaves -- it stopped measuring anything the moment `list_catalog`
+    # was refactored onto the shared snapshot helper.
+    name = registry.list_catalog()[0].name
+
     real_ensure = registry._ensure_catalog_cache
     snapshots = []
 
@@ -43,7 +51,6 @@ def test_invoke_by_name_takes_exactly_one_catalog_snapshot():
 
     registry._ensure_catalog_cache = counting
 
-    name = registry.list_catalog()[0].name
     registry.invoke_by_name(name, {})
 
     assert len(snapshots) == 1  # pre-fix: 2
