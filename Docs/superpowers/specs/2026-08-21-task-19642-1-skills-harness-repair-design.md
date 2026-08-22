@@ -66,9 +66,14 @@ The Skills service and, where applicable, the real trust service and real
 `ServicePolicyEnforcer` remain untouched. No trust bypass or fake policy
 enforcer is introduced.
 
+The inert Study/Quiz posture needs no new fake type: assigning plain objects
+to the two optional service slots exercises the already-supported missing-seam
+branch with the smallest possible fixture change.
+
 ### Observable interaction helpers
 
-The Skills editor/import helpers will wait for the next externally observable
+The Skills editor/import helpers will reuse the existing bounded
+`_wait_for_selector`/state helpers to wait for the next externally observable
 state before acting:
 
 - the full Library rail must contain the Skills row;
@@ -79,7 +84,9 @@ state before acting:
   mounted action controls, rather than a fixed pair of event-loop pauses.
 
 Waits remain bounded and fail with the missing selector/state named in the
-message. They do not sleep for arbitrary wall-clock durations.
+message. They do not sleep for arbitrary wall-clock durations. This is not a
+file-wide pause cleanup or a new polling abstraction: stable pauses outside the
+29 failing scenarios remain untouched.
 
 ### Current editor lifecycle
 
@@ -87,11 +94,16 @@ Older scenarios will be updated to drive the accepted lifecycle:
 
 - the trusted-skill save test makes a real edit before saving, preserving its
   purpose of proving that a save re-queues trust review;
-- deletion scenarios reveal More actions before pressing Delete;
+- clean deletion scenarios reveal More actions and wait for the existing
+  Delete control before pressing it;
 - create-save scenarios expect
   `Saved. Review trust before using this Skill with the agent.`;
 - assertions continue to verify the durable service result, trust posture,
   list membership/count, and real runtime-policy path.
+
+The 29 assigned nodes are the regression coverage for this repair. No new test
+module, fixture framework, or production-only seam is added unless an
+implementation-time RED run exposes a contract not represented by those nodes.
 
 ## Alternatives rejected
 
@@ -113,10 +125,20 @@ Only tests related to the modified harness/functionality will run:
 1. RED evidence from the current exact two-file gate and representative
    isolated failures is retained in TASK-19642.1 notes.
 2. Run the 29 assigned nodes through the two files in their inventory order.
-3. Run the directly related Skill editor owner nodes that pin clean/dirty,
-   More-actions/Delete, and create-save presentation.
-4. Run Ruff on the two modified test files, formatter check on those files,
-   and `git diff --check`.
+3. Run these directly related Skill editor owner nodes, which pin the accepted
+   lifecycle the integration tests are being aligned to:
+   - `test_skill_editor_clean_saved_mode_renders_navigation_actions_only`
+   - `test_skill_editor_lifecycle_exposes_only_valid_primary_actions`
+   - `test_handle_library_skill_delete_enters_confirm_state`
+   - `test_create_save_success_consumes_scroll_receipt_after_recompose`
+   - `test_mark_dirty_clears_stale_saved_status`
+4. Run Ruff on the two modified test files and `git diff --check`. The current
+   baseline has two small Ruff findings in `test_skills_library_flow.py`
+   (one unused local import and one semicolon-separated pause); because that
+   file is already in scope, remove those two findings. Both large files also
+   have pre-existing whole-file Ruff-format drift, so do not bulk-reformat or
+   claim a green whole-file formatter check; keep every changed hunk formatted
+   consistently and record the baseline explicitly.
 5. Perform inverse evidence by temporarily restoring one stale contract at a
    time (fresh-profile factory, direct clean Delete, or old create-save copy),
    confirm its named focused test fails, and restore the repair.
