@@ -11,7 +11,7 @@ from io import BytesIO
 import threading
 import time
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from PIL import Image
@@ -117,6 +117,37 @@ async def test_persona_actor_pack_uses_labelled_local_portrait_selector(
             "character_card_id"
             not in screen.query_one("#ccp-persona-editor-view").collect()
         )
+
+
+async def test_persona_portrait_validation_runs_off_the_event_loop(
+    mock_app_instance, _stub_characters, _stub_scope_service, monkeypatch
+) -> None:
+    mock_app_instance.chachanotes_db = SimpleNamespace(
+        list_character_cards=Mock(return_value=_character_rows())
+    )
+    main_thread = threading.get_ident()
+    validation_threads: list[int] = []
+    release = threading.Event()
+
+    def validate(*args, **kwargs):
+        validation_threads.append(threading.get_ident())
+        release.wait(timeout=2)
+
+    monkeypatch.setattr(personas_screen_module, "validate_actor_portrait", validate)
+    timer = threading.Timer(0.1, release.set)
+    timer.start()
+    app = PersonasTestApp(mock_app_instance)
+    try:
+        async with app.run_test() as pilot:
+            screen = await _mounted(pilot)
+            await pilot.click("#personas-mode-personas")
+            await screen._begin_create_actor_pack()
+
+            assert validation_threads
+            assert all(thread_id != main_thread for thread_id in validation_threads)
+    finally:
+        release.set()
+        timer.join(timeout=2)
 
 
 async def test_server_persona_actor_pack_explains_local_copy_requirement(
@@ -371,8 +402,14 @@ async def test_stale_pack_result_does_not_reconcile_into_newer_editor_authority(
         },
     )
     app = PersonasTestApp(mock_app_instance)
+    notifications: list[tuple[str, str]] = []
+    app.notify = lambda message, severity="information", **_: notifications.append(
+        (str(message), severity)
+    )
     async with app.run_test() as pilot:
         screen = await _mounted(pilot)
+        refresh = AsyncMock()
+        screen.character_handler.refresh_character_list = refresh
         await pilot.click("#personas-library-new-actor-pack")
         editor = screen.query_one(PersonasCharacterEditorWidget)
         screen.query_one("#personas-char-editor-name", Input).value = "Stale result"
@@ -390,6 +427,13 @@ async def test_stale_pack_result_does_not_reconcile_into_newer_editor_authority(
 
         assert "Portable UUID:" not in str(
             screen.query_one("#personas-char-editor-pack-status", Static).renderable
+        )
+        refresh.assert_awaited_once()
+        assert screen.state.selected_entity_id is None
+        assert screen._actor_pack_session is None
+        assert notifications[-1] == (
+            "Actor Pack created in background.",
+            "information",
         )
 
 

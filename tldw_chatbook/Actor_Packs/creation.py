@@ -69,7 +69,22 @@ class ActorPackCreationService:
         authority_guard: Callable[[], bool] = lambda: True,
         phase_hook: Callable[[str], None] | None = None,
     ) -> ActorPackCreationResult:
-        """Validate and commit one Character plus UUID in one transaction."""
+        """Validate and commit one Character plus UUID in one transaction.
+
+        Args:
+            request_data: Character fields accepted by the local card schema.
+            portrait_name: Filename used to validate the portrait media type.
+            portrait_bytes: Complete bounded portrait payload.
+            cancel_requested: Returns whether the owning UI operation was cancelled.
+            authority_guard: Returns whether the captured creation authority is current.
+            phase_hook: Optional test/diagnostic hook called at stable phase boundaries.
+
+        Returns:
+            The committed local Character id and portable UUID.
+
+        Raises:
+            ActorPackCreationError: If validation, authority, or persistence fails.
+        """
 
         self._begin_operation()
         try:
@@ -126,7 +141,23 @@ class ActorPackCreationService:
         authority_guard: Callable[[], bool] = lambda: True,
         phase_hook: Callable[[str], None] | None = None,
     ) -> ActorPackCreationResult:
-        """Coordinate one local Persona and UUID with linked-portrait authority."""
+        """Coordinate one local Persona and UUID with linked-portrait authority.
+
+        Args:
+            request_data: Persona fields accepted by the local profile schema.
+            source: Actor source; only ``local`` is eligible.
+            expected_portrait_revision: Captured Character portrait revision.
+            expected_portrait_sha256: Captured Character portrait content digest.
+            cancel_requested: Returns whether the owning UI operation was cancelled.
+            authority_guard: Returns whether the captured creation authority is current.
+            phase_hook: Optional test/diagnostic hook called at stable phase boundaries.
+
+        Returns:
+            The committed local Persona id and portable UUID.
+
+        Raises:
+            ActorPackCreationError: If validation, authority, or persistence fails.
+        """
 
         self._begin_operation()
         try:

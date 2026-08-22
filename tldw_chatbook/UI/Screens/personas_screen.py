@@ -6376,7 +6376,26 @@ class PersonasScreen(BaseAppScreen):
         if outcome.error is not None or not isinstance(outcome.value, list):
             self._notify("Portrait Characters are unavailable.", "error")
             return
-        choices = self._eligible_actor_pack_portraits(outcome.value)
+        eligibility = await _drain_to_thread(
+            self._eligible_actor_pack_portraits,
+            outcome.value,
+            task_name="personas-actor-pack-portrait-validation",
+        )
+        if eligibility.cancellation is not None:
+            raise eligibility.cancellation
+        if (
+            request_generation != self._actor_pack_generation
+            or self.state.active_mode != "personas"
+            or self.persona_handler.current_mode() != "local"
+        ):
+            return
+        if eligibility.error is not None:
+            self._notify("Portrait Characters are unavailable.", "error")
+            return
+        choices = eligibility.value
+        if not isinstance(choices, tuple):
+            self._notify("Portrait Characters are unavailable.", "error")
+            return
         if not choices:
             self._notify("No eligible local portrait Character.", "warning")
             return
@@ -6514,6 +6533,31 @@ class PersonasScreen(BaseAppScreen):
         self._profile_save_inflight = False
         self._profile_save_operation_inflight = False
 
+    async def _refresh_stale_actor_pack_commit(
+        self,
+        result: ActorPackCreationResult,
+        session: _ActorPackCreateSession,
+    ) -> None:
+        """Surface a committed result without retargeting newer UI authority."""
+
+        if self._actor_pack_session is session:
+            self._actor_pack_generation += 1
+            self._actor_pack_session = None
+        if result.actor_kind == "character":
+            await self.character_handler.refresh_character_list()
+        elif result.actor_kind == "persona":
+            try:
+                profiles = await self.persona_handler.refresh_persona_list(
+                    raise_on_unavailable=True
+                )
+            except Exception:
+                profiles = []
+            self._profiles = [dict(record) for record in (profiles or [])]
+            self._update_purpose_line()
+            if self.is_mounted and self.state.active_mode == "personas":
+                await self._render_profile_rows()
+        self._notify("Actor Pack created in background.", "information")
+
     async def _drain_actor_pack_creation(self) -> None:
         event = self._actor_pack_cancel_event
         task = self._actor_pack_operation_task
@@ -6609,6 +6653,9 @@ class PersonasScreen(BaseAppScreen):
                     )
                 )
             )
+            if type(result) is ActorPackCreationResult and not result_is_current:
+                await self._refresh_stale_actor_pack_commit(result, session)
+                return
             if not result_is_current:
                 return
             if session.actor_kind == "character":

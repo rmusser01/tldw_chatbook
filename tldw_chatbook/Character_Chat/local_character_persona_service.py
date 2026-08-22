@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+from ..Utils.path_validation import validate_path_simple
 from ..Chat.chat_conversation_service import ChatConversationService
 from .world_book_manager import WorldBookManager
 
@@ -60,11 +61,15 @@ class LocalCharacterPersonaService:
         self.db = db
         self.conversations = ChatConversationService(db)
         self.world_books = WorldBookManager(db) if db is not None else None
-        self.persona_store_path = (
-            Path(persona_store_path).expanduser()
-            if persona_store_path is not None
-            else None
-        )
+        if persona_store_path is None:
+            self.persona_store_path = None
+        else:
+            try:
+                self.persona_store_path = validate_path_simple(
+                    persona_store_path, probe_existing=False
+                )
+            except ValueError:
+                raise ValueError("local_persona_store_invalid") from None
         self._persona_store_lock = threading.RLock()
         self._persona_store_extras: dict[str, Any] = {}
         self._persona_profiles: list[dict[str, Any]] = []
