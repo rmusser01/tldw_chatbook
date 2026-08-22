@@ -196,6 +196,43 @@ plus `role` in the payload). **Recommended as a separate follow-up task, not
 yet filed** — it needs an owner call on changing a live sync proof's format,
 and a task id assigned against origin/dev.
 
+### Residue found in independent review, NOT deliberate (2026-08-22)
+
+The retention rule covers six entities. `sync_log` is written by **nine**:
+`chat_dictionaries`, `world_books` and `world_book_entries` have sync-emitting
+triggers and **no retention trigger, and no purge**, so for them the original
+defect is untouched. Nothing reads any of the three, so every row of theirs is
+unreachable by the same argument used for the covered six. Probed on this
+branch, at v45:
+
+| sequence (public API path) | result |
+| --- | --- |
+| soft-delete a chat dictionary | `name`/`description`/`file_path` still in `sync_log` (2 rows) |
+| soft-delete a world book | `name`/`description` still in `sync_log` |
+| hard-delete a world-book entry (`world_book_manager.delete_world_book_entry`, wired to Personas ▸ entry delete at `UI/Screens/personas_screen.py:5221`) | the entry's full `keys` + `content` survive as an orphan, forever |
+| 4 edits of a world-book entry | 4/4 old bodies retained (unbounded growth continues) |
+
+`world_book_entries` is the sharpest of the three: its payload carries the
+lorebook prose itself, its only delete path is a **hard** `DELETE`, and its
+tombstone leaves the content rows orphaned with no entity row left to reach
+them from. This is not a regression — it is exactly the base behaviour — but
+the claim "what goes is everything in it that no reader can reach" is not yet
+true of a third of the log's writers. **Extending retention to these three
+needs its own task**: the naive `version < NEW.version` rule is not enough for
+`chat_dictionaries`/`world_books` (their `last_modified` timestamp trigger
+causes a full-payload `sync_update` row to be written *at the tombstone
+version*), and `world_book_entries` has no `version` column at all, so its rule
+has to key on `operation IN ('create','update')` rather than on version.
+SQLite does not define the firing order of same-kind triggers, so any such rule
+must be order-independent by construction.
+
+Also worth recording: `get_sync_log_entries(since_change_id=…)` has **no**
+version filter — it is a change-feed API, and after v45 it returns a frontier
+snapshot rather than a complete log. It has zero ChaChaNotes production callers
+today (the production hits belong to the Prompts DB's same-named method), so
+nothing breaks; but anything built on it later must be written knowing the feed
+is lossy by design.
+
 ### Trap worth carrying forward
 
 The retention triggers were first named `<entity>_sync_log_prune`. That squats

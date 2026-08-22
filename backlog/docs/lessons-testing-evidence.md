@@ -6735,3 +6735,20 @@ yet — so two-thirds of the collision was invisible until a later schema bump
 would have surfaced it in an unrelated PR. When adding a schema object, grep
 the test tree for `LIKE '<prefix>%'` patterns your new name could match, and
 remember the underscore matches any single character.
+
+**Fourth find, independent review of the same branch — a retention rule must
+enumerate its WRITERS from the live schema, not from the entities the filing
+named.** The filing's ACs listed "conversation, message, note or character", and
+the shipped rule covered those plus keywords and keyword_collections: six
+entities, all correct. Enumerating `sqlite_master` for triggers containing
+`INSERT INTO sync_log` finds **nine** — `chat_dictionaries`, `world_books` and
+`world_book_entries` also write the log, none was covered, and probing them on
+the finished branch reproduced the original defect verbatim (a hard-deleted
+world-book entry's full `keys` + `content` orphaned in `sync_log` forever;
+4/4 old bodies retained across 4 edits). The sibling half of the SAME commit had
+already enumerated `chat_dictionaries` and `world_books` from the schema for its
+FTS census and found them — so the information was in the branch, it just did
+not cross from one half to the other. Rule: when a change claims to bound a
+shared table, derive the covered set from the table's own writers and assert
+`covered == writers` in a census test, exactly as the FTS half did; otherwise
+the AC's example list silently becomes the scope.

@@ -68,6 +68,22 @@
 -- is a format change to a live sync proof; it is recommended as a follow-up in
 -- task-19564's notes, not attempted here.
 --
+-- Nor does it cover every writer. `sync_log` is written for NINE entities;
+-- retention below covers six. `chat_dictionaries`, `world_books` and
+-- `world_book_entries` keep the pre-v45 behaviour: nothing reads them and
+-- nothing prunes them, so their payloads still survive deletion and still
+-- accumulate per edit. `world_book_entries` is the sharpest -- its payload
+-- carries the lorebook prose, and its only delete path is a hard `DELETE`
+-- (`world_book_manager.delete_world_book_entry`), which orphans every content
+-- row it wrote. Extending the rule to them is NOT a copy of the triggers
+-- below: `chat_dictionaries`/`world_books` get a full-payload `sync_update`
+-- row written AT the tombstone version (their `last_modified` timestamp
+-- trigger fires the update emitter), and `world_book_entries` has no `version`
+-- column, so the rule must key on `operation` instead. SQLite leaves the
+-- firing order of same-kind triggers undefined, so any such rule has to be
+-- order-independent by construction. Recorded in task-19564's notes as work
+-- that needs its own task, not silently assumed covered.
+--
 -- ALSO IN THIS STEP (task-19567)
 -- -----------------------------
 -- Section 3 repairs the three FTS `*_au` triggers whose DELETE half was never
