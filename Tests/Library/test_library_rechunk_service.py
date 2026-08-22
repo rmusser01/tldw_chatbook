@@ -917,3 +917,252 @@ def test_rechunk_stored_explicit_name_leaves_config_untouched(media_db):
         "SELECT chunking_config FROM Media WHERE id = ?", (media_id,)
     ).fetchone()
     assert row["chunking_config"] == stored
+
+
+# ---------------------------------------------------------------------------
+# Sub-project #4, Task 1: the ONE-ITEM extraction -- ``rechunk_one_item`` is
+# the per-item body lifted out of the batch loop (spec §4.4's consumer
+# contract). The 17 tests above are the behavior-identity pin for the batch;
+# these pin the new function's own contract:
+#   * exactly that item re-chunked (a full media row in, outcome dict out);
+#   * ``spec`` override (pre-resolved chunking dict) governs the new rows,
+#     REPLACING the stored-config resolution -- a spec template NAME is
+#     resolved via ``resolve_template`` (unresolvable -> failed with the
+#     named error, #3 semantics, never silent fallback);
+#   * ``reindex`` default OFF (mutation pin: the forced-index entry is never
+#     called) and ON (the forced path runs, outcome carries it).
+# ---------------------------------------------------------------------------
+
+
+def _outcome_notes(outcome: dict) -> str:
+    return "; ".join(str(note) for note in outcome.get("notes") or [])
+
+
+def test_rechunk_one_item_rechunks_exactly_that_item(media_db):
+    """The direct one-item call: the given row's chunks are replaced and
+    stamped, OTHER legacy items are untouched, and the outcome is the
+    per-item shape ``{status, notes, chunk_summary?}``."""
+    from tldw_chatbook.Library.library_rechunk_service import rechunk_one_item
+
+    target = _seed_legacy_item(media_db, "alpha beta gamma. " * 30)
+    bystander = _seed_legacy_item(media_db, "delta epsilon zeta. " * 30)
+
+    outcome = _run(
+        rechunk_one_item(media_db, media_db.get_media_by_id(target))
+    )
+
+    assert outcome["status"] == "rechunked"
+    assert outcome["notes"] == []
+    summary = outcome["chunk_summary"]
+    assert summary["engine_version"] == ENGINE_VERSION
+    rows = _live_chunk_rows(media_db, target)
+    assert rows, "the re-chunked item must still have live chunk rows"
+    assert summary["chunk_count"] == len(rows)
+    assert summary["template"] is None  # plain stored-config path here
+    assert all(row["chunk_engine_version"] == ENGINE_VERSION for row in rows)
+    assert all("OLD legacy" not in row["chunk_text"] for row in rows)
+
+    # Exactly that item: the bystander keeps its legacy rows untouched.
+    kept = _live_chunk_rows(media_db, bystander)
+    assert kept
+    assert all(row["chunk_engine_version"] is None for row in kept)
+
+
+def test_rechunk_one_item_skipped_shapes_mirror_the_batch(media_db):
+    """The batch's skip semantics live in the one-item function now: an
+    unavailable row, an empty source, and (spec=None) an unresolvable stored
+    template each return ``skipped`` with the same reason strings."""
+    from tldw_chatbook.Library.library_rechunk_service import rechunk_one_item
+
+    empty = _seed_legacy_item(media_db, "residual rows only")
+    _clear_content(media_db, empty)
+    unresolvable = _seed_legacy_item(
+        media_db,
+        "delta epsilon zeta. " * 30,
+        chunking_config='{"template": "renamed-away"}',
+    )
+
+    missing = _run(rechunk_one_item(media_db, None))
+    assert missing["status"] == "skipped"
+    assert "source row unavailable" in _outcome_notes(missing)
+    assert "chunk_summary" not in missing
+
+    cleared = _run(
+        rechunk_one_item(media_db, media_db.get_media_by_id(empty))
+    )
+    assert cleared["status"] == "skipped"
+    assert "source content is empty" in _outcome_notes(cleared)
+    assert _live_chunk_rows(media_db, empty), "a skip never touches rows"
+
+    refused = _run(
+        rechunk_one_item(media_db, media_db.get_media_by_id(unresolvable))
+    )
+    assert refused["status"] == "skipped"
+    assert "renamed-away" in _outcome_notes(refused), (
+        "the stored-path refusal keeps #3's named-error, skip-and-count shape"
+    )
+    assert _live_chunk_rows(media_db, unresolvable)
+
+
+def test_rechunk_one_item_spec_override_governs_rows(media_db):
+    """A PRE-RESOLVED spec replaces the stored-config resolution entirely:
+    even an UNRESOLVABLE stored template is bypassed, and the spec's own
+    options govern the new rows (no template columns, stored config
+    untouched -- the override never re-stamps)."""
+    from tldw_chatbook.Library.library_rechunk_service import rechunk_one_item
+
+    content = "One two three four. Five six seven eight. " * 8
+    stored = '{"template": "renamed-away"}'
+    media_id = _seed_legacy_item(
+        media_db, content, chunking_config=stored
+    )
+
+    outcome = _run(
+        rechunk_one_item(
+            media_db,
+            media_db.get_media_by_id(media_id),
+            spec={"method": "sentences", "max_size": 3},
+        )
+    )
+    assert outcome["status"] == "rechunked"
+    assert outcome["chunk_summary"]["template"] is None
+
+    # The spec's options governed: the rows ARE the real chunker's output
+    # for exactly those options (an omitted overlap defaults to 0 -- the
+    # engine's own 100 default would exceed max_size 3 and refuse the
+    # spec), and NOT the plain-path chunking.
+    expected = [
+        chunk["text"]
+        for chunk in improved_chunking_process(
+            content, {"method": "sentences", "max_size": 3, "overlap": 0}
+        )
+    ]
+    rows = _live_chunk_rows(media_db, media_id)
+    assert [row["chunk_text"] for row in rows] == expected
+    plain = [
+        chunk["text"]
+        for chunk in improved_chunking_process(content, {"max_size": 500, "overlap": 100})
+    ]
+    assert [row["chunk_text"] for row in rows] != plain
+    assert all(row["chunking_template"] is None for row in rows)
+    assert all(row["chunk_engine_version"] == ENGINE_VERSION for row in rows)
+
+    # The stored choice is byte-identical: the override governs ROWS, never
+    # the stored config (no re-stamp outside the auto path).
+    row = media_db.get_connection().execute(
+        "SELECT chunking_config FROM Media WHERE id = ?", (media_id,)
+    ).fetchone()
+    assert row["chunking_config"] == stored
+
+
+def test_rechunk_one_item_spec_template_name_resolves(media_db):
+    """A spec carrying a template NAME resolves through
+    ``resolve_template``: a live name rides the rows as the explicit path
+    does; an unresolvable name FAILS the item with the named error (#3
+    semantics: never a silent fallback) and leaves the rows untouched."""
+    from tldw_chatbook.Chunking.chunking_interop_library import (
+        get_chunking_service,
+    )
+    from tldw_chatbook.Library.library_rechunk_service import rechunk_one_item
+
+    chunking = get_chunking_service(media_db)
+    chunking.create_template(
+        name="spec-probe",
+        description="probe",
+        template_json={
+            "chunking": {"method": "words", "config": {"max_size": 4, "overlap": 0}}
+        },
+        tags=None,
+    )
+    media_id = _seed_legacy_item(
+        media_db, " ".join(f"w{i:02d}" for i in range(1, 25))
+    )
+
+    outcome = _run(
+        rechunk_one_item(
+            media_db,
+            media_db.get_media_by_id(media_id),
+            spec={"template": "spec-probe"},
+        )
+    )
+    assert outcome["status"] == "rechunked"
+    assert outcome["chunk_summary"]["template"] == "spec-probe"
+    rows = _live_chunk_rows(media_db, media_id)
+    assert [row["chunk_text"] for row in rows] == [
+        " ".join(f"w{i:02d}" for i in range(start, start + 4))
+        for start in range(1, 25, 4)
+    ]
+    assert all(row["chunking_template"] == "spec-probe" for row in rows)
+
+    # The unresolvable name: FAILED with the named error, rows untouched.
+    other = _seed_legacy_item(
+        media_db, " ".join(f"v{i:02d}" for i in range(1, 25))
+    )
+    refused = _run(
+        rechunk_one_item(
+            media_db,
+            media_db.get_media_by_id(other),
+            spec={"template": "no-such-template"},
+        )
+    )
+    assert refused["status"] == "failed"
+    notes = _outcome_notes(refused)
+    assert "no-such-template" in notes
+    assert "no longer resolves" in notes, "the named #3-family refusal"
+    assert "chunk_summary" not in refused
+    kept = _live_chunk_rows(media_db, other)
+    assert [row["chunk_text"] for row in kept] == [
+        "OLD legacy chunk one",
+        "OLD legacy chunk two",
+    ]
+    assert all(row["chunk_engine_version"] is None for row in kept)
+
+
+def test_rechunk_one_item_reindex_default_off_and_opt_in(media_db, monkeypatch):
+    """``reindex`` default OFF is a mutation pin: the forced-index entry is
+    NEVER called (rows still replaced); ``reindex=True`` runs it exactly
+    once and the outcome carries the re-index result."""
+    import tldw_chatbook.Library.library_rechunk_service as svc
+    from tldw_chatbook.Library.library_rechunk_service import rechunk_one_item
+
+    calls: list[dict] = []
+
+    async def _recording_forced_reindex(rag_service, indexing_db, media):
+        calls.append(
+            {
+                "media_id": media["id"],
+                "rag_service": rag_service,
+                "indexing_db": indexing_db,
+            }
+        )
+        return {"status": "reindexed"}
+
+    monkeypatch.setattr(svc, "forced_reindex_media_item", _recording_forced_reindex)
+
+    media_id = _seed_legacy_item(media_db, "alpha beta gamma. " * 30)
+    rag = _FakeRAGService()
+
+    # Default: chunk rows move, the vector path never does.
+    outcome = _run(
+        rechunk_one_item(media_db, media_db.get_media_by_id(media_id), rag_service=rag)
+    )
+    assert outcome["status"] == "rechunked"
+    assert calls == [], "reindex=False (default) must never touch the index"
+    assert "reindexed" not in outcome
+    assert all(
+        row["chunk_engine_version"] == ENGINE_VERSION
+        for row in _live_chunk_rows(media_db, media_id)
+    )
+
+    # Opt-in: the forced path runs exactly once, for exactly this item.
+    opt_in = _run(
+        rechunk_one_item(
+            media_db,
+            media_db.get_media_by_id(media_id),
+            rag_service=rag,
+            reindex=True,
+        )
+    )
+    assert opt_in["status"] == "rechunked"
+    assert calls == [{"media_id": media_id, "rag_service": rag, "indexing_db": None}]
+    assert opt_in["reindexed"] == {"status": "reindexed"}
