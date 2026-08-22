@@ -1,11 +1,11 @@
 """Workspace and conversation-browser ownership for the Console.
 
 `ConsoleWorkspaceController` owns 56 non-DOM methods covering Workspace
-policy and lifecycle, scope selection, persisted-conversation resume, and the
-grouped conversation browser. Browser query, timer, token, rich rows, totals,
-errors, and persisted-row cache have one canonical home here. Legacy
-Workspace row and scalar names are compatibility aliases: reads project from
-the rich rows and writes convert back into canonical rich state.
+policy and lifecycle, scope selection, persisted-conversation resume, the
+named-workspace Tree projection, and the flat Default/unassigned browser.
+Workspaces and Conversations own independent search attempts; page generations
+are scoped per workspace. Legacy Workspace row and scalar names are
+compatibility aliases over the flat lane.
 
 The Textual screen retains only framework and DOM edges. Its bounded search
 handler extracts plain query/disabled values and delegates the transition;
@@ -18,7 +18,7 @@ DOM or reach through sibling controllers.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from functools import partial
 from typing import Any, Optional, TYPE_CHECKING
 import asyncio
@@ -60,7 +60,9 @@ from ...Workspaces import (
     ConsoleConversationBrowserRow,
     DEFAULT_WORKSPACE_ID,
     WorkspaceRecord,
+    WorkspaceTreeWorkspace,
     build_console_conversation_browser_state,
+    build_workspace_tree_state,
     console_persisted_row_updated_sort,
 )
 from ...Workspaces.display_state import (
@@ -85,6 +87,38 @@ if TYPE_CHECKING:
 logger = logger.bind(module="ChatScreen")
 
 CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS = 2.0
+
+
+@dataclass(slots=True)
+class _SearchAttemptState:
+    """One projection's explicit debounce, request, result, and Retry state."""
+
+    query: str = ""
+    debounce: Any = None
+    generation: int = 0
+    request_key: tuple[str, str, int, object] | None = None
+    rows: tuple[ConsoleConversationBrowserInputRow, ...] = ()
+    total: int | None = None
+    error: str = ""
+    cache: dict[
+        str, tuple[tuple[ConsoleConversationBrowserInputRow, ...], int | None]
+    ] = field(default_factory=dict)
+    retry_query: str | None = None
+    worker: Any = None
+
+
+@dataclass(slots=True)
+class _PageAttemptState:
+    """One workspace's bounded page request and accumulated child state."""
+
+    generation: int = 0
+    request_key: tuple[str, tuple[str, ...], int, int] | None = None
+    owner_token: object = None
+    rows: tuple[ConsoleConversationBrowserInputRow, ...] = ()
+    next_cursor: int | None = None
+    error: str = ""
+    retry_cursor: int | None = None
+    worker: Any = None
 
 
 def _normalized_console_workspace_id(workspace_id: str | None) -> str:
@@ -158,6 +192,7 @@ class ConsoleWorkspaceController:
         subagent_counts_for_rows: Callable[[Any, Iterable[Any]], dict[str, int]],
         conversation_browser_collapse_preferences: Callable[[], dict[str, bool]],
         wake_retry_poke: Callable[[], None] | None = None,
+        workspace_tree_owner_accessor: Callable[[], object] | None = None,
     ) -> None:
         """Bind canonical Workspace state and its late-bound dependencies.
 
@@ -204,6 +239,7 @@ class ConsoleWorkspaceController:
             subagent_counts_for_rows: Compute sub-agent counts for browser rows.
             conversation_browser_collapse_preferences: Return collapse preferences.
             wake_retry_poke: Optionally request a staged-wake retry after resume.
+            workspace_tree_owner_accessor: Return the mounted Tree owner identity.
         """
         self._screen = screen
         self.app_instance = app_instance
@@ -255,9 +291,14 @@ class ConsoleWorkspaceController:
         #: session-open becomes a wake retry trigger here. Optional so the
         #: pre-existing direct-construction tests need no new kwarg.
         self._wake_retry_poke_fn = wake_retry_poke
+        self._workspace_tree_owner_accessor = workspace_tree_owner_accessor
 
-        # Canonical grouped-browser state. Legacy workspace-search names below
-        # are aliases/projections, never a second writer or backing row store.
+        self._workspace_tree_search = _SearchAttemptState()
+        self._flat_conversation_search = _SearchAttemptState()
+        self._workspace_page_attempts: dict[str, _PageAttemptState] = {}
+
+        # Canonical flat-browser state. Legacy workspace-search names below are
+        # aliases/projections, never a second writer or backing row store.
         self._console_persisted_rows_cache = None
         self._console_persisted_rows_cache_key = None
         self._console_persisted_rows_cache_at = 0.0
@@ -277,6 +318,58 @@ class ConsoleWorkspaceController:
         # current truth before toggling), never race two pool threads into
         # a stale double-star.
         self._console_star_toggle_lock = asyncio.Lock()
+
+    @property
+    def _console_conversation_browser_query(self) -> str:
+        return self._flat_conversation_search.query
+
+    @_console_conversation_browser_query.setter
+    def _console_conversation_browser_query(self, value: str) -> None:
+        self._flat_conversation_search.query = str(value or "")
+
+    @property
+    def _console_conversation_browser_search_timer(self) -> Any:
+        return self._flat_conversation_search.debounce
+
+    @_console_conversation_browser_search_timer.setter
+    def _console_conversation_browser_search_timer(self, value: Any) -> None:
+        self._flat_conversation_search.debounce = value
+
+    @property
+    def _console_conversation_browser_search_token(self) -> int:
+        return self._flat_conversation_search.generation
+
+    @_console_conversation_browser_search_token.setter
+    def _console_conversation_browser_search_token(self, value: int) -> None:
+        self._flat_conversation_search.generation = int(value)
+
+    @property
+    def _console_conversation_browser_rows(
+        self,
+    ) -> tuple[ConsoleConversationBrowserInputRow, ...]:
+        return self._flat_conversation_search.rows
+
+    @_console_conversation_browser_rows.setter
+    def _console_conversation_browser_rows(
+        self, value: Iterable[ConsoleConversationBrowserInputRow]
+    ) -> None:
+        self._flat_conversation_search.rows = tuple(value)
+
+    @property
+    def _console_conversation_browser_total(self) -> int | None:
+        return self._flat_conversation_search.total
+
+    @_console_conversation_browser_total.setter
+    def _console_conversation_browser_total(self, value: int | None) -> None:
+        self._flat_conversation_search.total = value
+
+    @property
+    def _console_conversation_browser_error(self) -> str:
+        return self._flat_conversation_search.error
+
+    @_console_conversation_browser_error.setter
+    def _console_conversation_browser_error(self, value: str) -> None:
+        self._flat_conversation_search.error = str(value or "")
 
     @property
     def _console_workspace_conversation_query(self) -> str:
@@ -563,6 +656,375 @@ class ConsoleWorkspaceController:
     def _console_conversation_browser_collapse_preferences(self) -> Any:
         return self._conversation_browser_collapse_preferences_fn
 
+    def _workspace_tree_owner_token(self) -> object:
+        accessor = self._workspace_tree_owner_accessor
+        return accessor() if accessor is not None else self._screen
+
+    async def refresh_workspace_tree_search(self, query: str) -> None:
+        """Run one full-scope named-workspace search attempt."""
+        lane = self._workspace_tree_search
+        lane.query = str(query or "")
+        lane.generation += 1
+        generation = lane.generation
+        owner_token = self._workspace_tree_owner_token()
+        request_key = ("workspaces", lane.query, generation, owner_token)
+        lane.request_key = request_key
+        lane.error = ""
+        lane.retry_query = None
+        try:
+            rows, total = await self._load_workspace_tree_search_rows(lane.query)
+        except Exception:
+            if self._workspace_search_attempt_is_current(request_key):
+                lane.error = "Workspace search is unavailable."
+                lane.retry_query = lane.query
+                self._sync_console_workspace_context()
+            return
+        if not self._workspace_search_attempt_is_current(request_key):
+            return
+        lane.rows = self._merge_console_browser_rows(rows)
+        lane.total = max(len(lane.rows), int(total or 0))
+        lane.cache = {lane.query: (lane.rows, lane.total)}
+        lane.error = ""
+        lane.retry_query = None
+        self._sync_console_workspace_context()
+
+    async def refresh_flat_conversation_search(self, query: str) -> None:
+        """Run one Default/unassigned search attempt independently."""
+        lane = self._flat_conversation_search
+        lane.query = str(query or "")
+        lane.generation += 1
+        generation = lane.generation
+        owner_token = self._workspace_tree_owner_token()
+        request_key = ("conversations", lane.query, generation, owner_token)
+        lane.request_key = request_key
+        lane.error = ""
+        lane.retry_query = None
+        try:
+            rows, total = await self._load_flat_conversation_search_rows(lane.query)
+        except Exception:
+            if self._flat_search_attempt_is_current(request_key):
+                lane.error = "Conversation search is unavailable."
+                lane.retry_query = lane.query
+                self._sync_console_workspace_context()
+            return
+        if not self._flat_search_attempt_is_current(request_key):
+            return
+        lane.rows = self._merge_console_browser_rows(
+            row for row in rows if self._row_belongs_to_flat_projection(row)
+        )
+        lane.total = max(len(lane.rows), int(total or 0))
+        lane.cache = {lane.query: (lane.rows, lane.total)}
+        lane.error = ""
+        lane.retry_query = None
+        self._sync_console_workspace_context()
+
+    async def retry_workspace_tree_search(self) -> None:
+        """Replace the failed workspace-search generation, if any."""
+        query = self._workspace_tree_search.retry_query
+        if query is not None:
+            await self.refresh_workspace_tree_search(query)
+
+    async def retry_flat_conversation_search(self) -> None:
+        """Replace the failed flat-search generation, if any."""
+        query = self._flat_conversation_search.retry_query
+        if query is not None:
+            await self.refresh_flat_conversation_search(query)
+
+    def _workspace_search_attempt_is_current(
+        self, request_key: tuple[str, str, int, object]
+    ) -> bool:
+        lane = self._workspace_tree_search
+        return bool(
+            self._screen_running_accessor()
+            and lane.request_key == request_key
+            and lane.generation == request_key[2]
+            and lane.query == request_key[1]
+            and self._workspace_tree_owner_token() is request_key[3]
+        )
+
+    def _flat_search_attempt_is_current(
+        self, request_key: tuple[str, str, int, object]
+    ) -> bool:
+        lane = self._flat_conversation_search
+        return bool(
+            self._screen_running_accessor()
+            and lane.request_key == request_key
+            and lane.generation == request_key[2]
+            and lane.query == request_key[1]
+            and self._workspace_tree_owner_token() is request_key[3]
+        )
+
+    async def _load_workspace_tree_search_rows(
+        self, query: str
+    ) -> tuple[tuple[ConsoleConversationBrowserInputRow, ...], int | None]:
+        rows: list[ConsoleConversationBrowserInputRow] = []
+        total = 0
+        for record in self._console_browser_workspace_records():
+            workspace_id = str(record.workspace_id or "").strip()
+            if (
+                not workspace_id
+                or workspace_id == DEFAULT_WORKSPACE_ID
+                or bool(getattr(record, "archived", False))
+            ):
+                continue
+            page_rows, page_total, error = await self._fetch_workspace_rows(
+                workspace_id, query=query, cursor=0
+            )
+            if error:
+                raise RuntimeError(error)
+            rows.extend(page_rows)
+            total += page_total if page_total is not None else len(page_rows)
+        return tuple(rows), total
+
+    async def _load_flat_conversation_search_rows(
+        self, query: str
+    ) -> tuple[tuple[ConsoleConversationBrowserInputRow, ...], int | None]:
+        rows, total, error = await self._persisted_console_browser_rows(query)
+        if error:
+            raise RuntimeError(error)
+        return tuple(rows), total
+
+    @staticmethod
+    def _row_belongs_to_flat_projection(
+        row: ConsoleConversationBrowserInputRow,
+    ) -> bool:
+        return row.scope_type == "global" or row.workspace_id in (
+            None,
+            DEFAULT_WORKSPACE_ID,
+        )
+
+    @staticmethod
+    def _new_workspace_page_state(
+        *,
+        rows: Iterable[ConsoleConversationBrowserInputRow] = (),
+        next_cursor: int | None = None,
+    ) -> _PageAttemptState:
+        return _PageAttemptState(rows=tuple(rows), next_cursor=next_cursor)
+
+    def _workspace_membership_token(self, workspace_id: str) -> tuple[str, ...]:
+        service = getattr(self.app_instance, "workspace_registry_service", None)
+        list_conversations = getattr(service, "list_workspace_conversations", None)
+        if not callable(list_conversations):
+            return ()
+        try:
+            return tuple(
+                sorted(
+                    str(getattr(row, "item_id", "") or "")
+                    for row in list_conversations(workspace_id)
+                    if str(getattr(row, "item_id", "") or "")
+                )
+            )
+        except Exception:
+            return ()
+
+    async def load_workspace_tree_page(self, workspace_id: str, cursor: int) -> None:
+        """Load one bounded workspace page if its full request key stays current."""
+        workspace_id = str(workspace_id or "").strip()
+        cursor = max(0, int(cursor))
+        attempt = self._workspace_page_attempts.setdefault(
+            workspace_id, _PageAttemptState()
+        )
+        attempt.generation += 1
+        generation = attempt.generation
+        request_key = (
+            workspace_id,
+            self._workspace_membership_token(workspace_id),
+            self._workspace_tree_search.generation,
+            cursor,
+        )
+        attempt.request_key = request_key
+        attempt.owner_token = self._workspace_tree_owner_token()
+        attempt.error = ""
+        attempt.retry_cursor = None
+        try:
+            rows, next_cursor = await self._fetch_workspace_tree_page(
+                workspace_id, cursor
+            )
+        except Exception:
+            self._commit_workspace_page_failure(workspace_id, generation, request_key)
+            return
+        if not self._workspace_page_attempt_is_current(
+            workspace_id, generation, request_key
+        ):
+            return
+        attempt.rows = self._merge_page_rows(attempt.rows, rows)
+        attempt.next_cursor = next_cursor
+        attempt.error = ""
+        attempt.retry_cursor = None
+        self._sync_console_workspace_context()
+
+    async def retry_workspace_tree_page(self, workspace_id: str) -> None:
+        """Replace the failed page generation for one workspace."""
+        attempt = self._workspace_page_attempts.get(workspace_id)
+        if attempt is not None and attempt.retry_cursor is not None:
+            await self.load_workspace_tree_page(workspace_id, attempt.retry_cursor)
+
+    def request_workspace_tree_page(self, workspace_id: str, cursor: int) -> None:
+        """Schedule one page worker without canceling another workspace lane."""
+        attempt = self._workspace_page_attempts.setdefault(
+            str(workspace_id or "").strip(), _PageAttemptState()
+        )
+        attempt.worker = self.run_worker(
+            self.load_workspace_tree_page(workspace_id, cursor),
+            group=f"console-workspace-page-{workspace_id}",
+            exclusive=False,
+        )
+
+    def _workspace_page_attempt_is_current(
+        self,
+        workspace_id: str,
+        generation: int,
+        request_key: tuple[str, tuple[str, ...], int, int] | None,
+    ) -> bool:
+        attempt = self._workspace_page_attempts.get(workspace_id)
+        return bool(
+            request_key is not None
+            and attempt is not None
+            and self._screen_running_accessor()
+            and attempt.generation == generation
+            and attempt.request_key == request_key
+            and request_key[1] == self._workspace_membership_token(workspace_id)
+            and request_key[2] == self._workspace_tree_search.generation
+            and attempt.owner_token is self._workspace_tree_owner_token()
+        )
+
+    def _commit_workspace_page_failure(
+        self,
+        workspace_id: str,
+        generation: int,
+        request_key: tuple[str, tuple[str, ...], int, int] | None,
+    ) -> None:
+        if not self._workspace_page_attempt_is_current(
+            workspace_id, generation, request_key
+        ):
+            return
+        attempt = self._workspace_page_attempts[workspace_id]
+        attempt.error = "Workspace conversations are unavailable."
+        attempt.retry_cursor = request_key[3] if request_key is not None else None
+        self._sync_console_workspace_context()
+
+    @staticmethod
+    def _merge_page_rows(
+        current: Iterable[ConsoleConversationBrowserInputRow],
+        incoming: Iterable[ConsoleConversationBrowserInputRow],
+    ) -> tuple[ConsoleConversationBrowserInputRow, ...]:
+        merged: dict[str, ConsoleConversationBrowserInputRow] = {}
+        for row in (*tuple(current), *tuple(incoming)):
+            conversation_id = str(row.conversation_id or "").strip()
+            if conversation_id:
+                merged.setdefault(conversation_id, row)
+        return tuple(merged.values())
+
+    async def _fetch_workspace_tree_page(
+        self, workspace_id: str, cursor: int
+    ) -> tuple[tuple[ConsoleConversationBrowserInputRow, ...], int | None]:
+        rows, total, error = await self._fetch_workspace_rows(
+            workspace_id, query="", cursor=cursor
+        )
+        if error:
+            raise RuntimeError(error)
+        next_cursor = cursor + CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT
+        if total is None or next_cursor >= total:
+            next_cursor = None
+        return rows, next_cursor
+
+    async def _fetch_workspace_rows(
+        self, workspace_id: str, *, query: str, cursor: int
+    ) -> tuple[tuple[ConsoleConversationBrowserInputRow, ...], int | None, str]:
+        service = getattr(self.app_instance, "chat_conversation_scope_service", None)
+        list_conversations = getattr(service, "list_conversations", None)
+        if not callable(list_conversations):
+            return (), None, ""
+        try:
+            list_kwargs = {
+                "mode": "local",
+                "query": query,
+                "scope_type": "workspace",
+                "workspace_id": workspace_id,
+                "limit": CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
+                "offset": cursor,
+            }
+            result = (
+                list_conversations(**list_kwargs)
+                if inspect.iscoroutinefunction(list_conversations)
+                else await asyncio.to_thread(list_conversations, **list_kwargs)
+            )
+            result = await result if inspect.isawaitable(result) else result
+        except Exception:
+            logger.opt(exception=True).debug(
+                "Unable to load Console workspace page workspace_id={}", workspace_id
+            )
+            return (), None, "Workspace conversations are unavailable."
+        if not isinstance(result, dict):
+            return (), 0, ""
+        items = result.get("items") if isinstance(result.get("items"), list) else []
+        labels = self._console_browser_workspace_labels()
+        starred_ids = self._starred_console_conversation_ids()
+        rows: list[ConsoleConversationBrowserInputRow] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            conversation_id = str(item.get("id") or "").strip()
+            if not conversation_id:
+                continue
+            row = ConsoleConversationBrowserInputRow(
+                row_key=conversation_id,
+                conversation_id=conversation_id,
+                native_session_id=None,
+                title=str(item.get("title") or "Untitled conversation"),
+                scope_type="workspace",
+                workspace_id=workspace_id,
+                workspace_label=labels.get(workspace_id, workspace_id),
+                status=str(item.get("state") or "workspace-thread"),
+                selected=conversation_id == self._current_console_conversation_id(),
+                source_kind="persisted",
+                updated_sort=console_persisted_row_updated_sort(item),
+                run_marker=self._console_browser_unseen_marker(conversation_id),
+            )
+            rows.append(self._apply_console_browser_star_state(row, starred_ids))
+        total = result.get("total")
+        if total is None and isinstance(result.get("pagination"), dict):
+            total = result["pagination"].get("total")
+        try:
+            total_count = int(total)
+        except (TypeError, ValueError):
+            total_count = len(rows)
+        return tuple(rows), total_count, ""
+
+    def workspace_tree_projection(
+        self,
+        rows: Iterable[ConsoleConversationBrowserInputRow] = (),
+    ) -> tuple[WorkspaceTreeWorkspace, ...]:
+        """Return the current immutable named-workspace projection."""
+        records = tuple(
+            record
+            for record in self._console_browser_workspace_records()
+            if str(record.workspace_id or "").strip() != DEFAULT_WORKSPACE_ID
+            and not bool(getattr(record, "archived", False))
+        )
+        workspace_ids = {str(record.workspace_id) for record in records}
+        for workspace_id in tuple(self._workspace_page_attempts):
+            if workspace_id not in workspace_ids:
+                self._workspace_page_attempts.pop(workspace_id, None)
+        if self._workspace_tree_search.query.strip():
+            source_rows = self._workspace_tree_search.rows
+        else:
+            source_rows = self._merge_console_browser_rows(
+                rows,
+                *(attempt.rows for attempt in self._workspace_page_attempts.values()),
+            )
+        return build_workspace_tree_state(
+            workspaces=(
+                (str(record.workspace_id), str(record.name or record.workspace_id))
+                for record in records
+            ),
+            rows=source_rows,
+            next_cursors={
+                workspace_id: attempt.next_cursor
+                for workspace_id, attempt in self._workspace_page_attempts.items()
+            },
+        )
+
     def transition_browser_search(self, query: str, disabled: bool) -> None:
         """Apply one input change and schedule its canonical browser refresh."""
         if disabled or query == self._console_conversation_browser_query:
@@ -573,6 +1035,12 @@ class ConsoleWorkspaceController:
         self._console_conversation_browser_query = query
         self._console_conversation_browser_search_token += 1
         token = self._console_conversation_browser_search_token
+        self._flat_conversation_search.request_key = (
+            "conversations",
+            query,
+            token,
+            self._workspace_tree_owner_token(),
+        )
         if self._console_conversation_browser_search_timer is not None:
             self._console_conversation_browser_search_timer.stop()
             self._console_conversation_browser_search_timer = None
@@ -593,6 +1061,39 @@ class ConsoleWorkspaceController:
             )
         )
 
+    def transition_workspace_tree_search(self, query: str, disabled: bool) -> None:
+        """Debounce Workspaces search without touching Conversations state."""
+        lane = self._workspace_tree_search
+        if disabled or query == lane.query:
+            return
+        if lane.debounce is not None:
+            lane.debounce.stop()
+            lane.debounce = None
+        lane.query = str(query or "")
+        lane.generation += 1
+        generation = lane.generation
+        if not lane.query.strip():
+            lane.rows = ()
+            lane.total = None
+            lane.error = ""
+            lane.retry_query = None
+            self._sync_console_workspace_context()
+            return
+        lane.debounce = self._schedule_console_browser_timer(
+            0.2,
+            partial(self._start_workspace_tree_search, lane.query, generation),
+        )
+
+    def _start_workspace_tree_search(self, query: str, generation: int) -> None:
+        lane = self._workspace_tree_search
+        if generation != lane.generation or query != lane.query:
+            return
+        lane.worker = self.run_worker(
+            self.refresh_workspace_tree_search(query),
+            group="console-workspace-tree-search",
+            exclusive=True,
+        )
+
     def clear_console_conversation_browser_search(self) -> None:
         """Clear canonical browser search state and restore search focus."""
         if self._console_conversation_browser_search_timer is not None:
@@ -603,6 +1104,8 @@ class ConsoleWorkspaceController:
         self._console_conversation_browser_rows = ()
         self._console_conversation_browser_total = None
         self._console_conversation_browser_error = ""
+        self._flat_conversation_search.request_key = None
+        self._flat_conversation_search.retry_query = None
         self._sync_console_workspace_context()
         self.call_after_refresh(self._focus_console_workspace_conversation_search)
 
@@ -616,6 +1119,12 @@ class ConsoleWorkspaceController:
             return
         if query != self._console_conversation_browser_query:
             return
+        self._flat_conversation_search.request_key = (
+            "conversations",
+            query,
+            token,
+            self._workspace_tree_owner_token(),
+        )
         self._invalidate_console_persisted_rows_cache()
         if not query.strip():
             self._console_conversation_browser_rows = ()
@@ -636,9 +1145,9 @@ class ConsoleWorkspaceController:
         self._console_conversation_browser_total = None
         self._console_conversation_browser_error = ""
         self._sync_console_workspace_context()
-        self.run_worker(
+        self._flat_conversation_search.worker = self.run_worker(
             self._refresh_console_conversation_browser_search(query, token),
-            group="console-workspace-conversation-search",
+            group="console-flat-conversation-search",
             exclusive=True,
         )
 
@@ -952,12 +1461,12 @@ class ConsoleWorkspaceController:
             return [], None, ""
 
         labels = self._console_browser_workspace_labels()
-        scopes: list[tuple[str, str | None]] = [("global", None)]
-        scopes.extend(
-            ("workspace", str(record.workspace_id))
-            for record in self._console_browser_workspace_records()
-            if str(record.workspace_id or "").strip()
-        )
+        # The flat Conversations lane owns only unassigned/global and Default
+        # records. Named-workspace search and pages have separate service calls.
+        scopes: list[tuple[str, str | None]] = [
+            ("global", None),
+            ("workspace", DEFAULT_WORKSPACE_ID),
+        ]
         last_error = ""
         for service, include_mode in services:
             list_conversations = getattr(service, "list_conversations", None)
@@ -1021,7 +1530,7 @@ class ConsoleWorkspaceController:
                     return (
                         rows,
                         None if not saw_total else total_count,
-                        "Workspace conversation search is unavailable.",
+                        "Conversation search is unavailable.",
                     )
                 saw_result = True
                 if not isinstance(result, dict):
@@ -1243,6 +1752,15 @@ class ConsoleWorkspaceController:
             return
         if query != self._console_conversation_browser_query:
             return
+        request_key = (
+            "conversations",
+            query,
+            token,
+            self._workspace_tree_owner_token(),
+        )
+        self._flat_conversation_search.request_key = request_key
+        settled_rows = self._console_conversation_browser_rows
+        settled_total = self._console_conversation_browser_total
         if not str(query or "").strip():
             self._console_conversation_browser_rows = ()
             self._console_conversation_browser_total = None
@@ -1251,12 +1769,16 @@ class ConsoleWorkspaceController:
             self.call_after_refresh(self._focus_console_workspace_conversation_search)
             return
 
-        local_rows = self._filter_console_browser_rows_for_query(
-            self._merge_console_browser_rows(
-                self._native_console_browser_rows(),
-                self._membership_console_browser_rows(),
-            ),
-            query,
+        local_rows = tuple(
+            row
+            for row in self._filter_console_browser_rows_for_query(
+                self._merge_console_browser_rows(
+                    self._native_console_browser_rows(),
+                    self._membership_console_browser_rows(),
+                ),
+                query,
+            )
+            if self._row_belongs_to_flat_projection(row)
         )
         self._console_conversation_browser_rows = local_rows
         self._console_conversation_browser_total = None
@@ -1269,17 +1791,35 @@ class ConsoleWorkspaceController:
             persisted_total,
             error_copy,
         ) = await self._persisted_console_browser_rows(query)
-        if token != self._console_conversation_browser_search_token:
+        if not self._flat_search_attempt_is_current(request_key):
             return
-        if query != self._console_conversation_browser_query:
+        if error_copy:
+            restored_rows = settled_rows or local_rows
+            self._console_conversation_browser_rows = restored_rows
+            self._console_conversation_browser_total = (
+                settled_total if settled_total is not None else len(restored_rows)
+            )
+            self._console_conversation_browser_error = error_copy
+            self._flat_conversation_search.retry_query = query
+            self._sync_console_workspace_context()
+            self.call_after_refresh(self._focus_console_workspace_conversation_search)
             return
-        merged = self._merge_console_browser_rows(local_rows, persisted_rows)
+        merged = self._merge_console_browser_rows(
+            local_rows,
+            (
+                row
+                for row in persisted_rows
+                if self._row_belongs_to_flat_projection(row)
+            ),
+        )
         result_total = persisted_total
         if result_total is None or result_total < len(merged):
             result_total = len(merged)
         self._console_conversation_browser_rows = merged
         self._console_conversation_browser_total = result_total
         self._console_conversation_browser_error = error_copy
+        self._flat_conversation_search.cache = {query: (merged, result_total)}
+        self._flat_conversation_search.retry_query = query if error_copy else None
         self._sync_console_workspace_context()
         self.call_after_refresh(self._focus_console_workspace_conversation_search)
 
@@ -1337,6 +1877,9 @@ class ConsoleWorkspaceController:
             state,
             conversation_browser=browser,
             conversation_section=legacy_state.conversation_section,
+            workspace_tree=self.workspace_tree_projection(
+                row for row in rows if row.source_kind == "native"
+            ),
         )
 
     # -- Workspace policy context -------------------------------------------
@@ -2690,15 +3233,8 @@ class ConsoleWorkspaceController:
                 workspace_id = state.workspace_label.removeprefix("Workspace: ").strip()
 
         if self._console_workspace_conversation_workspace_id != workspace_id:
-            if self._console_workspace_conversation_search_timer is not None:
-                self._console_workspace_conversation_search_timer.stop()
-                self._console_workspace_conversation_search_timer = None
-            self._invalidate_console_persisted_rows_cache()
-            self._console_workspace_conversation_query = ""
-            self._console_workspace_conversation_search_token += 1
-            self._console_workspace_conversation_search_rows = ()
-            self._console_workspace_conversation_search_total = None
-            self._console_workspace_conversation_search_error = ""
+            # The flat Conversations lane is Default/unassigned scope and is
+            # independent of whichever named workspace becomes active.
             self._console_workspace_conversation_workspace_id = workspace_id
 
         rows = list(state.conversation_rows)

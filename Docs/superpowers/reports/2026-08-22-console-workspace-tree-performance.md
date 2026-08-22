@@ -1,0 +1,60 @@
+# Console workspace Tree performance evidence
+
+Date: 2026-08-22
+
+Task: TASK-20937.2
+
+Phase: immutable old-projection baseline (captured before projection production edits)
+
+## Protocol
+
+The deterministic fixture matrix uses seed `20937`: small = 3 named workspaces × 4 conversations + 4 Default/unassigned records; representative = 12 × 12 + 20; stress = 50 × 75 + 75. The active workspace and respectively 0, 2, or 9 additional workspaces are expanded. Titles produce the approved 25%, 10%, and 10% search hit ratios.
+
+Each operation received three unreported warmups followed by 20 measured iterations using `time.perf_counter()`: initial projection, a run-marker replacement affecting `ceil(5%)` of service records, search apply plus clear, and active-row selection. The old projection performed one full reconcile/recompose for initial, marker, and selection operations and two for search apply/clear, for 100 reconciles and 100 recomposes per dataset across the measured iterations.
+
+Environment: Python 3.12.11, Textual 8.2.8, macOS 15.6 arm64 (`macOS-15.6-arm64-arm-64bit`), terminal 180 × 52 cells, source `5729439e5ad4fe0959b59a1fe699ef9ee3ebb2f8`. Fixture SHA-256: `8b3a04b4af657e6419a4fb0d72df83c501acad75a5ba2b9abe97655ffecc177c`. Frozen JSON SHA-256: `140db572a9284b4cb6871483eab0ed720a2f2b417fb6a3d3ed08e1f26c909f34`.
+
+Capture command:
+
+```text
+../../.venv/bin/python -B -m pytest Tests/UI/test_console_workspace_tree_performance.py::test_old_projection_baseline_is_reproducible -q -s
+```
+
+Result: `1 passed, 1 warning in 2.58s` (measurement call: 1.54s). The warning was the environment's existing Requests dependency-version warning.
+
+## Summary
+
+| Dataset | Service records | Materialized rows | Initial median / p95 ms | Marker median / p95 ms | Search apply+clear median / p95 ms | Selection median / p95 ms |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Small | 16 | 10 | 0.063209 / 0.065416 | 0.063625 / 0.064375 | 0.118146 / 0.153250 | 0.064167 / 0.074500 |
+| Representative | 164 | 60 | 0.524375 / 0.545542 | 0.535958 / 0.570667 | 0.955604 / 1.088333 | 0.531958 / 0.575625 |
+| Stress | 3,825 | 144 | 11.740625 / 12.137500 | 11.534563 / 13.153750 | 20.628667 / 22.516292 | 11.673000 / 13.326708 |
+
+These values are a report-only old-projection baseline. TASK-20937.2 makes no speed claim.
+
+## Raw samples (milliseconds)
+
+The following arrays are copied verbatim from the capture output. The machine-readable source of truth is `Tests/UI/fixtures/console_workspace_tree_old_baseline.json`; its reproducibility test checks the whole-file checksum, fixture checksum, metadata, counts, sample cardinality, median, and p95 without invoking changed projection code.
+
+```json
+{
+  "small": {
+    "initial_projection": [0.065792, 0.064083, 0.065416, 0.063958, 0.064083, 0.06325, 0.062916, 0.063333, 0.062834, 0.062791, 0.063167, 0.063333, 0.063167, 0.062958, 0.063375, 0.062834, 0.06375, 0.063083, 0.063042, 0.062959],
+    "marker_update_5_percent": [0.064084, 0.064375, 0.063666, 0.063333, 0.063584, 0.063709, 0.063792, 0.063542, 0.063625, 0.063625, 0.063416, 0.0635, 0.063334, 0.06325, 0.063375, 0.063625, 0.063292, 0.064166, 0.065459, 0.064167],
+    "search_apply_clear": [0.15325, 0.118709, 0.116583, 0.115959, 0.118459, 0.115833, 0.115958, 0.115958, 0.11575, 0.11575, 0.115875, 0.146667, 0.124666, 0.129042, 0.1155, 0.117834, 0.1245, 0.121875, 0.20725, 0.139458],
+    "active_row_selection": [0.066417, 0.065834, 0.064708, 0.0745, 0.066625, 0.057125, 0.07125, 0.0665, 0.063458, 0.063625, 0.06325, 0.079584, 0.060625, 0.059584, 0.0635, 0.070084, 0.068208, 0.063417, 0.0635, 0.0635]
+  },
+  "representative": {
+    "initial_projection": [0.545542, 0.5295, 0.577291, 0.544584, 0.539875, 0.517459, 0.517833, 0.51825, 0.517083, 0.518875, 0.517, 0.536667, 0.535541, 0.524625, 0.530083, 0.524, 0.524125, 0.523916, 0.523875, 0.525041],
+    "marker_update_5_percent": [0.525833, 0.526958, 0.526375, 0.552875, 0.536125, 0.548208, 0.754792, 0.569667, 0.550583, 0.570667, 0.549084, 0.536292, 0.535333, 0.535625, 0.536083, 0.535833, 0.5355, 0.533833, 0.535208, 0.534083],
+    "search_apply_clear": [0.99775, 0.955041, 0.947625, 0.946, 0.943375, 0.967, 0.952708, 0.94875, 1.039833, 1.012959, 0.956167, 1.045125, 0.944917, 0.945292, 0.94225, 0.95075, 1.005, 1.482458, 1.088333, 0.985292],
+    "active_row_selection": [0.548375, 0.563916, 0.537917, 0.54475, 0.525583, 0.524625, 0.527167, 0.5255, 0.525542, 0.587791, 0.533125, 0.575625, 0.538167, 0.530042, 0.532041, 0.530375, 0.531875, 0.552125, 0.527208, 0.525042]
+  },
+  "stress": {
+    "initial_projection": [11.991416, 11.987708, 11.974459, 12.1375, 11.780792, 11.515209, 11.745375, 11.428958, 11.783417, 11.616458, 11.956208, 11.671458, 11.388666, 11.735875, 53.100875, 11.763167, 11.669583, 11.456125, 11.320042, 11.473208],
+    "marker_update_5_percent": [11.407125, 11.398125, 12.094, 12.076625, 13.15375, 13.177709, 12.014125, 11.945833, 11.489291, 11.454459, 11.737792, 11.757666, 12.048959, 11.558292, 11.362416, 11.316875, 11.312125, 11.154875, 11.471375, 11.510834],
+    "search_apply_clear": [20.535125, 20.39875, 20.210083, 20.142584, 20.411833, 21.377208, 64.370959, 20.768041, 20.450875, 20.601333, 20.356958, 21.259041, 21.336292, 22.516292, 21.167167, 20.637042, 21.029708, 20.409375, 20.735042, 20.620292],
+    "active_row_selection": [11.589167, 11.215292, 11.478458, 11.864958, 11.526708, 11.698875, 11.733458, 11.656834, 11.549167, 11.371875, 11.443917, 11.658292, 50.707167, 11.687708, 11.816, 11.851042, 11.737625, 11.632667, 11.738542, 13.326708]
+  }
+}
+```

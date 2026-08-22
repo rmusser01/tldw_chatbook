@@ -49,9 +49,7 @@ async def test_rename_flow_renames_workspace() -> None:
 
         rename_modal = host.screen_stack[-1]
         assert isinstance(rename_modal, ConsoleWorkspaceRenameModal)
-        name_input = rename_modal.query_one(
-            "#console-workspace-rename-input", Input
-        )
+        name_input = rename_modal.query_one("#console-workspace-rename-input", Input)
         name_input.value = "Client A"
         rename_modal.query_one("#console-workspace-rename-save", Button).press()
         await pilot.pause(0.4)
@@ -130,3 +128,10 @@ async def test_default_row_labeled_everyday_chats() -> None:
         ]
         assert default_buttons, "expected the Default row as a switch option"
         assert "everyday chats" in str(default_buttons[0].label)
+
+        console = host.screen_stack[-2]
+        state = console._workspace._build_console_workspace_context_state()
+        assert [node.workspace_id for node in state.workspace_tree] == ["ws-a"]
+        assert DEFAULT_WORKSPACE_ID not in {
+            node.workspace_id for node in state.workspace_tree
+        }

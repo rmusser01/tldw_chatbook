@@ -9,6 +9,7 @@ from .conversation_browser_state import (
     ConsoleConversationBrowserSection,
     ConsoleConversationBrowserState,
     build_console_conversation_browser_state,
+    console_conversation_starred_recency_sort_key,
     console_persisted_row_updated_sort,
 )
 from .display_state import (
@@ -43,6 +44,12 @@ from .models import (
     WorkspaceTransferPolicy,
 )
 from .registry_service import BindingNotFound, LocalWorkspaceRegistryService
+from .workspace_tree_state import (
+    WorkspaceTreeConversation,
+    WorkspaceTreeWorkspace,
+    build_workspace_tree_state,
+    update_workspace_tree_conversation,
+)
 
 __all__ = [
     "CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT",
@@ -75,12 +82,17 @@ __all__ = [
     "WorkspaceRuntimeBinding",
     "WorkspaceSyncStatus",
     "WorkspaceTransferPolicy",
+    "WorkspaceTreeConversation",
+    "WorkspaceTreeWorkspace",
     "build_console_conversation_browser_state",
+    "build_workspace_tree_state",
     "build_library_workspace_depth_state",
     "library_item_context_handoff",
     "build_console_workspace_state",
     "console_persisted_row_updated_sort",
+    "console_conversation_starred_recency_sort_key",
     "console_workspace_conversation_result_copy",
     "console_workspace_conversation_visible_rows",
     "evaluate_workspace_eligibility",
+    "update_workspace_tree_conversation",
 ]

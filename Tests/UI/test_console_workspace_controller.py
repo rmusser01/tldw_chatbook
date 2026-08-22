@@ -190,6 +190,226 @@ def test_workspace_controller_initializes_canonical_browser_state_without_mount(
     assert controller._console_conversation_browser_error == ""
 
 
+def test_workspace_controller_initializes_independent_projection_attempt_state():
+    controller = _workspace_controller()
+
+    assert controller._workspace_tree_search.query == ""
+    assert controller._flat_conversation_search.query == ""
+    assert controller._workspace_tree_search is not controller._flat_conversation_search
+    assert controller._workspace_page_attempts == {}
+
+
+@pytest.mark.asyncio
+async def test_workspace_and_flat_search_completions_are_independent() -> None:
+    controller = _workspace_controller()
+    workspace_started = asyncio.Event()
+    release_workspace = asyncio.Event()
+
+    async def load_workspace(query):
+        workspace_started.set()
+        await release_workspace.wait()
+        return (_browser_row("workspace-hit", query, workspace_id="workspace-7"),), 1
+
+    async def load_flat(query):
+        return (_browser_row("flat-hit", query, workspace_id=DEFAULT_WORKSPACE_ID),), 1
+
+    controller._load_workspace_tree_search_rows = load_workspace
+    controller._load_flat_conversation_search_rows = load_flat
+
+    workspace_task = asyncio.create_task(controller.refresh_workspace_tree_search("A"))
+    await workspace_started.wait()
+    await controller.refresh_flat_conversation_search("B")
+    flat_rows = controller._flat_conversation_search.rows
+    release_workspace.set()
+    await workspace_task
+
+    assert [row.title for row in controller._workspace_tree_search.rows] == ["A"]
+    assert controller._flat_conversation_search.rows == flat_rows
+    assert [row.title for row in flat_rows] == ["B"]
+
+
+@pytest.mark.asyncio
+async def test_search_failures_preserve_each_lane_and_expose_scoped_retry() -> None:
+    controller = _workspace_controller()
+    workspace_settled = (_browser_row("workspace-old", "Workspace settled"),)
+    flat_settled = (
+        _browser_row("flat-old", "Flat settled", workspace_id=DEFAULT_WORKSPACE_ID),
+    )
+    controller._workspace_tree_search.rows = workspace_settled
+    controller._flat_conversation_search.rows = flat_settled
+
+    async def fail(_query):
+        raise RuntimeError("private detail")
+
+    controller._load_workspace_tree_search_rows = fail
+    controller._load_flat_conversation_search_rows = fail
+    await controller.refresh_workspace_tree_search("workspace query")
+
+    assert controller._workspace_tree_search.rows == workspace_settled
+    assert controller._workspace_tree_search.retry_query == "workspace query"
+    assert controller._workspace_tree_search.error == "Workspace search is unavailable."
+    assert controller._flat_conversation_search.rows == flat_settled
+    assert controller._flat_conversation_search.error == ""
+
+    await controller.refresh_flat_conversation_search("flat query")
+    assert controller._flat_conversation_search.rows == flat_settled
+    assert controller._flat_conversation_search.retry_query == "flat query"
+    assert (
+        controller._flat_conversation_search.error
+        == "Conversation search is unavailable."
+    )
+    assert "private" not in controller._flat_conversation_search.error
+
+
+@pytest.mark.asyncio
+async def test_workspace_page_retry_generation_rejects_stale_failure() -> None:
+    controller = _workspace_controller()
+    calls = 0
+    release_retry = asyncio.Event()
+
+    async def fetch(_workspace_id, _cursor):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("first failed")
+        await release_retry.wait()
+        return (_browser_row("page-row", "Page row"),), None
+
+    controller._fetch_workspace_tree_page = fetch
+    controller._workspace_page_attempts["workspace-7"] = (
+        controller._new_workspace_page_state(
+            rows=(_browser_row("existing", "Existing"),), next_cursor=75
+        )
+    )
+    await controller.load_workspace_tree_page("workspace-7", 75)
+    attempt = controller._workspace_page_attempts["workspace-7"]
+    stale_generation = attempt.generation
+    stale_key = attempt.request_key
+    assert attempt.error == "Workspace conversations are unavailable."
+    assert attempt.retry_cursor == 75
+    assert [row.conversation_id for row in attempt.rows] == ["existing"]
+
+    retry = asyncio.create_task(controller.retry_workspace_tree_page("workspace-7"))
+    await asyncio.sleep(0)
+    controller._commit_workspace_page_failure(
+        "workspace-7", stale_generation, stale_key
+    )
+    assert attempt.error == ""
+    release_retry.set()
+    await retry
+
+    assert [row.conversation_id for row in attempt.rows] == ["existing", "page-row"]
+    assert attempt.error == ""
+    assert attempt.retry_cursor is None
+
+
+@pytest.mark.asyncio
+async def test_overlapping_same_cursor_page_commits_once_by_conversation_id() -> None:
+    controller = _workspace_controller()
+    releases = [asyncio.Event(), asyncio.Event()]
+    started = [asyncio.Event(), asyncio.Event()]
+    calls = 0
+
+    async def fetch(_workspace_id, _cursor):
+        nonlocal calls
+        index = calls
+        calls += 1
+        started[index].set()
+        await releases[index].wait()
+        return (_browser_row("same", f"attempt-{index}"),), None
+
+    controller._fetch_workspace_tree_page = fetch
+    first = asyncio.create_task(controller.load_workspace_tree_page("workspace-7", 75))
+    await started[0].wait()
+    second = asyncio.create_task(controller.load_workspace_tree_page("workspace-7", 75))
+    await started[1].wait()
+    releases[1].set()
+    await second
+    releases[0].set()
+    await first
+
+    rows = controller._workspace_page_attempts["workspace-7"].rows
+    assert [(row.conversation_id, row.title) for row in rows] == [("same", "attempt-1")]
+
+
+@pytest.mark.asyncio
+async def test_workspace_search_projects_hit_outside_loaded_page() -> None:
+    registry = SimpleNamespace(
+        list_workspaces=lambda: (
+            SimpleNamespace(
+                workspace_id="workspace-7", name="Workspace 7", archived=False
+            ),
+        )
+    )
+    controller = _workspace_controller(
+        app_instance=SimpleNamespace(workspace_registry_service=registry)
+    )
+    loaded = _browser_row("loaded", "Loaded")
+    controller._workspace_page_attempts["workspace-7"] = (
+        controller._new_workspace_page_state(rows=(loaded,), next_cursor=75)
+    )
+
+    async def search(_query):
+        return (_browser_row("outside", "Needle outside page"),), 1
+
+    controller._load_workspace_tree_search_rows = search
+    await controller.refresh_workspace_tree_search("needle")
+
+    projection = controller.workspace_tree_projection()
+    assert [row.conversation_id for row in projection[0].conversations] == ["outside"]
+
+
+@pytest.mark.asyncio
+async def test_membership_move_discards_inflight_page_and_projects_new_owner_once() -> (
+    None
+):
+    memberships = {
+        "workspace-7": [
+            SimpleNamespace(item_id="moving", title="Moving", role="workspace-thread")
+        ],
+        "workspace-8": [],
+    }
+    registry = SimpleNamespace(
+        list_workspaces=lambda: (
+            SimpleNamespace(workspace_id="workspace-7", name="Seven", archived=False),
+            SimpleNamespace(workspace_id="workspace-8", name="Eight", archived=False),
+        ),
+        list_workspace_conversations=lambda workspace_id: tuple(
+            memberships[workspace_id]
+        ),
+    )
+    controller = _workspace_controller(
+        app_instance=SimpleNamespace(workspace_registry_service=registry)
+    )
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def fetch(_workspace_id, _cursor):
+        started.set()
+        await release.wait()
+        return (_browser_row("moving", "Stale owner"),), None
+
+    controller._fetch_workspace_tree_page = fetch
+    task = asyncio.create_task(controller.load_workspace_tree_page("workspace-7", 75))
+    await started.wait()
+    memberships["workspace-7"] = []
+    memberships["workspace-8"] = [
+        SimpleNamespace(item_id="moving", title="Moved", role="workspace-thread")
+    ]
+    release.set()
+    await task
+
+    moved = _browser_row("moving", "Moved", workspace_id="workspace-8")
+    projection = controller.workspace_tree_projection((moved,))
+    owners = [
+        node.workspace_id
+        for node in projection
+        if any(row.conversation_id == "moving" for row in node.conversations)
+    ]
+    assert owners == ["workspace-8"]
+    assert controller._workspace_page_attempts["workspace-7"].rows == ()
+
+
 def test_workspace_controller_constructor_documents_every_dependency():
     docstring = inspect.getdoc(ConsoleWorkspaceController.__init__) or ""
     parameters = inspect.signature(ConsoleWorkspaceController.__init__).parameters
@@ -235,6 +455,8 @@ async def test_workspace_persisted_cache_refresh_awaits_async_provider():
 
     async def list_conversations(**kwargs):
         calls.append(kwargs)
+        if kwargs["scope_type"] != "global":
+            return {"items": [], "total": 0}
         return {
             "items": [
                 {
@@ -392,7 +614,7 @@ def test_workspace_controller_blank_query_clears_without_mount():
 async def test_workspace_controller_refresh_stages_local_then_merges_persisted_rows():
     started = asyncio.Event()
     release = asyncio.Event()
-    workspace = SimpleNamespace(workspace_id="workspace-7", name="Workspace 7")
+    workspace = SimpleNamespace(workspace_id=DEFAULT_WORKSPACE_ID, name="Default")
     registry = SimpleNamespace(
         ensure_default_workspace=lambda: workspace,
         list_workspaces=lambda: (workspace,),
@@ -416,13 +638,13 @@ async def test_workspace_controller_refresh_stages_local_then_merges_persisted_r
                 {
                     "id": "shared",
                     "title": "Shared persisted",
-                    "workspace_id": "workspace-7",
+                    "workspace_id": DEFAULT_WORKSPACE_ID,
                     "scope_type": "workspace",
                 },
                 {
                     "id": "persisted-only",
                     "title": "Persisted only",
-                    "workspace_id": "workspace-7",
+                    "workspace_id": DEFAULT_WORKSPACE_ID,
                     "scope_type": "workspace",
                 },
             ],
@@ -470,7 +692,7 @@ async def test_workspace_controller_refresh_stages_local_then_merges_persisted_r
 
 @pytest.mark.asyncio
 async def test_workspace_controller_refresh_preserves_local_rows_on_sanitized_error():
-    workspace = SimpleNamespace(workspace_id="workspace-7", name="Workspace 7")
+    workspace = SimpleNamespace(workspace_id=DEFAULT_WORKSPACE_ID, name="Default")
     registry = SimpleNamespace(
         ensure_default_workspace=lambda: workspace,
         list_workspaces=lambda: (workspace,),
@@ -506,7 +728,7 @@ async def test_workspace_controller_refresh_preserves_local_rows_on_sanitized_er
     assert controller._console_conversation_browser_total == 1
     assert (
         controller._console_conversation_browser_error
-        == "Workspace conversation search is unavailable."
+        == "Conversation search is unavailable."
     )
     assert "secret" not in controller._console_conversation_browser_error
 
@@ -530,7 +752,7 @@ async def test_workspace_controller_selection_refresh_stops_timer_and_uses_new_t
     assert sync_calls == [None, None]
 
 
-def test_workspace_controller_workspace_change_resets_canonical_search_state():
+def test_workspace_change_preserves_independent_flat_search_state():
     workspace = SimpleNamespace(workspace_id="workspace-new")
     app = SimpleNamespace(
         workspace_registry_service=SimpleNamespace(
@@ -548,16 +770,16 @@ def test_workspace_controller_workspace_change_resets_canonical_search_state():
     state = controller._with_console_workspace_conversation_section(_workspace_state())
 
     assert controller._console_workspace_conversation_workspace_id == "workspace-new"
-    assert controller._console_conversation_browser_query == ""
-    assert controller._console_conversation_browser_search_token == 4
-    assert controller._console_conversation_browser_rows == ()
-    assert controller._console_conversation_browser_total is None
-    assert controller._console_conversation_browser_error == ""
+    assert controller._console_conversation_browser_query == "old"
+    assert controller._console_conversation_browser_search_token == 3
+    assert controller._console_conversation_browser_rows == (_rich_row(),)
+    assert controller._console_conversation_browser_total == 4
+    assert controller._console_conversation_browser_error == "old error"
     assert state.conversation_section is not None
     assert state.conversation_section.workspace_id == "workspace-new"
 
 
-def test_workspace_controller_workspace_change_resets_before_rich_browser_snapshot():
+def test_workspace_change_does_not_cancel_or_invalidate_flat_lane():
     workspace = SimpleNamespace(workspace_id="workspace-new")
     app = SimpleNamespace(
         workspace_registry_service=SimpleNamespace(
@@ -576,15 +798,15 @@ def test_workspace_controller_workspace_change_resets_before_rich_browser_snapsh
 
     state = controller._with_console_conversation_browser_state(_workspace_state())
 
-    assert controller._console_conversation_browser_query == ""
-    assert controller._console_conversation_browser_rows == ()
-    assert controller._console_conversation_browser_search_token == 4
-    assert controller._console_conversation_browser_search_timer is None
-    assert timer.stop_calls == 1
-    assert controller._console_persisted_rows_cache is None
-    assert controller._console_persisted_rows_cache_token == 6
+    assert controller._console_conversation_browser_query == "old"
+    assert controller._console_conversation_browser_rows == (_rich_row(),)
+    assert controller._console_conversation_browser_search_token == 3
+    assert controller._console_conversation_browser_search_timer is timer
+    assert timer.stop_calls == 0
+    assert controller._console_persisted_rows_cache == ([], 0, "")
+    assert controller._console_persisted_rows_cache_token == 5
     assert state.conversation_browser is not None
-    assert state.conversation_browser.query == ""
+    assert state.conversation_browser.query == "old"
     browser_rows = tuple(
         row
         for section in state.conversation_browser.sections
@@ -595,7 +817,7 @@ def test_workspace_controller_workspace_change_resets_before_rich_browser_snapsh
     )
     assert browser_rows == ()
     assert state.conversation_section is not None
-    assert state.conversation_section.query == ""
+    assert state.conversation_section.query == "old"
 
 
 def test_workspace_controller_clear_transition_stops_once_and_syncs_and_focuses():
@@ -668,9 +890,15 @@ def test_workspace_controller_scalar_legacy_aliases_share_canonical_state(
     setattr(controller, legacy_name, value)
     assert getattr(controller, canonical_name) is value
 
-    replacement = value if isinstance(value, _FakeTimer) else None
+    replacement = {
+        "_console_conversation_browser_query": "",
+        "_console_conversation_browser_search_timer": _FakeTimer(),
+        "_console_conversation_browser_search_token": 0,
+        "_console_conversation_browser_total": None,
+        "_console_conversation_browser_error": "",
+    }[canonical_name]
     setattr(controller, canonical_name, replacement)
-    assert getattr(controller, legacy_name) is replacement
+    assert getattr(controller, legacy_name) == replacement
 
 
 def test_workspace_controller_observes_late_bound_dependency_replacement():

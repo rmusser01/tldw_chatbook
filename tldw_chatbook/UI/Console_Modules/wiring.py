@@ -448,6 +448,9 @@ def build_console_controllers(
         # trigger -- late-binding like every sibling above.
         wake_retry_poke=lambda: screen._fleet._poke_console_wake_retry(),
         sync_workspace_context=lambda: screen._sync_console_workspace_context(),
+        workspace_tree_owner_accessor=(
+            lambda: getattr(screen, "_console_workspace_tree_owner", screen)
+        ),
     )
     screen._character = ConsoleCharacterController(
         app_config_accessor=(
