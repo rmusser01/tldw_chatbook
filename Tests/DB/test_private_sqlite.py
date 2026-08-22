@@ -29,6 +29,10 @@ from tldw_chatbook.DB.private_sqlite import (
     copy_private_sqlite,
     restore_private_sqlite,
 )
+from tldw_chatbook.Notes.notes_sync_state_schema import (
+    NotesSyncStateSchemaError,
+    notes_sync_state_transaction,
+)
 from tldw_chatbook.TTS.profile_migration_namespace import MigrationTombstoneKey
 from tldw_chatbook.Utils.private_paths import PrivatePathError, PrivatePathStatus
 
@@ -68,10 +72,12 @@ RESTORE_BACKUP_OWNER_IDS = (
 MIGRATION_BOUNDARY_BACKUP_OWNER_IDS = ("tts.profile_migration_boundary",)
 
 
-def test_notes_sync_state_owner_is_private_file_only_and_not_backup_enabled() -> None:
+def test_notes_sync_state_owner_allows_internal_memory_and_not_backup() -> None:
     policy = SQLITE_OWNER_REGISTRY["notes.sync_state"]
 
-    assert policy.allowed_target_kinds == frozenset({SQLiteTargetKind.PRIVATE_FILE})
+    assert policy.allowed_target_kinds == frozenset(
+        {SQLiteTargetKind.PRIVATE_FILE, SQLiteTargetKind.MEMORY}
+    )
     assert policy.centralized_backup_allowed is False
     reason = policy.reason.casefold()
     assert "device-private import receipts" in reason
@@ -83,6 +89,13 @@ def test_notes_sync_state_owner_is_private_file_only_and_not_backup_enabled() ->
         *RESTORE_BACKUP_OWNER_IDS,
         *MIGRATION_BOUNDARY_BACKUP_OWNER_IDS,
     }
+
+
+@pytest.mark.parametrize("database", (":memory:", Path(":memory:")))
+def test_public_notes_sync_state_transaction_rejects_memory(database) -> None:
+    with pytest.raises(NotesSyncStateSchemaError, match="private file"):
+        with notes_sync_state_transaction(database):
+            pytest.fail("public sync-state transaction admitted memory")
 
 
 @pytest.mark.parametrize(

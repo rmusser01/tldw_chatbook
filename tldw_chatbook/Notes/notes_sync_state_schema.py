@@ -754,6 +754,10 @@ def notes_sync_state_transaction(
         Exception: Re-raises operation failures after rolling back.
     """
 
+    if Path(database_path) == Path(":memory:"):
+        raise NotesSyncStateSchemaError(
+            "The public Notes sync-state transaction requires a private file."
+        )
     try:
         connection = connect_private_sqlite("notes.sync_state", Path(database_path))
     except (sqlite3.Error, OSError):

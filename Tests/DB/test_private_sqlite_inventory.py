@@ -933,7 +933,7 @@ def test_notes_sync_state_inventory_row_is_exact_and_backup_excluded() -> None:
     assert row == {
         "id": "C50",
         "module": "tldw_chatbook/Notes/notes_sync_state_schema",
-        "symbol": "notes_sync_state_transaction",
+        "symbol": "_canonical_v2_snapshot / notes_sync_state_transaction",
         "owner_id": "notes.sync_state",
         "classification": "private_file, memory",
         "intent": "device-private import receipts and future lasting-sync state",
