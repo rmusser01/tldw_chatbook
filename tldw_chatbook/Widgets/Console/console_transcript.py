@@ -2554,6 +2554,9 @@ class ConsoleTranscript(VerticalScroll):
         self._change_review_provider_factory: Callable[[], Any] | None = None
         self._presentation_context = ConsolePresentationContext()
         self._messages: list[ConsoleChatMessage] = []
+        self._unit_spans_by_index: tuple[
+            tuple[int, int, str, tuple[str, ...]], ...
+        ] = ()
         self.selected_message_id: str | None = None
         #: task-501: a selection to apply on the NEXT message ingest that
         #: contains this id. Set by the screen's sibling-swipe handler, which
@@ -2972,28 +2975,42 @@ class ConsoleTranscript(VerticalScroll):
             start -= 1
         return start
 
-    @staticmethod
     def _unit_span_at(
-        messages: list[ConsoleChatMessage], index: int
+        self, messages: list[ConsoleChatMessage], index: int
     ) -> tuple[int, int, str, tuple[str, ...]]:
         """Return the causal span and owner for the unit containing ``index``."""
         index = max(0, min(index, len(messages) - 1))
+        if messages is self._messages:
+            return self._unit_spans_by_index[index]
+        return self._build_unit_spans(messages)[index]
+
+    @staticmethod
+    def _build_unit_spans(
+        messages: list[ConsoleChatMessage],
+    ) -> tuple[tuple[int, int, str, tuple[str, ...]], ...]:
+        """Build one causal span lookup entry per message index."""
         index_by_id = {message.id: offset for offset, message in enumerate(messages)}
+        spans: list[tuple[int, int, str, tuple[str, ...]] | None] = [
+            None
+        ] * len(messages)
         for unit in group_console_transcript_messages(messages):
             if unit.standalone is not None:
                 standalone = unit.standalone
                 start = index_by_id[standalone.id]
-                if start == index:
-                    return start, start + 1, standalone.id, (standalone.id,)
+                spans[start] = (start, start + 1, standalone.id, (standalone.id,))
                 continue
             turn = unit.assistant_turn
             assert turn is not None
             start = index_by_id[turn.assistant.id]
             end = start + len(turn.owned_message_ids)
-            if start <= index < end:
-                return start, end, turn.assistant.id, turn.owned_message_ids
-        message = messages[index]
-        return index, index + 1, message.id, (message.id,)
+            span = (start, end, turn.assistant.id, turn.owned_message_ids)
+            spans[start:end] = [span] * (end - start)
+        return tuple(
+            span
+            if span is not None
+            else (index, index + 1, messages[index].id, (messages[index].id,))
+            for index, span in enumerate(spans)
+        )
 
     def _ownership_by_message_id(
         self, messages: list[ConsoleChatMessage] | None = None
@@ -3718,6 +3735,7 @@ class ConsoleTranscript(VerticalScroll):
         ]
         previous_hidden_tail_ids = self._hidden_tail_ids
         self._messages = list(messages)
+        self._unit_spans_by_index = self._build_unit_spans(self._messages)
         message_ids = {message.id for message in self._messages}
         if session_id is not _SESSION_ID_UNSET:
             if (

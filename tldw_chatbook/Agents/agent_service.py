@@ -18,9 +18,12 @@ import threading
 import time
 from collections.abc import Mapping
 from datetime import datetime, timezone
-from typing import Any, Callable, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Any, Callable, Literal, Protocol, cast
 
 from loguru import logger
+
+if TYPE_CHECKING:
+    from .run_log import RunLogWriter
 
 from tldw_chatbook.Chat.console_history_budget import (
     ProviderContinuationSidecar,
@@ -1775,7 +1778,7 @@ class AgentService:
                 call.name not in config.allowed_tools
                 or call.name not in disclosed_names
             ):
-                return ToolResult(ok=False, error=f"Tool not permitted: {call.name}")
+                return ToolResult.blocked(f"Tool not permitted: {call.name}")
             timeout = self.registry.timeout_for(call.name) or (
                 config.budget.max_tool_call_seconds
             )
@@ -3661,9 +3664,7 @@ class AgentService:
                     call.name not in config.allowed_tools
                     or call.name not in disclosed_names
                 ):
-                    return ToolResult(
-                        ok=False, error=f"Tool not permitted: {call.name}"
-                    )
+                    return ToolResult.blocked(f"Tool not permitted: {call.name}")
                 # Cheap early exit before rendering the skill: the
                 # authoritative check-and-increment lives in `spawn` itself
                 # (shared with the native spawn_subagent path), so the

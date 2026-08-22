@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import FrozenInstanceError
 
 import pytest
 
 import tldw_chatbook.Chat.console_agent_bridge as bridge_module
-from tldw_chatbook.Agents.agent_models import STEP_ERROR, STEP_SPAWN, STEP_TOOL_RESULT
+from tldw_chatbook.Agents.agent_models import (
+    STEP_ERROR,
+    STEP_SPAWN,
+    STEP_TOOL_RESULT,
+    ToolResult,
+)
 from tldw_chatbook.Agents.local_tool_provider import (
     LOCAL_DENY_REFUSAL,
     LOCAL_GATE_ERROR_REFUSAL,
@@ -24,8 +30,10 @@ from tldw_chatbook.Agents.mcp_tool_provider import (
 )
 from tldw_chatbook.Chat.console_agent_bridge import (
     STEP_APPROVAL_TIMEOUT,
+    build_intermediate_thinking_marker,
     build_step_activity_presentation,
     classify_activity_status,
+    safe_intermediate_thinking_summary,
 )
 from tldw_chatbook.Chat.console_chat_controller import (
     KILL_SWITCH_REFUSAL as CONTROLLER_KILL_SWITCH_REFUSAL,
@@ -37,6 +45,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_turn_grouping import visual_messages
 
 
 class _RecordingPersistence:
@@ -51,6 +60,24 @@ class _RecordingPersistence:
     def create_message(self, **kwargs: object) -> str:
         self.created.append(kwargs)
         return f"msg-{len(self.created)}"
+
+
+@pytest.mark.parametrize(
+    "public_callable",
+    [
+        safe_intermediate_thinking_summary,
+        build_intermediate_thinking_marker,
+        visual_messages,
+        ToolResult.blocked,
+    ],
+)
+def test_new_public_activity_helpers_use_google_style_docstrings(
+    public_callable,
+) -> None:
+    docstring = inspect.getdoc(public_callable) or ""
+
+    assert "Args:" in docstring
+    assert "Returns:" in docstring
 
 
 def test_activity_presentation_accepts_only_the_bounded_contract() -> None:

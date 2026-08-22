@@ -40,12 +40,53 @@ from tldw_chatbook.Widgets.Console.console_assistant_turn import (
     ConsoleActivityDisclosure,
     ConsoleAssistantTurnWidget,
 )
+import tldw_chatbook.Widgets.Console.console_transcript as transcript_module
 from tldw_chatbook.Widgets.Console.console_transcript import (
     ConsoleMarkdownMessage,
     ConsoleMessageHeader,
     ConsoleTranscript,
     ConsoleTranscriptMessage,
 )
+
+
+def test_unit_span_grouping_is_built_once_per_message_ingest(monkeypatch) -> None:
+    real_group = transcript_module.group_console_transcript_messages
+    group_calls = 0
+
+    def counted_group(messages):
+        nonlocal group_calls
+        group_calls += 1
+        return real_group(messages)
+
+    monkeypatch.setattr(
+        transcript_module,
+        "group_console_transcript_messages",
+        counted_group,
+    )
+    transcript = ConsoleTranscript()
+    transcript.set_messages(
+        [
+            ConsoleChatMessage(
+                role=ConsoleMessageRole.USER,
+                content="Question",
+                id="user-turn",
+            ),
+            ConsoleChatMessage(
+                role=ConsoleMessageRole.ASSISTANT,
+                content="Answer",
+                id="assistant-turn",
+            ),
+            ConsoleChatMessage(
+                role=ConsoleMessageRole.TOOL,
+                content="Result",
+                id="tool-turn",
+            ),
+        ]
+    )
+
+    assert transcript._unit_span_at(transcript._messages, 1)[:2] == (1, 3)
+    assert transcript._unit_span_at(transcript._messages, 2)[:2] == (1, 3)
+    assert group_calls == 1
 
 
 def _message_row_text(transcript: ConsoleTranscript, message_id: str) -> str:

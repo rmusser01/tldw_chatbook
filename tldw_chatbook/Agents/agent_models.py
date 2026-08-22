@@ -204,7 +204,14 @@ class ToolResult:
 
     @classmethod
     def blocked(cls, error: str) -> ToolResult:
-        """Return a permission/policy refusal with structured provenance."""
+        """Return a permission/policy refusal with structured provenance.
+
+        Args:
+            error: User-visible refusal reason.
+
+        Returns:
+            A failed tool result explicitly classified as blocked.
+        """
         return cls(ok=False, error=error, outcome=TOOL_OUTCOME_BLOCKED)
 
 

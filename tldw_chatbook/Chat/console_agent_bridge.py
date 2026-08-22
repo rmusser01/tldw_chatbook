@@ -1016,6 +1016,13 @@ def safe_intermediate_thinking_summary(summary: str | None) -> str | None:
     shapes reject the whole value, fenced payloads are discarded, and an
     explicit tool/function payload key rejects the remaining visible prefix.
     No redaction copy is returned because that would create fake detail.
+
+    Args:
+        summary: Existing visible step summary, or ``None``.
+
+    Returns:
+        A bounded terminal-safe summary, or ``None`` when the value is empty
+        or unsafe to disclose.
     """
     raw = str(summary or "")
     # The terminal-safe helper below uses str.splitlines(), whose boundary
@@ -1050,7 +1057,15 @@ def safe_intermediate_thinking_summary(summary: str | None) -> str | None:
 def build_intermediate_thinking_marker(
     summary: str | None,
 ) -> ConsoleChatMessage:
-    """Build one session-only Thinking activity from a visible step summary."""
+    """Build one session-only Thinking activity from a visible step summary.
+
+    Args:
+        summary: Existing visible step summary, or ``None``.
+
+    Returns:
+        A display-only Thinking marker containing only the bounded safe
+        summary.
+    """
     safe_summary = safe_intermediate_thinking_summary(summary)
     return ConsoleChatMessage(
         role=ConsoleMessageRole.TOOL,

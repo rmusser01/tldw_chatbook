@@ -110,7 +110,15 @@ def group_console_transcript_messages(
 def visual_messages(
     units: Iterable[ConsoleTranscriptUnit],
 ) -> Iterator[ConsoleChatMessage]:
-    """Yield messages in navigation order, with activities before the answer."""
+    """Yield messages in navigation order, with activities before the answer.
+
+    Args:
+        units: Grouped transcript units in causal order.
+
+    Returns:
+        An iterator that yields each unit's activities before its Assistant
+        answer while preserving standalone message order.
+    """
     for unit in units:
         if unit.standalone is not None:
             yield unit.standalone
