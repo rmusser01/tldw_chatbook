@@ -778,6 +778,31 @@ def test_campaign_attempt_event_schema_fails_closed(
         profile.append_attempt_state(tmp_path / "attempts.jsonl", event)
 
 
+@pytest.mark.parametrize("state", ([], {}, 0, None, True))
+def test_campaign_non_string_state_fails_stably_across_boundaries(
+    tmp_path: Path, state: object
+) -> None:
+    transition_ledger = tmp_path / "transition.jsonl"
+    profile.append_attempt_state(
+        transition_ledger, _attempt_event("attempt-0001", "running")
+    )
+    malformed = {"attempt_id": "attempt-0001", "state": state}
+
+    with pytest.raises(RuntimeError, match="^campaign_attempt_state_invalid$"):
+        profile.append_attempt_state(transition_ledger, malformed)
+
+    payload = json.dumps(malformed, sort_keys=True) + "\n"
+    loaded_ledger = tmp_path / "loaded.jsonl"
+    loaded_ledger.write_text(payload, encoding="utf-8")
+    with pytest.raises(RuntimeError, match="^campaign_attempt_state_invalid$"):
+        profile.attempt_lineage(loaded_ledger)
+
+    admission_ledger = tmp_path / "admission.jsonl"
+    admission_ledger.write_text(payload, encoding="utf-8")
+    with pytest.raises(RuntimeError, match="^campaign_attempt_state_invalid$"):
+        profile.require_campaign_acquisition(admission_ledger)
+
+
 def test_campaign_attempt_lineage_rejects_malformed_and_out_of_order_records(
     tmp_path: Path,
 ) -> None:
@@ -1042,6 +1067,91 @@ def test_campaign_process_probe_failures_use_stable_codes_and_preserve_lock(
     assert (tmp_path / "existing" / "attempts.jsonl").read_bytes() == before
 
 
+def test_process_start_identity_returns_none_only_for_exact_missing_pid() -> None:
+    def missing_pid(_command, **_kwargs):
+        return SimpleNamespace(returncode=1, stdout="", stderr="")
+
+    assert profile.process_start_identity(123, run_command=missing_pid) is None
+
+
+def test_process_start_identity_hashes_valid_ps_start_time() -> None:
+    started = "Fri Aug 22 13:00:00 2026"
+
+    assert profile.process_start_identity(
+        123,
+        run_command=lambda _command, **_kwargs: SimpleNamespace(
+            returncode=0, stdout=started + "\n", stderr=""
+        ),
+    ) == hashlib.sha256(started.encode("utf-8")).hexdigest()
+
+
+@pytest.mark.parametrize(
+    "completed",
+    (
+        SimpleNamespace(returncode=2, stdout="", stderr="ps failed"),
+        SimpleNamespace(returncode=1, stdout="", stderr="permission denied"),
+        SimpleNamespace(returncode=0, stdout="", stderr=""),
+        SimpleNamespace(returncode=0, stdout="not-a-start-time\n", stderr=""),
+    ),
+)
+def test_process_start_identity_rejects_operational_and_parse_failures(
+    completed: SimpleNamespace,
+) -> None:
+    with pytest.raises(RuntimeError, match="^campaign_process_identity_failed$"):
+        profile.process_start_identity(
+            123, run_command=lambda _command, **_kwargs: completed
+        )
+
+
+def test_process_start_identity_normalizes_command_exception() -> None:
+    def failing_command(_command, **_kwargs):
+        raise OSError("sensitive command detail")
+
+    with pytest.raises(RuntimeError, match="^campaign_process_identity_failed$"):
+        profile.process_start_identity(123, run_command=failing_command)
+
+
+@pytest.mark.parametrize(
+    "second_outcome",
+    (
+        SimpleNamespace(returncode=2, stdout="", stderr="ps failed"),
+        SimpleNamespace(returncode=1, stdout="", stderr="permission denied"),
+        SimpleNamespace(returncode=0, stdout="", stderr=""),
+        OSError("sensitive command detail"),
+    ),
+)
+def test_campaign_recovery_ps_error_rolls_back_without_ledger_mutation(
+    tmp_path: Path, second_outcome: object
+) -> None:
+    _acquire_attempt(tmp_path)
+    ledger = tmp_path / "attempts.jsonl"
+    before = ledger.read_bytes()
+    calls = 0
+
+    def run_command(_command, **_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return SimpleNamespace(returncode=1, stdout="", stderr="")
+        if isinstance(second_outcome, BaseException):
+            raise second_outcome
+        return second_outcome
+
+    with pytest.raises(RuntimeError, match="^campaign_process_identity_failed$"):
+        profile.recover_interrupted_attempt(
+            tmp_path,
+            process_start_probe=lambda pid: profile.process_start_identity(
+                pid, run_command=run_command
+            ),
+        )
+
+    assert profile._read_lock_owner(tmp_path / ".campaign-lock").owner_token == (
+        _OWNER_TOKEN
+    )
+    assert not (tmp_path / ".campaign-recovery").exists()
+    assert ledger.read_bytes() == before
+
+
 @pytest.mark.parametrize(
     "observed_identity",
     (None, 7, True, "", "not-a-hash", "g" * 64),
@@ -1158,6 +1268,45 @@ def test_campaign_recovery_rollback_conflict_preserves_both_locked_owners(
     assert not (tmp_path / ".campaign-recovery").exists()
     assert not (tmp_path / ".campaign-rollback").exists()
     assert (tmp_path / "attempts.jsonl").read_bytes() == before
+
+
+def test_campaign_recovery_append_race_rolls_back_owned_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _acquire_attempt(tmp_path)
+    ledger = tmp_path / "attempts.jsonl"
+    real_append = profile.append_attempt_state
+
+    def append_after_competing_completion(path: Path, event) -> None:
+        if event["state"] == "failed":
+            real_append(
+                path,
+                _attempt_event(
+                    "attempt-0001",
+                    "complete_pending_review",
+                    verdict="pass",
+                    raw_sha256="a" * 64,
+                ),
+            )
+        real_append(path, event)
+
+    monkeypatch.setattr(
+        profile, "append_attempt_state", append_after_competing_completion
+    )
+
+    with pytest.raises(RuntimeError, match="^campaign_attempt_transition_invalid$"):
+        profile.recover_interrupted_attempt(
+            tmp_path, process_start_probe=lambda _pid: None
+        )
+
+    assert profile._read_lock_owner(tmp_path / ".campaign-lock").owner_token == (
+        _OWNER_TOKEN
+    )
+    assert not (tmp_path / ".campaign-recovery").exists()
+    assert [event["state"] for event in profile.attempt_lineage(ledger)] == [
+        "running",
+        "complete_pending_review",
+    ]
 
 
 def test_campaign_dead_owner_recovery_appends_interrupted_and_preserves_raw(

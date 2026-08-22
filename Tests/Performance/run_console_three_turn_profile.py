@@ -1575,7 +1575,7 @@ def _validate_attempt_event(event: Mapping[str, Any]) -> dict[str, Any]:
     if privacy_violations(record):
         raise RuntimeError("campaign_event_privacy_violation")
     state = record.get("state")
-    if state not in ATTEMPT_STATES:
+    if not isinstance(state, str) or state not in ATTEMPT_STATES:
         raise RuntimeError("campaign_attempt_state_invalid")
     if set(record) != _ATTEMPT_FIELDS[state]:
         raise RuntimeError("campaign_event_fields_invalid")
@@ -1728,15 +1728,40 @@ def process_start_identity(
     pid: int, *, run_command: Any = subprocess.run
 ) -> str | None:
     """Return a stable content-free fingerprint for one live PID's start time."""
-    completed = run_command(
-        ["ps", "-o", "lstart=", "-p", str(pid)],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    started = completed.stdout.strip() if completed.returncode == 0 else ""
-    if not started:
+    try:
+        completed = run_command(
+            ["ps", "-o", "lstart=", "-p", str(pid)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        returncode = completed.returncode
+        stdout = completed.stdout
+        stderr = completed.stderr
+    except BaseException as exc:
+        raise RuntimeError("campaign_process_identity_failed") from exc
+    if (
+        returncode == 1
+        and isinstance(stdout, str)
+        and not stdout.strip()
+        and isinstance(stderr, str)
+        and not stderr.strip()
+    ):
         return None
+    if (
+        not isinstance(returncode, int)
+        or isinstance(returncode, bool)
+        or returncode != 0
+        or not isinstance(stdout, str)
+        or not isinstance(stderr, str)
+        or stderr.strip()
+    ):
+        raise RuntimeError("campaign_process_identity_failed")
+    started = stdout.strip()
+    try:
+        time.strptime(started, "%a %b %d %H:%M:%S %Y")
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("campaign_process_identity_failed") from exc
     return hashlib.sha256(started.encode("utf-8")).hexdigest()
 
 
@@ -2047,15 +2072,15 @@ def recover_interrupted_attempt(
         current = attempt_lineage(ledger)
         if current != lineage or current[-1]["state"] != "running":
             raise RuntimeError("campaign_recovery_state_changed")
+        event = {
+            "attempt_id": latest["attempt_id"],
+            "state": "failed",
+            "reason_category": "interrupted",
+        }
+        append_attempt_state(ledger, event)
     except BaseException:
         _preserve_recovery_rollback(campaign_root, recovery_root, owner)
         raise
-    event = {
-        "attempt_id": latest["attempt_id"],
-        "state": "failed",
-        "reason_category": "interrupted",
-    }
-    append_attempt_state(ledger, event)
     (recovery_root / "owner.json").unlink()
     recovery_root.rmdir()
     return event
