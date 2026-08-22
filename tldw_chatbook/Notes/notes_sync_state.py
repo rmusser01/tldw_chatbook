@@ -23,6 +23,7 @@ MAX_SYNC_ROOTS = 64
 _MAX_PATH_LENGTH = 32_768
 _MAX_DISPLAY_NAME_LENGTH = 255
 _MAX_ID_LENGTH = 256
+_MIN_SQLITE_INTEGER = -(2**63)
 _MAX_SQLITE_INTEGER = 2**63 - 1
 _DIRECTIONS = frozenset({"folder_to_notes", "notes_to_folder", "bidirectional"})
 _DURABLE_DIRECTIONS = _DIRECTIONS | {"unspecified"}
@@ -126,10 +127,26 @@ def _validate_reason_code(reason_code: object) -> str:
 
 
 def _timestamp_after(previous: int = 0) -> int:
-    return max(1, time.time_ns(), previous + 1)
+    observed = time.time_ns()
+    if type(observed) is not int or not (
+        _MIN_SQLITE_INTEGER <= observed <= _MAX_SQLITE_INTEGER
+    ):
+        raise NotesSyncStateError(
+            "The system clock is outside the durable sync-state timestamp range."
+        )
+    if type(previous) is not int or not 0 <= previous <= _MAX_SQLITE_INTEGER:
+        raise SyncStateCorruptionError(
+            "A private sync-state timestamp is outside the canonical range."
+        )
+    if previous == _MAX_SQLITE_INTEGER:
+        raise NotesSyncStateError(
+            "The durable sync-state timestamp cannot be advanced."
+        )
+    return max(1, observed, previous + 1)
 
 
 def _root_record(row: tuple[object, ...]) -> SyncRootRecord:
+    failure: SyncStateCorruptionError | None = None
     try:
         if len(row) != 13:
             raise ValueError
@@ -247,9 +264,12 @@ def _root_record(row: tuple[object, ...]) -> SyncRootRecord:
             updated_at=updated_at,
         )
     except (IndexError, TypeError, ValueError):
-        raise SyncStateCorruptionError(
+        failure = SyncStateCorruptionError(
             "A private sync-root record is incompatible with canonical v2."
-        ) from None
+        )
+    if failure is None:
+        raise AssertionError("Sync-root projection did not return or fail.")
+    raise failure from None
 
 
 def _select_root(

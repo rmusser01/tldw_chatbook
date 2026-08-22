@@ -40,6 +40,8 @@ _PRIVATE_ID = "private-root-id"
 _PRIVATE_DIGEST = "a" * 64
 _PRIVATE_MIGRATION_ID = "00000000-0000-4000-8000-000000000097"
 _RAW_SQLITE_SENTINEL = "sqlite leaked /private/alice/root"
+_MIN_SQLITE_INTEGER = -(2**63)
+_MAX_SQLITE_INTEGER = 2**63 - 1
 
 
 def _repository(tmp_path: Path) -> NotesSyncStateRepository:
@@ -568,6 +570,105 @@ def test_root_projection_rejects_nul_source_migration_id_without_disclosure(
         repository.get_root(root.root_id)
     assert malformed_migration_id not in str(caught.value)
     assert len(str(caught.value)) <= 160
+
+
+def test_root_corruption_error_chain_redacts_private_durable_value(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "corrupt-private-chain.sqlite3"
+    repository = NotesSyncStateRepository(database)
+    root = repository.create_candidate_root("root", "Root", "bidirectional")
+    private_sentinel = "private_state_sentinel"
+    with notes_sync_state_transaction(database, immediate=True) as connection:
+        connection.execute("PRAGMA ignore_check_constraints = ON")
+        connection.execute(
+            "UPDATE sync_roots SET state = ? WHERE root_id = ?",
+            (private_sentinel, root.root_id),
+        )
+
+    with pytest.raises(SyncStateCorruptionError) as caught:
+        repository.get_root(root.root_id)
+
+    pending: list[BaseException] = [caught.value]
+    chain: list[BaseException] = []
+    while pending:
+        error = pending.pop()
+        if error in chain:
+            continue
+        chain.append(error)
+        if error.__context__ is not None:
+            pending.append(error.__context__)
+        if error.__cause__ is not None:
+            pending.append(error.__cause__)
+    assert private_sentinel not in "\n".join(str(error) for error in chain)
+    assert caught.value.__context__ is None
+    assert caught.value.__cause__ is None
+
+
+@pytest.mark.parametrize(
+    ("clock_value", "expected_timestamp"),
+    (
+        (_MIN_SQLITE_INTEGER, 1),
+        (0, 1),
+        (1, 1),
+        (_MAX_SQLITE_INTEGER, _MAX_SQLITE_INTEGER),
+    ),
+)
+def test_root_creation_bounds_in_range_clock_to_valid_sqlite_timestamp(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    clock_value: int,
+    expected_timestamp: int,
+) -> None:
+    monkeypatch.setattr(sync_module.time, "time_ns", lambda: clock_value)
+
+    root = _repository(tmp_path).create_candidate_root("root", "Root", "bidirectional")
+
+    assert root.created_at == expected_timestamp
+    assert root.updated_at == expected_timestamp
+
+
+@pytest.mark.parametrize(
+    "clock_value",
+    (_MIN_SQLITE_INTEGER - 1, _MAX_SQLITE_INTEGER + 1),
+)
+def test_root_creation_rejects_out_of_range_clock_without_opening_database(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    clock_value: int,
+) -> None:
+    database = tmp_path / "out-of-range-clock.sqlite3"
+    monkeypatch.setattr(sync_module.time, "time_ns", lambda: clock_value)
+
+    with pytest.raises(NotesSyncStateError) as caught:
+        NotesSyncStateRepository(database).create_candidate_root(
+            "root", "Root", "bidirectional"
+        )
+
+    assert str(clock_value) not in str(caught.value)
+    assert len(str(caught.value)) <= 160
+    assert caught.value.__context__ is None
+    assert not database.exists()
+
+
+def test_root_update_rejects_unadvanceable_maximum_timestamp_with_typed_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _repository(tmp_path)
+    monkeypatch.setattr(sync_module.time, "time_ns", lambda: _MAX_SQLITE_INTEGER)
+    root = repository.create_candidate_root("root", "Root", "bidirectional")
+    monkeypatch.setattr(sync_module.time, "time_ns", lambda: 1)
+
+    with pytest.raises(NotesSyncStateError) as caught:
+        repository.update_candidate_root(
+            root.root_id, root.row_version, display_name="Changed"
+        )
+
+    assert str(_MAX_SQLITE_INTEGER) not in str(caught.value)
+    assert len(str(caught.value)) <= 160
+    assert caught.value.__context__ is None
+    assert repository.get_root(root.root_id) == root
 
 
 def test_missing_root_errors_are_typed_bounded_and_redacted(tmp_path: Path) -> None:
