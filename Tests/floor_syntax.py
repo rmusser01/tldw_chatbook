@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import io
 import tokenize
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -185,7 +186,7 @@ def find_floor_breaks(source: str, *, path: Path) -> list[FloorBreak]:
     return findings
 
 
-def iter_source_files(root: Path):
+def iter_source_files(root: Path) -> Iterator[Path]:
     """Yield every ``.py`` file under ``root``, skipping environment dirs.
 
     Args:
@@ -194,7 +195,17 @@ def iter_source_files(root: Path):
     Yields:
         Paths to source files, excluding anything under a directory named in
         ``EXCLUDED_DIRECTORY_NAMES``.
+
+    Note:
+        Only the components BELOW ``root`` are tested. Matching against the
+        absolute path would let the checkout's own location silence the sweep:
+        a repo living under any directory named `build`, `dist` or `venv`
+        excluded every file and yielded nothing, and a guard that sweeps zero
+        files passes -- reintroducing exactly the green-while-unchecked mode
+        this module exists to remove. Callers should still assert the yield is
+        non-empty; a sweep that finds no files is misconfigured, not clean.
     """
     for path in sorted(root.rglob("*.py")):
-        if EXCLUDED_DIRECTORY_NAMES.isdisjoint(path.parts):
+        relative = path.relative_to(root)
+        if EXCLUDED_DIRECTORY_NAMES.isdisjoint(relative.parts):
             yield path

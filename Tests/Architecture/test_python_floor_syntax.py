@@ -75,16 +75,36 @@ def _reports_version(interpreter: str) -> tuple[int, int] | None:
     claim it never checked -- a wrong interpreter here turns the check into a
     second run of the developer's own version, which always passes.
     """
-    probe = subprocess.run(
-        [interpreter, "-c", "import sys;print(sys.version_info[0],sys.version_info[1])"],
-        capture_output=True, text=True,
-    )
+    try:
+        probe = subprocess.run(
+            [
+                interpreter,
+                "-c",
+                "import sys;print('FLOORPROBE',*sys.version_info[:2])",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        # A hung or unrunnable interpreter must not stall the suite. Treating
+        # it as "not available" is right: an interpreter we cannot question is
+        # one we cannot verify.
+        return None
     if probe.returncode != 0:
         return None
-    parts = probe.stdout.split()
-    if len(parts) != 2 or not all(p.isdigit() for p in parts):
-        return None
-    return int(parts[0]), int(parts[1])
+    # Scan for the marker line rather than parsing all of stdout. A site
+    # customisation, a warning routed to stdout, or a venv activation notice
+    # would otherwise make a perfectly good floor interpreter look unusable --
+    # and that failure is silent, because it degrades into the skip this whole
+    # module exists to avoid.
+    for line in probe.stdout.splitlines():
+        fields = line.split()
+        if len(fields) == 3 and fields[0] == "FLOORPROBE" and all(
+            field.isdigit() for field in fields[1:]
+        ):
+            return int(fields[1]), int(fields[2])
+    return None
 
 
 def test_every_module_compiles_on_the_declared_python_floor() -> None:
@@ -187,7 +207,12 @@ PEP701_CASES = [
 def test_detector_matches_the_pinned_floor_verdicts(
     source: str, expected_break: bool
 ) -> None:
-    """The detector's verdict on each pinned case, with no interpreter needed."""
+    """The detector's verdict on each pinned case, with no interpreter needed.
+
+    Args:
+        source: A one-line module whose floor-compatibility is pinned.
+        expected_break: Whether a real floor interpreter rejects ``source``.
+    """
     found = find_floor_breaks(source, path=Path("synthetic.py"))
     assert bool(found) == expected_break, (
         f"detector said {bool(found)} for {source!r}; expected {expected_break}"
@@ -256,8 +281,15 @@ def test_no_shipped_module_uses_syntax_the_floor_cannot_parse() -> None:
     which is precisely how `TTS/backends/kokoro.py` shipped unimportable on the
     declared floor.
     """
+    swept = list(iter_source_files(PACKAGE))
+    assert swept, (
+        "swept zero source files -- the sweep is misconfigured, and a guard "
+        "that checks nothing reports the same green as one that checks "
+        "everything"
+    )
+
     findings = []
-    for path in iter_source_files(PACKAGE):
+    for path in swept:
         try:
             source = path.read_text(encoding="utf-8")
         except OSError as exc:
