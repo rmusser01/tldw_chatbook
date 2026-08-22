@@ -49,13 +49,30 @@ from .agent_models import (
     SPAWN_TOOL_NAME,
     STEP_ERROR,
     STEP_MODEL,
+    STEP_MODEL_CANCELLED,
+    STEP_MODEL_ERROR,
+    STEP_MODEL_REQUEST_STARTED,
+    STEP_MODEL_RESPONSE_COMPLETED,
+    STEP_MODEL_RETRY,
+    STEP_APPROVAL_APPROVED,
+    STEP_APPROVAL_DENIED,
+    STEP_APPROVAL_REQUESTED,
+    STEP_APPROVAL_REVOKED,
     STEP_SPAWN,
     STEP_STEERING,
     STEP_TOOL_CALL,
+    STEP_TOOL_CANCELLED,
+    STEP_TOOL_EXECUTION_STARTED,
+    STEP_TOOL_FAILED,
+    STEP_TOOL_PROPOSED,
     STEP_TOOL_RESULT,
+    STEP_TOOL_SUCCEEDED,
+    STEP_TOOL_TIMED_OUT,
     TOOL_OUTCOME_BLOCKED,
     TOOL_OUTCOME_FAILED,
     TOOL_OUTCOME_SUCCESS,
+    TOOL_OUTCOME_CANCELLED,
+    TOOL_OUTCOME_TIMEOUT,
     WAIT_AGENTS_TOOL_NAME,
     AgentConfig,
     AgentStep,
@@ -96,6 +113,7 @@ def safe_utc_timestamp(wall_clock: Callable[[], datetime]) -> str:
         return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     except Exception:  # noqa: BLE001 — timestamp capture is best-effort
         return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
 
 FENCE_OPEN = "```tool_call"
 _FENCE_CLOSE = "```"
@@ -354,6 +372,7 @@ class LoopDeps:
         | None
     ) = None
     on_step: Callable[[AgentStep], None] = lambda step: None
+    on_trace_step: Callable[[AgentStep], None] = lambda step: None
     # Optional pre-dispatch batch-review hook (P5 Task 4): the generic seam
     # the MCP approval flow (Task 6) rides on. When set, called ONCE per
     # turn with the full batch of tool calls about to be dispatched
@@ -485,9 +504,9 @@ class LoopDeps:
     # pre-run-log runs.
     on_record: Callable[[str, dict], int | None] | None = None
     continuation_context: ContinuationEventContext | None = None
-    persist_provider_continuation: Callable[
-        [ProviderContinuationEvent], None
-    ] = _noop_provider_continuation
+    persist_provider_continuation: Callable[[ProviderContinuationEvent], None] = (
+        _noop_provider_continuation
+    )
     expand_provider_continuation: (
         Callable[[ProviderContinuationCheckpoint], list[dict]] | None
     ) = None
@@ -722,8 +741,7 @@ def _truncate_tool_result(
             "offset/limit arguments to read the rest."
         )
     full_trailer = (
-        f"\n\n[truncated: {tool_name} returned {len(content)} characters."
-        f"{recovery}]"
+        f"\n\n[truncated: {tool_name} returned {len(content)} characters.{recovery}]"
     )
     if not total_limit:
         return content[:max_chars] + full_trailer
@@ -856,16 +874,21 @@ def run_agent_loop(
     spawned = 0
     model_turns = 0
     total_tokens = 0
+    budget_steps = 0
+    trace_steps = 0
     continuation_checkpoint: ProviderContinuationCheckpoint | None = None
     restored_calls: list[ToolCall] | None = None
     restore_history_start: int | None = None
     recent_calls: deque = deque(maxlen=LOOP_DETECTION_N * MAX_LOOP_PERIOD)
 
-    def add(kind: str, **kw) -> AgentStep:
+    def add(kind: str, *, counts_toward_budget: bool = True, **kw) -> AgentStep:
+        nonlocal budget_steps
         if not kw.get("created_at"):
             kw["created_at"] = safe_utc_timestamp(deps.wall_clock)
         step = AgentStep(index=len(steps), kind=kind, **kw)
         steps.append(step)
+        if counts_toward_budget:
+            budget_steps += 1
         # The service composes incremental durability with live UI here.
         # Either callback may fail, but observation is never load-bearing
         # for the run itself.
@@ -874,6 +897,18 @@ def run_agent_loop(
         except Exception:  # noqa: BLE001 — best-effort observation only
             pass
         return step
+
+    def trace(kind: str, **kw) -> None:
+        """Capture a safe lifecycle observation outside legacy control steps."""
+        nonlocal trace_steps
+        if not kw.get("created_at"):
+            kw["created_at"] = safe_utc_timestamp(deps.wall_clock)
+        step = AgentStep(index=1_000_000 + trace_steps, kind=kind, **kw)
+        trace_steps += 1
+        try:
+            deps.on_trace_step(step)
+        except Exception:  # noqa: BLE001 — best-effort observation only
+            pass
 
     def _outcome(status: str, **kw) -> RunOutcome:
         # Reports run spend on every terminal path; reads enclosing steps/
@@ -990,11 +1025,8 @@ def run_agent_loop(
             validate_continuation_restore(checkpoint, restore_provider_target)
         except Exception:
             return continuation_error()
-        if (
-            checkpoint.state != "active"
-            or not _valid_continuation_context(
-                context, deps.persist_provider_continuation
-            )
+        if checkpoint.state != "active" or not _valid_continuation_context(
+            context, deps.persist_provider_continuation
         ):
             return continuation_error()
         if not resume_provider_continuation:
@@ -1036,8 +1068,15 @@ def run_agent_loop(
 
     while True:
         if deps.should_cancel():
+            trace(
+                STEP_MODEL_CANCELLED,
+                summary="Model request cancelled",
+                status="cancelled",
+                field_states={"payload": "omitted"},
+                sensitivity="diagnostic",
+            )
             return _outcome(RUN_CANCELLED)
-        if len(steps) >= budget.max_steps:
+        if budget_steps >= budget.max_steps:
             add(STEP_ERROR, summary="step budget exhausted")
             return _outcome(RUN_STUCK)
         if model_turns >= budget.max_model_turns:
@@ -1073,9 +1112,7 @@ def run_agent_loop(
                         steer_message = format_steering_message(
                             steer_source, steer_text
                         )
-                        messages.append(
-                            {"role": "user", "content": steer_message}
-                        )
+                        messages.append({"role": "user", "content": steer_message})
                         add(STEP_STEERING, summary=steer_message[:200])
                         _emit_record(
                             deps,
@@ -1087,8 +1124,7 @@ def run_agent_loop(
                         )
                 except Exception:  # noqa: BLE001 — containment, like on_step
                     logger.opt(exception=True).warning(
-                        "drain_mailbox raised; steering delivery skipped "
-                        "for this turn"
+                        "drain_mailbox raised; steering delivery skipped for this turn"
                     )
             # PR3b Task 4: THE boundary. Everything appended so far --
             # every previous batch's fully-paired results, and the
@@ -1101,14 +1137,38 @@ def run_agent_loop(
             # unsafe -- a terminal return there keeps the previous
             # boundary instead).
             coherent_len = len(messages)
-            turn = (
-                deps.call_model_with_continuation(
-                    messages,
-                    tuple(active),
-                    continuation_checkpoint,
+            trace(
+                STEP_MODEL_REQUEST_STARTED,
+                summary="Model request started",
+                status="started",
+                field_states={"payload": "omitted"},
+                sensitivity="diagnostic",
+            )
+            try:
+                turn = (
+                    deps.call_model_with_continuation(
+                        messages,
+                        tuple(active),
+                        continuation_checkpoint,
+                    )
+                    if deps.call_model_with_continuation is not None
+                    else deps.call_model(messages, tuple(active))
                 )
-                if deps.call_model_with_continuation is not None
-                else deps.call_model(messages, tuple(active))
+            except Exception:
+                trace(
+                    STEP_MODEL_ERROR,
+                    summary="Model request failed",
+                    status="failed",
+                    field_states={"payload": "omitted"},
+                    sensitivity="diagnostic",
+                )
+                raise
+            trace(
+                STEP_MODEL_RESPONSE_COMPLETED,
+                summary="Model response completed",
+                status="completed",
+                field_states={"payload": "omitted"},
+                sensitivity="diagnostic",
             )
             model_turns += 1
             total_tokens += turn.tokens
@@ -1121,13 +1181,10 @@ def run_agent_loop(
         candidate = turn.provider_continuation
         if not restoring_batch and calls and candidate is not None:
             context = deps.continuation_context
-            if (
-                not _valid_continuation_context(
-                    context, deps.persist_provider_continuation
-                )
-                or not _continuation_calls_match(
-                    candidate, calls, turn.text, turn.assistant_message
-                )
+            if not _valid_continuation_context(
+                context, deps.persist_provider_continuation
+            ) or not _continuation_calls_match(
+                candidate, calls, turn.text, turn.assistant_message
             ):
                 return continuation_error()
             expected_revision = (
@@ -1179,9 +1236,7 @@ def run_agent_loop(
                     if (
                         candidate.checkpoint_revision != 1
                         or candidate.provider != "moonshot"
-                        or not moonshot_model_returns_reasoning_content(
-                            candidate.model
-                        )
+                        or not moonshot_model_returns_reasoning_content(candidate.model)
                         or len(candidate.rounds) != 1
                         or final_round.calls
                         or final_round.assistant_content != turn.text
@@ -1245,12 +1300,17 @@ def run_agent_loop(
                 )
                 if deps.on_ephemeral_runtime_warning is not None:
                     try:
-                        deps.on_ephemeral_runtime_warning(
-                            code, tool_names, len(calls)
-                        )
+                        deps.on_ephemeral_runtime_warning(code, tool_names, len(calls))
                     except Exception:  # noqa: BLE001 - warning is best effort
                         logger.warning("project_instruction_warning_callback_failed")
             if preparation.status == "retry_with_context":
+                trace(
+                    STEP_MODEL_RETRY,
+                    summary="Model retry requested",
+                    status="retrying",
+                    field_states={"payload": "omitted"},
+                    sensitivity="diagnostic",
+                )
                 messages.extend(build_project_instruction_deferral_rows(calls))
                 messages.extend(
                     deepcopy(dict(row)) for row in preparation.ephemeral_rows
@@ -1265,8 +1325,27 @@ def run_agent_loop(
         # makes every `.get(name, "proceed")` lookup below resolve to
         # "proceed" -- the exact same dispatch path as before this hook
         # existed, so absent-hook behavior stays byte-identical.
+        for call in calls:
+            trace(
+                STEP_TOOL_PROPOSED,
+                summary=f"{call.name} proposed",
+                tool_name=call.name,
+                status="proposed",
+                field_states={"args": "omitted", "result": "not_available"},
+                sensitivity="tool_content",
+            )
+
         verdicts: dict[str, str] = {}
         if deps.review_tool_calls is not None and calls:
+            for call in calls:
+                trace(
+                    STEP_APPROVAL_REQUESTED,
+                    summary=f"Approval requested for {call.name}",
+                    tool_name=call.name,
+                    status="pending",
+                    field_states={"args": "omitted", "result": "not_available"},
+                    sensitivity="tool_content",
+                )
             try:
                 verdicts = deps.review_tool_calls(list(calls)) or {}
             except Exception:  # noqa: BLE001 — policy differs by lifecycle
@@ -1281,6 +1360,25 @@ def run_agent_loop(
                     f"calls as proceed"
                 )
                 verdicts = {}
+
+            for call in calls:
+                verdict = (
+                    verdicts.get(call.call_id) if call.call_id else None
+                ) or verdicts.get(call.name, "proceed")
+                trace(
+                    STEP_APPROVAL_APPROVED
+                    if verdict == "proceed"
+                    else STEP_APPROVAL_DENIED,
+                    summary=(
+                        f"Approval granted for {call.name}"
+                        if verdict == "proceed"
+                        else f"Approval denied for {call.name}"
+                    ),
+                    tool_name=call.name,
+                    status="approved" if verdict == "proceed" else "denied",
+                    field_states={"args": "omitted", "result": "omitted"},
+                    sensitivity="tool_content",
+                )
 
         for call in calls:
             # F5 (Qodo #5, PR #1066 review): emit the tool_call record BEFORE
@@ -1299,6 +1397,23 @@ def run_agent_loop(
             # here, before the side effect, and legacy refusals retain their
             # pre-existing record order.
             if deps.should_cancel():
+                if deps.review_tool_calls is not None:
+                    trace(
+                        STEP_APPROVAL_REVOKED,
+                        summary=f"Approval revoked for {call.name}",
+                        tool_name=call.name,
+                        status="revoked",
+                        field_states={"args": "omitted", "result": "omitted"},
+                        sensitivity="tool_content",
+                    )
+                trace(
+                    STEP_TOOL_CANCELLED,
+                    summary=f"{call.name} cancelled",
+                    tool_name=call.name,
+                    status="cancelled",
+                    field_states={"args": "omitted", "result": "not_available"},
+                    sensitivity="tool_content",
+                )
                 return _outcome(RUN_CANCELLED)
             recent_calls.append((call.name, json.dumps(call.args, sort_keys=True)))
             cycle = _detect_cycle(recent_calls)
@@ -1311,9 +1426,7 @@ def run_agent_loop(
                 # "N-cycle" jargon. dict.fromkeys de-dupes while preserving
                 # order (a period-1 trip names the tool once, not 3x).
                 names = ", ".join(
-                    dict.fromkeys(
-                        n for n, _ in list(recent_calls)[-period * repeats :]
-                    )
+                    dict.fromkeys(n for n, _ in list(recent_calls)[-period * repeats :])
                 )
                 # Log-side detail (TASK-1231/F3 AC4): the period/repeats
                 # jargon that used to be the ONLY copy this trip produced is
@@ -1324,8 +1437,7 @@ def run_agent_loop(
                 # F3: "loop detected: read_file repeated in a 1-cycle (3x)"
                 # reads as unexplained jargon to a first-run user.
                 logger.debug(
-                    f"loop detected: period={period} repeats={repeats} "
-                    f"tools={names}"
+                    f"loop detected: period={period} repeats={repeats} tools={names}"
                 )
                 if period == 1:
                     summary = (
@@ -1424,6 +1536,14 @@ def run_agent_loop(
                 content = verdict
                 tool_outcome = TOOL_OUTCOME_BLOCKED
             else:
+                trace(
+                    STEP_TOOL_EXECUTION_STARTED,
+                    summary=f"{call.name} execution started",
+                    tool_name=call.name,
+                    status="started",
+                    field_states={"args": "omitted", "result": "not_available"},
+                    sensitivity="tool_content",
+                )
                 if call.name == SPAWN_TOOL_NAME:
                     if SPAWN_TOOL_NAME not in config.allowed_tools:
                         # Q6: refuse before dispatch — no budget consumption,
@@ -1489,8 +1609,7 @@ def run_agent_loop(
                             if result.ok or not agent_name:
                                 spawned += 1
                 elif (
-                    call.name == WAIT_AGENTS_TOOL_NAME
-                    and deps.wait_agents is not None
+                    call.name == WAIT_AGENTS_TOOL_NAME and deps.wait_agents is not None
                 ):
                     add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
                     # Same defensive coercion as load_tools' `ids` right
@@ -1665,10 +1784,30 @@ def run_agent_loop(
                     else (
                         TOOL_OUTCOME_BLOCKED
                         if result.outcome == TOOL_OUTCOME_BLOCKED
-                        else TOOL_OUTCOME_FAILED
+                        else (
+                            result.outcome
+                            if result.outcome
+                            in {TOOL_OUTCOME_TIMEOUT, TOOL_OUTCOME_CANCELLED}
+                            else TOOL_OUTCOME_FAILED
+                        )
                     )
                 )
                 content = result.content if result.ok else f"ERROR: {result.error}"
+
+            terminal_kind = {
+                TOOL_OUTCOME_SUCCESS: STEP_TOOL_SUCCEEDED,
+                TOOL_OUTCOME_TIMEOUT: STEP_TOOL_TIMED_OUT,
+                TOOL_OUTCOME_CANCELLED: STEP_TOOL_CANCELLED,
+            }.get(tool_outcome, STEP_TOOL_FAILED)
+            trace(
+                terminal_kind,
+                summary=f"{call.name} {tool_outcome}",
+                tool_name=call.name,
+                tool_outcome=tool_outcome,
+                status=tool_outcome,
+                field_states={"args": "omitted", "result": "omitted"},
+                sensitivity="tool_content",
+            )
 
             # tool_result capture stays HERE, after dispatch: this is the
             # first point the full result/error text exists. (The tool_call
@@ -1706,9 +1845,7 @@ def run_agent_loop(
                     total_limit=True,
                 )
                 target_state = (
-                    "completed"
-                    if verdict == "proceed" and result.ok
-                    else "failed"
+                    "completed" if verdict == "proceed" and result.ok else "failed"
                 )
                 if not transition_call(
                     call,

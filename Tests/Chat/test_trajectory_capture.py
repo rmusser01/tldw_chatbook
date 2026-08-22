@@ -120,8 +120,7 @@ def test_tool_marker_before_assistant_persist_flushes_on_assistant_persist(tmp_p
         )
         # Nothing writable yet: the marker waits for the parent's durable id.
         assert db.get_trajectory_rows(conversation_id) == [] or all(
-            row.event_kind == "user"
-            for row in db.get_trajectory_rows(conversation_id)
+            row.event_kind == "user" for row in db.get_trajectory_rows(conversation_id)
         )
 
         store.append_stream_chunk(assistant.id, "done")
@@ -163,7 +162,9 @@ def test_streamed_assistant_row_carries_timing(tmp_path):
 
         step_started = time.time()
         store.record_trajectory_timing(
-            assistant.id, step_started_at=step_started, model="test-model",
+            assistant.id,
+            step_started_at=step_started,
+            model="test-model",
             provider="test-provider",
         )
         time.sleep(0.01)
@@ -576,3 +577,60 @@ def test_feedback_survives_a_restart(tmp_path):
         ]
     finally:
         reopened.close()
+
+
+def test_message_edit_and_branch_selection_append_payload_free_trace_events(tmp_path):
+    db, store = _store_with_db(tmp_path)
+    try:
+        session = store.ensure_session(title="Mutations")
+        conversation_id = store.persist_session_if_needed(session.id)
+        first = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="SECRET_ORIGINAL_CONTENT",
+            persist=True,
+        )
+        second = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="second",
+            persist=True,
+        )
+
+        store.update_message_content(second.id, "SECRET_EDITED_CONTENT")
+        store.set_active_leaf(session.id, first.id)
+
+        rows = db.get_trajectory_rows(conversation_id)
+        by_kind = {
+            row.event_kind: json.loads(row.payload_json)
+            for row in rows
+            if row.payload_json is not None
+        }
+        assert by_kind["message_edited"]["field_states"] == {"payload": "omitted"}
+        assert by_kind["branch_selected"]["field_states"] == {"payload": "omitted"}
+        assert "SECRET_ORIGINAL_CONTENT" not in repr(by_kind)
+        assert "SECRET_EDITED_CONTENT" not in repr(by_kind)
+    finally:
+        db.close()
+
+
+def test_trace_event_capture_failure_never_fails_the_user_mutation(
+    tmp_path, monkeypatch
+):
+    db, store = _store_with_db(tmp_path)
+    try:
+        session = store.ensure_session(title="Capture failure")
+        store.persist_session_if_needed(session.id)
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="before",
+            persist=True,
+        )
+        monkeypatch.setattr(store, "write_trajectory_rows", lambda _rows: False)
+
+        updated = store.update_message_content(message.id, "after")
+
+        assert updated.content == "after"
+    finally:
+        db.close()

@@ -1226,6 +1226,7 @@ def _build_trajectory_snapshot(
                 "sensitivity": "diagnostic",
             }
         )
+
     persistence = getattr(store, "persistence", None)
     db = getattr(persistence, "db", None)
     if db is not None:
@@ -1274,7 +1275,12 @@ def _build_trajectory_snapshot(
                         conversation_id, limit=500, offset=offset
                     )
                 )
-                compaction_records.extend(page)
+                compaction_records.extend(
+                    {**record, "trace_lifecycle": True}
+                    if isinstance(record, Mapping)
+                    else record
+                    for record in page
+                )
                 if len(page) < 500:
                     break
                 offset += len(page)
@@ -1366,6 +1372,7 @@ def _build_trajectory_snapshot(
                             "turn_id": turn_by_message.get(message_id),
                             "field_states": {"payload": "omitted"},
                             "sensitivity": "retrieval_metadata",
+                            "trace_lifecycle": True,
                         }
                     )
             except Exception as error:  # noqa: BLE001

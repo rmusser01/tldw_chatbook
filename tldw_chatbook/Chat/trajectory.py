@@ -62,6 +62,7 @@ PREVIEW_MAX_CHARS = 120
 
 #: Ledger ``kind`` values (spec data model).
 KIND_USER = "user"
+KIND_SYSTEM = "system"
 KIND_ASSISTANT = "assistant"
 KIND_TOOL_CALL = "tool_call"
 KIND_TOOL_RESULT = "tool_result"
@@ -73,7 +74,7 @@ _TOOL_KINDS = frozenset({KIND_TOOL_CALL, KIND_TOOL_RESULT})
 # message's own sidecar row. Feedback (task-17169) is keyed to the message
 # it critiques, so treating it as that message's row would displace the
 # real one -- taking its timing and turn attribution with it.
-_RENDERED_ROLES = frozenset({KIND_USER, KIND_ASSISTANT})
+_RENDERED_ROLES = frozenset({KIND_USER, KIND_SYSTEM, KIND_ASSISTANT})
 _COMPACTION_PURPOSE = "conversation_compaction"
 
 # Sentinel for "no sidecar seq" in sort keys; larger than any real seq.
@@ -420,6 +421,11 @@ def derive_trajectory(
                 ),
             )
         )
+        if kind == KIND_ASSISTANT and row is not None:
+            events.extend(
+                (turn_id, record)
+                for record in _model_timing_records(m=m, row=row, turn_id=turn_id)
+            )
         for sidecar_row in sorted(
             sidecar_rows.get(m.mid, ()),
             key=lambda r: _as_int(_field(r, "seq")),
@@ -572,12 +578,15 @@ def _message_record(
     conversation_id = (
         _optional_text(_field(row, "conversation_id")) or m.conversation_id
     )
+    is_system = kind == KIND_SYSTEM
     return TrajectoryRecord(
         seq=0,  # assigned by the final pass
         kind=kind,
         turn_id=turn_id,
         message_id=m.mid,
-        content_preview=_preview(m.content),
+        content_preview=(
+            "System context attached" if is_system else _preview(m.content)
+        ),
         usage=usage,
         step_started_at=_field(row, "step_started_at") if row is not None else None,
         first_token_at=_field(row, "first_token_at") if row is not None else None,
@@ -600,12 +609,79 @@ def _message_record(
         observed_at=m.ts,
         field_states=_field_state_map(
             row,
-            default={"content_preview": "observed"},
+            default={"content_preview": "omitted" if is_system else "observed"},
         ),
         sensitivity=(
-            _optional_text(_field(row, "sensitivity")) or "conversation_content"
+            _optional_text(_field(row, "sensitivity"))
+            or ("system_context" if is_system else "conversation_content")
         ),
     )
+
+
+def _model_timing_records(
+    *, m: _Msg, row: Any, turn_id: str
+) -> tuple[TrajectoryRecord, ...]:
+    """Expose the three model observations already recorded by one message row."""
+    conversation_id = (
+        _optional_text(_field(row, "conversation_id")) or m.conversation_id
+    )
+    source_seq = _optional_int(_field(row, "seq"))
+    observations = (
+        (
+            "model_request_started",
+            "started",
+            _parse_timestamp(_field(row, "step_started_at")),
+            f"message:{m.parent}" if m.parent else None,
+        ),
+        (
+            "model_first_token",
+            "streaming",
+            _parse_timestamp(_field(row, "first_token_at")),
+            f"model-timing:{m.mid}:started",
+        ),
+        (
+            "model_response_completed",
+            "completed",
+            _parse_timestamp(_field(row, "completed_at")),
+            f"model-timing:{m.mid}:first-token",
+        ),
+    )
+    suffixes = ("started", "first-token", "completed")
+    records: list[TrajectoryRecord] = []
+    for suffix, (kind, status, observed_at, parent_event_id) in zip(
+        suffixes, observations
+    ):
+        if observed_at is None:
+            continue
+        base = TrajectoryRecord(
+            seq=0,
+            kind=kind,
+            turn_id=turn_id,
+            message_id=m.mid,
+            content_preview=kind.replace("_", " "),
+            usage=None,
+            step_started_at=observed_at,
+            first_token_at=(observed_at if kind == "model_first_token" else None),
+            completed_at=(observed_at if kind == "model_response_completed" else None),
+            model=_optional_text(_field(row, "model")),
+            provider=_optional_text(_field(row, "provider")),
+            payload=None,
+            variants=(),
+            depth=1,
+            event_id=f"model-timing:{m.mid}:{suffix}",
+            conversation_id=conversation_id,
+            source_seq=source_seq,
+            label=_event_label(kind),
+            status=status,
+            actor_kind="model",
+            actor_id=_optional_text(_field(row, "provider")) or "model",
+            parent_event_id=parent_event_id,
+            observed_at=observed_at,
+            field_states={"observed_at": "observed", "payload": "omitted"},
+            sensitivity="diagnostic",
+        )
+        records.append(base)
+    return tuple(records)
 
 
 def _record_from_sidecar_event(
@@ -616,6 +692,7 @@ def _record_from_sidecar_event(
 ) -> TrajectoryRecord:
     """Normalize one known or future trajectory-sidecar event."""
     payload = _parse_payload(_field(row, "payload_json"))
+    metadata = payload or {}
     kind = str(_field(row, "event_kind") or "event")
     message_id = _optional_text(_field(row, "message_id"))
     conversation_id = _optional_text(_field(row, "conversation_id"))
@@ -656,16 +733,27 @@ def _record_from_sidecar_event(
         conversation_id=conversation_id,
         source_seq=source_seq,
         label=_event_label(kind),
-        status=_optional_text(_field(row, "status")) or "observed",
+        status=(
+            _optional_text(_field(row, "status"))
+            or _optional_text(metadata.get("status"))
+            or "observed"
+        ),
         actor_kind=_optional_text(_field(row, "actor_kind")),
         actor_id=_optional_text(_field(row, "actor_id")),
         run_id=_optional_text(_field(row, "run_id")),
         parent_event_id=(
             _optional_text(_field(row, "parent_event_id"))
+            or _optional_text(metadata.get("parent_event_id"))
             or (f"message:{message_id}" if message_id else None)
         ),
-        source_event_id=_optional_text(_field(row, "source_event_id")),
-        replacement_event_id=_optional_text(_field(row, "replacement_event_id")),
+        source_event_id=(
+            _optional_text(_field(row, "source_event_id"))
+            or _optional_text(metadata.get("source_event_id"))
+        ),
+        replacement_event_id=(
+            _optional_text(_field(row, "replacement_event_id"))
+            or _optional_text(metadata.get("replacement_event_id"))
+        ),
         observed_at=_first_timestamp(
             _field(row, "step_started_at"),
             _field(row, "first_token_at"),
@@ -674,10 +762,18 @@ def _record_from_sidecar_event(
         ),
         field_states=_field_state_map(
             row,
-            default={"payload": "observed" if payload is not None else "not_available"},
+            default=(
+                {
+                    str(key): str(value)
+                    for key, value in metadata["field_states"].items()
+                }
+                if isinstance(metadata.get("field_states"), Mapping)
+                else {"payload": "observed" if payload is not None else "not_available"}
+            ),
         ),
         sensitivity=(
             _optional_text(_field(row, "sensitivity"))
+            or _optional_text(metadata.get("sensitivity"))
             or ("tool_content" if kind in _TOOL_KINDS else None)
             or ("conversation_content" if payload is not None else "diagnostic")
         ),
@@ -722,6 +818,7 @@ def _tool_preview(payload: dict | None) -> str:
 
 _EVENT_LABELS = {
     KIND_USER: "User message",
+    KIND_SYSTEM: "System context",
     KIND_ASSISTANT: "Assistant message",
     KIND_TOOL_CALL: "Tool call",
     KIND_TOOL_RESULT: "Tool result",
@@ -787,15 +884,19 @@ def _sidecar_event_id(row: Any) -> str:
     message_id = _optional_text(_field(row, "message_id")) or "unknown"
     source_seq = _optional_int(_field(row, "seq"))
     owner = conversation_id or message_id
-    suffix = str(source_seq) if source_seq is not None else _stable_digest(
-        message_id,
-        conversation_id,
-        _field(row, "turn_id"),
-        _field(row, "event_kind"),
-        _field(row, "step_started_at"),
-        _field(row, "first_token_at"),
-        _field(row, "completed_at"),
-        _field(row, "payload_json"),
+    suffix = (
+        str(source_seq)
+        if source_seq is not None
+        else _stable_digest(
+            message_id,
+            conversation_id,
+            _field(row, "turn_id"),
+            _field(row, "event_kind"),
+            _field(row, "step_started_at"),
+            _field(row, "first_token_at"),
+            _field(row, "completed_at"),
+            _field(row, "payload_json"),
+        )
     )
     return f"trajectory:{owner}:{suffix}"
 
@@ -823,9 +924,7 @@ def _records_from_agent_runs(runs: Iterable[Any]) -> list[TrajectoryRecord]:
             run,
             default={
                 "result": (
-                    "observed"
-                    if _field(run, "result") is not None
-                    else "not_available"
+                    "observed" if _field(run, "result") is not None else "not_available"
                 )
             },
         )
@@ -885,9 +984,11 @@ def _records_from_agent_runs(runs: Iterable[Any]) -> list[TrajectoryRecord]:
                 ),
                 observed_at=created_at,
                 field_states=run_states,
-                sensitivity=("conversation_content" if task else (
-                    _optional_text(_field(run, "sensitivity")) or "diagnostic"
-                )),
+                sensitivity=(
+                    "conversation_content"
+                    if task
+                    else (_optional_text(_field(run, "sensitivity")) or "diagnostic")
+                ),
             )
         )
     return records
@@ -992,53 +1093,96 @@ def _records_from_retrieval_runs(runs: Iterable[Any]) -> list[TrajectoryRecord]:
         ended_at = _parse_timestamp(_field(run, "ended_at"))
         stage = _optional_text(_field(run, "stage")) or "retrieval"
         conversation_id = _optional_text(_field(run, "conversation_id"))
-        records.append(
-            TrajectoryRecord(
-                seq=0,
-                kind="retrieval_run",
-                turn_id=(
-                    _optional_text(_field(run, "turn_id"))
-                    or conversation_id
-                    or f"retrieval:{run_id}"
-                ),
-                message_id=_optional_text(_field(run, "message_id")),
-                content_preview=_preview(stage.replace("_", " ")),
-                usage=None,
-                step_started_at=started_at,
-                first_token_at=None,
-                completed_at=ended_at,
-                model=None,
-                provider=None,
-                payload={"stage": stage},
-                variants=(),
-                depth=0,
-                event_id=f"retrieval-run:{run_id}",
-                conversation_id=conversation_id,
-                source_seq=_optional_int(
-                    _field(run, "run_ordinal") or _field(run, "source_seq")
-                ),
-                label="Retrieval run",
-                status=(
-                    _optional_text(_field(run, "status"))
-                    or ("complete" if ended_at is not None else "running")
-                ),
-                actor_kind="retrieval",
-                actor_id=_optional_text(_field(run, "actor_id")) or "retrieval",
-                run_id=run_id,
-                parent_event_id=_optional_text(_field(run, "parent_event_id")),
-                source_event_id=_optional_text(_field(run, "source_event_id")),
-                replacement_event_id=_optional_text(
-                    _field(run, "replacement_event_id")
-                ),
-                observed_at=started_at,
-                field_states=_field_state_map(
-                    run,
-                    default={"payload": "omitted"},
-                ),
-                sensitivity=_optional_text(_field(run, "sensitivity"))
-                or "retrieval_metadata",
-            )
+        base = TrajectoryRecord(
+            seq=0,
+            kind="retrieval_run",
+            turn_id=(
+                _optional_text(_field(run, "turn_id"))
+                or conversation_id
+                or f"retrieval:{run_id}"
+            ),
+            message_id=_optional_text(_field(run, "message_id")),
+            content_preview=_preview(stage.replace("_", " ")),
+            usage=None,
+            step_started_at=started_at,
+            first_token_at=None,
+            completed_at=ended_at,
+            model=None,
+            provider=None,
+            payload={"stage": stage},
+            variants=(),
+            depth=0,
+            event_id=f"retrieval-run:{run_id}",
+            conversation_id=conversation_id,
+            source_seq=_optional_int(
+                _field(run, "run_ordinal") or _field(run, "source_seq")
+            ),
+            label="Retrieval run",
+            status=(
+                _optional_text(_field(run, "status"))
+                or ("complete" if ended_at is not None else "running")
+            ),
+            actor_kind="retrieval",
+            actor_id=_optional_text(_field(run, "actor_id")) or "retrieval",
+            run_id=run_id,
+            parent_event_id=_optional_text(_field(run, "parent_event_id")),
+            source_event_id=_optional_text(_field(run, "source_event_id")),
+            replacement_event_id=_optional_text(_field(run, "replacement_event_id")),
+            observed_at=started_at,
+            field_states=_field_state_map(
+                run,
+                default={"payload": "omitted"},
+            ),
+            sensitivity=_optional_text(_field(run, "sensitivity"))
+            or "retrieval_metadata",
         )
+        if not bool(_field(run, "trace_lifecycle")):
+            records.append(base)
+            continue
+        started = replace(
+            base,
+            kind="retrieval_started",
+            event_id=f"retrieval-run:{run_id}:started",
+            label="Retrieval started",
+            status="started",
+            completed_at=None,
+            field_states={"payload": "omitted", "observed_at": "observed"},
+        )
+        selected = replace(
+            base,
+            kind="retrieval_candidates_selected",
+            event_id=f"retrieval-run:{run_id}:candidates",
+            label="Retrieval candidates selected",
+            status="observed",
+            step_started_at=None,
+            completed_at=None,
+            parent_event_id=started.event_id,
+            observed_at=None,
+            field_states={"payload": "omitted", "observed_at": "not_available"},
+        )
+        outcome_status = base.status or "unknown"
+        outcome_kind = (
+            "retrieval_completed"
+            if outcome_status in {"complete", "completed", "succeeded"}
+            else "retrieval_failed"
+            if outcome_status in {"error", "failed"}
+            else "retrieval_outcome"
+        )
+        outcome = replace(
+            base,
+            kind=outcome_kind,
+            event_id=f"retrieval-run:{run_id}:outcome",
+            label=_event_label(outcome_kind),
+            parent_event_id=selected.event_id,
+            observed_at=base.completed_at,
+            field_states={
+                "payload": "omitted",
+                "observed_at": (
+                    "observed" if base.completed_at is not None else "not_available"
+                ),
+            },
+        )
+        records.extend((base, started, selected, outcome))
     return records
 
 
@@ -1125,8 +1269,10 @@ def _causal_order(records: Iterable[TrajectoryRecord]) -> list[TrajectoryRecord]
                 continue
             component_edges[source].add(target)
             component_indegree[target] += 1
+
     def component_key(index: int) -> tuple[Any, ...]:
         return min(key(event_id) for event_id in components[index])
+
     ready = [
         (component_key(index), index)
         for index, degree in component_indegree.items()
@@ -1313,9 +1459,7 @@ def _coherent_turns(records: Iterable[TrajectoryRecord]) -> list[TrajectoryTurn]
                 for record in ordered
             ]
         )
-    return [
-        TrajectoryTurn(turn_id, tuple(buckets[turn_id])) for turn_id in turn_ids
-    ]
+    return [TrajectoryTurn(turn_id, tuple(buckets[turn_id])) for turn_id in turn_ids]
 
 
 def _group_turns(events: list[tuple[str, TrajectoryRecord]]) -> list[TrajectoryTurn]:
@@ -1382,11 +1526,52 @@ def _insert_compaction_markers(
     for i, turn in enumerate(turns):
         records: list[TrajectoryRecord] = []
         if i == 0:
-            records.extend(_marker_record(rec, turn_id=turn.turn_id) for rec in lead)
+            for rec in lead:
+                records.extend(_marker_records(rec, turn_id=turn.turn_id))
         records.extend(turn.records)
-        records.extend(_marker_record(rec, turn_id=turn.turn_id) for rec in buckets[i])
+        for rec in buckets[i]:
+            records.extend(_marker_records(rec, turn_id=turn.turn_id))
         result.append(TrajectoryTurn(turn.turn_id, tuple(records)))
     return result
+
+
+def _marker_records(rec: Any, *, turn_id: str) -> tuple[TrajectoryRecord, ...]:
+    """Keep the v1 marker unless its owner opts into v2 lifecycle records."""
+    marker = _marker_record(rec, turn_id=turn_id)
+    if not bool(_field(rec, "trace_lifecycle")):
+        return (marker,)
+    operation_id = marker.event_id.removeprefix("compaction:")
+    started = replace(
+        marker,
+        kind="compaction_started",
+        event_id=f"compaction:{operation_id}:started",
+        label="Compaction started",
+        status="started",
+        completed_at=None,
+        parent_event_id=None,
+        field_states={"payload": "not_available", "observed_at": "observed"},
+    )
+    status = marker.status or "unknown"
+    terminal_kind = {
+        "succeeded": "compaction_completed",
+        "failed": "compaction_failed",
+        "cancelled": "compaction_cancelled",
+    }.get(status, "compaction_outcome")
+    terminal = replace(
+        marker,
+        kind=terminal_kind,
+        event_id=f"compaction:{operation_id}:outcome",
+        label=_event_label(terminal_kind),
+        parent_event_id=started.event_id,
+        observed_at=marker.completed_at,
+        field_states={
+            "payload": "not_available",
+            "observed_at": (
+                "observed" if marker.completed_at is not None else "not_available"
+            ),
+        },
+    )
+    return (marker, started, terminal)
 
 
 def _marker_record(rec: Any, *, turn_id: str) -> TrajectoryRecord:

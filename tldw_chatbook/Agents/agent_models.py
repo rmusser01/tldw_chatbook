@@ -36,6 +36,21 @@ STEP_TOOL_CALL = "tool_call"
 STEP_TOOL_RESULT = "tool_result"
 STEP_SPAWN = "spawn"
 STEP_ERROR = "error"
+STEP_MODEL_REQUEST_STARTED = "model_request_started"
+STEP_MODEL_RESPONSE_COMPLETED = "model_response_completed"
+STEP_MODEL_RETRY = "model_retry"
+STEP_MODEL_ERROR = "model_error"
+STEP_MODEL_CANCELLED = "model_cancelled"
+STEP_TOOL_PROPOSED = "tool_proposed"
+STEP_APPROVAL_REQUESTED = "approval_requested"
+STEP_APPROVAL_APPROVED = "approval_approved"
+STEP_APPROVAL_DENIED = "approval_denied"
+STEP_APPROVAL_REVOKED = "approval_revoked"
+STEP_TOOL_EXECUTION_STARTED = "tool_execution_started"
+STEP_TOOL_SUCCEEDED = "tool_succeeded"
+STEP_TOOL_FAILED = "tool_failed"
+STEP_TOOL_TIMED_OUT = "tool_timed_out"
+STEP_TOOL_CANCELLED = "tool_cancelled"
 # Fleet PR3b Task 1 (spec SS6): a steering entry delivered to a child at the
 # protocol-coherent drain boundary records a step of this kind, so the step
 # log shows WHEN each entry actually reached the model.
@@ -44,7 +59,9 @@ STEP_STEERING = "steering"
 TOOL_OUTCOME_SUCCESS = "success"
 TOOL_OUTCOME_FAILED = "failed"
 TOOL_OUTCOME_BLOCKED = "blocked"
-ToolOutcome: TypeAlias = Literal["success", "failed", "blocked"]
+TOOL_OUTCOME_TIMEOUT = "timeout"
+TOOL_OUTCOME_CANCELLED = "cancelled"
+ToolOutcome: TypeAlias = Literal["success", "failed", "blocked", "timeout", "cancelled"]
 
 # The two steering sources (spec SS6: "two paths, one mechanism"). The label
 # the child sees is derived from the source by `format_steering_message`
@@ -75,6 +92,7 @@ def format_steering_message(source: str, text: str) -> str:
         ``"[Steering from {source}] {text}"``.
     """
     return f"[Steering from {source}] {text}"
+
 
 SPAWN_TOOL_NAME = "spawn_subagent"
 FIND_TOOLS_NAME = "find_tools"
@@ -457,6 +475,12 @@ class AgentStep:
     # Optional for backward compatibility with persisted steps written before
     # tool outcomes were structured. Only meaningful on STEP_TOOL_RESULT.
     tool_outcome: ToolOutcome | None = None
+    status: str = ""
+    parent_event_id: str | None = None
+    source_event_id: str | None = None
+    replacement_event_id: str | None = None
+    field_states: dict[str, str] = field(default_factory=dict)
+    sensitivity: str = ""
 
 
 @dataclass(frozen=True)

@@ -51,6 +51,8 @@ from .agent_models import (
     SPAWN_TOOL_NAME,
     STEERING_SOURCE_SUPERVISOR,
     STEP_ERROR,
+    TOOL_OUTCOME_CANCELLED,
+    TOOL_OUTCOME_TIMEOUT,
     TERMINAL_RUN_STATUSES,
     AgentConfig,
     AgentDefinition,
@@ -940,20 +942,24 @@ def _call_with_timeout(
     while worker.is_alive() and time.monotonic() < deadline:
         worker.join(min(_CANCEL_POLL_SECONDS, max(deadline - time.monotonic(), 0)))
         if worker.is_alive() and should_cancel():
-            return ToolResult(ok=False, error=f"tool call cancelled: {tool_name}")
+            return ToolResult(
+                ok=False,
+                error=f"tool call cancelled: {tool_name}",
+                outcome=TOOL_OUTCOME_CANCELLED,
+            )
         if worker.is_alive() and pauses_deadline():
             deadline = time.monotonic() + seconds
     if worker.is_alive():
         return ToolResult(
-            ok=False, error=f"tool call timed out after {seconds:g}s: {tool_name}"
+            ok=False,
+            error=f"tool call timed out after {seconds:g}s: {tool_name}",
+            outcome=TOOL_OUTCOME_TIMEOUT,
         )
     if "error" in box:
         return ToolResult(ok=False, error=box["error"])
     result = box.get("result")
     if result is None:
-        return ToolResult(
-            ok=False, error=f"tool call produced no result: {tool_name}"
-        )
+        return ToolResult(ok=False, error=f"tool call produced no result: {tool_name}")
     return result
 
 
@@ -994,9 +1000,7 @@ class AgentService:
         ) = None,
         prepare_provider_continuation_request: bool = False,
         startup_instruction_candidate: StartupInstructionCandidate | None = None,
-        confirm_project_instruction_dispatch: Callable[
-            [InstructionSnapshot], str
-        ]
+        confirm_project_instruction_dispatch: Callable[[InstructionSnapshot], str]
         | None = None,
         project_instruction_context: InstructionActivationLedger | None = None,
         on_ephemeral_runtime_warning: (
@@ -1198,9 +1202,7 @@ class AgentService:
         self._fleet_cancels: dict[str, threading.Event] = {}
         self._configured_run_log_plan = run_log_request_plan
         self.startup_instruction_candidate = startup_instruction_candidate
-        self.confirm_project_instruction_dispatch = (
-            confirm_project_instruction_dispatch
-        )
+        self.confirm_project_instruction_dispatch = confirm_project_instruction_dispatch
         self.project_instruction_context = project_instruction_context
         self.on_ephemeral_runtime_warning = on_ephemeral_runtime_warning
         self._startup_instruction_snapshot: InstructionSnapshot | None = None
@@ -1563,9 +1565,7 @@ class AgentService:
                 # content (messages_payload[0]); appending after
                 # ``config.system_prompt`` keeps the sub-agent identity prefix
                 # leading the emitted prompt, so detection is unaffected.
-                system_content = (
-                    f"{system_content}\n\n{config.workspace_context_note}"
-                )
+                system_content = f"{system_content}\n\n{config.workspace_context_note}"
             # TASK-1272 (Phase 3): bound the SEND payload, never
             # `run_agent_loop`'s own `messages` -- that list is untouched,
             # see `bound_history_for_send`'s docstring. A no-op (returns
@@ -1590,12 +1590,19 @@ class AgentService:
                 )
                 for message in reversed(payload_messages):
                     raw_calls = message.get("tool_calls")
-                    call_ids = tuple(
-                        call.get("id")
-                        for call in raw_calls
-                        if isinstance(call, Mapping)
-                    ) if isinstance(raw_calls, list) else ()
-                    if message.get("role") == "assistant" and call_ids == expected_call_ids:
+                    call_ids = (
+                        tuple(
+                            call.get("id")
+                            for call in raw_calls
+                            if isinstance(call, Mapping)
+                        )
+                        if isinstance(raw_calls, list)
+                        else ()
+                    )
+                    if (
+                        message.get("role") == "assistant"
+                        and call_ids == expected_call_ids
+                    ):
                         message[continuation_owner_key] = continuation_owner_message_id
                         break
             raw_payload = [
@@ -1616,10 +1623,7 @@ class AgentService:
                 ),
                 continuation_owner_key=continuation_owner_key or "id",
             )
-            if (
-                continuation_owner_key is not None
-                and not gateway_prepares_continuation
-            ):
+            if continuation_owner_key is not None and not gateway_prepares_continuation:
                 payload = [
                     {
                         key: value
@@ -1821,9 +1825,7 @@ class AgentService:
     # -- fleet helpers (PR2a Task 6) --------------------------------------
 
     @staticmethod
-    def _pending_handles(
-        fleet: FleetCoordinator, handle_ids: list[str]
-    ) -> list[str]:
+    def _pending_handles(fleet: FleetCoordinator, handle_ids: list[str]) -> list[str]:
         """The subset of ``handle_ids`` not yet in a terminal status.
 
         Args:
@@ -1952,13 +1954,11 @@ class AgentService:
         if not handles:  # pragma: no cover — handle_ids are pre-validated
             return "No sub-agents to report." + note
         headers = [
-            f"[{handle.handle_id}] {handle.agent or 'sub-agent'} — "
-            f"{handle.status}"
+            f"[{handle.handle_id}] {handle.agent or 'sub-agent'} — {handle.status}"
             for handle in handles
         ]
         bodies = [
-            (handle.result or handle.error or "(no result)")
-            for handle in handles
+            (handle.result or handle.error or "(no result)") for handle in handles
         ]
         hint = (
             "\n\n(Each result above was shortened to share this turn's "
@@ -2085,16 +2085,12 @@ class AgentService:
         mine = list(self._fleet_cancels)
         survivors = self._surviving_handles(fleet, mine)
         if survivors:
-            logger.info(
-                "{} sub-agents are outliving their turn", len(survivors)
-            )
+            logger.info("{} sub-agents are outliving their turn", len(survivors))
         # Everything else settles exactly as it always has. With no
         # survivors this holds `mine` itself, in the same order, and every
         # line below runs unchanged -- the turn-scoped path is not a
         # special case of the new one, it IS the old one.
-        settling = [
-            handle_id for handle_id in mine if handle_id not in survivors
-        ]
+        settling = [handle_id for handle_id in mine if handle_id not in survivors]
         deadline = turn_started + config.budget.max_wall_seconds
         # `self.clock` is injectable and some callers freeze it, which
         # would make the budget deadline above unreachable. A real-time
@@ -2162,8 +2158,7 @@ class AgentService:
             self.db.insert_steps_at_indices(run_id, step_dicts)
         except Exception as exc:  # noqa: BLE001 — trace capture is best-effort
             logger.warning(
-                "could not persist terminal agent steps "
-                "run_id={} error_type={}",
+                "could not persist terminal agent steps run_id={} error_type={}",
                 run_id,
                 _safe_exception_type(exc),
             )
@@ -2312,10 +2307,7 @@ class AgentService:
             runtime_schemas.append(SEND_TO_AGENT_SCHEMA)
         if offer_find_load:
             runtime_schemas.extend([FIND_TOOLS_SCHEMA, LOAD_TOOLS_SCHEMA])
-        if (
-            self.skill_file_bindings is not None
-            and self.skill_file_bindings.authorized
-        ):
+        if self.skill_file_bindings is not None and self.skill_file_bindings.authorized:
             runtime_schemas.append(SKILL_FILE_TOOL_SCHEMA)
         if agent_kind == AGENT_KIND_PRIMARY and self._install_skill_tool is not None:
             runtime_schemas.append(INSTALL_SKILL_TOOL_SCHEMA)
@@ -2449,9 +2441,7 @@ class AgentService:
                 child_request,
             )
         elif (
-            legacy_delivery_enabled
-            and snapshot is not None
-            and chain_delivery is None
+            legacy_delivery_enabled and snapshot is not None and chain_delivery is None
         ):
             chain_delivery = snapshot.primary_delivery
         if (
@@ -2587,8 +2577,8 @@ class AgentService:
             # the child runs on its own thread. handle_id is default-bound
             # (the run_child style) so the closure can never pick up a
             # later spawn's handle.
-            child_kwargs["drain_mailbox"] = (
-                lambda handle_id=handle.handle_id: fleet.drain_steering(handle_id)
+            child_kwargs["drain_mailbox"] = lambda handle_id=handle.handle_id: (
+                fleet.drain_steering(handle_id)
             )
             self._fleet_cancels[handle.handle_id] = child_cancel
             my_handle_ids.append(handle.handle_id)
@@ -2609,9 +2599,7 @@ class AgentService:
             # settle cancel the child through its Event. With the key OFF
             # the closure is the pre-Task-5 line, byte-identical.
             child_outlives_turn = _coerce_subagents_outlive_turn(
-                _setting(
-                    SUBAGENTS_OUTLIVE_TURN_KEY, DEFAULT_SUBAGENTS_OUTLIVE_TURN
-                )
+                _setting(SUBAGENTS_OUTLIVE_TURN_KEY, DEFAULT_SUBAGENTS_OUTLIVE_TURN)
             )
             if child_outlives_turn:
 
@@ -2872,16 +2860,13 @@ class AgentService:
                 )
                 if resolved is None:
                     available = (
-                        ", ".join(d.name for d in self._turn_definitions)
-                        or "none"
+                        ", ".join(d.name for d in self._turn_definitions) or "none"
                     )
                     # Refused BEFORE the budget increment: a typo costs no
                     # sub-agent slot (mirrors the loop's empty-task refusal).
                     return ToolResult(
                         ok=False,
-                        error=(
-                            f"unknown agent '{agent}'; available: {available}"
-                        ),
+                        error=(f"unknown agent '{agent}'; available: {available}"),
                     )
             if sub_agent_spawns >= config.budget.max_subagents:
                 return ToolResult(ok=False, error="sub-agent budget exhausted")
@@ -2926,9 +2911,7 @@ class AgentService:
                 )
             else:
                 child_max_wall_seconds = _coerce_child_max_wall_seconds(
-                    _setting(
-                        CHILD_MAX_WALL_SECONDS_KEY, DEFAULT_CHILD_MAX_WALL_SECONDS
-                    )
+                    _setting(CHILD_MAX_WALL_SECONDS_KEY, DEFAULT_CHILD_MAX_WALL_SECONDS)
                 )
                 child_budget = contain_child_budget(
                     config.budget, child_max_wall_seconds
@@ -3133,9 +3116,7 @@ class AgentService:
                 )
             known = {
                 handle.handle_id: handle
-                for handle in (
-                    fleet.get(handle_id) for handle_id in my_handle_ids
-                )
+                for handle in (fleet.get(handle_id) for handle_id in my_handle_ids)
                 if handle is not None
             }
             if not known:
@@ -3223,9 +3204,7 @@ class AgentService:
                 self._drain_fleet_handles(fleet, targets)
             return ToolResult(
                 ok=True,
-                content=self._format_wait_result(
-                    fleet, targets, config.budget, note
-                ),
+                content=self._format_wait_result(fleet, targets, config.budget, note),
             )
 
         def check_agents() -> ToolResult:
@@ -3257,9 +3236,7 @@ class AgentService:
                 )
             handles = [
                 handle
-                for handle in (
-                    fleet.get(handle_id) for handle_id in my_handle_ids
-                )
+                for handle in (fleet.get(handle_id) for handle_id in my_handle_ids)
                 if handle is not None
             ]
             mine = set(my_handle_ids)
@@ -3276,11 +3253,7 @@ class AgentService:
             now = self.clock()
 
             def _line(handle: FleetHandle) -> str:
-                end = (
-                    handle.finished_at
-                    if handle.finished_at is not None
-                    else now
-                )
+                end = handle.finished_at if handle.finished_at is not None else now
                 elapsed = max(end - handle.started_at, 0.0)
                 return (
                     f"[{handle.handle_id}] {handle.agent or 'sub-agent'} — "
@@ -3328,17 +3301,12 @@ class AgentService:
             resolved = None
             if retained.agent:
                 resolved = next(
-                    (
-                        d
-                        for d in self._turn_definitions
-                        if d.name == retained.agent
-                    ),
+                    (d for d in self._turn_definitions if d.name == retained.agent),
                     None,
                 )
                 if resolved is None:
                     available = (
-                        ", ".join(d.name for d in self._turn_definitions)
-                        or "none"
+                        ", ".join(d.name for d in self._turn_definitions) or "none"
                     )
                     return ToolResult(
                         ok=False,
@@ -3369,13 +3337,9 @@ class AgentService:
             # so it gets `contain_child_budget`'s independent ceiling --
             # never the turn-scoped parent-remainder clamp.
             child_max_wall_seconds = _coerce_child_max_wall_seconds(
-                _setting(
-                    CHILD_MAX_WALL_SECONDS_KEY, DEFAULT_CHILD_MAX_WALL_SECONDS
-                )
+                _setting(CHILD_MAX_WALL_SECONDS_KEY, DEFAULT_CHILD_MAX_WALL_SECONDS)
             )
-            child_budget = contain_child_budget(
-                config.budget, child_max_wall_seconds
-            )
+            child_budget = contain_child_budget(config.budget, child_max_wall_seconds)
             # Composition mirrors spawn's default path exactly (inherit
             # minus the spawn tool and any skill-tool names; a resolved
             # definition APPENDS instructions and INTERSECTS the
@@ -3389,8 +3353,7 @@ class AgentService:
                 for n in config.allowed_tools
                 if n != SPAWN_TOOL_NAME
                 and not (
-                    self.skill_runner is not None
-                    and self.skill_runner.is_skill_tool(n)
+                    self.skill_runner is not None and self.skill_runner.is_skill_tool(n)
                 )
             )
             child_system_prompt = get_internal_prompt("agents.subagent_system")
@@ -3556,9 +3519,9 @@ class AgentService:
                 for handle in handles
                 if handle.status not in TERMINAL_RUN_STATUSES
             ]
-            target = next(
-                (h for h in live if h.handle_id == target_id), None
-            ) or next((h for h in live if h.run_id == target_id), None)
+            target = next((h for h in live if h.handle_id == target_id), None) or next(
+                (h for h in live if h.run_id == target_id), None
+            )
             if target is not None and fleet.post_steering(
                 target.handle_id, STEERING_SOURCE_SUPERVISOR, text
             ):
@@ -3862,9 +3825,7 @@ class AgentService:
                         include_superseded=True,
                         agent_kind=AGENT_KIND_PRIMARY,
                     )
-                    omitted_run_count = max(
-                        0, total_primary_count - len(windowed)
-                    )
+                    omitted_run_count = max(0, total_primary_count - len(windowed))
                     resolved_runs: list = []
                     for run in windowed:
                         candidate_id = run.get("id")
@@ -3901,9 +3862,7 @@ class AgentService:
                     # connection, an unreadable directory) must degrade to a
                     # ToolResult like every other failure mode here, never
                     # raise into the run.
-                    return ToolResult(
-                        ok=False, error=f"Cross-run search failed: {exc}"
-                    )
+                    return ToolResult(ok=False, error=f"Cross-run search failed: {exc}")
                 ceiling = config.budget.max_tool_result_chars
                 render_max_chars = ceiling if ceiling > 0 else sys.maxsize
                 return ToolResult(
@@ -4097,7 +4056,10 @@ class AgentService:
             return ToolResult(
                 ok=True,
                 content=format_stats(
-                    groups, group_by=group_by, total_records=total, omitted_groups=omitted
+                    groups,
+                    group_by=group_by,
+                    total_records=total,
+                    omitted_groups=omitted,
                 ),
             )
 
@@ -4263,6 +4225,20 @@ class AgentService:
             if self._on_step is not None:
                 self._on_step(step, agent_kind, run_id)
 
+        def observe_trace_step(step: AgentStep) -> None:
+            """Persist lifecycle-only rows without changing legacy step callbacks."""
+            try:
+                record = dataclasses.asdict(step)
+                self.db.insert_steps_at_indices(run_id, [(step.index, record)])
+            except Exception as exc:  # noqa: BLE001 — trace capture is best-effort
+                logger.warning(
+                    "could not persist agent lifecycle step "
+                    "run_id={} step_index={} error_type={}",
+                    run_id,
+                    step.index,
+                    _safe_exception_type(exc),
+                )
+
         deps = LoopDeps(
             call_model=call_model,
             call_model_with_continuation=call_model,
@@ -4274,6 +4250,14 @@ class AgentService:
             clock=self.clock,
             wall_clock=self.wall_clock,
             on_step=observe_step,
+            # Console approval wiring is the production owner for the full
+            # tool lifecycle. Keep pure/legacy AgentService callers on the
+            # historical control-step contract when that owner is absent.
+            on_trace_step=(
+                observe_trace_step
+                if self.review_tool_calls is not None
+                else (lambda _step: None)
+            ),
             # PR2a Task 5: bind THIS run's id into the hook. `LoopDeps`
             # keeps its `(calls) -> verdicts` shape (the pure runtime stays
             # ignorant of run ids); the service, which owns the run
@@ -4319,12 +4303,8 @@ class AgentService:
             # `agent_kind == AGENT_KIND_PRIMARY` gate as search_run_log
             # immediately above -- a spawned sub-agent must never receive
             # either, for the same isolation reason.
-            run_log_stats=(
-                run_log_stats if agent_kind == AGENT_KIND_PRIMARY else None
-            ),
-            run_log_slice=(
-                run_log_slice if agent_kind == AGENT_KIND_PRIMARY else None
-            ),
+            run_log_stats=(run_log_stats if agent_kind == AGENT_KIND_PRIMARY else None),
+            run_log_slice=(run_log_slice if agent_kind == AGENT_KIND_PRIMARY else None),
             # PR2a Task 6: wired under the SAME `fleet_active` predicate
             # that pinned their schemas above, so the model is never told
             # about a tool this run cannot dispatch (and never dispatches
@@ -4390,9 +4370,7 @@ class AgentService:
                     restore_provider_continuation
                 )
             if restore_provider_target is not None:
-                continuation_kwargs["restore_provider_target"] = (
-                    restore_provider_target
-                )
+                continuation_kwargs["restore_provider_target"] = restore_provider_target
             if resume_provider_continuation:
                 continuation_kwargs["resume_provider_continuation"] = True
             with use_run_id(run_id):
@@ -4554,10 +4532,15 @@ class AgentService:
             raise ValueError(
                 "continuation target and owner key are required for private history"
             )
-        if sidecar and continuation_target is not None and (
-            continuation_target.provider,
-            continuation_target.model,
-        ) != (provider_config_key(api_endpoint), config.model):
+        if (
+            sidecar
+            and continuation_target is not None
+            and (
+                continuation_target.provider,
+                continuation_target.model,
+            )
+            != (provider_config_key(api_endpoint), config.model)
+        ):
             raise ContinuationConflictError(
                 "Continuation restore target mismatch."
             ) from None

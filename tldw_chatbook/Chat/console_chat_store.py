@@ -963,15 +963,12 @@ class ConsoleChatStore:
                 raise ValueError("session id is invalid")
             if session_id in self._sessions:
                 raise ValueError("session id already exists")
-        if (
-            canonical_settings_baseline is not None
-            and (
-                not isinstance(
-                    canonical_settings_baseline,
-                    ConsoleSessionSettings,
-                )
-                or canonical_settings_baseline != settings
+        if canonical_settings_baseline is not None and (
+            not isinstance(
+                canonical_settings_baseline,
+                ConsoleSessionSettings,
             )
+            or canonical_settings_baseline != settings
         ):
             raise ValueError("canonical baseline must equal the session settings.")
         session = ConsoleChatSession(
@@ -1043,7 +1040,9 @@ class ConsoleChatStore:
             or self._nodes_by_session.get(session_id)
             or self._children_by_parent.get(session_id)
             or self._active_leaf_by_session.get(session_id) is not None
-            or any(owner == session_id for owner in self._message_session_index.values())
+            or any(
+                owner == session_id for owner in self._message_session_index.values()
+            )
             or bool(self._tool_markers_by_session.get(session_id))
         )
         session_live_state = (
@@ -1144,10 +1143,9 @@ class ConsoleChatStore:
         current_canonical_settings: ConsoleSessionSettings,
     ) -> ConsoleChatSession:
         """Atomically refresh proven canonical defaults on an untouched tab."""
-        if (
-            not isinstance(prior_canonical_settings, ConsoleSessionSettings)
-            or not isinstance(current_canonical_settings, ConsoleSessionSettings)
-        ):
+        if not isinstance(
+            prior_canonical_settings, ConsoleSessionSettings
+        ) or not isinstance(current_canonical_settings, ConsoleSessionSettings):
             raise TypeError("Canonical settings provenance is required.")
         if not all(
             settings.source == "derived"
@@ -1218,12 +1216,9 @@ class ConsoleChatStore:
         """Remove an exact newly-created target without touching claimed work."""
 
         session = self._sessions.get(session_id)
-        if (
-            session is not expected_session
-            or not self.is_pristine_session(
-                session_id,
-                expected_settings=expected_settings,
-            )
+        if session is not expected_session or not self.is_pristine_session(
+            session_id,
+            expected_settings=expected_settings,
         ):
             return False
         self._messages_by_session.pop(session_id, None)
@@ -1421,10 +1416,7 @@ class ConsoleChatStore:
         self, session_id: str, conversation_id: str
     ) -> None:
         """Project exact current unbridged Chat intents during normal restore."""
-        if (
-            self.sync_v2_server_profile_id is None
-            or self.sync_v2_chat_producer is None
-        ):
+        if self.sync_v2_server_profile_id is None or self.sync_v2_chat_producer is None:
             return
         database = getattr(self.persistence, "db", None) if self.persistence else None
         enumerate_intents = getattr(
@@ -1991,9 +1983,7 @@ class ConsoleChatStore:
         session.pending_attachments.clear()
         return session
 
-    def consume_pending_attachment(
-        self, session_id: str, attachment_id: str
-    ) -> bool:
+    def consume_pending_attachment(self, session_id: str, attachment_id: str) -> bool:
         """Remove only the currently staged attachment with the exact identity.
 
         Args:
@@ -2607,9 +2597,7 @@ class ConsoleChatStore:
             ),
             None,
         )
-        self._register_tree_node(
-            session_id, message, parent_native_id=parent_native_id
-        )
+        self._register_tree_node(session_id, message, parent_native_id=parent_native_id)
         self._active_leaf_by_session[session_id] = message.id
         self._recompute_active_path(session_id)
         self._bump_payload_revision(session_id)
@@ -3186,6 +3174,19 @@ class ConsoleChatStore:
         if persisted and message.content != previous_content and descendant_ids:
             self._purge_descendants_invalidated_by_edit(
                 session_id, message.id, descendant_ids
+            )
+        if persisted and message.content != previous_content:
+            self.record_trace_event(
+                session_id,
+                anchor_message_id=message.id,
+                event_kind="message_edited",
+                summary="Message edited",
+                status="completed",
+                source_event_id=(
+                    f"message:{message.persisted_message_id}"
+                    if message.persisted_message_id is not None
+                    else None
+                ),
             )
         return self._snapshot(message)
 
@@ -4276,6 +4277,20 @@ class ConsoleChatStore:
         self._bump_payload_revision(session_id)
         if message_id != previous_leaf:
             self._bump_conversation_context_epoch(session_id)
+            if message_id is not None:
+                self.record_trace_event(
+                    session_id,
+                    anchor_message_id=message_id,
+                    event_kind="branch_selected",
+                    summary="Conversation branch selected",
+                    status="selected",
+                    source_event_id=(
+                        f"message:{nodes[previous_leaf].persisted_message_id}"
+                        if previous_leaf in nodes
+                        and nodes[previous_leaf].persisted_message_id is not None
+                        else None
+                    ),
+                )
 
     def session_context_summary(self, session_id: str) -> tuple[str | None, str | None]:
         """Return the session's in-memory ``(summary, boundary_native_id)`` pair.
@@ -4490,9 +4505,7 @@ class ConsoleChatStore:
             # Bump the revision bus (conversation key + every live session
             # bound to that conversation) so the polling trajectory screen
             # rebuilds its snapshot; without this, tail-follow sees nothing.
-            for conversation_id in dict.fromkeys(
-                row.conversation_id for row in rows
-            ):
+            for conversation_id in dict.fromkeys(row.conversation_id for row in rows):
                 self._bump_payload_revision(conversation_id)
                 for session in self._sessions.values():
                     if session.persisted_conversation_id == conversation_id:
@@ -4640,9 +4653,7 @@ class ConsoleChatStore:
             TrajectoryRowWrite(event_kind="tool_result", **shared),
         ]
 
-    def _trajectory_turn_id(
-        self, session_id: str, message: ConsoleChatMessage
-    ) -> str:
+    def _trajectory_turn_id(self, session_id: str, message: ConsoleChatMessage) -> str:
         """Resolve (and memoize) the turn id for a persisted message.
 
         A USER message opens a turn and registers its id as the session's
@@ -4730,6 +4741,53 @@ class ConsoleChatStore:
             ).warning("feedback_event_write_failed")
             return False
 
+    def record_trace_event(
+        self,
+        session_id: str,
+        *,
+        anchor_message_id: str,
+        event_kind: str,
+        summary: str,
+        status: str = "observed",
+        source_event_id: str | None = None,
+        replacement_event_id: str | None = None,
+        sensitivity: str = "diagnostic",
+    ) -> bool:
+        """Append one payload-free mutation/context observation; never raises."""
+        try:
+            message = self._message_or_raise(anchor_message_id)
+            session = self._sessions.get(session_id)
+            conversation_id = (
+                session.persisted_conversation_id if session is not None else None
+            )
+            if conversation_id is None or message.persisted_message_id is None:
+                return False
+            payload = {
+                "summary": summary,
+                "status": status,
+                "source_event_id": source_event_id,
+                "replacement_event_id": replacement_event_id,
+                "field_states": {"payload": "omitted"},
+                "sensitivity": sensitivity,
+            }
+            row = TrajectoryRowWrite(
+                message_id=message.persisted_message_id,
+                conversation_id=conversation_id,
+                turn_id=self._trajectory_turn_id(session_id, message),
+                seq=None,
+                event_kind=event_kind,
+                step_started_at=time.time(),
+                payload_json=json.dumps(payload),
+            )
+            return self.write_trajectory_rows([row])
+        except Exception as exc:  # noqa: BLE001 — capture is never load-bearing
+            logger.warning(
+                "trace_event_write_failed event_kind={} error_type={}",
+                event_kind,
+                type(exc).__name__,
+            )
+            return False
+
     def record_feedback_annotation(
         self,
         session_id: str,
@@ -4755,7 +4813,9 @@ class ConsoleChatStore:
         lost marker must never cost the user their feedback message.
         """
         try:
-            database = getattr(self.persistence, "db", None) if self.persistence else None
+            database = (
+                getattr(self.persistence, "db", None) if self.persistence else None
+            )
             if database is None:
                 return None
             try:
@@ -5049,9 +5109,7 @@ class ConsoleChatStore:
             self._bump_message_speech_revision(message.id)
             self._bump_payload_revision(session_id)
             self._settle_failed_retry_context(message, provider_visible=True)
-            self._persist_existing_message(
-                message, preserve_provider_continuation=True
-            )
+            self._persist_existing_message(message, preserve_provider_continuation=True)
             self._record_message_completed(session_id, message.id)
             return self._snapshot(message)
 
@@ -5306,9 +5364,7 @@ class ConsoleChatStore:
             self._bump_payload_revision(session_id)
         if on_active_path and message.content != previous_content:
             self._bump_conversation_context_epoch(session_id)
-        self._persist_existing_message(
-            message, force_metadata_write=provenance_cleared
-        )
+        self._persist_existing_message(message, force_metadata_write=provenance_cleared)
         self._record_message_completed(session_id, message.id)
         return self._snapshot(message)
 
@@ -5390,9 +5446,7 @@ class ConsoleChatStore:
             self._bump_payload_revision(session_id)
         if on_active_path and message.content != base:
             self._bump_conversation_context_epoch(session_id)
-        self._persist_existing_message(
-            message, force_metadata_write=provenance_cleared
-        )
+        self._persist_existing_message(message, force_metadata_write=provenance_cleared)
         self._record_message_completed(session_id, message.id)
         return self._snapshot(message)
 

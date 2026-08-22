@@ -463,9 +463,7 @@ def build_project_instruction_dispatch_notice(
         relative_source=source.relative_path if source else None,
         scope=source.scope if source else ".",
         byte_count=source.byte_count if source else 0,
-        outcomes=tuple(
-            outcome.code for outcome in snapshot.primary_delivery.outcomes
-        ),
+        outcomes=tuple(outcome.code for outcome in snapshot.primary_delivery.outcomes),
         warning_codes=snapshot.warning_codes,
     )
 
@@ -636,8 +634,7 @@ def project_instruction_authority_snapshot_is_current(
     state = session.project_instruction_state
     if (
         not state.project_instructions_enabled
-        or state.working_folder_binding_id
-        != expected_selection.binding.binding_id
+        or state.working_folder_binding_id != expected_selection.binding.binding_id
         or state.working_folder_locator_fingerprint
         != expected_selection.locator_fingerprint
     ):
@@ -1797,8 +1794,8 @@ class ConsoleChatController:
         # OWNING session instead of whatever the user currently has open.
         self._run_states: dict[str, ConsoleRunState] = {}
         self._run_state_histories: dict[str, list[ConsoleRunStatus]] = {}
-        self._buddy_run_owner_context: ContextVar[dict[str, str] | None] = (
-            ContextVar("console_buddy_run_owners", default=None)
+        self._buddy_run_owner_context: ContextVar[dict[str, str] | None] = ContextVar(
+            "console_buddy_run_owners", default=None
         )
         # Parallel-agents spec §6: run-marker state (Task 7). Both maps are
         # keyed by session id like the run-state maps above, but track
@@ -4687,9 +4684,7 @@ class ConsoleChatController:
         # or this run's cancellation, however long the human takes (the
         # card renders no countdown copy for 0; see
         # `format_approval_deadline`).
-        deadline = (
-            time.monotonic() + timeout_seconds if timeout_seconds > 0 else None
-        )
+        deadline = time.monotonic() + timeout_seconds if timeout_seconds > 0 else None
         payload = {
             "round_id": round_id,
             "session_id": owning_session_id,
@@ -5118,9 +5113,7 @@ class ConsoleChatController:
         # The pre-PR0 `still_armed` pre-test is redundant: a round unparks
         # its own payload in its own teardown, so a payload present here
         # necessarily belongs to a live round.
-        payload = self._head_round_payload(
-            self._parked_approval_payloads, session_id
-        )
+        payload = self._head_round_payload(self._parked_approval_payloads, session_id)
         if payload is None:
             return False
         self.set_pending_approval(payload)
@@ -5314,6 +5307,7 @@ class ConsoleChatController:
             ``ConsoleAgentBridge.run_reply`` when eligible; ``None``
             otherwise.
         """
+
         def publish(tool_count: int | None, not_connected: int | None) -> None:
             if publish_counts:
                 self._publish_mcp_inspector_counts(tool_count, not_connected)
@@ -5562,11 +5556,11 @@ class ConsoleChatController:
                 project_root_guard
                 if project_root_guard is not None
                 else (
-                    lambda: _project_root_identity_matches(
-                        root, project_root_identity
+                    lambda: (
+                        _project_root_identity_matches(root, project_root_identity)
+                        if project_root_identity is not None
+                        else True
                     )
-                    if project_root_identity is not None
-                    else True
                 )
             ),
             resolve_state=service.gate_tool_test,
@@ -5593,9 +5587,7 @@ class ConsoleChatController:
         bridge = self._agent_bridge
         if bridge is None:
             return {}
-        session = next(
-            (s for s in self.store.sessions() if s.id == session_id), None
-        )
+        session = next((s for s in self.store.sessions() if s.id == session_id), None)
         if session is None:
             return {}
 
@@ -5853,9 +5845,7 @@ class ConsoleChatController:
         # shared. Runs outside the critical section above because
         # `_unpark_round_payload` takes the (non-reentrant) same lock.
         for round_id_to_drop, _session_id in revoked:
-            self._unpark_round_payload(
-                self._parked_approval_payloads, round_id_to_drop
-            )
+            self._unpark_round_payload(self._parked_approval_payloads, round_id_to_drop)
         return revoked
 
     def _revoke_skill_script_rounds(self, run_id: str) -> list[tuple[str, str | None]]:
@@ -5954,8 +5944,10 @@ class ConsoleChatController:
         event = threading.Event()
         decision: dict[str, bool] = {}
         request_id = str(uuid4())
-        owning_session_id = session_id if session_id is not None else (
-            self.store.active_session_id or ""
+        owning_session_id = (
+            session_id
+            if session_id is not None
+            else (self.store.active_session_id or "")
         )
         # PR3a-1 Task 6b (audit F4): arm-time cancel binding, identical to
         # `request_mcp_approvals`' -- see `_bind_round_cancel_signal`.
@@ -5983,9 +5975,7 @@ class ConsoleChatController:
         )
         # ADR-067: <= 0 arms NO deadline (the default) -- the round waits
         # for a decision or the owning run's cancellation.
-        deadline = (
-            time.monotonic() + timeout_seconds if timeout_seconds > 0 else None
-        )
+        deadline = time.monotonic() + timeout_seconds if timeout_seconds > 0 else None
         payload = {
             "url": url,
             "timeout_seconds": timeout_seconds,
@@ -5999,9 +5989,8 @@ class ConsoleChatController:
         # DIFFERENT, background session -- mirrors `request_mcp_approvals`'
         # identical `is_parked` gate. `session_id is None` (a legacy caller
         # with no session context) always mounts.
-        is_parked = (
-            session_id is not None
-            and session_id != (self.store.active_session_id or "")
+        is_parked = session_id is not None and session_id != (
+            self.store.active_session_id or ""
         )
         # PR0: legacy `session_id is None` callers never park and never
         # queue -- they keep the unconditional mount below.
@@ -6052,9 +6041,7 @@ class ConsoleChatController:
             # session" test to avoid discarding a still-armed sibling's
             # only copy. Per-round storage makes that guard meaningless --
             # each round owns its own key.
-            self._unpark_round_payload(
-                self._parked_skill_install_payloads, request_id
-            )
+            self._unpark_round_payload(self._parked_skill_install_payloads, request_id)
             if session_id is not None:
                 # TASK-1050 (Defect A): discard ONLY this round's own id --
                 # the badge clears only once every bridge round for this
@@ -6209,8 +6196,10 @@ class ConsoleChatController:
         event = threading.Event()
         decision: dict[str, bool] = {}
         request_id = str(uuid4())
-        owning_session_id = session_id if session_id is not None else (
-            self.store.active_session_id or ""
+        owning_session_id = (
+            session_id
+            if session_id is not None
+            else (self.store.active_session_id or "")
         )
         # PR3a-1 Task 6b (audit F4): arm-time cancel binding, identical to
         # `request_mcp_approvals`' -- see `_bind_round_cancel_signal`.
@@ -6248,9 +6237,7 @@ class ConsoleChatController:
         )
         # ADR-067: <= 0 arms NO deadline (the default) -- the round waits
         # for a decision or the owning run's cancellation.
-        deadline = (
-            time.monotonic() + timeout_seconds if timeout_seconds > 0 else None
-        )
+        deadline = time.monotonic() + timeout_seconds if timeout_seconds > 0 else None
         card_payload = dict(payload)
         card_payload["timeout_seconds"] = timeout_seconds
         card_payload["request_id"] = request_id
@@ -6283,9 +6270,7 @@ class ConsoleChatController:
                 self._marshal_pending_skill_script(card_payload)
             # ADR-067: mark the owning run as waiting on a human decision
             # (see `request_mcp_approvals`' identical wrap for the why).
-            with use_human_input_wait(
-                str(script_round_state.get("run_id") or "")
-            ):
+            with use_human_input_wait(str(script_round_state.get("run_id") or "")):
                 while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
                     if self._is_session_cancelled(
                         session_id,
@@ -6320,9 +6305,7 @@ class ConsoleChatController:
             # session" test to avoid discarding a still-armed sibling's
             # only copy. Per-round storage makes that guard meaningless --
             # each round owns its own key.
-            self._unpark_round_payload(
-                self._parked_skill_script_payloads, request_id
-            )
+            self._unpark_round_payload(self._parked_skill_script_payloads, request_id)
             if session_id is not None:
                 # TASK-1050 (Defect A): discard ONLY this round's own id --
                 # the badge clears only once every bridge round for this
@@ -7141,6 +7124,23 @@ class ConsoleChatController:
             content="",
             persist=self.store.persistence is not None,
         )
+        self.store.record_trace_event(
+            session_id,
+            anchor_message_id=message_id,
+            event_kind="message_regenerated",
+            summary="Assistant response regenerated",
+            status="started",
+            source_event_id=(
+                f"message:{message.persisted_message_id}"
+                if message.persisted_message_id is not None
+                else None
+            ),
+            replacement_event_id=(
+                f"message:{new_message.persisted_message_id}"
+                if new_message.persisted_message_id is not None
+                else None
+            ),
+        )
         return await self._stream_assistant_response(
             resolution=resolution,
             provider_messages=provider_messages,
@@ -7358,9 +7358,7 @@ class ConsoleChatController:
             body = assemble(rows)
         return body
 
-    async def impersonate_user_reply(
-        self, session_id: str
-    ) -> "ImpersonateResult":
+    async def impersonate_user_reply(self, session_id: str) -> "ImpersonateResult":
         """Draft the USER's next message with the session's current model.
 
         task-1683: "Impersonate" writes a candidate reply *as the user*,
@@ -7391,9 +7389,7 @@ class ConsoleChatController:
             return ImpersonateResult(
                 "",
                 "provider-not-ready",
-                self._blocked_visible_copy(
-                    getattr(resolution, "visible_copy", "")
-                ),
+                self._blocked_visible_copy(getattr(resolution, "visible_copy", "")),
             )
         session_messages = self.store.messages_for_session(session_id)
         # Mirror _provider_message_payloads' rules exactly (cubic PR #1160):
@@ -7709,12 +7705,29 @@ class ConsoleChatController:
         anchor_index = active_path.index(message_id)
         for replaced_message_id in active_path[anchor_index:]:
             self.clear_original_attempt(replaced_message_id)
-        self.store.create_sibling(
+        edited_message = self.store.create_sibling(
             message_id,
             role=ConsoleMessageRole.USER,
             content=clean_content,
             persist=self.store.persistence is not None,
             attachments=anchor_attachments,
+        )
+        self.store.record_trace_event(
+            session_id,
+            anchor_message_id=message_id,
+            event_kind="message_edited",
+            summary="Message edited and resent",
+            status="completed",
+            source_event_id=(
+                f"message:{message.persisted_message_id}"
+                if message.persisted_message_id is not None
+                else None
+            ),
+            replacement_event_id=(
+                f"message:{edited_message.persisted_message_id}"
+                if edited_message.persisted_message_id is not None
+                else None
+            ),
         )
         assistant = self.store.append_message(
             session_id,
@@ -8056,8 +8069,7 @@ class ConsoleChatController:
             model=getattr(resolution, "model", None) or "",
             provider=getattr(resolution, "provider", "") or "",
             response_reservation=(
-                getattr(resolution, "max_tokens", None)
-                or DEFAULT_RESPONSE_RESERVATION
+                getattr(resolution, "max_tokens", None) or DEFAULT_RESPONSE_RESERVATION
             ),
         )
         agent_messages = list(bound.messages)
@@ -8068,13 +8080,16 @@ class ConsoleChatController:
         ):
             session_system_prompt = str(agent_messages[0].get("content", ""))
             agent_messages = agent_messages[1:]
-        mcp_provider, builtin_gate, local_provider, _local_review_hook = (
-            await self._compose_agent_request_providers(
-                session_id=session_id,
-                project_selection=selection,
-                project_authority_guard=None,
-                publish_mcp_counts=False,
-            )
+        (
+            mcp_provider,
+            builtin_gate,
+            local_provider,
+            _local_review_hook,
+        ) = await self._compose_agent_request_providers(
+            session_id=session_id,
+            project_selection=selection,
+            project_authority_guard=None,
+            publish_mcp_counts=False,
         )
         try:
             preview_result = await asyncio.to_thread(
@@ -8148,9 +8163,7 @@ class ConsoleChatController:
             return None
         if current_binding != selection.binding:
             return None
-        if not _project_root_identity_matches(
-            selection.root, selection.root_identity
-        ):
+        if not _project_root_identity_matches(selection.root, selection.root_identity):
             return None
         payload = copy.deepcopy(base_payload)
         payload.pop("tools", None)
@@ -8163,14 +8176,11 @@ class ConsoleChatController:
         messages = list(payload.get("messages") or ())
         payload["system"] = (
             [copy.deepcopy(messages[0])]
-            if messages
-            and messages[0].get("role") == ConsoleMessageRole.SYSTEM.value
+            if messages and messages[0].get("role") == ConsoleMessageRole.SYSTEM.value
             else []
         )
         source = snapshot.startup_source_metadata or snapshot.startup_source
-        outcomes = tuple(
-            outcome.code for outcome in snapshot.primary_delivery.outcomes
-        )
+        outcomes = tuple(outcome.code for outcome in snapshot.primary_delivery.outcomes)
         return ProjectInstructionPreview(
             relative_source=source.relative_path if source else None,
             scope=source.scope if source else ".",
@@ -8209,7 +8219,9 @@ class ConsoleChatController:
                 relative_source=source.relative_path if source else None,
                 scope=source.scope if source else ".",
                 byte_count=source.byte_count if source else 0,
-                outcome="active" if delivered else (outcomes[0] if outcomes else "none"),
+                outcome="active"
+                if delivered
+                else (outcomes[0] if outcomes else "none"),
                 warning_codes=tuple(snapshot.warning_codes),
             )
         )
@@ -8239,7 +8251,9 @@ class ConsoleChatController:
         metadata = self._project_instruction_display.get(session_id)
         if metadata is None:
             return None
-        session = next((item for item in self.store.sessions() if item.id == session_id), None)
+        session = next(
+            (item for item in self.store.sessions() if item.id == session_id), None
+        )
         state = session.project_instruction_state if session is not None else None
         if (
             state is None
@@ -10413,6 +10427,15 @@ class ConsoleChatController:
             )
             if context_block is not None:
                 return context_block
+        if any(row.get("role") == "system" for row in provider_messages):
+            self.store.record_trace_event(
+                owner_id,
+                anchor_message_id=assistant_message_id,
+                event_kind="context_injected",
+                summary="Context injected into provider request",
+                status="completed",
+                sensitivity="system_context",
+            )
         # TASK-14811.2: the real gateway now owns exact capacity resolution,
         # whole-unit windowing, provider serialization, accounting, and
         # dispatch as one immutable artifact. Do not pre-trim production
@@ -10912,9 +10935,9 @@ class ConsoleChatController:
             if captures:
                 self.store.attach_message_exchanges(assistant_message_id, captures)
         except Exception as exc:
-            logger.bind(
-                message_id=assistant_message_id, error=repr(exc)
-            ).warning("exchange_attach_failed")
+            logger.bind(message_id=assistant_message_id, error=repr(exc)).warning(
+                "exchange_attach_failed"
+            )
         payloads = self._usage_payloads(stream_signals)
         provider = str(getattr(resolution, "provider", "") or "")
         model = str(getattr(resolution, "model", "") or "")
@@ -10946,9 +10969,9 @@ class ConsoleChatController:
             # "never fail a send" contract this method promises. Swallow and
             # log instead; a dropped usage attach is a missing cost figure,
             # not a broken turn.
-            logger.bind(
-                message_id=assistant_message_id, error=repr(exc)
-            ).warning("usage_attach_failed")
+            logger.bind(message_id=assistant_message_id, error=repr(exc)).warning(
+                "usage_attach_failed"
+            )
         if not attached:
             return
         # Cost-ticker PR3: cache-TTL ground truth, Anthropic prompt-caching
@@ -10957,9 +10980,8 @@ class ConsoleChatController:
         # stamp. Same never-fail posture as the attach above: this is
         # read by the chip, never by send control flow.
         try:
-            if (
-                provider_config_key(provider) == "anthropic"
-                and getattr(resolution, "prompt_caching", None)
+            if provider_config_key(provider) == "anthropic" and getattr(
+                resolution, "prompt_caching", None
             ):
                 sid = self.store.session_id_for_message(assistant_message_id)
                 had_cache_activity = (total.cache_read + total.cache_write) > 0
@@ -10967,9 +10989,9 @@ class ConsoleChatController:
                 if had_cache_activity:
                     self._cache_warm_until[sid] = time.monotonic() + 300.0
         except Exception as exc:
-            logger.bind(
-                message_id=assistant_message_id, error=repr(exc)
-            ).warning("cost_cache_ttl_record_failed")
+            logger.bind(message_id=assistant_message_id, error=repr(exc)).warning(
+                "cost_cache_ttl_record_failed"
+            )
 
     async def _run_direct_provider_reply(
         self,
@@ -11573,7 +11595,10 @@ class ConsoleChatController:
         confirm_project_dispatch = None
         project_authority_guard = None
         project_activation_callback = None
-        if session is not None and session.project_instruction_state.project_instructions_enabled:
+        if (
+            session is not None
+            and session.project_instruction_state.project_instructions_enabled
+        ):
             try:
                 registry = getattr(self.app, "workspace_registry_service", None)
             except Exception:
@@ -11592,16 +11617,14 @@ class ConsoleChatController:
                 except ProjectInstructionBindingRecovery:
                     options = ()
                 action, binding_id = await callback(session_id, options, str(exc))
-                action, project_selection = (
-                    commit_project_instruction_setup_decision(
-                        store=self.store,
-                        session_id=session_id,
-                        registry=registry,
-                        expected_state=expected_setup_state,
-                        expected_options=options,
-                        action=action,
-                        binding_id=binding_id,
-                    )
+                action, project_selection = commit_project_instruction_setup_decision(
+                    store=self.store,
+                    session_id=session_id,
+                    registry=registry,
+                    expected_state=expected_setup_state,
+                    expected_options=options,
+                    action=action,
+                    binding_id=binding_id,
                 )
                 if action == "disable":
                     self._clear_project_instruction_delivery(session_id)
@@ -11624,9 +11647,7 @@ class ConsoleChatController:
                         ),
                         project_instruction_notice_key=None,
                     )
-                    self.store.set_session_project_instruction_state(
-                        session_id, state
-                    )
+                    self.store.set_session_project_instruction_state(session_id, state)
                 startup_candidate = ProjectInstructionResolver().resolve_startup(
                     binding_id=project_selection.binding.binding_id,
                     binding_root=project_selection.root,
@@ -11701,9 +11722,7 @@ class ConsoleChatController:
                                 self._clear_project_instruction_delivery(session_id)
                         return committed
 
-                    initial = on_owning_loop(
-                        lambda: commit_and_record(None)
-                    )
+                    initial = on_owning_loop(lambda: commit_and_record(None))
                     if initial != "prompt":
                         return initial
                     callback = self._confirm_project_instruction_dispatch
@@ -11854,9 +11873,7 @@ class ConsoleChatController:
         # hooks see every batch; each gates only what its provider owns,
         # so the combined hook is a collision-free merge.
         if local_review_hook is not None:
-            review_hook = build_combined_review_hook(
-                [review_hook, local_review_hook]
-            )
+            review_hook = build_combined_review_hook([review_hook, local_review_hook])
 
         # task-1337: THIS run's Library retrieval provider (direct tools or
         # the bounded RAG fallback), resolved ONCE here on the main loop via
@@ -13147,12 +13164,16 @@ class ConsoleChatController:
                 self._buddy_sink.run_state(
                     target, run_state.status, run_owner=run_owner
                 )
-                if run_state.status in {
-                    ConsoleRunStatus.BLOCKED,
-                    ConsoleRunStatus.COMPLETED,
-                    ConsoleRunStatus.STOPPED,
-                    ConsoleRunStatus.IDLE,
-                } and run_owner is not None:
+                if (
+                    run_state.status
+                    in {
+                        ConsoleRunStatus.BLOCKED,
+                        ConsoleRunStatus.COMPLETED,
+                        ConsoleRunStatus.STOPPED,
+                        ConsoleRunStatus.IDLE,
+                    }
+                    and run_owner is not None
+                ):
                     updated_owners = dict(context_owners)
                     updated_owners.pop(target, None)
                     self._buddy_run_owner_context.set(updated_owners or None)
