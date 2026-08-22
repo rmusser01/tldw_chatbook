@@ -41,6 +41,7 @@ from Tests.UI.test_library_shell import (
     LibraryHarness,
     _active_library_screen,
     _build_test_app,
+    _wait_for_display,
     _wait_for_library_shell,
     _wait_for_selector,
 )
@@ -339,7 +340,13 @@ async def test_saving_a_trusted_skill_warns_and_requeues_needs_review(tmp_path):
             "panel after saving."
         )
 
-        screen.query_one("#library-skill-save", Button).press()
+        screen.query_one("#library-skill-description", Input).value = (
+            "Reviews a diff after saving"
+        )
+        save = await _wait_for_display(screen, pilot, "#library-skill-save")
+        assert isinstance(save, Button)
+        assert screen._library_skill_dirty is True
+        save.press()
         await pilot.pause()
         status_text = await _wait_for_skill_status(screen, pilot)
         assert status_text == "Saved."
@@ -765,14 +772,20 @@ async def test_delete_skill_returns_to_list_and_decrements_count(tmp_path):
         await _wait_for_library_shell(screen, pilot)
         await _open_skill_editor(screen, pilot, "throwaway")
 
-        # task-415: Delete is a two-step inline confirmation now -- the
-        # first press arms it, the recomposed confirm button deletes.
-        screen.query_one("#library-skill-delete", Button).press()
-        await pilot.pause()
-        await pilot.pause()
+        # task-415: Delete is a two-step inline confirmation now.
+        more = await _wait_for_display(screen, pilot, "#library-skill-more-actions")
+        assert isinstance(more, Button)
+        more.press()
+        delete = await _wait_for_display(screen, pilot, "#library-skill-delete")
+        assert isinstance(delete, Button)
+        delete.press()
+        confirm = await _wait_for_display(
+            screen, pilot, "#library-skill-delete-confirm"
+        )
+        assert isinstance(confirm, Button)
         assert screen._library_skill_confirming_delete is True
         assert screen._library_skills_view == "editor"
-        screen.query_one("#library-skill-delete-confirm", Button).press()
+        confirm.press()
         await pilot.pause()
         for _ in range(150):
             if screen._library_skills_view == "list":
@@ -872,11 +885,19 @@ async def test_skill_editor_opens_under_real_runtime_policy_enforcer(tmp_path):
         status_text = await _wait_for_skill_status(screen, pilot)
         assert status_text == "Saved."
 
-        # task-415: two-step delete -- arm the confirmation, then confirm.
-        screen.query_one("#library-skill-delete", Button).press()
-        await pilot.pause()
-        await pilot.pause()
-        screen.query_one("#library-skill-delete-confirm", Button).press()
+        # task-415: Delete is a two-step inline confirmation now.
+        more = await _wait_for_display(screen, pilot, "#library-skill-more-actions")
+        assert isinstance(more, Button)
+        more.press()
+        delete = await _wait_for_display(screen, pilot, "#library-skill-delete")
+        assert isinstance(delete, Button)
+        delete.press()
+        confirm = await _wait_for_display(
+            screen, pilot, "#library-skill-delete-confirm"
+        )
+        assert isinstance(confirm, Button)
+        assert screen._library_skill_confirming_delete is True
+        confirm.press()
         await pilot.pause()
         for _ in range(150):
             if screen._library_skills_view == "list":
@@ -962,7 +983,9 @@ async def test_library_shell_create_skill_save_creates_and_increments_count(tmp_
         await pilot.pause()
 
         status_text = await _wait_for_skill_status(screen, pilot)
-        assert status_text == "Saved."
+        assert status_text == (
+            "Saved. Review trust before using this Skill with the agent."
+        )
         assert screen._selected_skill_name == "brand-new-skill"
 
         persisted = await local_service.get_skill("brand-new-skill")
@@ -1057,7 +1080,9 @@ async def test_library_shell_create_skill_save_arrives_needs_review_with_panel_p
         await pilot.pause()
 
         status_text = await _wait_for_skill_status(screen, pilot)
-        assert status_text == "Saved."
+        assert status_text == (
+            "Saved. Review trust before using this Skill with the agent."
+        )
 
         assert screen._library_skill_editor_state.trust_status == "quarantined_added"
         assert screen._library_skill_editor_state.trust_blocked is True
@@ -1101,9 +1126,16 @@ async def test_delete_cancel_preserves_edits_typed_during_confirm(tmp_path):
         await _wait_for_library_shell(screen, pilot)
         await _open_skill_editor(screen, pilot, "editme")
 
-        screen.query_one("#library-skill-delete", Button).press()
-        await pilot.pause()
-        await pilot.pause()
+        more = await _wait_for_display(screen, pilot, "#library-skill-more-actions")
+        assert isinstance(more, Button)
+        more.press()
+        delete = await _wait_for_display(screen, pilot, "#library-skill-delete")
+        assert isinstance(delete, Button)
+        delete.press()
+        confirm = await _wait_for_display(
+            screen, pilot, "#library-skill-delete-confirm"
+        )
+        assert isinstance(confirm, Button)
         assert screen._library_skill_confirming_delete is True
 
         screen.query_one(
@@ -1161,10 +1193,9 @@ async def test_derived_description_hint_hides_when_user_types(tmp_path):
 
 @pytest.mark.asyncio
 async def test_derived_flag_cleared_when_snapshotting_populated_description(tmp_path):
-    """Review finding: _snapshot_library_skill_live_fields folded typed text
-    into state but left description_derived True, so the delete-confirm
-    recompose rendered the populated field AND the 'No description set' hint
-    together."""
+    """Review finding: cancelling delete confirmation snapshots text typed
+    while confirmation is active and clears ``description_derived`` so the
+    in-place description hint hides."""
     local_service, service = _real_skills_scope_service(tmp_path)
     await local_service.create_skill(
         name="derived-then-typed",
@@ -1180,15 +1211,26 @@ async def test_derived_flag_cleared_when_snapshotting_populated_description(tmp_
         await _wait_for_library_shell(screen, pilot)
         await _open_skill_editor(screen, pilot, "derived-then-typed")
 
+        more = await _wait_for_display(screen, pilot, "#library-skill-more-actions")
+        assert isinstance(more, Button)
+        more.press()
+        delete = await _wait_for_display(screen, pilot, "#library-skill-delete")
+        assert isinstance(delete, Button)
+        delete.press()
+        confirm = await _wait_for_display(
+            screen, pilot, "#library-skill-delete-confirm"
+        )
+        assert isinstance(confirm, Button)
+        assert screen._library_skill_confirming_delete is True
+
         screen.query_one("#library-skill-description", Input).value = "typed desc"
         await pilot.pause()
-
-        screen.query_one("#library-skill-delete", Button).press()
-        await pilot.pause()
+        screen.query_one("#library-skill-delete-cancel", Button).press()
         await pilot.pause()
 
         assert screen._library_skill_editor_state.description_derived is False
-        assert len(screen.query("#library-skill-description-hint")) == 0
+        hint = screen.query_one("#library-skill-description-hint", Static)
+        assert hint.display is False
 
 
 # ---------------------------------------------------------------------------
