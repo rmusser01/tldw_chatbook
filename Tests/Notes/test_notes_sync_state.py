@@ -502,9 +502,11 @@ def test_disconnect_root_advances_newer_child_timestamps_during_clock_rollback(
     ("column", "malformed"),
     (
         ("root_id", ""),
+        ("root_id", "private\x00root"),
         ("lexical_root_path", ""),
         ("lexical_root_path", "private\x00path"),
         ("display_name", ""),
+        ("display_name", "private\x00name"),
         ("direction", "active"),
         ("state", "running"),
         ("row_version", 0),
@@ -535,6 +537,36 @@ def test_root_projection_rejects_noncanonical_durable_rows_without_disclosure(
         repository.list_roots()
     if isinstance(malformed, str) and malformed:
         assert malformed not in str(caught.value)
+    assert len(str(caught.value)) <= 160
+
+
+def test_root_projection_rejects_nul_source_migration_id_without_disclosure(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "corrupt-source-migration.sqlite3"
+    repository = NotesSyncStateRepository(database)
+    root = repository.create_candidate_root("root", "Root", "bidirectional")
+    malformed_migration_id = "m" * 17 + "\x00" + "m" * 18
+    with notes_sync_state_transaction(database, immediate=True) as connection:
+        connection.execute("PRAGMA ignore_check_constraints = ON")
+        connection.execute(
+            """INSERT INTO sync_migration_runs (
+                   migration_id, source_kind, source_revision_before,
+                   state, created_at, updated_at
+               ) VALUES (?, 'legacy_notes_sync_v1', ?, 'pending_recheck', 1, 1)""",
+            (malformed_migration_id, "a" * 64),
+        )
+        connection.execute(
+            """UPDATE sync_roots
+               SET source_kind = 'legacy_notes_sync_v1',
+                   source_locator_digest = ?, source_migration_id = ?
+               WHERE root_id = ?""",
+            ("b" * 64, malformed_migration_id, root.root_id),
+        )
+
+    with pytest.raises(SyncStateCorruptionError) as caught:
+        repository.get_root(root.root_id)
+    assert malformed_migration_id not in str(caught.value)
     assert len(str(caught.value)) <= 160
 
 

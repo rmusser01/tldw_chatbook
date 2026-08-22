@@ -178,14 +178,17 @@ def _root_record(row: tuple[object, ...]) -> SyncRootRecord:
             raise TypeError
         if needs_rescan not in (0, 1):
             raise ValueError
-        if not 1 <= len(root_id) <= _MAX_ID_LENGTH:
+        if not 1 <= len(root_id) <= _MAX_ID_LENGTH or "\x00" in root_id:
             raise ValueError
         if (
             not 1 <= len(lexical_root_path) <= _MAX_PATH_LENGTH
             or "\x00" in lexical_root_path
         ):
             raise ValueError
-        if not 1 <= len(display_name) <= _MAX_DISPLAY_NAME_LENGTH:
+        if (
+            not 1 <= len(display_name) <= _MAX_DISPLAY_NAME_LENGTH
+            or "\x00" in display_name
+        ):
             raise ValueError
         if direction not in _DURABLE_DIRECTIONS:
             raise ValueError
@@ -219,6 +222,7 @@ def _root_record(row: tuple[object, ...]) -> SyncRootRecord:
             or _LOWER_DIGEST_PATTERN.fullmatch(source_locator_digest) is None
             or source_migration_id is None
             or len(source_migration_id) != 36
+            or "\x00" in source_migration_id
         ):
             raise ValueError
         if direction == "unspecified" and not (
