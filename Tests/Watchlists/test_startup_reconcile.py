@@ -334,6 +334,34 @@ def test_deleting_the_highest_row_cannot_let_a_later_row_slip_under(db):
     assert _run_row(db, live)["status"] == "running"
 
 
+def test_every_bounded_table_really_is_autoincrement(db):
+    """The guarantee above, asserted for all four tables, not just one.
+
+    `test_deleting_the_highest_row_cannot_let_a_later_row_slip_under` proves
+    the behaviour for `local_watchlist_runs`. This is the cheap schema-level
+    alarm for the other three: if any of them is ever rebuilt without
+    `AUTOINCREMENT`, its rowids become reusable and the boundary silently
+    stops meaning what `_BOUNDED_TABLES` says it means.
+    """
+    from tldw_chatbook.Subscriptions.startup_reconcile import _BOUNDED_TABLES
+
+    with db.transaction() as conn:
+        schemas = {
+            row["name"]: row["sql"]
+            for row in conn.execute(
+                "SELECT name, sql FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+
+    for _key, table in _BOUNDED_TABLES:
+        assert table in schemas, f"{table} is missing from the schema"
+        assert "AUTOINCREMENT" in schemas[table].upper(), (
+            f"{table} no longer declares AUTOINCREMENT, so its rowids can be "
+            f"reused after a delete and the startup-reconcile boundary can "
+            f"sweep a row this process created"
+        )
+
+
 def test_the_reconcile_cannot_be_called_without_a_boundary(db):
     """The scoping must not be droppable by an innocent edit.
 
