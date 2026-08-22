@@ -265,6 +265,7 @@ def test_effect_transition_loads_only_the_affected_dependency_subgraph(
     small.transition_session(small_id, ImportSessionState.RUNNING)
     small_target = small.load_session_snapshot(small_id).payload_effects[0]
     small_statements: list[str] = []
+
     def traced_small_connect(*args, **kwargs):
         connection = original_connect(*args, **kwargs)
         connection.set_trace_callback(small_statements.append)
@@ -595,8 +596,9 @@ def test_schema_v2_missing_receipt_indexes_fail_closed_without_repair(
         connection.execute("DROP INDEX IF EXISTS idx_import_items_source_session")
         connection.commit()
 
-    with pytest.raises(ImportReceiptError, match="incompatible"):
+    with pytest.raises(ImportReceiptError, match="canonical schema") as raised:
         NoteImportReceiptRepository(database).load_session_snapshot(_APPROVAL_ID)
+    assert "canonical v1" not in str(raised.value)
 
     with sqlite3.connect(database) as connection:
         indexes = {
@@ -646,13 +648,16 @@ def test_schema_v2_missing_receipt_indexes_fail_closed_without_repair(
             ).fetchall()
         )
 
-    assert not {
-        "idx_import_payload_target",
-        "idx_import_folder_target",
-        "idx_import_membership_path",
-        "idx_import_folder_parent",
-        "idx_import_items_source_session",
-    } & indexes
+    assert (
+        not {
+            "idx_import_payload_target",
+            "idx_import_folder_target",
+            "idx_import_membership_path",
+            "idx_import_folder_parent",
+            "idx_import_items_source_session",
+        }
+        & indexes
+    )
     assert "idx_import_membership_path" not in detail
     assert "idx_import_payload_target" not in payload_detail
     assert "idx_import_folder_target" not in folder_detail

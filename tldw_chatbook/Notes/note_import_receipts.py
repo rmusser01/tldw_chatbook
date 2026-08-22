@@ -464,7 +464,7 @@ class NoteImportReceiptRepository:
                 yield connection
         except NotesSyncStateSchemaError:
             raise ImportReceiptError(
-                "The private receipt schema is incompatible with canonical v1."
+                "The private receipt schema is incompatible with canonical schema."
             ) from None
 
     def begin(

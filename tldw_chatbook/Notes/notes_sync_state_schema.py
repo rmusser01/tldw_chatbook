@@ -475,8 +475,9 @@ class _IndexColumnCensus:
 class IndexCensus:
     name: str
     table_name: str
-    sql: str
+    sql: str | None
     unique: int
+    origin: str
     partial: int
     columns: tuple[_IndexColumnCensus, ...]
 
@@ -529,20 +530,23 @@ def _normalize_sql(sql: str) -> str:
 
 
 def _schema_snapshot(connection: sqlite3.Connection) -> SyncStateSchemaSnapshot:
+    canonical_objects = {("table", name) for name in _V2_TABLE_NAMES} | {
+        ("index", name) for name in _V2_INDEX_NAMES
+    }
+    observed_objects = {
+        (str(row[0]), str(row[1]))
+        for row in connection.execute(
+            """SELECT type, name FROM sqlite_master
+            WHERE name NOT LIKE 'sqlite_%'"""
+        )
+    }
     table_names = {
         str(row[0])
         for row in connection.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table'"
         )
     }
-    index_names = {
-        str(row[0])
-        for row in connection.execute(
-            """SELECT name FROM sqlite_master
-            WHERE type = 'index' AND sql IS NOT NULL"""
-        )
-    }
-    if table_names != _V2_TABLE_NAMES or index_names != _V2_INDEX_NAMES:
+    if table_names != _V2_TABLE_NAMES or observed_objects != canonical_objects:
         raise NotesSyncStateSchemaError(
             "The private Notes sync-state schema is incompatible with canonical v2."
         )
@@ -600,54 +604,50 @@ def _schema_snapshot(connection: sqlite3.Connection) -> SyncStateSchemaSnapshot:
         )
 
     indexes: list[IndexCensus] = []
-    for name in sorted(_V2_INDEX_NAMES):
-        index_row = connection.execute(
-            """SELECT tbl_name, sql FROM sqlite_master
-            WHERE type = 'index' AND name = ?""",
-            (name,),
-        ).fetchone()
-        if (
-            index_row is None
-            or not isinstance(index_row[0], str)
-            or index_row[0] not in _V2_TABLE_NAMES
-            or not isinstance(index_row[1], str)
+    for table_name in sorted(_V2_TABLE_NAMES):
+        for list_row in connection.execute(
+            """SELECT name, \"unique\", origin, partial
+            FROM pragma_index_list(?) ORDER BY name""",
+            (table_name,),
         ):
-            raise NotesSyncStateSchemaError(
-                "The private Notes sync-state schema is incompatible with canonical v2."
-            )
-        list_row = connection.execute(
-            """SELECT \"unique\", partial FROM pragma_index_list(?)
-            WHERE name = ?""",
-            (index_row[0], name),
-        ).fetchone()
-        if list_row is None:
-            raise NotesSyncStateSchemaError(
-                "The private Notes sync-state schema is incompatible with canonical v2."
-            )
-        index_columns = tuple(
-            _IndexColumnCensus(
-                int(row[0]),
-                int(row[1]),
-                None if row[2] is None else str(row[2]),
-                int(row[3]),
-                str(row[4]),
-            )
-            for row in connection.execute(
-                """SELECT seqno, cid, name, desc, coll
-                FROM pragma_index_xinfo(?) WHERE key = 1 ORDER BY seqno""",
+            name = str(list_row[0])
+            sql_row = connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?",
                 (name,),
+            ).fetchone()
+            if sql_row is None or (
+                sql_row[0] is not None and not isinstance(sql_row[0], str)
+            ):
+                raise NotesSyncStateSchemaError(
+                    "The private Notes sync-state schema is incompatible with canonical v2."
+                )
+            index_columns = tuple(
+                _IndexColumnCensus(
+                    int(row[0]),
+                    int(row[1]),
+                    None if row[2] is None else str(row[2]),
+                    int(row[3]),
+                    str(row[4]),
+                )
+                for row in connection.execute(
+                    """SELECT seqno, cid, name, desc, coll
+                    FROM pragma_index_xinfo(?) WHERE key = 1 ORDER BY seqno""",
+                    (name,),
+                )
             )
-        )
-        indexes.append(
-            IndexCensus(
-                name=name,
-                table_name=index_row[0],
-                sql=_normalize_sql(index_row[1]),
-                unique=int(list_row[0]),
-                partial=int(list_row[1]),
-                columns=index_columns,
+            indexes.append(
+                IndexCensus(
+                    name=name,
+                    table_name=table_name,
+                    sql=(
+                        None if sql_row[0] is None else _normalize_sql(str(sql_row[0]))
+                    ),
+                    unique=int(list_row[1]),
+                    origin=str(list_row[2]),
+                    partial=int(list_row[3]),
+                    columns=index_columns,
+                )
             )
-        )
     return SyncStateSchemaSnapshot(
         user_version=int(connection.execute("PRAGMA user_version").fetchone()[0]),
         tables=tuple(tables),

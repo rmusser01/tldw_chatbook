@@ -472,8 +472,9 @@ class _TableOracle:
 @dataclass(frozen=True, slots=True)
 class _IndexOracle:
     name: str
-    sql: str
+    sql: str | None
     unique: int
+    origin: str
     partial: int
     columns: tuple[tuple[object, ...], ...]
 
@@ -490,10 +491,15 @@ def _oracle_census(connection: sqlite3.Connection) -> tuple[object, ...]:
     ).fetchall()
     index_rows = connection.execute(
         """SELECT name, sql FROM sqlite_master
-        WHERE type = 'index' AND sql IS NOT NULL ORDER BY name"""
+        WHERE type = 'index' ORDER BY name"""
     ).fetchall()
     assert {row[0] for row in table_rows} == expected_tables
-    assert {row[0] for row in index_rows} == expected_indexes
+    observed_indexes = {row[0] for row in index_rows}
+    assert expected_indexes <= observed_indexes
+    assert all(
+        name in expected_indexes or name.startswith("sqlite_autoindex_")
+        for name in observed_indexes
+    )
     tables = tuple(
         _TableOracle(
             name,
@@ -518,10 +524,16 @@ def _oracle_census(connection: sqlite3.Connection) -> tuple[object, ...]:
     indexes = tuple(
         _IndexOracle(
             name,
-            _normalize_sql(sql),
+            None if sql is None else _normalize_sql(sql),
             int(
                 connection.execute(
                     'SELECT "unique" FROM pragma_index_list(?) WHERE name = ?',
+                    (table_name, name),
+                ).fetchone()[0]
+            ),
+            str(
+                connection.execute(
+                    "SELECT origin FROM pragma_index_list(?) WHERE name = ?",
                     (table_name, name),
                 ).fetchone()[0]
             ),
@@ -734,7 +746,14 @@ def test_receipt_and_direct_initialization_orders_have_v2_parity(
 
 @pytest.mark.parametrize(
     "malformation",
-    ("missing_table", "changed_table", "missing_index", "changed_predicate"),
+    (
+        "missing_table",
+        "changed_table",
+        "missing_index",
+        "changed_predicate",
+        "extra_trigger",
+        "extra_view",
+    ),
 )
 def test_claimed_v2_malformed_schema_fails_closed_without_repair(
     tmp_path: Path,
@@ -754,12 +773,24 @@ def test_claimed_v2_malformed_schema_fails_closed_without_repair(
             connection.execute("DROP TABLE old_sync_roots")
         elif malformation == "missing_index":
             connection.execute("DROP INDEX idx_sync_roots_legacy_source")
-        else:
+        elif malformation == "changed_predicate":
             connection.execute("DROP INDEX idx_sync_roots_legacy_source")
             connection.execute(
                 """CREATE UNIQUE INDEX idx_sync_roots_legacy_source
                 ON sync_roots(source_kind, source_locator_digest)
                 WHERE source_kind IS NOT NULL"""
+            )
+        elif malformation == "extra_trigger":
+            connection.execute(
+                """CREATE TRIGGER private_receipt_sentinel
+                BEFORE INSERT ON import_sessions BEGIN
+                    SELECT RAISE(ABORT, 'private trigger sentinel');
+                END"""
+            )
+        else:
+            connection.execute(
+                """CREATE VIEW private_receipt_view AS
+                SELECT session_id FROM import_sessions"""
             )
         connection.commit()
         before = connection.execute(
@@ -775,6 +806,29 @@ def test_claimed_v2_malformed_schema_fails_closed_without_repair(
             "SELECT type, name, sql FROM sqlite_master ORDER BY type, name"
         ).fetchall()
     assert after == before
+
+
+def test_canonical_census_accounts_for_implicit_unique_indexes(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "implicit-indexes.sqlite3"
+    with notes_sync_state_transaction(database):
+        pass
+
+    with sqlite3.connect(database) as connection:
+        expected_autoindexes = {
+            row[0]
+            for table in sorted(_V1_TABLES | _V2_TABLES)
+            for row in connection.execute(
+                """SELECT name FROM pragma_index_list(?)
+                WHERE origin IN ('pk', 'u')""",
+                (table,),
+            )
+        }
+        snapshot = schema_module._schema_snapshot(connection)
+
+    assert expected_autoindexes
+    assert expected_autoindexes <= {index.name for index in snapshot.indexes}
 
 
 def test_schema_error_does_not_leak_raw_schema_or_path_text(tmp_path: Path) -> None:
@@ -977,6 +1031,38 @@ def test_upgrade_writes_version_last_and_rolls_back_partial_schema(
             ).fetchone()
             is None
         )
+
+
+def test_upgrade_validates_complete_schema_while_version_is_still_v1(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = tmp_path / "version-last.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.executescript(_LEGACY_V1_SQL)
+        connection.execute("PRAGMA user_version = 1")
+    observed_versions: list[tuple[int, bool]] = []
+    original_validate = schema_module._validate_v2_schema
+
+    def observe_validation(
+        connection: sqlite3.Connection,
+        *,
+        validate_version: bool,
+    ) -> None:
+        observed_versions.append(
+            (
+                int(connection.execute("PRAGMA user_version").fetchone()[0]),
+                validate_version,
+            )
+        )
+        original_validate(connection, validate_version=validate_version)
+
+    monkeypatch.setattr(schema_module, "_validate_v2_schema", observe_validation)
+
+    with notes_sync_state_transaction(database):
+        pass
+
+    assert observed_versions == [(1, False)]
 
 
 def test_empty_database_initializes_the_canonical_v2_shared_schema(
