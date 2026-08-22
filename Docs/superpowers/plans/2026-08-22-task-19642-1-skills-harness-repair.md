@@ -353,7 +353,7 @@ Run:
 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff check \
   Tests/Skills/test_skills_import.py \
   Tests/Skills/test_skills_library_flow.py
-git diff --check
+git diff --check origin/dev...HEAD
 ```
 
 Expected: both commands exit 0.
@@ -405,7 +405,9 @@ Check all three ACs only after Task 3 is green. Add Implementation Notes contain
 - exact `34 passed` two-file evidence and `12 passed` owner evidence;
 - Ruff and `git diff --check` results;
 - the pre-existing two-file formatter baseline, without claiming formatter success;
-- all three inverse failures and successful restoration;
+- all three representative causal inverse failures and successful restoration;
+- explicit confirmation that the focused output contained no Prompt/Study/Quiz
+  backend exception or local Library snapshot failure warning;
 - ADR-076 reuse and no-new-ADR decision;
 - lesson outcome.
 
