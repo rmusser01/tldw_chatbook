@@ -3179,34 +3179,15 @@ def prepare_target_worktree(
 
     cleanup_failures: list[BaseException] = []
     try:
-        run_command(
-            ["git", "worktree", "remove", "--force", str(target)],
-            cwd=repository_root,
-            check=False,
-            capture_output=True,
-            text=True,
+        _remove_target_worktree(
+            repository_root,
+            root,
+            name=name,
+            run_command=run_command,
+            allow_unregistered_owned=True,
         )
     except BaseException as exc:
         cleanup_failures.append(exc)
-    try:
-        registered = _target_worktree_registered(
-            repository_root, target, run_command=run_command
-        )
-    except BaseException as exc:
-        registered = True
-        cleanup_failures.append(exc)
-    if registered:
-        cleanup_failures.append(
-            RuntimeError(f"target_worktree_unregister_failed:{name}")
-        )
-    else:
-        try:
-            if target.is_symlink():
-                target.unlink()
-            elif target.exists():
-                shutil.rmtree(target)
-        except BaseException as exc:
-            cleanup_failures.append(exc)
     _raise_failures(
         "target_worktree_add_failed", [primary, *cleanup_failures]
     )
@@ -4747,8 +4728,12 @@ def _directory_open_flags() -> int:
     )
 
 
-def _remove_directory_contents_fd(descriptor: int) -> None:
+def _remove_directory_contents_fd(
+    descriptor: int, *, preserve: frozenset[str] = frozenset()
+) -> None:
     for entry in os.scandir(descriptor):
+        if entry.name in preserve:
+            continue
         if entry.is_dir(follow_symlinks=False):
             child = os.open(
                 entry.name, _directory_open_flags(), dir_fd=descriptor
@@ -4763,27 +4748,374 @@ def _remove_directory_contents_fd(descriptor: int) -> None:
     os.fsync(descriptor)
 
 
-def _remove_exact_worktree_registration(
-    repository_root: Path,
-    target: str,
-    registrations: frozenset[str],
-    *,
-    run_command: Any,
-) -> None:
-    if target not in registrations:
-        return
+def _git_common_directory(
+    repository_root: Path, *, run_command: Any
+) -> Path:
     completed = run_command(
-        ["git", "worktree", "remove", "--force", target],
+        ["git", "rev-parse", "--git-common-dir"],
         cwd=repository_root,
         check=False,
         capture_output=True,
         text=True,
     )
-    if completed.returncode != 0:
+    if (
+        completed.returncode != 0
+        or not isinstance(completed.stdout, str)
+        or len(completed.stdout.splitlines()) != 1
+        or not completed.stdout.strip()
+    ):
         raise RuntimeError("target_worktree_unregister_failed")
-    after = _worktree_registrations(repository_root, run_command=run_command)
-    if target in after or not registrations - {target} <= after:
+    common = Path(completed.stdout.strip())
+    if not common.is_absolute():
+        common = repository_root / common
+    return Path(os.path.abspath(common))
+
+
+def _open_strict_directory(path: Path) -> int:
+    absolute = Path(os.path.abspath(path))
+    if not absolute.is_absolute():
         raise RuntimeError("target_worktree_unregister_failed")
+    descriptor = os.open("/", _directory_open_flags())
+    try:
+        for part in absolute.parts[1:]:
+            child = os.open(part, _directory_open_flags(), dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = child
+        return descriptor
+    except OSError as exc:
+        os.close(descriptor)
+        raise RuntimeError("target_worktree_unregister_failed") from exc
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def _read_regular_file_fd(
+    parent_descriptor: int, name: str, *, error_code: str
+) -> bytes:
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+    )
+    try:
+        descriptor = os.open(name, flags, dir_fd=parent_descriptor)
+        try:
+            metadata = os.fstat(descriptor)
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > 4096:
+                raise RuntimeError(error_code)
+            chunks: list[bytes] = []
+            while chunk := os.read(descriptor, 4097):
+                chunks.append(chunk)
+                if sum(map(len, chunks)) > 4096:
+                    raise RuntimeError(error_code)
+            payload = b"".join(chunks)
+        finally:
+            os.close(descriptor)
+    except OSError as exc:
+        raise RuntimeError(error_code) from exc
+    if len(payload) > 4096:
+        raise RuntimeError(error_code)
+    return payload
+
+
+def _admin_gitdir_target(admin_descriptor: int) -> str:
+    payload = _read_regular_file_fd(
+        admin_descriptor,
+        "gitdir",
+        error_code="target_worktree_admin_invalid",
+    )
+    try:
+        value = payload.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise RuntimeError("target_worktree_admin_invalid") from exc
+    if not value.endswith("\n") or "\n" in value[:-1] or not value[:-1]:
+        raise RuntimeError("target_worktree_admin_invalid")
+    return os.path.abspath(value[:-1])
+
+
+def _worktree_admin_marker_name(target: str) -> str:
+    digest = hashlib.sha256(target.encode("utf-8")).hexdigest()
+    return f".campaign-worktree-cleanup-{digest}"
+
+
+def _worktree_backlink_admin_name(
+    owned_descriptor: int, common: Path
+) -> str:
+    payload = _read_regular_file_fd(
+        owned_descriptor,
+        ".git",
+        error_code="target_worktree_admin_invalid",
+    )
+    prefix = b"gitdir: "
+    if (
+        not payload.startswith(prefix)
+        or not payload.endswith(b"\n")
+        or payload.count(b"\n") != 1
+    ):
+        raise RuntimeError("target_worktree_admin_invalid")
+    try:
+        value = payload[len(prefix) : -1].decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise RuntimeError("target_worktree_admin_invalid") from exc
+    admin = Path(os.path.abspath(value))
+    if admin.parent != common / "worktrees" or admin.name in {"", ".", ".."}:
+        raise RuntimeError("target_worktree_admin_invalid")
+    return admin.name
+
+
+def _find_worktree_admin(common: Path, target: str) -> str:
+    """Match Git's linked-worktree admin by its exact ``gitdir`` backlink."""
+    expected_gitfile = os.path.abspath(f"{target}/.git")
+    common_descriptor = _open_strict_directory(common)
+    try:
+        worktrees_descriptor = os.open(
+            "worktrees", _directory_open_flags(), dir_fd=common_descriptor
+        )
+        try:
+            matches: list[str] = []
+            for entry in os.scandir(worktrees_descriptor):
+                if not entry.is_dir(follow_symlinks=False):
+                    raise RuntimeError("target_worktree_admin_invalid")
+                admin_descriptor = os.open(
+                    entry.name,
+                    _directory_open_flags(),
+                    dir_fd=worktrees_descriptor,
+                )
+                try:
+                    if _admin_gitdir_target(admin_descriptor) == expected_gitfile:
+                        matches.append(entry.name)
+                finally:
+                    os.close(admin_descriptor)
+        finally:
+            os.close(worktrees_descriptor)
+    except OSError as exc:
+        raise RuntimeError("target_worktree_admin_invalid") from exc
+    finally:
+        os.close(common_descriptor)
+    if len(matches) != 1:
+        raise RuntimeError("target_worktree_admin_invalid")
+    return matches[0]
+
+
+def _admin_marker_state(common: Path, target: str) -> str:
+    marker_name = _worktree_admin_marker_name(target)
+    common_descriptor = _open_strict_directory(common)
+    try:
+        try:
+            marker_descriptor = os.open(
+                marker_name,
+                _directory_open_flags(),
+                dir_fd=common_descriptor,
+            )
+        except FileNotFoundError:
+            return "absent"
+        try:
+            entries = {entry.name for entry in os.scandir(marker_descriptor)}
+            if not entries:
+                return "empty"
+            if entries in ({"retired"}, {"admin", "retired"}):
+                receipt = _read_regular_file_fd(
+                    marker_descriptor,
+                    "retired",
+                    error_code="target_worktree_admin_marker_conflict",
+                )
+                if receipt != f"{os.path.abspath(f'{target}/.git')}\n".encode():
+                    raise RuntimeError(
+                        "target_worktree_admin_marker_conflict"
+                    )
+                if "admin" in entries:
+                    admin_descriptor = os.open(
+                        "admin",
+                        _directory_open_flags(),
+                        dir_fd=marker_descriptor,
+                    )
+                    try:
+                        if any(os.scandir(admin_descriptor)):
+                            raise RuntimeError(
+                                "target_worktree_admin_marker_conflict"
+                            )
+                    finally:
+                        os.close(admin_descriptor)
+                return "retiring"
+            if entries != {"admin"}:
+                raise RuntimeError("target_worktree_admin_marker_conflict")
+            admin_descriptor = os.open(
+                "admin", _directory_open_flags(), dir_fd=marker_descriptor
+            )
+            try:
+                if _admin_gitdir_target(admin_descriptor) != os.path.abspath(
+                    f"{target}/.git"
+                ):
+                    raise RuntimeError(
+                        "target_worktree_admin_marker_conflict"
+                    )
+            finally:
+                os.close(admin_descriptor)
+            return "owned"
+        finally:
+            os.close(marker_descriptor)
+    except OSError as exc:
+        raise RuntimeError("target_worktree_admin_marker_conflict") from exc
+    finally:
+        os.close(common_descriptor)
+
+
+def _move_worktree_admin_to_marker(
+    common: Path, target: str, admin_name: str
+) -> None:
+    """Atomically unregister one linked worktree without touching its content."""
+    marker_name = _worktree_admin_marker_name(target)
+    common_descriptor = _open_strict_directory(common)
+    try:
+        worktrees_descriptor = os.open(
+            "worktrees", _directory_open_flags(), dir_fd=common_descriptor
+        )
+        try:
+            try:
+                os.mkdir(marker_name, mode=0o700, dir_fd=common_descriptor)
+                os.fsync(common_descriptor)
+            except FileExistsError:
+                pass
+            marker_descriptor = os.open(
+                marker_name,
+                _directory_open_flags(),
+                dir_fd=common_descriptor,
+            )
+            try:
+                entries = {entry.name for entry in os.scandir(marker_descriptor)}
+                if entries not in (set(), {"admin"}):
+                    raise RuntimeError(
+                        "target_worktree_admin_marker_conflict"
+                    )
+                if not entries:
+                    admin_descriptor = os.open(
+                        admin_name,
+                        _directory_open_flags(),
+                        dir_fd=worktrees_descriptor,
+                    )
+                    try:
+                        if _admin_gitdir_target(
+                            admin_descriptor
+                        ) != os.path.abspath(f"{target}/.git"):
+                            raise RuntimeError("target_worktree_admin_invalid")
+                    finally:
+                        os.close(admin_descriptor)
+                    try:
+                        os.rename(
+                            admin_name,
+                            "admin",
+                            src_dir_fd=worktrees_descriptor,
+                            dst_dir_fd=marker_descriptor,
+                        )
+                        os.fsync(worktrees_descriptor)
+                        os.fsync(marker_descriptor)
+                    except FileNotFoundError:
+                        if {
+                            entry.name for entry in os.scandir(marker_descriptor)
+                        } != {"admin"}:
+                            raise RuntimeError(
+                                "target_worktree_unregister_failed"
+                            ) from None
+            finally:
+                os.close(marker_descriptor)
+        finally:
+            os.close(worktrees_descriptor)
+    except OSError as exc:
+        raise RuntimeError("target_worktree_unregister_failed") from exc
+    finally:
+        os.close(common_descriptor)
+    if _admin_marker_state(common, target) != "owned":
+        raise RuntimeError("target_worktree_admin_marker_conflict")
+
+
+def _delete_worktree_admin_marker(common: Path, target: str) -> None:
+    marker_name = _worktree_admin_marker_name(target)
+    common_descriptor = _open_strict_directory(common)
+    try:
+        marker_descriptor = os.open(
+            marker_name,
+            _directory_open_flags(),
+            dir_fd=common_descriptor,
+        )
+        try:
+            entries = {entry.name for entry in os.scandir(marker_descriptor)}
+            if not entries:
+                pass
+            elif entries in ({"retired"}, {"admin", "retired"}):
+                receipt = _read_regular_file_fd(
+                    marker_descriptor,
+                    "retired",
+                    error_code="target_worktree_admin_marker_conflict",
+                )
+                if receipt != f"{os.path.abspath(f'{target}/.git')}\n".encode():
+                    raise RuntimeError(
+                        "target_worktree_admin_marker_conflict"
+                    )
+                if "admin" in entries:
+                    admin_descriptor = os.open(
+                        "admin",
+                        _directory_open_flags(),
+                        dir_fd=marker_descriptor,
+                    )
+                    try:
+                        if any(os.scandir(admin_descriptor)):
+                            raise RuntimeError(
+                                "target_worktree_admin_marker_conflict"
+                            )
+                    finally:
+                        os.close(admin_descriptor)
+                    os.rmdir("admin", dir_fd=marker_descriptor)
+                    os.fsync(marker_descriptor)
+                os.unlink("retired", dir_fd=marker_descriptor)
+                os.fsync(marker_descriptor)
+            elif entries != {"admin"}:
+                raise RuntimeError("target_worktree_admin_marker_conflict")
+            else:
+                admin_descriptor = os.open(
+                    "admin", _directory_open_flags(), dir_fd=marker_descriptor
+                )
+                try:
+                    if _admin_gitdir_target(
+                        admin_descriptor
+                    ) != os.path.abspath(f"{target}/.git"):
+                        raise RuntimeError(
+                            "target_worktree_admin_marker_conflict"
+                        )
+                    _remove_directory_contents_fd(
+                        admin_descriptor, preserve=frozenset({"gitdir"})
+                    )
+                    os.rename(
+                        "gitdir",
+                        "retired",
+                        src_dir_fd=admin_descriptor,
+                        dst_dir_fd=marker_descriptor,
+                    )
+                    os.fsync(admin_descriptor)
+                    os.fsync(marker_descriptor)
+                finally:
+                    os.close(admin_descriptor)
+                os.rmdir("admin", dir_fd=marker_descriptor)
+                os.fsync(marker_descriptor)
+                receipt = _read_regular_file_fd(
+                    marker_descriptor,
+                    "retired",
+                    error_code="target_worktree_admin_marker_conflict",
+                )
+                if receipt != f"{os.path.abspath(f'{target}/.git')}\n".encode():
+                    raise RuntimeError(
+                        "target_worktree_admin_marker_conflict"
+                    )
+                os.unlink("retired", dir_fd=marker_descriptor)
+                os.fsync(marker_descriptor)
+        finally:
+            os.close(marker_descriptor)
+        os.rmdir(marker_name, dir_fd=common_descriptor)
+        os.fsync(common_descriptor)
+    except OSError as exc:
+        raise RuntimeError("target_worktree_unregister_failed") from exc
+    finally:
+        os.close(common_descriptor)
 
 
 def _remove_target_worktree(
@@ -4795,6 +5127,7 @@ def _remove_target_worktree(
     expected_root: Path | None = None,
     expected_root_identity: tuple[int, int] | None = None,
     confinement_error: str = "target_worktree_invalid",
+    allow_unregistered_owned: bool = False,
 ) -> None:
     if name not in {"control", "candidate"}:
         raise RuntimeError("target_worktree_invalid")
@@ -4842,42 +5175,30 @@ def _remove_target_worktree(
             ],
         ) from None
     registered = target_text in registrations
-    if not registered:
-        if owned_name is None:
-            return
-        if owned_name != quarantine_name:
-            raise RuntimeError(f"target_worktree_remove_failed:{name}")
-    if owned_name is None:
-        try:
-            _remove_exact_worktree_registration(
-                repository_root,
-                target_text,
-                registrations,
-                run_command=run_command,
-            )
-        except RuntimeError as exc:
-            if str(exc) == "target_worktree_unregister_failed":
-                raise RuntimeError(
-                    f"target_worktree_unregister_failed:{name}"
-                ) from exc
-            raise
+    if not registered and owned_name is None:
         return
-    root_descriptor = os.open(root, _directory_open_flags())
-    owned_descriptor: int | None = None
-    moved_now = False
-    try:
-        observed_root = os.fstat(root_descriptor)
-        if (observed_root.st_dev, observed_root.st_ino) != root_identity:
-            raise RuntimeError(confinement_error)
-        owned_descriptor = os.open(
-            owned_name,
-            _directory_open_flags(),
-            dir_fd=root_descriptor,
-        )
-        observed_owned = os.fstat(owned_descriptor)
-        if (observed_owned.st_dev, observed_owned.st_ino) != owned_identity:
-            raise RuntimeError(confinement_error)
-        if owned_name != quarantine_name:
+    if not registered and owned_name == name:
+        if not allow_unregistered_owned:
+            raise RuntimeError(f"target_worktree_remove_failed:{name}")
+        root_descriptor: int | None = None
+        try:
+            root_descriptor = os.open(root, _directory_open_flags())
+            owned_descriptor = os.open(
+                name, _directory_open_flags(), dir_fd=root_descriptor
+            )
+        except OSError as exc:
+            if root_descriptor is not None:
+                os.close(root_descriptor)
+            raise RuntimeError(confinement_error) from exc
+        try:
+            observed_root = os.fstat(root_descriptor)
+            observed_owned = os.fstat(owned_descriptor)
+            if (
+                (observed_root.st_dev, observed_root.st_ino) != root_identity
+                or (observed_owned.st_dev, observed_owned.st_ino)
+                != owned_identity
+            ):
+                raise RuntimeError(confinement_error)
             os.rename(
                 name,
                 quarantine_name,
@@ -4885,37 +5206,103 @@ def _remove_target_worktree(
                 dst_dir_fd=root_descriptor,
             )
             os.fsync(root_descriptor)
-            moved_now = True
-        try:
-            if registered:
-                _remove_exact_worktree_registration(
-                    repository_root,
-                    target_text,
-                    registrations,
-                    run_command=run_command,
+            _remove_directory_contents_fd(owned_descriptor)
+            os.rmdir(quarantine_name, dir_fd=root_descriptor)
+            os.fsync(root_descriptor)
+        finally:
+            os.close(owned_descriptor)
+            os.close(root_descriptor)
+        return
+    try:
+        common = _git_common_directory(
+            repository_root, run_command=run_command
+        )
+        marker_state = _admin_marker_state(common, target_text)
+    except RuntimeError as exc:
+        if str(exc) == "target_worktree_admin_marker_conflict":
+            raise RuntimeError(
+                f"target_worktree_admin_marker_conflict:{name}"
+            ) from exc
+        raise RuntimeError(f"target_worktree_unregister_failed:{name}") from exc
+    if not registered:
+        if marker_state == "empty" and owned_name != quarantine_name:
+            raise RuntimeError(
+                f"target_worktree_admin_marker_conflict:{name}"
+            )
+        if marker_state == "absent" and owned_name is None:
+            return
+    elif marker_state == "owned":
+        raise RuntimeError(f"target_worktree_admin_marker_conflict:{name}")
+    admin_name = (
+        _find_worktree_admin(common, target_text) if registered else None
+    )
+    try:
+        root_descriptor = os.open(root, _directory_open_flags())
+    except OSError as exc:
+        raise RuntimeError(confinement_error) from exc
+    owned_descriptor: int | None = None
+    try:
+        observed_root = os.fstat(root_descriptor)
+        if (observed_root.st_dev, observed_root.st_ino) != root_identity:
+            raise RuntimeError(confinement_error)
+        if owned_name is not None:
+            try:
+                owned_descriptor = os.open(
+                    owned_name,
+                    _directory_open_flags(),
+                    dir_fd=root_descriptor,
                 )
-        except RuntimeError as exc:
-            if moved_now:
-                try:
-                    os.rename(
-                        quarantine_name,
-                        name,
-                        src_dir_fd=root_descriptor,
-                        dst_dir_fd=root_descriptor,
-                    )
-                    os.fsync(root_descriptor)
-                except OSError:
-                    pass
-            if str(exc) == "target_worktree_unregister_failed":
+            except OSError as exc:
+                raise RuntimeError(confinement_error) from exc
+            observed_owned = os.fstat(owned_descriptor)
+            if (observed_owned.st_dev, observed_owned.st_ino) != owned_identity:
+                raise RuntimeError(confinement_error)
+            if registered or marker_state in {"owned", "retiring"}:
+                backlink_name = _worktree_backlink_admin_name(
+                    owned_descriptor, common
+                )
+                if registered and backlink_name != admin_name:
+                    raise RuntimeError("target_worktree_admin_invalid")
+        if owned_name == name:
+            try:
+                os.rename(
+                    name,
+                    quarantine_name,
+                    src_dir_fd=root_descriptor,
+                    dst_dir_fd=root_descriptor,
+                )
+            except FileNotFoundError as exc:
                 raise RuntimeError(
                     f"target_worktree_unregister_failed:{name}"
                 ) from exc
-            raise
-        _remove_directory_contents_fd(owned_descriptor)
-        os.close(owned_descriptor)
-        owned_descriptor = None
-        os.rmdir(quarantine_name, dir_fd=root_descriptor)
-        os.fsync(root_descriptor)
+            os.fsync(root_descriptor)
+        try:
+            if registered:
+                _move_worktree_admin_to_marker(
+                    common, target_text, admin_name
+                )
+            after = _worktree_registrations(
+                repository_root, run_command=run_command
+            )
+            expected = registrations - ({target_text} if registered else set())
+            if after != expected:
+                raise RuntimeError("target_worktree_unregister_failed")
+            if registered or marker_state in {"owned", "retiring", "empty"}:
+                _delete_worktree_admin_marker(common, target_text)
+        except RuntimeError as exc:
+            if str(exc) == "target_worktree_admin_marker_conflict":
+                raise RuntimeError(
+                    f"target_worktree_admin_marker_conflict:{name}"
+                ) from exc
+            raise RuntimeError(
+                f"target_worktree_unregister_failed:{name}"
+            ) from exc
+        if owned_descriptor is not None:
+            _remove_directory_contents_fd(owned_descriptor)
+            os.close(owned_descriptor)
+            owned_descriptor = None
+            os.rmdir(quarantine_name, dir_fd=root_descriptor)
+            os.fsync(root_descriptor)
     finally:
         if owned_descriptor is not None:
             os.close(owned_descriptor)

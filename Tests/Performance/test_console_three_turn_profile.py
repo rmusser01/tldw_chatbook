@@ -2343,39 +2343,23 @@ def test_campaign_recovery_fails_closed_on_missing_or_malformed_owner(
 def test_campaign_attempt_cleanup_removes_only_owned_target_worktrees(
     tmp_path: Path,
 ) -> None:
+    repository = _init_real_worktree_repository(tmp_path)
     campaign = tmp_path / "campaign"
     attempt_root = profile.create_attempt_root(campaign, "attempt-0001")
     raw = attempt_root / "real-provider-three-turn.raw.jsonl"
     raw.write_bytes(b"retained\n")
-    commands: list[list[str]] = []
     for name in ("control", "candidate"):
-        (attempt_root / name).mkdir()
-    registered = {
-        str((attempt_root / name).resolve()) for name in ("control", "candidate")
-    }
-
-    def run_command(command, **_kwargs):
-        commands.append(command)
-        if command == ["git", "worktree", "list", "--porcelain"]:
-            stdout = "".join(f"worktree {path}\n\n" for path in sorted(registered))
-            return SimpleNamespace(returncode=0, stdout=stdout)
-        registered.difference_update(
-            {path for path in registered if not Path(path).exists()}
-        )
-        return SimpleNamespace(returncode=0, stdout="")
+        _add_real_worktree(repository, attempt_root / name, branch=name)
 
     profile.cleanup_attempt_worktrees(
-        tmp_path,
+        repository,
         campaign,
         "attempt-0001",
-        run_command=run_command,
     )
 
-    assert [command for command in commands if command[2:4] == ["remove", "--force"]] == [
-        ["git", "worktree", "remove", "--force", str(attempt_root / "control")],
-        ["git", "worktree", "remove", "--force", str(attempt_root / "candidate")],
-    ]
-    assert registered == set()
+    assert profile._worktree_registrations(repository) == frozenset(
+        {str(repository.resolve())}
+    )
     assert raw.read_bytes() == b"retained\n"
     assert attempt_root.is_dir()
 
@@ -4743,8 +4727,6 @@ def test_prepare_target_worktree_preserves_command_failure(tmp_path: Path) -> No
     def fake_run(command, **kwargs):
         if command == ["git", "worktree", "list", "--porcelain"]:
             return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
-        if command[2] == "remove":
-            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
         return subprocess.CompletedProcess(command, 2, stdout="", stderr="busy")
 
     assert callable(prepare_target_worktree)
@@ -4767,8 +4749,6 @@ def test_prepare_target_worktree_cleans_partial_add_failure(tmp_path: Path) -> N
         if command[2] == "add":
             target.mkdir(parents=True)
             return subprocess.CompletedProcess(command, 2, stdout="", stderr="busy")
-        if command[2] == "remove":
-            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
         assert command == ["git", "worktree", "list", "--porcelain"]
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
@@ -4783,13 +4763,12 @@ def test_prepare_target_worktree_cleans_partial_add_failure(tmp_path: Path) -> N
 
     assert calls == [
         ["git", "worktree", "add", "--detach", str(target), profile.CANDIDATE_SHA],
-        ["git", "worktree", "remove", "--force", str(target)],
         ["git", "worktree", "list", "--porcelain"],
     ]
     assert not target.exists()
 
 
-def test_prepare_target_worktree_accepts_nonzero_remove_when_git_proves_absent(
+def test_prepare_target_worktree_cleans_partial_when_git_proves_absent(
     tmp_path: Path,
 ) -> None:
     target = (tmp_path / "run/candidate").resolve()
@@ -4798,8 +4777,6 @@ def test_prepare_target_worktree_accepts_nonzero_remove_when_git_proves_absent(
         if command[2] == "add":
             target.mkdir(parents=True)
             return subprocess.CompletedProcess(command, 2, stdout="", stderr="add failed")
-        if command[2] == "remove":
-            return subprocess.CompletedProcess(command, 1, stdout="", stderr="already absent")
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
     with pytest.raises(RuntimeError, match="^target_worktree_failed:candidate$"):
@@ -4823,8 +4800,6 @@ def test_prepare_target_worktree_cleans_partial_directory_when_add_raises(
         if command[2] == "add":
             target.mkdir(parents=True)
             raise RuntimeError("git-add-exploded")
-        if command[2] == "remove":
-            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
     with pytest.raises(RuntimeError, match="^git-add-exploded$"):
@@ -4839,7 +4814,7 @@ def test_prepare_target_worktree_cleans_partial_directory_when_add_raises(
     assert not target.exists()
 
 
-def test_prepare_target_worktree_preserves_add_when_remove_and_list_raise(
+def test_prepare_target_worktree_preserves_add_when_registration_check_raises(
     tmp_path: Path,
 ) -> None:
     target = (tmp_path / "run/candidate").resolve()
@@ -4850,8 +4825,6 @@ def test_prepare_target_worktree_preserves_add_when_remove_and_list_raise(
         if command[2] == "add":
             target.mkdir(parents=True)
             raise RuntimeError("git-add-exploded")
-        if command[2] == "remove":
-            raise RuntimeError("git-remove-exploded")
         raise OSError("git-list-exploded")
 
     with pytest.raises(BaseExceptionGroup) as caught:
@@ -4865,15 +4838,12 @@ def test_prepare_target_worktree_preserves_add_when_remove_and_list_raise(
 
     assert calls == [
         ["git", "worktree", "add", "--detach", str(target), profile.CANDIDATE_SHA],
-        ["git", "worktree", "remove", "--force", str(target)],
         ["git", "worktree", "list", "--porcelain"],
     ]
     assert target.is_dir()
     assert [str(error) for error in caught.value.exceptions] == [
         "git-add-exploded",
-        "git-remove-exploded",
         "git-list-exploded",
-        "target_worktree_unregister_failed:candidate",
     ]
 
 
@@ -4886,8 +4856,6 @@ def test_prepare_target_worktree_keeps_registered_partial_add_directory(
         if command[2] == "add":
             target.mkdir(parents=True)
             return subprocess.CompletedProcess(command, 2, stdout="", stderr="add failed")
-        if command[2] == "remove":
-            return subprocess.CompletedProcess(command, 1, stdout="", stderr="busy")
         return subprocess.CompletedProcess(
             command, 0, stdout=f"worktree {target}\nHEAD {'1' * 40}\n\n", stderr=""
         )
@@ -4917,8 +4885,6 @@ def test_prepare_target_worktree_keeps_partial_directory_when_registration_unkno
         if command[2] == "add":
             target.mkdir(parents=True)
             return subprocess.CompletedProcess(command, 2, stdout="", stderr="add failed")
-        if command[2] == "remove":
-            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
         return subprocess.CompletedProcess(command, 1, stdout="", stderr="list failed")
 
     with pytest.raises(BaseExceptionGroup) as caught:
@@ -4931,50 +4897,508 @@ def test_prepare_target_worktree_keeps_partial_directory_when_registration_unkno
         )
 
     assert target.is_dir()
-    assert [str(error) for error in caught.value.exceptions] == [
-        "target_worktree_failed:candidate",
+    primary, cleanup = caught.value.exceptions
+    assert str(primary) == "target_worktree_failed:candidate"
+    assert isinstance(cleanup, BaseExceptionGroup)
+    assert [str(error) for error in cleanup.exceptions] == [
+        "target_worktree_remove_failed:candidate",
         "target_worktree_registration_check_failed",
-        "target_worktree_unregister_failed:candidate",
     ]
 
 
-def test_remove_target_worktree_only_removes_owned_fixed_target(tmp_path: Path) -> None:
-    remove_target_worktree = getattr(profile, "_remove_target_worktree", None)
-    run_root = tmp_path / "run"
+def _init_real_worktree_repository(root: Path) -> Path:
+    repository = root / "repository"
+    repository.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "codex@example.invalid"],
+        cwd=repository,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Codex"],
+        cwd=repository,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-qm", "base", "--allow-empty"],
+        cwd=repository,
+        check=True,
+    )
+    return repository
+
+
+def _add_real_worktree(
+    repository: Path, target: Path, *, branch: str
+) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        ["git", "worktree", "add", "-q", "-b", branch, str(target)],
+        cwd=repository,
+        check=True,
+    )
+
+
+def _linked_worktree_admin(target: Path) -> Path:
+    prefix = "gitdir: "
+    payload = (target / ".git").read_text(encoding="utf-8")
+    assert payload.startswith(prefix) and payload.endswith("\n")
+    return Path(payload[len(prefix) : -1])
+
+
+def test_remove_target_worktree_real_git_parent_swap_preserves_unrelated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository = _init_real_worktree_repository(tmp_path)
+    attempts = tmp_path / "attempts"
+    run_root = attempts / "attempt-0001"
     target = run_root / "candidate"
-    target.mkdir(parents=True)
-    calls = []
-    registered = {str(target.resolve())}
+    outside = tmp_path / "outside" / "attempt-0001" / "candidate"
+    _add_real_worktree(repository, target, branch="intended")
+    _add_real_worktree(repository, outside, branch="unrelated")
+    sentinel = outside / "uncommitted-sentinel"
+    sentinel.write_bytes(b"must survive")
+    original_rename = profile.os.rename
+    swapped = False
 
-    def fake_run(command, **kwargs):
-        calls.append((command, kwargs))
-        if command == ["git", "worktree", "list", "--porcelain"]:
-            stdout = "".join(f"worktree {path}\n\n" for path in registered)
-            return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
-        registered.clear()
-        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+    def swap_after_quarantine(source, destination, *args, **kwargs):
+        nonlocal swapped
+        result = original_rename(source, destination, *args, **kwargs)
+        if source == "candidate" and destination == ".candidate-cleanup":
+            swapped = True
+            original_rename(attempts, tmp_path / "original-attempts")
+            original_rename(tmp_path / "outside", attempts)
+        return result
 
-    assert callable(remove_target_worktree)
-    remove_target_worktree(
-        tmp_path / "repository",
+    monkeypatch.setattr(profile.os, "rename", swap_after_quarantine)
+
+    profile._remove_target_worktree(
+        repository,
         run_root,
         name="candidate",
-        run_command=fake_run,
     )
-    assert [
-        "git",
-        "worktree",
-        "remove",
-        "--force",
-        str(target),
-    ] in [command for command, _kwargs in calls]
-    assert not target.exists()
+
+    assert swapped
+    swapped_sentinel = attempts / "attempt-0001/candidate/uncommitted-sentinel"
+    assert swapped_sentinel.read_bytes() == b"must survive"
+    assert profile._worktree_registrations(repository) == frozenset(
+        {str(repository.resolve()), str(outside.resolve())}
+    )
+    assert not (
+        tmp_path / "original-attempts/attempt-0001/.candidate-cleanup"
+    ).exists()
+
+
+def test_remove_target_worktree_real_git_unregisters_absent_exact_target(
+    tmp_path: Path,
+) -> None:
+    repository = _init_real_worktree_repository(tmp_path)
+    run_root = tmp_path / "run"
+    target = run_root / "candidate"
+    detached = tmp_path / "detached-candidate"
+    _add_real_worktree(repository, target, branch="candidate")
+    target.rename(detached)
+
+    profile._remove_target_worktree(
+        repository, run_root, name="candidate"
+    )
+
+    assert detached.is_dir()
+    assert profile._worktree_registrations(repository) == frozenset(
+        {str(repository.resolve())}
+    )
+
+
+@pytest.mark.parametrize(
+    "checkpoint",
+    (
+        "target_quarantine",
+        "empty_admin_marker",
+        "owned_admin_marker",
+        "admin_content_removed",
+        "receipt_published",
+        "admin_removed",
+        "receipt_removed",
+    ),
+)
+def test_remove_target_worktree_real_git_resumes_namespace_checkpoints(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    checkpoint: str,
+) -> None:
+    repository = _init_real_worktree_repository(tmp_path)
+    run_root = tmp_path / "run"
+    target = run_root / "candidate"
+    _add_real_worktree(repository, target, branch="candidate")
+    admin = _linked_worktree_admin(target)
+    removable_admin_entry = next(
+        entry.name for entry in admin.iterdir() if entry.name != "gitdir"
+    )
+    original_rename = profile.os.rename
+    original_rmdir = profile.os.rmdir
+    original_unlink = profile.os.unlink
+
+    def interrupt_rename(source, destination, *args, **kwargs):
+        if checkpoint == "empty_admin_marker" and destination == "admin":
+            raise KeyboardInterrupt("empty admin marker checkpoint")
+        result = original_rename(source, destination, *args, **kwargs)
+        if checkpoint == "target_quarantine" and destination == ".candidate-cleanup":
+            raise KeyboardInterrupt("target quarantine checkpoint")
+        if checkpoint == "owned_admin_marker" and destination == "admin":
+            raise KeyboardInterrupt("owned admin marker checkpoint")
+        if checkpoint == "receipt_published" and destination == "retired":
+            raise KeyboardInterrupt("receipt published checkpoint")
+        return result
+
+    def interrupt_rmdir(path, *args, **kwargs):
+        result = original_rmdir(path, *args, **kwargs)
+        if checkpoint == "admin_removed" and path == "admin":
+            raise KeyboardInterrupt("admin removed checkpoint")
+        return result
+
+    def interrupt_unlink(path, *args, **kwargs):
+        result = original_unlink(path, *args, **kwargs)
+        if checkpoint == "admin_content_removed" and path == removable_admin_entry:
+            raise KeyboardInterrupt("admin content removed checkpoint")
+        if checkpoint == "receipt_removed" and path == "retired":
+            raise KeyboardInterrupt("receipt removed checkpoint")
+        return result
+
+    monkeypatch.setattr(profile.os, "rename", interrupt_rename)
+    monkeypatch.setattr(profile.os, "rmdir", interrupt_rmdir)
+    monkeypatch.setattr(profile.os, "unlink", interrupt_unlink)
+    with pytest.raises(KeyboardInterrupt):
+        profile._remove_target_worktree(
+            repository, run_root, name="candidate"
+        )
+
+    assert (run_root / ".candidate-cleanup").is_dir()
+    monkeypatch.setattr(profile.os, "rename", original_rename)
+    monkeypatch.setattr(profile.os, "rmdir", original_rmdir)
+    monkeypatch.setattr(profile.os, "unlink", original_unlink)
+    profile._remove_target_worktree(
+        repository, run_root, name="candidate"
+    )
+
+    assert not (run_root / ".candidate-cleanup").exists()
+    assert profile._worktree_registrations(repository) == frozenset(
+        {str(repository.resolve())}
+    )
+
+
+@pytest.mark.parametrize("name", ("control", "candidate"))
+def test_remove_target_worktree_real_git_resumes_after_admin_marker_deleted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    repository = _init_real_worktree_repository(tmp_path)
+    run_root = tmp_path / "run"
+    target = run_root / name
+    quarantine = run_root / f".{name}-cleanup"
+    _add_real_worktree(repository, target, branch=name)
+    original_delete_marker = profile._delete_worktree_admin_marker
+
+    def delete_then_interrupt(common: Path, target_text: str) -> None:
+        original_delete_marker(common, target_text)
+        raise KeyboardInterrupt("post-unregister checkpoint")
+
+    monkeypatch.setattr(
+        profile, "_delete_worktree_admin_marker", delete_then_interrupt
+    )
+    with pytest.raises(KeyboardInterrupt):
+        profile._remove_target_worktree(
+            repository, run_root, name=name
+        )
+
+    assert quarantine.is_dir()
+    assert str(target) not in profile._worktree_registrations(repository)
+    monkeypatch.setattr(
+        profile, "_delete_worktree_admin_marker", original_delete_marker
+    )
+    profile._remove_target_worktree(
+        repository, run_root, name=name
+    )
+
+    assert not quarantine.exists()
+
+
+def test_remove_target_worktree_real_git_refuses_admin_marker_collision(
+    tmp_path: Path,
+) -> None:
+    repository = _init_real_worktree_repository(tmp_path)
+    run_root = tmp_path / "run"
+    target = run_root / "candidate"
+    _add_real_worktree(repository, target, branch="candidate")
+    marker = repository / ".git" / profile._worktree_admin_marker_name(str(target))
+    marker.mkdir()
+    (marker / "foreign").write_bytes(b"must survive")
+
+    with pytest.raises(
+        RuntimeError, match="^target_worktree_admin_marker_conflict:candidate$"
+    ):
+        profile._remove_target_worktree(
+            repository, run_root, name="candidate"
+        )
+
+    assert (marker / "foreign").read_bytes() == b"must survive"
+    assert target.is_dir()
+    assert str(target) in profile._worktree_registrations(repository)
+
+
+@pytest.mark.parametrize(
+    "malformation", ("backlink", "admin_gitdir", "duplicate", "admin_symlink")
+)
+def test_remove_target_worktree_real_git_rejects_malformed_admin_contract(
+    tmp_path: Path, malformation: str
+) -> None:
+    repository = _init_real_worktree_repository(tmp_path)
+    run_root = tmp_path / "run"
+    target = run_root / "candidate"
+    _add_real_worktree(repository, target, branch="candidate")
+    admin = _linked_worktree_admin(target)
+    if malformation == "backlink":
+        (target / ".git").write_bytes(b"invalid backlink\n")
+    elif malformation == "admin_gitdir":
+        (admin / "gitdir").write_bytes(b"invalid gitdir\n")
+    elif malformation == "duplicate":
+        duplicate = admin.parent / "duplicate"
+        duplicate.mkdir()
+        (duplicate / "gitdir").write_text(
+            f"{target / '.git'}\n", encoding="utf-8"
+        )
+    else:
+        detached_admin = repository / ".git" / "detached-admin"
+        admin.rename(detached_admin)
+        admin.symlink_to(detached_admin, target_is_directory=True)
+
+    expected_error = (
+        "target_worktree_remove_failed:candidate"
+        if malformation == "admin_gitdir"
+        else "target_worktree_admin_invalid"
+    )
+    with pytest.raises(RuntimeError, match=expected_error):
+        profile._remove_target_worktree(
+            repository, run_root, name="candidate"
+        )
+
+    assert target.is_dir()
+    assert not (run_root / ".candidate-cleanup").exists()
+
+
+def test_remove_target_worktree_real_git_rejects_worktrees_symlink(
+    tmp_path: Path,
+) -> None:
+    repository = _init_real_worktree_repository(tmp_path)
+    run_root = tmp_path / "run"
+    target = run_root / "candidate"
+    _add_real_worktree(repository, target, branch="candidate")
+    worktrees = repository / ".git/worktrees"
+    detached = repository / ".git/detached-worktrees"
+    worktrees.rename(detached)
+    worktrees.symlink_to(detached, target_is_directory=True)
+
+    with pytest.raises(RuntimeError, match="target_worktree_admin_invalid"):
+        profile._remove_target_worktree(
+            repository, run_root, name="candidate"
+        )
+
+    assert target.is_dir()
+    assert not (run_root / ".candidate-cleanup").exists()
+
+
+def test_remove_target_worktree_real_git_rejects_common_directory_symlink(
+    tmp_path: Path,
+) -> None:
+    repository = _init_real_worktree_repository(tmp_path)
+    run_root = tmp_path / "run"
+    target = run_root / "candidate"
+    _add_real_worktree(repository, target, branch="candidate")
+    common = repository / ".git"
+    detached = tmp_path / "detached-common"
+    common.rename(detached)
+    common.symlink_to(detached, target_is_directory=True)
+
+    with pytest.raises(
+        RuntimeError, match="^target_worktree_unregister_failed:candidate$"
+    ):
+        profile._remove_target_worktree(
+            repository, run_root, name="candidate"
+        )
+
+    assert target.is_dir()
+    assert not (run_root / ".candidate-cleanup").exists()
+
+
+def test_remove_target_worktree_real_git_preserves_missing_unrelated_registration(
+    tmp_path: Path,
+) -> None:
+    repository = _init_real_worktree_repository(tmp_path)
+    run_root = tmp_path / "run"
+    target = run_root / "candidate"
+    unrelated = tmp_path / "unrelated"
+    _add_real_worktree(repository, target, branch="candidate")
+    _add_real_worktree(repository, unrelated, branch="unrelated")
+    unrelated_detached = tmp_path / "unrelated-detached"
+    unrelated.rename(unrelated_detached)
+
+    profile._remove_target_worktree(
+        repository, run_root, name="candidate"
+    )
+
+    assert unrelated_detached.is_dir()
+    assert profile._worktree_registrations(repository) == frozenset(
+        {str(repository.resolve()), str(unrelated.resolve())}
+    )
+
+
+def test_remove_target_worktree_real_git_preserves_unrelated_that_goes_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository = _init_real_worktree_repository(tmp_path)
+    run_root = tmp_path / "run"
+    target = run_root / "candidate"
+    unrelated = tmp_path / "unrelated"
+    detached = tmp_path / "unrelated-detached"
+    _add_real_worktree(repository, target, branch="candidate")
+    _add_real_worktree(repository, unrelated, branch="unrelated")
+    original_move = profile._move_worktree_admin_to_marker
+
+    def move_then_detach(common: Path, target_text: str, admin_name: str) -> None:
+        original_move(common, target_text, admin_name)
+        unrelated.rename(detached)
+
+    monkeypatch.setattr(
+        profile, "_move_worktree_admin_to_marker", move_then_detach
+    )
+
+    profile._remove_target_worktree(
+        repository, run_root, name="candidate"
+    )
+
+    assert detached.is_dir()
+    assert profile._worktree_registrations(repository) == frozenset(
+        {str(repository.resolve()), str(unrelated.resolve())}
+    )
+
+
+def test_remove_target_worktree_real_git_same_target_contention_is_resumable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository = _init_real_worktree_repository(tmp_path)
+    run_root = tmp_path / "run"
+    target = run_root / "candidate"
+    _add_real_worktree(repository, target, branch="candidate")
+    original_registrations = profile._worktree_registrations
+    barrier = threading.Barrier(2)
+    local = threading.local()
+
+    def synchronized_registrations(*args, **kwargs):
+        result = original_registrations(*args, **kwargs)
+        if not getattr(local, "synchronized", False):
+            local.synchronized = True
+            barrier.wait(timeout=5)
+        return result
+
+    monkeypatch.setattr(
+        profile, "_worktree_registrations", synchronized_registrations
+    )
+
+    def cleanup() -> BaseException | None:
+        try:
+            profile._remove_target_worktree(
+                repository, run_root, name="candidate"
+            )
+        except BaseException as exc:
+            return exc
+        return None
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = tuple(executor.map(lambda _index: cleanup(), range(2)))
+
+    stable_errors = {
+        "target_worktree_unregister_failed:candidate",
+        "target_worktree_admin_marker_conflict:candidate",
+    }
+    for outcome in outcomes:
+        if outcome is not None and str(outcome) not in stable_errors:
+            raise outcome
+    assert any(outcome is None for outcome in outcomes)
+    assert all(
+        outcome is None or str(outcome) in stable_errors
+        for outcome in outcomes
+    ), [repr(outcome) for outcome in outcomes]
+    monkeypatch.setattr(
+        profile, "_worktree_registrations", original_registrations
+    )
+    profile._remove_target_worktree(
+        repository, run_root, name="candidate"
+    )
+
+    assert str(target) not in profile._worktree_registrations(repository)
+    assert not (run_root / ".candidate-cleanup").exists()
+
+
+def test_remove_target_worktree_real_git_different_targets_are_resumable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository = _init_real_worktree_repository(tmp_path)
+    run_root = tmp_path / "run"
+    for name in ("control", "candidate"):
+        _add_real_worktree(repository, run_root / name, branch=name)
+    original_registrations = profile._worktree_registrations
+    barrier = threading.Barrier(2)
+    local = threading.local()
+
+    def synchronized_registrations(*args, **kwargs):
+        result = original_registrations(*args, **kwargs)
+        if not getattr(local, "synchronized", False):
+            local.synchronized = True
+            barrier.wait(timeout=5)
+        return result
+
+    monkeypatch.setattr(
+        profile, "_worktree_registrations", synchronized_registrations
+    )
+
+    def cleanup(name: str) -> BaseException | None:
+        try:
+            profile._remove_target_worktree(
+                repository, run_root, name=name
+            )
+        except BaseException as exc:
+            return exc
+        return None
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = tuple(executor.map(cleanup, ("control", "candidate")))
+
+    assert all(
+        outcome is None
+        or str(outcome).startswith("target_worktree_unregister_failed:")
+        for outcome in outcomes
+    )
+    monkeypatch.setattr(
+        profile, "_worktree_registrations", original_registrations
+    )
+    for name in ("control", "candidate"):
+        profile._remove_target_worktree(
+            repository, run_root, name=name
+        )
+
+    assert profile._worktree_registrations(repository) == frozenset(
+        {str(repository.resolve())}
+    )
+    assert not (run_root / ".control-cleanup").exists()
+    assert not (run_root / ".candidate-cleanup").exists()
+
+
+def test_remove_target_worktree_rejects_non_target_name(tmp_path: Path) -> None:
+    run_root = tmp_path / "run"
+    run_root.mkdir()
     with pytest.raises(RuntimeError, match="target_worktree_invalid"):
-        remove_target_worktree(
+        profile._remove_target_worktree(
             tmp_path / "repository",
             run_root,
             name="outside",
-            run_command=fake_run,
         )
 
 
@@ -5002,256 +5426,36 @@ def test_remove_target_worktree_preserves_remove_and_registration_failures(
     assert (run_root / "candidate").is_dir()
 
 
-def test_remove_target_worktree_unregisters_exact_registered_missing_target(
-    tmp_path: Path,
-) -> None:
-    run_root = tmp_path / "run"
-    run_root.mkdir()
-    target = run_root / "candidate"
-    registered = {str(target.resolve())}
-    calls: list[list[str]] = []
-
-    def fake_run(command, **_kwargs):
-        calls.append(command)
-        if command == ["git", "worktree", "list", "--porcelain"]:
-            stdout = "".join(f"worktree {path}\n\n" for path in sorted(registered))
-            return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
-        if command == ["git", "worktree", "remove", "--force", str(target)]:
-            registered.clear()
-        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
-
-    profile._remove_target_worktree(
-        tmp_path / "repository",
-        run_root,
-        name="candidate",
-        run_command=fake_run,
-    )
-
-    assert ["git", "worktree", "remove", "--force", str(target)] in calls
-    assert registered == set()
-
-
-def test_remove_target_worktree_parent_swap_cannot_redirect_deletion(
-    tmp_path: Path,
-) -> None:
-    attempts = tmp_path / "attempts"
-    run_root = attempts / "attempt-0001"
-    target = run_root / "candidate"
-    target.mkdir(parents=True)
-    outside = tmp_path / "outside" / "attempt-0001" / "candidate"
-    outside.mkdir(parents=True)
-    registered = {str(target.resolve())}
-    swapped = False
-
-    def fake_run(command, **_kwargs):
-        nonlocal swapped
-        if command == ["git", "worktree", "list", "--porcelain"]:
-            stdout = "".join(f"worktree {path}\n\n" for path in sorted(registered))
-            return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
-        if not swapped:
-            swapped = True
-            attempts.rename(tmp_path / "original-attempts")
-            attempts.symlink_to(tmp_path / "outside", target_is_directory=True)
-        if command[:4] == ["git", "worktree", "remove", "--force"]:
-            registered.clear()
-        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
-
-    profile._remove_target_worktree(
-        tmp_path / "repository",
-        run_root,
-        name="candidate",
-        run_command=fake_run,
-    )
-
-    assert outside.is_dir()
-    assert not (
-        tmp_path / "original-attempts" / "attempt-0001" / ".candidate-cleanup"
-    ).exists()
-
-
-def test_remove_target_worktree_preserves_unrelated_stale_registration(
-    tmp_path: Path,
-) -> None:
-    run_root = tmp_path / "run"
-    target = run_root / "candidate"
-    target.mkdir(parents=True)
-    registered = {str(target.resolve()), str(tmp_path / "missing-unrelated")}
-    calls: list[list[str]] = []
-
-    def fake_run(command, **_kwargs):
-        calls.append(command)
-        if command == ["git", "worktree", "list", "--porcelain"]:
-            stdout = "".join(
-                f"worktree {path}\n\n" for path in sorted(registered)
-            )
-            return subprocess.CompletedProcess(
-                command, 0, stdout=stdout, stderr=""
-            )
-        registered.remove(str(target.resolve()))
-        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
-
-    profile._remove_target_worktree(
-        tmp_path / "repository",
-        run_root,
-        name="candidate",
-        run_command=fake_run,
-    )
-
-    assert ["git", "worktree", "remove", "--force", str(target)] in calls
-    assert registered == {str(tmp_path / "missing-unrelated")}
-    assert not target.exists()
-
-
-def test_remove_target_worktree_resumes_inode_bound_quarantine(
-    tmp_path: Path,
-) -> None:
-    run_root = tmp_path / "run"
-    quarantine = run_root / ".candidate-cleanup"
-    (quarantine / "nested").mkdir(parents=True)
-    (quarantine / "nested" / "evidence").write_bytes(b"retained until cleanup")
-    target = run_root / "candidate"
-    registered = {str(target.resolve())}
-
-    def fake_run(command, **_kwargs):
-        if command == ["git", "worktree", "list", "--porcelain"]:
-            stdout = "".join(f"worktree {path}\n\n" for path in registered)
-            return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
-        registered.clear()
-        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
-
-    profile._remove_target_worktree(
-        tmp_path / "repository",
-        run_root,
-        name="candidate",
-        run_command=fake_run,
-    )
-
-    assert registered == set()
-    assert not quarantine.exists()
-
-
-@pytest.mark.parametrize("name", ("control", "candidate"))
-def test_remove_target_worktree_finishes_unregistered_quarantine(
-    tmp_path: Path, name: str
-) -> None:
-    run_root = tmp_path / "run"
-    quarantine = run_root / f".{name}-cleanup"
-    (quarantine / "nested").mkdir(parents=True)
-    (quarantine / "nested" / "evidence").write_bytes(b"cleanup checkpoint")
-    unrelated = str(tmp_path / "unrelated-worktree")
-    commands: list[list[str]] = []
-
-    def fake_run(command, **_kwargs):
-        commands.append(command)
-        assert command == ["git", "worktree", "list", "--porcelain"]
-        return subprocess.CompletedProcess(
-            command,
-            0,
-            stdout=f"worktree {unrelated}\n\n",
-            stderr="",
-        )
-
-    profile._remove_target_worktree(
-        tmp_path / "repository",
-        run_root,
-        name=name,
-        run_command=fake_run,
-    )
-
-    assert commands == [["git", "worktree", "list", "--porcelain"]]
-    assert not quarantine.exists()
-
-
-def test_remove_target_worktree_exact_remove_preserves_newly_missing_registration(
-    tmp_path: Path,
-) -> None:
-    run_root = tmp_path / "run"
-    target = run_root / "candidate"
-    target.mkdir(parents=True)
-    unrelated_path = tmp_path / "unrelated-worktree"
-    unrelated_path.mkdir()
-    target_text = str(target.resolve())
-    unrelated_text = str(unrelated_path.resolve())
-    registered = {target_text, unrelated_text}
-    commands: list[list[str]] = []
-
-    def fake_run(command, **_kwargs):
-        commands.append(command)
-        if command == ["git", "worktree", "list", "--porcelain"]:
-            stdout = "".join(
-                f"worktree {path}\n\n" for path in sorted(registered)
-            )
-            return subprocess.CompletedProcess(
-                command, 0, stdout=stdout, stderr=""
-            )
-        assert command == [
-            "git",
-            "worktree",
-            "remove",
-            "--force",
-            target_text,
-        ]
-        unrelated_path.rmdir()
-        registered.remove(target_text)
-        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
-
-    profile._remove_target_worktree(
-        tmp_path / "repository",
-        run_root,
-        name="candidate",
-        run_command=fake_run,
-    )
-
-    assert registered == {unrelated_text}
-    assert not target.exists()
-    assert not (run_root / ".candidate-cleanup").exists()
-
-
 def test_remove_target_worktrees_attempts_both_when_first_cleanup_fails(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    repository = _init_real_worktree_repository(tmp_path)
     run_root = tmp_path / "run"
     for name in ("control", "candidate"):
-        (run_root / name).mkdir(parents=True)
-    calls = []
-    registered = {
-        str((run_root / name).resolve()) for name in ("control", "candidate")
-    }
+        _add_real_worktree(repository, run_root / name, branch=name)
+    original_move_admin = profile._move_worktree_admin_to_marker
 
-    def fake_run(command, **_kwargs):
-        calls.append(command)
-        if command == ["git", "worktree", "list", "--porcelain"]:
-            stdout = "".join(f"worktree {path}\n\n" for path in sorted(registered))
-            return subprocess.CompletedProcess(
-                command,
-                0,
-                stdout=stdout,
-                stderr="",
-            )
-        missing = {path for path in registered if not Path(path).exists()}
-        if any(path.endswith("candidate") for path in missing):
-            return subprocess.CompletedProcess(command, 1, stdout="", stderr="busy")
-        registered.difference_update(missing)
-        return subprocess.CompletedProcess(
-            command,
-            0,
-            stdout="",
-            stderr="",
-        )
+    def fail_candidate(common: Path, target: str, admin_name: str) -> None:
+        if target.endswith("/candidate"):
+            raise RuntimeError("target_worktree_unregister_failed")
+        original_move_admin(common, target, admin_name)
+
+    monkeypatch.setattr(
+        profile, "_move_worktree_admin_to_marker", fail_candidate
+    )
 
     with pytest.raises(RuntimeError, match="target_worktree_unregister_failed:candidate"):
         profile._remove_target_worktrees(
-            tmp_path / "repository",
+            repository,
             run_root,
             names=("candidate", "control"),
-            run_command=fake_run,
         )
 
-    assert len(
-        [command for command in calls if command[2:4] == ["remove", "--force"]]
-    ) == 2
-    assert (run_root / "candidate").is_dir()
+    assert (run_root / ".candidate-cleanup").is_dir()
     assert not (run_root / "control").exists()
+    assert profile._worktree_registrations(repository) == frozenset(
+        {str(repository.resolve()), str(run_root / "candidate")}
+    )
 
 
 def _write_fingerprint_tree(root: Path, *, candidate: bool) -> None:
