@@ -31,7 +31,7 @@ from tldw_chatbook.Chat.provider_continuation import (
     parse_provider_continuation_json,
 )
 from tldw_chatbook.Chat.console_transaction_contribution import (
-    ConsoleTransactionContribution,
+    _scoped_console_transaction_writer,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
@@ -236,12 +236,12 @@ class ConsoleDispatchRepository:
             "assistant": acceptance.assistant_message_id,
         }
         for contribution in acceptance.contributions:
-            self._write_contribution(
-                cursor,
-                contribution,
-                conversation_id=acceptance.conversation_id,
-                message_ids=message_ids,
-            )
+            with _scoped_console_transaction_writer(cursor) as writer:
+                contribution.write(
+                    writer=writer,
+                    conversation_id=acceptance.conversation_id,
+                    message_ids=message_ids,
+                )
         row = cursor.execute(
             _OWNER_SELECT + " WHERE checkpoint.assistant_message_id = ?",
             (acceptance.assistant_message_id,),
@@ -652,50 +652,6 @@ class ConsoleDispatchRepository:
             positions.add(position)
             normalized.append((position, data, mime_type, display_name))
         return tuple(sorted(normalized))
-
-    @staticmethod
-    def _write_contribution(
-        cursor: sqlite3.Cursor,
-        contribution: ConsoleTransactionContribution,
-        *,
-        conversation_id: str,
-        message_ids: Mapping[str, str],
-    ) -> None:
-        connection = cursor.connection
-        if not connection.in_transaction:
-            raise sqlite3.DatabaseError(
-                "A contribution requires the caller-owned transaction."
-            )
-
-        denied_actions = {
-            sqlite3.SQLITE_ATTACH,
-            sqlite3.SQLITE_DETACH,
-            sqlite3.SQLITE_TRANSACTION,
-            sqlite3.SQLITE_SAVEPOINT,
-        }
-
-        def transaction_guard(
-            action: int,
-            _arg1: str | None,
-            _arg2: str | None,
-            _database: str | None,
-            _source: str | None,
-        ) -> int:
-            if action in denied_actions:
-                return sqlite3.SQLITE_DENY
-            return sqlite3.SQLITE_OK
-
-        connection.set_authorizer(transaction_guard)
-        try:
-            contribution.write(
-                cursor=cursor,
-                conversation_id=conversation_id,
-                message_ids=message_ids,
-            )
-        finally:
-            connection.set_authorizer(None)
-        if not connection.in_transaction:
-            raise sqlite3.DatabaseError("Contribution ended the caller transaction.")
 
     @staticmethod
     def _valid_identifier(value: object) -> bool:

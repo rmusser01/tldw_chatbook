@@ -452,6 +452,23 @@ The same foundation repository owns explicit dispatch-checkpoint primitives:
   any tool executes;
 - no generic upsert may overwrite state or revision.
 
+Generic sidecar contributions do not receive the repository's raw
+`sqlite3.Cursor`. The transaction owner supplies a narrowly typed
+`ConsoleTransactionWriter` capability with only parameterized, insert-only
+`execute(...)` and `executemany(...)` operations. The writer exposes no cursor,
+connection, authorizer, transaction/savepoint control, ATTACH/DETACH path,
+commit/rollback method, repository/session/publication state, or connection
+factory. Control statements, multi-statement SQL, and non-INSERT SQL are rejected
+before delegation to the private caller-owned cursor. Contribution exceptions
+propagate so the surrounding `BEGIN IMMEDIATE` transaction rolls back every core
+and sidecar write.
+
+This is an application API capability boundary, not a hostile-Python sandbox.
+Arbitrary code can import modules, inspect private implementation details, or cause
+unrelated process side effects; contributions are trusted in-process components
+that must use only the public writer protocol. The contract prevents transaction
+escape through the capability the persistence API intentionally supplies.
+
 ### 3.4 First persistence and temporary sessions
 
 An empty durable-capable tab stages policy in memory. On first conversation

@@ -45,7 +45,7 @@
 | `tldw_chatbook/Chat/console_library_policy_coordinator.py` | Off-loop reads/writes, same-process holder publication, and execution-time fresh capture. |
 | `tldw_chatbook/Chat/console_dispatch_checkpoint.py` | Strict checkpoint model, canonical bounded JSON codecs, recovery/reconstructability contracts, and CAS result types. |
 | `tldw_chatbook/Chat/console_dispatch_repository.py` | Transactional accepted insert, state CAS, terminal settlement, ADR-063 handoff, and loader reconciliation. |
-| `tldw_chatbook/Chat/console_transaction_contribution.py` | Generic cursor-bound sidecar contribution protocol used by first persistence and ephemeral promotion. It names no activity/preparation event kind. |
+| `tldw_chatbook/Chat/console_transaction_contribution.py` | Generic insert-only transaction-writer capability and sidecar contribution protocol used by first persistence and ephemeral promotion. It names no activity/preparation event kind and exposes no raw cursor/connection. |
 | `tldw_chatbook/DB/migrations/chachanotes_v44_to_v45_console_library_policy.sql` | Nullable assistant state, device-local policy/checkpoint tables/index, and all four final Sync-v1 message triggers. |
 | `tldw_chatbook/DB/ChaChaNotes_DB.py` | v45 runner/migration, migration seed input, message sync proof, low-level transaction operations, and trajectory rows. |
 | `tldw_chatbook/config.py` and every production `CharactersRAGDB` opener | One sanitized migration-seed helper and shipped future-session defaults. DB code never reads TOML. |
@@ -447,7 +447,7 @@ class LibraryPreparationContribution:
     def write(
         self,
         *,
-        cursor: sqlite3.Cursor,
+        writer: ConsoleTransactionWriter,
         conversation_id: str,
         message_ids: Mapping[str, str],
     ) -> None:
@@ -503,7 +503,7 @@ class LibraryActivityContribution:
     def write(
         self,
         *,
-        cursor: sqlite3.Cursor,
+        writer: ConsoleTransactionWriter,
         conversation_id: str,
         message_ids: Mapping[str, str],
     ) -> None:
@@ -692,15 +692,27 @@ Validate exact allowed keys after normalization; do not use `setdefault` for any
 - Produces the exact methods below:
 
 ```python
+class ConsoleTransactionWriter(Protocol):
+    def execute(self, statement: str, parameters: tuple[object, ...], /) -> None:
+        """Execute one parameterized INSERT through the caller transaction."""
+
+    def executemany(
+        self,
+        statement: str,
+        parameter_rows: Iterable[tuple[object, ...]],
+        /,
+    ) -> None:
+        """Execute parameterized INSERT rows through the caller transaction."""
+
 class ConsoleTransactionContribution(Protocol):
     def write(
         self,
         *,
-        cursor: sqlite3.Cursor,
+        writer: ConsoleTransactionWriter,
         conversation_id: str,
         message_ids: Mapping[str, str],
     ) -> None:
-        """Write through the caller-owned cursor without committing."""
+        """Write through the caller-owned capability without committing."""
 
 class ConsoleLibraryPolicyRepository:
     def read(self, conversation_id: str) -> ConsoleLibraryPolicyReadResult:
@@ -751,7 +763,7 @@ class ConsoleLibraryPolicyCoordinator:
 - [ ] **Step 4: Write RED coordinator tests.** Use two holders for one conversation and two repositories over one file DB. Assert off-loop execution, same-process publication only after commit, fresh execution read defeating stale Allowed, unavailable read producing Never/Blocked, and a commit after capture affecting only the next capture.
 - [ ] **Step 5: Run RED.** Run the four new test files; expected: missing modules/contracts.
 - [ ] **Step 6: Implement minimal repositories and coordinator.** Use parameterized SQL and typed result variants. `settle_with_assistant` and `handoff_to_provider_continuation` must write message content/state/version/hash/sync intent and delete the expected checkpoint in one `transaction(immediate=True)`.
-- [ ] **Step 7: Implement the generic contribution seam.** Contributions receive only the active cursor, committed conversation ID candidate, and message-ID map; they cannot commit, publish session state, catch write errors, or obtain a second connection.
+- [ ] **Step 7: Implement the generic contribution seam.** Contributions receive only an insert-only `ConsoleTransactionWriter`, committed conversation ID candidate, and message-ID map. The writer accepts parameterized single-statement INSERT/INSERT-many operations and exposes no raw cursor/connection, authorizer, transaction/savepoint/ATTACH/DETACH control, commit/rollback, repository/session/publication state, or connection factory. Contribution errors propagate through the caller-owned `BEGIN IMMEDIATE` transaction. This is an API capability boundary for trusted in-process components, not a hostile-code sandbox.
 - [ ] **Step 8: Run GREEN, lint, and mutation probes.** Re-run Step 5; temporarily invert missing/error fail-closed and remove a checkpoint version predicate one at a time, confirm named tests fail, then restore the implementation. Run scoped Ruff.
 - [ ] **Step 9: Commit.** Commit `feat(console): add Library policy and dispatch repositories`.
 

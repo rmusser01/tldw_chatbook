@@ -114,6 +114,152 @@ The final 49-test GREEN run after restoration proves no mutation remained.
 - `Tests/Chat/test_console_library_policy_coordinator.py`
 - `Tests/Chat/test_console_transaction_contribution.py`
 
+## Fix round 2 — transaction-writer capability correction
+
+### Reviewer escape verification and superseded interpretation
+
+The remaining review finding was reproduced against fix-round-1 source before
+production edits. A contribution used the supplied raw cursor to call
+`cursor.connection.set_authorizer(None)`, inserted its sidecar, committed, and
+returned. The repository's `connection.in_transaction` postcondition raised only
+after the irreversible commit. The regression failed with two persisted message rows
+instead of zero.
+
+This evidence supersedes fix round 1's Finding 8 contract interpretation and its
+authorizer-based enforcement claim. The raw cursor itself supplied the public
+authorizer mutator, so the authorizer could not be a capability boundary. The
+historical section below is retained as the evidence available during that round;
+the final contract and implementation are the writer capability described here.
+
+Before production edits, the frozen interface was corrected consistently in the
+design specification, implementation plan/interface ledger (including the later
+preparation and activity contributions), ADR-079, and Task 6 brief.
+
+### Corrected capability design
+
+`ConsoleTransactionContribution.write(...)` now receives a
+`ConsoleTransactionWriter`, conversation ID, and message-ID map. It no longer
+receives `sqlite3.Cursor`.
+
+The writer exposes only:
+
+- `execute(statement, parameters)` for one parameterized INSERT; and
+- `executemany(statement, parameter_rows)` for parameterized INSERT rows.
+
+It rejects empty, multi-statement, non-INSERT, and non-parameterized SQL before
+delegating to the private cursor. There is no public cursor, connection, authorizer,
+transaction/savepoint, ATTACH/DETACH, commit/rollback, connection-factory,
+repository, session, or publication capability. A new scoped writer is supplied to
+each contribution and revoked when the callback returns or raises, so retaining the
+object cannot create a later transaction. Contribution exceptions continue to
+propagate through the caller-owned `BEGIN IMMEDIATE` transaction.
+
+This is an application API capability boundary for trusted in-process components,
+not a hostile-Python sandbox. Python reflection, arbitrary imports, and unrelated
+global/process side effects remain outside this protocol's claim. The correction
+removes the temporary SQLite authorizer rather than representing it as a security
+boundary it cannot provide.
+
+### RED evidence
+
+RED was captured in two layers before production implementation:
+
+1. The exact old-boundary exploit ran against the raw cursor implementation and
+   failed at the rollback assertion because `2` message rows remained committed.
+2. After the complete wished-for writer suite was authored, the combined four-file
+   run stopped at the intended collection error:
+
+   ```text
+   ImportError: cannot import name 'ConsoleTransactionWriter'
+   1 error, 1 warning
+   ```
+
+The new tests cover the public capability shape, callback-scope revocation,
+single-row and batch parameterized INSERTs, the clear-authorizer/commit exploit,
+direct commit/rollback/BEGIN/savepoint/release/ATTACH/DETACH attempts,
+UPDATE/DELETE, unparameterized INSERT, multi-statement INSERT+COMMIT, and rollback
+when a later contribution raises after an earlier contribution wrote successfully.
+
+### GREEN and adjacent evidence
+
+The corrected contribution file completed with:
+
+```text
+19 passed, 1 warning in 3.43s
+```
+
+The unchanged authoritative four-file Task 6 command completed with:
+
+```text
+86 passed, 1 warning in 10.95s
+```
+
+The narrow adjacent compatibility suite remained green:
+
+```text
+118 passed, 1 warning in 13.75s
+```
+
+The warning is the environment's existing `requests` dependency-version warning.
+No full suite was run. Every database was a pytest temporary database; the profile
+database was never opened.
+
+### Mutation evidence
+
+The 11 prior mutation probes remain recorded below at the exact fix-round-1 base;
+their policy, codec, ownership, attachment, coordinator, and dispatch-CAS guards
+were unchanged in this correction. A targeted mutation subset covered every altered
+writer-boundary property. Each mutant was applied alone with bytecode disabled,
+killed by the named real-behavior test, and restored before the final GREEN run:
+
+1. The repository leaked its raw cursor as the `writer`; the
+   clear-authorizer-and-commit case failed because it no longer raised and committed
+   through the leaked connection.
+2. `execute(...)` skipped statement validation; all 11 direct control/non-INSERT
+   cases failed, including transaction, savepoint, ATTACH/DETACH, UPDATE/DELETE,
+   unparameterized INSERT, and multi-statement SQL.
+3. Callback-finally revocation was removed;
+   `test_generic_contribution_receives_only_writer_and_committed_id_map` failed
+   because the retained writer remained usable after the callback.
+4. The repository swallowed a later contribution exception;
+   `test_later_contribution_failure_rolls_back_normal_parameterized_writes` failed
+   because no error propagated and the transaction committed.
+
+### Static, documentation, and self-review evidence
+
+- Scoped Ruff over all ten Task 6 production/test files: `All checks passed!`
+- `git diff --check`: passed with no output.
+- Documentation terminology check found `ConsoleTransactionWriter` and the same
+  capability-boundary language in the spec, plan/frozen ledger, ADR-079, and Task 6
+  brief. Both planned later contribution interfaces use `writer`, not `cursor`.
+- The only remaining documented `cursor: sqlite3.Cursor` contribution-adjacent
+  signature is `ConsoleDispatchRepository.insert_with_messages(...)`, whose cursor is
+  private to the transaction-owning repository path and is not supplied to a
+  contribution.
+- Production source contains no `set_authorizer`, SQLite authorizer action constant,
+  `writer=cursor`, or contribution `cursor=cursor` path.
+- The public writer protocol exposes exactly two write methods and has no public
+  connection-bearing state. The private implementation is slot-backed, validates
+  before delegation, and revokes in `finally`.
+- Normal insert-one/insert-many behavior, exception propagation, later-failure
+  rollback, core message/checkpoint rollback, and no post-callback reuse all execute
+  against real SQLite temporary databases.
+- Final diff review found no unresolved correctness concern. Insert-only DML is the
+  minimum needed by the current preparation/activity sidecars while preserving the
+  generic contribution protocol for later planned implementations.
+
+### Fix round 2 changed files
+
+- `.superpowers/sdd/2026-08-22-console-library-controls/task-6-brief.md`
+- `.superpowers/sdd/2026-08-22-console-library-controls/task-6-report.md`
+- `Docs/superpowers/plans/2026-08-22-console-library-controls.md`
+- `Docs/superpowers/specs/2026-08-22-console-library-controls-design.md`
+- `backlog/decisions/079-console-library-conversation-authority.md`
+- `tldw_chatbook/Chat/console_transaction_contribution.py`
+- `tldw_chatbook/Chat/console_dispatch_repository.py`
+- `Tests/Chat/test_console_transaction_contribution.py`
+
+
 ## Fix round 1 — Important review findings
 
 ### Finding verification and contract interpretation

@@ -197,6 +197,15 @@ query or source identity and owns the persistent sent-turn disclosure. A
 cancelled preparation persists neither the transient echo nor the sidecar. The
 one-shot bypass never changes future policy.
 
+Sidecar contributions participate through an insert-only
+`ConsoleTransactionWriter`, not a raw `sqlite3.Cursor`. The persistence owner keeps
+the cursor private and supplies only parameterized single-row/batch INSERT methods;
+the capability exposes no connection, authorizer, transaction/savepoint or
+ATTACH/DETACH control, commit/rollback, connection factory, or publication/session
+state. Contribution exceptions propagate through the same caller-owned
+`BEGIN IMMEDIATE` transaction. This is a public API capability boundary for trusted
+in-process components, not a claim that Python code is a hostile-code sandbox.
+
 Assistant Library use is reviewable but is not evidence staging. Capture a
 bounded `library_activity` event in the existing device-local
 `message_trajectory_metadata` sidecar at the built-in Library provider result
@@ -278,6 +287,7 @@ accepted ADR-003, ADR-030, ADR-032, ADR-066, or ADR-067 in place.
 | Keep retrieval pause state in the mounted Screen | Navigation, shutdown, and queued background work could orphan a claim or lose staged state. Store ownership plus compare-and-set transitions makes recovery lifecycle-safe. |
 | Publish first-persistence ID/title before commit | A rolled-back SQLite transaction could leave the session pointing at a nonexistent conversation or carrying a title for a send that never happened. Publication is a post-commit effect. |
 | Create the assistant/recovery owner after USER commit | A crash between those writes would leave an accepted USER with no durable owner capable of recovery. The assistant placeholder and dispatch checkpoint belong in the same transaction. |
+| Pass the raw SQLite cursor to a generic contribution and try to police it with a temporary authorizer | The supplied cursor exposes its connection and authorizer mutator, so a contribution can clear the guard and commit irreversibly before a postcondition runs. An insert-only writer capability keeps transaction control out of the public contribution API. |
 | Store dispatch recovery in `message_trajectory_metadata` | That event ledger has no checkpoint revision column and ADR-067 exports its rows. A dedicated temporary table gives CAS, atomic settlement, and explicit non-export ownership. |
 | Update the terminal assistant and delete its checkpoint separately | A crash could hydrate Retry anyway beside a completed response or lose a Discard halfway through. One expected-revision settlement transaction makes the pair indivisible. |
 | Keep assistant generation state in memory while syncing the empty owner | Another device or export would receive a blank checkpoint-free assistant. A closed message field makes unresolved and empty-terminal rows inert and truthful across every projection. |
