@@ -49,6 +49,7 @@ from typing import Literal
 
 from tldw_chatbook.Utils.path_validation import validate_path
 from tldw_chatbook.Utils.sensitive_paths import (
+    is_git_metadata_write,
     SensitivePathContext,
     is_sensitive_path,
     refuses_new_directory_chain,
@@ -157,6 +158,15 @@ def resolve_workspace_path(
     if is_sensitive_path(resolved, context=context):
         raise LocalToolError(
             f"Refused: '{path}' is a protected path and cannot be {verb}"
+        )
+    if intent == "write" and is_git_metadata_write(resolved):
+        # TASK-19700: the upstream cause of TASK-16801's four
+        # repository-supplied argv vectors. Write-only and checked here
+        # rather than folded into `is_sensitive_path`, which also governs
+        # reads -- reading repository state stays legitimate.
+        raise LocalToolError(
+            f"Refused: '{path}' is inside a repository's .git metadata and "
+            f"cannot be {verb}"
         )
     if intent == "write" and refuses_new_directory_chain(
         resolved.parent, context=context
