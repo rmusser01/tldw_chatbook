@@ -622,11 +622,14 @@ def _model_timing_records(
     *, m: _Msg, row: Any, turn_id: str
 ) -> tuple[TrajectoryRecord, ...]:
     """Expose the three model observations already recorded by one message row."""
+    metadata = _parse_payload(_field(row, "payload_json")) or {}
+    if metadata.get("trace_version") != 2:
+        return ()
     conversation_id = (
         _optional_text(_field(row, "conversation_id")) or m.conversation_id
     )
     source_seq = _optional_int(_field(row, "seq"))
-    observations = (
+    observations = [
         (
             "model_request_started",
             "started",
@@ -645,8 +648,10 @@ def _model_timing_records(
             _parse_timestamp(_field(row, "completed_at")),
             f"model-timing:{m.mid}:first-token",
         ),
-    )
-    suffixes = ("started", "first-token", "completed")
+    ]
+    if metadata.get("model_status") != "completed":
+        observations.pop()
+    suffixes = ("started", "first-token", "completed")[: len(observations)]
     records: list[TrajectoryRecord] = []
     for suffix, (kind, status, observed_at, parent_event_id) in zip(
         suffixes, observations
@@ -999,11 +1004,13 @@ def _records_from_agent_steps(steps: Iterable[Any]) -> list[TrajectoryRecord]:
     records: list[TrajectoryRecord] = []
     for step in steps:
         run_id = _optional_text(_field(step, "run_id"))
-        source_seq = _optional_int(_field(step, "index"))
-        if source_seq is None:
-            source_seq = _optional_int(_field(step, "seq"))
-        if not run_id or source_seq is None:
+        step_index = _optional_int(_field(step, "index"))
+        if step_index is None:
+            step_index = _optional_int(_field(step, "seq"))
+        if not run_id or step_index is None:
             continue
+        owner_seq = _optional_int(_field(step, "owner_seq"))
+        source_seq = owner_seq if owner_seq is not None else step_index
         kind = _optional_text(_field(step, "kind")) or "agent_step"
         summary = _optional_text(_field(step, "summary")) or ""
         created_at = _parse_timestamp(_field(step, "created_at"))
@@ -1049,7 +1056,7 @@ def _records_from_agent_steps(steps: Iterable[Any]) -> list[TrajectoryRecord]:
                 payload=dict(payload) if payload else None,
                 variants=(),
                 depth=1,
-                event_id=f"agent-step:{run_id}:{source_seq}",
+                event_id=f"agent-step:{run_id}:{step_index}",
                 conversation_id=_optional_text(_field(step, "conversation_id")),
                 source_seq=source_seq,
                 label=_event_label(kind),
@@ -1059,9 +1066,21 @@ def _records_from_agent_steps(steps: Iterable[Any]) -> list[TrajectoryRecord]:
                 run_id=run_id,
                 parent_event_id=(
                     _optional_text(_field(step, "parent_event_id"))
+                    or (
+                        f"agent-step:{run_id}:{_field(step, 'parent_step_index')}"
+                        if _field(step, "parent_step_index") is not None
+                        else None
+                    )
                     or f"agent-run:{run_id}"
                 ),
-                source_event_id=_optional_text(_field(step, "source_event_id")),
+                source_event_id=(
+                    _optional_text(_field(step, "source_event_id"))
+                    or (
+                        f"agent-step:{run_id}:{_field(step, 'source_step_index')}"
+                        if _field(step, "source_step_index") is not None
+                        else None
+                    )
+                ),
                 replacement_event_id=_optional_text(
                     _field(step, "replacement_event_id")
                 ),
@@ -1136,53 +1155,7 @@ def _records_from_retrieval_runs(runs: Iterable[Any]) -> list[TrajectoryRecord]:
             sensitivity=_optional_text(_field(run, "sensitivity"))
             or "retrieval_metadata",
         )
-        if not bool(_field(run, "trace_lifecycle")):
-            records.append(base)
-            continue
-        started = replace(
-            base,
-            kind="retrieval_started",
-            event_id=f"retrieval-run:{run_id}:started",
-            label="Retrieval started",
-            status="started",
-            completed_at=None,
-            field_states={"payload": "omitted", "observed_at": "observed"},
-        )
-        selected = replace(
-            base,
-            kind="retrieval_candidates_selected",
-            event_id=f"retrieval-run:{run_id}:candidates",
-            label="Retrieval candidates selected",
-            status="observed",
-            step_started_at=None,
-            completed_at=None,
-            parent_event_id=started.event_id,
-            observed_at=None,
-            field_states={"payload": "omitted", "observed_at": "not_available"},
-        )
-        outcome_status = base.status or "unknown"
-        outcome_kind = (
-            "retrieval_completed"
-            if outcome_status in {"complete", "completed", "succeeded"}
-            else "retrieval_failed"
-            if outcome_status in {"error", "failed"}
-            else "retrieval_outcome"
-        )
-        outcome = replace(
-            base,
-            kind=outcome_kind,
-            event_id=f"retrieval-run:{run_id}:outcome",
-            label=_event_label(outcome_kind),
-            parent_event_id=selected.event_id,
-            observed_at=base.completed_at,
-            field_states={
-                "payload": "omitted",
-                "observed_at": (
-                    "observed" if base.completed_at is not None else "not_available"
-                ),
-            },
-        )
-        records.extend((base, started, selected, outcome))
+        records.append(base)
     return records
 
 
@@ -1552,6 +1525,8 @@ def _marker_records(rec: Any, *, turn_id: str) -> tuple[TrajectoryRecord, ...]:
         field_states={"payload": "not_available", "observed_at": "observed"},
     )
     status = marker.status or "unknown"
+    if status not in {"succeeded", "failed", "cancelled"}:
+        return (marker, started)
     terminal_kind = {
         "succeeded": "compaction_completed",
         "failed": "compaction_failed",

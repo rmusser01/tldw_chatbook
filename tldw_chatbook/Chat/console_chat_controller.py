@@ -3663,6 +3663,23 @@ class ConsoleChatController:
                     provider_messages,
                     citation_context,
                 )
+            if citation_context and echoed_user is not None:
+                self.store.record_trace_event(
+                    session.id,
+                    anchor_message_id=echoed_user.id,
+                    event_kind="context_attached",
+                    summary="Retrieved context attached",
+                    status="completed",
+                    sensitivity="system_context",
+                )
+                self.store.record_trace_event(
+                    session.id,
+                    anchor_message_id=echoed_user.id,
+                    event_kind="context_injected",
+                    summary="Retrieved context injected into provider request",
+                    status="completed",
+                    sensitivity="system_context",
+                )
             if origin is ConsoleSubmissionOrigin.AGENT_WAKE:
                 # The one-shot prefill is USER-staged state; a wake must
                 # not consume (and thereby destroy) it.
@@ -7138,8 +7155,15 @@ class ConsoleChatController:
             replacement_event_id=(
                 f"message:{new_message.persisted_message_id}"
                 if new_message.persisted_message_id is not None
-                else None
+                else f"console-message:{new_message.id}"
             ),
+            field_states={
+                "replacement_event_id": (
+                    "observed"
+                    if new_message.persisted_message_id is not None
+                    else "not_available"
+                )
+            },
         )
         return await self._stream_assistant_response(
             resolution=resolution,
@@ -9233,6 +9257,24 @@ class ConsoleChatController:
         provider = self._rag_capture_provider
         if provider is None:
             return None, None, None, None
+        session_id = turn_context.session_id if turn_context is not None else None
+        anchor_message_id = (
+            self.store.active_leaf(session_id) if session_id is not None else None
+        )
+
+        def record(event_kind: str, summary: str, status: str) -> None:
+            if session_id is None or anchor_message_id is None:
+                return
+            self.store.record_trace_event(
+                session_id,
+                anchor_message_id=anchor_message_id,
+                event_kind=event_kind,
+                summary=summary,
+                status=status,
+                sensitivity="retrieval_metadata",
+            )
+
+        record("retrieval_started", "Retrieval started", "started")
         try:
             parameters = inspect.signature(provider).parameters
             accepts_context = any(
@@ -9256,12 +9298,14 @@ class ConsoleChatController:
             else:
                 captured = await provider(draft)
         except asyncio.CancelledError:
+            record("retrieval_failed", "Retrieval cancelled", "cancelled")
             raise
         except Exception:
             logger.error(
                 "Console RAG capture unavailable; "
                 f"reason=capture_provider_failure; draft_length={len(draft)}"
             )
+            record("retrieval_failed", "Retrieval failed", "failed")
             return None, None, None, None
         captured_context = getattr(captured, "context", None)
         context = (
@@ -9281,6 +9325,12 @@ class ConsoleChatController:
             if isinstance(captured_prompt_id, str) and captured_prompt_id.strip()
             else None
         )
+        if prompt_evidence_set_id is not None:
+            record(
+                "retrieval_candidates_selected",
+                "Retrieval candidates selected",
+                "completed",
+            )
         captured_repair_contract = getattr(
             captured,
             "citation_repair_contract",
@@ -9293,6 +9343,7 @@ class ConsoleChatController:
             and captured_repair_contract.evidence_context == context
             else None
         )
+        record("retrieval_completed", "Retrieval completed", "completed")
         return context, builder, prompt_evidence_set_id, repair_contract
 
     @staticmethod
@@ -10427,15 +10478,6 @@ class ConsoleChatController:
             )
             if context_block is not None:
                 return context_block
-        if any(row.get("role") == "system" for row in provider_messages):
-            self.store.record_trace_event(
-                owner_id,
-                anchor_message_id=assistant_message_id,
-                event_kind="context_injected",
-                summary="Context injected into provider request",
-                status="completed",
-                sensitivity="system_context",
-            )
         # TASK-14811.2: the real gateway now owns exact capacity resolution,
         # whole-unit windowing, provider serialization, accounting, and
         # dispatch as one immutable artifact. Do not pre-trim production
@@ -11079,6 +11121,14 @@ class ConsoleChatController:
         )
         retry_prepared = False
         emitted_content = False
+        if prepare_retry:
+            self.store.record_trace_event(
+                owner_id,
+                anchor_message_id=assistant_message_id,
+                event_kind="model_retry",
+                summary="Provider retry started",
+                status="retrying",
+            )
         try:
             provider_stream = self.provider_gateway.stream_chat(
                 resolution,
@@ -11089,6 +11139,16 @@ class ConsoleChatController:
                 if not chunk:
                     continue
                 if cancel_event.is_set():
+                    self.store.record_trajectory_timing(
+                        assistant_message_id, model_status="cancelled"
+                    )
+                    self.store.record_trace_event(
+                        owner_id,
+                        anchor_message_id=assistant_message_id,
+                        event_kind="model_cancelled",
+                        summary="Provider request cancelled",
+                        status="cancelled",
+                    )
                     self._attach_stream_usage(
                         assistant_message_id, stream_signals, resolution, partial=True
                     )
@@ -11120,6 +11180,16 @@ class ConsoleChatController:
                 if chunk:
                     emitted_content = True
             if cancel_event.is_set():
+                self.store.record_trajectory_timing(
+                    assistant_message_id, model_status="cancelled"
+                )
+                self.store.record_trace_event(
+                    owner_id,
+                    anchor_message_id=assistant_message_id,
+                    event_kind="model_cancelled",
+                    summary="Provider request cancelled",
+                    status="cancelled",
+                )
                 self._attach_stream_usage(
                     assistant_message_id, stream_signals, resolution, partial=True
                 )
@@ -11135,6 +11205,16 @@ class ConsoleChatController:
                 self._consume_one_shot_prefill(assistant_message_id, one_shot_used)
                 return ConsoleSubmitResult(True, True, stopped.content)
             if not emitted_content:
+                self.store.record_trajectory_timing(
+                    assistant_message_id, model_status="failed"
+                )
+                self.store.record_trace_event(
+                    owner_id,
+                    anchor_message_id=assistant_message_id,
+                    event_kind="model_error",
+                    summary="Provider stream ended without content",
+                    status="failed",
+                )
                 try:
                     failed = self.store.get_message(assistant_message_id)
                 except KeyError:
@@ -11182,6 +11262,9 @@ class ConsoleChatController:
                         one_shot_used,
                     )
                     return ConsoleSubmitResult(True, True, selection.selected_body)
+            self.store.record_trajectory_timing(
+                assistant_message_id, model_status="completed"
+            )
             self._attach_stream_usage(
                 assistant_message_id, stream_signals, resolution, partial=False
             )
@@ -11200,6 +11283,16 @@ class ConsoleChatController:
             return ConsoleSubmitResult(True, True, completed.content)
         except asyncio.CancelledError:
             if cancel_event.is_set():
+                self.store.record_trajectory_timing(
+                    assistant_message_id, model_status="cancelled"
+                )
+                self.store.record_trace_event(
+                    owner_id,
+                    anchor_message_id=assistant_message_id,
+                    event_kind="model_cancelled",
+                    summary="Provider request cancelled",
+                    status="cancelled",
+                )
                 self._attach_stream_usage(
                     assistant_message_id, stream_signals, resolution, partial=True
                 )
@@ -11220,6 +11313,16 @@ class ConsoleChatController:
             # system row; they must never be written into assistant message
             # content, which is persisted and replayed as model context.
             visible_copy = f"Provider stream failed: {describe_stream_failure(exc)}"
+            self.store.record_trajectory_timing(
+                assistant_message_id, model_status="failed"
+            )
+            self.store.record_trace_event(
+                owner_id,
+                anchor_message_id=assistant_message_id,
+                event_kind="model_error",
+                summary="Provider request failed",
+                status="failed",
+            )
             try:
                 if not prepare_retry or retry_prepared:
                     self.store.mark_message_failed(assistant_message_id)

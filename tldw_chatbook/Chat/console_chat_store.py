@@ -857,6 +857,7 @@ class ConsoleChatStore:
         # time, flushed -- remapped to the parent's persisted id -- when the
         # parent message persists. Keyed by the parent's NATIVE message id.
         self._pending_trajectory_tool_rows: dict[str, list[dict[str, Any]]] = {}
+        self._pending_trajectory_event_rows: dict[str, list[dict[str, Any]]] = {}
 
     def subscribe_message_completed(
         self,
@@ -4445,6 +4446,7 @@ class ConsoleChatStore:
         completed_at: float | None = None,
         model: str | None = None,
         provider: str | None = None,
+        model_status: str | None = None,
         flush: bool = False,
     ) -> None:
         """Merge timing facts for one message's trajectory capture; never raises.
@@ -4469,6 +4471,9 @@ class ConsoleChatStore:
                     stash[key] = value
             if completed_at is not None:
                 stash["completed_at"] = completed_at
+                stash.setdefault("model_status", "completed")
+            if model_status is not None:
+                stash["model_status"] = model_status
             if not flush:
                 return
             message = self._nodes_lookup(message_id)
@@ -4752,6 +4757,7 @@ class ConsoleChatStore:
         source_event_id: str | None = None,
         replacement_event_id: str | None = None,
         sensitivity: str = "diagnostic",
+        field_states: Mapping[str, str] | None = None,
     ) -> bool:
         """Append one payload-free mutation/context observation; never raises."""
         try:
@@ -4760,23 +4766,34 @@ class ConsoleChatStore:
             conversation_id = (
                 session.persisted_conversation_id if session is not None else None
             )
-            if conversation_id is None or message.persisted_message_id is None:
-                return False
             payload = {
                 "summary": summary,
                 "status": status,
                 "source_event_id": source_event_id,
                 "replacement_event_id": replacement_event_id,
-                "field_states": {"payload": "omitted"},
+                "field_states": {
+                    "payload": "omitted",
+                    **dict(field_states or {}),
+                },
                 "sensitivity": sensitivity,
             }
+            captured_at = time.time()
+            if conversation_id is None or message.persisted_message_id is None:
+                self._pending_trajectory_event_rows.setdefault(message.id, []).append(
+                    {
+                        "event_kind": event_kind,
+                        "payload_json": json.dumps(payload),
+                        "captured_at": captured_at,
+                    }
+                )
+                return True
             row = TrajectoryRowWrite(
                 message_id=message.persisted_message_id,
                 conversation_id=conversation_id,
                 turn_id=self._trajectory_turn_id(session_id, message),
                 seq=None,
                 event_kind=event_kind,
-                step_started_at=time.time(),
+                step_started_at=captured_at,
                 payload_json=json.dumps(payload),
             )
             return self.write_trajectory_rows([row])
@@ -4906,6 +4923,17 @@ class ConsoleChatStore:
                     completed_at=timing.get("completed_at"),
                     model=timing.get("model"),
                     provider=timing.get("provider"),
+                    payload_json=(
+                        json.dumps(
+                            {
+                                "trace_version": 2,
+                                "model_status": timing.get("model_status"),
+                            }
+                        )
+                        if event_kind == "assistant"
+                        and timing.get("step_started_at") is not None
+                        else None
+                    ),
                 )
             ]
             pending = self._pending_trajectory_tool_rows.pop(message.id, None)
@@ -4919,12 +4947,59 @@ class ConsoleChatStore:
                         captured_at=entry["captured_at"],
                     )
                 )
+            pending_events = self._pending_trajectory_event_rows.pop(message.id, None)
+            for entry in pending_events or ():
+                rows.append(
+                    TrajectoryRowWrite(
+                        message_id=message.persisted_message_id,
+                        conversation_id=conversation_id,
+                        turn_id=turn_id,
+                        seq=None,
+                        event_kind=entry["event_kind"],
+                        step_started_at=entry["captured_at"],
+                        payload_json=entry["payload_json"],
+                    )
+                )
             if self.write_trajectory_rows(rows):
                 self._trajectory_written_ids.add(message.id)
         except Exception as exc:
             logger.bind(message_id=message.id, error=repr(exc)).warning(
                 "trajectory_row_write_failed"
             )
+
+    def _flush_pending_trace_events_to_parent(
+        self, message: ConsoleChatMessage
+    ) -> None:
+        """Preserve terminal observations when an empty child has no DB row."""
+        pending = self._pending_trajectory_event_rows.pop(message.id, None)
+        if not pending:
+            return
+        session_id = self._message_session_index.get(message.id)
+        parent_native_id = self._native_parent_by_message.get(message.id)
+        parent = self._nodes_lookup(parent_native_id) if parent_native_id else None
+        session = self._sessions.get(session_id) if session_id else None
+        conversation_id = (
+            session.persisted_conversation_id if session is not None else None
+        )
+        if (
+            parent is None
+            or parent.persisted_message_id is None
+            or conversation_id is None
+        ):
+            return
+        rows = [
+            TrajectoryRowWrite(
+                message_id=parent.persisted_message_id,
+                conversation_id=conversation_id,
+                turn_id=message.turn_id or self._trajectory_turn_id(session_id, parent),
+                seq=None,
+                event_kind=entry["event_kind"],
+                step_started_at=entry["captured_at"],
+                payload_json=entry["payload_json"],
+            )
+            for entry in pending
+        ]
+        self.write_trajectory_rows(rows)
 
     def reset_stream_content(self, message_id: str) -> ConsoleChatMessage:
         """Discard streamed content once a turn is reclassified as a tool call.
@@ -5208,6 +5283,8 @@ class ConsoleChatStore:
             provider_visible=message.status != "failed",
         )
         self._persist_existing_message(message, preserve_provider_continuation=True)
+        if message.persisted_message_id is None:
+            self._flush_pending_trace_events_to_parent(message)
         return self._snapshot(message)
 
     def mark_message_failed(self, message_id: str) -> ConsoleChatMessage:
@@ -5249,6 +5326,8 @@ class ConsoleChatStore:
             provider_visible=message.status != "failed",
         )
         self._persist_existing_message(message, preserve_provider_continuation=True)
+        if message.persisted_message_id is None:
+            self._flush_pending_trace_events_to_parent(message)
         return self._snapshot(message)
 
     def mark_message_send_blocked(self, message_id: str) -> ConsoleChatMessage:

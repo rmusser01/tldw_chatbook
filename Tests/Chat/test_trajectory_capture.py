@@ -8,13 +8,16 @@ streamed assistant rows carry step-start/first-token/completion timing.
 """
 
 import json
+import asyncio
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, TrajectoryRowWrite
 
@@ -23,6 +26,37 @@ def _store_with_db(tmp_path):
     db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "test_client")
     store = ConsoleChatStore(persistence=ChatPersistenceService(db))
     return db, store
+
+
+class _TraceGateway:
+    def __init__(self, outcome: str = "success") -> None:
+        self.outcome = outcome
+
+    async def resolve_for_send(self, _selection):
+        return SimpleNamespace(
+            ready=True,
+            provider="llama_cpp",
+            model="test-model",
+            base_url="http://127.0.0.1:9099",
+            visible_copy="",
+        )
+
+    async def stream_chat(self, _resolution, _messages, **_kwargs):
+        if self.outcome == "error":
+            raise RuntimeError("provider secret must not persist")
+        if self.outcome == "success":
+            yield "done"
+
+
+class _CancelGateway(_TraceGateway):
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = asyncio.Event()
+
+    async def stream_chat(self, _resolution, _messages, **_kwargs):
+        self.started.set()
+        yield "partial"
+        await asyncio.Event().wait()
 
 
 def test_persisted_user_message_produces_user_trajectory_row(tmp_path):
@@ -187,6 +221,215 @@ def test_streamed_assistant_row_carries_timing(tmp_path):
         assert row.first_token_at is not None
         assert row.first_token_at - row.step_started_at > 0
         assert row.completed_at >= row.first_token_at
+        assert json.loads(row.payload_json) == {
+            "model_status": "completed",
+            "trace_version": 2,
+        }
+    finally:
+        db.close()
+
+
+def test_pending_trace_event_flushes_with_new_assistant_owner(tmp_path):
+    db, store = _store_with_db(tmp_path)
+    try:
+        session = store.ensure_session(title="Trajectory")
+        conversation_id = store.persist_session_if_needed(session.id)
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="go",
+            persist=True,
+        )
+        assistant = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="",
+            persist=True,
+        )
+        assert assistant.persisted_message_id is None
+
+        assert store.record_trace_event(
+            session.id,
+            anchor_message_id=assistant.id,
+            event_kind="model_error",
+            summary="Provider request failed",
+            status="failed",
+        )
+        store.record_trajectory_timing(assistant.id, model_status="failed")
+        store.mark_message_failed(assistant.id)
+
+        rows = db.get_trajectory_rows(conversation_id)
+        assert [row.event_kind for row in rows] == ["user", "model_error"]
+        assert rows[-1].message_id == rows[0].message_id
+        assert json.loads(rows[-1].payload_json)["field_states"] == {
+            "payload": "omitted"
+        }
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_real_submit_captures_retrieval_and_context_at_owner_seams(tmp_path):
+    db, store = _store_with_db(tmp_path)
+    secret_context = "credential=sk-never-persist-this"
+
+    async def capture(_draft, _turn_context, **_kwargs):
+        return SimpleNamespace(
+            context=secret_context,
+            citation_builder=None,
+            prompt_evidence_set_id="prompt-set-1",
+            citation_repair_contract=None,
+        )
+
+    try:
+        session = store.ensure_session(title="Trace")
+        controller = ConsoleChatController(
+            store=store,
+            provider_gateway=_TraceGateway(),
+            rag_capture_provider=capture,
+        )
+        result = await controller.submit_draft("question")
+        assert result.accepted
+
+        conversation_id = next(
+            item.persisted_conversation_id
+            for item in store.sessions()
+            if item.id == session.id
+        )
+        rows = db.get_trajectory_rows(conversation_id)
+        kinds = [row.event_kind for row in rows]
+        for kind in (
+            "retrieval_started",
+            "retrieval_candidates_selected",
+            "retrieval_completed",
+            "context_attached",
+            "context_injected",
+        ):
+            assert kind in kinds
+        assert secret_context not in repr(rows)
+        context_rows = [row for row in rows if row.event_kind.startswith("context_")]
+        assert all(
+            json.loads(row.payload_json)["sensitivity"] == "system_context"
+            for row in context_rows
+        )
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ("empty", "error"))
+async def test_direct_provider_failure_is_truthful_and_has_no_completion(
+    tmp_path, outcome: str
+):
+    db, store = _store_with_db(tmp_path)
+    try:
+        session = store.ensure_session(title="Trace")
+        controller = ConsoleChatController(
+            store=store,
+            provider_gateway=_TraceGateway(outcome),
+        )
+        result = await controller.submit_draft("question")
+        assert result.accepted
+
+        conversation_id = next(
+            item.persisted_conversation_id
+            for item in store.sessions()
+            if item.id == session.id
+        )
+        rows = db.get_trajectory_rows(conversation_id)
+        kinds = [row.event_kind for row in rows]
+        assert "model_error" in kinds
+        assert "model_response_completed" not in kinds
+        assert "provider secret must not persist" not in repr(rows)
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_direct_provider_cancel_emits_cancel_without_completion(tmp_path):
+    db, store = _store_with_db(tmp_path)
+    gateway = _CancelGateway()
+    try:
+        session = store.ensure_session(title="Trace")
+        controller = ConsoleChatController(store=store, provider_gateway=gateway)
+        task = asyncio.create_task(controller.submit_draft("question"))
+        await gateway.started.wait()
+        await asyncio.sleep(0)
+        assert controller.stop_active_run(record_user_stop=False)
+        result = await task
+        assert result.accepted
+
+        conversation_id = next(
+            item.persisted_conversation_id
+            for item in store.sessions()
+            if item.id == session.id
+        )
+        rows = db.get_trajectory_rows(conversation_id)
+        kinds = [row.event_kind for row in rows]
+        assert "model_cancelled" in kinds
+        assert "model_response_completed" not in kinds
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_direct_provider_retry_emits_retry_at_dispatch_seam(tmp_path):
+    db, store = _store_with_db(tmp_path)
+    gateway = _TraceGateway("empty")
+    try:
+        session = store.ensure_session(title="Trace")
+        controller = ConsoleChatController(store=store, provider_gateway=gateway)
+        failed = await controller.submit_draft("question")
+        assert failed.assistant_message_id is not None
+
+        gateway.outcome = "success"
+        retried = await controller.retry_message(failed.assistant_message_id)
+        assert retried.accepted
+
+        conversation_id = next(
+            item.persisted_conversation_id
+            for item in store.sessions()
+            if item.id == session.id
+        )
+        kinds = [row.event_kind for row in db.get_trajectory_rows(conversation_id)]
+        assert "model_retry" in kinds
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_regenerate_uses_stable_replacement_identity_before_persistence(tmp_path):
+    db, store = _store_with_db(tmp_path)
+    try:
+        session = store.ensure_session(title="Trace")
+        store.persist_session_if_needed(session.id)
+        store.append_message(
+            session.id, role=ConsoleMessageRole.USER, content="question", persist=True
+        )
+        original = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="answer",
+            persist=True,
+        )
+        controller = ConsoleChatController(
+            store=store,
+            provider_gateway=_TraceGateway(),
+        )
+
+        result = await controller.regenerate_message(original.id)
+        assert result.accepted
+
+        conversation_id = next(
+            item.persisted_conversation_id
+            for item in store.sessions()
+            if item.id == session.id
+        )
+        rows = db.get_trajectory_rows(conversation_id)
+        row = next(row for row in rows if row.event_kind == "message_regenerated")
+        payload = json.loads(row.payload_json)
+        assert payload["replacement_event_id"].startswith("console-message:")
+        assert payload["field_states"]["replacement_event_id"] == "not_available"
     finally:
         db.close()
 

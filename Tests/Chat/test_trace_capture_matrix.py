@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 
 import pytest
@@ -79,6 +80,7 @@ def test_approved_event_family_matrix_projects_every_owned_observation() -> None
             completed_at=5.0,
             model="model",
             provider="provider",
+            payload_json=json.dumps({"trace_version": 2, "model_status": "completed"}),
         ),
         Sidecar("a1", "conv-1", "turn-1", 3, "user_feedback"),
         Sidecar("u1", "conv-1", "turn-1", 4, "message_edited"),
@@ -86,6 +88,22 @@ def test_approved_event_family_matrix_projects_every_owned_observation() -> None
         Sidecar("a1", "conv-1", "turn-1", 6, "branch_selected"),
         Sidecar("a1", "conv-1", "turn-1", 7, "context_attached"),
         Sidecar("a1", "conv-1", "turn-1", 8, "context_injected"),
+        Sidecar("a1", "conv-1", "turn-1", 9, "retrieval_started"),
+        Sidecar(
+            "a1",
+            "conv-1",
+            "turn-1",
+            10,
+            "retrieval_candidates_selected",
+            step_started_at=4.5,
+            payload_json=json.dumps(
+                {
+                    "field_states": {"payload": "omitted"},
+                    "sensitivity": "retrieval_metadata",
+                }
+            ),
+        ),
+        Sidecar("a1", "conv-1", "turn-1", 11, "retrieval_completed"),
     ]
     agent_steps = [
         {
@@ -208,11 +226,27 @@ def test_approved_event_family_matrix_projects_every_owned_observation() -> None
         by_kind["model_response_completed"].parent_event_id
         == by_kind["model_first_token"].event_id
     )
-    assert (
-        by_kind["retrieval_candidates_selected"].field_states["observed_at"]
-        == "not_available"
-    )
+    assert by_kind["retrieval_candidates_selected"].observed_at == 4.5
     assert by_kind["retrieval_candidates_selected"].sensitivity == "retrieval_metadata"
+
+
+def test_legacy_retrieval_aggregate_does_not_invent_lifecycle_observations() -> None:
+    records = _records(
+        retrieval_runs=[
+            {
+                "run_id": "legacy-rag",
+                "conversation_id": "conv-1",
+                "stage": "sealed_evidence",
+                "started_at": "2026-08-22T11:59:58Z",
+                "ended_at": "2026-08-22T11:59:59Z",
+                "status": "complete",
+                "trace_lifecycle": True,
+            }
+        ]
+    )
+
+    assert [record.kind for record in records] == ["retrieval_run"]
+    assert records[0].field_states["payload"] in {"omitted", "not_available"}
 
 
 @pytest.mark.parametrize(
@@ -252,3 +286,36 @@ def test_compaction_terminal_status_projects_distinct_outcome(
         "compaction_started",
         expected_kind,
     ]
+
+
+def test_running_compaction_does_not_invent_terminal_outcome() -> None:
+    records = _records(
+        messages=[
+            {
+                "id": "u1",
+                "conversation_id": "conv-1",
+                "sender": "user",
+                "content": "go",
+                "timestamp": 1,
+                "parent_message_id": None,
+                "deleted": False,
+            }
+        ],
+        compaction_records=[
+            {
+                "operation_id": "compact-running",
+                "conversation_id": "conv-1",
+                "purpose": "conversation_compaction",
+                "status": "running",
+                "started_at": 2,
+                "trace_lifecycle": True,
+            }
+        ],
+    )
+
+    assert {
+        record.kind for record in records if record.kind.startswith("compaction")
+    } == {
+        "compaction",
+        "compaction_started",
+    }

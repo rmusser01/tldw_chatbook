@@ -28,14 +28,14 @@ def _native_call(name: str, args: dict, call_id: str = "call-1") -> dict:
     ("decision", "decision_kind", "terminal_kind"),
     (
         ("approve_once", "approval_approved", "tool_succeeded"),
-        ("deny", "approval_denied", "tool_failed"),
+        ("deny", "approval_denied", None),
     ),
 )
 def test_real_agent_service_and_approval_hook_capture_ordered_lifecycle(
     tmp_path, monkeypatch, decision: str, decision_kind: str, terminal_kind: str
 ) -> None:
     target = tmp_path / "evidence.txt"
-    target.write_text("evidence", encoding="utf-8")
+    target.write_text("credential=sk-durable-secret", encoding="utf-8")
 
     import tldw_chatbook.Tools.file_operation_tools as file_tools
     import tldw_chatbook.Tools.workspace_file_roots as workspace_roots
@@ -106,11 +106,16 @@ def test_real_agent_service_and_approval_hook_capture_ordered_lifecycle(
         assert outcome.status == "done"
         assert approval_rounds == [("read_file",)]
         durable = db.get_run(run_id)
+        assert "sk-durable-secret" not in repr(durable)
         kinds = [step["kind"] for step in durable["steps"]]
         assert kinds.index("model_request_started") < kinds.index("tool_proposed")
         assert kinds.index("tool_proposed") < kinds.index("approval_requested")
         assert kinds.index("approval_requested") < kinds.index(decision_kind)
-        assert kinds.index(decision_kind) < kinds.index(terminal_kind)
+        if terminal_kind is None:
+            assert "tool_execution_started" not in kinds
+            assert "tool_failed" not in kinds
+        else:
+            assert kinds.index(decision_kind) < kinds.index(terminal_kind)
 
         snapshot = derive_trajectory(
             [],
@@ -125,10 +130,122 @@ def test_real_agent_service_and_approval_hook_capture_ordered_lifecycle(
             ],
         )
         records = [record for turn in snapshot.turns for record in turn.records]
+        joined_kinds = [record.kind for record in records]
+        expected = [
+            "model_request_started",
+            "model_response_completed",
+            "model",
+            "tool_proposed",
+            "approval_requested",
+            decision_kind,
+        ]
+        if terminal_kind is not None:
+            expected.extend(["tool_execution_started", terminal_kind])
+        positions = [joined_kinds.index(kind) for kind in expected]
+        assert positions == sorted(positions)
         proposal = next(record for record in records if record.kind == "tool_proposed")
         assert proposal.parent_event_id == f"agent-run:{run_id}"
         assert proposal.field_states["args"] == "omitted"
         assert proposal.sensitivity == "tool_content"
         assert str(target) not in repr(proposal)
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("diagnostic_fails", (False, True))
+def test_lifecycle_capture_failure_is_contained_and_diagnosed_when_writable(
+    tmp_path, monkeypatch, diagnostic_fails: bool
+) -> None:
+    db = AgentRunsDB(tmp_path / "agent-runs.db", client_id="test")
+    registry = ToolCatalogRegistry()
+    real_insert = db.insert_steps_at_indices
+
+    def fail_lifecycle(run_id, rows):
+        kind = rows[0][1].get("kind")
+        if kind == "model_request_started" or (
+            diagnostic_fails and kind == "capture_failed"
+        ):
+            raise RuntimeError("SECRET_CAPTURE_FAILURE")
+        return real_insert(run_id, rows)
+
+    monkeypatch.setattr(db, "insert_steps_at_indices", fail_lifecycle)
+    try:
+        service = AgentService(
+            db,
+            registry,
+            chat_call=lambda **_kwargs: {"choices": [{"message": {"content": "done"}}]},
+            review_tool_calls=lambda _calls, _run_id: {},
+        )
+        run_id, outcome = service.run_turn(
+            conversation_id="conv-1",
+            messages=[{"role": "user", "content": "go"}],
+            config=AgentConfig(model="model", system_prompt="system", allowed_tools=()),
+            api_endpoint="openai",
+        )
+
+        assert outcome.status == "done"
+        kinds = [step["kind"] for step in db.get_run(run_id)["steps"]]
+        assert ("capture_failed" in kinds) is (not diagnostic_fails)
+        assert "SECRET_CAPTURE_FAILURE" not in repr(db.get_run(run_id))
+    finally:
+        db.close()
+
+
+def test_repeated_same_tool_calls_keep_distinct_safe_durable_correlation(
+    tmp_path,
+) -> None:
+    gate = BuiltinToolGate(service=None)
+    provider = BuiltinToolProvider(gate=gate)
+    provider._tools["read_file"] = ReadFileTool()
+    registry = ToolCatalogRegistry()
+    registry.register_provider(provider)
+    secret_a = str(tmp_path / "SECRET_A.txt")
+    secret_b = str(tmp_path / "SECRET_B.txt")
+    replies = [
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            _native_call("read_file", {"file_path": secret_a}, "a"),
+                            _native_call("read_file", {"file_path": secret_b}, "b"),
+                        ],
+                    }
+                }
+            ]
+        },
+        {"choices": [{"message": {"content": "done"}}]},
+    ]
+    db = AgentRunsDB(tmp_path / "agent-runs.db", client_id="test")
+    try:
+        service = AgentService(
+            db,
+            registry,
+            chat_call=lambda **_kwargs: replies.pop(0),
+            review_tool_calls=lambda calls, _run_id: {
+                call.call_id: "deny" for call in calls
+            },
+        )
+        run_id, outcome = service.run_turn(
+            conversation_id="conv-1",
+            messages=[{"role": "user", "content": "read both"}],
+            config=AgentConfig(
+                model="model",
+                system_prompt="system",
+                allowed_tools=("read_file",),
+                native_tools=True,
+            ),
+            api_endpoint="openai",
+        )
+        assert outcome.status == "done"
+        durable = db.get_run(run_id)["steps"]
+        proposals = [step for step in durable if step["kind"] == "tool_proposed"]
+        assert {step["call_id"] for step in proposals} == {"a", "b"}
+        assert len({step["parent_event_id"] for step in proposals}) == 1
+        decisions = [step for step in durable if step["kind"] == "approval_denied"]
+        assert {step["call_id"] for step in decisions} == {"a", "b"}
+        assert all(step["parent_event_id"] for step in decisions)
+        assert secret_a not in repr(durable) and secret_b not in repr(durable)
     finally:
         db.close()

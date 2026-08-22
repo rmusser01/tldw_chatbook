@@ -481,6 +481,12 @@ class AgentStep:
     replacement_event_id: str | None = None
     field_states: dict[str, str] = field(default_factory=dict)
     sensitivity: str = ""
+    # Trace-v2 envelope fields. ``index`` remains the legacy control-step
+    # identity; owner_seq is the observation order across control + lifecycle.
+    owner_seq: int | None = None
+    call_id: str = ""
+    parent_step_index: int | None = None
+    source_step_index: int | None = None
 
 
 @dataclass(frozen=True)

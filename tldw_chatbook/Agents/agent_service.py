@@ -13,6 +13,7 @@ import dataclasses
 import functools
 import json
 import math
+import re
 import sys
 import threading
 import time
@@ -701,6 +702,63 @@ def _safe_exception_type(exc: Exception) -> str:
     except Exception:  # noqa: BLE001 — logging must remain non-load-bearing
         return "Exception"
     return name if isinstance(name, str) and name else "Exception"
+
+
+def _safe_agent_step_record(run_id: str, step: AgentStep) -> dict[str, Any]:
+    """Serialize one step without persisting tool payloads or local-only links."""
+    record = dataclasses.asdict(step)
+    states = dict(step.field_states)
+    if step.args is not None:
+        record["args"] = None
+        states["args"] = "omitted"
+    if step.result:
+        result = step.result[:2000]
+        lower = result.lower()
+        sensitive_result = step.tool_name.startswith("fs_") or step.tool_name in {
+            "read_file",
+            "write_file",
+            "list_directory",
+            "glob_files",
+            "grep_files",
+            "read_skill_file",
+            "run_skill_script",
+        }
+        sensitive_result = sensitive_result or any(
+            marker in lower
+            for marker in (
+                "api_key",
+                "api key",
+                "authorization:",
+                "bearer ",
+                "password",
+                "credential",
+                "secret",
+                "reasoning_content",
+                "chain of thought",
+                "sk-",
+            )
+        )
+        sensitive_result = sensitive_result or bool(
+            re.search(r"(?:^|\s)(?:/[^\s]+|[A-Za-z]:\\[^\s]+)", result)
+        )
+        record["result"] = "" if sensitive_result else result
+        states["result"] = "omitted" if sensitive_result else "summarized"
+    if step.tool_name and (step.args is not None or step.result):
+        record["summary"] = f"{step.tool_name} recorded"
+    if step.tool_name:
+        record["sensitivity"] = "tool_content"
+    record["field_states"] = states
+    record["parent_event_id"] = step.parent_event_id or (
+        f"agent-step:{run_id}:{step.parent_step_index}"
+        if step.parent_step_index is not None
+        else f"agent-run:{run_id}"
+    )
+    record["source_event_id"] = step.source_event_id or (
+        f"agent-step:{run_id}:{step.source_step_index}"
+        if step.source_step_index is not None
+        else None
+    )
+    return record
 
 
 def _default_chat_call():
@@ -2154,7 +2212,7 @@ class AgentService:
             for step in outcome.steps:
                 if not step.created_at:
                     step.created_at = safe_utc_timestamp(self.wall_clock)
-                step_dicts.append((step.index, dataclasses.asdict(step)))
+                step_dicts.append((step.index, _safe_agent_step_record(run_id, step)))
             self.db.insert_steps_at_indices(run_id, step_dicts)
         except Exception as exc:  # noqa: BLE001 — trace capture is best-effort
             logger.warning(
@@ -4212,7 +4270,7 @@ class AgentService:
             try:
                 if not step.created_at:
                     step.created_at = safe_utc_timestamp(self.wall_clock)
-                record = dataclasses.asdict(step)
+                record = _safe_agent_step_record(run_id, step)
                 self.db.insert_steps_at_indices(run_id, [(step.index, record)])
             except Exception as exc:  # noqa: BLE001 — trace capture is best-effort
                 logger.warning(
@@ -4228,7 +4286,7 @@ class AgentService:
         def observe_trace_step(step: AgentStep) -> None:
             """Persist lifecycle-only rows without changing legacy step callbacks."""
             try:
-                record = dataclasses.asdict(step)
+                record = _safe_agent_step_record(run_id, step)
                 self.db.insert_steps_at_indices(run_id, [(step.index, record)])
             except Exception as exc:  # noqa: BLE001 — trace capture is best-effort
                 logger.warning(
@@ -4238,6 +4296,33 @@ class AgentService:
                     step.index,
                     _safe_exception_type(exc),
                 )
+                # The existing run is still the durable owner. Record one
+                # payload-free replacement observation directly; never feed
+                # the diagnostic through this callback again.
+                diagnostic_index = 2_000_000 + max(0, step.index - 1_000_000)
+                diagnostic = AgentStep(
+                    index=diagnostic_index,
+                    kind="capture_failed",
+                    summary="Lifecycle capture failed",
+                    created_at=step.created_at,
+                    status="incomplete",
+                    owner_seq=step.owner_seq,
+                    source_step_index=step.index,
+                    field_states={"payload": "not_available"},
+                    sensitivity="diagnostic",
+                )
+                try:
+                    self.db.insert_steps_at_indices(
+                        run_id,
+                        [
+                            (
+                                diagnostic.index,
+                                _safe_agent_step_record(run_id, diagnostic),
+                            )
+                        ],
+                    )
+                except Exception:  # noqa: BLE001 — non-recursive containment
+                    logger.warning("could not persist agent capture diagnostic")
 
         deps = LoopDeps(
             call_model=call_model,
