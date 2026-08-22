@@ -20,6 +20,7 @@ from loguru import logger
 from . import Tool
 from ..Utils.path_validation import validate_path_multi
 from ..Utils.sensitive_paths import (
+    is_git_metadata_write,
     SensitivePathContext,
     is_sensitive_path,
     refuses_new_directory_chain,
@@ -628,6 +629,21 @@ class WriteFileTool(Tool):
                 return {
                     "file_path": file_path,
                     "error": f"Refused: '{file_path}' is a protected path and cannot be written",
+                }
+
+            # TASK-19700: the OTHER write family enforces this at
+            # `local_tool_impls.resolve_workspace_path`; this family has its
+            # own boundary, and the two drifting apart is exactly how the
+            # denylist came to be missing from all seven `fs_*` tools
+            # (TASK-19551). Write-only: reading repository state stays
+            # legitimate.
+            if is_git_metadata_write(path):
+                return {
+                    "file_path": file_path,
+                    "error": (
+                        f"Refused: '{file_path}' is inside a repository's "
+                        f".git metadata and cannot be written"
+                    ),
                 }
 
             # Check if we're overwriting an existing file

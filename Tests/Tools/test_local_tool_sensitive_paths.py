@@ -613,3 +613,159 @@ def test_resolve_workspace_path_still_confines_and_still_allows_hidden(tmp_path)
     assert resolve_workspace_path(".github", ws) == (ws / ".github").resolve()
     with pytest.raises(LocalToolError, match="outside the workspace root"):
         resolve_workspace_path("../x", ws)
+
+
+# ---------------------------------------------------------------------------
+# Shape 5: writes into a repository's own `.git/` metadata (TASK-19700).
+#
+# Surfaced by TASK-16801's git-modes arc, where a repository-supplied
+# `.git/config` or `.git/HEAD` was the precondition for FOUR proven
+# data-destruction vectors (an option-shaped remote or branch name reaching
+# git's argv; `remote.push`/`mirror`/`push.default` turning an ordinary push
+# into a forced update or a ref deletion). Those are all fixed defensively
+# inside the git engine; this is the upstream cause -- an agent that can
+# write `.git/` reconfigures git for EVERY feature that shells out to it.
+#
+# `.git` is a dotted component under the root, which ADR-032's
+# `allow_hidden=True` deliberately lets past confinement, so this depends
+# entirely on the write guard.
+# ---------------------------------------------------------------------------
+
+
+def _plant_repo(tmp_path: Path) -> Path:
+    """A workspace root that is a real-looking git repo (no git binary needed)."""
+    root = tmp_path / "repo"
+    (root / ".git").mkdir(parents=True)
+    (root / ".git" / "config").write_text("[core]\n\trepositoryformatversion = 0\n")
+    (root / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
+    return root
+
+
+def test_fs_write_refuses_rewriting_git_config(tmp_path):
+    root = _plant_repo(tmp_path)
+    before = (root / ".git" / "config").read_text()
+    message = _refused(
+        lambda: write_file(
+            ".git/config",
+            "[remote \"--force\"]\n\turl = https://example.invalid/x.git\n",
+            workspace_root=root,
+        ),
+        "fs_write(.git/config)",
+    )
+    assert ".git" in message
+    assert (root / ".git" / "config").read_text() == before, "config was rewritten"
+
+
+def test_fs_write_refuses_rewriting_git_head(tmp_path):
+    root = _plant_repo(tmp_path)
+    before = (root / ".git" / "HEAD").read_text()
+    message = _refused(
+        lambda: write_file(
+            ".git/HEAD", "ref: refs/heads/--mirror\n", workspace_root=root
+        ),
+        "fs_write(.git/HEAD)",
+    )
+    assert ".git" in message
+    assert (root / ".git" / "HEAD").read_text() == before, "HEAD was rewritten"
+
+
+def test_fs_write_refuses_a_nested_path_under_git(tmp_path):
+    """The guard is on ANY `.git` component, not just its direct children."""
+    root = _plant_repo(tmp_path)
+    (root / ".git" / "hooks").mkdir()
+    _refused(
+        lambda: write_file(
+            ".git/hooks/pre-commit", "#!/bin/sh\nexit 1\n", workspace_root=root
+        ),
+        "fs_write(.git/hooks/pre-commit)",
+    )
+    assert not (root / ".git" / "hooks" / "pre-commit").exists()
+
+
+def test_fs_write_refuses_the_dot_git_FILE_of_a_linked_worktree(tmp_path):
+    """A linked worktree carries `.git` as a FILE; rewriting it redirects the
+    whole repository, so the guard must not assume `.git` is a directory."""
+    root = tmp_path / "linked"
+    root.mkdir()
+    (root / ".git").write_text("gitdir: /elsewhere/.git/worktrees/x\n")
+    before = (root / ".git").read_text()
+    _refused(
+        lambda: write_file(".git", "gitdir: /attacker\n", workspace_root=root),
+        "fs_write(.git as a file)",
+    )
+    assert (root / ".git").read_text() == before
+
+
+def test_fs_edit_refuses_git_config(tmp_path):
+    """The guard sits at the shared boundary, so edit is covered too."""
+    root = _plant_repo(tmp_path)
+    _refused(
+        lambda: edit_file(
+            ".git/config",
+            "repositoryformatversion = 0",
+            "repositoryformatversion = 0\n\tfsmonitor = /tmp/evil",
+            workspace_root=root,
+        ),
+        "fs_edit(.git/config)",
+    )
+    assert "fsmonitor" not in (root / ".git" / "config").read_text()
+
+
+def test_fs_patch_refuses_git_config(tmp_path):
+    root = _plant_repo(tmp_path)
+    # A REAL unified diff -- the "*** Begin Patch" envelope is a different
+    # tool's format and this parser rejects it as `invalid_diff`, which
+    # would make this test pass without ever reaching the guard.
+    patch = "--- /dev/null\n+++ b/.git/hooks/pre-commit\n@@ -0,0 +1,1 @@\n+evil\n"
+    try:
+        result = patch_files(patch, workspace_root=root)
+    except LocalToolError as exc:
+        result = str(exc)
+    assert "invalid_diff" not in str(result), (
+        f"the patch payload never reached the guard: {result}"
+    )
+    assert ".git" in str(result), f"expected a .git refusal, got: {result}"
+    assert not (root / ".git" / "hooks" / "pre-commit").exists(), (
+        f"patch_files wrote into .git/: {result}"
+    )
+
+
+def test_fs_patch_control_the_same_shape_succeeds_outside_git(tmp_path):
+    """Proves the patch payload above is well-formed: the identical shape
+    aimed at an ordinary path must APPLY, so the refusal is the guard's
+    doing and not a malformed diff."""
+    root = _plant_repo(tmp_path)
+    patch = "--- /dev/null\n+++ b/notes.txt\n@@ -0,0 +1,1 @@\n+hello\n"
+    patch_files(patch, workspace_root=root)
+    assert (root / "notes.txt").read_text() == "hello\n"
+
+
+# -- the deliberate exceptions: ordinary tracked dotfiles stay writable ------
+
+
+def test_fs_write_still_allows_gitignore(tmp_path):
+    """`.gitignore` is an ordinary tracked file; refusing it would break
+    normal coding work. It only shares a name PREFIX with `.git`."""
+    root = tmp_path / "repo2"
+    (root / ".git").mkdir(parents=True)
+    write_file(".gitignore", "build/\n", workspace_root=root)
+    assert (root / ".gitignore").read_text() == "build/\n"
+
+
+def test_fs_write_still_allows_gitattributes_and_github_dir(tmp_path):
+    root = tmp_path / "repo3"
+    (root / ".git").mkdir(parents=True)
+    (root / ".github" / "workflows").mkdir(parents=True)
+    write_file(".gitattributes", "* text=auto\n", workspace_root=root)
+    write_file(".github/workflows/ci.yml", "name: ci\n", workspace_root=root)
+    assert (root / ".gitattributes").read_text() == "* text=auto\n"
+    assert (root / ".github" / "workflows" / "ci.yml").read_text() == "name: ci\n"
+
+
+def test_reads_under_git_are_unchanged_by_this_guard(tmp_path):
+    """Scope pin: TASK-19700 governs WRITES. Read behaviour is deliberately
+    untouched here so the change cannot quietly break an agent inspecting
+    repository state; the read-side question is tracked separately."""
+    root = _plant_repo(tmp_path)
+    out = read_file(".git/HEAD", workspace_root=root)
+    assert "refs/heads/main" in out

@@ -835,3 +835,48 @@ def refuses_new_directory_chain(
         if parent == node:
             return False
         node = parent
+
+
+#: The one directory (or, in a linked worktree, FILE) name that holds a
+#: repository's own metadata. Matched as an exact path COMPONENT, never as a
+#: prefix: `.gitignore`, `.gitattributes` and `.github/` are ordinary tracked
+#: files and stay writable (TASK-19700 policy).
+GIT_METADATA_COMPONENT = ".git"
+
+
+def is_git_metadata_write(path: Path) -> bool:
+    """Whether writing ``path`` would modify a repository's own git metadata.
+
+    TASK-19700. Surfaced by TASK-16801's git-modes arc: a repository-supplied
+    ``.git/config`` or ``.git/HEAD`` was the precondition for four proven
+    data-destruction vectors -- an option-shaped remote or branch name
+    reaching git's argv, and ``remote.push``/``remote.mirror``/
+    ``push.default=matching`` turning an ordinary push into a forced update
+    or a ref deletion. Each is fixed defensively inside the git engine, but
+    an agent that can write ``.git/`` reconfigures git for EVERY feature
+    that shells out to it, so the upstream cause is denied here.
+
+    Deliberately WRITE-only and deliberately NOT part of
+    :func:`is_sensitive_path`: that denylist governs reads as well, and an
+    agent reading repository state is legitimate (ADR-032 adopted
+    ``allow_hidden`` precisely so a coding agent can see dotfiles). The
+    read-side question -- ``.git/config`` can embed a credential in a remote
+    URL -- is tracked separately rather than smuggled in here.
+
+    Matching is on an exact path component, so the near-miss names that
+    share the prefix stay writable:
+
+    * refused: ``.git``, ``.git/config``, ``.git/hooks/pre-commit``, and the
+      ``.git`` FILE a linked worktree carries (rewriting it redirects the
+      whole repository, so a directory-only check would miss it);
+    * allowed: ``.gitignore``, ``.gitattributes``, ``.github/workflows/``.
+
+    Args:
+        path: An already-resolved absolute path (the callers resolve before
+            calling, so a symlink cannot smuggle a ``.git`` component past
+            this check).
+
+    Returns:
+        True when any component of ``path`` is exactly ``.git``.
+    """
+    return GIT_METADATA_COMPONENT in path.parts
