@@ -297,3 +297,69 @@ drains into whichever test happens to be tearing down. Count is stable (2 in
 `Tests/MCP/test_local_server_tools.py`,
 `Tests/MCP/test_gateway_runtime_tools.py`,
 `backlog/docs/lessons-testing-evidence.md`.
+
+## Review follow-up (Qodo, PR #1961)
+
+Qodo raised one finding — a rule violation, "Non-contiguous imports in the
+gateway test": `Tests/MCP/test_gateway_runtime_tools.py` split its import
+section with `gateway = pytest.importorskip("mcp_unified.gateway")` plus five
+attribute assignments, so the third-party and local groups were not contiguous
+and every local import carried `# noqa: E402`. The new `RuntimeSourceState`
+import had been added into that already-split section.
+
+The guard cannot simply be deleted — `mcp-unified` really is optional
+(`[mcp]` extra in `pyproject.toml`) and both `mcp_unified.gateway` and
+`tldw_chatbook.MCP.gateway_runtime` resolve it at module scope, so the skip has
+to run before the imports. It is now a probe-and-skip preamble placed *ahead of*
+the three import groups rather than between them:
+
+```python
+try:
+    import mcp_unified.gateway  # noqa: F401
+except ImportError:
+    import pytest
+
+    pytest.skip("mcp-unified extra not installed", allow_module_level=True)
+```
+
+`try`/`except` lines are exempt from pycodestyle's import-position rule and the
+handler body is indented, so nothing below is flagged: the file now has three
+contiguous blocks (stdlib / third-party incl. the direct `mcp_unified.gateway`
+symbol imports / local, alphabetised) and zero `# noqa: E402`. Confirmed with
+`ruff check --isolated --select E402,F401,F811` → "All checks passed!".
+
+**A conftest `collect_ignore` was tried first and rejected on evidence.** With
+`Tests/MCP/conftest.py` holding the guard, a directory run skipped the module
+correctly, but `pytest Tests/MCP/test_gateway_runtime_tools.py` — a path named
+explicitly on the command line — is *not* subject to `collect_ignore` or to
+`pytest_ignore_collect`, and produced `ModuleNotFoundError: No module named
+'mcp_unified'` → "1 error during collection". That is strictly worse than the
+`importorskip` it replaced, so the conftest was removed.
+
+**Guard proven to still guard.** Verified with a `-p` plugin that installs a
+`sys.meta_path` finder raising `ModuleNotFoundError` for `mcp_unified`:
+explicit-file run → `SKIPPED [1] ...:19: mcp-unified extra not installed`,
+`1 skipped`; directory run (`Tests/MCP/`) → same skip line, no collection error.
+Every `monkeypatch.setattr` target was re-resolved after the reorder
+(`local_server_tools.get_subscriptions_db_path`, `.SubscriptionsDB`,
+`.load_default_runtime_source_state`, and `runtime_policy.types.
+RuntimeSourceState`), and `import tldw_chatbook.MCP.local_server_tools as
+local_server_tools` was rewritten as `from tldw_chatbook.MCP import
+local_server_tools` — asserted to bind the identical module object, so the
+patches land where they did before.
+
+**Counts (unchanged by the fix).** `Tests/MCP/test_local_server_tools.py` +
+`Tests/MCP/test_gateway_runtime_tools.py` → 98 passed;
+`Tests/DB/test_core_sqlite_owner_privacy.py` +
+`Tests/Agents/test_tool_catalog_concurrency.py` → 92 passed; all four together
+→ 190 passed. Repo-wide `--collect-only -q` → 55619 collected, 1 error in
+`Tests/UI/test_library_file_notes_workspace.py`
+("function uses no argument 'push_phase'") — a pre-existing dev red in a file
+this branch does not touch (last changed by `d3833708a`).
+
+Noted, not fixed (out of scope, untouched file): under the same blocker,
+`Tests/MCP/test_tools_resources_prompts_real_methods.py` fails rather than skips
+— it does a bare in-test `from mcp_unified.gateway import GatewayRequestContext`
+with no guard, in two tests.
+
+**Modified files (review follow-up).** `Tests/MCP/test_gateway_runtime_tools.py`.

@@ -2,50 +2,64 @@
 
 from __future__ import annotations
 
+# `mcp-unified` ships in the optional `[mcp]` extra, so a plain checkout can
+# legitimately lack it. The skip has to run before the import section below --
+# both `mcp_unified.gateway` and `tldw_chatbook.MCP.gateway_runtime` resolve the
+# extra at module scope -- so it sits here, ahead of the three import groups,
+# rather than between them. The `pytest.importorskip` form used by the sibling
+# gateway modules splits third-party from local and forces E402 suppressions on
+# every import below it; this probe-and-skip keeps the groups contiguous while
+# producing the same module-level skip.
+try:
+    # Probe only; the symbols this module actually uses are imported below.
+    import mcp_unified.gateway  # noqa: F401
+except ImportError:  # pragma: no cover - only reachable without the extra
+    import pytest
+
+    pytest.skip("mcp-unified extra not installed", allow_module_level=True)
+
 import asyncio
 import copy
-from functools import partial
 import json
 import threading
+from functools import partial
 from typing import Any
 
 import pytest
 from loguru import logger
-
-gateway = pytest.importorskip(
-    "mcp_unified.gateway", reason="mcp-unified extra not installed"
+from mcp_unified.gateway import (
+    PROTOCOL_PROFILES,
+    GatewayLimits,
+    GatewayProtocolConnection,
+    GatewayRequestContext,
+    GatewayToolExecutionError,
 )
-GatewayRequestContext = gateway.GatewayRequestContext
-GatewayToolExecutionError = gateway.GatewayToolExecutionError
-GatewayProtocolConnection = gateway.GatewayProtocolConnection
-GatewayLimits = gateway.GatewayLimits
-PROTOCOL_PROFILES = gateway.PROTOCOL_PROFILES
 
-from tldw_chatbook.MCP.gateway_runtime import ChatbookGatewayRuntime  # noqa: E402
-from tldw_chatbook.Agents.agent_models import ToolResult  # noqa: E402
-from tldw_chatbook.Agents.local_tool_provider import (  # noqa: E402
+from tldw_chatbook.Agents.agent_models import ToolResult
+from tldw_chatbook.Agents.local_tool_provider import (
     LOCAL_DENY_REFUSAL,
     LOCAL_GATE_ERROR_REFUSAL,
     LOCAL_KILL_SWITCH_REFUSAL,
     LOCAL_TIMEOUT_REFUSAL,
 )
-from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB  # noqa: E402
-import tldw_chatbook.MCP.local_server_tools as local_server_tools  # noqa: E402
-from tldw_chatbook.MCP.local_server_tools import (  # noqa: E402
+from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+from tldw_chatbook.MCP import local_server_tools
+from tldw_chatbook.MCP.gateway_runtime import ChatbookGatewayRuntime
+from tldw_chatbook.MCP.local_server_tools import (
     EXTERNAL_NO_CALLBACK_REFUSAL,
     LocalToolRegistration,
     _local_agent_tool_registrations,
     build_server_local_provider,
 )
-from tldw_chatbook.MCP.permission_store import (  # noqa: E402
+from tldw_chatbook.MCP.permission_store import (
     MCPPermissionStore,
     definition_hash,
 )
-from tldw_chatbook.runtime_policy.types import RuntimeSourceState  # noqa: E402
-from tldw_chatbook.MCP.server import (  # noqa: E402
+from tldw_chatbook.MCP.server import (
     TldwMCPServer,
     _describe_local_tools,
 )
+from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
 
 BUILTIN_TOOL_NAMES = [
