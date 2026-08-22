@@ -58,10 +58,10 @@ away".
 
 ## Acceptance Criteria
 
-- [ ] The feed and API arms register in the same in-flight guard the URL arm
+- [x] The feed and API arms register in the same in-flight guard the URL arm
       uses, so a scheduler tick overlapping a manual "Check Now" runs the check
       once
-- [ ] An overlapping check produces exactly one alert notification and one set
+- [x] An overlapping check produces exactly one alert notification and one set
       of statistics — pinned by a test that actually overlaps the two triggers
 - [ ] The 22 `async def` methods no longer execute synchronous sqlite on the
       event loop
@@ -115,3 +115,36 @@ bundling a user-visible correctness bug (duplicate alert notifications), the
 `record_check_result` nests, and a leaked thread-local connection. Recommend
 splitting: (A) the in-flight guard + duplicate-alert test, (B) the sqlite
 offload, (C) transaction nesting + connection close.
+
+## Part A shipped (2026-08-21) — B and C still open
+
+**A (feed/API in-flight guard) is done.** Both arms now claim through the same
+`_IN_FLIGHT_URL_CHECKS` registry the url-family arms use, scoped to the whole
+source with a NUL-prefixed sentinel in the URL slot (no real URL can contain
+NUL, so it cannot collide with a url-family claim for the same subscription).
+
+The skip returns a `DISPOSITION_SKIPPED_IN_FLIGHT` disposition rather than the
+arm's usual `None`. That turned out to be the load-bearing half: without it,
+`_entirely_skipped_dispositions` would not match, `execute_run` would run the
+ordinary health path, and a turned-away check would take
+`record_check_result`'s SUCCESS branch -- resetting the auto-pause breaker,
+clearing `last_error` and stamping `last_successful_check` for a run that
+never contacted the source. Returning `[]` items with `None` dispositions
+would have been indistinguishable from a clean "nothing new" check.
+
+Two comments in the file asserted the old invariant ("feed/API runs can never
+skip", "`None` for the feed and API arms") and are corrected, not left to rot.
+
+Red-proofed on behaviour, not vocabulary: against the unfixed code the forced
+interleave fetches the feed **2 times for one overlap**. `Tests/Subscriptions/`
+755 passed.
+
+**Still open:**
+
+* **B** -- the 22 `async def` methods doing synchronous sqlite on the loop.
+  See this task's own busy_timeout measurement above: the 5s stall exposure is
+  writer-vs-writer only (WAL), but every one of the 22 still blocks the loop
+  for its own query duration.
+* **C** -- `transaction()` is not re-entrant and `record_check_result` nests
+  it, so the inner `commit()` durably commits the outer transaction early;
+  plus the leaked thread-local connection that never checkpoints the `-wal`.
