@@ -55,14 +55,27 @@ _LIBRARY_ITEM_TYPE_ACTION_NAMESPACE = {
     "collection": "library.collections",
 }
 
+# chunking-agent-tools (Task 4, spec §6): writing operations map to their OWN
+# registered action instead of the type-owned read. ``spec_save`` resolves to
+# the dedicated ``library.templates/save`` verb -- the Task-3 provisional
+# derived READ mapping had to stop the moment the save handler went live (a
+# live write resolving to a read action under policy would be wrong even
+# though the v7 CRUD validator still guards the write itself).
+_LIBRARY_TOOL_ACTION_OVERRIDES = {
+    "spec_save": "library.templates.save.local",
+}
+
 
 def _library_tool_action_id(descriptor: LibraryToolDescriptor) -> str:
-    """Map one Library descriptor to its type-owned local read action id.
+    """Map one Library descriptor to its policy action id.
 
-    list/search are browse-level reads; get is a detail-level read. Derived
-    from the descriptor table so the policy surface can never drift from the
-    tool contract.
+    list/search are browse-level reads; get is a detail-level read; writing
+    operations carry an explicit override above. Derived from the descriptor
+    table so the policy surface can never drift from the tool contract.
     """
+    override = _LIBRARY_TOOL_ACTION_OVERRIDES.get(descriptor.operation)
+    if override is not None:
+        return override
     action = "detail" if descriptor.operation == "get" else "list"
     namespace = _LIBRARY_ITEM_TYPE_ACTION_NAMESPACE[descriptor.item_type]
     return f"{namespace}.{action}.local"

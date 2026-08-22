@@ -1,4 +1,4 @@
-"""The media chunking agent tools' handlers (chunking-agent-tools Task 3).
+"""The media chunking agent tools' handlers (chunking-agent-tools Tasks 3-4).
 
 ``LocalMediaChunkToolService`` implements the descriptor-backed media
 chunk-tool operations (spec §4) behind the shared
@@ -15,10 +15,15 @@ chunk-tool operations (spec §4) behind the shared
   ``get_library_media_chunks`` (reuse-stored-chunks is THE read path;
   nothing re-chunks), with budget-bounded neighbors (§8.12), family
   disambiguation (§8.10), and the revision check (§8.9).
-* ``library_list_chunk_specs`` / ``library_save_chunk_spec`` /
-  ``library_rechunk_media`` -- not-yet payloads naming their own landing
-  task; the handlers land with Tasks 4-5 of this same change, so the
-  surface never ships a dead name that silently no-ops.
+* ``library_list_chunk_specs`` / ``library_save_chunk_spec`` (§4.3) -- the
+  agent view of the v7 chunking-template store (specs ARE templates,
+  ruling §8.3): a bounded listing carrying the AC-24a validity/reserved
+  decoration, and a create-or-update of CUSTOM templates through the
+  interop CRUD's validate-on-write gate. The validator's FULL errors array
+  rides the refusal payload (§8.15 -- agents self-correct), and a save runs
+  only under the ``library.templates.save.local`` policy action (spec §6).
+* ``library_rechunk_media`` -- not-yet payload naming its own landing task;
+  the handler lands with Task 5 of this same change.
 
 Error discipline mirrors the sibling services exactly: ``LibraryToolError``
 payloads, ``sqlite3.Error``/``OSError`` and unexpected exceptions scrubbed
@@ -32,6 +37,8 @@ import sqlite3
 from collections.abc import Mapping
 from typing import Any
 
+from loguru import logger
+
 from tldw_chatbook.Library.library_tool_contract import (
     DEFAULT_MAX_NODES,
     DISPLAY_NAME_MAX_BYTES,
@@ -40,6 +47,7 @@ from tldw_chatbook.Library.library_tool_contract import (
     ERROR_INVALID_ARGUMENT,
     ERROR_NOT_FOUND,
     ERROR_STORAGE_ERROR,
+    KEYWORDS_PER_ITEM_MAX,
     LIBRARY_TOOL_DESCRIPTORS,
     MAX_CHUNK_CONTEXT,
     MAX_MAX_NODES,
@@ -47,12 +55,15 @@ from tldw_chatbook.Library.library_tool_contract import (
     LibraryToolDescriptor,
     LibraryToolError,
     check_cursor_revision,
+    fit_page_payload,
     make_cursor,
     normalize_display_text,
     parse_cursor,
     parse_public_id,
     serialized_size,
+    validate_page_args,
 )
+from tldw_chatbook.runtime_policy.types import PolicyDeniedError
 
 #: The NULL chunk family's wire label (Task 2's backend uses the same
 #: rendering; the string round-trips back as the ``chunk_type`` filter).
@@ -62,10 +73,21 @@ _LEGACY_ENGINE_LABEL = "legacy"
 #: Spec §8.13's exact degradation hint.
 _RECHUNK_HINT = "no stored chunks — use library_rechunk_media to enable unit fetches"
 
-#: The tools whose handlers land with Tasks 4-5 of this change.
+#: Spec §6: the policy action the chunk-spec save tool runs under. Registered
+#: in ``runtime_policy/registry.py`` (the ``library.templates`` resource on
+#: the local Library agent-tools capability); the MCP local-control mapping
+#: resolves this exact id for the tool.
+SPEC_SAVE_POLICY_ACTION_ID = "library.templates.save.local"
+
+#: Description the CRUD demands on CREATE (it refuses empty ones); the tool
+#: schema keeps the field optional, so an unsupplied one on create lands as
+#: this stable, honest default rather than a refusal.
+_DEFAULT_SPEC_DESCRIPTION = (
+    "Custom chunking spec saved through the library_save_chunk_spec tool."
+)
+
+#: The tools whose handlers land with Task 5 of this change.
 _PENDING_TOOL_LANDINGS = {
-    "library_list_chunk_specs": "the chunk-spec listing lands with the spec tools task in this change",
-    "library_save_chunk_spec": "saving chunk specs lands with the spec tools task in this change",
     "library_rechunk_media": "the re-chunk tool lands with the re-chunk task in this change",
 }
 
@@ -152,10 +174,13 @@ class LocalMediaChunkToolService:
         media_db: Any = None,
         media_reading_service: Any = None,
         template_interop: Any = None,
+        policy_enforcer: Any = None,
     ) -> None:
         self._media_db = media_db
         self._reading = media_reading_service
         self._templates = template_interop
+        self._policy_enforcer = policy_enforcer
+        self._template_listing: Any = None
 
     # -- Entry point ---------------------------------------------------------
 
@@ -189,6 +214,10 @@ class LocalMediaChunkToolService:
             return self._structure(arguments)
         if tool_name == "library_get_media_chunk":
             return self._fetch_chunk(arguments)
+        if tool_name == "library_list_chunk_specs":
+            return self._list_specs(arguments)
+        if tool_name == "library_save_chunk_spec":
+            return self._save_spec(arguments)
         raise _invalid(f"unknown Library tool: {tool_name!r}")
 
     @staticmethod
@@ -598,5 +627,299 @@ class LocalMediaChunkToolService:
             "metadata",
         )}
 
+    # -- library_list_chunk_specs / library_save_chunk_spec (spec §4.3) ------
 
-__all__ = ["LocalMediaChunkToolService"]
+    def _require_templates(self) -> Any:
+        """The interop handle, or the named degrade payload."""
+        if self._templates is None:
+            raise LibraryToolError(
+                ERROR_FEATURE_UNAVAILABLE,
+                "The local chunk-spec (template) store is not available in"
+                " this deployment.",
+            )
+        return self._templates
+
+    def _decorated_templates(self) -> list[dict[str, Any]]:
+        """The v7 store through the AC-24a decorated listing (no new storage).
+
+        ``LocalRAGAdminService._decorate_template_record`` is the one flag
+        surface (``template_valid`` / ``template_validation_errors`` /
+        ``name_reserved``) -- consuming it here keeps the agent view from
+        drifting from the UI's. Lazy import: ``RAG_Admin`` pulls the local
+        admin stack, heavier than this module's own chain.
+        """
+        if self._template_listing is None:
+            from ..RAG_Admin.local_rag_admin_service import LocalRAGAdminService
+
+            self._template_listing = LocalRAGAdminService(
+                media_db=None, chunking_service=self._require_templates()
+            )
+        return list(self._template_listing.list_templates())
+
+    def _decorated_template_by_id(self, template_id: int) -> dict[str, Any]:
+        """One decorated record by row id (save re-reads through the same
+        AC-24a surface the listing uses)."""
+        listing = self._decorated_templates()
+        for record in listing:
+            if int(record.get("id") or -1) == int(template_id):
+                return record
+        raise _not_found()
+
+    @staticmethod
+    def _spec_method(record: Mapping[str, Any]) -> str | None:
+        """``chunking.method`` from the stored body, tolerant of bad JSON."""
+        raw = record.get("template_json")
+        body = raw if isinstance(raw, dict) else None
+        if body is None:
+            try:
+                body = json.loads(raw) if raw else None
+            except (TypeError, ValueError):
+                return None
+        if not isinstance(body, dict):
+            return None
+        chunking = body.get("chunking")
+        if not isinstance(chunking, dict):
+            return None
+        method = chunking.get("method")
+        if isinstance(method, str) and method.strip():
+            return method.strip()
+        return None
+
+    @classmethod
+    def _spec_item(cls, record: Mapping[str, Any]) -> dict[str, Any]:
+        """One template record in the agent listing shape (spec §4.3).
+
+        The flags come verbatim from the AC-24a decoration; ``error_count``
+        condenses ``template_validation_errors`` (the listing carries the
+        count; a save refusal carries the full array, §8.15).
+        """
+        name, truncated = normalize_display_text(
+            record.get("name"), max_bytes=DISPLAY_NAME_MAX_BYTES
+        )
+        raw_tags = record.get("tags") or []
+        tags = [str(tag) for tag in raw_tags]
+        tags_truncated = len(tags) > KEYWORDS_PER_ITEM_MAX
+        errors = list(record.get("template_validation_errors") or [])
+        return {
+            "name": name,
+            "name_truncated": truncated,
+            "method": cls._spec_method(record),
+            "tags": tags[:KEYWORDS_PER_ITEM_MAX],
+            "tags_truncated": tags_truncated,
+            "is_builtin": bool(record.get("is_builtin")),
+            "template_valid": bool(record.get("template_valid")),
+            "error_count": len(errors),
+            "name_reserved": bool(record.get("name_reserved")),
+        }
+
+    def _list_specs(self, arguments: Mapping[str, Any]) -> dict[str, Any]:
+        """The v7 template store's agent view, bounded like sibling lists."""
+        self._require_templates()
+        limit, offset = validate_page_args(
+            arguments.get("limit"), arguments.get("offset")
+        )
+        records = self._decorated_templates()
+        total = len(records)
+        page = records[offset : offset + limit]
+        items = [self._spec_item(record) for record in page]
+        has_more = offset + len(items) < total
+        return fit_page_payload(
+            {
+                "items": items,
+                "total": total,
+                "limit": limit,
+                "offset": offset,
+                "has_more": has_more,
+                "next_offset": offset + len(items) if has_more else None,
+            }
+        )
+
+    def _enforce_spec_save_policy(self) -> None:
+        """Spec §6: the save runs under ``library.templates.save.local``.
+
+        Enforcement precedes EVERY backend touch (denial -> the named error
+        payload, no CRUD call, not even the routing read). No-op without an
+        enforcer handle -- the scope-service precedent: the MCP runtime gate
+        (the re-pointed ``_TOOL_ACTION_IDS`` mapping) stays the always-on
+        outer layer, and construction sites wire the enforcer where a
+        runtime-policy context exists.
+        """
+        if self._policy_enforcer is None:
+            return
+        try:
+            self._policy_enforcer.require_allowed(
+                action_id=SPEC_SAVE_POLICY_ACTION_ID
+            )
+        except PolicyDeniedError as exc:
+            raise LibraryToolError(
+                ERROR_FEATURE_UNAVAILABLE,
+                "Saving chunk specs is not permitted by the current runtime"
+                f" policy ({SPEC_SAVE_POLICY_ACTION_ID}): {exc.user_message}",
+                details={
+                    "policy_action": SPEC_SAVE_POLICY_ACTION_ID,
+                    "reason_code": str(
+                        getattr(exc, "reason_code", "authority_denied")
+                    ),
+                },
+            ) from exc
+
+    @staticmethod
+    def _validate_spec_save_arguments(
+        arguments: Mapping[str, Any]
+    ) -> tuple[str, str | None, list[str] | None]:
+        """Type-check the save args; returns ``(name, description, tags)``.
+
+        The body is NOT validated here -- it goes through the template
+        validator (and then the CRUD's own gate), never ad-hoc checks."""
+        raw_name = arguments.get("name")
+        if not isinstance(raw_name, str) or not raw_name.strip():
+            raise _invalid("name must be a non-empty string")
+        name = raw_name.strip()
+
+        raw_description = arguments.get("description")
+        if raw_description is None:
+            description: str | None = None
+        elif isinstance(raw_description, str) and raw_description.strip():
+            description = raw_description.strip()
+        else:
+            raise _invalid("description must be a non-empty string when supplied")
+
+        raw_tags = arguments.get("tags")
+        tags: list[str] | None
+        if raw_tags is None:
+            tags = None
+        elif isinstance(raw_tags, list) and all(
+            isinstance(tag, str) and tag.strip() for tag in raw_tags
+        ):
+            tags = [tag.strip() for tag in raw_tags]
+        else:
+            raise _invalid("tags must be a list of non-empty strings")
+
+        return name, description, tags
+
+    @staticmethod
+    def _run_template_validator(body: Mapping[str, Any]) -> dict[str, Any]:
+        """``RAG_Admin.template_validation.validate_template`` on the body,
+        with the SAME §7.1 carve-out the CRUD's gate uses (name/description/
+        tags never enter the validated body) so this verdict and the CRUD's
+        cannot disagree. The validator never raises (Task-6 contract)."""
+        from ..RAG_Admin.template_validation import validate_template
+
+        validated = {
+            key: value
+            for key, value in body.items()
+            if key not in ("name", "description", "tags")
+        }
+        return validate_template(validated)
+
+    def _save_spec(self, arguments: Mapping[str, Any]) -> dict[str, Any]:
+        """Create-or-update one CUSTOM template through the interop CRUD."""
+        interop = self._require_templates()
+        name, description, tags = self._validate_spec_save_arguments(arguments)
+        body = arguments.get("spec")
+        if not isinstance(body, Mapping):
+            raise _invalid(
+                "spec must be a JSON object in the template store's shape"
+                " (chunking.method/config, optional preprocessing/postprocessing)"
+            )
+        body = dict(body)
+
+        # Policy before ANY backend touch (spec §6).
+        self._enforce_spec_save_policy()
+
+        # Route: built-in names are never mutated (agents duplicate as custom
+        # first); an existing custom name updates; a new name creates.
+        existing = interop.get_template_by_name(name)
+        if existing is not None and bool(existing.get("is_builtin")):
+            raise _invalid(
+                f"{name!r} is a built-in chunk spec; built-in specs are never"
+                " mutated through this tool. Save your version under a new"
+                " (custom) name instead — duplicate the built-in as a custom"
+                " spec first, then edit the custom copy."
+            )
+
+        # The validator BEFORE the CRUD (ruling §8.15): the refusal carries
+        # the validator's FULL errors array so agents can self-correct; the
+        # CRUD's own gate stays behind this as the backstop.
+        verdict = self._run_template_validator(body)
+        if not verdict["valid"]:
+            errors = list(verdict["errors"])
+            summary = "; ".join(
+                f"{issue['field']}: {issue['message']}" for issue in errors[:3]
+            )
+            more = f" (+{len(errors) - 3} more)" if len(errors) > 3 else ""
+            raise LibraryToolError(
+                ERROR_INVALID_ARGUMENT,
+                f"The chunk spec body failed validation and was refused:"
+                f" {summary}{more}",
+                details={
+                    "errors": errors,
+                    "warnings": list(verdict["warnings"]),
+                },
+            )
+
+        from ..Chunking.chunking_interop_library import (
+            BuiltinTemplateError,
+            ChunkingTemplateError,
+            InputError,
+            InvalidTemplateError,
+        )
+
+        notes: list[str] = []
+        try:
+            if existing is None:
+                effective_description = description
+                if effective_description is None:
+                    effective_description = _DEFAULT_SPEC_DESCRIPTION
+                    notes.append(
+                        "no description supplied; a default description was"
+                        " saved with the spec"
+                    )
+                template_id = int(
+                    interop.create_template(
+                        name,
+                        effective_description,
+                        body,
+                        tags=tags,
+                    )
+                )
+                created = True
+            else:
+                interop.update_template(
+                    int(existing["id"]),
+                    description=description,
+                    template_json=body,
+                    tags=tags,
+                )
+                template_id = int(existing["id"])
+                created = False
+        except InputError as exc:
+            raise _invalid(f"The chunk-spec store refused the save: {exc}") from exc
+        except InvalidTemplateError as exc:
+            # The reserved `auto` sentinel refusal lives here (case-
+            # insensitive, auto-selection §4.3/AC 14); body refusals were
+            # already surfaced above with the full array.
+            raise _invalid(str(exc)) from exc
+        except BuiltinTemplateError as exc:  # unreachable: pre-checked above
+            raise _invalid(
+                f"{name!r} is a built-in chunk spec and is never mutated;"
+                " duplicate it as a custom spec first."
+            ) from exc
+        except ChunkingTemplateError as exc:
+            logger.error("chunk-spec save failed: %s", exc)
+            raise LibraryToolError(
+                ERROR_STORAGE_ERROR,
+                "The local chunk-spec store could not complete the save.",
+                retryable=True,
+            ) from exc
+
+        record = self._decorated_template_by_id(template_id)
+        return {
+            "created": created,
+            "spec": self._spec_item(record),
+            "warnings": list(verdict["warnings"]),
+            "notes": notes,
+        }
+
+
+__all__ = ["SPEC_SAVE_POLICY_ACTION_ID", "LocalMediaChunkToolService"]

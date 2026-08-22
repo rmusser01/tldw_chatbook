@@ -324,7 +324,7 @@ def _spec_save_schema() -> dict:
             },
             "spec": {
                 "type": "object",
-                "description": "Chunking configuration body (method/max_size/overlap/...); validated by the template store on save.",
+                "description": "The chunking template body in the template store's own shape (chunking: {method, config: {max_size, overlap, ...}}, optional preprocessing/postprocessing lists); validated by the store's server-parity validator on save, and refusals return its full error list.",
             },
             "description": {
                 "type": "string",

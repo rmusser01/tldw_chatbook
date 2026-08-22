@@ -576,6 +576,7 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
     "library_collections": _action_ids("""
         library.collections.detail.local
         library.collections.list.local
+        library.templates.save.local
     """),
     "external_connectors": _action_ids("""
         connectors.accounts.delete.server

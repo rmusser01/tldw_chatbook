@@ -973,33 +973,397 @@ def test_backend_failure_scrubs_to_storage_error(
 
 
 # ---------------------------------------------------------------------------
-# Not-yet handlers (Tasks 4-5 land in this same change)
+# Not-yet handler (Task 5 lands in this same change)
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "tool_name, arguments",
-    [
-        ("library_list_chunk_specs", {}),
-        (
-            "library_save_chunk_spec",
-            {"name": "x", "spec": {"method": "words", "max_size": 500}},
-        ),
-        ("library_rechunk_media", None),  # id filled in the test body
-    ],
-)
-def test_spec_and_rechunk_tools_report_pending(
+def test_rechunk_tool_reports_pending(
     service: LocalMediaChunkToolService,
     media_db: MediaDatabase,
-    tool_name,
-    arguments,
 ):
     _, media_uuid = _seed_media(media_db, "body\n")
-    if arguments is None:
-        arguments = {"id": _public_id(media_uuid)}
 
-    payload = _invoke(service, tool_name, arguments)
+    payload = _invoke(service, "library_rechunk_media", {"id": _public_id(media_uuid)})
 
     assert _error_code(payload) == ERROR_FEATURE_UNAVAILABLE
     # The payload names the tool's future availability, never a bare refusal.
-    assert tool_name in payload["error"]["message"]
+    assert "library_rechunk_media" in payload["error"]["message"]
+
+
+# ---------------------------------------------------------------------------
+# Spec tools (Task 4, spec §4.3): list + save over the v7 template store
+# ---------------------------------------------------------------------------
+
+
+def _valid_spec_body(method: str = "sentences") -> dict:
+    """One valid v7 template body in the store's own (nested) shape."""
+    return {
+        "chunking": {"method": method, "config": {"max_size": 120, "overlap": 0}}
+    }
+
+
+@pytest.fixture()
+def interop(media_db: MediaDatabase):
+    from tldw_chatbook.Chunking.chunking_interop_library import (
+        ChunkingInteropService,
+    )
+
+    return ChunkingInteropService(media_db)
+
+
+@pytest.fixture()
+def spec_service(media_db, interop) -> LocalMediaChunkToolService:
+    return LocalMediaChunkToolService(
+        media_db,
+        LocalMediaReadingService(media_db),
+        template_interop=interop,
+    )
+
+
+def _insert_template_row(
+    db: MediaDatabase,
+    name: str,
+    body: str,
+    *,
+    is_builtin: bool = False,
+    tags: str | None = None,
+) -> int:
+    """Direct row insert -- lands stored-invalid / legacy-reserved rows the
+    validate-on-write CRUD would refuse to mint (AC-24a + auto-selection
+    legacy fixtures)."""
+    with db.transaction() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO ChunkingTemplates (
+                uuid, name, description, template_json, tags, is_builtin
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (str(uuid.uuid4()), name, f"row {name}", body, tags, int(is_builtin)),
+        )
+        return int(cursor.lastrowid)
+
+
+def _spec_item_by_name(payload: dict, name: str) -> dict | None:
+    return next(
+        (item for item in payload["items"] if item["name"] == name), None
+    )
+
+
+class _StubEnforcer:
+    """The ``require_allowed(action_id=...)`` seam (scope-service shape)."""
+
+    def __init__(self, *, deny: bool = False) -> None:
+        from tldw_chatbook.runtime_policy.types import PolicyDeniedError
+
+        self._denied = PolicyDeniedError
+        self.actions: list[str] = []
+        self._deny = deny
+
+    def require_allowed(self, *, action_id: str) -> None:
+        self.actions.append(action_id)
+        if self._deny:
+            raise self._denied(
+                action_id=action_id,
+                reason_code="capability_disabled",
+                user_message=f"policy denies {action_id}",
+                effective_source="local",
+                authority_owner="test",
+            )
+
+
+def test_spec_list_carries_flags_from_seeded_store(
+    media_db: MediaDatabase, spec_service: LocalMediaChunkToolService
+):
+    # Seeded store: the DB's own builtins plus one custom (via the real CRUD),
+    # one STORED-INVALID row, and one legacy `Auto`-cased row (flags surface).
+    media_db_ref = media_db
+    _insert_template_row(
+        media_db_ref,
+        "broken spec",
+        '{"chunking": {"method": "not_a_method"}}',
+    )
+    _insert_template_row(media_db_ref, "Auto", '{"chunking": {"method": "words"}}')
+    payload = _invoke(spec_service, "library_list_chunk_specs", {})
+
+    assert "error" not in payload
+    assert payload["total"] >= 4
+
+    builtin = _spec_item_by_name(payload, "academic_paper")
+    assert builtin is not None
+    assert builtin["is_builtin"] is True
+    assert builtin["method"] == "sentences"
+    assert builtin["template_valid"] is True
+    assert builtin["error_count"] == 0
+    assert builtin["name_reserved"] is False
+
+    invalid = _spec_item_by_name(payload, "broken spec")
+    assert invalid is not None
+    assert invalid["is_builtin"] is False
+    assert invalid["template_valid"] is False
+    assert invalid["error_count"] >= 1
+
+    reserved = _spec_item_by_name(payload, "Auto")
+    assert reserved is not None
+    assert reserved["name_reserved"] is True
+    assert reserved["template_valid"] is True
+
+
+def test_spec_list_paginates_in_the_sibling_envelope_shape(
+    spec_service: LocalMediaChunkToolService,
+):
+    first = _invoke(spec_service, "library_list_chunk_specs", {"limit": 2})
+    assert "error" not in first
+    assert first["limit"] == 2
+    assert len(first["items"]) == 2
+    assert first["has_more"] is True
+    assert first["next_offset"] == 2
+
+    second = _invoke(
+        spec_service, "library_list_chunk_specs", {"limit": 2, "offset": 2}
+    )
+    assert second["offset"] == 2
+    assert second["total"] == first["total"]
+    # Deterministic order (is_builtin DESC, name ASC): pages never overlap.
+    names = {item["name"] for item in first["items"]}
+    names |= {item["name"] for item in second["items"]}
+    assert len(names) == 4
+
+
+def test_spec_list_empty_store_is_an_empty_page_not_an_error(
+    media_db: MediaDatabase, spec_service: LocalMediaChunkToolService, interop
+):
+    # Soft-delete every row directly: the CRUD (correctly) refuses deleting
+    # built-ins, and the point under test is the LISTING's empty posture.
+    assert interop.get_all_templates()  # the seeded store is non-empty
+    with media_db.transaction() as conn:
+        conn.execute("UPDATE ChunkingTemplates SET deleted = 1")
+
+    payload = _invoke(spec_service, "library_list_chunk_specs", {})
+
+    assert "error" not in payload
+    assert payload["items"] == []
+    assert payload["total"] == 0
+    assert payload["has_more"] is False
+    assert payload["next_offset"] is None
+
+
+def test_spec_list_rejects_bad_page_args(spec_service: LocalMediaChunkToolService):
+    for bad in ({"limit": 0}, {"limit": "5"}, {"offset": -1}, {"bogus": 1}):
+        payload = _invoke(spec_service, "library_list_chunk_specs", bad)
+        assert _error_code(payload) == ERROR_INVALID_ARGUMENT, bad
+
+
+def test_spec_save_valid_body_round_trips_into_the_listing(
+    spec_service: LocalMediaChunkToolService, interop
+):
+    result = _invoke(
+        spec_service,
+        "library_save_chunk_spec",
+        {
+            "name": "agent chapters",
+            "description": "built by the test",
+            "tags": ["agent", "book"],
+            "spec": _valid_spec_body(method="paragraphs"),
+        },
+    )
+    assert "error" not in result, result
+    assert result["created"] is True
+    saved = result["spec"]
+    assert saved["name"] == "agent chapters"
+    assert saved["method"] == "paragraphs"
+    assert saved["is_builtin"] is False
+    assert saved["template_valid"] is True
+    assert saved["error_count"] == 0
+    assert saved["name_reserved"] is False
+
+    listing = _invoke(spec_service, "library_list_chunk_specs", {"limit": 50})
+    listed = _spec_item_by_name(listing, "agent chapters")
+    assert listed is not None
+    assert listed["method"] == "paragraphs"
+    assert listed["tags"] == ["agent", "book"]
+
+    # Same name again -> update, not a second row; omitted fields untouched.
+    result_two = _invoke(
+        spec_service,
+        "library_save_chunk_spec",
+        {
+            "name": "agent chapters",
+            "tags": ["agent"],
+            "spec": _valid_spec_body(method="words"),
+        },
+    )
+    assert result_two["created"] is False
+    row = interop.get_template_by_name("agent chapters")
+    assert row["version"] == 2  # the CRUD's own update incremented it
+    assert row["description"] == "built by the test"
+    listing_two = _invoke(spec_service, "library_list_chunk_specs", {"limit": 50})
+    matches = [i for i in listing_two["items"] if i["name"] == "agent chapters"]
+    assert len(matches) == 1
+    assert matches[0]["method"] == "words"
+    assert matches[0]["tags"] == ["agent"]
+
+
+def test_spec_save_invalid_body_returns_the_full_validator_errors_array(
+    spec_service: LocalMediaChunkToolService,
+):
+    from tldw_chatbook.RAG_Admin.template_validation import validate_template
+
+    body = {"preprocessing": "x", "postprocessing": 3, "chunking": {"method": "words"}}
+    payload = _invoke(
+        spec_service,
+        "library_save_chunk_spec",
+        {"name": "doomed spec", "spec": body},
+    )
+
+    assert _error_code(payload) == ERROR_INVALID_ARGUMENT
+    expected = validate_template(body)
+    assert len(expected["errors"]) >= 2  # the array is genuinely multi-error
+    # Ruling §8.15: the FULL errors array (field+message pairs), verbatim
+    # from the validator -- not the CRUD's 3-error message summary.
+    assert payload["error"]["details"]["errors"] == expected["errors"]
+    assert payload["error"]["details"]["warnings"] == expected["warnings"]
+
+
+def test_spec_save_builtin_name_refused_with_duplicate_hint(
+    spec_service: LocalMediaChunkToolService, interop, monkeypatch
+):
+    calls = {"create": 0, "update": 0}
+    monkeypatch.setattr(
+        interop, "create_template", lambda *a, **k: calls.__setitem__("create", 1)
+    )
+    monkeypatch.setattr(
+        interop, "update_template", lambda *a, **k: calls.__setitem__("update", 1)
+    )
+
+    payload = _invoke(
+        spec_service,
+        "library_save_chunk_spec",
+        {"name": "academic_paper", "spec": _valid_spec_body()},
+    )
+
+    assert _error_code(payload) == ERROR_INVALID_ARGUMENT
+    message = payload["error"]["message"]
+    assert "built-in" in message and "academic_paper" in message
+    assert "duplicate" in message and "custom" in message
+    # Never mutated, never routed to the CRUD.
+    assert calls == {"create": 0, "update": 0}
+    row = interop.get_template_by_name("academic_paper")
+    assert row["version"] == 1
+
+
+def test_spec_save_reserved_auto_name_refused_case_insensitively(
+    spec_service: LocalMediaChunkToolService, interop
+):
+    for reserved in ("auto", "Auto", "AUTO"):
+        payload = _invoke(
+            spec_service,
+            "library_save_chunk_spec",
+            {"name": reserved, "spec": _valid_spec_body()},
+        )
+        assert _error_code(payload) == ERROR_INVALID_ARGUMENT, reserved
+        # The CRUD's own named refusal (auto-selection sentinel wording).
+        assert "reserved" in payload["error"]["message"]
+    assert interop.get_template_by_name("Auto") is None
+
+
+def test_spec_save_policy_denial_precedes_any_backend_call(
+    media_db: MediaDatabase, interop, monkeypatch
+):
+    service = LocalMediaChunkToolService(
+        media_db,
+        LocalMediaReadingService(media_db),
+        template_interop=interop,
+        policy_enforcer=_StubEnforcer(deny=True),
+    )
+    calls = {"create": 0, "update": 0, "read": 0}
+    monkeypatch.setattr(
+        interop, "create_template", lambda *a, **k: calls.__setitem__("create", 1)
+    )
+    monkeypatch.setattr(
+        interop, "update_template", lambda *a, **k: calls.__setitem__("update", 1)
+    )
+    monkeypatch.setattr(
+        interop, "get_template_by_name", lambda *a, **k: calls.__setitem__("read", 1) or None
+    )
+
+    payload = _invoke(
+        service,
+        "library_save_chunk_spec",
+        {"name": "blocked spec", "spec": _valid_spec_body()},
+    )
+
+    assert calls == {"create": 0, "update": 0, "read": 0}
+    assert "error" in payload
+    message = payload["error"]["message"]
+    assert "library.templates.save.local" in message
+    assert "policy denies" in message  # the enforcer's own user message
+
+
+def test_spec_save_enforcer_sees_the_write_action_on_success(
+    media_db: MediaDatabase, interop
+):
+    enforcer = _StubEnforcer()
+    service = LocalMediaChunkToolService(
+        media_db,
+        LocalMediaReadingService(media_db),
+        template_interop=interop,
+        policy_enforcer=enforcer,
+    )
+
+    payload = _invoke(
+        service,
+        "library_save_chunk_spec",
+        {"name": "allowed spec", "spec": _valid_spec_body()},
+    )
+
+    assert "error" not in payload, payload
+    assert enforcer.actions == ["library.templates.save.local"]
+
+
+def test_spec_save_argument_validation(
+    spec_service: LocalMediaChunkToolService,
+):
+    bad_args = [
+        {},
+        {"spec": _valid_spec_body()},
+        {"name": "x"},
+        {"name": "", "spec": _valid_spec_body()},
+        {"name": "   ", "spec": _valid_spec_body()},
+        {"name": 7, "spec": _valid_spec_body()},
+        {"name": "x", "spec": "not-an-object"},
+        {"name": "x", "spec": ["list"]},
+        {"name": "x", "spec": _valid_spec_body(), "tags": "agent"},
+        {"name": "x", "spec": _valid_spec_body(), "tags": [7]},
+        {"name": "x", "spec": _valid_spec_body(), "description": 5},
+        {"name": "x", "spec": _valid_spec_body(), "unknown_key": True},
+    ]
+    for args in bad_args:
+        payload = _invoke(spec_service, "library_save_chunk_spec", args)
+        assert _error_code(payload) == ERROR_INVALID_ARGUMENT, args
+
+
+def test_spec_tools_without_interop_map_to_feature_unavailable(
+    media_db: MediaDatabase,
+):
+    service = LocalMediaChunkToolService(
+        media_db, LocalMediaReadingService(media_db), template_interop=None
+    )
+    payload = _invoke(service, "library_list_chunk_specs", {})
+    assert _error_code(payload) == ERROR_FEATURE_UNAVAILABLE
+    payload = _invoke(
+        service,
+        "library_save_chunk_spec",
+        {"name": "x", "spec": _valid_spec_body()},
+    )
+    assert _error_code(payload) == ERROR_FEATURE_UNAVAILABLE
+
+
+def test_spec_save_descriptor_documents_the_template_body_shape():
+    """The `spec` body is the v7 store's template shape (nested
+    `chunking`), which is what the CRUD validates -- not a flat options map
+    (the validator refuses flat bodies with `chunking: Field required`)."""
+    schema = LIBRARY_TOOL_DESCRIPTORS["library_save_chunk_spec"].input_schema
+    description = schema["properties"]["spec"]["description"]
+    assert "chunking" in description
+    assert "preprocessing" in description or "template" in description

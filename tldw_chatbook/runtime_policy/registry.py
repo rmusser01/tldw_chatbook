@@ -179,6 +179,9 @@ SYNC_V2_PULL = _action("pull", "observe")
 SYNC_V2_RESOLVE = _action("resolve", "update")
 SYNC_V2_STORE = _action("store", "create")
 SYNC_V2_RETRIEVE = _action("retrieve", "observe")
+# chunking-agent-tools (spec §6): the chunk-spec save tool's dedicated verb.
+# ``update`` kind -- the tool is create-or-update over the v7 template store.
+SAVE = _action("save", "update")
 
 CRUD_ACTIONS = (LIST, DETAIL, CREATE, UPDATE, DELETE)
 DISCOVER_TRIGGER_OBSERVE_ACTIONS = (LIST, LAUNCH, OBSERVE)
@@ -626,12 +629,20 @@ AUDITED_CAPABILITY_SEEDS = (
     # list/detail resource -- deliberately NOT mapped onto
     # `collections.reading_list.*`, whose CRUD surface models the read-it-later
     # feature, not read-only agent retrieval over Library collections.
+    # chunking-agent-tools (Task 4, spec §6): the same capability is the local
+    # Library agent-tools policy home -- `library.templates/save` backs
+    # `library_save_chunk_spec` over the v7 template store. Deliberately NOT
+    # `rag.template.*` (the RAG-admin UI seam's verbs, ADR-003 ownership) and
+    # not the derived media read action the MCP mapping used provisionally.
     _capability(
         "library_collections",
         "Library Collections (local agent reads)",
         "library_collections",
         sources=LOCAL_ONLY_SOURCES,
-        resources=(_resource("library.collections", actions=(LIST, DETAIL)),),
+        resources=(
+            _resource("library.collections", actions=(LIST, DETAIL)),
+            _resource("library.templates", actions=(SAVE,)),
+        ),
     ),
     _capability(
         "watchlists",
