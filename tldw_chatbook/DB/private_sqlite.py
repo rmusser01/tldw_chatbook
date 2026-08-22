@@ -221,9 +221,10 @@ _SQLITE_OWNER_POLICIES = {
     ),
     "notes.sync_state": SQLiteOwnerPolicy(
         "tldw_chatbook/Notes/notes_sync_state_schema",
-        _PRIVATE_FILE,
+        _PRIVATE_OR_MEMORY,
         "Device-private import receipts and future lasting-sync state remain "
-        "profile-local and outside centralized backup.",
+        "profile-local and outside centralized backup; memory is used only for "
+        "the transient canonical-schema oracle.",
     ),
     "notifications.client": SQLiteOwnerPolicy(
         "tldw_chatbook/Notifications/client_notifications_db",

@@ -1362,3 +1362,92 @@ def test_terminal_migration_replay_skips_fresh_source_capture(
     replay = legacy.migrate_legacy_notes_sync_state(repository, object())
 
     assert replay == terminal
+
+
+def test_sync_foundation_non_goals_and_legacy_owner_are_source_ratchets() -> None:
+    project_root = Path(__file__).parents[2]
+    notes_root = project_root / "tldw_chatbook/Notes"
+    sync_engine = notes_root / "sync_engine.py"
+    assert hashlib.sha256(sync_engine.read_bytes()).hexdigest() == (
+        "96d8223654da8669bd5f5115fc43928c22f3c1e5c551f4e73c206b5cd0b9dd17"
+    )
+
+    foundation_paths = (
+        notes_root / "notes_sync_state_schema.py",
+        notes_root / "notes_sync_state.py",
+        notes_root / "notes_sync_legacy_migration.py",
+    )
+    prohibited = (
+        "activate",
+        "activation",
+        "watcher",
+        "reconcile",
+        "resolver",
+        "journal",
+        "tldw_chatbook.ui",
+        "server",
+        "sync_v2",
+        "sync-v2",
+        "backup_",
+        "portable export",
+    )
+    for source_path in foundation_paths:
+        source = source_path.read_text(encoding="utf-8").lower()
+        assert all(term not in source for term in prohibited), source_path.name
+        assert "loguru" not in source
+        assert "import logging" not in source
+        assert "logger." not in source
+
+    invocation_marker = "migrate_legacy_notes_sync_state("
+    startup_callers = []
+    migration_module = notes_root / "notes_sync_legacy_migration.py"
+    for source_path in (project_root / "tldw_chatbook").rglob("*.py"):
+        if source_path == migration_module:
+            continue
+        source = source_path.read_text(encoding="utf-8")
+        if invocation_marker in source:
+            startup_callers.append(source_path.relative_to(project_root).as_posix())
+    assert startup_callers == []
+
+
+def test_migration_privacy_redacts_hash_inputs_models_and_aggregates(
+    tmp_path: Path,
+) -> None:
+    private_path = "/private/alice/notes/quarterly.md"
+    private_note_id = "private-note-identity"
+    private_content_hash = "private-content-hash-input"
+    snapshot = _snapshot(
+        directory=private_path,
+        notes=(
+            _note_row(
+                private_note_id,
+                file_path_on_disk=private_path,
+                sync_root_folder=private_path,
+                last_synced_disk_file_hash=private_content_hash,
+                is_externally_synced=1,
+            ),
+        ),
+        conflicts=(
+            _conflict_row(
+                1,
+                note_id=private_note_id,
+                file_path=private_path,
+                db_content_hash=private_content_hash,
+                disk_content_hash=private_content_hash,
+            ),
+        ),
+    )
+    repository = _migration_repository(tmp_path)
+    run = repository.record_legacy_generation(snapshot)
+    items = repository.list_migration_items(run.migration_id)
+    aggregates = repository.migration_item_counts(run.migration_id)
+
+    rendered = repr((snapshot, run, items, aggregates))
+    for private in (
+        private_path,
+        private_note_id,
+        private_content_hash,
+        snapshot.digest,
+        run.migration_id,
+    ):
+        assert private not in rendered

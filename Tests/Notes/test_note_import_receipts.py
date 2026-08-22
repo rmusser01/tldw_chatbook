@@ -484,7 +484,7 @@ def _repository(tmp_path: Path) -> NoteImportReceiptRepository:
     return NoteImportReceiptRepository(tmp_path / "notes-sync.sqlite3")
 
 
-def test_notes_sync_state_path_is_profile_local_and_not_a_generic_database_path(
+def test_notes_sync_state_path_is_profile_local_and_has_no_production_consumer(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -493,15 +493,19 @@ def test_notes_sync_state_path_is_profile_local_and_not_a_generic_database_path(
     assert config.get_notes_sync_state_db_path() == (
         tmp_path / "tldw_chatbook_notes_sync_state.db"
     )
-    generic_paths = (
-        Path(__file__).parents[2] / "tldw_chatbook/Chatbooks/database_paths.py"
-    ).read_text(encoding="utf-8")
-    settings_backup = (
-        Path(__file__).parents[2] / "tldw_chatbook/UI/Tools_Settings_Window.py"
-    ).read_text(encoding="utf-8")
-    for source in (generic_paths, settings_backup):
-        assert "get_notes_sync_state_db_path" not in source
-        assert "tldw_chatbook_notes_sync_state.db" not in source
+    production_root = Path(__file__).parents[2] / "tldw_chatbook"
+    config_path = production_root / "config.py"
+    consumers = []
+    for source_path in production_root.rglob("*.py"):
+        if source_path == config_path:
+            continue
+        source = source_path.read_text(encoding="utf-8")
+        if (
+            "get_notes_sync_state_db_path" in source
+            or "tldw_chatbook_notes_sync_state.db" in source
+        ):
+            consumers.append(source_path.relative_to(production_root).as_posix())
+    assert consumers == []
 
 
 def test_receipt_repository_creates_v2_normalized_schema_without_private_text(

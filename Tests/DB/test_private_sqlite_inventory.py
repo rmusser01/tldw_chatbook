@@ -935,32 +935,46 @@ def test_notes_sync_state_inventory_row_is_exact_and_backup_excluded() -> None:
         "module": "tldw_chatbook/Notes/notes_sync_state_schema",
         "symbol": "notes_sync_state_transaction",
         "owner_id": "notes.sync_state",
-        "classification": "private_file",
+        "classification": "private_file, memory",
         "intent": "device-private import receipts and future lasting-sync state",
         "disposition": (
             "Migrated via `connect_private_sqlite`. The profile-local ledger stores "
-            "only opaque identifiers, private digests, bounded lifecycle state, and "
-            "reconciliation metadata; it is excluded from portable export and "
-            "centralized backup."
+            "only opaque identifiers, private digests, paused lasting-sync "
+            "candidates, bounded lifecycle state, and migration metadata; the "
+            "memory target is a transient canonical-schema oracle with no artifact, "
+            "and the file ledger is excluded from portable export and centralized "
+            "backup."
         ),
     }
     assert SQLITE_OWNER_REGISTRY["notes.sync_state"].production_module == (
         "tldw_chatbook/Notes/notes_sync_state_schema"
     )
-    receipt_calls, receipt_violations = _private_sqlite_seam_violations(
-        Path("tldw_chatbook/Notes/note_import_receipts.py"),
-        "tldw_chatbook/Notes/note_import_receipts",
+    assert SQLITE_OWNER_REGISTRY["notes.sync_state"].allowed_target_kinds == frozenset(
+        {SQLiteTargetKind.PRIVATE_FILE, SQLiteTargetKind.MEMORY}
     )
     coordinator_path = Path("tldw_chatbook/Notes/notes_sync_state_schema.py")
     assert coordinator_path.exists(), "notes sync-state coordinator must exist"
-    coordinator_calls, coordinator_violations = _private_sqlite_seam_violations(
-        coordinator_path,
-        "tldw_chatbook/Notes/notes_sync_state_schema",
-    )
-    assert receipt_calls == []
-    assert receipt_violations == []
-    assert len(coordinator_calls) == 1
-    assert coordinator_violations == []
+    owner_calls: list[tuple[str, str]] = []
+    for source_path in PRODUCTION_ROOT.rglob("*.py"):
+        module = source_path.relative_to(PROJECT_ROOT).with_suffix("").as_posix()
+        calls, violations = _private_sqlite_seam_violations(source_path, module)
+        assert violations == []
+        owner_calls.extend(
+            (module, symbol)
+            for symbol, seam_name, call in calls
+            if seam_name == "connect_private_sqlite"
+            and _literal_string_argument(call, 0, "owner_id") == "notes.sync_state"
+        )
+    assert sorted(owner_calls) == [
+        (
+            "tldw_chatbook/Notes/notes_sync_state_schema",
+            "_canonical_v2_snapshot",
+        ),
+        (
+            "tldw_chatbook/Notes/notes_sync_state_schema",
+            "notes_sync_state_transaction",
+        )
+    ]
     assert SQLITE_OWNER_REGISTRY["notes.sync_state"].centralized_backup_allowed is False
     assert "notes.sync_state" not in {
         backup_row["owner_id"] for backup_row in _inventory_rows("B")

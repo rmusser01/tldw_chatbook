@@ -196,6 +196,19 @@ def test_migration_projections_are_exact_frozen_redacted_and_bounded() -> None:
     assert _PRIVATE_MIGRATION_ID not in repr(item)
     assert _PRIVATE_DIGEST not in repr(item)
     assert _PRIVATE_ID not in repr(item)
+    aggregate = MigrationItemCount(
+        item_kind="binding",
+        outcome="needs_rescan",
+        count=1,
+    )
+    for private in (
+        _PRIVATE_PATH,
+        _PRIVATE_ID,
+        _PRIVATE_DIGEST,
+        _PRIVATE_MIGRATION_ID,
+        _RAW_SQLITE_SENTINEL,
+    ):
+        assert private not in repr((run, item, aggregate))
     with pytest.raises(FrozenInstanceError):
         run.state = MigrationState.DRIFTED  # type: ignore[misc]
 
