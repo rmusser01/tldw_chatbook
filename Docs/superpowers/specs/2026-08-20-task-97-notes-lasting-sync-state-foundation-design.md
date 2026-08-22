@@ -1,9 +1,10 @@
 # TASK-97: Notes Lasting-Sync State Foundation — Design
 
 Date: 2026-08-20
-Status: Independently reviewed; awaiting user approval
+Status: User-approved for implementation planning
 Review: Approved at `904f44aee` with no remaining P0–P2 findings
-Task: [TASK-97](../../../backlog/tasks/task-97%20-%20Conflict-resolution-dialog-for-Notes-sync.md)
+User approval: 2026-08-22
+Task: [TASK-97](../../../backlog/tasks/task-97%20-%20Notes-lasting-sync-private-state-foundation.md)
 Governing decisions:
 
 - [ADR-059: Notes Folder Import and Device-Local Sync Ownership](../../../backlog/decisions/059-notes-folder-import-and-device-local-sync-ownership.md)
