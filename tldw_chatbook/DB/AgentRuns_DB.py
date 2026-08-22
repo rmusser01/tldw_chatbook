@@ -1441,6 +1441,40 @@ class AgentRunsDB(BaseDB):
                 (stamp, run_id),
             )
 
+    def insert_steps_at_indices(
+        self, run_id: str, steps: Sequence[tuple[int, dict]]
+    ) -> None:
+        """Insert caller-indexed steps without rewriting existing rows.
+
+        Live capture calls this with one step; terminal recovery calls it
+        with the complete outcome. The ``(run_id, seq)`` primary key makes
+        repeats no-ops while missing indices are filled.
+
+        Raises:
+            KeyError: If ``run_id`` does not exist.
+        """
+        stamp = _now_iso()
+        with self.transaction() as conn:
+            exists = conn.execute(
+                "SELECT 1 FROM agent_runs WHERE id = ?", (run_id,)
+            ).fetchone()
+            if exists is None:
+                raise KeyError(f"Unknown run id: {run_id}")
+            if steps:
+                conn.executemany(
+                    "INSERT INTO agent_run_steps (run_id, seq, payload, created_at) "
+                    "VALUES (?, ?, ?, ?) "
+                    "ON CONFLICT(run_id, seq) DO NOTHING",
+                    [
+                        (run_id, int(index), json.dumps(payload), stamp)
+                        for index, payload in steps
+                    ],
+                )
+            conn.execute(
+                "UPDATE agent_runs SET updated_at = ? WHERE id = ?",
+                (stamp, run_id),
+            )
+
     def set_status(self, run_id: str, status: str, result: str | None = None) -> bool:
         """Update a run's terminal (or in-progress) status.
 

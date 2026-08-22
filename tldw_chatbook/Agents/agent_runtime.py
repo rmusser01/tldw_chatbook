@@ -10,6 +10,7 @@ from collections import deque
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Callable, Literal
 
 from loguru import logger
@@ -77,6 +78,18 @@ from .project_instruction_runtime import (
     InstructionDeliveryReceipt,
     build_project_instruction_deferral_rows,
 )
+
+
+def _utc_now() -> datetime:
+    """Return the UTC wall clock used to stamp durable agent steps."""
+    return datetime.now(timezone.utc)
+
+
+def _utc_iso(value: datetime) -> str:
+    """Format an injected wall-clock value like existing persisted timestamps."""
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 FENCE_OPEN = "```tool_call"
 _FENCE_CLOSE = "```"
@@ -327,6 +340,7 @@ class LoopDeps:
     load_schemas: Callable[[list], list]
     should_cancel: Callable[[], bool]
     clock: Callable[[], float]
+    wall_clock: Callable[[], datetime] = _utc_now
     call_model_with_continuation: (
         Callable[
             [list, tuple, ProviderContinuationCheckpoint | None],
@@ -839,14 +853,16 @@ def run_agent_loop(
     recent_calls: deque = deque(maxlen=LOOP_DETECTION_N * MAX_LOOP_PERIOD)
 
     def add(kind: str, **kw) -> AgentStep:
+        if not kw.get("created_at"):
+            kw["created_at"] = _utc_iso(deps.wall_clock())
         step = AgentStep(index=len(steps), kind=kind, **kw)
         steps.append(step)
-        # The hook drives live UI only (see LoopDeps.on_step docstring);
-        # durability comes from the service's end-of-run persist, so a
-        # raising callback must never abort or corrupt the run itself.
+        # The service composes incremental durability with live UI here.
+        # Either callback may fail, but observation is never load-bearing
+        # for the run itself.
         try:
             deps.on_step(step)
-        except Exception:  # noqa: BLE001 — best-effort UI notification only
+        except Exception:  # noqa: BLE001 — best-effort observation only
             pass
         return step
 

@@ -687,6 +687,16 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _utc_iso(value: datetime) -> str:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
 def _default_chat_call():
     from tldw_chatbook.Chat.Chat_Functions import chat_api_call
 
@@ -988,11 +998,13 @@ class AgentService:
         on_ephemeral_runtime_warning: (
             Callable[[str, tuple[str, ...], int], None] | None
         ) = None,
+        wall_clock: Callable[[], datetime] = _utc_now,
     ) -> None:
         self.db = db
         self.registry = registry
         self.chat_call = chat_call or _default_chat_call()
         self.clock = clock
+        self.wall_clock = wall_clock
         self._on_step = on_step
         self.skill_runner = skill_runner
         # task-3 (skills-foundation): per-run authorization + reader for the
@@ -2137,13 +2149,14 @@ class AgentService:
                 logger.warning("could not mark abandoned sub-agent run cancelled")
 
     def _persist(self, run_id: str, outcome: RunOutcome) -> None:
-        stamp = _now_iso()
         step_dicts = []
         for step in outcome.steps:
             record = dataclasses.asdict(step)
-            record["created_at"] = record["created_at"] or stamp
-            step_dicts.append(record)
-        self.db.append_steps(run_id, step_dicts)
+            record["created_at"] = record["created_at"] or _utc_iso(
+                self.wall_clock()
+            )
+            step_dicts.append((step.index, record))
+        self.db.insert_steps_at_indices(run_id, step_dicts)
         self.db.set_status(run_id, outcome.status, result=outcome.final_text or None)
 
     def _run_one(
@@ -4222,6 +4235,22 @@ class AgentService:
             payload_state=payload_state,
             staged_delivery=staged_delivery,
         )
+
+        def observe_step(step: AgentStep) -> None:
+            record = dataclasses.asdict(step)
+            record["created_at"] = record["created_at"] or _utc_iso(
+                self.wall_clock()
+            )
+            try:
+                self.db.insert_steps_at_indices(run_id, [(step.index, record)])
+            except Exception as exc:  # noqa: BLE001 — trace capture is best-effort
+                logger.warning(
+                    "could not persist agent step incrementally "
+                    f"(run_id={run_id}, step_index={step.index}): {exc}"
+                )
+            if self._on_step is not None:
+                self._on_step(step, agent_kind, run_id)
+
         deps = LoopDeps(
             call_model=call_model,
             call_model_with_continuation=call_model,
@@ -4231,11 +4260,8 @@ class AgentService:
             load_schemas=load_schemas,
             should_cancel=should_cancel,
             clock=self.clock,
-            on_step=(
-                (lambda s: self._on_step(s, agent_kind, run_id))
-                if self._on_step is not None
-                else (lambda s: None)
-            ),
+            wall_clock=self.wall_clock,
+            on_step=observe_step,
             # PR2a Task 5: bind THIS run's id into the hook. `LoopDeps`
             # keeps its `(calls) -> verdicts` shape (the pure runtime stays
             # ignorant of run ids); the service, which owns the run
