@@ -45,6 +45,7 @@ class CandidateMemoryPresentation:
     outcome: str
     details: str
     pressure: str | None
+    failure_line: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +58,7 @@ class MachineMemoryPresentation:
     action_label: str
     action_disabled: bool
     failure_line: str | None
+    accelerator_detail_lines: tuple[str, ...]
 
 
 def build_candidate_memory_presentation(
@@ -64,6 +66,8 @@ def build_candidate_memory_presentation(
     snapshot: MachineMemorySnapshot | None = None,
     *,
     active: bool = False,
+    observed_at_label: str | None = None,
+    failure: ProbeReason | None = None,
 ) -> CandidateMemoryPresentation:
     """Build non-blocking copy for one candidate's paired memory scenarios."""
     if active and projection is None:
@@ -71,12 +75,14 @@ def build_candidate_memory_presentation(
             outcome="Memory scenario: Checking local memory…",
             details="",
             pressure=None,
+            failure_line=None,
         )
     if projection is None or projection.primary_state is CapacityState.UNKNOWN:
         return CandidateMemoryPresentation(
             outcome=_unavailable_candidate_copy(snapshot),
             details="",
             pressure=None,
+            failure_line=None,
         )
 
     estimate_32k = projection.context_32k
@@ -90,6 +96,7 @@ def build_candidate_memory_presentation(
             outcome=_unavailable_candidate_copy(snapshot),
             details="",
             pressure=None,
+            failure_line=None,
         )
 
     outcome = _candidate_outcome(
@@ -108,6 +115,7 @@ def build_candidate_memory_presentation(
         outcome=outcome,
         details=details,
         pressure=_pressure_copy(projection.current_pressure),
+        failure_line=_retained_failure_copy(failure, observed_at_label),
     )
 
 
@@ -132,6 +140,7 @@ def build_machine_memory_presentation(
             action_label=action_label,
             action_disabled=active,
             failure_line=None,
+            accelerator_detail_lines=(),
         )
     if snapshot.system_state not in {
         SystemMemoryState.OBSERVED,
@@ -144,6 +153,7 @@ def build_machine_memory_presentation(
             action_label="Recheck memory",
             action_disabled=False,
             failure_line=None,
+            accelerator_detail_lines=(),
         )
 
     total = snapshot.total_bytes
@@ -155,6 +165,7 @@ def build_machine_memory_presentation(
             action_label=action_label,
             action_disabled=active,
             failure_line=None,
+            accelerator_detail_lines=(),
         )
     budget = _ram_working_budget_bytes(total)
     is_unified = snapshot.memory_kind is MemoryKind.UNIFIED
@@ -172,10 +183,13 @@ def build_machine_memory_presentation(
         limitation_lines=(
             "Scenarios: 32,768 / 65,536 tokens · model support not checked",
             "Heuristic only · runtime, offload, and speed not checked",
+            "One selected GGUF/model · heuristic runtime/context allowances · no unusual runtime options",
+            "VRAM not used in this rating · model-context support, runtime compatibility, offload, and performance not verified",
         ),
         action_label=action_label,
         action_disabled=active,
         failure_line=_retained_failure_copy(failure, observed_at_label),
+        accelerator_detail_lines=_accelerator_detail_lines(snapshot),
     )
 
 
@@ -261,6 +275,14 @@ def _accelerator_copy(snapshot: MachineMemorySnapshot) -> str | None:
     reason = snapshot.accelerator_reason
     if state is AcceleratorState.OBSERVED:
         return _observed_accelerator_copy(snapshot.accelerators, partial=False)
+    if (
+        state is AcceleratorState.PARTIAL
+        and not snapshot.accelerators
+        and snapshot.platform == "darwin"
+        and snapshot.architecture not in {"arm64", "aarch64"}
+        and reason is ProbeReason.UNSUPPORTED_PLATFORM
+    ):
+        return "VRAM observation is unavailable on this platform · RAM estimate still available"
     if state is AcceleratorState.PARTIAL and snapshot.accelerators:
         return _observed_accelerator_copy(snapshot.accelerators, partial=True)
     if state is AcceleratorState.PERMISSION_DENIED:
@@ -276,13 +298,23 @@ def _accelerator_copy(snapshot: MachineMemorySnapshot) -> str | None:
     return "VRAM not observed · not used in this rating"
 
 
+def _accelerator_detail_lines(snapshot: MachineMemorySnapshot) -> tuple[str, ...]:
+    if snapshot.memory_kind is MemoryKind.UNIFIED:
+        return ()
+    return tuple(
+        _accelerator_fact(accelerator) for accelerator in snapshot.accelerators
+    )
+
+
 def _observed_accelerator_copy(
     accelerators: tuple[AcceleratorMemoryObservation, ...], *, partial: bool
 ) -> str:
     if len(accelerators) > 2:
         base = f"VRAM observed on {len(accelerators)} devices · show estimate details"
     else:
-        facts = " · ".join(_accelerator_fact(accelerator) for accelerator in accelerators)
+        facts = " · ".join(
+            _accelerator_fact(accelerator) for accelerator in accelerators
+        )
         base = f"VRAM observed: {facts}"
     incomplete = " · other accelerator evidence incomplete" if partial else ""
     return f"{base}{incomplete} · not used in this rating"
@@ -302,6 +334,8 @@ def _retained_failure_copy(
 ) -> str | None:
     if failure is None:
         return None
-    if observed_at_label is not None and _OBSERVED_AT_PATTERN.fullmatch(observed_at_label):
+    if observed_at_label is not None and _OBSERVED_AT_PATTERN.fullmatch(
+        observed_at_label
+    ):
         return f"Recheck failed · using memory observed at {observed_at_label}"
     return "Recheck failed · using previously observed memory"

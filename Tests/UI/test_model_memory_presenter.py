@@ -37,14 +37,17 @@ def _snapshot(
     platform: str = "linux",
     architecture: str = "x86_64",
 ) -> MachineMemorySnapshot:
-    total_bytes = total_gib * GIB if system_state in {
-        SystemMemoryState.OBSERVED,
-        SystemMemoryState.PARTIAL,
-    } else None
+    total_bytes = (
+        total_gib * GIB
+        if system_state
+        in {
+            SystemMemoryState.OBSERVED,
+            SystemMemoryState.PARTIAL,
+        }
+        else None
+    )
     resolved_memory_kind = (
-        memory_kind
-        if total_bytes is not None
-        else MemoryKind.UNKNOWN
+        memory_kind if total_bytes is not None else MemoryKind.UNKNOWN
     )
     return MachineMemorySnapshot(
         platform=platform,
@@ -117,8 +120,16 @@ def test_current_pressure_is_separate_from_stable_capacity_copy() -> None:
     ("total_gib", "model_gib", "expected"),
     [
         (32, 4, "64K scenario within RAM budget · 12.6 GiB headroom"),
-        (16, 4, "32K within budget · 64K crosses reserve · 0.2 GiB over reserve at 64K"),
-        (12, 4, "32K within budget · 64K exceeds installed RAM · 1.0 GiB over installed RAM at 64K"),
+        (
+            16,
+            4,
+            "32K within budget · 64K crosses reserve · 0.2 GiB over reserve at 64K",
+        ),
+        (
+            12,
+            4,
+            "32K within budget · 64K exceeds installed RAM · 1.0 GiB over installed RAM at 64K",
+        ),
         (12, 6, "32K crosses reserve · 1.4 GiB over reserve at 32K"),
         (12, 8, "32K exceeds installed RAM · 1.0 GiB over installed RAM at 32K"),
     ],
@@ -149,7 +160,9 @@ def test_candidate_pressure_matrix_never_changes_capacity(
     available_gib: int | None, expected: str | None
 ) -> None:
     """Changing the pressure branch must not affect the capacity result."""
-    presentation = build_candidate_memory_presentation(_projection(available_gib=available_gib))
+    presentation = build_candidate_memory_presentation(
+        _projection(available_gib=available_gib)
+    )
 
     assert presentation.outcome.startswith("64K scenario within RAM budget")
     assert presentation.pressure == expected
@@ -202,9 +215,21 @@ def test_candidate_active_copy_is_nonblocking_and_has_no_estimate() -> None:
 @pytest.mark.parametrize(
     ("system_state", "system_reason", "headline"),
     [
-        (SystemMemoryState.UNAVAILABLE, ProbeReason.MEMORY_UNAVAILABLE, "Machine estimate unavailable · filename guidance still applies"),
-        (SystemMemoryState.PERMISSION_DENIED, ProbeReason.PERMISSION_DENIED, "Memory access was denied · filename guidance still applies"),
-        (SystemMemoryState.UNSUPPORTED, ProbeReason.UNSUPPORTED_PLATFORM, "Machine estimate is not supported on this platform"),
+        (
+            SystemMemoryState.UNAVAILABLE,
+            ProbeReason.MEMORY_UNAVAILABLE,
+            "Machine estimate unavailable · filename guidance still applies",
+        ),
+        (
+            SystemMemoryState.PERMISSION_DENIED,
+            ProbeReason.PERMISSION_DENIED,
+            "Memory access was denied · filename guidance still applies",
+        ),
+        (
+            SystemMemoryState.UNSUPPORTED,
+            ProbeReason.UNSUPPORTED_PLATFORM,
+            "Machine estimate is not supported on this platform",
+        ),
     ],
 )
 def test_machine_unavailable_system_states_have_fixed_recovery_copy(
@@ -227,7 +252,10 @@ def test_machine_observed_evidence_uses_binary_gib_budget_and_limitations() -> N
     """Changing visible RAM facts, policy caveats, or retry availability must be caught."""
     presentation = build_machine_memory_presentation(_snapshot())
 
-    assert presentation.headline == "Machine memory: 32.0 GiB RAM · 25.6 GiB RAM working budget"
+    assert (
+        presentation.headline
+        == "Machine memory: 32.0 GiB RAM · 25.6 GiB RAM working budget"
+    )
     assert presentation.evidence_lines == (
         "Available now: 21.0 GiB",
         "VRAM not observed · not used in this rating",
@@ -235,6 +263,8 @@ def test_machine_observed_evidence_uses_binary_gib_budget_and_limitations() -> N
     assert presentation.limitation_lines == (
         "Scenarios: 32,768 / 65,536 tokens · model support not checked",
         "Heuristic only · runtime, offload, and speed not checked",
+        "One selected GGUF/model · heuristic runtime/context allowances · no unusual runtime options",
+        "VRAM not used in this rating · model-context support, runtime compatibility, offload, and performance not verified",
     )
     assert presentation.action_label == "Recheck memory"
     assert not presentation.action_disabled
@@ -250,7 +280,10 @@ def test_machine_partial_ram_keeps_capacity_but_omits_volatile_pressure() -> Non
 
     presentation = build_machine_memory_presentation(snapshot)
 
-    assert presentation.headline == "Machine memory: 32.0 GiB RAM · 25.6 GiB RAM working budget"
+    assert (
+        presentation.headline
+        == "Machine memory: 32.0 GiB RAM · 25.6 GiB RAM working budget"
+    )
     assert presentation.evidence_lines[0] == (
         "Available now: Not observed · capacity estimate still available"
     )
@@ -274,8 +307,42 @@ def test_retained_refresh_failure_keeps_facts_and_uses_fixed_observed_label() ->
         failure=ProbeReason.COMMAND_TIMEOUT,
     )
 
-    assert presentation.headline == "Machine memory: 32.0 GiB RAM · 25.6 GiB RAM working budget"
-    assert presentation.failure_line == "Recheck failed · using memory observed at 09:41"
+    assert (
+        presentation.headline
+        == "Machine memory: 32.0 GiB RAM · 25.6 GiB RAM working budget"
+    )
+    assert (
+        presentation.failure_line == "Recheck failed · using memory observed at 09:41"
+    )
+
+
+def test_candidate_retained_refresh_failure_keeps_outcome_and_exposes_fixed_line() -> (
+    None
+):
+    """Dropping the retry failure from candidate rows would hide stale evidence."""
+    presentation = build_candidate_memory_presentation(
+        _projection(),
+        observed_at_label="09:41",
+        failure=ProbeReason.COMMAND_TIMEOUT,
+    )
+
+    assert presentation.outcome == "64K scenario within RAM budget · 12.6 GiB headroom"
+    assert (
+        presentation.failure_line == "Recheck failed · using memory observed at 09:41"
+    )
+
+
+def test_candidate_replaces_an_unbounded_retained_failure_label() -> None:
+    """An arbitrary label must not reach a candidate row as failure detail."""
+    presentation = build_candidate_memory_presentation(
+        _projection(),
+        observed_at_label="09:41 raw probe details",
+        failure=ProbeReason.COMMAND_TIMEOUT,
+    )
+
+    assert (
+        presentation.failure_line == "Recheck failed · using previously observed memory"
+    )
 
 
 def test_active_refresh_keeps_accepted_facts_but_disables_recheck() -> None:
@@ -307,23 +374,90 @@ def test_apple_unified_memory_is_shown_once_without_vram_duplication() -> None:
 
     presentation = build_machine_memory_presentation(snapshot)
 
-    assert presentation.headline == "Machine memory: 32.0 GiB unified · 25.6 GiB RAM working budget"
-    assert presentation.evidence_lines == ("Available now: 21.0 GiB · GPU shares unified memory",)
+    assert (
+        presentation.headline
+        == "Machine memory: 32.0 GiB unified · 25.6 GiB RAM working budget"
+    )
+    assert presentation.evidence_lines == (
+        "Available now: 21.0 GiB · GPU shares unified memory",
+    )
+    assert presentation.accelerator_detail_lines == ()
+    assert presentation.limitation_lines[-1] == (
+        "VRAM not used in this rating · model-context support, runtime compatibility, offload, and performance not verified"
+    )
+
+
+def test_darwin_non_arm_partial_accelerator_fallback_is_unsupported_not_absent() -> (
+    None
+):
+    """The real Darwin fallback shape must not become a misleading absent-VRAM line."""
+    snapshot = _snapshot(
+        platform="darwin",
+        architecture="x86_64",
+        accelerator_state=AcceleratorState.PARTIAL,
+        accelerator_reason=ProbeReason.UNSUPPORTED_PLATFORM,
+    )
+
+    presentation = build_machine_memory_presentation(snapshot)
+
+    assert presentation.evidence_lines[-1] == (
+        "VRAM observation is unavailable on this platform · RAM estimate still available"
+    )
 
 
 @pytest.mark.parametrize(
     ("state", "reason", "expected"),
     [
-        (AcceleratorState.NOT_OBSERVED, ProbeReason.EXECUTABLE_NOT_FOUND, "VRAM not observed · not used in this rating"),
-        (AcceleratorState.PERMISSION_DENIED, ProbeReason.PERMISSION_DENIED, "VRAM access denied · RAM estimate still available"),
-        (AcceleratorState.UNSUPPORTED, ProbeReason.UNSUPPORTED_PLATFORM, "VRAM observation is unavailable on this platform · RAM estimate still available"),
-        (AcceleratorState.NOT_OBSERVED, ProbeReason.COMMAND_TIMEOUT, "NVIDIA VRAM check timed out · RAM estimate still available"),
-        (AcceleratorState.NOT_OBSERVED, ProbeReason.UNTRUSTED_EXECUTABLE, "NVIDIA VRAM tool was not used from an untrusted location"),
-        (AcceleratorState.NOT_OBSERVED, ProbeReason.MALFORMED_OUTPUT, "VRAM evidence could not be read safely · RAM estimate still available"),
-        (AcceleratorState.NOT_OBSERVED, ProbeReason.DUPLICATE_DEVICE, "VRAM evidence could not be read safely · RAM estimate still available"),
-        (AcceleratorState.NOT_OBSERVED, ProbeReason.TOO_MANY_DEVICES, "VRAM evidence could not be read safely · RAM estimate still available"),
-        (AcceleratorState.NOT_OBSERVED, ProbeReason.COMMAND_FAILED, "VRAM evidence could not be read safely · RAM estimate still available"),
-        (AcceleratorState.NOT_OBSERVED, ProbeReason.SYSFS_UNTRUSTED_PATH, "VRAM evidence could not be read safely · RAM estimate still available"),
+        (
+            AcceleratorState.NOT_OBSERVED,
+            ProbeReason.EXECUTABLE_NOT_FOUND,
+            "VRAM not observed · not used in this rating",
+        ),
+        (
+            AcceleratorState.PERMISSION_DENIED,
+            ProbeReason.PERMISSION_DENIED,
+            "VRAM access denied · RAM estimate still available",
+        ),
+        (
+            AcceleratorState.UNSUPPORTED,
+            ProbeReason.UNSUPPORTED_PLATFORM,
+            "VRAM observation is unavailable on this platform · RAM estimate still available",
+        ),
+        (
+            AcceleratorState.NOT_OBSERVED,
+            ProbeReason.COMMAND_TIMEOUT,
+            "NVIDIA VRAM check timed out · RAM estimate still available",
+        ),
+        (
+            AcceleratorState.NOT_OBSERVED,
+            ProbeReason.UNTRUSTED_EXECUTABLE,
+            "NVIDIA VRAM tool was not used from an untrusted location",
+        ),
+        (
+            AcceleratorState.NOT_OBSERVED,
+            ProbeReason.MALFORMED_OUTPUT,
+            "VRAM evidence could not be read safely · RAM estimate still available",
+        ),
+        (
+            AcceleratorState.NOT_OBSERVED,
+            ProbeReason.DUPLICATE_DEVICE,
+            "VRAM evidence could not be read safely · RAM estimate still available",
+        ),
+        (
+            AcceleratorState.NOT_OBSERVED,
+            ProbeReason.TOO_MANY_DEVICES,
+            "VRAM evidence could not be read safely · RAM estimate still available",
+        ),
+        (
+            AcceleratorState.NOT_OBSERVED,
+            ProbeReason.COMMAND_FAILED,
+            "VRAM evidence could not be read safely · RAM estimate still available",
+        ),
+        (
+            AcceleratorState.NOT_OBSERVED,
+            ProbeReason.SYSFS_UNTRUSTED_PATH,
+            "VRAM evidence could not be read safely · RAM estimate still available",
+        ),
     ],
 )
 def test_accelerator_failure_copy_is_fixed_and_independent_from_ram(
@@ -340,7 +474,9 @@ def test_accelerator_failure_copy_is_fixed_and_independent_from_ram(
 def test_observed_and_partial_vram_are_informational_only() -> None:
     """VRAM must never be folded into the v1 RAM estimate or omitted from caveats."""
     observed = build_machine_memory_presentation(
-        _snapshot(accelerator_state=AcceleratorState.OBSERVED, accelerators=(_device(),))
+        _snapshot(
+            accelerator_state=AcceleratorState.OBSERVED, accelerators=(_device(),)
+        )
     )
     partial = build_machine_memory_presentation(
         _snapshot(
@@ -353,6 +489,7 @@ def test_observed_and_partial_vram_are_informational_only() -> None:
     assert observed.evidence_lines[-1] == (
         "VRAM observed: NVIDIA RTX 4090 24.0 GiB · not used in this rating"
     )
+    assert observed.accelerator_detail_lines == ("NVIDIA RTX 4090 24.0 GiB",)
     assert partial.evidence_lines[-1] == (
         "VRAM observed: NVIDIA RTX 4090 24.0 GiB · other accelerator evidence incomplete · not used in this rating"
     )
@@ -361,12 +498,19 @@ def test_observed_and_partial_vram_are_informational_only() -> None:
 def test_overflow_accelerators_stay_bounded_behind_details_toggle() -> None:
     """Listing every device inline would make the panel unbounded and unusable."""
     devices = tuple(_device(label=f"RTX {index}") for index in range(3))
-    snapshot = _snapshot(accelerator_state=AcceleratorState.OBSERVED, accelerators=devices)
+    snapshot = _snapshot(
+        accelerator_state=AcceleratorState.OBSERVED, accelerators=devices
+    )
 
     presentation = build_machine_memory_presentation(snapshot)
 
     assert presentation.evidence_lines[-1] == (
         "VRAM observed on 3 devices · show estimate details · not used in this rating"
+    )
+    assert presentation.accelerator_detail_lines == (
+        "NVIDIA RTX 0 24.0 GiB",
+        "NVIDIA RTX 1 24.0 GiB",
+        "NVIDIA RTX 2 24.0 GiB",
     )
 
 
