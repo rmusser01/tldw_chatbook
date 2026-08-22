@@ -6663,6 +6663,84 @@ class TestLlamaCppExchangeCapture:
         assert "local-secret" not in _json.dumps(captures[0].request)
 
     @pytest.mark.asyncio
+    async def test_llamacpp_stream_to_complete_fallback_gets_its_own_capture(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """task-19324: the stream->complete retry is a SECOND HTTP request.
+
+        It is issued inside ``stream_llamacpp_chat``, below the seam that
+        captures ``stream_chat``'s own call, so before this it never got a
+        capture and the Inspector showed one row for a turn that really
+        made two calls -- understating what was sent on exactly the
+        degraded turn a user opens the Inspector to look at.
+
+        Drives the REAL ``stream_llamacpp_chat`` (only the HTTP layer and
+        the non-streaming retry are faked) so the fallback genuinely fires.
+        """
+        import json as _json
+
+        class _EmptyStreamResponse:
+            def raise_for_status(self):
+                return None
+
+            async def aiter_lines(self):
+                # A stream that opens fine and yields no content is exactly
+                # what triggers the non-streaming retry.
+                return
+                yield  # pragma: no cover - generator marker
+
+        class _StreamCtx:
+            async def __aenter__(self):
+                return _EmptyStreamResponse()
+
+            async def __aexit__(self, *exc):
+                return False
+
+        class _FakeClient:
+            def stream(self, *args, **kwargs):
+                return _StreamCtx()
+
+        gateway = ConsoleProviderGateway()
+        monkeypatch.setattr(
+            ConsoleProviderGateway,
+            "_active_http_client",
+            lambda self: _FakeClient(),
+        )
+
+        async def fake_complete(self, **kwargs):
+            return "recovered text"
+
+        monkeypatch.setattr(
+            ConsoleProviderGateway, "complete_llamacpp_chat", fake_complete
+        )
+
+        aggregate = ConsoleProviderStreamSignals(exchange_capture_enabled=True)
+        resolution = self._resolution(streaming=True)
+        out = [
+            c
+            async for c in gateway.stream_chat(
+                resolution, [{"role": "user", "content": "q"}], signals=aggregate
+            )
+        ]
+        assert out == ["recovered text"]
+
+        captures = aggregate.exchange_captures()
+        assert len(captures) == 2, (
+            "the streaming call and its non-streaming retry are two HTTP "
+            f"requests and must be two captures, got {len(captures)}"
+        )
+        retry = [c for c in captures if "retry_of" in c.request]
+        assert len(retry) == 1
+        retry_capture = retry[0]
+        assert retry_capture.request["wire_payload"]["stream"] is False
+        assert (
+            retry_capture.request["wire_payload"]["messages"][-1]["content"] == "q"
+        )
+        assert retry_capture.response["content"] == "recovered text"
+        # Same keyless guarantee the sibling captures hold.
+        assert "local-secret" not in _json.dumps(retry_capture.request)
+
+    @pytest.mark.asyncio
     async def test_llamacpp_non_streaming_abort_after_first_item_keeps_recorded_content(
         self, monkeypatch
     ):

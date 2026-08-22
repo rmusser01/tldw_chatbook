@@ -4,7 +4,9 @@ Note Management Tools for LLM function calling.
 These tools allow LLMs to create, search, update, and manage notes.
 """
 
-from typing import Dict, Any
+import threading
+from typing import Dict, Any, Optional, Tuple
+
 from loguru import logger
 
 from . import Tool
@@ -33,6 +35,70 @@ def _notes_db_base_dir():
     """
     return get_chachanotes_db_path().parent
 
+
+#: Cached ``NotesInteropService`` for the tool path (task-692).
+#:
+#: Each note tool used to build its own service per ``execute()``. That is
+#: not just object churn: the service's ``_db_instances`` cache is an
+#: INSTANCE attribute, so a per-call service always missed it and
+#: ``_get_db`` constructed a fresh ``CharactersRAGDB`` -- a real DB open
+#: plus schema-version check (~1.8 ms measured on an existing DB) -- on
+#: every single call, and the instance was then discarded. ``TASK-545 P2``
+#: put these tools on the agent worker thread, where one run can invoke
+#: them many times.
+#:
+#: Keyed on the resolved DB path so a config change (or a test that
+#: repoints the data dir) still rebuilds rather than serving a service
+#: bound to the previous database.
+_SERVICE_LOCK = threading.Lock()
+_SERVICE_CACHE: Optional[Tuple[str, NotesInteropService]] = None
+
+
+def _notes_service() -> NotesInteropService:
+    """Return the shared notes service for the tool path.
+
+    Built lazily on first use and reused afterwards, so the service's own
+    per-user ``CharactersRAGDB`` cache survives across tool calls instead
+    of being rebuilt for each one.
+
+    Returns:
+        A ``NotesInteropService`` bound to the current chachanotes DB.
+    """
+    global _SERVICE_CACHE
+
+    from ..config import chachanotes_db
+
+    # Resolved ONCE and derived from that single value (Qodo #5): calling
+    # `get_chachanotes_db_path()` twice -- once inside `_notes_db_base_dir()`
+    # and once for the key -- lets a profile switch or config rewrite between
+    # them cache a service under a key that does not describe the database it
+    # was actually bound to.
+    db_path = get_chachanotes_db_path()
+    base_dir = db_path.parent
+    key = str(db_path)
+
+    cached = _SERVICE_CACHE
+    if cached is not None and cached[0] == key:
+        return cached[1]
+
+    with _SERVICE_LOCK:
+        cached = _SERVICE_CACHE
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        service = NotesInteropService(
+            base_db_directory=base_dir,
+            api_client_id="tool_executor",
+            global_db_to_use=chachanotes_db,
+        )
+        _SERVICE_CACHE = (key, service)
+        return service
+
+
+def _reset_notes_service_cache() -> None:
+    """Drop the cached service (tests, and any deliberate re-point)."""
+    global _SERVICE_CACHE
+    with _SERVICE_LOCK:
+        _SERVICE_CACHE = None
 
 #: Matches config.py's own `default_users_name_fallback`, so an
 #: unconfigured user sees no change from the previously hardcoded value.
@@ -120,13 +186,7 @@ class CreateNoteTool(Tool):
             return {"error": "No content provided"}
 
         try:
-            from ..config import chachanotes_db
-
-            notes_service = NotesInteropService(
-                base_db_directory=_notes_db_base_dir(),
-                api_client_id="tool_executor",
-                global_db_to_use=chachanotes_db,
-            )
+            notes_service = _notes_service()
 
             note_id = notes_service.add_note(
                 user_id=_resolve_user_id(),
@@ -196,13 +256,7 @@ class SearchNotesTool(Tool):
 
         try:
             # Get the notes service
-            from ..config import chachanotes_db
-
-            notes_service = NotesInteropService(
-                base_db_directory=_notes_db_base_dir(),
-                api_client_id="tool_executor",
-                global_db_to_use=chachanotes_db,
-            )
+            notes_service = _notes_service()
 
             # Search notes
             results = notes_service.search_notes(
@@ -300,13 +354,7 @@ class UpdateNoteTool(Tool):
             return {"error": "No updates provided (need title or content)"}
 
         try:
-            from ..config import chachanotes_db
-
-            notes_service = NotesInteropService(
-                base_db_directory=_notes_db_base_dir(),
-                api_client_id="tool_executor",
-                global_db_to_use=chachanotes_db,
-            )
+            notes_service = _notes_service()
 
             user_id = _resolve_user_id()
 
