@@ -21,12 +21,13 @@ Replace the retired ASK-engine modal concept with reviewed inline conflict resol
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A content conflict appears in the existing inline reviewed-sync flow with a bounded file/note comparison and Keep file, Keep note, Keep both, and Skip for now choices
+- [ ] #1 Only eligible bound content-change conflicts appear in the existing inline reviewed-sync flow with a bounded file/note comparison and Keep file, Keep note, Keep both, and Skip for now choices; identity, move, representation, creation, deletion, and duplicate-authority conflicts remain blocked
 - [ ] #2 Staging or changing a choice performs no mutation; selections survive paging but are discarded when the review becomes stale or is abandoned
 - [ ] #3 Apply reviewed revalidates fresh authority and applies safe actions plus explicitly selected conflict resolutions; skipped conflicts remain Needs attention
 - [ ] #4 Keep file and Keep note resolve only that occurrence without changing the root's configured direction
-- [ ] #5 Keep both durably preserves the original note as an unbound manual conflict copy before updating the bound note, supports restart recovery, and records both outcomes
-- [ ] #6 Durable resolution history records each explicit choice and offers per-item Undo only while exact recovery remains valid; later edits are never overwritten
+- [ ] #5 Keep both durably preserves the original note content in a new unbound manual conflict copy before updating the original bound note, supports restart recovery, and records both outcomes
+- [ ] #6 Each completed resolution leaves an at-action per-item receipt with Undo and Dismiss, durable resolution history records the explicit choice, and Undo is offered only while exact 30-day recovery remains valid; later edits are never overwritten
 - [ ] #7 Deletion, pause, managed-placement, capability, and activation attention remain blocked and unchanged
 - [ ] #8 Comparison content and private authority never enter persistent diagnostics or logs, and unsupported filesystem writes remain fail-closed
+- [ ] #9 The inline choices, comparison, receipts, and history are keyboard reachable, communicate state without color alone, preserve focus during staged updates, and remain usable at 60x20
 <!-- AC:END -->

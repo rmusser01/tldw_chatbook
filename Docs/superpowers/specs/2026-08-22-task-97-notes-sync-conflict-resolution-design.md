@@ -103,6 +103,26 @@ reviewed apply gets one narrow admission rule: unresolved content-conflict rows
 may coexist with selected safe work, but every other attention or capability
 class remains blocking.
 
+The runtime owns one in-process asynchronous mutation lock per root. Automatic
+execution, manual reviewed apply, startup recovery for that root, and Undo all
+use the same lock. After acquiring it, a caller must reacquire root ownership
+and repeat every freshness, token, plan, authority, and recovery check before it
+builds a request or mutates anything. The existing planning lease remains a
+lifecycle/cancellation admission mechanism; it is not serialization. A lock
+entry may be discarded only after the root has no admitted or waiting mutation
+task. Executor operation-ID locks remain durable replay guards, not substitutes
+for root serialization.
+
+Only bound content rows with reason `both_sides_changed` or
+`out_of_direction_change` are eligible for choices, and only when both note and
+file content exist and the row has no managed-placement effect. All four choices
+are available for either eligible reason; the one-way case uses an occurrence-
+only direction override when its selected write opposes the configured
+direction. Every other `CONFLICT` reason—including duplicate authority,
+out-of-direction create/move/representation, ambiguous identity, and implied
+filesystem moves—retains its existing blocking copy and exposes no resolution
+choice.
+
 ## Typed contracts
 
 ### Conflict choice
@@ -180,10 +200,15 @@ The underlying executor action remains validated recovery metadata. Durable
 history therefore retains the user's choice after temporary recovery payloads
 expire.
 
-History projections contain only operation ID, typed choice, bounded state,
-completion/update time, and Undo availability/reason. They never expose the
-binding ID, path, title, content, hash, or exception text. History pages contain
-at most 100 rows.
+The durable history projection contains only operation ID, typed choice,
+bounded state, completion/update time, and Undo availability/reason. The
+interactive adapter may decorate a row from fresh authority with the current
+bounded note title and normalized root-relative path; those labels are never
+stored in the operation journal, logged, or returned in representations. When
+fresh authority cannot identify the item, the row uses the first eight
+characters of the opaque operation ID. No history form exposes binding IDs,
+content, hashes, absolute paths, or exception text. History pages contain at
+most 100 rows.
 
 ## Review and comparison flow
 
@@ -191,7 +216,8 @@ at most 100 rows.
 2. The controller projects conflict rows but does not copy private authority.
 3. **View comparison** calls the runtime with root ID, token, and binding ID.
 4. Under the root's planning lease, the runtime performs a fresh observation and
-   recomputes the plan.
+   recomputes the plan. Comparison is read-only and does not acquire the root
+   mutation lock.
 5. The root, token, complete plan, and exact conflict binding must equal the
    reviewed values.
 6. The adapter builds the bounded comparison while its private observation
@@ -217,7 +243,8 @@ not issue a notification.
 choices. Skip is transmitted as reviewed intent so the result can count remaining
 attention, but it creates no operation and no history row.
 
-Before mutation the runtime:
+The runtime first acquires the root mutation lock. While holding it and before
+mutation, it:
 
 1. reacquires authoritative root ownership;
 2. requires an active root and exact reviewed token;
@@ -229,6 +256,11 @@ Before mutation the runtime:
    is still retained; and
 7. admits required recovery separately for each item before that item's first
    mutation.
+
+Automatic execution and recovery use the same lock and repeat their own fresh
+authority checks after acquisition. This prevents reviewed apply, automatic
+work, recovery, and Undo from deriving contradictory requests concurrently even
+when their durable operation IDs differ.
 
 Unselected and skipped content conflicts do not block safe actions or selected
 content resolutions. Automatic reconciliation is unchanged and still blocks on
@@ -268,7 +300,8 @@ reconciliation. Remaining conflicts keep the root in **Needs attention**.
 ### Keep both
 
 Keep both leaves the reviewed file unchanged, preserves the original Database
-Note as an unbound manual note, then makes the reviewed file the bound version.
+Note content in a new unbound manual note, then makes the reviewed file the
+content of the original bound note. The bound note retains its identity.
 
 Stable identities are domain-separated SHA-256 values:
 
@@ -282,6 +315,26 @@ filesystem path. Existing active manual folders at the normalized path are
 reused. If absent, the caller-owned deterministic ID is used to create them. An
 ID/path mismatch fails closed. Existing manual folders are never automatically
 renamed.
+
+The sync authority exposes one narrow
+`create_or_verify_conflict_copy(request)` seam over the existing local folder,
+note, and membership repositories. It accepts the
+caller-derived parent folder ID, child folder ID, copy note ID, normalized
+manual folder names, bounded title/body, and note-scope owner. It returns the
+actual verified folder, note, and placement identities. It does not accept a
+filesystem path and cannot create sync-managed placements.
+
+For each folder level the seam resolves the normalized active manual path
+first. If that path exists, it reuses the existing folder and returns its actual
+ID. If absent, it creates the folder with the caller-owned deterministic ID. A
+deterministic ID already attached to a different active path, a non-manual
+folder, a different owner, or a deleted object fails closed. Concurrent create
+losers reread and verify the winning row rather than choosing another identity.
+For the copy, an existing deterministic note and manual placement are reused
+only when owner, parent, title, body, deletion state, and placement all match;
+any mismatch fails closed. The authority uses repository optimistic versions
+and returns fresh versions after each create-or-verify step. These are
+idempotent repository operations, not a cross-database transaction.
 
 After recovery admission the executor performs an idempotent, journaled
 sequence:
@@ -301,6 +354,29 @@ empty folder or an additional preserved copy, but never removes either user's
 version. An existing deterministic note with different identity, content, or
 placement is Needs attention and is never overwritten.
 
+The generic operation table is not widened. While the operation state remains
+`recovery_admitted`, private recovery metadata carries an exact
+`conflict_substage` enum and is advanced by compare-and-set with the operation
+and recovery IDs:
+
+| Completed durable boundary | Operation state | `conflict_substage` |
+| --- | --- | --- |
+| recovery admitted | `recovery_admitted` | `recovery_admitted` |
+| both folders verified | `recovery_admitted` | `folders_established` |
+| conflict-copy note verified | `recovery_admitted` | `copy_created` |
+| manual placement verified | `recovery_admitted` | `placement_created` |
+| copy note and placement jointly reverified | `recovery_admitted` | `copy_verified` |
+| bound note updated and reobserved | `first_authority_applied` | `bound_note_updated` |
+| reviewed file reobserved unchanged | `second_authority_applied` | `file_reverified` |
+| binding baseline committed | `binding_updated` | `binding_updated` |
+| every authority reverified | `verified` | `verified` |
+
+Each external side effect is followed by its checkpoint. A crash between them
+replays the same create-or-verify step, then advances the checkpoint; it never
+guesses that an effect occurred. Startup reconstruction rejects unknown,
+skipped, or regressing substages and any collision with the checkpointed
+identities. Completion follows `verified` as it does for existing operations.
+
 The durable operation kind is `resolve_keep_both`; validated recovery metadata
 records the underlying update-note action and the exact conflict-copy identities.
 
@@ -316,37 +392,65 @@ Recovery capacity is admitted before each selected item's first mutation. Every
 admitted mutation is cancellation-shielded through its current durable
 sub-step, then cancellation is propagated after the journal is coherent.
 
+Conflict-resolution and linked Undo recovery expires 30 days after admission,
+matching ADR-059's normal recovery-retention contract. One named duration
+constant serves these operation kinds; this task does not change any shorter
+retention for unrelated operation kinds. History remains after recovery expiry,
+but Undo then reports `Undo expired` and cannot mutate.
+
 Startup recovery reconstructs conflict requests from the durable operation kind
 and validated private metadata. It never treats a resolution operation as an
 automatic action.
 
 Per-item Undo is available only for a completed conflict resolution with
-unexpired exact recovery. Undo reacquires the root lease and validates the
-current note, file, binding, and conflict copy before mutation.
+unexpired exact recovery. Undo acquires the same root mutation lock as apply,
+then reacquires the root lease and validates the current note, file, binding,
+and conflict copy before mutation.
 
-Undo restores the pre-resolution authority and the original binding baseline,
-leaving the binding **Needs attention** so the original conflict can be reviewed
-again. For Keep both it:
+Before its first mutation, Undo admits a separate durable `undo_resolution`
+operation. Its ID is the domain-separated SHA-256 of the canonical tuple
+`("undo_resolution_v1", root_id, source_operation_id)`; private recovery
+metadata repeats and validates the source operation ID. The linked operation
+follows the existing generic state machine:
 
-1. restores and verifies the original bound note first;
-2. restores the original binding baseline as Needs attention; and
-3. soft-deletes only the unchanged operation-owned conflict-copy note.
+| Undo boundary | Durable state/checkpoint |
+| --- | --- |
+| exact pre-Undo authority admitted | `recovery_admitted` |
+| changed note or file restored and verified | `first_authority_applied` |
+| unchanged opposite authority reverified | `second_authority_applied` |
+| original binding identity/path/serialization/digests restored with fresh note version | `binding_updated` |
+| unchanged Keep-both copy soft-deleted, or no copy required | private `undo_substage=copy_cleanup_complete` while `binding_updated` |
+| all resulting authority verified | `verified` |
+| source operation marked Undone | linked Undo `completed` |
 
-If the final cleanup fails, both visible versions remain and the operation is
-Partial. Empty manual folders may remain. Undo never deletes a shared/manual
-folder.
+Startup recovery resumes the linked Undo from these checkpoints. Each step is
+idempotent and authority-checked; a crash can therefore leave a recoverable
+partial Undo but never an unjournaled restore. Only after verification does one
+device-state transaction complete the Undo operation and compare-and-set the
+source completed operation's empty reason to `undo_completed`. A zero-row source
+CAS makes the Undo operation Needs attention rather than rewriting history.
 
-Undo is one-shot. A compare-and-set changes the completed operation's bounded
-reason code to `undo_completed` only when its reason is still empty. The durable
-operation state remains `completed`; history projects the reason as **Undone**.
-A changed bound authority or edited conflict copy disables/refuses Undo with a
-bounded `changed_since_resolution` reason and makes no mutation.
+Undo restores the pre-resolution note/file authority and the original binding
+identity, relative path, serialization, and content digests. Restoring a note is
+an optimistic write and produces a fresh note version, so the active binding is
+atomically updated to that fresh version rather than its historical version.
+The binding remains `active`; **Needs attention** is projected from the freshly
+divergent reconciliation plan, so the same binding can be reviewed and resolved
+again. For Keep both, Undo restores and verifies the original bound note before
+updating the binding, then soft-deletes only the unchanged operation-owned
+conflict-copy note.
+
+If final cleanup fails, both visible versions remain and the linked Undo is
+Needs attention. Empty manual folders may remain. Undo never deletes a
+shared/manual folder. A changed bound authority or edited conflict copy refuses
+Undo with bounded `changed_since_resolution` and makes no mutation.
 
 ## Inline Library behavior
 
 Conflict rows are collapsed by default and show bounded note title, wrapped
-root-relative path, `Both file and note changed`, current selection, and the
-four choices.
+root-relative path, current selection, and the four choices. Reason copy is
+exactly `Both file and note changed` for `both_sides_changed` and `This change
+is outside the root direction` for `out_of_direction_change`.
 
 Choice effect copy is explicit:
 
@@ -377,9 +481,16 @@ enable it. Disabled tooltips name the exact blocker.
 
 After successful subset apply:
 
-- if conflicts remain, page 1 of the fresh review stays visible, focus moves to
-  its first conflict, and the existing status line reports applied and remaining
-  counts once;
+- each completed destructive resolution adds an in-place retained receipt at
+  the action point with bounded item label, choice, **Undo**, and **Dismiss**;
+- the receipt remains until that item is undone, explicitly dismissed, or
+  superseded by a newer resolution of the same item; navigation/remount
+  reconstructs undismissed receipts from the root's durable operation IDs;
+- Dismiss adds only the opaque operation ID to runtime-owned private per-root
+  receipt state, never deletes operation history or recovery authority;
+- if conflicts remain, receipts stay above page 1 of the fresh review, focus
+  moves to its first conflict, and the existing status line reports applied and
+  remaining counts once;
 - if no attention remains, the normal receipt phase is shown; and
 - if an admitted operation is non-terminal, the existing root recovery path is
   shown instead of a fresh review.
@@ -391,10 +502,12 @@ attention.
 ## Resolution history UI
 
 Each lasting-sync root gains a bounded **Resolution history** action in the
-existing retained canvas. It is not a modal. The action is enabled when the
-runtime reports at least one durable conflict-resolution operation.
+existing retained canvas. It supplements rather than replaces the at-action
+Undo/Dismiss receipts and is not a modal. The action is enabled when the runtime
+reports at least one durable conflict-resolution operation.
 
-History shows newest first, 100 rows per page. Each row shows choice, timestamp,
+History shows newest first, 100 rows per page. Each row shows its fresh bounded
+item label (or short operation-ID fallback), choice, timestamp,
 terminal/recovery status, and one of:
 
 - **Undo** — exact recovery is currently valid;
@@ -419,8 +532,9 @@ Undo is per item. There is no batch Undo. Skip never appears.
 
 Status lines and durable public projections contain only bounded counts, enum
 labels, opaque IDs, and reason codes. Note title and relative path are displayed
-only in the active comparison/review surface and are excluded from status,
-history, logs, exceptions, and object representations.
+only in active review, receipt, or interactive-history adapters derived from
+fresh authority; they are excluded from persistence, status, logs, exceptions,
+and object representations.
 
 ## Verification
 
@@ -432,7 +546,9 @@ history, logs, exceptions, and object representations.
 - Note-to-File diff orientation;
 - missing note timestamp reports unavailable;
 - no hashes/absolute paths in comparison projections or representations;
-- review projection and typed blocker accounting.
+- review projection and typed blocker accounting;
+- only `both_sides_changed` and placement-free `out_of_direction_change` rows
+  expose choices; every other conflict reason remains blocked.
 
 ### Runtime and executor
 
@@ -446,7 +562,12 @@ history, logs, exceptions, and object representations.
   mutation;
 - unsupported Windows write remains blocked;
 - deterministic conflict-copy folder/note replay and mismatch refusal;
+- create-or-verify returns actual reused IDs and rejects owner, path, kind,
+  version, content, placement, and concurrent-create collisions;
 - durable operation kinds survive recovery expiry;
+- automatic execution, reviewed apply, recovery, and Undo serialize on one root
+  lock and revalidate after acquisition;
+- conflict resolution and Undo recovery retain exact authority for 30 days;
 - per-item failure stops later items and reports completed work honestly;
 - fresh post-apply review occurs only after terminal attempted work.
 
@@ -469,11 +590,16 @@ version.
 ### Undo
 
 - Keep file, Keep note, and Keep both restore the pre-resolution conflict and
-  baseline;
+  baseline fields with the freshly restored note version while the binding
+  remains active;
 - Keep both restores before soft-deleting the exact copy;
 - edited copy, changed bound note/file, expired recovery, wrong root, duplicate
   delivery, and stale lease all refuse safely;
-- Undo completion is one-shot and durable;
+- every Undo crash boundary resumes from its linked durable operation;
+- Undo completion is one-shot and marks the source only after verification;
+- a second resolution after Undo succeeds without stale binding authority;
+- concurrent apply/apply and apply/Undo attempts serialize, and the loser
+  revalidates against the winner's state before mutation;
 - empty/manual folders are retained.
 
 ### Controller and mounted Textual behavior
@@ -487,6 +613,10 @@ version.
 - checkmark plus text communicates selection without color;
 - Apply enablement uses typed blocker facts;
 - partial subset status uses the existing status line once;
+- each completed resolution leaves a retained item receipt with working Undo
+  and Dismiss even when other conflicts remain;
+- interactive history rows use fresh bounded labels or the short opaque-ID
+  fallback without persisting the labels;
 - deletion choices remain disabled;
 - review, comparison, receipt, and history remain contained at 60x20 and wide
   production CSS sizes.
@@ -502,7 +632,9 @@ version.
 
 Mutation checks must individually prove observation-token enforcement,
 recovery-before-write, deletion blocking, deterministic copy collision refusal,
-durable choice recording, and stale async comparison rejection.
+durable choice recording, stale async comparison rejection, per-root mutation
+serialization, durable Undo admission, fresh post-Undo binding version, and
+30-day recovery expiry.
 
 ## Documentation and task hygiene
 
