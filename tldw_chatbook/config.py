@@ -28,6 +28,7 @@ from typing import (
     Mapping,
     NamedTuple,
     Optional,
+    TYPE_CHECKING,
     Iterator,
 )
 
@@ -58,6 +59,9 @@ from tldw_chatbook.Utils.private_paths import (
     verify_trusted_directory,
 )
 from tldw_chatbook.Utils.sensitive_config_keys import is_sensitive_config_key
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryMigrationSeed
 #
 #######################################################################################################################
 #
@@ -1530,7 +1534,13 @@ def _load_settings_uncached(
     final_general_settings_cli = get_toml_section("general")
     final_database_settings_cli = get_toml_section("database")
     final_model_catalog_settings_cli = get_toml_section("model_catalog")
-    final_chat_defaults_cli = get_toml_section("chat_defaults")
+    final_chat_defaults_cli = copy.deepcopy(get_toml_section("chat_defaults"))
+    if not isinstance(final_chat_defaults_cli, dict):
+        final_chat_defaults_cli = {}
+    final_chat_defaults_cli["rag_auto_retrieve_on_send"] = coerce_bool_setting(
+        final_chat_defaults_cli.get("rag_auto_retrieve_on_send", False),
+        False,
+    )
     final_character_defaults_cli = get_toml_section("character_defaults")
     final_notes_settings_cli = get_toml_section("notes")
     # (task 11, spec §9.1/AC 40) The [chunking] table -- the config tier of
@@ -6973,6 +6983,33 @@ def get_notes_sync_watcher_intervals(
             "notes.sync_watcher_interval_seconds."
         )
     return float(base), float(peak)
+
+
+def load_console_library_migration_seed(
+    app_config: Mapping[str, Any] | None = None,
+) -> "ConsoleLibraryMigrationSeed":
+    """Return the sanitized pre-upgrade automatic-retrieval migration seed.
+
+    Args:
+        app_config: Optional already-loaded application configuration.
+
+    Returns:
+        The strict typed seed required by a legacy database migration.
+    """
+    from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryMigrationSeed
+
+    selected = (
+        load_cli_config_and_ensure_existence() if app_config is None else app_config
+    )
+    chat_defaults = selected.get("chat_defaults") if isinstance(selected, Mapping) else None
+    raw_value = (
+        chat_defaults.get("rag_auto_retrieve_on_send", False)
+        if isinstance(chat_defaults, Mapping)
+        else False
+    )
+    return ConsoleLibraryMigrationSeed(
+        auto_retrieve_on_send=coerce_bool_setting(raw_value, False)
+    )
 
 
 def get_prompts_db_path(*, ignore_override: bool = False) -> Path:

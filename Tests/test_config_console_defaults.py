@@ -76,6 +76,56 @@ def test_console_large_paste_collapse_defaults_enabled():
     )
 
 
+def test_legacy_console_rag_auto_retrieve_template_default_is_false():
+    """Fresh sessions begin with the pre-upgrade automatic-retrieval setting off."""
+    template = tomllib.loads(config_module.CONFIG_TOML_CONTENT)
+
+    assert template["chat_defaults"]["rag_auto_retrieve_on_send"] is False
+    assert (
+        config_module.DEFAULT_CONFIG_FROM_TOML["chat_defaults"]
+        ["rag_auto_retrieve_on_send"]
+        is False
+    )
+
+
+@pytest.mark.parametrize("value", [True, False])
+def test_legacy_console_rag_auto_retrieve_round_trips_as_a_strict_bool(
+    tmp_path, monkeypatch, value
+):
+    """A valid saved boolean must be available unchanged to the migration seed."""
+    config_path = tmp_path / "config.toml"
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    assert config_module.save_setting_to_cli_config(
+        "chat_defaults", "rag_auto_retrieve_on_send", value
+    )
+
+    settings = config_module.load_settings(force_reload=True)
+    seed = config_module.load_console_library_migration_seed(settings)
+
+    assert settings["chat_defaults"]["rag_auto_retrieve_on_send"] is value
+    assert seed.auto_retrieve_on_send is value
+
+
+@pytest.mark.parametrize("raw_value", ['"sideways"', "42", "true"])
+def test_malformed_legacy_console_rag_auto_retrieve_value_falls_back_safely(
+    tmp_path, monkeypatch, raw_value
+):
+    """Invalid config cannot make new sessions automatic by accident."""
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        f"[chat_defaults]\\nrag_auto_retrieve_on_send = {raw_value}\\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+
+    settings = config_module.load_settings(force_reload=True)
+    seed = config_module.load_console_library_migration_seed(settings)
+
+    assert settings["chat_defaults"]["rag_auto_retrieve_on_send"] is False
+    assert seed.auto_retrieve_on_send is False
+
+
 def test_console_rail_labels_ship_horizontal_by_default():
     """The generated config keeps the established horizontal rail handles."""
     assert (
