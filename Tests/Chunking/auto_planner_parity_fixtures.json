@@ -966,6 +966,45 @@
           "has_tables": false,
           "has_timecodes": false,
           "language": null,
+          "media_type": "obsidian_note",
+          "mime_type": null,
+          "source_name": null,
+          "text_length": 0,
+          "title": null
+        },
+        "rationale": "No specialized media signals detected; selected sentence chunks.",
+        "template_name": null,
+        "used_llm": false
+      },
+      "media_type": "obsidian_note",
+      "planner_media_type": "obsidian_note"
+    },
+    {
+      "chunk_options": {
+        "adaptive": false,
+        "language": null,
+        "max_size": 900,
+        "method": "sentences",
+        "multi_level": false,
+        "overlap": 120
+      },
+      "chunking_plan": {
+        "derived_views": [],
+        "fallback_reason": null,
+        "goal": "balanced",
+        "max_size": 900,
+        "method": "sentences",
+        "mode": "auto",
+        "overlap": 120,
+        "profile": {
+          "extension": null,
+          "has_chapters": false,
+          "has_headings": false,
+          "has_lists": false,
+          "has_speaker_labels": false,
+          "has_tables": false,
+          "has_timecodes": false,
+          "language": null,
           "media_type": null,
           "mime_type": null,
           "source_name": null,

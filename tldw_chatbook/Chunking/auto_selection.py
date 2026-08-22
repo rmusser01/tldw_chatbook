@@ -138,6 +138,18 @@ MEDIA_TYPE_MAP: dict[str, str] = {
     # planner equivalent → identity.
     "xml_document": "xml_document",
     "xml": "xml",
+    # --- Notes-import family ---------------------------------------------------
+    # DB/Client_Media_DB_v2.py save_obsidian_note() persists "obsidian_note"
+    # through the same add_media_with_keywords seam; the Library viewer
+    # recognizes the type (_MARKDOWN_MEDIA_TYPES). No planner equivalent →
+    # identity (markdown-ish prose rides the generic sentence plan).
+    "obsidian_note": "obsidian_note",
+    # NOTE: Book_Ingestion_Lib._process_markup_or_plain_text's result dict
+    # names "opml"/"text" (else "document") for markup family labels, but
+    # that helper is dead code today — if it is ever revived, those strings
+    # arrive unmapped and ride the identity fallback unchanged (generic
+    # plan), which is the correct behavior; add explicit identity entries
+    # only if that revival ever happens.
 }
 
 #: Every media-type string chatbook's own ingest code can produce or label
@@ -178,6 +190,8 @@ KNOWN_INGEST_MEDIA_TYPES: tuple[str, ...] = (
     # xml family
     "xml_document",
     "xml",
+    # notes-import family
+    "obsidian_note",
 )
 
 #: Spec §4.2 asks for the embeddings config's enabled state. No cheap
