@@ -3813,6 +3813,14 @@ default = "pixels"
 # the exact host is listed in allowed_hosts.
 enabled = true
 allowed_hosts = []
+# Default (connect, read) timeout applied by `Utils/egress.py`'s
+# `create_default_session()` to any request through that session which does
+# not pass its own `timeout=` (task-19830). Per-provider `api_timeout`
+# settings under [api_settings.<provider>] still take precedence wherever
+# they're read explicitly -- these are only the floor for call sites that
+# don't set one.
+# request_connect_timeout_seconds = 10
+# request_read_timeout_seconds = 30
 
 [image_generation]
 # Backend-specific fields (model, base_url, timeout_seconds, api_key, ...) go

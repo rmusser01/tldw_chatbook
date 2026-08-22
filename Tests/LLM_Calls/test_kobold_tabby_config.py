@@ -70,7 +70,7 @@ def captured_post(monkeypatch):
             captured["json"] = json
             return FakeResponse()
 
-    monkeypatch.setattr(lib.requests, "Session", lambda: FakeSession())
+    monkeypatch.setattr(lib, "create_default_session", lambda: FakeSession())
     return captured
 
 
@@ -238,7 +238,7 @@ def test_kobold_streaming_uses_the_openai_compatible_endpoint(monkeypatch):
             seen["url"] = url
             return StreamResponse()
 
-    monkeypatch.setattr(lib.requests, "Session", lambda: StreamSession())
+    monkeypatch.setattr(lib, "create_default_session", lambda: StreamSession())
 
     drain(lib.summarize_with_kobold("text", None, "Summarize.", streaming=True))
 
@@ -277,7 +277,7 @@ def test_configuration_reaches_the_public_analyze_boundary(monkeypatch):
             seen["url"] = url
             return FakeResponse()
 
-    monkeypatch.setattr(lib.requests, "Session", lambda: Session())
+    monkeypatch.setattr(lib, "create_default_session", lambda: Session())
 
     result = drain(
         analyze(

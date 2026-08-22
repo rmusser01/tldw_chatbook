@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from typing import Iterable, List, Mapping, MutableMapping
 from urllib.parse import urljoin, urlparse
 
+import requests
 from loguru import logger
 
 from ..config import get_cli_setting
@@ -875,6 +876,89 @@ async def guarded_fetch_httpx_async(
         finally:
             await response.aclose()
     raise EgressFetchError("too many redirects", url=url)
+
+
+#: Config-driven default ``(connect, read)`` timeout for
+#: ``create_default_session()`` -- see ``default_session_timeout()`` below.
+#: The read half matches the house default this module already used for
+#: ``guarded_fetch_requests``.
+DEFAULT_SESSION_CONNECT_TIMEOUT = 10.0
+DEFAULT_SESSION_READ_TIMEOUT = 30.0
+
+
+def default_session_timeout() -> tuple[float, float]:
+    """Config-driven ``(connect, read)`` timeout for ``create_default_session()``.
+
+    Read from ``[web_security] request_connect_timeout_seconds`` /
+    ``request_read_timeout_seconds``, the same ``get_cli_setting`` pattern
+    ``_config_enabled``/``_config_allowed_hosts`` above already use, and
+    consistent in spirit with the per-provider ``api_timeout`` settings
+    ``LLM_Calls`` reads directly (task-19830).
+
+    A tuple, not a single number, because ``requests`` applies the two
+    halves differently: CONNECT bounds the TCP handshake/TLS setup once;
+    READ is re-armed for every chunk of a streamed response (``stream=
+    True``), so a slow-but-progressing stream is only killed by a stall on
+    one chunk, never by total elapsed duration.
+    """
+    connect = get_cli_setting(
+        "web_security",
+        "request_connect_timeout_seconds",
+        DEFAULT_SESSION_CONNECT_TIMEOUT,
+    )
+    read = get_cli_setting(
+        "web_security", "request_read_timeout_seconds", DEFAULT_SESSION_READ_TIMEOUT
+    )
+    try:
+        connect_seconds = float(connect)
+    except (TypeError, ValueError):
+        connect_seconds = DEFAULT_SESSION_CONNECT_TIMEOUT
+    try:
+        read_seconds = float(read)
+    except (TypeError, ValueError):
+        read_seconds = DEFAULT_SESSION_READ_TIMEOUT
+    return (connect_seconds, read_seconds)
+
+
+class DefaultTimeoutSession(requests.Session):
+    """A ``requests.Session`` that fills in a default timeout when the
+    caller omits one.
+
+    ``get``/``post``/``put``/``delete``/``patch`` all funnel through
+    ``Session.request()`` in the base ``requests.Session`` class, so
+    overriding this one method covers every verb. An explicit ``timeout=``
+    -- keyword, or the 9th positional argument the rare
+    ``session.request(method, url, ...)`` call site passes -- always wins;
+    this only fills the gap when the caller specified neither (task-19830).
+    """
+
+    def __init__(self, *args, default_timeout=None, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.default_timeout = (
+            default_session_timeout() if default_timeout is None else default_timeout
+        )
+
+    def request(self, method, url, *args, **kwargs):  # type: ignore[override]
+        # Session.request's positional signature (after method, url) is
+        # params, data, headers, cookies, files, auth, timeout -- 6
+        # positionals before `timeout`, so a 7th positional argument IS an
+        # explicit timeout and must not be overridden.
+        if "timeout" not in kwargs and len(args) <= 6:
+            kwargs["timeout"] = self.default_timeout
+        return super().request(method, url, *args, **kwargs)
+
+
+def create_default_session(*, timeout=None) -> "DefaultTimeoutSession":
+    """Build a ``requests.Session`` whose default timeout is config-driven.
+
+    Every call made through the returned session that omits ``timeout=``
+    gets ``default_session_timeout()`` (or the ``timeout`` passed here, if
+    given) instead of blocking forever on a half-open connection. A call
+    that already passes its own ``timeout=`` is completely untouched --
+    construction alone never changes behaviour for a deliberate per-call or
+    per-provider timeout (task-19830).
+    """
+    return DefaultTimeoutSession(default_timeout=timeout)
 
 
 def guarded_fetch_requests(

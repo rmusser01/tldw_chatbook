@@ -6106,3 +6106,46 @@ side wholesale, **verify the taken pin reproduces from its own tree before
 concluding anything** — and separately review the delta between it and the pin
 you last reviewed. Those are two different questions, and the first being green
 does not answer the second.
+
+## A construction-symbol swap silently disconnects every test that mocks it by name, and those tests are not where you'd look (TASK-19830, 2026-08-22)
+
+**What happened.** Converting 49 `requests.Session()` construction sites
+across six `LLM_Calls/` modules to a shared `create_default_session()`
+factory looked purely mechanical — same object shape, same methods, an
+explicit `timeout=` still wins. `Tests/LLM_Calls/ -q` went from clean to
+**55 failed**. The cause was never the production code: dozens of tests across
+the repo intercepted the OLD symbol by name —
+`monkeypatch.setattr(module.requests, "Session", fake_session)`, a
+`SimpleNamespace(Session=lambda: session)` swap of the whole `requests`
+module reference, or a `unittest.mock.patch("...module.requests.Session")`
+string target. Once the production code called `create_default_session()` (a
+function imported into the module's own namespace) instead of
+`requests.Session()`, none of those patches touched anything: the real code
+path went unmocked, so real code ran a live/blocked network call, or an
+`AttributeError`, or (worst) a fake that silently no longer applied — a
+`transport_must_not_run` negative-path assertion that "passed" only because
+the mock was no longer wired to anything, not because the code was actually
+verified not to reach the network.
+
+**Where the tests actually were.** `Tests/LLM_Calls/` alone had 8 affected
+files. The largest single file was `Tests/Chat/test_chat_functions.py` — 26
+occurrences, zero of which are under `Tests/LLM_Calls/`. In total: **12 test
+files, 91 individual mock call sites**, across `Tests/Chat/` and
+`Tests/LLM_Calls/` both, found only by grepping every import alias each
+converted module is known under (`cloud_adapters`, `local_adapters`,
+`llm_calls`, `lib`, `sgl`, `legacy_adapters`, `llm_api_calls_module`, ...)
+against the pattern `<alias>.requests` across the **entire** `Tests/` tree —
+not by running the package's own test directory and calling it done.
+
+**What to do.** Before swapping a construction symbol (a class, a factory
+function, anything a test might intercept by patching its name), grep the
+**whole test tree** — not just the package under change's own test
+directory — for every import alias of the module being touched, combined
+with the OLD symbol's attribute name (`<alias>\.requests` here). Do this
+*before* running the gate, not after chasing the first red result; the
+failure signatures vary (a live network attempt, an `AttributeError`, a
+values-mismatch three calls deep) and none of them says "your mock stopped
+being wired up." A negative-path test (`transport_must_not_run`,
+"assert this was never called") is the most dangerous case: it can go on
+reporting green forever while checking nothing, because a disconnected mock
+and a correctly-guarded code path are indistinguishable from the outside.

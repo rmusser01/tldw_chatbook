@@ -968,6 +968,132 @@ def test_requests_sink_cap_still_enforced():
 
 
 # ---------------------------------------------------------------------------
+# Default-timeout session factory (task-19830)
+# ---------------------------------------------------------------------------
+from tldw_chatbook.Utils.egress import (
+    DEFAULT_SESSION_CONNECT_TIMEOUT,
+    DEFAULT_SESSION_READ_TIMEOUT,
+    DefaultTimeoutSession,
+    create_default_session,
+    default_session_timeout,
+)
+
+
+class _TimeoutRecordingAdapter(BaseAdapter):
+    """Records the ``timeout`` kwarg ``Session.send()`` hands the adapter on
+    every request, without touching the network."""
+
+    def __init__(self):
+        super().__init__()
+        self.seen_timeouts = []
+
+    def send(self, request, **kwargs):
+        self.seen_timeouts.append(kwargs.get("timeout"))
+        resp = RequestsResponse()
+        resp.status_code = 200
+        resp.raw = io.BytesIO(b"ok")
+        resp.url = request.url
+        resp.request = request
+        return resp
+
+    def close(self):
+        pass
+
+
+def _default_session_with_recorder(**factory_kwargs):
+    sess = create_default_session(**factory_kwargs)
+    adapter = _TimeoutRecordingAdapter()
+    sess.mount("http://", adapter)
+    sess.mount("https://", adapter)
+    return sess, adapter
+
+
+def test_create_default_session_returns_a_default_timeout_session():
+    sess = create_default_session()
+    assert isinstance(sess, DefaultTimeoutSession)
+    assert isinstance(sess, requests_lib.Session)
+
+
+def test_default_session_applies_default_timeout_when_get_omits_one():
+    sess, adapter = _default_session_with_recorder()
+    sess.get("https://example.com/")
+    assert adapter.seen_timeouts == [
+        (DEFAULT_SESSION_CONNECT_TIMEOUT, DEFAULT_SESSION_READ_TIMEOUT)
+    ]
+
+
+def test_default_session_applies_default_timeout_to_post_too():
+    sess, adapter = _default_session_with_recorder()
+    sess.post("https://example.com/", json={"a": 1})
+    assert adapter.seen_timeouts == [
+        (DEFAULT_SESSION_CONNECT_TIMEOUT, DEFAULT_SESSION_READ_TIMEOUT)
+    ]
+
+
+def test_explicit_timeout_keyword_wins_over_default():
+    sess, adapter = _default_session_with_recorder()
+    sess.get("https://example.com/", timeout=5)
+    assert adapter.seen_timeouts == [5]
+
+
+def test_explicit_timeout_none_is_respected_not_overridden():
+    """``timeout=None`` is a deliberate 'no timeout' from the caller -- the
+    session must not paper over it with its own default."""
+    sess, adapter = _default_session_with_recorder()
+    sess.get("https://example.com/", timeout=None)
+    assert adapter.seen_timeouts == [None]
+
+
+def test_explicit_positional_timeout_on_request_wins_over_default():
+    """``Session.request(method, url, params, data, headers, cookies, files,
+    auth, timeout, ...)`` -- a caller passing timeout as the 9th positional
+    argument (7th after method/url) must not get it overridden either."""
+    sess, adapter = _default_session_with_recorder()
+    sess.request("GET", "https://example.com/", None, None, None, None, None, None, 7)
+    assert adapter.seen_timeouts == [7]
+
+
+def test_default_session_timeout_reads_config_not_hardcoded(monkeypatch):
+    monkeypatch.setattr(
+        egress,
+        "get_cli_setting",
+        lambda section, key=None, default=None: {
+            "request_connect_timeout_seconds": 3,
+            "request_read_timeout_seconds": 45,
+        }.get(key, default),
+    )
+    assert default_session_timeout() == (3.0, 45.0)
+
+
+def test_create_default_session_honours_config_default(monkeypatch):
+    monkeypatch.setattr(
+        egress,
+        "get_cli_setting",
+        lambda section, key=None, default=None: {
+            "request_connect_timeout_seconds": 2,
+            "request_read_timeout_seconds": 9,
+        }.get(key, default),
+    )
+    sess, adapter = _default_session_with_recorder()
+    sess.get("https://example.com/")
+    assert adapter.seen_timeouts == [(2.0, 9.0)]
+
+
+def test_explicit_factory_timeout_overrides_config(monkeypatch):
+    monkeypatch.setattr(
+        egress,
+        "get_cli_setting",
+        lambda section, key=None, default=None: {
+            "request_connect_timeout_seconds": 2,
+            "request_read_timeout_seconds": 9,
+        }.get(key, default),
+    )
+    sess, adapter = _default_session_with_recorder(timeout=(1.0, 1.0))
+    sess.get("https://example.com/")
+    assert adapter.seen_timeouts == [(1.0, 1.0)]
+
+
+# ---------------------------------------------------------------------------
 # Guarded aiohttp helper + Playwright chain validation
 # ---------------------------------------------------------------------------
 from tldw_chatbook.Utils.egress import (

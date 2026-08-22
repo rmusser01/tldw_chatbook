@@ -73,7 +73,7 @@ def test_shared_builder_composes_llama_wire_format():
             pass
 
     with patch(
-        "tldw_chatbook.LLM_Calls.LLM_API_Calls_Local.requests.Session",
+        "tldw_chatbook.LLM_Calls.LLM_API_Calls_Local.create_default_session",
         return_value=FakeSession(),
     ):
         _chat_with_openai_compatible_local_server(
@@ -118,7 +118,7 @@ def test_shared_builder_composes_vllm_dual_placement():
             pass
 
     with patch(
-        "tldw_chatbook.LLM_Calls.LLM_API_Calls_Local.requests.Session",
+        "tldw_chatbook.LLM_Calls.LLM_API_Calls_Local.create_default_session",
         return_value=FakeSession(),
     ):
         from tldw_chatbook.LLM_Calls.LLM_API_Calls_Local import (

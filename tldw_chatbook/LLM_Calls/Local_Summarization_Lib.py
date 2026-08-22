@@ -29,6 +29,7 @@ from urllib3 import Retry
 #
 # Import Local Libraries
 from tldw_chatbook.Utils.Utils import extract_text_from_segments, logging
+from tldw_chatbook.Utils.egress import create_default_session
 from tldw_chatbook.Utils.persistent_diagnostics import safe_metadata_token
 from tldw_chatbook.config import get_cli_setting, load_settings
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
@@ -81,14 +82,19 @@ def summarize_with_local_llm(
         }
 
         logging.debug("Local LLM: Posting request")
-        response = requests.post(
-            "http://127.0.0.1:8080/v1/chat/completions",
-            headers=headers,
-            json=data,
-            # task-19560: unbounded before this. A local server that accepts
-            # the connection and then stalls hung the caller forever.
-            timeout=int(get_cli_setting("local_llm", "api_timeout", 120)),
-        )
+        with create_default_session() as session:
+            response = session.post(
+                "http://127.0.0.1:8080/v1/chat/completions",
+                headers=headers,
+                json=data,
+                # task-19560 set this per-provider timeout; task-19830 moved
+                # the call onto the shared session. Both are kept on purpose:
+                # the session is the safety net for calls that forget a
+                # timeout, and an explicit `timeout=` always wins over it
+                # (see `DefaultTimeoutSession.request`), so the user-facing
+                # `local_llm.api_timeout` knob still governs this call.
+                timeout=int(get_cli_setting("local_llm", "api_timeout", 120)),
+            )
 
         if response.status_code == 200:
             if streaming:
@@ -387,7 +393,7 @@ def summarize_with_llama(
         }
 
         # Create a session
-        session = requests.Session()
+        session = create_default_session()
 
         # Load config values
         retry_count = int(llama_config.get("api_retries", 3))
@@ -631,7 +637,7 @@ def summarize_with_kobold(
             logging.debug("Kobold Summarization: Streaming mode enabled")
             try:
                 # Create a session
-                session = requests.Session()
+                session = create_default_session()
 
                 # Load config values
                 retry_count = kobold_legacy["api_retries"]
@@ -708,7 +714,7 @@ def summarize_with_kobold(
         else:
             try:
                 # Create a session
-                session = requests.Session()
+                session = create_default_session()
 
                 # Load config values
                 retry_count = kobold_legacy["api_retries"]
@@ -902,7 +908,7 @@ def summarize_with_oobabooga(
         if streaming:
             logging.debug("Oobabooga: Streaming mode enabled")
             # Create a session
-            session = requests.Session()
+            session = create_default_session()
 
             # Load config values
             retry_count = loaded_config_data["ooba_api"]["api_retries"]
@@ -965,7 +971,7 @@ def summarize_with_oobabooga(
                 return f"Error summarizing with Oobabooga: {str(e)}"
         else:
             # Create a session
-            session = requests.Session()
+            session = create_default_session()
 
             # Load config values
             retry_count = loaded_config_data["ooba_api"]["api_retries"]
@@ -1134,7 +1140,7 @@ def summarize_with_tabbyapi(
             logging.debug("TabbyAPI: Streaming mode enabled")
             try:
                 # Create a session
-                session = requests.Session()
+                session = create_default_session()
 
                 # Load config values
                 retry_count = tabby_legacy["api_retries"]
@@ -1202,7 +1208,7 @@ def summarize_with_tabbyapi(
         else:
             try:
                 # Create a session
-                session = requests.Session()
+                session = create_default_session()
 
                 # Load config values
                 retry_count = tabby_legacy["api_retries"]
@@ -1392,7 +1398,7 @@ def summarize_with_vllm(
         # Handle streaming
         if streaming:
             # Create a session
-            session = requests.Session()
+            session = create_default_session()
 
             # Load config values
             retry_count = loaded_config_data["vllm_api"]["api_retries"]
@@ -1443,7 +1449,7 @@ def summarize_with_vllm(
         # Handle non-streaming
         else:
             # Create a session
-            session = requests.Session()
+            session = create_default_session()
 
             # Load config values
             retry_count = loaded_config_data["vllm_api"]["api_retries"]
@@ -1655,7 +1661,7 @@ def summarize_with_ollama(
 
         try:
             # Create a session
-            session = requests.Session()
+            session = create_default_session()
 
             # Load config values
             retry_count = loaded_config_data["ollama_api"]["api_retries"]
@@ -1739,7 +1745,7 @@ def summarize_with_ollama(
             # Non-streaming => parse entire JSON once and return the text
             try:
                 # Create a session
-                session = requests.Session()
+                session = create_default_session()
 
                 # Load config values
                 retry_count = loaded_config_data["ollama_api"]["api_retries"]
@@ -1926,7 +1932,7 @@ def summarize_with_custom_openai(
 
         if streaming:
             # Create a session
-            session = requests.Session()
+            session = create_default_session()
 
             # Load config values
             retry_count = loaded_config_data["custom_openai_api"]["api_retries"]
@@ -1979,7 +1985,7 @@ def summarize_with_custom_openai(
             return stream_generator()
         else:
             # Create a session
-            session = requests.Session()
+            session = create_default_session()
 
             # Load config values
             retry_count = loaded_config_data["custom_openai_api"]["api_retries"]
@@ -2184,7 +2190,7 @@ def summarize_with_custom_openai_2(
 
         if streaming:
             # Create a session
-            session = requests.Session()
+            session = create_default_session()
 
             # Load config values
             retry_count = loaded_config_data["custom_openai_api_2"]["api_retries"]
@@ -2237,7 +2243,7 @@ def summarize_with_custom_openai_2(
             return stream_generator()
         else:
             # Create a session
-            session = requests.Session()
+            session = create_default_session()
 
             # Load config values
             retry_count = loaded_config_data["custom_openai_api_2"]["api_retries"]

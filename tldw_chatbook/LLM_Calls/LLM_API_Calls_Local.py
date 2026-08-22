@@ -24,6 +24,7 @@ from tldw_chatbook.Chat.console_provider_support import (
 from tldw_chatbook.Utils.Utils import logging
 from tldw_chatbook.config import get_runtime_config_snapshot, load_settings
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
+from tldw_chatbook.Utils.egress import create_default_session
 from tldw_chatbook.Utils.sensitive_llm_logging import (
     is_sensitive_llm_request,
     llm_content_byte_count,
@@ -266,7 +267,7 @@ def _chat_with_openai_compatible_local_server(
         )
 
     try:
-        session = requests.Session()
+        session = create_default_session()
         # Configure retries
         retry_strategy = Retry(
             total=llm_retry_count(api_retries),
@@ -1047,7 +1048,7 @@ def chat_with_kobold(
     )
 
     try:
-        session = requests.Session()
+        session = create_default_session()
         retry_strategy = Retry(
             total=llm_retry_count(api_retries),
             backoff_factor=api_retry_delay,
