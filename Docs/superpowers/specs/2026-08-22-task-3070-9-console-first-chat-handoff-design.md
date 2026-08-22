@@ -62,11 +62,13 @@ keyword-only, late-bound callbacks for presentation observations/actions only:
 - projection of provider/model into the mounted Console controls;
 - restoration of focus when the captured target is still mounted.
 
-The controller does not query the DOM, retain a widget, reach through
-`ChatScreen` to another controller, or capture a bound screen method at
-construction. The focus token is opaque to policy code and is passed directly
-back to the presentation callback. Existing chat-core, settings-summary,
-control-bar, native-chat UI, and worker callbacks remain the only repaint seams.
+The moved methods and new first-chat seams do not query the DOM, retain a focus
+widget, reach through `ChatScreen` to another controller, or capture a bound
+screen method at construction. They do not change the session controller's
+older, explicitly documented `_screen` framework-service reference. The focus
+token is opaque to first-chat policy code and is passed directly back to the
+presentation callback. Existing chat-core, settings-summary, control-bar,
+native-chat UI, and worker callbacks remain the only repaint seams.
 
 Runtime configuration helpers and the first-chat handoff types move to
 `session.py` as ordinary module dependencies. The existing stable
