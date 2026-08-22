@@ -135,3 +135,32 @@ direction. Deterministic totals: shell 7 -> 0; prompts+file_notes
 Remaining open: prompts_canvas x17 + file_notes x1 deterministic, plus
 the shell's 3 order-flakes (media pager size0 / initial-error /
 page-error) and 2 file_notes order-flakes.
+
+## Fix progress tranche 3 (2026-08-21 late, PR #1915 merged)
+
+4 more cleared incl. ONE real product bug:
+_read_library_prompt_editor_fields preferred the persisted detail over
+the live legacy-lane TextAreas, so unsaved edits silently dropped out
+of copy/save/export. Now live-if-non-empty wins; structured/foreign
+artifacts (lanes mount empty, truth in STRUCTURE) keep the detail
+compatibility fallback -- the naive live-always form blanked those
+copies and the in-branch differential caught it pre-merge. Plus 3
+label expectations aligned to a24a2202f's relabels.
+
+Running totals: 41 of the original ~50 failures cleared across tranches
+1-3; prompts+file_notes unique failing tests 19 -> 16.
+
+Remaining-16 diagnostic map for the next tranche:
+- copy x2 unsaved-lane (11492-class): the a24a2202f editor republishes
+  block state on a system-lane change and reverts a programmatic
+  user-lane .text write (block_state non-None even for legacy); needs
+  the editor's real edit seam (_change_field / per-lane publish), not
+  textarea assignment.
+- double-notify x6: 'Library tools are now available.' (4aa59c20a
+  lifecycle graduation toast, intended) precedes the expected toast in
+  single-call assertions -- tests need the lifecycle toast filtered or
+  the graduation settled before the action.
+- NoMatches x3: #library-row-browse-prompts x2 (rail collapsed/renamed
+  at these sizes?) and #library-prompts-export (button gated or moved).
+- app_config on LibraryHarness WorkerFailed x1 + file_notes x3
+  (source-choices keyboard, database-files return, False-is-True x2).
