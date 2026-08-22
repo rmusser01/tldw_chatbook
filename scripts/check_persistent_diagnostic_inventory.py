@@ -12,9 +12,15 @@ TASK-19572: any non-zero exit now prints the full committed-vs-rebuild report --
 rows only-in-committed / only-in-rebuild / changed with
 ``old_count/old_digest -> new_count/new_digest``, per-entry sink-topology
 deltas, metadata deltas, and the exact next command. No flag is needed; ``--diff``
-only forces the same report when the tree is in sync. Reading that report IS the
-review the artifact demands, so it deliberately reports what changed rather than
-regenerating anything.
+only adds an explicit "no drift" line when the tree is already in sync (there is
+no report to print in that case). Reading that report IS the review the artifact
+demands, so it deliberately reports what changed rather than regenerating
+anything.
+
+The pin stores an aggregate per-file digest and no statement text, so the report
+is at the maximum resolution the artifact allows: it names which files drifted
+and by how much, and ``NEXT_STEPS`` tells the reader how to recover the
+statements themselves.
 """
 
 from __future__ import annotations
@@ -339,6 +345,16 @@ NEXT_STEPS = (
     "    re-levelled, or given different arguments -- check it does not now\n"
     "    interpolate user content, secrets, or paths into a persistent sink;\n"
     "  - a sink-topology row means a new file/handler destination appeared.\n"
+    "The pin stores only an aggregate per-file digest, so the rows above can name\n"
+    "WHICH files changed and by how much, never the statement text -- and the\n"
+    "interpolation check just above needs that text. Read it with:\n"
+    "  base=$(git log -1 --format=%H -- "
+    "Docs/security/production-diagnostic-inventory.json)\n"
+    "  git diff $base -- <each path listed above>\n"
+    "Treat that revision as a LOWER BOUND, not the truth: the pin has been\n"
+    "committed stale before (TASK-19572 review found two rows whose drift predated\n"
+    "the pin's own commit), so if a listed file shows no logger change in that\n"
+    "range, widen it rather than assuming the row is noise.\n"
     "Only then run:  python scripts/check_persistent_diagnostic_inventory.py --write\n"
     "and commit Docs/security/production-diagnostic-inventory.json with the "
     "review recorded in the task/PR notes."
@@ -548,8 +564,9 @@ def main() -> int:
         "--diff",
         action="store_true",
         help=(
-            "print the committed-vs-rebuild report even when in sync; the same "
-            "report is printed automatically on every non-zero exit"
+            "confirm explicitly that the committed inventory matches the "
+            "rebuild; on drift the full report is printed anyway, with or "
+            "without this flag"
         ),
     )
     args = parser.parse_args()

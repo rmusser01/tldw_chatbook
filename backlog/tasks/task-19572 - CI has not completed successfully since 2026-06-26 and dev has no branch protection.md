@@ -171,16 +171,18 @@ drift, and the exact next command. `--diff` also exists as an explicit flag, and
 a `::error::` annotation is emitted only under `GITHUB_ACTIONS`.
 
 **The inventory was red at `origin/dev` 3193816e7 and is now green.** The report
-named 16 files; the delta was reviewed statement-by-statement (each added and
+named 17 files; the delta was reviewed statement-by-statement (each added and
 removed logger call was recovered by scanning both revisions with the checker's
-own AST scanner, not by reading a line diff) before `--write`. Almost all of it
+own AST scanner, not by reading a line diff) before `--write`. 65 statements
+were added and 7 removed. Almost all of it
 is metadata-only — `type(exc).__name__`, ids, counts — or pure code movement
 (the three character-picker diagnostics moved from `chat_screen.py` into
-`UI/Console_Modules/character.py` unchanged). **One row is worth a follow-up and
-is deliberately not absorbed silently:** task-19576 added three
-`logger.error(f"Failed to extract ... from {file_path}: {e}")` calls in
-`Utils/file_handlers.py`, which put a full user file path in a persistent sink —
-the same class as the open TASK-19321/TASK-19322 path-logging repairs.
+`UI/Console_Modules/character.py` unchanged; `app.py` is the one count-preserving
+digest change and it is a local rename, `_log_buffer` -> `_log_records`).
+**Rows worth a follow-up, deliberately not absorbed silently:** see Owner gate
+item 5 — the regeneration pinned 21 newly-added diagnostics across five files
+that interpolate a filesystem path into a log line, the class the open
+TASK-19321/TASK-19322 repairs cover.
 
 **`derived-artifacts.yml`.** One job, four stdlib-only checks, `setup-python`
 and nothing else installed. Two deliberate departures from `css-bundle-guard.yml`:
@@ -209,7 +211,7 @@ failure, not the first.
 - Timings on this machine (M-series, `.venv` python 3.12): bundle-sync
   **0.86 s**, profile-owned-path **10.98 s**, diagnostic inventory **20.17 s**,
   backlog ids **0.10 s**; `scripts/preflight.sh` end-to-end **31.9 s**.
-- The report against the real dev-tip drift named 16 files and every count/digest
+- The report against the real dev-tip drift named 17 files and every count/digest
   delta.
 - Mutation proof, diagnostic checker: adding one `logger.warning` in
   `Workspaces/git_workspace.py` and re-levelling one `logger.info` ->
@@ -284,5 +286,60 @@ of Done:
 > Run `./scripts/preflight.sh` before opening a PR — it runs the same four
 > derived-artifact checks as the `Derived artifacts` CI job.
 
-**5. Follow-up to file:** `Utils/file_handlers.py` logs full user file paths in
-three new `logger.error` calls (task-19576), same class as TASK-19321/19322.
+**5. Follow-ups to file — path-interpolating diagnostics absorbed by this
+regeneration.** Independent review (2026-08-22) re-derived every added/removed
+statement from the two revisions and found the class is **wider than one file**.
+21 newly-pinned diagnostics across five files interpolate a filesystem path:
+
+| file | new path-logging calls | what is interpolated |
+|---|---|---|
+| `UI/Screens/change_review_screen.py` | 8 | `{root!r}` ×6, `{roots!r}`, `{remote!r} at {root!r}` — workspace root paths |
+| `Widgets/Console/console_conversation_inspector.py` | 5 (3 net new; 2 carried from the retired `console_context_modal.py`) | `{path}` — user-chosen export/snapshot destination |
+| `DB/ChaChaNotes_DB.py` | 4 | `{self.db_path_str}` in the V42→V43 / V43→V44 migration lines (replicates the pre-existing style of the ~330 calls already in that file) |
+| `Utils/file_handlers.py` | 3 | `{file_path}` — lines **380, 410, 441** (task-19576) |
+| `Workspaces/git_workspace.py` | 1 | `{root}`, at `debug` level |
+
+**Severity is lower than "into a persistent sink" implies, and the wording
+elsewhere in this file should be read with that correction.** The only
+general-purpose on-disk log is `PrivateRotatingFileHandler`, and it carries
+`PersistentDiagnosticFilter`, which admits **only** records marked by
+`log_persistent_metadata` / `persist_event`. A plain
+`logger.error(f"... {file_path} ...")` is a Chatbook record without that marker,
+so `filter()` returns `False` and it never reaches the rotating file. Verified
+directly:
+
+```
+PersistentDiagnosticFilter().filter(<ERROR record from tldw_chatbook.Utils.file_handlers>)
+-> False
+```
+
+These lines therefore reach the terminal and the in-app Logs screen, not the
+private log file. They remain in scope for TASK-19321/19322, but as a UI/console
+exposure, not an on-disk one — and any follow-up should cover all five files,
+not only `file_handlers.py`.
+
+**6. Two rows in this regeneration predate this branch's base and were never
+reviewed when they landed.** The previous pin (blob `b07d9e10f`, committed at
+`0b112ab1e`) did **not** reproduce from the tree of its own commit: rebuilding
+the inventory from `0b112ab1e`'s git blobs yields `Client_Media_DB_v2.py`
+339 (pinned 338) and `library_screen.py` 111 (pinned 109). Because the drift
+predates the base, a statement-recovery diff between the pin's commit and the
+base — the method used here — shows *nothing* for those two rows, and they were
+carried into the new pin unexamined. Traced independently and both are benign:
+`Client_Media_DB_v2.py` gained one `logger.info("Media search completed
+(mode={}, limit={}, offset={}, sort={}, summary=true).", ...)` at `e351a9c99`;
+`library_screen.py` gained two static-message warnings at `a85681ba0` and
+`f72cc8c2b`. No action needed beyond knowing the gap exists — which is itself
+the argument for the gate this task ships.
+
+**7. The pin must be regenerated against the FINAL base immediately before
+merge.** The inventory is a whole-tree artifact and `dev` moves 23–50 times a
+day. Measured 2026-08-22: this branch's freshly regenerated pin is *already* red
+against `origin/dev` `cbb11633f` — three rows drift
+(`Chat/console_fleet_wake.py` digest, `Persona_Buddy/preferences.py` new row,
+`UI/Screens/personas_screen.py` 180→186). Since a `pull_request` check runs on
+the merge ref, a stale pin turns the required check red on PRs that did nothing
+wrong. Two consequences the owner should price in before flipping the switch:
+any PR that adds a logger call must regenerate, and two such PRs racing will
+both conflict textually on the same sorted JSON. Neither is a defect in this
+branch; both are costs of making *this* artifact the required gate.
