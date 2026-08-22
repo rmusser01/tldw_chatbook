@@ -41,6 +41,11 @@ integrity-bearing:
   conversation; backs keyset pagination over (conversation_id, id).
 * ``idx_notes_file_path_unique`` — at most one note per on-disk file path
   (the notes sync engine's file<->note mapping invariant; partial).
+* ``idx_persona_visual_assets_version_key`` — (pack_version_id, asset_key)
+  is an immutable visual-graph version's asset identity; duplicates would
+  let two different assets answer for the same manifest key.
+* ``idx_persona_visual_bindings_persona_active`` — at most one ACTIVE
+  persona-visual binding per persona (partial, WHERE status = 'active').
 * ``idx_visual_identity_bindings_actor_active`` — at most one ACTIVE visual
   identity binding per actor (partial, WHERE status = 'active').
 * ``rag_citation_traces_import_identity_uq`` /
@@ -155,6 +160,9 @@ EXPECTED_CHACHANOTES_INDEXES: dict[str, IndexPin] = {
     "idx_message_attachments_message": IndexPin(
         "message_attachments", False, ("message_id",)
     ),
+    "idx_message_exchanges_message": IndexPin(
+        "message_exchanges", False, ("message_id",)
+    ),
     "idx_message_trajectory_conv_seq": IndexPin(
         "message_trajectory_metadata", True, ("conversation_id", "seq")
     ),
@@ -209,6 +217,12 @@ EXPECTED_CHACHANOTES_INDEXES: dict[str, IndexPin] = {
     "idx_notes_last_modified": IndexPin("notes", False, ("last_modified",)),
     "idx_notes_sync_excluded": IndexPin("notes", False, ("sync_excluded",)),
     "idx_notes_sync_root": IndexPin("notes", False, ("sync_root_folder",)),
+    "idx_persona_visual_assets_version_key": IndexPin(
+        "persona_visual_assets", True, ("pack_version_id", "asset_key")
+    ),
+    "idx_persona_visual_bindings_persona_active": IndexPin(
+        "persona_visual_bindings", True, ("persona_id",)
+    ),
     "idx_quiz_attempts_quiz_id": IndexPin("quiz_attempts", False, ("quiz_id",)),
     "idx_quiz_attempts_started_at": IndexPin("quiz_attempts", False, ("started_at",)),
     "idx_quiz_questions_order": IndexPin(
