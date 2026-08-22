@@ -14,6 +14,7 @@ from tldw_chatbook.Chat.console_display_state import (
     CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID,
     CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID,
     ConsoleDisplayRow,
+    ConsoleInspectorAction,
     ConsoleStagedContextState,
 )
 from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel
@@ -140,6 +141,23 @@ def _fully_inside_outer(header: Widget, outer: Widget) -> bool:
 def _external_boundary_header(section: ConsoleBoundedSection) -> Widget:
     siblings = list(section.parent.children)
     return siblings[siblings.index(section) - 1]
+
+
+def _assert_recovery_references_are_current(rail) -> None:
+    """Assert recovery state contains mounted controls from current boundaries only."""
+
+    current_sections = {
+        section.section_id: section for section, _header in rail._mounted_boundaries()
+    }
+    for section_id, (target, controls) in rail._section_focus_history.items():
+        section = current_sections[section_id]
+        assert target.is_attached
+        assert target.is_mounted
+        assert target is section.viewport or section.viewport in target.ancestors
+        assert controls
+        assert all(control.is_attached and control.is_mounted for control in controls)
+        assert all(section.viewport in control.ancestors for control in controls)
+    assert not rail._pending_focus_recoveries
 
 
 def _staged_state(row_count: int) -> ConsoleStagedContextState:
@@ -695,7 +713,7 @@ async def test_nested_selected_boundary_uses_actual_sibling_header_coordinates()
         boundaries = rail._mounted_boundaries()
         selected_index = next(
             index
-            for index, (section, _header, _root) in enumerate(boundaries)
+            for index, (section, _header) in enumerate(boundaries)
             if section is selected
         )
         actual_header = _external_boundary_header(selected)
@@ -732,7 +750,7 @@ async def test_newer_navigation_prevents_stale_delayed_header_reveal(
         boundaries = rail._mounted_boundaries()
         selected_index = next(
             index
-            for index, (section, _header, _root) in enumerate(boundaries)
+            for index, (section, _header) in enumerate(boundaries)
             if section is selected
         )
         successor = boundaries[selected_index + 1][0]
@@ -849,8 +867,9 @@ async def test_newer_navigation_prevents_stale_delayed_header_reveal(
                 assert len(captured_follow_ons) == 1
                 assert (
                     getattr(captured_follow_ons[0][0], "__name__", None)
-                    == "_finish_boundary_header_reveal"
+                    == "_reveal_boundary_header"
                 )
+                assert captured_follow_ons[0][1][-1] == 1
 
             assert (
                 pilot.app.focused,
@@ -1272,6 +1291,295 @@ async def test_disappearing_target_recovers_next_then_previous_and_keeps_outside
         section.request_reconcile()
         await pilot.pause()
         assert pilot.app.focused is outside
+
+
+@pytest.mark.asyncio
+async def test_focus_leave_clears_recovery_incident_before_mutation_and_reentry():
+    async with make_console_pilot(size=(160, 45)) as pilot:
+        rail = await _open_inspector(pilot)
+        section = rail.query_one(
+            "#console-bounded-section-sources", ConsoleBoundedSection
+        )
+        await section.viewport.remove_children()
+        former = Button("former action", id="leave-recovery-former")
+        await section.viewport.mount(former)
+        section.request_reconcile()
+        former.focus()
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: (
+                rail._section_focus_history.get(section.section_id, (None, ()))[0]
+                is former
+            ),
+            description="focused action captured by Inspector recovery",
+        )
+
+        outside = pilot.app.screen.query_one("#console-native-composer")
+        outside.focus()
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: not rail.inspector_active(),
+            description="intentional Inspector focus leave",
+        )
+        await pilot.pause()
+
+        assert rail._section_focus_history == {}
+        assert not rail._pending_focus_recoveries
+
+        await former.remove()
+        replacement = Button("replacement action", id="leave-recovery-replacement")
+        await section.viewport.mount(replacement)
+        section.request_reconcile()
+        collapse = rail.query_one("#console-inspector-rail-collapse", Button)
+        collapse.focus()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert pilot.app.focused is collapse
+        _assert_recovery_references_are_current(rail)
+
+
+@pytest.mark.asyncio
+async def test_inactive_section_history_cannot_recover_after_focus_moves_elsewhere():
+    async with make_console_pilot(size=(160, 45)) as pilot:
+        rail = await _open_inspector(pilot)
+        sources = rail.query_one(
+            "#console-bounded-section-sources", ConsoleBoundedSection
+        )
+        settings = rail.query_one(
+            "#console-bounded-section-session-settings", ConsoleBoundedSection
+        )
+        await sources.viewport.remove_children()
+        source_action = Button("source action", id="inactive-history-source")
+        await sources.viewport.mount(source_action)
+        sources.request_reconcile()
+        await settings.viewport.remove_children()
+        settings_action = Button("settings action", id="active-history-settings")
+        await settings.viewport.mount(settings_action)
+        settings.request_reconcile()
+
+        source_action.focus()
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: pilot.app.focused is source_action,
+            description="first section recovery history",
+        )
+        settings_action.focus()
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: pilot.app.focused is settings_action,
+            description="focus moved to a different Inspector section",
+        )
+
+        assert set(rail._section_focus_history) == {settings.section_id}
+
+        await source_action.remove()
+        sources.request_reconcile()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert pilot.app.focused is settings_action
+        _assert_recovery_references_are_current(rail)
+
+
+@pytest.mark.asyncio
+async def test_empty_owner_is_settled_absence_with_one_outer_fallback():
+    async with make_console_pilot(size=(160, 45)) as pilot:
+        rail = await _open_inspector(pilot)
+        sources = rail.query_one(
+            "#console-bounded-section-sources", ConsoleBoundedSection
+        )
+        await sources.viewport.remove_children()
+        source_action = Button("source action", id="empty-owner-source-action")
+        await sources.viewport.mount(source_action)
+        sources.request_reconcile()
+        source_action.focus()
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: pilot.app.focused is source_action,
+            description="empty-owner focused action",
+        )
+
+        owner = sources.parent
+        await owner.remove_children()
+        rail.request_outer_reconcile()
+        outer = rail.query_one("#console-inspector-rail-body")
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: (
+                pilot.app.focused is outer
+                and not rail._pending_focus_recoveries
+                and not rail._outer_reconcile_scheduled
+            ),
+            description="empty owner settled as absent boundary",
+        )
+
+        assert tuple(owner.children) == ()
+        assert sources.section_id not in rail._section_focus_history
+
+
+@pytest.mark.asyncio
+async def test_structural_run_recompose_restores_same_stable_action_id():
+    async with make_console_pilot(size=(160, 45)) as pilot:
+        rail = await _open_inspector(pilot)
+        inspector = rail.query_one("#console-run-inspector-state", ConsoleRunInspector)
+        initial_actions = tuple(
+            replace(
+                action,
+                enabled=action.widget_id == CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID,
+                disabled_reason=(
+                    ""
+                    if action.widget_id == CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID
+                    else "unavailable"
+                ),
+            )
+            for action in inspector.state.actions
+        )
+        assert {action.widget_id for action in initial_actions} >= {
+            CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID,
+            CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID,
+        }
+        initial_state = replace(inspector.state, actions=initial_actions)
+        before_initial_recompose = inspector.recompose_count
+        previous_mount = rail.query_one(
+            f"#{CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID}", Button
+        )
+        inspector.sync_state(initial_state)
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: (
+                inspector.recompose_count > before_initial_recompose
+                and bool(list(rail.query(f"#{CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID}")))
+                and rail.query_one(f"#{CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID}", Button)
+                is not previous_mount
+            ),
+            description="enabled approval action before structural recompose",
+        )
+        previous = rail.query_one(f"#{CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID}", Button)
+        previous.focus()
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: pilot.app.focused is previous,
+            description="approval action focused before structural recompose",
+        )
+
+        replacement_actions = tuple(
+            replace(
+                action,
+                enabled=action.widget_id
+                in {
+                    CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID,
+                    CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID,
+                },
+                disabled_reason=(
+                    ""
+                    if action.widget_id
+                    in {
+                        CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID,
+                        CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID,
+                    }
+                    else "unavailable"
+                ),
+            )
+            for action in initial_actions
+        )
+        before_recompose = inspector.recompose_count
+        inspector.sync_state(replace(initial_state, actions=replacement_actions))
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: (
+                inspector.recompose_count > before_recompose
+                and bool(list(rail.query(f"#{CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID}")))
+                and rail.query_one(f"#{CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID}", Button)
+                is not previous
+            ),
+            description="replacement approval action mounted after structural sync",
+        )
+        current = rail.query_one(f"#{CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID}", Button)
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: pilot.app.focused is current,
+            description="same stable action id focus restored after structural sync",
+        )
+
+        assert pilot.app.focused is not rail.query_one("#console-retrieval-scope-row")
+        history_target, _controls = rail._section_focus_history["approvals"]
+        assert history_target is current
+        _assert_recovery_references_are_current(rail)
+
+
+@pytest.mark.asyncio
+async def test_structural_control_and_boundary_removal_recovers_without_stale_reentry():
+    async with make_console_pilot(size=(160, 45)) as pilot:
+        rail = await _open_inspector(pilot)
+        inspector = rail.query_one("#console-run-inspector-state", ConsoleRunInspector)
+        first = ConsoleInspectorAction("recompose-action-first", "First", True)
+        middle = ConsoleInspectorAction("recompose-action-middle", "Middle", True)
+        inserted = ConsoleInspectorAction("recompose-action-inserted", "Inserted", True)
+        last = ConsoleInspectorAction("recompose-action-last", "Last", True)
+        initial_state = replace(
+            inspector.state,
+            dictionary_rows=(),
+            dictionary_actions=(first, middle, last),
+        )
+        inspector.sync_state(initial_state)
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: bool(list(rail.query("#recompose-action-middle"))),
+            description="three structural recovery controls mounted",
+        )
+        old_middle = rail.query_one("#recompose-action-middle", Button)
+        old_middle.focus()
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: pilot.app.focused is old_middle,
+            description="middle structural recovery control focused",
+        )
+
+        inspector.sync_state(
+            replace(initial_state, dictionary_actions=(first, inserted, last))
+        )
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: (
+                not list(rail.query("#recompose-action-middle"))
+                and bool(list(rail.query("#recompose-action-inserted")))
+                and bool(list(rail.query("#recompose-action-last")))
+            ),
+            description="focused middle control structurally removed",
+        )
+        current_inserted = rail.query_one("#recompose-action-inserted", Button)
+        current_last = rail.query_one("#recompose-action-last", Button)
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: pilot.app.focused is current_inserted,
+            description="new current-DOM control at the removed positional anchor",
+        )
+        assert pilot.app.focused is not current_last
+        _assert_recovery_references_are_current(rail)
+
+        inspector.sync_state(
+            replace(initial_state, dictionary_actions=(), dictionary_rows=())
+        )
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: not list(rail.query("#console-bounded-section-chat-dictionaries")),
+            description="focused structural boundary removed",
+        )
+        outer = rail.query_one("#console-inspector-rail-body")
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: pilot.app.focused is outer,
+            description="removed boundary recovery to outer body",
+        )
+
+        collapse = rail.query_one("#console-inspector-rail-collapse", Button)
+        collapse.focus()
+        await pilot.pause()
+        await pilot.pause()
+        assert pilot.app.focused is collapse
+        assert "chat-dictionaries" not in rail._section_focus_history
+        _assert_recovery_references_are_current(rail)
 
 
 @pytest.mark.asyncio
