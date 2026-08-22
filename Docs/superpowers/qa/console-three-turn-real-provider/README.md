@@ -86,3 +86,13 @@ The control is pinned to `5f720a40417eaa78f33619d5cbc82effc470104b`.
 Candidate identity is resolved once from `HEAD` before the run begins. Failed,
 partial, noisy, or incomplete evidence must not be promoted into a performance
 claim.
+
+## Retained run
+
+The retained run used candidate
+`eb8225a32f88ea43c337aff99804d360384e7668` and completed all three warmups plus
+90 measured conversations. Its pre-registered verdict is `inconclusive`: the
+disabled third-send-to-worker gate passed, while the remaining event-loop and
+enabled third-send confidence bounds were too wide to establish the 10%
+non-regression ceiling. See `real-provider-three-turn-summary.md` for the exact
+metrics, confidence bounds, validity checks, and independent review.
