@@ -91,6 +91,23 @@ Top to bottom:
   Ctrl+P), a word count, and database sizes. (Token usage lives in the
   status row's cost chip — e.g. "2.7k tok" — not in the footer.)
 
+### Rail scrolling and focus
+
+An open, named section in either rail shows up to 20 rendered content
+lines. If its body is longer, **▼ more — scroll** means more content remains
+inside that section: place the pointer over that body, or Tab to its scrollable
+area, and scroll there. **▼ more sections — scroll** is different: later
+sections remain below, so scroll the whole Context or Inspector rail instead.
+
+Tab and Shift+Tab keep the usual order through section controls, an
+overflowing section's scrollable area, and controls inside that body. A section
+that fits is not an extra Tab stop. With focus on an overflowing section, use
+the arrow keys, Page Up/Page Down, Home, and End to read it. While focus is
+anywhere in the Inspector, `n` and `p` jump to the next or previous named
+section; they stop at the first and last section, and typing in an editable
+field remains typing. The footer adds **n/p Sections** while this navigation is
+active; **F1** lists the complete Console shortcuts.
+
 ### Small terminals
 
 The shell adapts instead of clipping: below 35 rows the header banner hides
@@ -107,6 +124,14 @@ even at 80x24 or 60x18. An explicitly opened rail yields to this rule once
 the terminal cannot fit the rail plus a usable transcript (~70 columns for
 the Context rail, ~74 for the Inspector); the preference itself survives and
 the rail returns when the terminal widens again.
+
+The expanded, browser-like terminal remains the primary layout, but the rails
+also protect reachability when height is tight. Context then scrolls as a whole
+so every section header and open body can still be reached. If an open Context
+section is marked **· no room**, its **[>]** control temporarily gives it room
+without changing which sections you chose to keep open or closed. Rail scroll
+positions and that temporary priority last only for the current session; your
+saved open/closed choices are unchanged.
 
 ### Focus mode
 
@@ -172,6 +197,7 @@ composer-level strip below shows once setup completes.
 | **<---------\|Context** / **Inspect\|--------->** headers | Collapse the open Context or Inspector rail; the entire painted header is the button. |
 | **Context->** handle | Reopens the collapsed "Console context" rail when the viewport can retain a usable transcript. |
 | **<-Inspect** handle | Reopens the collapsed "Inspector" rail when the viewport can retain a usable transcript; shows badges like "1 appr" (pending approvals) or "art" (artifact ready). |
+| **[>]** on a Context section marked **· no room** | Temporarily gives that already-open section priority when vertical space is constrained; it does not change saved open/closed choices. |
 | **Sessions** section | Names the active conversation. |
 | **Workspaces** section | Shows the active workspace and provides **Switch**, **New**, and **RAG Scope** actions. |
 | **Conversations** section | Searches, starts, stars, and resumes conversations — see [Sessions, tabs & workspaces](console/sessions-tabs-workspaces.md). |
@@ -396,6 +422,9 @@ Screen-level keys only — global keys live in the [guide index](index.md).
 |---|---|
 | F1 | Open the Console help panel (actions, agent notes, full shortcut list) |
 | F6 / Shift+F6 | Focus the next / previous pane (context rail → transcript → Inspector → composer) |
+| Tab / Shift+Tab | Move through rail controls and any overflowing section body in normal order; sections that fit do not add a scroll-area stop |
+| Arrow keys / Page Up / Page Down / Home / End | Scroll within a focused overflowing section body |
+| n / p (Inspector focused) | Move to the next / previous named Inspector section, without wrapping or taking over editable input |
 | Ctrl+K | Open the "Switch Session" conversation finder |
 | Ctrl+T | New Console tab |
 | Alt+1 … Alt+9 | Jump to Console tab 1–9 |
