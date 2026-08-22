@@ -2273,8 +2273,9 @@ def recover_interrupted_attempt(
             _rmdir_namespace(recovery_root)
         else:
             recovery_owner = _read_lock_owner(recovery_root)
-            if recovery_owner == canonical_owner:
-                _delete_exact_lock_root(recovery_root, recovery_owner)
+            if recovery_owner != canonical_owner:
+                raise RuntimeError("campaign_recovery_owner_conflict")
+            _delete_exact_lock_root(recovery_root, recovery_owner)
     owner: CampaignLockOwner | None = None
     if recovery_root.exists() or recovery_root.is_symlink():
         if lineage and lineage[-1] == {

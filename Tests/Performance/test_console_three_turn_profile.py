@@ -2040,6 +2040,67 @@ def test_campaign_recovery_restarts_after_duplicate_rollback_checkpoint(
     assert not recovery.exists()
 
 
+def test_campaign_recovery_refuses_different_canonical_and_recovery_owners(
+    tmp_path: Path,
+) -> None:
+    _acquire_attempt(tmp_path)
+    replacement = profile.CampaignLockOwner(
+        pid=456,
+        process_start_sha256="f" * 64,
+        owner_token="3" * 64,
+    )
+    recovery = tmp_path / ".campaign-recovery"
+    _write_campaign_owner(recovery, replacement)
+    ledger = tmp_path / "attempts.jsonl"
+    ledger_before = ledger.read_bytes()
+    canonical_before = (tmp_path / ".campaign-lock" / "owner.json").read_bytes()
+    recovery_before = (recovery / "owner.json").read_bytes()
+
+    with pytest.raises(
+        RuntimeError, match="^campaign_recovery_owner_conflict$"
+    ):
+        profile.recover_interrupted_attempt(
+            tmp_path, process_start_probe=lambda _pid: None
+        )
+
+    assert ledger.read_bytes() == ledger_before
+    assert (tmp_path / ".campaign-lock" / "owner.json").read_bytes() == canonical_before
+    assert (recovery / "owner.json").read_bytes() == recovery_before
+
+
+@pytest.mark.parametrize("malformed_marker", ("canonical", "recovery"))
+@pytest.mark.parametrize("payload", (b"not-json\n", b"{}\n"))
+def test_campaign_recovery_preserves_malformed_dual_marker_owners(
+    tmp_path: Path, malformed_marker: str, payload: bytes
+) -> None:
+    attempt = _acquire_attempt(tmp_path)
+    canonical = tmp_path / ".campaign-lock"
+    recovery = tmp_path / ".campaign-recovery"
+    _write_campaign_owner(recovery, attempt.owner)
+    malformed = canonical if malformed_marker == "canonical" else recovery
+    (malformed / "owner.json").write_bytes(payload)
+    ledger = tmp_path / "attempts.jsonl"
+    ledger_before = ledger.read_bytes()
+    canonical_before = (canonical / "owner.json").read_bytes()
+    recovery_before = (recovery / "owner.json").read_bytes()
+    probes = 0
+
+    def probe(_pid: int) -> None:
+        nonlocal probes
+        probes += 1
+        return None
+
+    with pytest.raises(RuntimeError, match="^campaign_lock_owner_invalid$"):
+        profile.recover_interrupted_attempt(
+            tmp_path, process_start_probe=probe
+        )
+
+    assert probes == 0
+    assert ledger.read_bytes() == ledger_before
+    assert (canonical / "owner.json").read_bytes() == canonical_before
+    assert (recovery / "owner.json").read_bytes() == recovery_before
+
+
 def test_campaign_recovery_rollback_conflict_preserves_both_locked_owners(
     tmp_path: Path,
 ) -> None:
