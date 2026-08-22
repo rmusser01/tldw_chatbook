@@ -88,6 +88,7 @@ from .agent_runtime import (
     ToolBatchPreparation,
     render_tool_protocol,
     run_agent_loop,
+    safe_utc_timestamp,
 )
 from .fleet_coordinator import (
     DEFAULT_RETAINED_TRANSCRIPT_MAX_CHARS,
@@ -689,12 +690,6 @@ def _now_iso() -> str:
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
-
-
-def _utc_iso(value: datetime) -> str:
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
 def _default_chat_call():
@@ -2149,14 +2144,18 @@ class AgentService:
                 logger.warning("could not mark abandoned sub-agent run cancelled")
 
     def _persist(self, run_id: str, outcome: RunOutcome) -> None:
-        step_dicts = []
-        for step in outcome.steps:
-            record = dataclasses.asdict(step)
-            record["created_at"] = record["created_at"] or _utc_iso(
-                self.wall_clock()
+        try:
+            step_dicts = []
+            for step in outcome.steps:
+                if not step.created_at:
+                    step.created_at = safe_utc_timestamp(self.wall_clock)
+                step_dicts.append((step.index, dataclasses.asdict(step)))
+            self.db.insert_steps_at_indices(run_id, step_dicts)
+        except Exception as exc:  # noqa: BLE001 — trace capture is best-effort
+            logger.warning(
+                "could not persist terminal agent steps "
+                f"(run_id={run_id}): {exc}"
             )
-            step_dicts.append((step.index, record))
-        self.db.insert_steps_at_indices(run_id, step_dicts)
         self.db.set_status(run_id, outcome.status, result=outcome.final_text or None)
 
     def _run_one(
@@ -4237,11 +4236,10 @@ class AgentService:
         )
 
         def observe_step(step: AgentStep) -> None:
-            record = dataclasses.asdict(step)
-            record["created_at"] = record["created_at"] or _utc_iso(
-                self.wall_clock()
-            )
             try:
+                if not step.created_at:
+                    step.created_at = safe_utc_timestamp(self.wall_clock)
+                record = dataclasses.asdict(step)
                 self.db.insert_steps_at_indices(run_id, [(step.index, record)])
             except Exception as exc:  # noqa: BLE001 — trace capture is best-effort
                 logger.warning(

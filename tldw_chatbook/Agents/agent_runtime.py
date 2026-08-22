@@ -85,11 +85,17 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _utc_iso(value: datetime) -> str:
-    """Format an injected wall-clock value like existing persisted timestamps."""
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+def safe_utc_timestamp(wall_clock: Callable[[], datetime]) -> str:
+    """Read an injected wall clock without making step capture load-bearing."""
+    try:
+        value = wall_clock()
+        if not isinstance(value, datetime):
+            raise TypeError("wall clock must return datetime")
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    except Exception:  # noqa: BLE001 — timestamp capture is best-effort
+        return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 FENCE_OPEN = "```tool_call"
 _FENCE_CLOSE = "```"
@@ -340,7 +346,6 @@ class LoopDeps:
     load_schemas: Callable[[list], list]
     should_cancel: Callable[[], bool]
     clock: Callable[[], float]
-    wall_clock: Callable[[], datetime] = _utc_now
     call_model_with_continuation: (
         Callable[
             [list, tuple, ProviderContinuationCheckpoint | None],
@@ -486,6 +491,10 @@ class LoopDeps:
     expand_provider_continuation: (
         Callable[[ProviderContinuationCheckpoint], list[dict]] | None
     ) = None
+    # Appended after every pre-existing field to preserve LoopDeps' legacy
+    # positional constructor slots. Unlike ``clock`` (monotonic budgets),
+    # this clock supplies UTC audit timestamps.
+    wall_clock: Callable[[], datetime] = _utc_now
 
 
 def _continuation_calls_match(
@@ -854,7 +863,7 @@ def run_agent_loop(
 
     def add(kind: str, **kw) -> AgentStep:
         if not kw.get("created_at"):
-            kw["created_at"] = _utc_iso(deps.wall_clock())
+            kw["created_at"] = safe_utc_timestamp(deps.wall_clock)
         step = AgentStep(index=len(steps), kind=kind, **kw)
         steps.append(step)
         # The service composes incremental durability with live UI here.

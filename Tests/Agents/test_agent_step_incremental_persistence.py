@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import json
+from datetime import datetime, timezone
 
 import pytest
 
-from tldw_chatbook.Agents.agent_models import AgentConfig
+import tldw_chatbook.Agents.agent_service as agent_service_module
+from tldw_chatbook.Agents.agent_models import (
+    AgentConfig,
+    AgentStep,
+    ModelTurn,
+    ToolResult,
+)
+from tldw_chatbook.Agents.agent_runtime import LoopDeps
 from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
@@ -74,6 +81,37 @@ def test_step_timestamp_uses_injected_utc_wall_clock_not_budget_clock(
     assert parsed.utcoffset() == timezone.utc.utcoffset(parsed)
 
 
+def test_loopdeps_preserves_pre_wall_clock_positional_continuation_slot() -> None:
+    def continuation(_messages, _schemas, _checkpoint):
+        return ModelTurn(text="done")
+
+    deps = LoopDeps(
+        lambda _messages, _schemas: ModelTurn(text="done"),
+        lambda _call: ToolResult(ok=True),
+        lambda _task: ToolResult(ok=True),
+        lambda _query: [],
+        lambda _ids: [],
+        lambda: False,
+        lambda: 0.0,
+        continuation,
+    )
+
+    assert deps.call_model_with_continuation is continuation
+
+
+def test_raising_wall_clock_falls_back_without_aborting_run(db: AgentRunsDB) -> None:
+    def fail_wall_clock():
+        raise RuntimeError("clock unavailable")
+
+    run_id, outcome = _run(_service(db, wall_clock=fail_wall_clock))
+
+    durable_timestamp = db.get_run(run_id)["steps"][0]["created_at"]
+    assert outcome.status == "done"
+    assert outcome.steps[0].created_at == durable_timestamp
+    parsed = datetime.fromisoformat(durable_timestamp.replace("Z", "+00:00"))
+    assert parsed.utcoffset() == timezone.utc.utcoffset(parsed)
+
+
 def test_terminal_error_step_without_live_timestamp_uses_wall_clock_fallback(
     db: AgentRunsDB,
 ) -> None:
@@ -87,9 +125,51 @@ def test_terminal_error_step_without_live_timestamp_uses_wall_clock_fallback(
     )
 
     assert outcome.status == "error"
-    assert db.get_run(run_id)["steps"][0]["created_at"] == (
-        "2026-08-22T13:00:00.000000Z"
+    durable_timestamp = db.get_run(run_id)["steps"][0]["created_at"]
+    assert outcome.steps[0].created_at == durable_timestamp
+    assert durable_timestamp == "2026-08-22T13:00:00.000000Z"
+
+
+def test_live_serialization_failure_still_notifies_ui_and_finalizes_status(
+    db: AgentRunsDB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    observed = []
+    serialize = agent_service_module.dataclasses.asdict
+
+    def fail_step_serialization(value):
+        if isinstance(value, AgentStep):
+            raise TypeError("cannot serialize")
+        return serialize(value)
+
+    monkeypatch.setattr(
+        agent_service_module.dataclasses, "asdict", fail_step_serialization
     )
+    run_id, outcome = _run(
+        _service(
+            db,
+            on_step=lambda step, _kind, _run_id: observed.append(step.index),
+        )
+    )
+
+    run = db.get_run(run_id)
+    assert outcome.status == "done"
+    assert observed == [0]
+    assert run["status"] == "done" and run["result"] == "done"
+
+
+def test_live_and_terminal_trace_write_failure_still_finalizes_status(
+    db: AgentRunsDB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail_trace_write(_run_id, _steps):
+        raise RuntimeError("trace store unavailable")
+
+    monkeypatch.setattr(db, "insert_steps_at_indices", fail_trace_write)
+    run_id, outcome = _run(_service(db))
+
+    run = db.get_run(run_id)
+    assert outcome.status == "done"
+    assert run["status"] == "done" and run["result"] == "done"
+    assert run["steps"] == []
 
 
 def test_failed_incremental_write_does_not_abort_and_terminal_write_recovers(
