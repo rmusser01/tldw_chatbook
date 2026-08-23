@@ -89,6 +89,7 @@ from tldw_chatbook.Chat.answer_citations import format_evidence_for_cited_answer
 from tldw_chatbook.Chat.console_chat_store import (
     ConsoleChatSession,
     ConsoleChatStore,
+    ConsoleDurableTurnCommit,
     TerminalCitationFinalizer,
 )
 from tldw_chatbook.Chat.console_command_grammar import COMMAND_PREFIX
@@ -127,6 +128,11 @@ from tldw_chatbook.Chat.console_context_repository import (
     ConsoleMemoryRecord,
 )
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+    ConsoleDispatchCheckpointState,
+    ConsoleDispatchReconstructability,
+    ConsoleDispatchResultStatus,
+    ConsoleDispatchTransition,
+    ConsoleDurableTurnAcceptance,
     ConsoleLibraryItemScopeSnapshot,
     ConsoleProviderIntent,
     ConsoleResolvedDestination,
@@ -1693,6 +1699,30 @@ class _PreparedSendContinuation:
     staged_evidence: _PreparedEvidenceLease | None
 
 
+@dataclass(frozen=True, slots=True)
+class _DurablePostcommitContinuation:
+    """App-lifetime inputs for idempotent postcommit re-entry."""
+
+    preparation_id: str
+    session_id: str
+    origin: ConsoleSubmissionOrigin
+    queue_entry_id: str | None
+    clean_draft: str
+    commit: ConsoleDurableTurnCommit
+    echoed_user_id: str
+    resolution: ConsoleProviderResolution
+    provider_messages: list[dict[str, Any]]
+    prefill: str | None
+    prefill_from_one_shot: bool
+    one_shot_prefill_revision: int | None
+    skill_bindings: tuple[Any, ...]
+    skill_bundle_block: str | None
+    citation_repair_session: Any | None
+    turn_context: ConsoleTurnExecutionContext
+    prepared: _PreparedSendContinuation | None
+    committed_context_epoch: int
+
+
 @dataclass(frozen=True)
 class ConsoleSubmitResult:
     """Result returned to the composer after a Console submit attempt."""
@@ -1715,6 +1745,8 @@ class ConsoleSubmitResult:
     origin: ConsoleSubmissionOrigin | None = None
     queue_entry_id: str | None = None
     committed_context_epoch: int | None = None
+    preparation_id: str | None = None
+    provider_started: bool = False
 
 
 @dataclass(frozen=True)
@@ -1840,6 +1872,9 @@ class ConsoleChatController:
         )
         self._preparation_outcomes: dict[str, ConsolePreparationOutcome] = {}
         self._prepared_send_continuations: dict[str, _PreparedSendContinuation] = {}
+        self._durable_postcommit_continuations: dict[
+            str, _DurablePostcommitContinuation
+        ] = {}
         self._provider_config = provider_config
         #: Task 4 (D2 fix wave, "bonus race"): screen-owned callable that
         #: builds a fresh default `ConsoleSessionSettings` snapshot (mirrors
@@ -4612,11 +4647,40 @@ class ConsoleChatController:
         # early-returns. Titling first means the conversation is created as the
         # derived title (e.g. "hello") instead of the default "Chat 1", so the
         # workspace rail shows it immediately after persistence.
+        durable_commit = getattr(self.store.persistence, "commit_durable_turn", None)
+        durable_turn = bool(
+            callable(durable_commit)
+            and not session.ephemeral
+            and origin
+            in {ConsoleSubmissionOrigin.MANUAL, ConsoleSubmissionOrigin.QUEUED}
+        )
+        if (
+            self.store.persistence is not None
+            and getattr(self.store.persistence, "db", None) is not None
+            and not session.ephemeral
+            and origin
+            in {ConsoleSubmissionOrigin.MANUAL, ConsoleSubmissionOrigin.QUEUED}
+            and not callable(durable_commit)
+        ):
+            return self._block(
+                session.id,
+                "Durable turn acceptance is unavailable; the provider was not called.",
+            )
+        staged_title = session.title
         if (
             origin is not ConsoleSubmissionOrigin.AGENT_WAKE
             and resumed_preparation is None
         ):
-            self._maybe_auto_title_session(session, clean_draft)
+            derived_title = (
+                derive_console_session_title(clean_draft)
+                if session.persisted_conversation_id is None
+                and is_default_console_session_title(session.title)
+                else ""
+            )
+            if durable_turn:
+                staged_title = derived_title or session.title
+            else:
+                self._maybe_auto_title_session(session, clean_draft)
         staged_attachments = tuple(
             MessageAttachment(
                 data=pending.data,
@@ -5039,6 +5103,29 @@ class ConsoleChatController:
                     queue_entry_id=queue_entry_id,
                 )
         committed_context_epoch = self.store.conversation_context_epoch(session.id)
+        if durable_turn and preparation is not None and echoed_user is not None:
+            return await self._accept_durable_turn(
+                session=session,
+                preparation=preparation,
+                preparation_outcome=preparation_outcome,
+                prepared_continuation=prepared_continuation,
+                echoed_user=echoed_user,
+                staged_title=staged_title,
+                staged_attachments=staged_attachments,
+                resolution=resolution,
+                provider_messages=provider_messages,
+                prefill=prefill,
+                prefill_from_one_shot=prefill_from_one_shot,
+                one_shot_prefill_revision=one_shot_prefill_revision,
+                skill_bindings=tuple(skill_bindings),
+                skill_bundle_block=skill_bundle_block,
+                citation_repair_contract=citation_repair_contract,
+                terminal_citation_finalizer=terminal_citation_finalizer,
+                turn_context=turn_context,
+                origin=origin,
+                queue_entry_id=queue_entry_id,
+                committed_context_epoch=committed_context_epoch,
+            )
         # TASK-1364: record the accepted send to the shared prompt history.
         # Same placement rule as the accepted-hook above: only a send that is
         # confirmed to proceed is recorded -- every `_block`/refusal path
@@ -5214,6 +5301,380 @@ class ConsoleChatController:
                 self.store.clear_terminal_citation_state(assistant.id)
             del terminal_citation_finalizer
             del citation_trace_builder
+
+    async def _run_durable_postcommit_effect(
+        self,
+        preparation_id: str,
+        effect_name: str,
+        callback: Callable[[], Any],
+    ) -> Any:
+        """Run one preparation-keyed effect and mark it only after success."""
+
+        effects = self.store.durable_postcommit_effects_for(preparation_id)
+        if effects is None:
+            raise RuntimeError("Durable postcommit effects are unavailable.")
+        if effect_name in effects.completed:
+            return None
+        if not self.store.claim_durable_postcommit_effect(preparation_id, effect_name):
+            raise RuntimeError("Durable postcommit effect is already in flight.")
+        try:
+            result = callback()
+            if inspect.isawaitable(result):
+                result = await result
+        except BaseException:
+            self.store.abandon_durable_postcommit_effect(preparation_id, effect_name)
+            raise
+        self.store.complete_durable_postcommit_effect(preparation_id, effect_name)
+        return result
+
+    async def _accept_durable_turn(
+        self,
+        *,
+        session: ConsoleChatSession,
+        preparation: ConsoleTurnPreparation,
+        preparation_outcome: ConsolePreparationOutcome | None,
+        prepared_continuation: _PreparedSendContinuation | None,
+        echoed_user: ConsoleChatMessage,
+        staged_title: str,
+        staged_attachments: tuple[MessageAttachment, ...],
+        resolution: ConsoleProviderResolution,
+        provider_messages: list[dict[str, Any]],
+        prefill: str | None,
+        prefill_from_one_shot: bool,
+        one_shot_prefill_revision: int | None,
+        skill_bindings: tuple[Any, ...],
+        skill_bundle_block: str,
+        citation_repair_contract: CitationRepairContract | None,
+        terminal_citation_finalizer: TerminalCitationFinalizer | None,
+        turn_context: ConsoleTurnExecutionContext,
+        origin: ConsoleSubmissionOrigin,
+        queue_entry_id: str | None,
+        committed_context_epoch: int,
+    ) -> ConsoleSubmitResult:
+        """Commit one durable owner, then enter its idempotent effect chain."""
+
+        identity = self.store.stage_durable_turn_identity(
+            session.id,
+            preparation.preparation_id,
+            title=staged_title,
+        )
+        parent_message_id = None
+        if echoed_user.parent_message_id is not None:
+            parent = self.store.get_message(echoed_user.parent_message_id)
+            parent_message_id = parent.persisted_message_id
+            if parent_message_id is None:
+                self._pause_prepared_commit(
+                    preparation.preparation_id,
+                    ConsolePreparationPauseKind.PERSISTENCE,
+                )
+                return ConsoleSubmitResult(
+                    False,
+                    False,
+                    "Couldn't save the prepared turn. Retry or cancel.",
+                    session_id=session.id,
+                    origin=origin,
+                    queue_entry_id=queue_entry_id,
+                    preparation_id=preparation.preparation_id,
+                )
+        contributions = (
+            (preparation_outcome.contribution,)
+            if preparation_outcome is not None
+            and preparation_outcome.contribution is not None
+            else ()
+        )
+        acceptance = ConsoleDurableTurnAcceptance(
+            conversation_id=identity.conversation_id,
+            user_message_id=echoed_user.id,
+            assistant_message_id=str(uuid4()),
+            parent_message_id=parent_message_id,
+            user_content=preparation.executed_draft,
+            attachments=tuple(
+                {
+                    "position": attachment.position,
+                    "data": attachment.data,
+                    "mime_type": attachment.mime_type,
+                    "display_name": attachment.display_name,
+                }
+                for attachment in staged_attachments
+            ),
+            preparation_id=preparation.preparation_id,
+            attempt_id=preparation.attempt_id,
+            origin=origin.value,
+            queue_entry_id=queue_entry_id,
+            frozen_authority=turn_context.library_authority,
+            resolved_destination=turn_context.resolved_destination,
+            reconstructability=ConsoleDispatchReconstructability(
+                attachments_reconstructable=True,
+                evidence_reconstructable=not bool(
+                    preparation_outcome is not None
+                    and preparation_outcome.evidence_bundle is not None
+                ),
+                prefill_reconstructable=prefill is None,
+                opaque_reference=f"opaque:{preparation.preparation_id}",
+            ),
+            contributions=contributions,
+        )
+        try:
+            commit = self.store.commit_durable_turn(acceptance)
+        except Exception:
+            return ConsoleSubmitResult(
+                False,
+                False,
+                "Couldn't save the prepared turn. Retry or cancel.",
+                session_id=session.id,
+                user_message_id=echoed_user.id,
+                origin=origin,
+                queue_entry_id=queue_entry_id,
+                preparation_id=preparation.preparation_id,
+            )
+        citation_repair_session = (
+            ConsoleCitationRepairSession(
+                contract=citation_repair_contract,
+                resolution=resolution,
+            )
+            if citation_repair_contract is not None
+            else None
+        )
+        self._durable_postcommit_continuations[preparation.preparation_id] = (
+            _DurablePostcommitContinuation(
+                preparation_id=preparation.preparation_id,
+                session_id=session.id,
+                origin=origin,
+                queue_entry_id=queue_entry_id,
+                clean_draft=preparation.executed_draft,
+                commit=commit,
+                echoed_user_id=echoed_user.id,
+                resolution=resolution,
+                provider_messages=provider_messages,
+                prefill=prefill,
+                prefill_from_one_shot=prefill_from_one_shot,
+                one_shot_prefill_revision=one_shot_prefill_revision,
+                skill_bindings=skill_bindings,
+                skill_bundle_block=skill_bundle_block,
+                citation_repair_session=citation_repair_session,
+                turn_context=turn_context,
+                prepared=prepared_continuation,
+                committed_context_epoch=committed_context_epoch,
+            )
+        )
+        return await self.resume_durable_postcommit(preparation.preparation_id)
+
+    async def resume_durable_postcommit(
+        self, preparation_id: str
+    ) -> ConsoleSubmitResult:
+        """Resume missing postcommit effects without allocating another turn."""
+
+        continuation = self._durable_postcommit_continuations.get(preparation_id)
+        if continuation is None:
+            return ConsoleSubmitResult(
+                False,
+                False,
+                "Committed turn continuation is unavailable.",
+                preparation_id=preparation_id,
+            )
+        commit = continuation.commit
+        session_id = continuation.session_id
+        assistant_holder: dict[str, ConsoleChatMessage] = {}
+
+        def publish_owners() -> None:
+            _user, assistant = self.store.publish_durable_turn_owners(
+                session_id,
+                commit,
+                terminal_citation_finalizer=None,
+                defer_terminal_persistence=(
+                    continuation.citation_repair_session is not None
+                ),
+            )
+            assistant_holder["assistant"] = assistant
+
+        def clear_staged_input() -> None:
+            self._release_prepared_evidence(continuation.prepared)
+            if continuation.prepared is not None:
+                for pending in continuation.prepared.attachments:
+                    self.store.consume_pending_attachment(
+                        session_id, pending.attachment_id
+                    )
+            revision = continuation.one_shot_prefill_revision
+            if continuation.prefill_from_one_shot and revision is not None:
+                self.store.consume_session_one_shot_prefill(session_id, revision)
+            live_session = next(
+                (row for row in self.store.sessions() if row.id == session_id), None
+            )
+            if (
+                live_session is not None
+                and live_session.draft == continuation.clean_draft
+            ):
+                live_session.draft = ""
+
+        def queue_acknowledgement() -> None:
+            self.prompt_queue_coordinator.turn_accepted(
+                session_id,
+                origin=continuation.origin,
+                context_epoch=continuation.committed_context_epoch,
+                entry_id=continuation.queue_entry_id,
+            )
+
+        def project_workspace() -> None:
+            live_session = next(
+                row for row in self.store.sessions() if row.id == session_id
+            )
+            self.store._project_workspace_membership_after_commit(live_session)
+            if self.store.has_pending_workspace_projection(session_id):
+                raise RuntimeError("Workspace projection remains pending.")
+
+        def accepted_hook() -> None:
+            if continuation.origin is ConsoleSubmissionOrigin.MANUAL:
+                callback = self.on_submission_accepted
+                if callback is not None:
+                    callback()
+
+        async def prompt_history() -> None:
+            history = self.prompt_history
+            if history is not None and continuation.clean_draft.strip():
+                await history.append(continuation.clean_draft)
+
+        def publish_preparation() -> None:
+            current = self._preparation_by_id(preparation_id)
+            if (
+                current is not None
+                and current.state is ConsoleTurnPreparationState.ACCEPTED
+            ):
+                return
+            if not self._transition_preparation(
+                preparation_id,
+                ConsoleTurnPreparationState.COMMITTING,
+                ConsoleTurnPreparationState.ACCEPTED,
+            ):
+                raise RuntimeError(
+                    "Prepared turn changed before acceptance publication."
+                )
+
+        def transition_checkpoint() -> None:
+            current_commit = self.store.durable_turn_commit_for(preparation_id)
+            if current_commit is None:
+                raise RuntimeError("Durable acceptance is unavailable.")
+            repository = getattr(
+                self.store.persistence, "console_dispatch_repository", None
+            )
+            if repository is None:
+                raise RuntimeError("Durable dispatch repository is unavailable.")
+            result = repository.cas_state(
+                ConsoleDispatchTransition(
+                    assistant_message_id=current_commit.assistant_message_id,
+                    expected_state=ConsoleDispatchCheckpointState.ACCEPTED,
+                    expected_checkpoint_revision=(
+                        current_commit.checkpoint.checkpoint_revision
+                    ),
+                    expected_user_message_version=(current_commit.user_message_version),
+                    expected_assistant_message_version=(
+                        current_commit.assistant_message_version
+                    ),
+                    new_state=ConsoleDispatchCheckpointState.DISPATCH_STARTED,
+                    new_attempt_id=current_commit.checkpoint.attempt_id,
+                )
+            )
+            if result.status is not ConsoleDispatchResultStatus.COMMITTED:
+                raise RuntimeError("Durable dispatch checkpoint transition failed.")
+            if not self._transition_preparation(
+                preparation_id,
+                ConsoleTurnPreparationState.ACCEPTED,
+                ConsoleTurnPreparationState.DISPATCH_STARTED,
+            ):
+                raise RuntimeError("Prepared turn changed before provider dispatch.")
+
+        try:
+            await self._run_durable_postcommit_effect(
+                preparation_id,
+                "identity_publication",
+                lambda: self.store.publish_durable_turn_identity(session_id, commit),
+            )
+            await self._run_durable_postcommit_effect(
+                preparation_id, "durable_owner_publication", publish_owners
+            )
+            await self._run_durable_postcommit_effect(
+                preparation_id, "staged_input_clearing", clear_staged_input
+            )
+            await self._run_durable_postcommit_effect(
+                preparation_id,
+                "workspace_projection",
+                project_workspace,
+            )
+            await self._run_durable_postcommit_effect(
+                preparation_id, "queue_acknowledgement", queue_acknowledgement
+            )
+            await self._run_durable_postcommit_effect(
+                preparation_id, "accepted_hook", accepted_hook
+            )
+            await self._run_durable_postcommit_effect(
+                preparation_id, "prompt_history", prompt_history
+            )
+            await self._run_durable_postcommit_effect(
+                preparation_id, "preparation_publication", publish_preparation
+            )
+            await self._run_durable_postcommit_effect(
+                preparation_id, "checkpoint_transition", transition_checkpoint
+            )
+            assistant = assistant_holder.get("assistant")
+            if assistant is None:
+                assistant = self.store.get_message(commit.assistant_message_id)
+            stream_result = await self._run_durable_postcommit_effect(
+                preparation_id,
+                "provider_entry",
+                lambda: self._stream_assistant_response(
+                    resolution=continuation.resolution,
+                    provider_messages=continuation.provider_messages,
+                    assistant_message_id=assistant.id,
+                    prefill=continuation.prefill,
+                    prefill_from_one_shot=continuation.prefill_from_one_shot,
+                    one_shot_prefill_revision=(continuation.one_shot_prefill_revision),
+                    skill_bindings=continuation.skill_bindings,
+                    skill_bundle_block=continuation.skill_bundle_block,
+                    citation_repair_session=continuation.citation_repair_session,
+                    turn_context=continuation.turn_context,
+                    preparation_id=None,
+                ),
+            )
+        except BaseException:
+            if continuation.origin is ConsoleSubmissionOrigin.QUEUED:
+                self.prompt_queue_coordinator.retain_durable_acceptance(session_id)
+            state = self.store.durable_postcommit_effects_for(preparation_id)
+            provider_started = bool(
+                state is not None and "checkpoint_transition" in state.completed
+            )
+            return ConsoleSubmitResult(
+                True,
+                True,
+                "Accepted turn is retained for recovery.",
+                session_id=session_id,
+                user_message_id=commit.user_message_id,
+                assistant_message_id=commit.assistant_message_id,
+                terminal_status=self.run_state_for(session_id).status,
+                origin=continuation.origin,
+                queue_entry_id=continuation.queue_entry_id,
+                committed_context_epoch=continuation.committed_context_epoch,
+                preparation_id=preparation_id,
+                provider_started=provider_started,
+            )
+        # Task 14 deliberately leaves the durable checkpoint in
+        # ``dispatch_started`` for Task 15's terminal settlement, but the
+        # Task-13 volatile preparation must still leave the session after the
+        # live provider path returns or a following queued/manual turn would
+        # be refused as if acceptance were still in progress.
+        self._settle_accepted_preparation(preparation_id)
+        if not isinstance(stream_result, ConsoleSubmitResult):
+            stream_result = ConsoleSubmitResult(True, True)
+        return replace(
+            stream_result,
+            session_id=session_id,
+            user_message_id=commit.user_message_id,
+            assistant_message_id=commit.assistant_message_id,
+            terminal_status=self.run_state_for(session_id).status,
+            origin=continuation.origin,
+            queue_entry_id=continuation.queue_entry_id,
+            committed_context_epoch=continuation.committed_context_epoch,
+            preparation_id=preparation_id,
+            provider_started=True,
+        )
 
     def new_session(
         self,

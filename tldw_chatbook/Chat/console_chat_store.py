@@ -56,6 +56,8 @@ from tldw_chatbook.Chat.console_chat_models import (
 )
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+    ConsoleDispatchCheckpoint,
+    ConsoleDurableTurnAcceptance,
     ConsoleResolvedDestination,
     ConsoleTurnLibraryAuthority,
 )
@@ -78,6 +80,7 @@ from tldw_chatbook.Chat.console_library_policy_coordinator import (
     ConsoleLibraryPolicyCoordinator,
 )
 from tldw_chatbook.Chat.console_turn_preparation import (
+    ConsolePreparationPauseKind,
     ConsolePreparationTransition,
     ConsoleTurnPreparation,
     ConsoleTurnPreparationState,
@@ -275,6 +278,28 @@ class ConsoleStagedConversationIdentity:
     title: str
 
 
+@dataclass(frozen=True, slots=True)
+class ConsoleDurableTurnCommit:
+    """Immutable durable values returned before live publication."""
+
+    identity: ConsoleStagedConversationIdentity
+    user_message_id: str
+    user_message_version: int
+    assistant_message_id: str
+    assistant_message_version: int
+    checkpoint: ConsoleDispatchCheckpoint
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleDurablePostcommitEffects:
+    """App-lifetime completion ledger for one committed preparation."""
+
+    preparation_id: str
+    session_id: str
+    assistant_message_id: str
+    completed: frozenset[str] = frozenset()
+
+
 def _default_library_policy_holder() -> ConsoleLibraryPolicyHolder:
     return ConsoleLibraryPolicyHolder(
         ConsoleLibraryPolicySnapshot(
@@ -300,6 +325,15 @@ class ConsoleChatPersistence(Protocol):
     #: pre-persistence scope selection with no diagnostic). Declaring it
     #: here makes the seam an explicit, checkable part of the contract.
     db: Any | None
+
+    def commit_durable_turn(
+        self,
+        *,
+        acceptance: ConsoleDurableTurnAcceptance,
+        policy_candidate: ConsoleLibraryPolicyCandidate,
+        conversation_kwargs: Mapping[str, object],
+    ) -> ConsoleDispatchCheckpoint:
+        """Atomically create/validate and accept one durable Console turn."""
 
     def create_conversation(self, **kwargs) -> str:
         """Create a persisted conversation and return its ID."""
@@ -849,6 +883,14 @@ class ConsoleChatStore:
         # return directly.
         self._preparation_lock = threading.RLock()
         self._preparations_by_session: dict[str, ConsoleTurnPreparation] = {}
+        self._durable_identity_by_preparation: dict[
+            str, ConsoleStagedConversationIdentity
+        ] = {}
+        self._durable_commit_by_preparation: dict[str, ConsoleDurableTurnCommit] = {}
+        self._durable_effects_by_preparation: dict[
+            str, ConsoleDurablePostcommitEffects
+        ] = {}
+        self._durable_effects_in_flight: set[tuple[str, str]] = set()
         #: Derived VIEW = the current active path only (root -> active leaf).
         #: Written ONLY by ``_recompute_active_path`` (single-writer invariant);
         #: every other reader/writer of the tree goes through the maps below.
@@ -2274,6 +2316,284 @@ class ConsoleChatStore:
             title=session.title,
         )
 
+    def stage_durable_turn_identity(
+        self,
+        session_id: str,
+        preparation_id: str,
+        *,
+        title: str | None = None,
+    ) -> ConsoleStagedConversationIdentity:
+        """Reserve one stable first-send identity without publishing it."""
+
+        session = self._session_or_raise(session_id)
+        if type(preparation_id) is not str or not preparation_id:
+            raise ValueError("preparation_id must be non-empty text")
+        with self._preparation_lock:
+            existing = self._durable_identity_by_preparation.get(preparation_id)
+            if existing is not None:
+                return existing
+            identity = ConsoleStagedConversationIdentity(
+                conversation_id=session.persisted_conversation_id or str(uuid4()),
+                title=title if title is not None else session.title,
+            )
+            self._durable_identity_by_preparation[preparation_id] = identity
+            return identity
+
+    def session_library_policy_candidate(
+        self, session_id: str
+    ) -> ConsoleLibraryPolicyCandidate:
+        """Return the exact policy values staged on one native session."""
+
+        snapshot = self._session_or_raise(session_id).library_policy_holder.snapshot
+        return ConsoleLibraryPolicyCandidate(
+            auto_retrieve=snapshot.auto_retrieve,
+            assistant_access=snapshot.assistant_access,
+        )
+
+    def commit_durable_turn(
+        self, acceptance: ConsoleDurableTurnAcceptance
+    ) -> ConsoleDurableTurnCommit:
+        """Commit one durable turn without publishing any live owner state."""
+
+        if not isinstance(acceptance, ConsoleDurableTurnAcceptance):
+            raise TypeError("acceptance must be ConsoleDurableTurnAcceptance")
+        preparation = self.preparation_by_id(acceptance.preparation_id)
+        if preparation is None or preparation.session_id not in self._sessions:
+            raise RuntimeError("Durable preparation is unavailable.")
+        session = self._session_or_raise(preparation.session_id)
+        if preparation.state is ConsoleTurnPreparationState.PAUSED:
+            resumed = self.compare_and_set_preparation(
+                session.id,
+                ConsolePreparationTransition(
+                    preparation_id=preparation.preparation_id,
+                    expected_state=ConsoleTurnPreparationState.PAUSED,
+                    new_state=ConsoleTurnPreparationState.COMMITTING,
+                    pause_kind=None,
+                    new_attempt_id=None,
+                ),
+            )
+            if resumed is None:
+                raise RuntimeError("Durable preparation changed before retry.")
+            preparation = resumed
+        if preparation.state is not ConsoleTurnPreparationState.COMMITTING:
+            raise RuntimeError("Durable preparation is not committing.")
+        existing_commit = self._durable_commit_by_preparation.get(
+            acceptance.preparation_id
+        )
+        if existing_commit is not None:
+            return existing_commit
+        identity = self._durable_identity_by_preparation.get(acceptance.preparation_id)
+        if identity is None:
+            identity = self.stage_durable_turn_identity(
+                session.id,
+                acceptance.preparation_id,
+                title=session.title,
+            )
+        if identity.conversation_id != acceptance.conversation_id:
+            raise RuntimeError("Durable acceptance identity changed.")
+        if self.persistence is None:
+            raise RuntimeError("Durable Console persistence is unavailable.")
+        scope_type, workspace_id = self._persistence_scope(session)
+        local_character_id = session.local_character_id()
+        conversation_kwargs: dict[str, object] = {
+            "conversation_title": identity.title,
+            "workspace_id": workspace_id,
+            "scope_type": scope_type,
+            "system_prompt": (
+                session.settings.system_prompt if session.settings is not None else None
+            ),
+            "runtime_backend": session.runtime_backend,
+            "assistant_kind": session.assistant_kind,
+            "assistant_id": session.assistant_id,
+            "assistant_authority_id": session.assistant_authority_id,
+            "character_id": local_character_id,
+            "character_name": (
+                session.character_name if local_character_id is not None else None
+            ),
+        }
+        if session.speech_preferences != ConsoleSpeechPreferences():
+            conversation_kwargs["speech_preferences"] = session.speech_preferences
+        try:
+            checkpoint = self.persistence.commit_durable_turn(
+                acceptance=acceptance,
+                policy_candidate=self.session_library_policy_candidate(session.id),
+                conversation_kwargs=conversation_kwargs,
+            )
+        except Exception:
+            self.compare_and_set_preparation(
+                session.id,
+                ConsolePreparationTransition(
+                    preparation_id=preparation.preparation_id,
+                    expected_state=ConsoleTurnPreparationState.COMMITTING,
+                    new_state=ConsoleTurnPreparationState.PAUSED,
+                    pause_kind=ConsolePreparationPauseKind.PERSISTENCE,
+                    new_attempt_id=None,
+                ),
+            )
+            logger.bind(
+                session_id=session.id,
+                preparation_id=preparation.preparation_id,
+            ).warning("console_durable_turn_commit_failed")
+            raise
+        commit = ConsoleDurableTurnCommit(
+            identity=identity,
+            user_message_id=acceptance.user_message_id,
+            user_message_version=checkpoint.user_message_version,
+            assistant_message_id=acceptance.assistant_message_id,
+            assistant_message_version=checkpoint.assistant_message_version,
+            checkpoint=checkpoint,
+        )
+        self._durable_commit_by_preparation[acceptance.preparation_id] = commit
+        self.begin_durable_postcommit_effects(
+            preparation_id=acceptance.preparation_id,
+            session_id=session.id,
+            assistant_message_id=acceptance.assistant_message_id,
+        )
+        return commit
+
+    def begin_durable_postcommit_effects(
+        self,
+        *,
+        preparation_id: str,
+        session_id: str,
+        assistant_message_id: str,
+    ) -> ConsoleDurablePostcommitEffects:
+        """Create or return one preparation-keyed postcommit ledger."""
+
+        self._session_or_raise(session_id)
+        with self._preparation_lock:
+            existing = self._durable_effects_by_preparation.get(preparation_id)
+            if existing is not None:
+                if (
+                    existing.session_id != session_id
+                    or existing.assistant_message_id != assistant_message_id
+                ):
+                    raise RuntimeError("Durable postcommit owner changed.")
+                return existing
+            effects = ConsoleDurablePostcommitEffects(
+                preparation_id=preparation_id,
+                session_id=session_id,
+                assistant_message_id=assistant_message_id,
+            )
+            self._durable_effects_by_preparation[preparation_id] = effects
+            return effects
+
+    def durable_postcommit_effects_for(
+        self, preparation_id: str | None
+    ) -> ConsoleDurablePostcommitEffects | None:
+        """Return the immutable effect ledger for one committed turn."""
+
+        if not preparation_id:
+            return None
+        with self._preparation_lock:
+            return self._durable_effects_by_preparation.get(preparation_id)
+
+    def durable_turn_commit_for(
+        self, preparation_id: str
+    ) -> ConsoleDurableTurnCommit | None:
+        """Return one app-lifetime durable acceptance result."""
+
+        with self._preparation_lock:
+            return self._durable_commit_by_preparation.get(preparation_id)
+
+    def complete_durable_postcommit_effect(
+        self, preparation_id: str, effect_name: str
+    ) -> ConsoleDurablePostcommitEffects:
+        """Mark one effect complete only after its caller reports success."""
+
+        with self._preparation_lock:
+            current = self._durable_effects_by_preparation.get(preparation_id)
+            if current is None:
+                raise RuntimeError("Durable postcommit ledger is unavailable.")
+            updated = replace(
+                current,
+                completed=current.completed | {effect_name},
+            )
+            self._durable_effects_by_preparation[preparation_id] = updated
+            self._durable_effects_in_flight.discard((preparation_id, effect_name))
+            return updated
+
+    def claim_durable_postcommit_effect(
+        self, preparation_id: str, effect_name: str
+    ) -> bool:
+        """Claim one incomplete effect so concurrent re-entry cannot duplicate it."""
+
+        key = (preparation_id, effect_name)
+        with self._preparation_lock:
+            current = self._durable_effects_by_preparation.get(preparation_id)
+            if (
+                current is None
+                or effect_name in current.completed
+                or key in self._durable_effects_in_flight
+            ):
+                return False
+            self._durable_effects_in_flight.add(key)
+            return True
+
+    def abandon_durable_postcommit_effect(
+        self, preparation_id: str, effect_name: str
+    ) -> None:
+        """Release a failed effect claim without recording completion."""
+
+        with self._preparation_lock:
+            self._durable_effects_in_flight.discard((preparation_id, effect_name))
+
+    def publish_durable_turn_identity(
+        self, session_id: str, commit: ConsoleDurableTurnCommit
+    ) -> None:
+        """Publish committed identity and the matching durable policy snapshot."""
+
+        self.publish_committed_identity(session_id, commit.identity)
+        session = self._session_or_raise(session_id)
+        repository = getattr(
+            self.persistence, "console_library_policy_repository", None
+        )
+        if repository is None:
+            raise RuntimeError("Durable Console Library policy is unavailable.")
+        result = repository.read(commit.identity.conversation_id)
+        if result.durable_policy is None:
+            raise RuntimeError("Committed Console Library policy is unavailable.")
+        session.library_policy_holder.snapshot = result.snapshot
+        session.library_policy_holder.explicitly_staged = False
+        if self.library_policy_coordinator is not None:
+            self.library_policy_coordinator.register_holder(
+                session.id,
+                commit.identity.conversation_id,
+                session.library_policy_holder,
+            )
+
+    def publish_durable_turn_owners(
+        self,
+        session_id: str,
+        commit: ConsoleDurableTurnCommit,
+        *,
+        terminal_citation_finalizer: TerminalCitationFinalizer | None = None,
+        defer_terminal_persistence: bool = False,
+    ) -> tuple[ConsoleChatMessage, ConsoleChatMessage]:
+        """Hydrate the already-committed USER and assistant live owners."""
+
+        user = self._message_or_raise(commit.user_message_id)
+        if self._message_session_index.get(user.id) != session_id:
+            raise RuntimeError("Committed USER owner changed sessions.")
+        user.persisted_message_id = commit.user_message_id
+        try:
+            assistant = self._message_or_raise(commit.assistant_message_id)
+        except KeyError:
+            self.append_message(
+                session_id,
+                role=ConsoleMessageRole.ASSISTANT,
+                content="",
+                persist=False,
+                terminal_citation_finalizer=terminal_citation_finalizer,
+                defer_terminal_persistence=defer_terminal_persistence,
+                message_id=commit.assistant_message_id,
+            )
+            assistant = self._message_or_raise(commit.assistant_message_id)
+        if assistant.role is not ConsoleMessageRole.ASSISTANT:
+            raise RuntimeError("Committed assistant owner changed role.")
+        assistant.persisted_message_id = commit.assistant_message_id
+        return self._snapshot(user), self._snapshot(assistant)
+
     def publish_committed_identity(
         self,
         session_id: str,
@@ -2842,6 +3162,7 @@ class ConsoleChatStore:
         change_review_run_id: str | None = None,
         metadata: "MessageMetadata | None" = None,
         activity_presentation: ConsoleActivityPresentation | None = None,
+        message_id: str | None = None,
     ) -> ConsoleChatMessage:
         """Append a message; scalar image kwargs become a one-item tuple.
 
@@ -2902,6 +3223,7 @@ class ConsoleChatStore:
             and (defer_terminal_persistence or arm_finalizer)
         )
         message = ConsoleChatMessage(
+            id=message_id or str(uuid4()),
             role=role,
             content=content,
             status=self._initial_status(role=role, content=content),

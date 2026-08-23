@@ -16,6 +16,10 @@ from tldw_chatbook.Chat.console_context_repository import (
     ContextPolicyReadResult,
 )
 from tldw_chatbook.Chat.console_dispatch_repository import ConsoleDispatchRepository
+from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+    ConsoleDispatchCheckpoint,
+    ConsoleDurableTurnAcceptance,
+)
 from tldw_chatbook.Chat.console_library_policy_repository import (
     ConsoleLibraryPolicyRepository,
 )
@@ -361,6 +365,73 @@ class ChatPersistenceService:
                     "Console Library policy could not be committed with conversation."
                 )
         return result.snapshot
+
+    def commit_durable_turn(
+        self,
+        *,
+        acceptance: ConsoleDurableTurnAcceptance,
+        policy_candidate: ConsoleLibraryPolicyCandidate,
+        conversation_kwargs: Mapping[str, object],
+    ) -> ConsoleDispatchCheckpoint:
+        """Atomically create/validate and accept one durable Console turn.
+
+        The service owns the sole outer ``BEGIN IMMEDIATE``.  It intentionally
+        returns only durable values and never mutates the live Console session;
+        publication is a postcommit store/controller responsibility.
+        """
+
+        self.validate_workspace_target(**conversation_kwargs)
+        with self.db.transaction(immediate=True) as cursor:
+            conversation = cursor.execute(
+                "SELECT deleted FROM conversations WHERE id = ?",
+                (acceptance.conversation_id,),
+            ).fetchone()
+            if conversation is None:
+                created_id = self.create_conversation(
+                    conversation_id=acceptance.conversation_id,
+                    **dict(conversation_kwargs),
+                )
+                if created_id != acceptance.conversation_id:
+                    raise RuntimeError(
+                        "Persistence returned an unexpected conversation id."
+                    )
+                policy_result = self.console_library_policy_repository.insert(
+                    acceptance.conversation_id,
+                    policy_candidate,
+                )
+                if (
+                    policy_result.status
+                    is not ConsoleLibraryPolicyWriteStatus.COMMITTED
+                ):
+                    raise RuntimeError(
+                        "Console Library policy could not be committed with turn."
+                    )
+            else:
+                if conversation["deleted"]:
+                    raise RuntimeError("Durable conversation is unavailable.")
+                policy_row = cursor.execute(
+                    "SELECT auto_retrieve_on_send, assistant_library_access, "
+                    "policy_revision FROM console_conversation_library_policy "
+                    "WHERE conversation_id = ?",
+                    (acceptance.conversation_id,),
+                ).fetchone()
+                authority = acceptance.frozen_authority.policy
+                if (
+                    policy_row is None
+                    or authority.source != "durable"
+                    or authority.policy_revision != policy_row["policy_revision"]
+                    or int(policy_candidate.auto_retrieve.value == "automatic")
+                    != policy_row["auto_retrieve_on_send"]
+                    or int(policy_candidate.assistant_access.value == "allowed")
+                    != policy_row["assistant_library_access"]
+                ):
+                    raise RuntimeError(
+                        "Durable Console Library policy no longer matches acceptance."
+                    )
+            return self.console_dispatch_repository.insert_with_messages(
+                cursor,
+                acceptance,
+            )
 
     def promote_console_conversation_bundle(
         self,

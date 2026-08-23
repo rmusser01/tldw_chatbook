@@ -326,6 +326,20 @@ class ConsolePromptQueueCoordinator:
         chain.accepted_live_turn = True
         self._changed(session_id)
 
+    def retain_durable_acceptance(self, session_id: str) -> None:
+        """Fence a committed queued claim from returning to pending.
+
+        Task 14 uses this only after SQLite has committed the durable owner and
+        a later publication effect failed.  Recovery presentation belongs to
+        Task 15; this narrow fence merely keeps the queue boundary truthful.
+        """
+
+        chain = self._chains.get(session_id)
+        if chain is None:
+            return
+        chain.accepted_live_turn = True
+        self._changed(session_id)
+
     async def _after_turn(self, session_id: str, result: "ConsoleSubmitResult") -> None:
         chain = self._chains.get(session_id)
         if chain is None:
