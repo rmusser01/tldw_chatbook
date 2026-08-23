@@ -185,6 +185,46 @@ async def test_open_item_by_id_media_is_canvas_scoped() -> None:
 
 
 @pytest.mark.asyncio
+async def test_open_item_by_id_notes_keeps_route_owned_source_strip() -> None:
+    """A cross-kind notes open still mounts the Database/Files source strip.
+
+    The strip is route-owned chrome composed OUTSIDE the canvas host, so
+    the targeted open seam must detect the structural mismatch and take
+    the sanctioned whole-screen path -- a canvas-child-only swap would
+    land the notes editor without its source strip. This is the
+    deliberately-not-converted case recorded in the task notes.
+    """
+    app = _build_test_app()
+    _seed_conversations(
+        app,
+        _two_conversations(),
+        notes=[
+            {
+                "id": "n-1",
+                "title": "Probe note",
+                "content": "Body",
+                "last_modified": "2026-07-06T08:00:00Z",
+                "version": 1,
+            }
+        ],
+        media=_two_media_items(),
+    )
+    host = LibraryHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-rail-explore-all", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-row-browse-conversations")
+        screen.query_one("#library-row-browse-conversations", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-conversations-canvas")
+        assert not screen.query("#library-notes-source-strip")
+        await screen._open_library_item_by_id("notes", "n-1")
+        await _wait_for_selector(screen, pilot, "#library-notes-canvas")
+        await _wait_for_selector(screen, pilot, "#library-notes-source-strip")
+        assert screen._library_notes_view == "editor"
+
+
+@pytest.mark.asyncio
 async def test_export_open_from_media_is_canvas_scoped() -> None:
     """The media section "Export…" action swaps to the export canvas only."""
     host = _media_app_host()

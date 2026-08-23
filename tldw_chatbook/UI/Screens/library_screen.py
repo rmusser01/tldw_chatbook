@@ -8303,6 +8303,7 @@ class LibraryScreen(BaseAppScreen):
         *,
         generation: int,
         route_key: tuple[object, ...],
+        rail_mode: str = "sync",
     ) -> LibraryEntryReconcileResult:
         """Replace only the active Library canvas child for one entry owner.
 
@@ -8310,6 +8311,18 @@ class LibraryScreen(BaseAppScreen):
         after each await.  Once mounted, stateful owners are synchronized from
         the screen again so state changed while removal/mounting yielded to the
         message pump cannot be stranded in the pre-await constructor snapshot.
+
+        Args:
+            widget: The destination canvas child to mount.
+            generation: Snapshot generation this projection belongs to.
+            route_key: Route key this projection belongs to.
+            rail_mode: ``"sync"`` (default) fully recomposes the rail from
+                the fresh shell state -- required for entry reconciliation,
+                where counts/sections may have changed with the snapshot.
+                ``"selection"`` patches only the two selection-affected rows
+                in place (``LibraryRail.apply_selection``) -- the task-21116
+                per-click open seam, where only the selected row moved and a
+                full rail rebuild would recreate every row button per click.
         """
         if not self._library_entry_reconcile_is_current(generation, route_key):
             return LibraryEntryReconcileResult.SUPERSEDED
@@ -8337,13 +8350,20 @@ class LibraryScreen(BaseAppScreen):
             else None
         )
         try:
-            rail.sync_state(
-                shell,
-                self._library_rail_preferences(),
-                query=self._library_rag_query,
-                lifecycle=self._library_lifecycle,
-                onboarding_all_empty=self._library_onboarding_all_empty,
-            )
+            if rail_mode == "selection":
+                rail.apply_selection(
+                    shell,
+                    lifecycle=self._library_lifecycle,
+                    onboarding_all_empty=self._library_onboarding_all_empty,
+                )
+            else:
+                rail.sync_state(
+                    shell,
+                    self._library_rail_preferences(),
+                    query=self._library_rag_query,
+                    lifecycle=self._library_lifecycle,
+                    onboarding_all_empty=self._library_onboarding_all_empty,
+                )
             header_renderable = header.renderable
             header_text = getattr(header_renderable, "plain", str(header_renderable))
             expected_header = self._library_header_line(shell.header_line)
@@ -8473,6 +8493,30 @@ class LibraryScreen(BaseAppScreen):
             self.refresh(recompose=True)
             return
         self._register_footer_shortcuts()
+        # Crossing the Notes boundary is STRUCTURAL: the Database/Files
+        # source strip is route-owned chrome composed OUTSIDE the canvas
+        # host (above the shell grid), so adding/removing it must go
+        # through the central whole-screen seam -- the same rule
+        # ``_replace_library_browse_canvas`` enforces. Every other
+        # transition keeps the targeted path.
+        try:
+            destination_shell = build_library_shell_state(
+                self._build_library_shell_input(),
+                selected_row_id=self._library_selected_row_id,
+            )
+            strip_mounted = bool(self.query("#library-notes-source-strip"))
+            strip_needed = (
+                destination_shell.canvas_kind
+                in LIBRARY_NOTES_SOURCE_STRIP_CANVAS_KINDS
+            )
+        except Exception:
+            logger.debug(
+                "Library open-surface strip probe failed.", exc_info=True
+            )
+            strip_mounted, strip_needed = False, True
+        if strip_mounted != strip_needed:
+            self.refresh(recompose=True)
+            return
         generation = self._library_snapshot_state_generation
         route_key = self._library_entry_route_key()
         try:
@@ -8480,6 +8524,10 @@ class LibraryScreen(BaseAppScreen):
                 build(),
                 generation=generation,
                 route_key=route_key,
+                # A per-click open moves only the rail SELECTION; counts and
+                # sections are untouched, so patch the two affected rows in
+                # place instead of recreating every rail row per click.
+                rail_mode="selection",
             )
         except Exception:
             logger.debug(

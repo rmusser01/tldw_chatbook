@@ -532,3 +532,12 @@ deep-link and palette bypass, and keyboard/compositor UAT with the production
 stylesheet at 100x30 and 170x48). Per user direction, repository-wide pytest
 was not run; only modified/touched Library component and direct-owner gates are
 claimed.*
+*Verified against fix/task-21116-wave4 (dev @ 30c7e1fe9) — 2026-08-23
+(TASK-21116, performance conversion — no workflow changes: opening a media
+item, leaving the media viewer (Escape / "‹ Back to list", including the
+edit/delete/analysis Cancel steps), opening a Search/RAG result, the
+section "Export…" actions, and the Prompts/Skills inline "Import…" row now
+update only the affected canvas region instead of rebuilding the whole
+screen. One visible refinement: opening the Prompts/Skills Import… row
+parks the caret in its path field, and Cancel returns focus to the Import…
+button.)*
