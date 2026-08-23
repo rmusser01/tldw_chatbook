@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
 import errno
 import hashlib
 import importlib
@@ -404,6 +405,10 @@ def _read_review_receipt(path: Path) -> dict[str, Any]:
         normalized_findings.add((severity, code))
     if decision == "changes_required" and not findings:
         raise RuntimeError("review_receipt_findings_invalid")
+    if decision == "approved" and any(
+        finding["severity"] in {"critical", "important"} for finding in findings
+    ):
+        raise RuntimeError("review_receipt_approval_findings_invalid")
     return parsed
 
 
@@ -477,6 +482,8 @@ def register_review_receipt(
     ):
         raise RuntimeError("review_attempt_state_invalid")
     current = lineage[-1]
+    if current["verdict"] not in _MEASURED_VERDICTS:
+        raise RuntimeError("review_attempt_verdict_invalid")
     if (
         receipt["attempt_id"] != attempt_id
         or receipt["artifact_set_sha256"] != digest
@@ -515,6 +522,64 @@ def register_review_receipt(
             },
         )
     return receipt
+
+
+def _atomic_rename_directory_noreplace(source: Path, target: Path) -> None:
+    """Atomically rename one sibling directory only when target is absent."""
+    if source.parent != target.parent:
+        raise RuntimeError("review_atomic_noreplace_invalid")
+    if sys.platform == "win32":
+        try:
+            os.rename(source, target)
+        except FileExistsError as exc:
+            raise RuntimeError("review_destination_exists") from exc
+        except OSError as exc:
+            raise RuntimeError("review_promotion_rename_failed") from exc
+        return
+    try:
+        library = ctypes.CDLL(None, use_errno=True)
+        if sys.platform == "darwin":
+            rename = library.renamex_np
+            rename.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+            rename.restype = ctypes.c_int
+            result = rename(os.fsencode(source), os.fsencode(target), 0x00000004)
+        elif sys.platform.startswith("linux"):
+            rename = library.renameat2
+            rename.argtypes = [
+                ctypes.c_int,
+                ctypes.c_char_p,
+                ctypes.c_int,
+                ctypes.c_char_p,
+                ctypes.c_uint,
+            ]
+            rename.restype = ctypes.c_int
+            result = rename(
+                -100,
+                os.fsencode(source),
+                -100,
+                os.fsencode(target),
+                0x00000001,
+            )
+        else:
+            raise RuntimeError("review_atomic_noreplace_unsupported")
+    except AttributeError as exc:
+        raise RuntimeError("review_atomic_noreplace_unsupported") from exc
+    except OSError as exc:
+        raise RuntimeError("review_atomic_noreplace_unsupported") from exc
+    if result != 0:
+        error_number = ctypes.get_errno()
+        if error_number in {errno.EEXIST, errno.ENOTEMPTY}:
+            raise RuntimeError("review_destination_exists")
+        unsupported = {
+            errno.EINVAL,
+            errno.ENOSYS,
+            getattr(errno, "ENOTSUP", errno.EINVAL),
+            getattr(errno, "EOPNOTSUPP", errno.EINVAL),
+        }
+        if error_number in unsupported:
+            raise RuntimeError("review_atomic_noreplace_unsupported")
+        raise RuntimeError("review_promotion_rename_failed")
+    _fsync_directory(source.parent)
 
 
 def promote_reviewed_artifacts(
@@ -561,10 +626,7 @@ def promote_reviewed_artifacts(
         raise RuntimeError("review_promotion_copy_mismatch")
     if destination.exists() or destination.is_symlink():
         raise RuntimeError("review_destination_exists")
-    try:
-        _rename_namespace(stage, destination)
-    except OSError as exc:
-        raise RuntimeError("review_promotion_rename_failed") from exc
+    _atomic_rename_directory_noreplace(stage, destination)
     return reviewed_digest
 
 

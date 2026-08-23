@@ -4249,7 +4249,9 @@ def test_canonical_artifact_hashes_reject_absolute_artifact_paths(
         )
 
 
-def _prepare_review_attempt(tmp_path: Path) -> tuple[Path, Path, str, str]:
+def _prepare_review_attempt(
+    tmp_path: Path, *, verdict: str = "pass"
+) -> tuple[Path, Path, str, str]:
     campaign = tmp_path / "campaign"
     attempt = profile.create_attempt_root(campaign, "attempt-0001")
     values = _write_reviewed_artifacts(attempt)
@@ -4263,7 +4265,7 @@ def _prepare_review_attempt(tmp_path: Path) -> tuple[Path, Path, str, str]:
     profile.complete_attempt_measurement(
         campaign / "attempts.jsonl",
         "attempt-0001",
-        verdict="pass",
+        verdict=verdict,
         raw_sha256=raw_sha256,
     )
     return campaign, attempt, profile.canonical_artifact_digest(attempt), raw_sha256
@@ -4275,12 +4277,15 @@ def _write_review_receipt(
     *,
     decision: str = "approved",
     filename: str = "review-001.json",
+    verdict: str = "pass",
+    findings: list[dict[str, str]] | None = None,
 ) -> Path:
-    findings = (
-        []
-        if decision == "approved"
-        else [{"severity": "important", "code": "report_verdict_mismatch"}]
-    )
+    if findings is None:
+        findings = (
+            []
+            if decision == "approved"
+            else [{"severity": "important", "code": "report_verdict_mismatch"}]
+        )
     receipt = {
         "artifact_set_sha256": digest,
         "attempt_id": "attempt-0001",
@@ -4289,7 +4294,7 @@ def _write_review_receipt(
         "privacy_confirmed": True,
         "reviewed_at": "2026-08-23T00:00:00Z",
         "reviewer": "independent-reviewer",
-        "verdict": "pass",
+        "verdict": verdict,
     }
     reviews = attempt / "reviews"
     reviews.mkdir(exist_ok=True)
@@ -4433,6 +4438,75 @@ def test_registered_receipt_is_immutable(tmp_path: Path) -> None:
         )
 
 
+def test_smoke_receipt_cannot_be_registered_or_promoted(tmp_path: Path) -> None:
+    campaign, attempt, digest, _raw_sha256 = _prepare_review_attempt(
+        tmp_path, verdict="smoke"
+    )
+    receipt = _write_review_receipt(attempt, digest, verdict="smoke")
+    artifact_bytes = {
+        name: (attempt / name).read_bytes() for name in REVIEWED_ARTIFACT_NAMES
+    }
+
+    with pytest.raises(RuntimeError, match="^review_attempt_verdict_invalid$"):
+        profile.register_review_receipt(campaign, "attempt-0001", receipt)
+    with pytest.raises(RuntimeError, match="^review_attempt_verdict_invalid$"):
+        profile.promote_reviewed_artifacts(
+            campaign, "attempt-0001", receipt, tmp_path / "published"
+        )
+
+    assert not (tmp_path / "published").exists()
+    assert {
+        name: (attempt / name).read_bytes() for name in REVIEWED_ARTIFACT_NAMES
+    } == artifact_bytes
+    assert not (attempt / "reviews" / ".registered").exists()
+
+
+@pytest.mark.parametrize("severity", ("critical", "important"))
+def test_approved_receipt_rejects_blocking_findings_at_every_entrypoint(
+    tmp_path: Path, severity: str
+) -> None:
+    campaign, attempt, digest, _raw_sha256 = _prepare_review_attempt(tmp_path)
+    receipt = _write_review_receipt(
+        attempt,
+        digest,
+        findings=[{"severity": severity, "code": "evidence_mismatch"}],
+    )
+
+    with pytest.raises(
+        RuntimeError, match="^review_receipt_approval_findings_invalid$"
+    ):
+        profile._read_review_receipt(receipt)
+    with pytest.raises(
+        RuntimeError, match="^review_receipt_approval_findings_invalid$"
+    ):
+        profile.register_review_receipt(campaign, "attempt-0001", receipt)
+    with pytest.raises(
+        RuntimeError, match="^review_receipt_approval_findings_invalid$"
+    ):
+        profile.promote_reviewed_artifacts(
+            campaign, "attempt-0001", receipt, tmp_path / "published"
+        )
+
+
+def test_approved_receipt_allows_only_minor_findings(tmp_path: Path) -> None:
+    campaign, attempt, digest, _raw_sha256 = _prepare_review_attempt(tmp_path)
+    receipt = _write_review_receipt(
+        attempt,
+        digest,
+        findings=[{"severity": "minor", "code": "wording_polish"}],
+    )
+
+    assert profile._read_review_receipt(receipt)["findings"] == [
+        {"severity": "minor", "code": "wording_polish"}
+    ]
+    profile.register_review_receipt(campaign, "attempt-0001", receipt)
+    profile.promote_reviewed_artifacts(
+        campaign, "attempt-0001", receipt, tmp_path / "published"
+    )
+
+    assert (tmp_path / "published").is_dir()
+
+
 @pytest.mark.parametrize("problem", ("missing", "non_approved", "attempt", "digest"))
 def test_promotion_rejects_missing_nonapproved_or_mismatched_receipt(
     tmp_path: Path, problem: str
@@ -4477,6 +4551,59 @@ def test_promotion_rejects_any_preexisting_destination(tmp_path: Path) -> None:
         )
 
     assert (destination / "README.md").read_text(encoding="utf-8") == "occupied\n"
+
+
+def test_atomic_directory_rename_never_replaces_existing_empty_destination(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "evidence").write_bytes(b"retained")
+    destination = tmp_path / "destination"
+
+    profile._atomic_rename_directory_noreplace(source, destination)
+
+    assert not source.exists()
+    assert (destination / "evidence").read_bytes() == b"retained"
+    second_source = tmp_path / "second-source"
+    second_source.mkdir()
+    (second_source / "evidence").write_bytes(b"still staged")
+    occupied = tmp_path / "occupied"
+    occupied.mkdir()
+    with pytest.raises(RuntimeError, match="^review_destination_exists$"):
+        profile._atomic_rename_directory_noreplace(second_source, occupied)
+    assert (second_source / "evidence").read_bytes() == b"still staged"
+    assert list(occupied.iterdir()) == []
+
+
+def test_promotion_empty_destination_race_preserves_staging_and_attempt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    campaign, attempt, digest, _raw_sha256 = _prepare_review_attempt(tmp_path)
+    receipt = _write_review_receipt(attempt, digest)
+    destination = tmp_path / "published"
+    real_rename = profile._atomic_rename_directory_noreplace
+
+    def inject_empty_destination(source: Path, target: Path) -> None:
+        target.mkdir()
+        real_rename(source, target)
+
+    monkeypatch.setattr(
+        profile, "_atomic_rename_directory_noreplace", inject_empty_destination
+    )
+
+    with pytest.raises(RuntimeError, match="^review_destination_exists$"):
+        profile.promote_reviewed_artifacts(
+            campaign, "attempt-0001", receipt, destination
+        )
+
+    stage = destination.parent / f".{destination.name}.task-20010-stage"
+    assert stage.is_dir()
+    assert {path.name for path in stage.iterdir()} == (
+        REVIEWED_ARTIFACT_NAMES | {"confirmatory-review-receipt.json"}
+    )
+    assert destination.is_dir() and list(destination.iterdir()) == []
+    assert attempt.is_dir()
 
 
 def test_promotion_rejects_source_changed_after_review(tmp_path: Path) -> None:
