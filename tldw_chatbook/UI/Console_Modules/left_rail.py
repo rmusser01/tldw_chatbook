@@ -63,6 +63,8 @@ from ...Widgets.Console import (
     ConsoleWorkspaceContextTray,
     ConsoleWorkspaceTree,
     WorkspaceTreeContextChanged,
+    WorkspaceTreeExpansionChanged,
+    WorkspaceTreeFocusRecoveryRequested,
     WorkspaceTreeStarRequested,
 )
 from ...Widgets.Console.console_agent_steering_bar import (
@@ -358,12 +360,21 @@ class ConsoleLeftRail(Vertical):
             for item in CONTEXT_SECTION_DESCRIPTORS
             if item.section_id == section_id
         )
-        return DestinationRailSectionHeader(
+        header = DestinationRailSectionHeader(
             descriptor.title,
             section_id=section_id,
             open=is_open,
             id=f"console-rail-section-header-{section_id}",
         )
+        # Keep the disclosure chrome structurally above its bounded body even
+        # in lightweight hosts that mount the Console screen without the app
+        # stylesheet.  The production CSS declares the same two constraints;
+        # owning them here prevents a late allocator pass from collapsing the
+        # default ``Horizontal`` 1fr height to zero and leaving the visible
+        # toggle painted over by the first body row.
+        header.styles.height = "auto"
+        header.styles.min_height = 2
+        return header
 
     @staticmethod
     def _section_body(
@@ -399,6 +410,19 @@ class ConsoleLeftRail(Vertical):
         """Allocate from the first complete mounted geometry snapshot."""
 
         self.request_allocation_reconcile()
+        self.call_after_refresh(self._request_initial_workspace_tree_pages)
+
+    def _request_initial_workspace_tree_pages(self) -> None:
+        """Route persisted/default-expanded nodes through the page loader once."""
+
+        try:
+            tree = self.query_one("#console-workspace-tree", ConsoleWorkspaceTree)
+        except (NoMatches, QueryError):
+            return
+        for workspace_id in sorted(tree.preferred_expanded_workspace_ids):
+            self.post_message(
+                WorkspaceTreeExpansionChanged(workspace_id, expanded=True)
+            )
 
     def on_resize(self) -> None:
         """Reallocate when the outer Context region changes height."""
@@ -1757,6 +1781,21 @@ class ConsoleLeftRail(Vertical):
         except (NoMatches, QueryError):
             return
         tray.sync_workspace_tree_context(event.data)
+
+    def on_workspace_tree_focus_recovery_requested(
+        self, event: WorkspaceTreeFocusRecoveryRequested
+    ) -> None:
+        """Return focus to the Workspaces section header when its Tree empties."""
+
+        event.stop()
+        try:
+            header = self.query_one(
+                "#console-rail-section-header-workspace",
+                DestinationRailSectionHeader,
+            )
+        except (NoMatches, QueryError):
+            return
+        header.focus()
 
     def sync_sections(self, rail_state: ConsoleRailState) -> None:
         """Apply section open flags to section bodies and headers.

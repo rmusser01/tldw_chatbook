@@ -34,6 +34,7 @@ from tldw_chatbook.Widgets.Console.console_bounded_section import (
 )
 from tldw_chatbook.Widgets.Console.console_workspace_tree import (
     ConsoleWorkspaceTree,
+    WorkspaceTreeExpansionChanged,
     WorkspaceTreeStarRequested,
 )
 from tldw_chatbook.Widgets.Console.console_changed_files_section import (
@@ -204,6 +205,7 @@ class _RailHarness(App[None]):
         self.expansion_preferences_changed = expansion_preferences_changed
         self.section_toggles: list[str] = []
         self.star_requests: list[WorkspaceTreeStarRequested] = []
+        self.expansion_requests: list[WorkspaceTreeExpansionChanged] = []
 
     def build_rail(self) -> ConsoleLeftRail:
         return ConsoleLeftRail(
@@ -248,6 +250,11 @@ class _RailHarness(App[None]):
         self, event: WorkspaceTreeStarRequested
     ) -> None:
         self.star_requests.append(event)
+
+    def on_workspace_tree_expansion_changed(
+        self, event: WorkspaceTreeExpansionChanged
+    ) -> None:
+        self.expansion_requests.append(event)
 
 
 class _ProductionConsoleHarness(ConsoleHarness):
@@ -322,6 +329,21 @@ async def test_native_tree_restores_persisted_disclosure_and_exposes_pointer_sta
         tree.set_search_active(False)
         assert workspace.is_expanded
         assert writes == [frozenset({"workspace-1"})]
+
+
+@pytest.mark.asyncio
+async def test_native_tree_requests_page_zero_for_initial_persisted_expansion() -> None:
+    app = _RailHarness(
+        workspace_state=_native_workspace_tree_state(),
+        workspace_tree_expanded_ids=frozenset({"workspace-1"}),
+    )
+
+    async with app.run_test(size=(60, 30)) as pilot:
+        await _settle(pilot)
+
+        assert [
+            (event.workspace_id, event.expanded) for event in app.expansion_requests
+        ] == [("workspace-1", True)]
 
 
 async def _settle(pilot, passes: int = 5) -> None:

@@ -144,7 +144,16 @@ async def test_default_row_labeled_everyday_chats() -> None:
 async def test_mounted_page_request_publishes_loading_and_suppresses_duplicate() -> (
     None
 ):
-    app = _build_test_app()
+    # This case owns the manual request lifecycle.  Explicitly persist no
+    # expanded workspaces so the startup expansion loader does not claim the
+    # same lane before the test installs its controlled async service.
+    app = _build_test_app(
+        config_overrides={
+            "console": {
+                "conversation_browser": {"expanded_workspace_ids": []},
+            },
+        }
+    )
     app.workspace_registry_service.create_workspace(
         workspace_id="ws-a", name="Workspace 1"
     )

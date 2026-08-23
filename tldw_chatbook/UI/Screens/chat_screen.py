@@ -10207,6 +10207,21 @@ class ChatScreen(BaseAppScreen):
             browser_config["collapsed_groups"] = {}
         return browser_config
 
+    @work(thread=True)
+    def _persist_console_workspace_tree_expansion_preferences(
+        self, workspace_ids: list[str]
+    ) -> None:
+        """Write native Workspace Tree disclosure preferences off the UI loop."""
+
+        try:
+            save_setting_to_cli_config(
+                "console.conversation_browser",
+                "expanded_workspace_ids",
+                list(workspace_ids),
+            )
+        except Exception as exc:
+            logger.warning("Failed to persist Workspace Tree disclosure: {}", exc)
+
     def _console_conversation_browser_collapse_preferences(self) -> dict[str, bool]:
         """Return persisted grouped browser collapse preferences."""
         app_config = getattr(self.app_instance, "app_config", None)

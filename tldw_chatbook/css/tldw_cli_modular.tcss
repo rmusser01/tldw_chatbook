@@ -7307,6 +7307,14 @@ ConsoleCitationSourcesModal {
     margin: 0;
 }
 
+.console-workspace-context-action-row {
+    width: 99%;
+    max-width: 100%;
+    height: 1;
+    min-height: 1;
+    margin: 0;
+}
+
 .console-workspace-action {
     height: 1;
     min-height: 1;
@@ -7327,7 +7335,7 @@ ConsoleCitationSourcesModal {
 }
 
 #console-workspace-tree-star {
-    width: auto;
+    width: 100%;
     min-width: 6;
     height: 1;
     min-height: 1;

@@ -1233,14 +1233,20 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 )
             )
             scope_button = Button(
-                "RAG Scope",
+                "RAG",
                 id="console-workspace-rag-scope-open",
                 classes="console-workspace-action",
                 compact=True,
                 disabled=not self.state.rag_scope_enabled,
             )
-            scope_button.tooltip = "Narrow RAG retrieval to items in this workspace"
+            scope_button.tooltip = "RAG Scope: narrow retrieval to this workspace"
             yield self._record_composed_node(scope_button)
+        with self._record_composed_node(
+            Horizontal(
+                id="console-workspace-context-action-row",
+                classes="console-workspace-context-action-row",
+            )
+        ):
             star_button = Button(
                 "Star",
                 id="console-workspace-tree-star",

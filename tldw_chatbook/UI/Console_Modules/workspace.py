@@ -210,6 +210,9 @@ class ConsoleWorkspaceController:
         workspace_tree_owner_accessor: Callable[[], object] | None = None,
         flat_conversation_owner_accessor: Callable[[], object] | None = None,
         screen_lifecycle_token_accessor: Callable[[], object] | None = None,
+        persist_workspace_tree_expansion_preferences: (
+            Callable[[list[str]], None] | None
+        ) = None,
     ) -> None:
         """Bind canonical Workspace state and its late-bound dependencies.
 
@@ -259,6 +262,8 @@ class ConsoleWorkspaceController:
             workspace_tree_owner_accessor: Return the mounted Tree owner identity.
             flat_conversation_owner_accessor: Return the mounted flat owner identity.
             screen_lifecycle_token_accessor: Return the current screen mount identity.
+            persist_workspace_tree_expansion_preferences: Persist the exact Tree
+                disclosure set to durable Console configuration.
         """
         self._screen = screen
         self.app_instance = app_instance
@@ -313,6 +318,9 @@ class ConsoleWorkspaceController:
         self._workspace_tree_owner_accessor = workspace_tree_owner_accessor
         self._flat_conversation_owner_accessor = flat_conversation_owner_accessor
         self._screen_lifecycle_token_accessor = screen_lifecycle_token_accessor
+        self._persist_workspace_tree_expansion_preferences = (
+            persist_workspace_tree_expansion_preferences
+        )
 
         self._workspace_tree_search = _SearchAttemptState()
         self._flat_conversation_search = _SearchAttemptState()
@@ -655,11 +663,17 @@ class ConsoleWorkspaceController:
     ) -> None:
         """Persist the exact non-search disclosure preference set."""
 
-        self._console_conversation_browser_config()["expanded_workspace_ids"] = sorted(
+        serialized = sorted(
             str(workspace_id).strip()
             for workspace_id in workspace_ids
             if str(workspace_id).strip()
         )
+        self._console_conversation_browser_config()["expanded_workspace_ids"] = (
+            serialized
+        )
+        callback = self._persist_workspace_tree_expansion_preferences
+        if callback is not None:
+            callback(serialized)
 
     @property
     def _focus_console_workspace_conversation_search(self) -> Any:
@@ -735,6 +749,8 @@ class ConsoleWorkspaceController:
         lane.request_key = request_key
         lane.error = ""
         lane.retry_query = None
+        if self._screen_running_accessor():
+            self._sync_console_workspace_context()
         try:
             rows, total = await self._load_workspace_tree_search_rows(lane.query)
         except Exception:
@@ -1545,6 +1561,12 @@ class ConsoleWorkspaceController:
         lane.generation += 1
         generation = lane.generation
         if not lane.query.strip():
+            worker = lane.worker
+            cancel = getattr(worker, "cancel", None)
+            if callable(cancel):
+                cancel()
+            lane.worker = None
+            lane.request_key = None
             lane.rows = ()
             lane.total = None
             lane.settled_rows = ()

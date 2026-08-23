@@ -216,8 +216,10 @@ def test_workspace_controller_initializes_independent_projection_attempt_state()
 
 def test_workspace_tree_expansion_preferences_round_trip_exact_empty_state() -> None:
     config: dict[str, object] = {}
+    persisted: list[list[str]] = []
     controller = _workspace_controller(
         conversation_browser_config=lambda: config,
+        persist_workspace_tree_expansion_preferences=persisted.append,
     )
 
     assert controller.workspace_tree_expansion_preferences() is None
@@ -229,6 +231,21 @@ def test_workspace_tree_expansion_preferences_round_trip_exact_empty_state() -> 
     controller.set_workspace_tree_expansion_preferences(frozenset())
     assert config["expanded_workspace_ids"] == []
     assert controller.workspace_tree_expansion_preferences() == frozenset()
+    assert persisted == [["w1", "w2"], []]
+
+
+def test_clearing_workspace_search_settles_visible_loading_immediately() -> None:
+    controller = _workspace_controller()
+    controller._workspace_tree_search.query = "old"
+    controller._workspace_tree_search.request_key = ("workspaces", "old", 1)
+
+    controller.transition_workspace_tree_search("", disabled=False)
+
+    assert controller._workspace_tree_search.request_key is None
+    assert controller._workspace_tree_search.worker is None
+    state = controller._with_console_conversation_browser_state(_workspace_state())
+    assert state.workspace_query == ""
+    assert state.workspace_loading is False
 
 
 def test_expanding_unloaded_non_active_workspace_schedules_one_loading_page() -> None:

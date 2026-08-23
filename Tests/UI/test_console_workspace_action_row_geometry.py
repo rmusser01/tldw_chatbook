@@ -31,21 +31,25 @@ class StyledConsoleHarness(ConsoleHarness):
 
 
 @pytest.mark.asyncio
-async def test_workspace_action_buttons_fit_inside_their_rows() -> None:
+@pytest.mark.parametrize("terminal_size", [(100, 48), (235, 52)])
+async def test_workspace_action_buttons_fit_inside_their_rows(terminal_size) -> None:
     app = _build_test_app()
     host = StyledConsoleHarness(app)
 
-    async with host.run_test(size=(235, 52)) as pilot:
+    async with host.run_test(size=terminal_size) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-context")
-        await pilot.pause()
+        for _ in range(10):
+            await pilot.pause()
+            if console.query_one("#console-change-workspace").region.width > 0:
+                break
 
         tray = console.query_one("#console-workspace-context")
         checks = [
             ("#console-workspace-action-row", "#console-change-workspace"),
             ("#console-workspace-action-row", "#console-new-workspace"),
             ("#console-workspace-action-row", "#console-workspace-rag-scope-open"),
-            ("#console-workspace-action-row", "#console-workspace-tree-star"),
+            ("#console-workspace-context-action-row", "#console-workspace-tree-star"),
         ]
         for row_selector, button_selector in checks:
             row = console.query_one(row_selector)

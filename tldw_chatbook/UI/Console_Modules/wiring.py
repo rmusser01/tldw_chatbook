@@ -458,6 +458,13 @@ def build_console_controllers(
             )
         ),
         screen_lifecycle_token_accessor=lambda: getattr(screen, "_task", screen),
+        persist_workspace_tree_expansion_preferences=(
+            lambda workspace_ids: (
+                screen._persist_console_workspace_tree_expansion_preferences(
+                    workspace_ids
+                )
+            )
+        ),
     )
     screen._character = ConsoleCharacterController(
         app_config_accessor=(

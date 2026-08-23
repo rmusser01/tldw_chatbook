@@ -12,6 +12,7 @@ from textual.widgets import Input, Tree
 import tldw_chatbook.Widgets.Console.console_workspace_tree as tree_module
 from tldw_chatbook.Widgets.Console.console_workspace_tree import (
     ConsoleWorkspaceTree,
+    WorkspaceTreeFocusRecoveryRequested,
     WorkspaceTreeConversationSelected,
     WorkspaceTreeNodeData,
     WorkspaceTreeStarRequested,
@@ -79,6 +80,11 @@ class _TreeHarness(App[None]):
 
     def on_workspace_tree_star_requested(
         self, event: WorkspaceTreeStarRequested
+    ) -> None:
+        self.messages.append(event)
+
+    def on_workspace_tree_focus_recovery_requested(
+        self, event: WorkspaceTreeFocusRecoveryRequested
     ) -> None:
         self.messages.append(event)
 
@@ -407,6 +413,42 @@ def test_private_cross_parent_move_preserves_identity_with_one_invalidation(
     assert node.parent is tree.workspace_nodes["w2"]
     assert tree.get_node_by_id(node_id) is node
     assert invalidations == [None]
+
+
+def test_private_same_parent_move_treats_index_as_final_position(monkeypatch) -> None:
+    tree = _tree()
+    parent = tree.workspace_nodes["w1"]
+    first = tree.conversation_nodes["c1"]
+    second = parent.children[1]
+    invalidations: list[None] = []
+    monkeypatch.setattr(tree, "_invalidate", lambda: invalidations.append(None))
+
+    tree._move_node_preserving_identity(first, parent, 1)
+
+    assert tuple(parent.children[:2]) == (second, first)
+    assert invalidations == [None]
+
+
+@pytest.mark.asyncio
+async def test_removing_final_selectable_node_requests_owning_section_recovery() -> (
+    None
+):
+    tree = ConsoleWorkspaceTree()
+    app = _TreeHarness(tree)
+    async with app.run_test(size=(60, 20)) as pilot:
+        tree.sync_projection((_workspace("w1", "One"),), expanded_workspace_ids=set())
+        await pilot.pause()
+        tree.move_cursor(tree.workspace_nodes["w1"])
+        tree.focus()
+
+        tree.sync_projection((), expanded_workspace_ids=set())
+        await pilot.pause()
+
+        assert any(
+            isinstance(message, WorkspaceTreeFocusRecoveryRequested)
+            for message in app.messages
+        )
+        assert tree.can_focus is False
 
 
 def test_search_expansion_snapshot_restores_exactly_without_persistence_messages() -> (

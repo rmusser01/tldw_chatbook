@@ -156,6 +156,10 @@ class WorkspaceTreeContextChanged(Message):
         super().__init__()
 
 
+class WorkspaceTreeFocusRecoveryRequested(Message):
+    """The Tree became empty and focus must return to its owning section."""
+
+
 class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
     """Incrementally synchronize the Console Workspace projection into a Tree.
 
@@ -509,7 +513,10 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
                         target = self._first_selectable(
                             reversed(top_level[:owner_index])
                         )
-            self.move_cursor(target or self.root)
+            if target is None:
+                self.post_message(WorkspaceTreeFocusRecoveryRequested())
+            else:
+                self.move_cursor(target)
         node.remove()
 
     def _move_node_preserving_identity(
@@ -549,8 +556,6 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
         if old_parent is parent and old_index == bounded_index:
             return
         old_parent._children.pop(old_index)
-        if old_parent is parent and old_index < bounded_index:
-            bounded_index -= 1
         parent._children.insert(bounded_index, node)
         node._parent = parent
         self._invalidate()
@@ -774,6 +779,7 @@ __all__ = [
     "WorkspaceTreeConversationSelected",
     "WorkspaceTreeContextChanged",
     "WorkspaceTreeExpansionChanged",
+    "WorkspaceTreeFocusRecoveryRequested",
     "WorkspaceTreeLoadMoreRequested",
     "WorkspaceTreeNodeData",
     "WorkspaceTreeRetryRequested",
