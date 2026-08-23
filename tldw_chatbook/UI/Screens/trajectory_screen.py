@@ -57,6 +57,7 @@ import hashlib
 import json
 import time
 from collections.abc import Callable
+from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 
@@ -66,6 +67,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll
+from textual.events import DescendantFocus
 from textual.screen import ModalScreen
 from textual.widgets import DataTable, Input, Static
 
@@ -335,6 +337,7 @@ class TrajectoryScreen(ModalScreen[None]):
         self._row_turn_ids: dict[str, str] = {}
         self._visible_keys: list[str] = []
         self._ledger_rendered = False
+        self._legacy_key_assignments: dict[tuple[str, str], list[str]] = {}
         self._record_keys: dict[int, str] = {}
         self._rebuild_record_keys()
         #: Bumped by every ledger render; a worker-built page carries the
@@ -441,37 +444,89 @@ class TrajectoryScreen(ModalScreen[None]):
         """Build collision-safe deterministic row identities for this snapshot."""
 
         keys: dict[int, str] = {}
-        occurrences: dict[str, int] = {}
+        event_occurrences: dict[str, int] = {}
+        legacy_groups: dict[str, list[tuple[TrajectoryRecord, str]]] = {}
         for turn in self._turns:
             for record in turn.records:
                 if record.event_id:
                     base = record.event_id
-                else:
-                    material = json.dumps(
-                        {
-                            "conversation": record.conversation_id,
-                            "turn": record.turn_id,
-                            "message": record.message_id,
-                            "kind": record.kind,
-                            "source_seq": record.source_seq,
-                            "run": record.run_id,
-                            "parent": record.parent_event_id,
-                            "source": record.source_event_id,
-                            "replacement": record.replacement_event_id,
-                            "actor_kind": record.actor_kind,
-                            "actor_id": record.actor_id,
-                            "model": record.model,
-                            "provider": record.provider,
-                        },
-                        sort_keys=True,
-                        ensure_ascii=False,
+                    occurrence = event_occurrences.get(base, 0)
+                    event_occurrences[base] = occurrence + 1
+                    keys[id(record)] = (
+                        base
+                        if occurrence == 0
+                        else f"{base}:collision:{occurrence + 1}"
                     )
-                    digest = hashlib.sha256(material.encode("utf-8")).hexdigest()[:20]
-                    base = f"legacy:{digest}"
-                occurrence = occurrences.get(base, 0)
-                occurrences[base] = occurrence + 1
-                key = base if occurrence == 0 else f"{base}:collision:{occurrence + 1}"
+                    continue
+
+                owner_material = json.dumps(
+                    {
+                        "conversation": record.conversation_id,
+                        "turn": record.turn_id,
+                        "message": record.message_id,
+                        "kind": record.kind,
+                        "source_seq": record.source_seq,
+                        "run": record.run_id,
+                        "parent": record.parent_event_id,
+                        "source": record.source_event_id,
+                        "replacement": record.replacement_event_id,
+                        "actor_kind": record.actor_kind,
+                        "actor_id": record.actor_id,
+                        "model": record.model,
+                        "provider": record.provider,
+                    },
+                    sort_keys=True,
+                    ensure_ascii=False,
+                )
+                owner_digest = hashlib.sha256(
+                    owner_material.encode("utf-8")
+                ).hexdigest()
+                base = f"legacy:{owner_digest[:20]}"
+                collision_facts = asdict(record)
+                collision_facts.pop("seq", None)
+                collision_facts.pop("event_id", None)
+                collision_material = json.dumps(
+                    collision_facts,
+                    sort_keys=True,
+                    ensure_ascii=False,
+                    default=str,
+                )
+                discriminator = hashlib.sha256(
+                    collision_material.encode("utf-8")
+                ).hexdigest()
+                legacy_groups.setdefault(base, []).append((record, discriminator))
+
+        for base, records in legacy_groups.items():
+            used: set[str] = set()
+            unmatched: list[tuple[TrajectoryRecord, str]] = []
+            for record, discriminator in records:
+                previous = self._legacy_key_assignments.get((base, discriminator), ())
+                key = next(
+                    (candidate for candidate in previous if candidate not in used), None
+                )
+                if key is None:
+                    unmatched.append((record, discriminator))
+                    continue
                 keys[id(record)] = key
+                used.add(key)
+
+            for record, discriminator in unmatched:
+                if base not in used:
+                    key = base
+                else:
+                    collision_base = f"{base}:collision:{discriminator[:12]}"
+                    key = collision_base
+                    suffix = 2
+                    while key in used:
+                        key = f"{collision_base}:{suffix}"
+                        suffix += 1
+                keys[id(record)] = key
+                used.add(key)
+                assignments = self._legacy_key_assignments.setdefault(
+                    (base, discriminator), []
+                )
+                if key not in assignments:
+                    assignments.append(key)
         self._record_keys = keys
 
     def _record_key(self, record: TrajectoryRecord) -> str:
@@ -592,9 +647,8 @@ class TrajectoryScreen(ModalScreen[None]):
             )
             try:
                 self.app.call_from_thread(
-                    self._set_failure,
-                    "Live refresh unavailable.",
-                    "live",
+                    self._set_live_failure,
+                    revision,
                 )
             except Exception:  # noqa: BLE001 - screen may have closed
                 pass
@@ -603,6 +657,13 @@ class TrajectoryScreen(ModalScreen[None]):
             self.app.call_from_thread(self._apply_live_snapshot, snapshot, revision)
         except Exception:  # noqa: BLE001 - worker boundary
             return
+
+    def _set_live_failure(self, revision: int | None) -> None:
+        """Accept a live failure only while it still owns the current revision."""
+
+        if revision != self._last_revision:
+            return
+        self._set_failure("Live refresh unavailable.", "live")
 
     def _apply_live_snapshot(
         self, snapshot: TrajectorySnapshot, revision: int | None = None
@@ -1309,6 +1370,12 @@ class TrajectoryScreen(ModalScreen[None]):
         if table.display:
             table.focus()
 
+    def on_descendant_focus(self, event: DescendantFocus) -> None:
+        """Keep filter recovery copy truthful for keyboard and pointer focus."""
+
+        self._refresh_state()
+        self._refresh_hints()
+
     @on(DataTable.RowSelected)
     def _on_row_selected(self, event: DataTable.RowSelected) -> None:
         """Enter on a cursor row opens the inspector (the table consumes enter)."""
@@ -1398,8 +1465,6 @@ class TrajectoryScreen(ModalScreen[None]):
         search = self.query_one("#trajectory-search", Input)
         if search.has_focus:
             self.query_one("#trajectory-table", DataTable).focus()
-            self.call_after_refresh(self._refresh_state)
-            self.call_after_refresh(self._refresh_hints)
             return
         self.dismiss(None)
 

@@ -653,6 +653,62 @@ async def test_live_failure_is_visible_and_retry_uses_snapshot_builder() -> None
 
 
 @pytest.mark.asyncio
+async def test_stale_live_failure_cannot_replace_newer_revision_success() -> None:
+    stale_started = threading.Event()
+    release_stale = threading.Event()
+    stale_finished = threading.Event()
+    state = {"revision": 1, "calls": 0}
+    initial = _snapshot_with_records(_numbered_records(1))
+    latest = _snapshot_with_records(_numbered_records(3))
+
+    def build() -> TrajectorySnapshot:
+        state["calls"] += 1
+        if state["calls"] == 1:
+            stale_started.set()
+            release_stale.wait(timeout=5)
+            stale_finished.set()
+            raise RuntimeError("STALE_REVISION_SECRET")
+        return latest
+
+    async with _mounted(
+        initial,
+        revision_provider=lambda: state["revision"],
+        snapshot_builder=build,
+    ) as (app, pilot, screen):
+        state["revision"] = 2
+        screen._poll_revision()
+        for _ in range(100):
+            if stale_started.is_set():
+                break
+            await pilot.pause(0.01)
+        assert stale_started.is_set()
+
+        state["revision"] = 3
+        screen._poll_revision()
+        for _ in range(100):
+            if screen._total_records == 3:
+                break
+            await pilot.pause(0.01)
+        assert screen._total_records == 3
+        assert screen._last_revision == 3
+
+        release_stale.set()
+        for _ in range(100):
+            if stale_finished.is_set():
+                break
+            await pilot.pause(0.01)
+        assert stale_finished.is_set()
+        await pilot.pause()
+
+        assert screen._total_records == 3
+        assert screen._failure is None
+        assert screen._retry_target is None
+        assert "FAILED" not in str(
+            screen.query_one("#trajectory-state", Static).render()
+        )
+
+
+@pytest.mark.asyncio
 async def test_open_import_marks_the_pushed_production_screen_read_only_shared(
     monkeypatch,
 ) -> None:
@@ -852,6 +908,33 @@ async def test_search_focus_keeps_x_as_text_until_escape_enables_recovery() -> N
         assert search.value == ""
         assert screen._query == ""
         assert screen._brush_range is None
+
+
+@pytest.mark.asyncio
+async def test_focus_only_transitions_refresh_filter_recovery_truth() -> None:
+    async with _mounted(base_snapshot(), size=(60, 18)) as (app, pilot, screen):
+        search = screen.query_one("#trajectory-search", Input)
+        table = screen.query_one("#trajectory-table", DataTable)
+        state = screen.query_one("#trajectory-state", Static)
+        hints = screen.query_one("#trajectory-hints", Static)
+        domain = screen._timeline.model.domain
+        assert domain is not None
+        screen._timeline.apply_brush((domain[1] + 100, domain[1] + 200))
+        await pilot.pause()
+
+        assert "x clear filters" in str(state.render())
+        assert "x clear filters" in str(hints.render())
+
+        await pilot.press("/")
+        assert search.has_focus
+        assert "Esc then x clear filters" in str(state.render())
+        assert "x clear filters" not in str(hints.render())
+
+        await pilot.press("enter")
+        assert table.has_focus
+        assert "Esc then" not in str(state.render())
+        assert "x clear filters" in str(state.render())
+        assert "x clear filters" in str(hints.render())
 
 
 @pytest.mark.asyncio
@@ -1084,6 +1167,47 @@ async def test_legacy_identity_survives_pending_to_completed_mutation() -> None:
         selected = screen._row_records[pending_key]
         assert selected is not None
         assert selected.status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_legacy_collision_keys_survive_distinct_collider_inserted_ahead() -> None:
+    collider_a = replace(
+        _legacy_record(1, "provider-a"),
+        content_preview="collider A",
+        payload={"collider": "A"},
+    )
+    collider_b = replace(
+        _legacy_record(2, "provider-a"),
+        content_preview="collider B",
+        payload={"collider": "B"},
+    )
+    async with _mounted(_snapshot_with_records([collider_a, collider_b])) as (
+        app,
+        pilot,
+        screen,
+    ):
+        table = screen.query_one("#trajectory-table", DataTable)
+        collider_b_key = screen._record_key(collider_b)
+        table.move_cursor(row=table.get_row_index(collider_b_key), animate=False)
+        screen._follow = False
+
+        collider_c = replace(
+            _legacy_record(1, "provider-a"),
+            content_preview="collider C",
+            payload={"collider": "C"},
+        )
+        moved_a = replace(collider_a, seq=2)
+        moved_b = replace(collider_b, seq=3)
+        screen._apply_live_snapshot(
+            _snapshot_with_records([collider_c, moved_a, moved_b])
+        )
+        await pilot.pause()
+
+        assert screen._record_key(moved_b) == collider_b_key
+        assert screen._cursor_key() == collider_b_key
+        selected = screen._row_records[collider_b_key]
+        assert selected is not None
+        assert selected.content_preview == "collider B"
 
 
 @pytest.mark.asyncio
