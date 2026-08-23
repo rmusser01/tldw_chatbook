@@ -1785,17 +1785,17 @@ class ConsoleLeftRail(Vertical):
     def on_workspace_tree_focus_recovery_requested(
         self, event: WorkspaceTreeFocusRecoveryRequested
     ) -> None:
-        """Return focus to the Workspaces section header when its Tree empties."""
+        """Return focus to the Workspaces disclosure when its Tree empties."""
 
         event.stop()
         try:
-            header = self.query_one(
-                "#console-rail-section-header-workspace",
-                DestinationRailSectionHeader,
+            disclosure = self.query_one(
+                f"#{RAIL_SECTION_TOGGLE_PREFIX}workspace",
+                Button,
             )
         except (NoMatches, QueryError):
             return
-        header.focus()
+        disclosure.focus()
 
     def sync_sections(self, rail_state: ConsoleRailState) -> None:
         """Apply section open flags to section bodies and headers.

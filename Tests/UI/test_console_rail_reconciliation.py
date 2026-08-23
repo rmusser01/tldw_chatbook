@@ -35,6 +35,7 @@ from tldw_chatbook.Widgets.Console.console_bounded_section import (
 from tldw_chatbook.Widgets.Console.console_workspace_tree import (
     ConsoleWorkspaceTree,
     WorkspaceTreeExpansionChanged,
+    WorkspaceTreeFocusRecoveryRequested,
     WorkspaceTreeStarRequested,
 )
 from tldw_chatbook.Widgets.Console.console_changed_files_section import (
@@ -344,6 +345,39 @@ async def test_native_tree_requests_page_zero_for_initial_persisted_expansion() 
         assert [
             (event.workspace_id, event.expanded) for event in app.expansion_requests
         ] == [("workspace-1", True)]
+
+
+@pytest.mark.asyncio
+async def test_empty_native_tree_focuses_the_workspace_disclosure_control() -> None:
+    app = _RailHarness(
+        workspace_state=_native_workspace_tree_state(),
+        workspace_tree_expanded_ids=frozenset({"workspace-1"}),
+    )
+
+    async with app.run_test(size=(60, 60)) as pilot:
+        await _settle(pilot)
+        rail = app.query_one(ConsoleLeftRail)
+        tree = app.query_one(ConsoleWorkspaceTree)
+        tree.move_cursor(tree.conversation_nodes["conversation-1"])
+        tree.focus()
+        await pilot.pause()
+        assert app.focused is tree
+
+        tree.post_message(WorkspaceTreeFocusRecoveryRequested())
+        await _settle(pilot)
+        disclosure = app.query_one("#console-rail-section-toggle-workspace", Button)
+        assert app.focused is disclosure
+
+        tree.focus()
+        await pilot.pause()
+        assert app.focused is tree
+
+        rail.sync_workspace_context(
+            replace(_native_workspace_tree_state(), workspace_tree=())
+        )
+        await _settle(pilot)
+
+        assert app.focused is disclosure
 
 
 async def _settle(pilot, passes: int = 5) -> None:
