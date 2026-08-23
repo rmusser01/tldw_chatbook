@@ -153,7 +153,13 @@ def test_terminal_error_step_without_live_timestamp_uses_wall_clock_fallback(
     )
 
     assert outcome.status == "error"
-    durable_timestamp = db.get_run(run_id)["steps"][0]["created_at"]
+    live_step = outcome.steps[0]
+    durable_step = next(
+        step
+        for step in db.get_run(run_id)["steps"]
+        if step["index"] == live_step.index
+    )
+    durable_timestamp = durable_step["created_at"]
     assert outcome.steps[0].created_at == durable_timestamp
     assert durable_timestamp == "2026-08-22T13:00:00.000000Z"
 

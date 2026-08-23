@@ -1631,16 +1631,17 @@ class CitationTraceRepository:
             return set()
         candidates: set[str] = set()
         unique_ids = tuple(dict.fromkeys(str(value) for value in message_ids if value))
-        for start in range(0, len(unique_ids), 500):
-            chunk = unique_ids[start : start + 500]
-            placeholders = ",".join("?" for _ in chunk)
-            rows = self.db.get_connection().execute(
-                f"SELECT DISTINCT message_id FROM rag_message_trace_owners "
-                f"WHERE profile_id = ? AND state = 'active' "
-                f"AND message_id IN ({placeholders})",
-                (identity.profile_id, *chunk),
-            )
-            candidates.update(str(row["message_id"]) for row in rows)
+        with self.db.transaction() as connection:
+            for start in range(0, len(unique_ids), 500):
+                chunk = unique_ids[start : start + 500]
+                placeholders = ",".join("?" for _ in chunk)
+                rows = connection.execute(
+                    f"SELECT DISTINCT message_id FROM rag_message_trace_owners "
+                    f"WHERE profile_id = ? AND state = 'active' "
+                    f"AND message_id IN ({placeholders})",
+                    (identity.profile_id, *chunk),
+                )
+                candidates.update(str(row["message_id"]) for row in rows)
         return candidates
 
     def get_active_trace_for_message(

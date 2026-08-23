@@ -913,11 +913,14 @@ def _without_reasoning_fields(content: str) -> tuple[str, bool]:
 
 
 def _sanitize_summary_text(content: str) -> tuple[str, bool]:
+    bounded = redact_log_line(content, max_length=_DURABLE_SUMMARY_MAX_CHARS)
+    bounded_altered = bounded != content
+    content = bounded
     content, think_altered = _without_think_blocks(content)
     content, reasoning_altered = _without_reasoning_fields(content)
     lines: list[str] = []
     withholding_key = False
-    altered = think_altered or reasoning_altered
+    altered = bounded_altered or think_altered or reasoning_altered
     for line in content.splitlines():
         upper_line = line.upper()
         if "-----BEGIN " in upper_line and "PRIVATE KEY-----" in upper_line:
@@ -936,7 +939,7 @@ def _sanitize_summary_text(content: str) -> tuple[str, bool]:
         elif contains_local_path(line):
             with_paths = "[local path withheld]"
             altered = True
-        redacted = redact_log_line(with_paths, max_length=0)
+        redacted = redact_log_line(with_paths, max_length=_DURABLE_SUMMARY_MAX_CHARS)
         altered = altered or redacted != with_paths
         lines.append(redacted)
     return "\n".join(lines).strip(), altered
@@ -980,11 +983,13 @@ def _sanitize_summary_value(value: Any, depth: int = 0) -> tuple[Any, bool]:
 
 def _safe_bounded_summary(content: str) -> tuple[str, bool]:
     """Keep useful output while replacing private lines/blocks."""
-    sanitized = redact_log_line(content, max_length=0)
+    sanitized = redact_log_line(content, max_length=_DURABLE_SUMMARY_MAX_CHARS)
+    redaction_altered = sanitized != content
+    content = sanitized
     uppered = content.upper()
     private_key = "-----BEGIN " in uppered and "PRIVATE KEY-----" in uppered
     if (
-        sanitized == content
+        not redaction_altered
         and not contains_local_path(content)
         and not _contains_hidden_reasoning(content)
         and not private_key
@@ -5218,10 +5223,8 @@ class AgentService:
             chain_id=chain_id,
             payload_state=payload_state,
             staged_delivery=staged_delivery,
-            on_context_assembled=(
-                lambda categories: context_callback_ref["callback"](categories)
-                if self.review_tool_calls is not None
-                else None
+            on_context_assembled=lambda categories: context_callback_ref["callback"](
+                categories
             ),
         )
 
@@ -5378,9 +5381,7 @@ class AgentService:
             # run. Otherwise control steps can retain links to model events
             # that disappear after restart.
             on_trace_step=observe_trace_step,
-            reserve_context_trace=(
-                reserve_context_trace if self.review_tool_calls is not None else None
-            ),
+            reserve_context_trace=reserve_context_trace,
             # PR2a Task 5: bind THIS run's id into the hook. `LoopDeps`
             # keeps its `(calls) -> verdicts` shape (the pure runtime stays
             # ignorant of run ids); the service, which owns the run

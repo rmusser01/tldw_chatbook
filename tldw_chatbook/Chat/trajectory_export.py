@@ -778,7 +778,21 @@ def preflight_trace_export(
     *,
     profile: TraceExportProfile | str = TraceExportProfile.REDACTED_DIAGNOSTIC,
 ) -> TraceExportPreflight:
-    """Classify and prepare every material snapshot field in one traversal."""
+    """Classify and prepare every material snapshot field in one traversal.
+
+    Args:
+        snapshot: Trace snapshot whose event fields will be inventoried and
+            prepared for export.
+        profile: Privacy profile governing each field decision.
+
+    Returns:
+        The immutable preflight inventory, prepared events, and redaction
+        provenance used to build the collaboration bundle.
+
+    Raises:
+        TrajectoryExportError: If any snapshot event lacks a stable event ID.
+        ValueError: If ``profile`` is not a supported privacy profile.
+    """
     selected = _profile(profile)
     records = tuple(record for turn in snapshot.turns for record in turn.records)
     aliases = _identity_aliases(records)

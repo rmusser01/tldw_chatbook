@@ -473,7 +473,6 @@ def test_agent_service_actual_request_assembly_captures_safe_context_chain(tmp_p
             db,
             ToolCatalogRegistry(),
             chat_call=lambda **_kwargs: {"choices": [{"message": {"content": "done"}}]},
-            review_tool_calls=lambda _calls, _run_id: {},
         )
         run_id, outcome = service.run_turn(
             conversation_id="conv-1",

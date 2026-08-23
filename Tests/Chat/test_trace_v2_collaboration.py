@@ -111,6 +111,13 @@ def _resign(payload: dict) -> dict:
     return payload
 
 
+def test_preflight_trace_export_has_google_style_public_api_docstring() -> None:
+    docstring = trajectory_export.preflight_trace_export.__doc__ or ""
+
+    assert "Args:" in docstring
+    assert "Returns:" in docstring
+
+
 def test_profile_enum_and_redacted_diagnostic_default_manifest() -> None:
     profile = trajectory_export.TraceExportProfile
     assert {member.value for member in profile} == {

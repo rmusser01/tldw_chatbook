@@ -20,6 +20,7 @@ from tldw_chatbook.Chat.trajectory_export import (
 )
 from tldw_chatbook.Chat.trajectory_import import load_imported_trace
 from tldw_chatbook.UI.Screens.trajectory_screen import TrajectoryScreen
+from tldw_chatbook.Widgets.Console import trace_export_dialog as export_dialog_module
 from tldw_chatbook.Widgets.Console.trace_export_dialog import TraceExportDialog
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 from Tests.UI.test_trace_responsive import _TraceHost
@@ -69,6 +70,41 @@ async def test_export_success_writes_importable_v2_bundle(tmp_path: Path) -> Non
         assert target.exists()
         imported = load_imported_trace(target)
         assert imported.manifest["profile"] == "redacted_diagnostic"
+
+
+@pytest.mark.asyncio
+async def test_export_rejects_destination_that_fails_central_path_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "blocked-trace.json"
+    validation_calls: list[str] = []
+
+    def reject_destination(path: str, *, require_exists: bool = False) -> Path:
+        validation_calls.append(path)
+        assert require_exists is False
+        raise ValueError("destination rejected by path policy")
+
+    monkeypatch.setattr(
+        export_dialog_module,
+        "validate_path_simple",
+        reject_destination,
+        raising=False,
+    )
+    app = _TraceHost()
+    async with app.run_test(size=(60, 18)) as pilot:
+        dialog = TraceExportDialog(base_snapshot())
+        await app.push_screen(dialog)
+        await pilot.pause()
+        dialog.query_one("#trace-export-path", Input).value = str(target)
+
+        await pilot.click("#trace-export-submit")
+        await pilot.pause()
+
+        assert validation_calls == [str(target)]
+        assert not target.exists()
+        assert app.screen is dialog
+        status = str(dialog.query_one("#trace-export-status", Static).render())
+        assert "destination rejected by path policy" in status
 
 
 @pytest.mark.asyncio

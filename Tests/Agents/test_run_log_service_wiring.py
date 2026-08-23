@@ -192,6 +192,30 @@ def test_private_model_summaries_are_stateful_useful_and_wake_safe(
         assert secret not in wake_notice
 
 
+def test_large_durable_summary_never_requests_unbounded_redaction(monkeypatch) -> None:
+    real_redact = agent_service_module.redact_log_line
+    redaction_calls: list[tuple[int, int]] = []
+
+    def track_redaction(text: str, max_length: int = 2_000) -> str:
+        redaction_calls.append((len(text), max_length))
+        return real_redact(text, max_length=max_length)
+
+    monkeypatch.setattr(agent_service_module, "redact_log_line", track_redaction)
+    secret = "sk-" + ("a" * 32)
+    content = "Public prefix " + ("x" * 100_000) + f" api_key={secret}"
+
+    summary, altered = agent_service_module._safe_bounded_summary(content)
+
+    assert altered is True
+    assert len(summary) < 5_000
+    assert secret not in summary
+    assert redaction_calls
+    assert any(input_length > 4_000 for input_length, _limit in redaction_calls)
+    assert all(
+        limit > 0 for input_length, limit in redaction_calls if input_length > 4_000
+    )
+
+
 def test_record_numbers_are_unique_across_the_whole_run_tree(wired):
     db, registry, root = wired
     writer = RunLogWriter()

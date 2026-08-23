@@ -21,6 +21,7 @@ from tldw_chatbook.Chat.trajectory_export import (
     preflight_trace_export,
     write_trajectory_export,
 )
+from tldw_chatbook.Utils.path_validation import validate_path_simple
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
@@ -334,7 +335,11 @@ class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
             if not await self._confirm_full_export():
                 self._set_status("Full export cancelled; review the profile or path.")
                 return
-        destination = Path(raw_path)
+        try:
+            destination = validate_path_simple(raw_path, require_exists=False)
+        except ValueError as exc:
+            self._set_status(f"Invalid destination: {exc}", error=True)
+            return
         if destination.exists() and not await self._confirm_overwrite(destination):
             self._set_status("Export cancelled; the existing file was kept.")
             return
