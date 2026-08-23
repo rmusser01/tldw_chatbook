@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-22'
-updated_date: '2026-08-23 09:21'
+updated_date: '2026-08-23 10:04'
 labels:
   - performance
   - config
@@ -163,4 +163,35 @@ config write lock, `get_cli_setting` returned the cached value in 20.4 us;
 on base the same read blocks for the writer's full hold. New-test flake
 check: 3x repeats of the fastpath+logs files (11 tests) and the
 dictation/roundtrip set (8 tests), all green.
+
+REVIEW FIX ROUND (adversarial review verdict FIX-FIRST; 1.98M hostile
+reader iterations held, but the load-bearing identity re-check was
+untested): F1 -- ported the reviewer's deterministic torn-window probe as
+`test_torn_window_path_switch_is_caught_by_the_identity_recheck` (warm
+cache for config B, flip TLDW_CONFIG_PATH to A, settrace hook injects a
+locked force_reload reload between the fast path's `cached_config` and
+`cached_source` loads; a non-publish reload never bumps the generation, so
+only the `_CONFIG_CACHE is cached_config` clause forces the reader to the
+locked path and A's config). Red-first verified: with the identity clause
+removed (temporary Edit mutation, restored via Edit), the test FAILS with
+"reader for path A was served path 'B''s config"; restored, green. F4 --
+`test_decrypt_failure_publish_falls_back_and_recovers` pins the
+`_install_bootstrap_cache_from_raw` -> None fallback: write reports
+success and lands on disk, >=2 decrypt attempts (raw install + locked
+reload), cache left EMPTY (never ciphertext), next read recovers the
+value once decryption works. F5 -- docstring corrections: (a) the
+"generation bump stays LAST / fast path relies on it" claims (fast-path
+bullet + `_publish_runtime_config_unlocked`) now state the identity
+re-check carries soundness on its own and the generation sandwich adds
+conservatism only (review proved a bump-first mutant equivalent); (b) the
+writer store-order bullet and `_install_bootstrap_cache_from_raw` now
+state the implicit coupling explicitly -- that function does no pre-clear
+itself; the invariant holds because every raw_config comes from
+`_write_raw_cli_config_unlocked`, whose `_invalidate_config_caches()` did
+the cache=None/source=None stores under the same lock. F2 (Logs
+in-flight-write swallow-until-unmount) and F3 (publish-time path
+recompute) deliberately NOT fixed here -- ledgered follow-ups per the
+review verdict. Re-runs post-fix: fast-path file 9/9 (7 + 2 new),
+Tests/Chat/test_provider_readiness.py 194/194, 32-file config gate
+350/350 (was 348; +2 = the new tests). ruff + py_compile clean.
 <!-- SECTION:NOTES:END -->

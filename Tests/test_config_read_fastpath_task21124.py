@@ -26,7 +26,9 @@ These tests pin the repair:
 
 from __future__ import annotations
 
+import inspect
 import statistics
+import sys
 import threading
 import time
 from types import SimpleNamespace
@@ -290,3 +292,146 @@ def test_reader_latency_informational_probe(capsys):
         "median read latency under concurrent writes exceeded 5 ms -- "
         "reads are queueing behind the config write lock again"
     )
+
+
+def test_torn_window_path_switch_is_caught_by_the_identity_recheck(
+    monkeypatch, tmp_path
+):
+    """The `_CONFIG_CACHE is cached_config` clause is load-bearing -- pin it.
+
+    Review of TASK-21124 (fix round F1): deleting that clause left every
+    other test in this file green while a deterministic interleave proved
+    it is the ENTIRE defense against the cross-install torn pair -- without
+    it, a reader for path A is served path B's config. This test ports the
+    reviewer's probe: warm the cache for config B, flip TLDW_CONFIG_PATH to
+    A without reading, then use a settrace hook to inject a concurrent
+    locked `force_reload` reload (which installs A's config WITHOUT bumping
+    `_CONFIG_GENERATION` -- non-publish reloads never bump) exactly between
+    the fast path's `cached_config` and `cached_source` loads. The reader's
+    torn pair is then (B's dict, source=A) with an unchanged generation --
+    every fast-path condition EXCEPT the identity re-check passes, and only
+    that re-check (B's dict is no longer the installed cache) forces the
+    reader to the locked path and A's config.
+
+    Verified red-first: with the identity clause removed from
+    `_load_cli_config_bootstrap`, this test fails with the reader receiving
+    B's config for path A.
+    """
+    cfg_a = tmp_path / "cfg_a" / "config.toml"
+    cfg_b = tmp_path / "cfg_b" / "config.toml"
+    cfg_a.parent.mkdir(mode=0o700)
+    cfg_b.parent.mkdir(mode=0o700)
+    cfg_a.write_text('[probe]\npath_id = "A"\n')
+    cfg_b.write_text('[probe]\npath_id = "B"\n')
+    cfg_a.chmod(0o600)
+    cfg_b.chmod(0o600)
+
+    # Locate the exact line between the two torn loads. If the fast path's
+    # shape changes, fail loudly rather than silently hooking nothing.
+    src_lines, first_line = inspect.getsourcelines(
+        config_module._load_cli_config_bootstrap
+    )
+    hook_line = None
+    for offset, line in enumerate(src_lines):
+        if "cached_source = _CONFIG_CACHE_SOURCE" in line:
+            hook_line = first_line + offset
+            break
+    assert hook_line is not None, (
+        "could not locate the `cached_source = _CONFIG_CACHE_SOURCE` line; "
+        "the fast path moved -- relocate this test's hook"
+    )
+
+    # Warm the cache for B, then flip the effective path to A WITHOUT
+    # reading, so the next read arrives with a stale-but-valid B cache.
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(cfg_b))
+    warmed = config_module.load_cli_config_and_ensure_existence(force_reload=True)
+    assert warmed.get("probe", {}).get("path_id") == "B"
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(cfg_a))
+
+    fired = {"n": 0}
+
+    def interleaved_reload():
+        # What a concurrent thread's cache-miss reload does for path A --
+        # injected at the exact torn point via the trace hook, so the race
+        # is deterministic instead of probabilistic.
+        with config_module._config_file_lock():
+            config_module._load_cli_config_bootstrap_unlocked(force_reload=True)
+
+    target_code = config_module._load_cli_config_bootstrap.__code__
+
+    def global_tracer(frame, event, arg):
+        if frame.f_code is target_code:
+            return local_tracer
+        return None
+
+    def local_tracer(frame, event, arg):
+        if event == "line" and frame.f_lineno == hook_line and fired["n"] == 0:
+            fired["n"] += 1
+            interleaved_reload()
+        return local_tracer
+
+    sys.settrace(global_tracer)
+    try:
+        result = config_module.load_cli_config_and_ensure_existence()
+    finally:
+        sys.settrace(None)
+
+    assert fired["n"] == 1, (
+        "the interleave never fired -- the hook line no longer executes on "
+        "the warm path; this test is not exercising the race it claims to"
+    )
+    got = result.get("probe", {}).get("path_id")
+    assert got == "A", (
+        f"torn-window reader for path A was served path {got!r}'s config -- "
+        "the `_CONFIG_CACHE is cached_config` identity re-check in "
+        "_load_cli_config_bootstrap is not biting"
+    )
+
+
+def test_decrypt_failure_publish_falls_back_and_recovers(tmp_path, monkeypatch):
+    """F4: `_install_bootstrap_cache_from_raw` returning None is survivable.
+
+    When strict decryption of the just-written raw config fails, the
+    publish step must fall back to the full locked reload (historical
+    failure handling): the write itself still lands on disk and reports
+    success, the bootstrap cache is left EMPTY rather than populated with
+    an undecryptable view, and the next normal read -- once decryption
+    works again -- recovers the written value.
+    """
+    _warm_cache()
+    config_path = config_module._get_effective_config_path()
+
+    calls = {"n": 0}
+    original = config_module._decrypt_config_section_with_status
+
+    def failing_decrypt(config_data, *args, **kwargs):
+        calls["n"] += 1
+        return config_module._ConfigDecryptionResult(config_data, False)
+
+    config_module._decrypt_config_section_with_status = failing_decrypt
+    try:
+        ok = config_module.save_setting_to_cli_config(
+            "task21124_probe", "decrypt_fail", "v1"
+        )
+    finally:
+        config_module._decrypt_config_section_with_status = original
+
+    assert ok is True, "the write itself must still succeed"
+    assert calls["n"] >= 2, (
+        "expected the raw install AND the locked-reload fallback to both "
+        f"attempt decryption; saw {calls['n']} attempt(s)"
+    )
+    on_disk = config_module.tomllib.loads(config_path.read_text())
+    assert on_disk.get("task21124_probe", {}).get("decrypt_fail") == "v1", (
+        "the atomic write must land regardless of the publish fallback"
+    )
+    assert config_module._CONFIG_CACHE is None, (
+        "a failed decrypt must leave the bootstrap cache EMPTY (the "
+        "historical failure mode), never populated with ciphertext"
+    )
+
+    # Recovery: with decryption working again, the next read repopulates
+    # the cache and serves the written value.
+    recovered = config_module.get_cli_setting("task21124_probe", "decrypt_fail")
+    assert recovered == "v1"
+    assert config_module._CONFIG_CACHE is not None

@@ -5155,19 +5155,25 @@ def _load_cli_config_bootstrap(
       the (cache, source) pair read here belongs to one single install and
       cannot be torn across two different installs.
     * Writers store in the order: cache=None, source=None, <build>,
-      cache=new, source=path (see `_load_cli_config_bootstrap_unlocked`,
-      `_install_bootstrap_cache_from_raw`, `_invalidate_config_caches`),
-      all under `_config_file_lock`; combined with the identity re-check,
-      a hit therefore returns the config that IS the currently installed
-      cache for the caller's path.
-    * `_CONFIG_GENERATION` is bumped by `_publish_runtime_config_unlocked`
-      only AFTER the new cache is installed. The generation sandwich
-      (read, ..., re-read) is the double-check the task's AC names: an
-      unchanged generation means no write PUBLISHED between the two reads,
-      so the returned dict is the currently published config or -- when a
-      writer is mid-flight, past its cache install but before its bump --
-      the write's own fresh view. Either way the caller gets one complete,
-      never-mutated-in-place config: exactly what the locked path returns.
+      cache=new, source=path, all under `_config_file_lock`. In
+      `_load_cli_config_bootstrap_unlocked` and
+      `_invalidate_config_caches` the pre-clear is explicit; for
+      `_install_bootstrap_cache_from_raw` the coupling is IMPLICIT -- it
+      does no pre-clear itself, and the invariant holds only because
+      every `raw_config` it receives comes from
+      `_write_raw_cli_config_unlocked`, whose `_invalidate_config_caches()`
+      call performed the cache=None/source=None stores moments earlier
+      under the same lock. Combined with the identity re-check, a hit
+      therefore returns the config that IS the currently installed cache
+      for the caller's path.
+    * The `_CONFIG_GENERATION` sandwich (read, ..., re-read) is the
+      double-check the task's AC names, but it is NOT what makes the read
+      sound -- the identity re-check above carries the soundness on its
+      own (review of TASK-21124 proved by mutation that reordering the
+      publish-time bump relative to the cache install leaves every
+      guarantee intact). The generation term adds conservatism only: when
+      a publication lands between the two generation reads, the reader
+      declines the hit and re-validates through the locked path instead.
     * A write's invalidate window (cache=None between file replace and
       republish) makes readers MISS and serialize through the lock below,
       which is the pre-existing behavior for every miss.
@@ -5349,7 +5355,13 @@ def _install_bootstrap_cache_from_raw(
     loaded_config = decryption.config
     # Same store order as `_load_cli_config_bootstrap_unlocked` (cache, then
     # source); the fast path's identity re-check makes either order safe --
-    # see `_load_cli_config_bootstrap`.
+    # see `_load_cli_config_bootstrap`. NOTE an implicit coupling: this
+    # function performs no cache=None/source=None pre-clear of its own; the
+    # documented writer store order holds only because every caller's
+    # `raw_config` comes from `_write_raw_cli_config_unlocked`, whose
+    # `_invalidate_config_caches()` did that pre-clear moments earlier under
+    # the same lock. A new caller sourcing `raw_config` elsewhere must
+    # preserve that ordering.
     _CONFIG_CACHE = loaded_config
     _CONFIG_CACHE_SOURCE = config_path
     _LAST_CONFIG_LOAD_FAILURE = None
@@ -5370,9 +5382,12 @@ def _publish_runtime_config_unlocked(
             takes one write from four TOML parses to two (the inherent
             read-modify-write read plus the TASK-13157 verify parse).
 
-    The `_CONFIG_GENERATION` bump stays LAST: the fast path in
-    `_load_cli_config_bootstrap` relies on the cache being replaced before
-    the generation moves (documented there). Callers hold the write lock.
+    The `_CONFIG_GENERATION` bump is kept last for consistency, but the
+    ordering is not load-bearing: the fast path's soundness rests on its
+    cache-identity re-check, and the generation sandwich only adds
+    conservatism (see `_load_cli_config_bootstrap` -- the TASK-21124
+    review proved a bump-first mutant equivalent). Callers hold the write
+    lock.
     """
 
     global settings, _CONFIG_GENERATION
