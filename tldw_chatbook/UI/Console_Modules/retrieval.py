@@ -191,6 +191,31 @@ class ConsoleRetrievalController:
             self._release_consumed_launch(launch, result)
         return result
 
+    def _snapshot_console_staged_evidence(self) -> ConsoleLiveWorkLaunch | None:
+        """Snapshot the exact live launch admitted with a prepared send."""
+
+        return self._pending_launch()
+
+    async def _capture_frozen_console_staged_rag(
+        self,
+        draft: str,
+        turn_context: ConsoleTurnExecutionContext | None,
+        launch: ConsoleLiveWorkLaunch | None,
+    ) -> Any:
+        """Capture an admitted launch without consulting newer staged state."""
+
+        del turn_context
+        self._clear_evidence_sent_notice()
+        result = await capture_console_staged_evidence_for_chat(
+            self.app_instance,
+            launch,
+            user_message=draft,
+        )
+        context = getattr(result, "context", None)
+        if launch is not None and isinstance(context, str) and context.strip():
+            self._release_consumed_launch(launch, result)
+        return result
+
     def _build_console_retrieval_scope_state(self) -> ConsoleRetrievalScopeState:
         """Return the cached effective scope for the active session."""
         session = self._active_native_session()

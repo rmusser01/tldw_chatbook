@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from tldw_chatbook.Agents.agent_models import RUN_DONE, RunOutcome
 from tldw_chatbook.Chat import console_chat_controller as controller_module
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
 from tldw_chatbook.Chat.console_chat_controller import (
@@ -33,7 +34,15 @@ from tldw_chatbook.Chat.console_library_policy import (
     ConsoleAutoRetrieve,
     ConsoleLibraryPolicySnapshot,
 )
+from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
+from tldw_chatbook.Chat.console_prompt_queue import (
+    PromptQueueMode,
+    PromptQueueReservation,
+)
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
+from tldw_chatbook.Chat.console_project_instructions import (
+    ProjectInstructionControlState,
+)
 from tldw_chatbook.Chat.console_turn_context import (
     ConsoleTurnConfigurationSnapshot,
     ConsoleTurnExecutionContext,
@@ -46,6 +55,11 @@ from tldw_chatbook.Chat.console_turn_preparation import (
 )
 from tldw_chatbook.Chat.library_preparation import LibraryPreparationContribution
 from tldw_chatbook.Library.library_rag_state import LibraryRagResultRow
+from tldw_chatbook.UI.Console_Modules import retrieval as retrieval_module
+from tldw_chatbook.UI.Console_Modules.retrieval import ConsoleRetrievalController
+from tldw_chatbook.UI.Views.RAGSearch.search_handoff import (
+    build_library_rag_evidence_bundle,
+)
 
 
 class _StreamingFence:
@@ -101,6 +115,14 @@ class _DestinationSequenceFence(_StreamingFence):
         )
 
 
+class _ResolverFailureFence(_StreamingFence):
+    async def resolve_for_send(self, selection):
+        if self.resolve_calls:
+            self.resolve_calls += 1
+            raise RuntimeError("destination unreadable")
+        return await super().resolve_for_send(selection)
+
+
 class _MissingDestinationFence(_StreamingFence):
     async def resolve_for_send(self, _selection):
         self.resolve_calls += 1
@@ -125,6 +147,31 @@ class _BlockingFirstFence(_StreamingFence):
         self.started.set()
         await self.release.wait()
         yield "ok"
+
+
+class _PrepareFailureFence(_StreamingFence):
+    def __init__(self, store: ConsoleChatStore) -> None:
+        super().__init__()
+        self.store = store
+        self.observed_state = None
+
+    def prepare_chat_request(self, *_args, **_kwargs):
+        preparation = self.store.preparation_for_session(self.store.active_session_id)
+        self.observed_state = preparation.state if preparation is not None else None
+        raise RuntimeError("direct preparation failed")
+
+
+class _StateCapturingAgentBridge:
+    def __init__(self, store: ConsoleChatStore) -> None:
+        self.store = store
+        self.observed_state = None
+        self.calls = 0
+
+    def run_reply(self, **_kwargs):
+        self.calls += 1
+        preparation = self.store.preparation_for_session(self.store.active_session_id)
+        self.observed_state = preparation.state if preparation is not None else None
+        return "run-1", RunOutcome(status=RUN_DONE, steps=[], final_text="agent ok")
 
 
 class _PolicyCoordinator:
@@ -176,7 +223,14 @@ class _HeldRagService(_RagService):
         self.release = asyncio.Event()
 
     async def search(self, query, source_types, mode, **kwargs):
-        self.calls.append({"query": query, "source_types": tuple(source_types), "mode": mode, **kwargs})
+        self.calls.append(
+            {
+                "query": query,
+                "source_types": tuple(source_types),
+                "mode": mode,
+                **kwargs,
+            }
+        )
         self.entered.set()
         await self.release.wait()
         return self.result
@@ -219,8 +273,7 @@ def _context(
             ),
             direct_library_tools=True,
             source_types=AUTOMATIC_LIBRARY_SOURCE_TYPES,
-            scope_snapshot=scope
-            or ConsoleLibraryItemScopeSnapshot((), (), True),
+            scope_snapshot=scope or ConsoleLibraryItemScopeSnapshot((), (), True),
             provider_intent=ConsoleProviderIntent(
                 "llama_cpp", "test-model", "http://127.0.0.1:9099"
             ),
@@ -288,6 +341,88 @@ def _controller_for_preparation(
     return controller, store
 
 
+def _pending_image(name: str, data: bytes) -> PendingAttachment:
+    return PendingAttachment(
+        file_path=f"/tmp/{name}",
+        display_name=name,
+        file_type="image",
+        insert_mode="attachment",
+        data=data,
+        mime_type="image/png",
+        original_size=len(data),
+        processed_size=len(data),
+    )
+
+
+def _real_retrieval_controller_for_launch(state: dict[str, object]):
+    def consume_launch():
+        return state.get("launch")
+
+    def release_launch(launch, result):
+        state.setdefault("released", []).append((launch, result))
+        if state.get("launch") is launch:
+            state["launch"] = None
+
+    controller = ConsoleRetrievalController(
+        app_instance=SimpleNamespace(),
+        active_native_session=lambda: None,
+        current_conversation_id=lambda: None,
+        clear_evidence_sent_notice=lambda: None,
+        consume_pending_launch=consume_launch,
+        release_consumed_launch=release_launch,
+        is_mounted=lambda: False,
+        sync_retrieval_scope_row=lambda: None,
+        sync_control_bar=lambda: None,
+        request_control_bar_sync=lambda: None,
+        dictionary_scope_service=lambda: None,
+        set_library_rag_source_scope=lambda _value: None,
+        set_library_rag_query=lambda _value: None,
+        run_library_rag_action=lambda: None,
+        library_rag_source_scope=lambda: (),
+        library_rag_top_k=lambda: 10,
+        pending_launch=lambda: state.get("launch"),
+        set_pending_launch=lambda launch: state.__setitem__("launch", launch),
+        set_pending_auto_open=lambda _value: None,
+        set_evidence_sent_notice=lambda _value: None,
+        sync_pending_launch_surfaces=lambda: True,
+        refresh_screen=lambda: None,
+        has_staged_evidence=lambda: state.get("launch") is not None,
+    )
+    return controller
+
+
+async def _paused_queued_send():
+    store = ConsoleChatStore()
+    policy = _PolicyCoordinator(ConsoleAutoRetrieve.NEVER)
+    store.library_policy_coordinator = policy
+    session = store.create_session(session_id="session-1")
+    gateway = _BlockingFirstFence()
+    service = _RagService(error=RuntimeError("queued retrieval failed"))
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    controller.app = SimpleNamespace(library_rag_search_service=service)
+
+    chain = asyncio.create_task(
+        controller.run_prompt_chain("owner", session_id=session.id)
+    )
+    await gateway.started.wait()
+    snapshot = controller.prompt_queue_registry.snapshot(session.id)
+    first = controller.queue_prompt(
+        session.id, text="frozen queued", expected_revision=snapshot.revision
+    )
+    second = controller.queue_prompt(
+        session.id,
+        text="later queued",
+        expected_revision=first.snapshot.revision,
+    )
+    policy.auto_retrieve = ConsoleAutoRetrieve.AUTOMATIC
+    gateway.release.set()
+    await chain
+    preparation = store.preparation_for_session(session.id)
+    assert preparation is not None
+    assert preparation.queue_entry_id == first.entry_id
+    return controller, store, gateway, service, preparation, first, second
+
+
 def test_store_preparation_cas_is_exact_and_survives_controller_replacement():
     store = ConsoleChatStore()
     store.create_session(session_id="session-1")
@@ -352,7 +487,9 @@ def test_store_racing_actions_have_one_winner():
             with lock:
                 wins.append(result)
 
-    threads = [threading.Thread(target=act, args=(transition,)) for transition in transitions]
+    threads = [
+        threading.Thread(target=act, args=(transition,)) for transition in transitions
+    ]
     for thread in threads:
         thread.start()
     barrier.wait()
@@ -374,9 +511,10 @@ async def test_evidence_success_uses_exact_draft_fixed_categories_and_exact_bund
     assert isinstance(outcome, ConsolePreparationOutcome)
     assert outcome.state is ConsoleTurnPreparationState.READY
     assert outcome.evidence_bundle is not None
-    assert outcome.evidence_bundle is controller.preparation_outcome(
-        preparation.preparation_id
-    ).evidence_bundle
+    assert (
+        outcome.evidence_bundle
+        is controller.preparation_outcome(preparation.preparation_id).evidence_bundle
+    )
     assert outcome.contribution is None
     assert service.calls == [
         {
@@ -387,7 +525,10 @@ async def test_evidence_success_uses_exact_draft_fixed_categories_and_exact_bund
             "include_citations": True,
         }
     ]
-    assert store.preparation_for_session("session-1").state is ConsoleTurnPreparationState.READY
+    assert (
+        store.preparation_for_session("session-1").state
+        is ConsoleTurnPreparationState.READY
+    )
 
 
 @pytest.mark.asyncio
@@ -429,18 +570,27 @@ async def test_zero_matches_readies_with_one_bounded_contribution():
     assert outcome.contribution.event.outcome == "zero_matches"
     assert outcome.contribution.event.result_count == 0
     assert outcome.contribution.event.source_types == AUTOMATIC_LIBRARY_SOURCE_TYPES
-    assert store.preparation_for_session("session-1").state is ConsoleTurnPreparationState.READY
+    assert (
+        store.preparation_for_session("session-1").state
+        is ConsoleTurnPreparationState.READY
+    )
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("service", "timeout", "error_code"),
     [
-        (_RagService(error=RuntimeError("secret exception body")), 5.0, "library_retrieval_failed"),
+        (
+            _RagService(error=RuntimeError("secret exception body")),
+            5.0,
+            "library_retrieval_failed",
+        ),
         (_RagService(delay=0.05), 0.001, "library_retrieval_timeout"),
     ],
 )
-async def test_failure_and_timeout_pause_with_bounded_error(service, timeout, error_code):
+async def test_failure_and_timeout_pause_with_bounded_error(
+    service, timeout, error_code
+):
     controller, store = _controller_for_preparation(
         _preparation(), service, timeout=timeout
     )
@@ -507,7 +657,20 @@ def test_controller_cancel_removes_exact_owner_and_sidecars_without_touching_sta
         processed_size=16,
     )
     assert store.add_pending_attachment(session.id, attachment)
-    explicit_evidence = [object()]
+    evidence_bundle = build_library_rag_evidence_bundle(
+        [_row("exact evidence")], query="exact query"
+    )
+    explicit_evidence = ConsoleLiveWorkLaunch.from_values(
+        source="Library Search/RAG",
+        title="Exact staged evidence",
+        payload={"evidence_bundle": evidence_bundle.to_payload()},
+        status="ready",
+    )
+    evidence_state: dict[str, object] = {
+        "launch": explicit_evidence,
+        "released": [],
+    }
+    retrieval = _real_retrieval_controller_for_launch(evidence_state)
     survivor = store.append_message(
         session.id, role=ConsoleMessageRole.SYSTEM, content="keep me"
     )
@@ -531,7 +694,11 @@ def test_controller_cancel_removes_exact_owner_and_sidecars_without_touching_sta
         evidence_ids=("exact-evidence",),
     )
     assert store.begin_preparation(preparation) is preparation
-    controller = ConsoleChatController(store=store, provider_gateway=_StreamingFence())
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=_StreamingFence(),
+        rag_capture_provider=retrieval._capture_console_staged_rag,
+    )
     controller._preparation_outcomes[preparation.preparation_id] = (
         ConsolePreparationOutcome(
             preparation_id=preparation.preparation_id,
@@ -546,7 +713,8 @@ def test_controller_cancel_removes_exact_owner_and_sidecars_without_touching_sta
 
     cancelled = controller.cancel_library_preparation(preparation.preparation_id)
 
-    assert cancelled.state is ConsoleTurnPreparationState.CANCELLED
+    assert isinstance(cancelled, ConsoleSubmitResult)
+    assert not cancelled.accepted
     assert store.preparation_for_session(session.id) is None
     assert controller.preparation_outcome(preparation.preparation_id) is None
     assert controller._prepared_send_continuations == {}
@@ -554,7 +722,8 @@ def test_controller_cancel_removes_exact_owner_and_sidecars_without_touching_sta
     assert store.session_one_shot_prefill(session.id) == "exact prefill"
     assert store.pending_attachments(session.id) == [attachment]
     assert store.pending_attachments(session.id)[0] is attachment
-    assert explicit_evidence == [explicit_evidence[0]]
+    assert evidence_state["launch"] is explicit_evidence
+    assert evidence_state["released"] == []
     assert store.messages_for_session(session.id) == [survivor]
 
 
@@ -582,7 +751,9 @@ async def test_success_injects_the_sealed_bundle_into_the_same_dispatched_reques
     store = ConsoleChatStore()
     store.library_policy_coordinator = _PolicyCoordinator(ConsoleAutoRetrieve.AUTOMATIC)
     gateway = _StreamingFence()
-    service = _RagService({"runtime_backend": "local", "results": [_row("needle body")]})
+    service = _RagService(
+        {"runtime_backend": "local", "results": [_row("needle body")]}
+    )
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
     controller.app = SimpleNamespace(library_rag_search_service=service)
 
@@ -590,7 +761,9 @@ async def test_success_injects_the_sealed_bundle_into_the_same_dispatched_reques
 
     assert result.accepted
     assert gateway.provider_calls == 1
-    final_user = next(row for row in reversed(gateway.messages) if row["role"] == "user")
+    final_user = next(
+        row for row in reversed(gateway.messages) if row["role"] == "user"
+    )
     assert "needle body" in final_user["content"]
     assert store.preparation_for_session(result.session_id) is None
     assert controller._preparation_outcomes == {}
@@ -846,7 +1019,9 @@ async def test_manual_recovery_continues_same_frozen_send_without_second_submit(
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
     controller.app = SimpleNamespace(library_rag_search_service=service)
 
-    first = await controller.submit_draft("frozen admitted draft", session_id=session.id)
+    first = await controller.submit_draft(
+        "frozen admitted draft", session_id=session.id
+    )
     paused = store.preparation_for_session(session.id)
     assert not first.accepted
     assert paused is not None
@@ -864,20 +1039,31 @@ async def test_manual_recovery_continues_same_frozen_send_without_second_submit(
     assert gateway.provider_calls == 1
     assert gateway.resolve_calls == 2
     assert service.calls[-1]["query"] == original.executed_draft
-    assert original.execution_context.configuration.provider_selection.provider == "llama_cpp"
-    assert original.execution_context.resolved_destination.endpoint_identity == "http://127.0.0.1:9099"
+    assert (
+        original.execution_context.configuration.provider_selection.provider
+        == "llama_cpp"
+    )
+    assert (
+        original.execution_context.resolved_destination.endpoint_identity
+        == "http://127.0.0.1:9099"
+    )
     assert "frozen admitted draft" in repr(gateway.messages)
     if action == "retry":
         assert "retry evidence" in repr(gateway.messages)
     else:
         assert len(service.calls) == 1
-        assert original.execution_context.library_authority.policy.auto_retrieve is ConsoleAutoRetrieve.AUTOMATIC
+        assert (
+            original.execution_context.library_authority.policy.auto_retrieve
+            is ConsoleAutoRetrieve.AUTOMATIC
+        )
     assert store.preparation_for_session(session.id) is None
     assert controller.preparation_outcome(paused.preparation_id) is None
 
 
 @pytest.mark.asyncio
-async def test_text_with_attachment_is_automatic_eligible_and_preserved_until_ready(monkeypatch):
+async def test_text_with_attachment_is_automatic_eligible_and_preserved_until_ready(
+    monkeypatch,
+):
     monkeypatch.setattr(controller_module, "is_vision_capable", lambda *_args: True)
     store = ConsoleChatStore()
     store.library_policy_coordinator = _PolicyCoordinator(ConsoleAutoRetrieve.AUTOMATIC)
@@ -917,7 +1103,9 @@ async def test_evidence_probe_error_skips_duplicate_automatic_spend():
     controller = ConsoleChatController(
         store=store,
         provider_gateway=gateway,
-        staged_evidence_provider=lambda _session_id: (_ for _ in ()).throw(RuntimeError()),
+        staged_evidence_provider=lambda _session_id: (_ for _ in ()).throw(
+            RuntimeError()
+        ),
     )
     controller.app = SimpleNamespace(library_rag_search_service=service)
 
@@ -1098,7 +1286,9 @@ async def test_queued_recovery_reclaims_same_entry_then_advances_without_spin(ac
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
     controller.app = SimpleNamespace(library_rag_search_service=service)
 
-    chain = asyncio.create_task(controller.run_prompt_chain("owner", session_id=session.id))
+    chain = asyncio.create_task(
+        controller.run_prompt_chain("owner", session_id=session.id)
+    )
     await gateway.started.wait()
     snapshot = controller.prompt_queue_registry.snapshot(session.id)
     first = controller.queue_prompt(
@@ -1132,3 +1322,456 @@ async def test_queued_recovery_reclaims_same_entry_then_advances_without_spin(ac
     assert final.total_count == 0
     assert gateway.provider_calls == 3
     assert store.preparation_for_session(session.id) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["retry", "bypass"])
+@pytest.mark.parametrize("refusal", ["skill", "authorization"])
+async def test_queued_recovery_refusal_returns_exact_claim_to_head_without_spin(
+    monkeypatch, action, refusal
+):
+    (
+        controller,
+        store,
+        gateway,
+        service,
+        paused,
+        first,
+        second,
+    ) = await _paused_queued_send()
+    service.error = None
+
+    if refusal == "skill":
+
+        async def refuse(messages):
+            return messages, "skill refused", (), (), None
+
+        monkeypatch.setattr(controller, "_apply_skill_substitution", refuse)
+    else:
+        monkeypatch.setattr(
+            controller.prompt_queue_coordinator, "authorizes", lambda *_args: False
+        )
+
+    if action == "retry":
+        result = await controller.retry_library_preparation(paused.preparation_id)
+    else:
+        result = await controller.bypass_library_preparation(paused.preparation_id)
+
+    assert isinstance(result, ConsoleSubmitResult)
+    assert not result.accepted
+    snapshot = controller.prompt_queue_registry.snapshot(paused.session_id)
+    assert snapshot.claimed_count == 0
+    assert snapshot.waiting_count == 2
+    assert [entry.entry_id for entry in snapshot.entries] == [
+        first.entry_id,
+        second.entry_id,
+    ]
+    assert snapshot.mode is PromptQueueMode.PAUSED
+    assert snapshot.reservation is PromptQueueReservation.RELEASED
+    assert gateway.provider_calls == 1
+    assert store.preparation_for_session(paused.session_id) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["retry", "bypass"])
+@pytest.mark.parametrize("failure", ["composition", "provider_preflight"])
+async def test_queued_recovery_exception_returns_exact_claim_to_head(
+    monkeypatch, action, failure
+):
+    (
+        controller,
+        store,
+        gateway,
+        service,
+        paused,
+        first,
+        second,
+    ) = await _paused_queued_send()
+    service.error = None
+
+    if failure == "composition":
+
+        async def fail_composition(_messages, _session_id):
+            raise RuntimeError("composition failed")
+
+        monkeypatch.setattr(controller, "_apply_chat_dictionaries", fail_composition)
+    else:
+
+        async def fail_preflight(**_kwargs):
+            raise RuntimeError("provider preflight failed")
+
+        monkeypatch.setattr(
+            controller, "_apply_conversation_memory_preflight", fail_preflight
+        )
+
+    if action == "retry":
+        result = await controller.retry_library_preparation(paused.preparation_id)
+    else:
+        result = await controller.bypass_library_preparation(paused.preparation_id)
+
+    assert isinstance(result, ConsoleSubmitResult)
+    assert not result.accepted
+    snapshot = controller.prompt_queue_registry.snapshot(paused.session_id)
+    assert snapshot.claimed_count == 0
+    assert snapshot.waiting_count == 2
+    assert [entry.entry_id for entry in snapshot.entries] == [
+        first.entry_id,
+        second.entry_id,
+    ]
+    assert snapshot.mode is PromptQueueMode.PAUSED
+    assert snapshot.reservation is PromptQueueReservation.RELEASED
+    assert gateway.provider_calls == 1
+    assert store.preparation_for_session(paused.session_id) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["retry", "bypass"])
+async def test_recovery_uses_frozen_staged_inputs_and_leaves_new_state_staged(
+    monkeypatch, action
+):
+    monkeypatch.setattr(controller_module, "is_vision_capable", lambda *_args: True)
+    captured_contexts = []
+
+    async def capture_evidence(_app, launch, *, user_message):
+        captured_contexts.append((launch, user_message))
+        return SimpleNamespace(
+            context="[S1] newly staged evidence",
+            citation_builder=None,
+            prompt_evidence_set_id=None,
+            citation_repair_contract=None,
+        )
+
+    monkeypatch.setattr(
+        retrieval_module, "capture_console_staged_evidence_for_chat", capture_evidence
+    )
+    evidence_state: dict[str, object] = {"launch": None, "released": []}
+    retrieval = _real_retrieval_controller_for_launch(evidence_state)
+    store = ConsoleChatStore()
+    store.library_policy_coordinator = _PolicyCoordinator(ConsoleAutoRetrieve.AUTOMATIC)
+    session = store.create_session(session_id="session-1")
+    original_attachment = _pending_image("original.png", b"original-image")
+    new_attachment = _pending_image("new.png", b"new-image")
+    assert store.add_pending_attachment(session.id, original_attachment)
+    store.set_session_one_shot_prefill(session.id, "original prefill")
+    gateway = _StreamingFence()
+    service = _RagService(error=RuntimeError("pause first"))
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        rag_capture_provider=retrieval._capture_console_staged_rag,
+        staged_evidence_provider=lambda _session_id: (
+            evidence_state["launch"] is not None
+        ),
+        model="vision-model",
+    )
+    controller.app = SimpleNamespace(library_rag_search_service=service)
+
+    first = await controller.submit_draft("frozen draft", session_id=session.id)
+    paused = store.preparation_for_session(session.id)
+    assert not first.accepted
+    assert paused is not None
+
+    assert store.add_pending_attachment(session.id, new_attachment)
+    store.set_session_one_shot_prefill(session.id, "new prefill")
+    store.set_session_draft(session.id, "new composer draft")
+    new_bundle = build_library_rag_evidence_bundle(
+        [_row("new staged evidence")], query="new evidence query"
+    )
+    new_launch = ConsoleLiveWorkLaunch.from_values(
+        source="Library Search/RAG",
+        title="New staged evidence",
+        payload={"evidence_bundle": new_bundle.to_payload()},
+        status="ready",
+    )
+    evidence_state["launch"] = new_launch
+    service.error = None
+    service.result = {"results": []}
+
+    if action == "retry":
+        result = await controller.retry_library_preparation(paused.preparation_id)
+    else:
+        result = await controller.bypass_library_preparation(paused.preparation_id)
+
+    assert result.accepted
+    user_payload = next(
+        message for message in reversed(gateway.messages) if message["role"] == "user"
+    )
+    assert "b3JpZ2luYWwtaW1hZ2U=" in str(user_payload)
+    assert "bmV3LWltYWdl" not in str(user_payload)
+    assert gateway.messages[-1] == {
+        "role": "assistant",
+        "content": "original prefill",
+    }
+    assert store.pending_attachments(session.id) == [new_attachment]
+    assert store.session_one_shot_prefill(session.id) == "new prefill"
+    assert store.session_draft(session.id) == "new composer draft"
+    assert evidence_state["launch"] is new_launch
+    assert evidence_state["released"] == []
+    assert captured_contexts == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["retry", "bypass"])
+async def test_recovery_resolution_exception_pauses_without_ready_wedge(action):
+    store = ConsoleChatStore()
+    store.library_policy_coordinator = _PolicyCoordinator(ConsoleAutoRetrieve.AUTOMATIC)
+    gateway = _ResolverFailureFence()
+    service = _RagService(error=RuntimeError("pause first"))
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    controller.app = SimpleNamespace(library_rag_search_service=service)
+    first = await controller.submit_draft("frozen draft")
+    paused = store.preparation_for_session(first.session_id)
+    service.error = None
+
+    if action == "retry":
+        result = await controller.retry_library_preparation(paused.preparation_id)
+    else:
+        result = await controller.bypass_library_preparation(paused.preparation_id)
+
+    assert isinstance(result, ConsoleSubmitResult)
+    assert not result.accepted
+    current = store.preparation_for_session(first.session_id)
+    assert current is not None
+    assert current.state is ConsoleTurnPreparationState.PAUSED
+    assert current.pause_kind is ConsolePreparationPauseKind.DESTINATION_CHANGED
+    assert gateway.provider_calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["retry", "bypass"])
+@pytest.mark.parametrize("reclaim_failure", ["refusal", "exception"])
+async def test_queue_reclaim_failure_pauses_without_claim_or_ready_wedge(
+    monkeypatch, action, reclaim_failure
+):
+    (
+        controller,
+        store,
+        gateway,
+        service,
+        paused,
+        first,
+        second,
+    ) = await _paused_queued_send()
+    service.error = None
+
+    if reclaim_failure == "refusal":
+
+        def replacement(*_args):
+            return None
+    else:
+
+        def replacement(*_args):
+            raise RuntimeError("reclaim failed")
+
+    monkeypatch.setattr(
+        controller.prompt_queue_coordinator, "reclaim_prepared_entry", replacement
+    )
+    if action == "retry":
+        result = await controller.retry_library_preparation(paused.preparation_id)
+    else:
+        result = await controller.bypass_library_preparation(paused.preparation_id)
+
+    assert isinstance(result, ConsoleSubmitResult)
+    assert not result.accepted
+    current = store.preparation_for_session(paused.session_id)
+    assert current is not None
+    assert current.state is ConsoleTurnPreparationState.PAUSED
+    assert current.pause_kind is ConsolePreparationPauseKind.PERSISTENCE
+    snapshot = controller.prompt_queue_registry.snapshot(paused.session_id)
+    assert snapshot.claimed_count == 0
+    assert [entry.entry_id for entry in snapshot.entries] == [
+        first.entry_id,
+        second.entry_id,
+    ]
+    assert gateway.provider_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_repeated_recovery_actions_return_stable_submit_results_without_keyerror():
+    store = ConsoleChatStore()
+    store.library_policy_coordinator = _PolicyCoordinator(ConsoleAutoRetrieve.AUTOMATIC)
+    service = _RagService(error=RuntimeError("pause first"))
+    controller = ConsoleChatController(store=store, provider_gateway=_StreamingFence())
+    controller.app = SimpleNamespace(library_rag_search_service=service)
+    first = await controller.submit_draft("frozen draft")
+    paused = store.preparation_for_session(first.session_id)
+
+    cancelled = controller.cancel_library_preparation(paused.preparation_id)
+    retry_loser = await controller.retry_library_preparation(paused.preparation_id)
+    bypass_loser = await controller.bypass_library_preparation(paused.preparation_id)
+    cancel_loser = controller.cancel_library_preparation(paused.preparation_id)
+
+    for result in (cancelled, retry_loser, bypass_loser, cancel_loser):
+        assert isinstance(result, ConsoleSubmitResult)
+        assert not result.accepted
+
+
+@pytest.mark.asyncio
+async def test_losing_ready_commit_cas_returns_paused_submit_result(monkeypatch):
+    store = ConsoleChatStore()
+    store.library_policy_coordinator = _PolicyCoordinator(ConsoleAutoRetrieve.AUTOMATIC)
+    service = _RagService(error=RuntimeError("pause first"))
+    controller = ConsoleChatController(store=store, provider_gateway=_StreamingFence())
+    controller.app = SimpleNamespace(library_rag_search_service=service)
+    first = await controller.submit_draft("frozen draft")
+    paused = store.preparation_for_session(first.session_id)
+    service.error = None
+    original_cas = store.compare_and_set_preparation
+
+    def lose_ready_commit(session_id, transition):
+        if (
+            transition.expected_state is ConsoleTurnPreparationState.READY
+            and transition.new_state is ConsoleTurnPreparationState.COMMITTING
+        ):
+            committed = original_cas(session_id, transition)
+            assert committed is not None
+            original_cas(
+                session_id,
+                ConsolePreparationTransition(
+                    preparation_id=transition.preparation_id,
+                    expected_state=ConsoleTurnPreparationState.COMMITTING,
+                    new_state=ConsoleTurnPreparationState.PAUSED,
+                    pause_kind=ConsolePreparationPauseKind.PERSISTENCE,
+                    new_attempt_id=None,
+                ),
+            )
+            return None
+        return original_cas(session_id, transition)
+
+    monkeypatch.setattr(store, "compare_and_set_preparation", lose_ready_commit)
+    result = await controller.retry_library_preparation(paused.preparation_id)
+
+    assert isinstance(result, ConsoleSubmitResult)
+    assert not result.accepted
+    current = store.preparation_for_session(first.session_id)
+    assert current is not None
+    assert current.state is ConsoleTurnPreparationState.PAUSED
+    assert current.pause_kind is ConsolePreparationPauseKind.PERSISTENCE
+
+
+@pytest.mark.asyncio
+async def test_direct_request_preparation_failure_never_claims_dispatch_started():
+    store = ConsoleChatStore()
+    store.library_policy_coordinator = _PolicyCoordinator(ConsoleAutoRetrieve.NEVER)
+    gateway = _PrepareFailureFence(store)
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+
+    with pytest.raises(RuntimeError, match="direct preparation failed"):
+        await controller.submit_draft("frozen draft")
+
+    assert gateway.observed_state is ConsoleTurnPreparationState.ACCEPTED
+    assert gateway.provider_calls == 0
+    assert store.preparation_for_session(store.active_session_id) is None
+
+
+@pytest.mark.asyncio
+async def test_agent_setup_failure_never_claims_dispatch_started(monkeypatch):
+    store = ConsoleChatStore()
+    store.library_policy_coordinator = _PolicyCoordinator(ConsoleAutoRetrieve.NEVER)
+    bridge = _StateCapturingAgentBridge(store)
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=_StreamingFence(),
+        agent_bridge=bridge,
+        agent_runtime_enabled=True,
+    )
+    session = store.create_session(session_id="session-1")
+    store.set_session_project_instruction_state(
+        session.id, ProjectInstructionControlState.legacy_disabled()
+    )
+    controller.app = SimpleNamespace(call_from_thread=lambda fn, *args: fn(*args))
+    observed = []
+
+    async def fail_setup(**_kwargs):
+        preparation = store.preparation_for_session(store.active_session_id)
+        observed.append(preparation.state)
+        raise RuntimeError("agent setup failed")
+
+    monkeypatch.setattr(controller, "_compose_agent_request_providers", fail_setup)
+
+    with pytest.raises(RuntimeError, match="agent setup failed"):
+        await controller.submit_draft("frozen draft", session_id=session.id)
+
+    assert observed == [ConsoleTurnPreparationState.ACCEPTED]
+    assert bridge.calls == 0
+    assert store.preparation_for_session(session.id) is None
+
+
+@pytest.mark.asyncio
+async def test_actual_agent_call_observes_dispatch_started():
+    store = ConsoleChatStore()
+    store.library_policy_coordinator = _PolicyCoordinator(ConsoleAutoRetrieve.NEVER)
+    bridge = _StateCapturingAgentBridge(store)
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=_StreamingFence(),
+        agent_bridge=bridge,
+        agent_runtime_enabled=True,
+    )
+    session = store.create_session(session_id="session-1")
+    store.set_session_project_instruction_state(
+        session.id, ProjectInstructionControlState.legacy_disabled()
+    )
+    controller.app = SimpleNamespace(call_from_thread=lambda fn, *args: fn(*args))
+
+    result = await controller.submit_draft("frozen draft", session_id=session.id)
+
+    assert result.accepted
+    assert bridge.calls == 1
+    assert bridge.observed_state is ConsoleTurnPreparationState.DISPATCH_STARTED
+    assert store.preparation_for_session(result.session_id) is None
+
+
+@pytest.mark.asyncio
+async def test_close_preserves_accepted_owner_until_cancelled_task_finally_settles():
+    store = ConsoleChatStore()
+    store.library_policy_coordinator = _PolicyCoordinator(ConsoleAutoRetrieve.NEVER)
+    gateway = _BlockingFirstFence()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    task = asyncio.create_task(controller.submit_draft("frozen draft"))
+    await gateway.started.wait()
+    session_id = store.active_session_id
+    preparation = store.preparation_for_session(session_id)
+    assert preparation is not None
+
+    controller.close_session(session_id)
+
+    assert not task.done()
+    live = store.preparation_by_id(preparation.preparation_id)
+    assert live is not None
+    assert live.state is ConsoleTurnPreparationState.DISPATCH_STARTED
+    assert preparation.preparation_id in controller._prepared_send_continuations
+
+    await asyncio.gather(task, return_exceptions=True)
+    await asyncio.sleep(0)
+
+    assert store.preparation_by_id(preparation.preparation_id) is None
+    assert controller._preparation_outcomes == {}
+    assert controller._prepared_send_continuations == {}
+
+
+@pytest.mark.asyncio
+async def test_zero_match_contribution_survives_until_provider_attempt_then_cleans():
+    store = ConsoleChatStore()
+    store.library_policy_coordinator = _PolicyCoordinator(ConsoleAutoRetrieve.AUTOMATIC)
+    controller = None
+
+    class ContributionFence(_StreamingFence):
+        async def stream_chat(self, resolution, messages, **kwargs):
+            preparation = store.preparation_for_session(store.active_session_id)
+            outcome = controller.preparation_outcome(preparation.preparation_id)
+            assert outcome is not None
+            assert outcome.contribution is not None
+            assert outcome.contribution.outcome == "zero_matches"
+            async for chunk in super().stream_chat(resolution, messages, **kwargs):
+                yield chunk
+
+    gateway = ContributionFence()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    controller.app = SimpleNamespace(library_rag_search_service=_RagService())
+
+    result = await controller.submit_draft("frozen draft")
+
+    assert result.accepted
+    assert controller._preparation_outcomes == {}
+    assert controller._prepared_send_continuations == {}

@@ -299,6 +299,7 @@ class ConsolePromptQueueCoordinator:
         origin: ConsoleSubmissionOrigin,
         context_epoch: int,
         entry_id: str | None = None,
+        defer_queued_settlement: bool = False,
     ) -> None:
         """Commit the accepted boundary and settle a queued claim exactly once."""
 
@@ -320,17 +321,8 @@ class ConsolePromptQueueCoordinator:
         else:
             if entry_id is None or chain.current_entry_id != entry_id:
                 raise RuntimeError("queued acceptance did not match the claimed entry")
-            snapshot = self.registry.snapshot(session_id)
-            settled = self.registry.settle_claim(
-                session_id,
-                entry_id=entry_id,
-                expected_revision=snapshot.revision,
-            )
-            if not settled.applied:
-                raise RuntimeError("queued acceptance could not settle its claim")
-            callback = self.on_queued_accepted
-            if callback is not None:
-                callback(ConsoleQueuedAcceptanceEvent(session_id, entry_id))
+            if not defer_queued_settlement:
+                self._settle_queued_claim(session_id, entry_id)
         chain.accepted_live_turn = True
         self._changed(session_id)
 
@@ -338,6 +330,7 @@ class ConsolePromptQueueCoordinator:
         chain = self._chains.get(session_id)
         if chain is None:
             return
+        current_entry_id = chain.current_entry_id
         accepted = chain.accepted_live_turn
         chain.accepted_live_turn = False
         status = self._terminal_status(session_id, result)
@@ -345,13 +338,18 @@ class ConsolePromptQueueCoordinator:
         self._changed(session_id)
 
         if not accepted:
-            if chain.current_entry_id is not None:
+            if current_entry_id is not None:
                 self._return_claim(
                     session_id,
-                    chain.current_entry_id,
+                    current_entry_id,
                     PromptQueuePauseReason.DISPATCH_REFUSED,
                 )
             return
+        if current_entry_id is not None:
+            snapshot = self.registry.snapshot(session_id)
+            if snapshot.claimed_count:
+                self._settle_queued_claim(session_id, current_entry_id)
+        chain.current_entry_id = None
         if status not in self._SUCCESS:
             reason = (
                 PromptQueuePauseReason.STOPPED
@@ -362,6 +360,21 @@ class ConsolePromptQueueCoordinator:
             return
 
         await self._drain_waiting(session_id, status)
+
+    def _settle_queued_claim(self, session_id: str, entry_id: str) -> None:
+        """Acknowledge one exact claimed entry and emit its acceptance event."""
+
+        snapshot = self.registry.snapshot(session_id)
+        settled = self.registry.settle_claim(
+            session_id,
+            entry_id=entry_id,
+            expected_revision=snapshot.revision,
+        )
+        if not settled.applied:
+            raise RuntimeError("queued acceptance could not settle its claim")
+        callback = self.on_queued_accepted
+        if callback is not None:
+            callback(ConsoleQueuedAcceptanceEvent(session_id, entry_id))
 
     async def _drain_waiting(self, session_id: str, status: ConsoleRunStatus) -> None:
         """Claim and submit FIFO entries until the chain empties or pauses."""
@@ -592,14 +605,24 @@ class ConsolePromptQueueCoordinator:
         self._changed(session_id)
         return QueueGenerationAuthorization(self, session_id, _key=_AUTHORIZATION_KEY)
 
-    async def complete_prepared_entry(
-        self, session_id: str, result: "ConsoleSubmitResult"
+    async def finish_recovered_entry(
+        self,
+        session_id: str,
+        entry_id: str,
+        result: "ConsoleSubmitResult" | None,
     ) -> None:
-        """Finish an exact reclaimed preparation and resume normal FIFO drain."""
+        """Finish one exact reclaimed send without losing claim ownership."""
 
         chain = self._chains.get(session_id)
-        if chain is not None:
-            chain.current_entry_id = None
+        if chain is None:
+            return
+        if chain.current_entry_id != entry_id:
+            if result is None and chain.current_entry_id is None:
+                self._pause_after_exception(session_id)
+            return
+        if result is None:
+            self._pause_after_exception(session_id)
+            return
         await self._after_turn(session_id, result)
 
     async def recover_and_drain(
