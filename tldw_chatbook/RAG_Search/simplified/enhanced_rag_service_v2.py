@@ -52,6 +52,8 @@ def _config_profiles():
     from .. import config_profiles
 
     return config_profiles
+
+
 from .data_models import IndexingResult
 
 
