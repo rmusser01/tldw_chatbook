@@ -769,6 +769,15 @@ def main() -> int:
     finally:
         if tmp is not None:
             shutil.rmtree(tmp, ignore_errors=True)
+            # ignore_errors=True deliberately never raises here -- this is a
+            # `finally`, and raising could mask whatever exception/SystemExit
+            # is already propagating through it. But silent-on-failure would
+            # be a leak wearing a `finally`: if removal genuinely failed
+            # (e.g. a permission-denied subtree), say so on stderr instead of
+            # returning as if nothing happened.
+            if Path(tmp).exists():
+                print(f"WARNING: failed to fully remove temp clone {tmp} "
+                      f"-- remove it manually", file=sys.stderr)
 
 
 if __name__ == "__main__":
