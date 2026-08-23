@@ -234,9 +234,7 @@ def resolve_effective_layout(
     """
     mounted = READ_SIDE_PANE_ORDER if read_mode else MANAGEMENT_SIDE_PANE_ORDER
     priority = READ_COLLAPSE_PRIORITY if read_mode else MANAGEMENT_COLLAPSE_PRIORITY
-    collapsed = set(preferred.collapsed_for_persistence()).intersection(
-        COLLAPSIBLE_REGIONS
-    )
+    collapsed = set(preferred.collapsed_for_persistence()).intersection(mounted)
 
     if article_focus:
         return RegionLayout(collapsed=frozenset(collapsed.union(mounted)))

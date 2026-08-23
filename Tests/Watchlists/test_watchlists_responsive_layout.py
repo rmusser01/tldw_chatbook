@@ -90,6 +90,14 @@ def test_management_boundaries_exclude_feed_items():
     )
 
 
+def test_management_parks_feed_items_preference_but_keeps_mounted_rail_preferences():
+    preferred = RegionLayout(
+        collapsed=frozenset({Region.ITEMS, Region.RIGHT_RAIL})
+    )
+    effective = resolve(preferred, 200, read_mode=False)
+    assert effective.collapsed == frozenset({Region.RIGHT_RAIL})
+
+
 @pytest.mark.parametrize(
     ("read_mode", "mounted"),
     [
