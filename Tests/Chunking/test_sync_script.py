@@ -220,6 +220,7 @@ def test_owned_temporary_clone_is_removed(
     def fake_run(command, **kwargs):
         stage = "clone" if command[1] == "clone" else "checkout"
         subprocess_stages.append(stage)
+        assert 0 < kwargs["timeout"] <= sync_helper.CLONE_TIMEOUT_SECONDS
         if failure_stage == "clone" and stage == "clone":
             raise subprocess.CalledProcessError(returncode=1, cmd=command)
         if failure_stage == "checkout" and stage == "checkout":
