@@ -92,11 +92,12 @@ def _normalized_console_workspace_id(workspace_id: str | None) -> str:
 
     A Console session's default ``workspace_id`` (unset, or the explicit
     ``CONSOLE_GLOBAL_WORKSPACE_ID`` sentinel) and the registry's built-in
-    Default workspace row (``DEFAULT_WORKSPACE_ID`` --
-    ``ensure_default_workspace`` floors every context read to it) are THE
-    SAME state on two layers (task-15120 owner ruling, see
-    ``_set_active_workspace_for_console_session``), not two different
-    workspaces that happen to share a session. Any comparison between a
+    Default workspace row (``DEFAULT_WORKSPACE_ID`` -- the resting state
+    ``ensure_default_workspace`` establishes at boot and switch seams, and
+    the id the read-only context resolution floors a missing active
+    workspace to, TASK-21118) are THE SAME state on two layers (task-15120
+    owner ruling, see ``_set_active_workspace_for_console_session``), not
+    two different workspaces that happen to share a session. Any comparison between a
     session's ``workspace_id`` and a registry workspace id must normalize
     through this before comparing, or an aligned "global"/Default session
     reads as diverged purely because of which layer's spelling it carries.
@@ -1340,31 +1341,133 @@ class ConsoleWorkspaceController:
 
     # -- Workspace policy context -------------------------------------------
 
-    def _current_console_workspace_context(self) -> ConsoleWorkspaceContext:
-        """Return explicit workspace policy context for native Console sends."""
-        workspace_id = CONSOLE_GLOBAL_WORKSPACE_ID
+    #: Memoized active-workspace resolution for the per-keystroke Console
+    #: context read: (registry service instance, its ``mutation_generation``
+    #: at read time, resolved workspace id), or ``None`` before the first
+    #: cacheable read. A CLASS attribute default, matching the screen's
+    #: memo conventions, so hand-built fixtures that skip ``__init__``
+    #: still read a defined value.
+    _console_workspace_id_memo: "tuple[Any, int, str] | None" = None
+
+    def _resolve_console_active_workspace_id(self) -> str:
+        """Resolve the active workspace id read-only, memoized per screen.
+
+        TASK-21118: this sits on the per-keystroke path (DraftChanged ->
+        control-state build -> provider selection ->
+        ``_current_console_workspace_context``), which used to call
+        ``ensure_default_workspace`` ~1.25x per key -- a synchronous SQLite
+        read on the UI thread, plus that method's repair side-effects (a
+        probing SELECT and, with stale Default bindings, a DELETE write
+        transaction). Two changes here:
+
+        * READ-ONLY: the keystroke path now calls ``get_active_workspace``
+          only. The ensure/repair behavior lives at session-start and
+          workspace-switch seams instead (app wiring's
+          ``ensure_default_workspace``, ``set_active_workspace``'s
+          switch-to-Default repair, ``_set_active_workspace_for_console_
+          session``'s global branch, ``_console_browser_workspace_records``,
+          and ``archive_workspace``). A missing active workspace is floored
+          to ``DEFAULT_WORKSPACE_ID`` in memory -- the same id ``ensure_
+          default_workspace`` returned for that state -- without writing.
+        * MEMOIZED: the resolution is served from a memo revalidated
+          against the registry's in-memory ``mutation_generation`` (bumped
+          by every workspace-record mutator, from any screen), so a warm
+          keystroke performs zero DB round-trips while a workspace change
+          anywhere -- Console switcher, browser row, session switch,
+          Settings "Set active", Library create, archive -- invalidates it
+          on the very next read. The generation must be a real ``int``
+          before anything is cached: a MagicMock double's auto-attribute
+          compares equal to itself forever and would freeze the memo, so
+          doubles without an integer generation stay on live reads.
+
+        This memo COMPOSES with the task-15452 per-pass derivation memo
+        rather than replacing it: that memo dedupes the provider-selection
+        legs within one synchronous pass, and each pass's single remaining
+        context read is what this cross-pass memo serves.
+        """
         registry_service = getattr(
             self.app_instance, "workspace_registry_service", None
         )
-        if registry_service is not None:
-            try:
+        if registry_service is None:
+            return CONSOLE_GLOBAL_WORKSPACE_ID
+        generation = getattr(registry_service, "mutation_generation", None)
+        if isinstance(generation, bool) or not isinstance(generation, int):
+            generation = None
+        # getattr, not a bare read: `_current_console_workspace_context` is
+        # deliberately callable unbound on duck-typed screen stand-ins (see
+        # test_console_staged_evidence_strip's bundleless-launch pin), which
+        # lack this class-attribute default.
+        memo = getattr(self, "_console_workspace_id_memo", None)
+        if (
+            memo is not None
+            and generation is not None
+            and memo[0] is registry_service
+            and memo[1] == generation
+        ):
+            return memo[2]
+        workspace_id = CONSOLE_GLOBAL_WORKSPACE_ID
+        try:
+            get_active_workspace = getattr(
+                registry_service, "get_active_workspace", None
+            )
+            if callable(get_active_workspace):
+                active_workspace = get_active_workspace()
+                if active_workspace is None:
+                    # Read-only floor: `ensure_default_workspace` used to
+                    # create/activate the built-in Default here and return
+                    # it. Boot wiring and every switch seam keep the
+                    # registry resting on an active workspace, so this
+                    # only covers the moments in between -- same id,
+                    # minus the write.
+                    if generation is not None:
+                        self._console_workspace_id_memo = (
+                            registry_service,
+                            generation,
+                            DEFAULT_WORKSPACE_ID,
+                        )
+                    return DEFAULT_WORKSPACE_ID
+            else:
+                # Reduced test doubles supply only `ensure_default_workspace`;
+                # production always has the read-only accessor above.
                 ensure_default_workspace = getattr(
-                    registry_service,
-                    "ensure_default_workspace",
-                    None,
+                    registry_service, "ensure_default_workspace", None
                 )
-                active_workspace = (
-                    ensure_default_workspace()
-                    if callable(ensure_default_workspace)
-                    else registry_service.get_active_workspace()
-                )
-                candidate = getattr(active_workspace, "workspace_id", None)
-                if candidate:
-                    workspace_id = str(candidate)
-            except Exception:
-                logger.debug(
-                    "Console workspace registry was unavailable for send context"
-                )
+                if not callable(ensure_default_workspace):
+                    return workspace_id
+                active_workspace = ensure_default_workspace()
+            candidate = getattr(active_workspace, "workspace_id", None)
+            if candidate:
+                workspace_id = str(candidate)
+        except Exception:
+            logger.debug(
+                "Console workspace registry was unavailable for send context"
+            )
+            return workspace_id
+        if generation is not None:
+            self._console_workspace_id_memo = (
+                registry_service,
+                generation,
+                workspace_id,
+            )
+        return workspace_id
+
+    def _current_console_workspace_context(self) -> ConsoleWorkspaceContext:
+        """Return explicit workspace policy context for native Console sends.
+
+        Runs on every printable keystroke; the active-workspace resolution
+        is memoized and read-only (see
+        ``_resolve_console_active_workspace_id``), and the staged-launch
+        evidence bundle below is parsed at most once per launch
+        (``evidence_bundle_from_launch`` caches on the launch object).
+
+        Resolution goes through the class, not ``self``: this method is
+        callable unbound on duck-typed screen stand-ins exposing only
+        ``app_instance`` and ``_pending_console_launch_context``, and both
+        legs preserve that contract.
+        """
+        workspace_id = ConsoleWorkspaceController._resolve_console_active_workspace_id(
+            self
+        )
 
         staged_sources: list[ConsoleStagedSource] = []
         pending_launch = self._pending_console_launch_context
@@ -2030,9 +2133,10 @@ class ConsoleWorkspaceController:
                 # disagreeing, and the previous workspace's capabilities
                 # bleeding into a global conversation. The registry's stable
                 # representation of "no explicit workspace" is the built-in
-                # Default (`ensure_default_workspace` floors every context
-                # read to it, deliberately -- capability-less, safe), so a
-                # global conversation lands there, not on bare None.
+                # Default (established here and at the other ensure seams,
+                # deliberately -- capability-less, safe; the read-only
+                # context resolution floors to the same id, TASK-21118), so
+                # a global conversation lands there, not on bare None.
                 if (
                     active_workspace is not None
                     and active_workspace.workspace_id != DEFAULT_WORKSPACE_ID

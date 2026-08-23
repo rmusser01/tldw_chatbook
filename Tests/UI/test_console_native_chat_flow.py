@@ -2570,7 +2570,20 @@ def test_console_provider_selection_carries_active_session_system_prompt():
     assert controller.system_prompt == "Answer only in French."
 
 
-def test_console_provider_selection_restores_default_workspace_when_none_active():
+def test_console_provider_selection_floors_missing_active_workspace_read_only():
+    """No active workspace: the context floors to Default WITHOUT writing.
+
+    TASK-21118 relocated `ensure_default_workspace`'s restore/repair side-
+    effects off the per-keystroke context read (which runs this builder):
+    the read now floors a missing active workspace to the same
+    `DEFAULT_WORKSPACE_ID` the ensure returned -- preserving the
+    capability-less Default identity every policy consumer compares
+    against -- but leaves the registry untouched. The registry is restored
+    at the session-start/workspace-switch seams instead (app wiring's
+    ensure at boot, `set_active_workspace`'s switch-to-Default repair,
+    the Console session-switch and browser seams), which the final ensure
+    below stands in for.
+    """
     app = _build_test_app()
     service = app.workspace_registry_service
     with service.db.transaction() as conn:
@@ -2581,7 +2594,15 @@ def test_console_provider_selection_restores_default_workspace_when_none_active(
     selection = screen._build_console_provider_selection()
 
     assert selection.workspace_context.active_workspace_id == DEFAULT_WORKSPACE_ID
+    # Read-only: the passive read must NOT have healed the registry ...
+    assert service.get_active_workspace() is None
+    # ... that is the ensure seams' job, and it still works.
+    service.ensure_default_workspace()
     assert service.get_active_workspace().workspace_id == DEFAULT_WORKSPACE_ID
+    selection_after = screen._build_console_provider_selection()
+    assert (
+        selection_after.workspace_context.active_workspace_id == DEFAULT_WORKSPACE_ID
+    )
 
 
 def test_console_configured_llamacpp_override_wins_over_provider_api_url():

@@ -710,3 +710,114 @@ def test_v2_migration_dedupes_against_preexisting_suffixed_name(tmp_path: Path) 
 
     assert index_row is not None
     assert len({n.strip().casefold() for n in names}) == len(names)
+
+
+# ---------------------------------------------------------------------------
+# TASK-21118: switch-seam repair + mutation generation
+# ---------------------------------------------------------------------------
+
+
+def _insert_stale_default_binding(db: WorkspaceDB, binding_id: str) -> None:
+    with db.transaction() as conn:
+        conn.execute(
+            """
+            INSERT INTO workspace_runtime_bindings (
+                binding_id,
+                workspace_id,
+                binding_kind,
+                label,
+                locator,
+                status,
+                metadata_json,
+                created_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                binding_id,
+                DEFAULT_WORKSPACE_ID,
+                RuntimeBindingKind.LOCAL_FILESYSTEM.value,
+                "Unsafe local files",
+                "/tmp",
+                RuntimeBindingStatus.READY.value,
+                "{}",
+                "2026-06-08T00:00:00Z",
+                "2026-06-08T00:00:00Z",
+            ),
+        )
+
+
+def test_switching_to_default_strips_stale_runtime_bindings(tmp_path: Path) -> None:
+    """The workspace-switch seam owns the Default-binding repair (TASK-21118).
+
+    The repair used to run inside `ensure_default_workspace` on every
+    Console context read (~1.25x per keystroke). The keystroke path is now
+    read-only, so activating Default must strip stale bindings itself --
+    otherwise a Settings/Console switch straight to Default would leave a
+    capability-granting binding live until the next boot.
+    """
+    service = build_test_registry(tmp_path)
+    service.ensure_default_workspace()
+    service.create_workspace(workspace_id="ws-a", name="Workspace A")
+    service.set_active_workspace("ws-a")
+    _insert_stale_default_binding(service.db, "stale-default-binding")
+
+    service.set_active_workspace(DEFAULT_WORKSPACE_ID)
+
+    assert service.list_runtime_bindings(DEFAULT_WORKSPACE_ID) == ()
+    assert service.get_runtime_binding("stale-default-binding") is None
+
+
+def test_mutation_generation_bumps_on_every_record_mutator(tmp_path: Path) -> None:
+    """Every workspace-record mutator must advance `mutation_generation`.
+
+    The Console keystroke memo revalidates against this counter instead of
+    re-reading SQLite, so a mutator that forgets to bump would serve a
+    STALE workspace context after that mutation -- the exact defect class
+    AC "invalidated by workspace-change events" exists to prevent.
+    """
+    service = build_test_registry(tmp_path)
+
+    generation = service.mutation_generation
+    service.create_workspace(workspace_id="ws-a", name="Workspace A")
+    assert service.mutation_generation > generation
+
+    generation = service.mutation_generation
+    service.set_active_workspace("ws-a")
+    assert service.mutation_generation > generation
+
+    generation = service.mutation_generation
+    service.rename_workspace("ws-a", "Workspace A2")
+    assert service.mutation_generation > generation
+
+    generation = service.mutation_generation
+    service.clear_active_workspace()
+    assert service.mutation_generation > generation
+
+    generation = service.mutation_generation
+    service.ensure_default_workspace()  # restores + activates Default
+    assert service.mutation_generation > generation
+
+    generation = service.mutation_generation
+    service.archive_workspace("ws-a")
+    assert service.mutation_generation > generation
+
+    generation = service.mutation_generation
+    service.unarchive_workspace("ws-a")
+    assert service.mutation_generation > generation
+
+
+def test_mutation_generation_is_stable_across_pure_reads(tmp_path: Path) -> None:
+    """Reads must NOT advance the generation, or the memo never serves a hit."""
+    service = build_test_registry(tmp_path)
+    service.ensure_default_workspace()
+
+    generation = service.mutation_generation
+    service.get_active_workspace()
+    service.get_workspace(DEFAULT_WORKSPACE_ID)
+    service.list_workspaces()
+    # ensure with an active workspace already resting on Default and no
+    # stale bindings changes nothing -- and must therefore bump nothing.
+    service.ensure_default_workspace()
+    assert service.mutation_generation == generation
