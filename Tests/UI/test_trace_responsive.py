@@ -456,14 +456,146 @@ async def test_render_failure_is_payload_safe_and_r_retries_real_worker(
 
 
 @pytest.mark.asyncio
+async def test_render_retry_is_visible_single_flight_and_recovers_after_failure(
+    monkeypatch,
+) -> None:
+    retry_started = threading.Event()
+    release_retry = threading.Event()
+    early_third_started = threading.Event()
+
+    class _BlockedRetryScreen(TrajectoryScreen):
+        attempts = 0
+
+        def _build_row_specs(self):
+            self.attempts += 1
+            if self.attempts == 1:
+                raise RuntimeError("initial render failed")
+            if self.attempts == 2:
+                retry_started.set()
+                release_retry.wait(timeout=5)
+                raise RuntimeError("retry render failed")
+            early_third_started.set()
+            return super()._build_row_specs()
+
+    monkeypatch.setattr(trajectory_screen_module, "WORKER_THRESHOLD", 0)
+    app = _TraceHost()
+    async with app.run_test(size=(60, 18)) as pilot:
+        screen = _BlockedRetryScreen(base_snapshot())
+        await app.push_screen(screen)
+        state_widget = screen.query_one("#trajectory-state", Static)
+        for _ in range(100):
+            if "FAILED" in str(state_widget.render()):
+                break
+            await pilot.pause(0.01)
+
+        await pilot.press("r")
+        for _ in range(100):
+            if retry_started.is_set():
+                break
+            await pilot.pause(0.01)
+        assert retry_started.is_set()
+        try:
+            assert "RETRYING" in str(state_widget.render())
+            assert "RETRYING" in _painted_text(app)
+            hints = str(screen.query_one("#trajectory-hints", Static).render())
+            assert "r retry" not in hints
+
+            await pilot.press("r")
+            for _ in range(50):
+                if early_third_started.is_set():
+                    break
+                await pilot.pause(0.01)
+            assert not early_third_started.is_set()
+            assert screen.attempts == 2
+        finally:
+            release_retry.set()
+
+        for _ in range(100):
+            if "FAILED" in str(state_widget.render()) and not screen._loading:
+                break
+            await pilot.pause(0.01)
+        assert "FAILED" in str(state_widget.render())
+        assert "r retry" in str(screen.query_one("#trajectory-hints", Static).render())
+
+        await pilot.press("r")
+        table = screen.query_one("#trajectory-table", DataTable)
+        for _ in range(100):
+            if table.row_count:
+                break
+            await pilot.pause(0.01)
+        assert table.row_count
+        assert screen.attempts == 3
+        assert screen._failure is None
+        assert screen._loading is False
+        assert screen._retry_target is None
+
+
+@pytest.mark.asyncio
+async def test_successful_render_retry_clears_failure_when_filter_makes_specs_stale(
+    monkeypatch,
+) -> None:
+    retry_started = threading.Event()
+    release_retry = threading.Event()
+
+    class _StaleRetryScreen(TrajectoryScreen):
+        attempts = 0
+
+        def _build_row_specs(self):
+            self.attempts += 1
+            if self.attempts == 1:
+                raise RuntimeError("initial render failed")
+            if self.attempts == 2:
+                retry_started.set()
+                release_retry.wait(timeout=5)
+            return super()._build_row_specs()
+
+    monkeypatch.setattr(trajectory_screen_module, "WORKER_THRESHOLD", 0)
+    app = _TraceHost()
+    async with app.run_test(size=(60, 18)) as pilot:
+        screen = _StaleRetryScreen(base_snapshot())
+        await app.push_screen(screen)
+        state_widget = screen.query_one("#trajectory-state", Static)
+        for _ in range(100):
+            if "FAILED" in str(state_widget.render()):
+                break
+            await pilot.pause(0.01)
+
+        await pilot.press("r")
+        for _ in range(100):
+            if retry_started.is_set():
+                break
+            await pilot.pause(0.01)
+        assert retry_started.is_set()
+        try:
+            screen.query_one("#trajectory-search", Input).value = "checking"
+            await pilot.pause()
+        finally:
+            release_retry.set()
+
+        for _ in range(100):
+            if not screen._retry_in_flight:
+                break
+            await pilot.pause(0.01)
+        assert screen._retry_in_flight is False
+        assert screen._loading is False
+        assert screen._failure is None
+        assert screen._retry_target is None
+
+
+@pytest.mark.asyncio
 async def test_live_failure_is_visible_and_retry_uses_snapshot_builder() -> None:
-    state = {"revision": 1, "fail": True, "calls": 0}
+    retry_started = threading.Event()
+    release_retry = threading.Event()
+    state = {"revision": 1, "fail": True, "block": False, "calls": 0}
     snapshot = base_snapshot()
 
     def build():
         state["calls"] += 1
         if state["fail"]:
             raise RuntimeError("SECRET_LIVE_PAYLOAD")
+        if state["block"]:
+            retry_started.set()
+            release_retry.wait(timeout=5)
         return snapshot
 
     async with _mounted(
@@ -491,7 +623,27 @@ async def test_live_failure_is_visible_and_retry_uses_snapshot_builder() -> None
         assert screen._retry_target == "live"
 
         state["fail"] = False
+        state["block"] = True
         await pilot.press("r")
+        for _ in range(100):
+            if retry_started.is_set():
+                break
+            await pilot.pause(0.01)
+        assert retry_started.is_set()
+        try:
+            assert "RETRYING" in str(state_widget.render())
+            assert "r retry" not in str(
+                screen.query_one("#trajectory-hints", Static).render()
+            )
+            await pilot.press("r")
+            for _ in range(50):
+                if state["calls"] > 2:
+                    break
+                await pilot.pause(0.01)
+            assert state["calls"] == 2
+        finally:
+            state["block"] = False
+            release_retry.set()
         for _ in range(100):
             if "FAILED" not in str(state_widget.render()):
                 break
@@ -666,6 +818,43 @@ async def test_x_clears_search_and_timeline_brush_together() -> None:
 
 
 @pytest.mark.asyncio
+async def test_search_focus_keeps_x_as_text_until_escape_enables_recovery() -> None:
+    async with _mounted(base_snapshot(), size=(60, 18)) as (app, pilot, screen):
+        await pilot.press("/")
+        search = screen.query_one("#trajectory-search", Input)
+        table = screen.query_one("#trajectory-table", DataTable)
+        assert search.has_focus
+        await pilot.press("n", "o", "p", "e")
+        domain = screen._timeline.model.domain
+        assert domain is not None
+        screen._timeline.apply_brush((domain[1] + 100, domain[1] + 200))
+        await pilot.pause()
+
+        state_widget = screen.query_one("#trajectory-state", Static)
+        assert "Esc then x clear filters" in str(state_widget.render())
+        assert "x clear filters" not in str(
+            screen.query_one("#trajectory-hints", Static).render()
+        )
+
+        await pilot.press("x")
+        await pilot.pause()
+        assert search.value == "nopex"
+        assert screen._brush_range is not None
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert table.has_focus
+        assert "Esc then" not in str(state_widget.render())
+        assert "x clear filters" in str(state_widget.render())
+
+        await pilot.press("x")
+        await pilot.pause()
+        assert search.value == ""
+        assert screen._query == ""
+        assert screen._brush_range is None
+
+
+@pytest.mark.asyncio
 async def test_inspector_scroll_survives_same_event_refresh_and_resets_on_change() -> (
     None
 ):
@@ -729,6 +918,8 @@ async def test_empty_modes_and_compound_state_truth_are_painted_at_60_columns() 
         assert "LIVE" in state
         assert "FOLLOWING" in state
         assert "EMPTY" in state
+        assert "Waiting for first event" in state
+        assert "o open trace" not in state
         await pilot.press("i", "enter")
         inspector = screen.query_one("#trajectory-inspector", VerticalScroll)
         assert not inspector.display
@@ -772,6 +963,26 @@ async def test_empty_modes_and_compound_state_truth_are_painted_at_60_columns() 
             "x clear filters",
         ):
             assert expected in painted
+
+
+@pytest.mark.asyncio
+async def test_compact_state_prioritizes_filter_recovery_before_secondary_facts() -> (
+    None
+):
+    record = replace(
+        _untimed_snapshot().turns[0].records[0],
+        field_states={"payload": "capture_failed"},
+    )
+    async with _mounted(
+        _snapshot_with_records([record]), size=(60, 18), shared_trace=True
+    ) as (app, pilot, screen):
+        screen.query_one("#trajectory-search", Input).value = "no-match"
+        await pilot.pause()
+        state = str(screen.query_one("#trajectory-state", Static).render())
+        assert state.index("READ-ONLY SHARED TRACE") < state.index("x clear filters")
+        assert state.index("x clear filters") < state.index("INCOMPLETE")
+        assert state.index("INCOMPLETE") < state.index("NO TIMING")
+        assert "x clear filters" in _painted_text(app)
 
 
 @pytest.mark.asyncio
@@ -842,11 +1053,46 @@ async def test_legacy_identity_survives_insertion_when_provider_distinguishes_ro
 
 
 @pytest.mark.asyncio
-async def test_six_digit_record_identity_is_fully_painted_without_horizontal_scroll() -> (
-    None
-):
+async def test_legacy_identity_survives_pending_to_completed_mutation() -> None:
+    pending = replace(
+        _legacy_record(1, "provider-a"),
+        status="pending",
+        content_preview="working",
+        completed_at=None,
+        payload={"phase": "pending"},
+        field_states={"payload": "observed"},
+    )
+    async with _mounted(_snapshot_with_records([pending])) as (app, pilot, screen):
+        table = screen.query_one("#trajectory-table", DataTable)
+        pending_key = screen._record_key(pending)
+        table.move_cursor(row=table.get_row_index(pending_key), animate=False)
+        screen._follow = False
+
+        completed = replace(
+            pending,
+            status="completed",
+            content_preview="finished",
+            completed_at=15.0,
+            payload={"phase": "completed", "result": "done"},
+            field_states={"payload": "redacted"},
+        )
+        screen._apply_live_snapshot(_snapshot_with_records([completed]))
+        await pilot.pause()
+
+        assert screen._record_key(completed) == pending_key
+        assert screen._cursor_key() == pending_key
+        selected = screen._row_records[pending_key]
+        assert selected is not None
+        assert selected.status == "completed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", VIEWPORTS)
+async def test_six_digit_record_identity_is_fully_painted_without_horizontal_scroll(
+    size,
+) -> None:
     record = replace(_numbered_records(1)[0], seq=123456)
-    async with _mounted(_snapshot_with_records([record]), size=(60, 18)) as (
+    async with _mounted(_snapshot_with_records([record]), size=size) as (
         app,
         pilot,
         screen,

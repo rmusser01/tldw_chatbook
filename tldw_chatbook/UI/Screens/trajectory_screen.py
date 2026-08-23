@@ -57,7 +57,6 @@ import hashlib
 import json
 import time
 from collections.abc import Callable
-from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 
@@ -108,7 +107,7 @@ _NARROW_COLUMNS = (
 )
 _COMPACT_COLUMNS = _NARROW_COLUMNS + (("Tokens", 10), ("Duration", 10))
 _WIDE_COLUMNS = (
-    ("#", 4),
+    ("#", 6),
     ("Event", 14),
     ("Summary", 26),
     ("State", 10),
@@ -325,6 +324,7 @@ class TrajectoryScreen(ModalScreen[None]):
         self._loading = False
         self._failure: str | None = None
         self._retry_target: str | None = None
+        self._retry_in_flight = False
         #: The always-mounted timeline strip (created here so filters,
         #: pagination growth and selection sync can reach it pre-mount).
         self._timeline = TrajectoryTimeline(id="trajectory-timeline")
@@ -447,14 +447,24 @@ class TrajectoryScreen(ModalScreen[None]):
                 if record.event_id:
                     base = record.event_id
                 else:
-                    identity = asdict(record)
-                    identity.pop("seq", None)
-                    identity.pop("event_id", None)
                     material = json.dumps(
-                        identity,
+                        {
+                            "conversation": record.conversation_id,
+                            "turn": record.turn_id,
+                            "message": record.message_id,
+                            "kind": record.kind,
+                            "source_seq": record.source_seq,
+                            "run": record.run_id,
+                            "parent": record.parent_event_id,
+                            "source": record.source_event_id,
+                            "replacement": record.replacement_event_id,
+                            "actor_kind": record.actor_kind,
+                            "actor_id": record.actor_id,
+                            "model": record.model,
+                            "provider": record.provider,
+                        },
                         sort_keys=True,
                         ensure_ascii=False,
-                        default=str,
                     )
                     digest = hashlib.sha256(material.encode("utf-8")).hexdigest()[:20]
                     base = f"legacy:{digest}"
@@ -498,6 +508,10 @@ class TrajectoryScreen(ModalScreen[None]):
         total = self._total_records
         filtering = bool(self._query) or self._brush_range is not None
         visible = self._visible_record_count if self._ledger_rendered else total
+        try:
+            search_focused = self.query_one("#trajectory-search", Input).has_focus
+        except Exception:  # noqa: BLE001 - state can update before mount
+            search_focused = False
         parts: list[str] = []
         if self._shared_trace:
             parts.append("READ-ONLY SHARED TRACE")
@@ -505,23 +519,31 @@ class TrajectoryScreen(ModalScreen[None]):
             parts.extend(("LIVE", "FOLLOWING" if self._follow else "PAUSED"))
             if not self._follow:
                 parts.append("f resume")
-        if self._failure is not None:
+        if self._retry_in_flight:
+            parts.extend(("RETRYING", "Retry in progress…"))
+        elif self._failure is not None:
             parts.extend(("FAILED", self._failure, "r retry"))
         elif self._loading:
             parts.extend(("LOADING", "Building trace ledger…"))
         elif not parts and total:
             parts.append("READY")
         if total == 0:
-            parts.extend(("EMPTY", "No trace events yet", "o open trace"))
-        if self._snapshot_is_incomplete:
-            parts.append("INCOMPLETE")
-        if filtering:
-            if visible:
-                parts.extend(("FILTERED", f"{visible}/{total} events"))
+            if self._snapshot_builder is not None:
+                parts.extend(("EMPTY", "Waiting for first event"))
             else:
-                parts.extend(("NO MATCHES", f"0/{total} events", "x clear filters"))
+                parts.extend(("EMPTY", "No trace events yet", "o open trace"))
+        if filtering:
+            recovery = (
+                "Esc then x clear filters" if search_focused else "x clear filters"
+            )
+            if visible:
+                parts.extend(("FILTERED", f"{visible}/{total} events", recovery))
+            else:
+                parts.extend(("NO MATCHES", f"0/{total} events", recovery))
         elif total:
             parts.append(f"{total} events")
+        if self._snapshot_is_incomplete:
+            parts.append("INCOMPLETE")
         if total and not self._snapshot_has_timing:
             parts.extend(("NO TIMING", "Duration unavailable"))
         try:
@@ -603,6 +625,7 @@ class TrajectoryScreen(ModalScreen[None]):
             self._loading = False
             self._failure = None
             self._retry_target = None
+            self._retry_in_flight = False
         self._turn_numbers = {
             turn.turn_id: index + 1 for index, turn in enumerate(self._turns)
         }
@@ -726,6 +749,7 @@ class TrajectoryScreen(ModalScreen[None]):
         if not self._alive:
             return
         self._loading = False
+        self._retry_in_flight = False
         self._failure = message
         self._retry_target = retry_target
         self._refresh_state()
@@ -948,6 +972,13 @@ class TrajectoryScreen(ModalScreen[None]):
         if not self._alive:
             return
         if generation is not None and generation != self._render_generation:
+            if self._retry_in_flight and self._retry_target == "render":
+                self._loading = False
+                self._failure = None
+                self._retry_target = None
+                self._retry_in_flight = False
+                self._refresh_state()
+                self._refresh_hints()
             return
         table = self.query_one("#trajectory-table", DataTable)
         previous_key = self._pending_restore_key
@@ -993,6 +1024,7 @@ class TrajectoryScreen(ModalScreen[None]):
             if self._retry_target == "render":
                 self._failure = None
                 self._retry_target = None
+                self._retry_in_flight = False
         self._refresh_state()
         if self.query_one("#trajectory-inspector", VerticalScroll).display:
             self._refresh_inspector()
@@ -1010,14 +1042,16 @@ class TrajectoryScreen(ModalScreen[None]):
             inspector_open = self.query_one(
                 "#trajectory-inspector", VerticalScroll
             ).display
+            search_focused = self.query_one("#trajectory-search", Input).has_focus
         except Exception:  # noqa: BLE001 - pre-mount refresh
             inspector_open = False
+            search_focused = False
         has_cursor_target = bool(self._visible_keys)
         has_turn_target = any(key != LOAD_EARLIER_ROW_KEY for key in self._visible_keys)
         filtering = bool(self._query) or self._brush_range is not None
         if self._detail_full:
             pairs = [("i", "close"), ("d", "split view")]
-            if self._failure is not None:
+            if self._failure is not None and not self._retry_in_flight:
                 pairs.append(("r", "retry"))
             if filtering:
                 pairs.append(("x", "clear filters"))
@@ -1030,8 +1064,11 @@ class TrajectoryScreen(ModalScreen[None]):
                 and (key != "e" or self._hidden_earlier > 0)
                 and (key != "f" or self._snapshot_builder is not None)
                 and (key != "d" or inspector_open)
-                and (key != "r" or self._failure is not None)
-                and (key != "x" or filtering)
+                and (
+                    key != "r"
+                    or (self._failure is not None and not self._retry_in_flight)
+                )
+                and (key != "x" or (filtering and not search_focused))
             ]
         text = " · ".join(f"{key} {label}" for key, label in pairs)
         try:
@@ -1361,6 +1398,8 @@ class TrajectoryScreen(ModalScreen[None]):
         search = self.query_one("#trajectory-search", Input)
         if search.has_focus:
             self.query_one("#trajectory-table", DataTable).focus()
+            self.call_after_refresh(self._refresh_state)
+            self.call_after_refresh(self._refresh_hints)
             return
         self.dismiss(None)
 
@@ -1437,6 +1476,8 @@ class TrajectoryScreen(ModalScreen[None]):
 
         if not self._query and self._brush_range is None:
             return
+        if self.query_one("#trajectory-search", Input).has_focus:
+            return
         self._query = ""
         self.query_one("#trajectory-search", Input).value = ""
         self._brush_range = None
@@ -1447,8 +1488,9 @@ class TrajectoryScreen(ModalScreen[None]):
         """`r`: retry only the failed render or live-refresh operation."""
 
         target = self._retry_target
-        if target is None:
+        if target is None or self._retry_in_flight:
             return
+        self._retry_in_flight = True
         self._loading = True
         self._refresh_state()
         self._refresh_hints()
@@ -1467,7 +1509,12 @@ class TrajectoryScreen(ModalScreen[None]):
             )
             return
         self._render_generation += 1
-        self.run_worker(self._render_worker, thread=True, group="trajectory-ledger")
+        self.run_worker(
+            self._render_worker,
+            thread=True,
+            group="trajectory-ledger",
+            exclusive=True,
+        )
 
     # -- import (task-16320: open shared traces read-only) ----------------------
 

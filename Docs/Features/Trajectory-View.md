@@ -35,7 +35,8 @@ The line under the title makes the current mode explicit:
   information is absent instead of leaving a blank ledger.
 - Search and time filters show the visible/total event count; `x` clears both.
 - A failed ledger render or live refresh shows `FAILED · … · r retry` without
-  exposing payload or exception text.
+  exposing payload or exception text. While the single retry worker runs, the
+  state changes to `RETRYING` and another retry cannot be started.
 
 ## The responsive ledger
 
@@ -81,7 +82,8 @@ position when the same stable event remains selected.
 payloads (so you can find a turn by a path a tool touched or text deep
 inside a result). Matching collapses the ledger to hits; turn headers
 survive while any child matches. Press `x` to clear both search and timeline
-filters.
+filters. While the search box is focused, `x` remains ordinary query text;
+press `escape`, then `x`, to clear filters.
 
 ## The timeline
 
@@ -110,7 +112,7 @@ records in.
 
 ## Sharing traces: export and import
 
-Trajectories can be exported to a single portable JSON file and opened on
+Traces can be exported to a single portable JSON file and opened on
 another machine (or attached to a bug report):
 
 - **Export** produces a versioned `tldw-trajectory` document containing
