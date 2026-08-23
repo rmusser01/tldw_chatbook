@@ -26,6 +26,7 @@ from tldw_chatbook.Persona_Buddy import (
 from tldw_chatbook.Widgets.Persona_Widgets.persona_buddy_widget import (
     PersonaBuddyWidget,
 )
+from tldw_chatbook.Widgets.Persona_Widgets import persona_buddy_widget
 
 
 async def _wait_until(predicate, *, timeout: float = 2.0) -> None:
@@ -1174,7 +1175,12 @@ async def test_keyboard_move_resize_reset_collapse_close_exact_bindings():
         assert buddy.absolute_offset.x == max(0, start.x - 1)
         await pilot.press("j", "k", "l")
         await pilot.press("H", "J", "K", "L")
-        await _wait_until(lambda: len(controller.persisted) >= 8)
+        # Geometry writes are coalesced (TASK-21122): the eight presses land in
+        # memory immediately and share one debounced durable write.
+        expected = controller.preferences.geometry
+        await _wait_until(lambda: controller.persisted)
+        await _wait_until(lambda: controller.persisted[-1].geometry == expected)
+        assert len(controller.persisted) < 8
         await pilot.press("0")
         assert buddy.absolute_offset == Offset(
             app.size.width - buddy.region.width,
@@ -2037,3 +2043,358 @@ async def test_capture_is_released_when_widget_unmounts_mid_drag():
         assert app.mouse_captured is buddy
         await buddy.remove()
         assert app.mouse_captured is None
+
+
+class _UnavailableResolutionController(_FakeController):
+    """Always resolve an unavailable visual, counting every costly attempt."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.resolve_calls = 0
+        self.visual = replace(self.visual, available=False, reason="unavailable")
+
+    async def resolve_current_visual(self, *, cols: int, lines: int):
+        self.resolve_calls += 1
+        return self.visual
+
+
+def _count_buddy_static_updates(monkeypatch) -> list[int]:
+    """Count every `Static.update` issued inside the Buddy overlay subtree."""
+
+    counter = [0]
+    original = Static.update
+
+    def counted(self, *args, **kwargs):
+        node = self
+        while node is not None:
+            if isinstance(node, PersonaBuddyWidget):
+                counter[0] += 1
+                break
+            node = getattr(node, "_parent", None)
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Static, "update", counted)
+    return counter
+
+
+@pytest.mark.asyncio
+async def test_static_visual_stops_repainting_at_steady_state(monkeypatch):
+    """TASK-21122: the 10 Hz poll must not repaint an unchanged static view."""
+
+    counter = _count_buddy_static_updates(monkeypatch)
+    controller = _FakeController(animate=False, frames=("STATIC-A",))
+    app = _BuddyApp(controller)
+    async with app.run_test(size=(80, 24)):
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        await _wait_until(lambda: "STATIC-A" in _compositor_text(app.screen))
+        await asyncio.sleep(0.4)
+        counter[0] = 0
+        await asyncio.sleep(0.8)
+        assert counter[0] == 0, f"{counter[0]} unchanged repaints in 0.8 s"
+        assert buddy._frame_timer is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["state", "collapsed", "visual", "focus"])
+async def test_real_changes_still_repaint_within_one_poll(monkeypatch, change: str):
+    """Every gated input still opens the gate on the next poll tick."""
+
+    counter = _count_buddy_static_updates(monkeypatch)
+    controller = _FakeController(animate=False, frames=("STATIC-A",))
+    app = _BuddyApp(controller)
+    async with app.run_test(size=(80, 24)):
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        await _wait_until(lambda: "STATIC-A" in _compositor_text(app.screen))
+        await asyncio.sleep(0.4)
+        counter[0] = 0
+        baked = buddy._painted_authority
+
+        if change == "state":
+            controller.state = "error"
+            controller.generation += 1
+            await _wait_until(
+                lambda: "Error" in _compositor_text(app.screen), timeout=1.0
+            )
+        elif change == "collapsed":
+            controller.apply_preferences_patch(collapsed=True)
+            await _wait_until(
+                lambda: (
+                    buddy.query_one("#persona-buddy-collapse", Button).tooltip == "Open"
+                ),
+                timeout=1.0,
+            )
+        elif change == "focus":
+            buddy.query_one("#persona-buddy-collapse", Button).focus(
+                scroll_visible=False
+            )
+            await _wait_until(
+                lambda: (
+                    str(buddy.query_one("#persona-buddy-collapse", Button).label)
+                    == "Fold"
+                ),
+                timeout=1.0,
+            )
+        else:
+            controller.visual = _visual_with_frame(
+                controller, label="STATIC-Z", width=24, height=10
+            )
+            controller.generation += 1
+            await _wait_until(
+                lambda: "STATIC-Z" in _compositor_text(app.screen), timeout=1.0
+            )
+        # The focus leg is applied eagerly by `on_descendant_focus`, so wait for
+        # the poll to observe it rather than racing that handler.
+        await _wait_until(lambda: buddy._painted_authority != baked, timeout=1.0)
+        assert counter[0] > 0
+
+
+@pytest.mark.asyncio
+async def test_animated_visual_repaints_only_on_the_frame_clock(monkeypatch):
+    """The frame timer stays the sole animation clock after the poll is gated."""
+
+    counter = _count_buddy_static_updates(monkeypatch)
+    controller = _FakeController(
+        animate=True,
+        frames=("ANIM-A", "ANIM-B", "ANIM-C"),
+        durations=(100, 100, 100),
+        loop=True,
+    )
+    app = _BuddyApp(controller)
+    async with app.run_test(size=(80, 24)):
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        await _wait_until(lambda: "ANIM-A" in _compositor_text(app.screen))
+        counter[0] = 0
+        seen: set[int] = set()
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + 1.0
+        while loop.time() < deadline:
+            seen.add(buddy.frame_index)
+            await asyncio.sleep(0.02)
+        assert seen == {0, 1, 2}
+        # ~10 painted frames/s, not 10 painted frames/s plus 10 poll repaints/s.
+        assert counter[0] < 15, counter[0]
+
+
+def test_resolution_backoff_ladder_doubles_to_a_two_second_cap_and_stops():
+    """TASK-21122: pin the ladder itself, not just "some" backoff."""
+
+    widget = PersonaBuddyWidget(
+        controller=_FakeController(),
+        view_generation=1,
+        reconcile=lambda: None,
+    )
+    authority = ("authority",)
+    delays: list[float] = []
+    while True:
+        delay = widget._register_resolution_retry(authority)
+        if delay is None:
+            break
+        delays.append(delay)
+        # An uncapped attempt count would spin here forever.
+        assert len(delays) <= 32, "retry ladder is not capped"
+    assert delays == [0.1, 0.2, 0.4, 0.8, 1.6, 2.0, 2.0, 2.0]
+    assert sum(delays) < 10.0
+    # A different authority starts a fresh ladder.
+    assert widget._register_resolution_retry(("other",)) == 0.1
+
+
+@pytest.mark.asyncio
+async def test_unavailable_resolution_retries_back_off_and_stop():
+    """TASK-21122: an unconfirmed-unavailable visual must not retry at 10 Hz."""
+
+    controller = _UnavailableResolutionController()
+    app = _BuddyApp(controller)
+    async with app.run_test(size=(80, 24)):
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        await _wait_until(lambda: controller.resolve_calls >= 1)
+        # 10 Hz over 1.2 s would be ~12 attempts; the capped 0.1 -> 2 s ladder
+        # allows at most four inside the same window.
+        await asyncio.sleep(1.2)
+        assert 1 <= controller.resolve_calls <= 4, controller.resolve_calls
+        assert buddy._retry_attempts >= 1
+        assert buddy._retry_attempts <= persona_buddy_widget._MAX_RESOLUTION_RETRIES
+
+
+@pytest.mark.asyncio
+async def test_exhausted_retries_are_not_respawned_by_the_poll(monkeypatch):
+    """TASK-21122: the `_ensure_resolution` backoff guard is load-bearing.
+
+    Without it, a retry worker that has run out of attempts is restarted by
+    the next 100 ms poll tick -- restoring the resolve storm this task exists
+    to kill.
+    """
+
+    monkeypatch.setattr(persona_buddy_widget, "_MAX_RESOLUTION_RETRIES", 2)
+    monkeypatch.setattr(persona_buddy_widget, "_RESOLUTION_RETRY_BASE_SECONDS", 0.02)
+    monkeypatch.setattr(persona_buddy_widget, "_RESOLUTION_RETRY_MAX_SECONDS", 0.04)
+    controller = _UnavailableResolutionController()
+    app = _BuddyApp(controller)
+    async with app.run_test(size=(80, 24)):
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        await _wait_until(lambda: buddy._retry_attempts >= 2, timeout=2.0)
+        await _wait_until(
+            lambda: (
+                buddy._resolution_worker is not None
+                and buddy._resolution_worker.is_finished
+            ),
+            timeout=2.0,
+        )
+        settled = controller.resolve_calls
+        await asyncio.sleep(0.6)
+        assert controller.resolve_calls == settled, (
+            f"{controller.resolve_calls - settled} respawned resolves in 0.6 s"
+        )
+
+
+@pytest.mark.asyncio
+async def test_post_reconcile_retry_backs_off_when_authority_did_not_move(
+    monkeypatch,
+):
+    """TASK-21122: the second retry path had no delay at all before this task."""
+
+    monkeypatch.setattr(persona_buddy_widget, "_MAX_RESOLUTION_RETRIES", 3)
+    monkeypatch.setattr(persona_buddy_widget, "_RESOLUTION_RETRY_BASE_SECONDS", 0.02)
+    monkeypatch.setattr(persona_buddy_widget, "_RESOLUTION_RETRY_MAX_SECONDS", 0.04)
+
+    class _ConfirmingScreen(_BuddyScreen):
+        """Confirm unavailable, but never mark the authority confirmed."""
+
+        def confirm_persona_buddy_unavailable(self, **_kwargs) -> bool:
+            return True
+
+        def is_persona_buddy_confirmed_unavailable(self, *_args) -> bool:
+            return False
+
+    controller = _UnavailableResolutionController()
+    app = _BuddyApp(controller)
+    app.buddy_screen = _ConfirmingScreen(controller)
+    async with app.run_test(size=(80, 24)):
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        await _wait_until(lambda: controller.resolve_calls >= 1)
+        await asyncio.sleep(0.6)
+        # Ladder is 3 attempts; an unbacked-off `continue` re-resolves as fast
+        # as the event loop allows.
+        assert controller.resolve_calls <= 5, controller.resolve_calls
+        assert buddy._retry_attempts >= 1
+
+
+@pytest.mark.asyncio
+async def test_mouse_resize_into_compact_repaints_from_geometry_alone():
+    """TASK-21122: `preferences.geometry` is load-bearing in the paint gate.
+
+    A mouse drag never patches the controller until mouse-up, so once the
+    interaction flag has baked into the painted authority the working
+    geometry is the only member that can move -- and only the poll's
+    `_sync_compact_state` applies the compact class.
+    """
+
+    controller = _FakeController()
+    app = _BuddyApp(controller)
+    async with app.run_test(size=(80, 24)):
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        await _wait_until(lambda: buddy.region.width == 28)
+        assert not buddy.has_class("persona-buddy-compact")
+        corner_x = buddy.region.right - 1
+        corner_y = buddy.region.bottom - 1
+        buddy.on_mouse_down(_mouse(events.MouseDown, x=corner_x, y=corner_y))
+        await asyncio.sleep(0.25)
+        baked = buddy._painted_authority
+        assert buddy._interaction is not None
+
+        buddy.on_mouse_move(_mouse(events.MouseMove, x=corner_x - 20, y=corner_y - 10))
+        await _wait_until(lambda: buddy.has_class("persona-buddy-compact"), timeout=1.0)
+        assert buddy._painted_authority != baked
+        assert controller.persisted == []
+        buddy.on_mouse_up(_mouse(events.MouseUp, x=corner_x - 20, y=corner_y - 10))
+
+
+@pytest.mark.asyncio
+async def test_a_failed_paint_is_not_recorded_as_painted():
+    """TASK-21122: recording the authority before the paint would skip a retry."""
+
+    controller = _FakeController(animate=False, frames=("STATIC-A",))
+    app = _BuddyApp(controller)
+    async with app.run_test(size=(80, 24)):
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        await _wait_until(lambda: "STATIC-A" in _compositor_text(app.screen))
+        await asyncio.sleep(0.3)
+
+        original = buddy._paint_frame
+        baked = buddy._painted_authority
+
+        def failing_paint() -> None:
+            raise RuntimeError("paint failed")
+
+        # No awaits in this block: the 10 Hz poll cannot interleave, so the
+        # raising paint is only ever seen by the explicit call below.
+        buddy._paint_frame = failing_paint
+        controller.state = "error"
+        controller.generation += 1
+        with pytest.raises(RuntimeError):
+            buddy.refresh_from_controller()
+        assert buddy._painted_authority == baked
+        buddy._paint_frame = original
+
+        buddy.refresh_from_controller()
+        assert buddy._painted_authority != baked
+        assert "Error" in _compositor_text(app.screen)
+
+
+@pytest.mark.asyncio
+async def test_superseding_persist_discards_the_pending_geometry_debounce():
+    """TASK-21122: the merged snapshot already carries the pending geometry."""
+
+    controller = _FakeController()
+    app = _BuddyApp(controller)
+    async with app.run_test(size=(100, 30)):
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        await _wait_until(lambda: buddy.region.width == 28)
+        controller.persisted.clear()
+
+        buddy.action_move_left()
+        moved = controller.preferences.geometry
+        buddy.action_toggle_collapse()
+        await _wait_until(lambda: controller.persisted)
+        await asyncio.sleep(0.5)
+
+        assert len(controller.persisted) == 1, len(controller.persisted)
+        assert controller.persisted[-1].geometry == moved
+        assert controller.persisted[-1].collapsed is True
+
+
+@pytest.mark.asyncio
+async def test_held_geometry_keys_coalesce_into_one_durable_write():
+    """TASK-21122: key repeat must not queue one config write per keypress."""
+
+    controller = _FakeController()
+    app = _BuddyApp(controller)
+    async with app.run_test(size=(100, 30)) as pilot:
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        await _wait_until(lambda: buddy.region.width == 28)
+        buddy.focus(scroll_visible=False)
+        controller.persisted.clear()
+        for _ in range(20):
+            await pilot.press("l")
+        expected = controller.preferences.geometry
+        assert expected.x == buddy.absolute_offset.x
+        await _wait_until(lambda: controller.persisted)
+        await _wait_until(lambda: controller.persisted[-1].geometry == expected)
+        assert len(controller.persisted) <= 2, len(controller.persisted)
+
+
+@pytest.mark.asyncio
+async def test_pending_geometry_write_is_flushed_on_unmount():
+    """A debounced geometry write still lands when the view goes away."""
+
+    controller = _FakeController()
+    app = _BuddyApp(controller)
+    async with app.run_test(size=(100, 30)):
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        await _wait_until(lambda: buddy.region.width == 28)
+        controller.persisted.clear()
+        buddy.action_move_left()
+        expected = controller.preferences.geometry
+        assert controller.persisted == []
+        await buddy.remove()
+        await _wait_until(lambda: controller.persisted)
+        assert controller.persisted[-1].geometry == expected

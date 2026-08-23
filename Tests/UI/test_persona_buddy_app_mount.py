@@ -531,3 +531,82 @@ async def test_blocked_close_and_stale_geometry_merge_immediately_and_durably():
         assert persisted[-1] == final
         assert final.open is False
         assert final.geometry == current.geometry
+
+
+class _ShutdownOrderBuddyApp(_BuddyApp):
+    """Reproduce `TldwCli`'s exit order: Buddy drain, then screen teardown.
+
+    `TldwCli._shutdown` runs `_shutdown_app_owned_lifecycles()` -- which ends
+    the Buddy controller -- BEFORE `super()._shutdown()` closes screens, so
+    the widget's own `on_unmount` runs against a controller that has already
+    closed admission. A fake controller has no shutdown gate and structurally
+    cannot show this (TASK-21122 review, MAJOR-1).
+    """
+
+    _shutdown_persona_buddy = TldwCli._shutdown_persona_buddy
+    _flush_persona_buddy_geometry = getattr(
+        TldwCli, "_flush_persona_buddy_geometry", None
+    )
+
+    def __init__(self, preferences: PersonaBuddyPreferences) -> None:
+        super().__init__(preferences)
+        # `_shutdown_persona_buddy` peeks the lazy slot, not the property.
+        self._persona_buddy_controller = self.persona_buddy_controller
+        self._persona_buddy_shutdown_task = None
+
+    async def _shutdown(self) -> None:
+        await self._shutdown_persona_buddy()
+        await super()._shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("quit_after", [0.05, 0.15, 0.40])
+async def test_debounced_geometry_survives_the_real_shutdown_order(quit_after: float):
+    """TASK-21122: quitting inside the debounce window must not lose the nudge.
+
+    0.05 s and 0.15 s land inside the 250 ms debounce (the window that used to
+    drop the write and raise `WorkerFailed`); 0.40 s is past it, where the
+    timer has already fired. All three must be durable.
+    """
+
+    app = _ShutdownOrderBuddyApp(_enabled_preferences())
+    persisted: list[PersonaBuddyPreferences] = []
+
+    def recording_writer(preferences: PersonaBuddyPreferences) -> bool:
+        persisted.append(preferences)
+        return True
+
+    controller = app.persona_buddy_controller
+    controller._preference_writer = recording_writer
+    async with app.run_test(size=(100, 30)):
+        view = app.screen.query_one(PersonaBuddyWidget)
+        await _wait_until(lambda: view.region.width > 0)
+        persisted.clear()
+        view.action_move_left()
+        expected = controller.current_preferences().geometry
+        assert persisted == []
+        await asyncio.sleep(quit_after)
+
+    assert app._exception is None, app._exception
+    assert persisted, "debounced geometry write was lost at shutdown"
+    assert persisted[-1].geometry == expected
+
+
+@pytest.mark.asyncio
+async def test_unmount_after_controller_shutdown_raises_no_worker_error():
+    """A closed controller must not turn the unmount flush into a traceback."""
+
+    app = _ShutdownOrderBuddyApp(_enabled_preferences())
+    controller = app.persona_buddy_controller
+    controller._preference_writer = lambda _preferences: True
+    async with app.run_test(size=(100, 30)) as pilot:
+        view = app.screen.query_one(PersonaBuddyWidget)
+        await _wait_until(lambda: view.region.width > 0)
+        # Close admission first, THEN arm a debounce and unmount: any persist
+        # attempt from here raises `persona_buddy_shutdown`.
+        await controller.shutdown()
+        view.action_move_left()
+        await view.remove()
+        await pilot.pause()
+
+    assert app._exception is None, app._exception

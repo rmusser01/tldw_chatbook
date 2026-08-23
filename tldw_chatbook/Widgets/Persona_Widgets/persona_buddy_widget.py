@@ -36,6 +36,10 @@ _BOUNDARY_SIZE = 2
 _COMPACT_HEIGHT = 1
 _RESIZE_GRIP_WIDTH = 2
 _POLL_SECONDS = 0.10
+_GEOMETRY_PERSIST_DEBOUNCE_SECONDS = 0.25
+_RESOLUTION_RETRY_BASE_SECONDS = 0.10
+_RESOLUTION_RETRY_MAX_SECONDS = 2.0
+_MAX_RESOLUTION_RETRIES = 8
 _ACTIONABLE_ALERTS = {
     "approval_needed": "Approval needed",
     "error": "Error",
@@ -234,6 +238,12 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         self._resolution_worker: Worker[None] | None = None
         self._resolved_authority: tuple[object, ...] | None = None
         self._requested_authority: tuple[object, ...] | None = None
+        self._painted_authority: tuple[object, ...] | None = None
+        self._retry_authority: tuple[object, ...] | None = None
+        self._retry_attempts = 0
+        self._retry_ready_at = 0.0
+        self._geometry_persist_timer: Timer | None = None
+        self._pending_geometry_revision: int | None = None
         self._interaction: tuple[str, int, int, PersonaBuddyGeometry] | None = None
         self._last_screen_size: tuple[int, int] | None = None
         self._next_frame_at = 0.0
@@ -274,6 +284,7 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         if self._poll_timer is not None:
             self._poll_timer.stop()
         self._stop_frame_timer()
+        self._flush_geometry_persist()
         if self._resolution_worker is not None:
             self._resolution_worker.cancel()
 
@@ -373,7 +384,8 @@ class PersonaBuddyWidget(Widget, can_focus=True):
                     visual=visual,
                 ):
                     self._resolved_authority = None
-                    await asyncio.sleep(_POLL_SECONDS)
+                    if not await self._await_resolution_retry(authority):
+                        return
                     continue
                 pending = self._reconcile()
                 removed = False
@@ -395,10 +407,60 @@ class PersonaBuddyWidget(Widget, can_focus=True):
                 if callable(confirmed) and confirmed(
                     self._controller, current_snapshot
                 ):
+                    self._clear_resolution_retry()
                     return
                 self._resolved_authority = None
+                if self._resolution_authority(current_snapshot) == authority:
+                    # Nothing moved: repeating the identical resolve immediately
+                    # is a tight spin (TASK-21122).
+                    if not await self._await_resolution_retry(authority):
+                        return
                 continue
+            self._clear_resolution_retry()
             return
+
+    def _clear_resolution_retry(self) -> None:
+        """Forget backoff bookkeeping once an authority settles."""
+
+        self._retry_authority = None
+        self._retry_attempts = 0
+        self._retry_ready_at = 0.0
+
+    def _register_resolution_retry(self, authority: tuple[object, ...]) -> float | None:
+        """Return the next capped backoff delay, or None once retries run out."""
+
+        now = time.monotonic()
+        if authority != self._retry_authority:
+            self._retry_authority = authority
+            self._retry_attempts = 0
+        if self._retry_attempts >= _MAX_RESOLUTION_RETRIES:
+            self._retry_ready_at = now
+            return None
+        delay = min(
+            _RESOLUTION_RETRY_MAX_SECONDS,
+            _RESOLUTION_RETRY_BASE_SECONDS * float(2**self._retry_attempts),
+        )
+        self._retry_attempts += 1
+        self._retry_ready_at = now + delay
+        return delay
+
+    async def _await_resolution_retry(self, authority: tuple[object, ...]) -> bool:
+        """Sleep one capped backoff step; return False when retries are spent."""
+
+        delay = self._register_resolution_retry(authority)
+        if delay is None:
+            return False
+        await asyncio.sleep(delay)
+        return True
+
+    def _resolution_retry_is_pending(self, authority: tuple[object, ...]) -> bool:
+        """Report whether this authority is still inside its backoff window."""
+
+        if authority != self._retry_authority:
+            return False
+        if self._retry_attempts >= _MAX_RESOLUTION_RETRIES:
+            return True
+        return time.monotonic() < self._retry_ready_at
 
     def _resolution_authority(self, snapshot: Any) -> tuple[object, ...] | None:
         """Return the full semantic/cache/viewport key for one costly resolve."""
@@ -429,6 +491,10 @@ class PersonaBuddyWidget(Widget, can_focus=True):
     def _ensure_resolution(self, snapshot: Any) -> None:
         authority = self._resolution_authority(snapshot)
         if authority is None or authority == self._resolved_authority:
+            return
+        if self._resolution_retry_is_pending(authority):
+            # A finished retry worker must not be respawned by the next poll
+            # tick: the backoff lives on the view, not inside the loop.
             return
         worker = self._resolution_worker
         if (
@@ -463,6 +529,63 @@ class PersonaBuddyWidget(Widget, can_focus=True):
                 snapshot = self._controller.snapshot()
                 setter(snapshot.viewport_generation + 1)
 
+    def _paint_authority(
+        self,
+        snapshot: Any,
+        preferences: PersonaBuddyPreferences,
+    ) -> tuple[object, ...]:
+        """Return every input the painted view is a pure function of.
+
+        Membership is derived from what the paint path actually reads, so the
+        gate cannot skip a real repaint:
+
+        * ``_sync_compact_state`` -> ``_compact_presentation_for_geometry``
+          reads the working geometry, ``screen.size``, ``snapshot.state``,
+          ``snapshot.collapsed`` and the accepted render's content box;
+        * ``_sync_control_presentation`` reads ``collapsed``, the compact
+          class (derived from the above) and **which control has focus** --
+          the labels expand to words only while focused;
+        * ``_apply_geometry`` -> ``_display_geometry`` additionally reads
+          ``_display_content_boxes`` for the current collapsed key;
+        * ``_paint_frame`` reads the compact class, the alert for
+          ``snapshot.state``, and the accepted render (via
+          ``_accepted_render_for_paint``, which also reads ``display``);
+        * ``_sync_frame_timer`` reads the accepted render's animation fields,
+          carried here by ``accepted.visual_identity``.
+
+        The controller generations ride along so any authority move the
+        painted fields happen not to expose still opens the gate. The frame
+        renderable itself is deliberately absent: prepared frames declare
+        ``renderable`` as ``compare=False`` precisely because their identity
+        fields (``paint_digest``, ``asset_sha256``, ``cache_identity``)
+        already determine the painted cells, and ``_AcceptedRender`` pins that
+        identity at resolve time.
+        """
+
+        accepted = self._accepted_render
+        focused = self.app.focused
+        return (
+            snapshot.generation,
+            snapshot.preferences_generation,
+            snapshot.state,
+            snapshot.enabled,
+            snapshot.open,
+            snapshot.collapsed,
+            preferences.geometry,
+            self.screen.size,
+            self.display,
+            self._interaction is not None,
+            # Only the two overlaid controls change label on focus, and ids are
+            # unique within the one mounted view, so the id is a sound proxy.
+            getattr(focused, "id", None),
+            accepted.authority if accepted is not None else None,
+            accepted.visual_identity if accepted is not None else None,
+            accepted.collapsed if accepted is not None else None,
+            accepted.content_width if accepted is not None else None,
+            accepted.content_height if accepted is not None else None,
+            self._display_content_boxes.get(bool(snapshot.collapsed)),
+        )
+
     def refresh_from_controller(self, *, schedule_resolution: bool = True) -> None:
         """Refresh paint/state from an immutable snapshot without touching focus."""
 
@@ -491,6 +614,15 @@ class PersonaBuddyWidget(Widget, can_focus=True):
                 alert_key[1],
                 self._requested_render_budget(snapshot),
             )
+
+        authority = self._paint_authority(snapshot, preferences)
+        if authority == self._painted_authority:
+            # Nothing the view renders moved. `Static.update` refreshes
+            # unconditionally, so the gate has to sit above it (TASK-21122).
+            if schedule_resolution:
+                self._ensure_resolution(snapshot)
+            return
+
         self._sync_compact_state(snapshot.collapsed)
 
         accepted = self._accepted_render
@@ -504,6 +636,10 @@ class PersonaBuddyWidget(Widget, can_focus=True):
 
         self._paint_frame()
         self._sync_frame_timer()
+        # Recorded only once the paint has actually happened: banking the
+        # authority first would make a mid-paint raise permanent, where the
+        # ungated version simply repainted on the next tick.
+        self._painted_authority = authority
         if schedule_resolution:
             self._ensure_resolution(snapshot)
 
@@ -744,7 +880,17 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         clamped = self._display_geometry(geometry)
         self.styles.width = clamped.width
         self.styles.height = clamped.height
-        self.absolute_offset = Offset(clamped.x, clamped.y)
+        offset = Offset(clamped.x, clamped.y)
+        if self.absolute_offset != offset:
+            # `absolute_offset` is a plain attribute, not a style: assigning it
+            # does not schedule an arrange, so a pure move (size unchanged --
+            # the common case now that the box is content-fitted) only reached
+            # the compositor when some later repaint happened to run. That used
+            # to be the repaint the per-keypress config write triggered right
+            # afterwards; coalescing those writes (TASK-21122) removed it, so
+            # the move has to ask for its own layout.
+            self.absolute_offset = offset
+            self.refresh(layout=True)
         frame = self.query_one("#persona-buddy-frame", Static)
         frame.styles.width = "100%"
         frame.styles.height = "100%"
@@ -843,10 +989,7 @@ class PersonaBuddyWidget(Widget, can_focus=True):
             return
         self._interaction = None
         self.release_interaction_capture()
-        self._apply_and_schedule_preferences(
-            geometry=self._working_preferences.geometry,
-            reconcile=False,
-        )
+        self._schedule_geometry_persist(self._working_preferences.geometry)
         event.stop()
 
     def release_interaction_capture(self) -> None:
@@ -878,7 +1021,7 @@ class PersonaBuddyWidget(Widget, can_focus=True):
             self._working_preferences, geometry=preferred
         )
         self._apply_geometry(preferred)
-        self._apply_and_schedule_preferences(geometry=preferred, reconcile=False)
+        self._schedule_geometry_persist(preferred)
 
     def _preferred_geometry_at_clamped_position(
         self, geometry: PersonaBuddyGeometry
@@ -921,7 +1064,7 @@ class PersonaBuddyWidget(Widget, can_focus=True):
             self._working_preferences, geometry=preferred
         )
         self._apply_geometry(preferred)
-        self._apply_and_schedule_preferences(geometry=preferred, reconcile=False)
+        self._schedule_geometry_persist(preferred)
 
     def action_toggle_collapse(self) -> None:
         if not self._is_current_view():
@@ -973,6 +1116,9 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         """Publish an exact field patch now and persist its revision on the app."""
 
         revision = self._controller.apply_preferences_patch(**changes)
+        # This write carries the whole merged snapshot, so it already contains
+        # any geometry a pending debounce was holding.
+        self._discard_pending_geometry_persist()
 
         async def update() -> None:
             await self._controller.persist_preferences_revision(revision)
@@ -986,8 +1132,92 @@ class PersonaBuddyWidget(Widget, can_focus=True):
 
         self._schedule_awaitable(update())
 
+    def _schedule_geometry_persist(self, geometry: PersonaBuddyGeometry) -> None:
+        """Publish geometry now and coalesce its durable write (TASK-21122).
+
+        Held-down ``hjkl``/``HJKL`` key repeat used to queue one config write
+        per keypress. The in-memory patch stays immediate so intent, merge
+        order, and the displayed geometry are unchanged; only the blocking
+        file write is debounced, and it is flushed on unmount.
+        """
+
+        self._pending_geometry_revision = self._controller.apply_preferences_patch(
+            geometry=geometry
+        )
+        timer = self._geometry_persist_timer
+        if timer is not None:
+            timer.stop()
+        self._geometry_persist_timer = self.set_timer(
+            _GEOMETRY_PERSIST_DEBOUNCE_SECONDS, self._flush_geometry_persist
+        )
+
+    def _take_pending_geometry_persist(self) -> int | None:
+        """Detach the pending debounced revision and stop its timer."""
+
+        timer = self._geometry_persist_timer
+        self._geometry_persist_timer = None
+        revision = self._pending_geometry_revision
+        self._pending_geometry_revision = None
+        if timer is not None:
+            timer.stop()
+        return revision
+
+    def _discard_pending_geometry_persist(self) -> None:
+        """Drop a pending debounce whose write another persist already covers."""
+
+        self._take_pending_geometry_persist()
+
+    async def flush_pending_geometry_persist(self) -> None:
+        """Await the newest coalesced geometry write; safe during shutdown.
+
+        The app's Buddy shutdown hook calls this BEFORE closing controller
+        admission, so the last nudge inside the debounce window is durable.
+        Called after admission has already closed (a teardown path that skips
+        the hook), the controller refuses the write; that is the same outcome
+        as any failed write, which the controller documents as leaving the
+        in-memory intent authoritative, so it is swallowed here rather than
+        escalated into a worker traceback on quit.
+        """
+
+        revision = self._take_pending_geometry_persist()
+        if revision is None:
+            return
+        try:
+            await self._controller.persist_preferences_revision(revision)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return
+
+    def _flush_geometry_persist(self) -> None:
+        """Write the newest coalesced geometry revision exactly once."""
+
+        revision = self._take_pending_geometry_persist()
+        if revision is None:
+            return
+
+        async def persist() -> None:
+            try:
+                await self._controller.persist_preferences_revision(revision)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                return
+            if not self._is_current_view():
+                return
+            self.refresh_from_controller()
+
+        self._schedule_awaitable(persist())
+
     def _schedule_awaitable(self, awaitable: Awaitable[None]) -> None:
-        self.app.run_worker(awaitable, group="persona-buddy-preferences")
+        try:
+            app = self.app
+        except Exception:
+            close = getattr(awaitable, "close", None)
+            if callable(close):
+                close()
+            return
+        app.run_worker(awaitable, group="persona-buddy-preferences")
 
 
 __all__ = ["PersonaBuddyWidget"]

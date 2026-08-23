@@ -7370,3 +7370,49 @@ LibraryScreen".
    counts a `_build_notes_sync_runtime_owner` WRAPPER as a second call and fails its own
    `len(builds) == 1`. The wrapper was renamed `_construct_...`; if you add a wrapper
    around a fenced call, check the fence's matching rule before the name.
+
+---
+
+## A repaint-gate harness that forces a repaint per stimulus resyncs the gate and goes blind — validate the negative control PER MEMBER
+
+**TASK-21122, 2026-08-23.** Gating Persona Buddy's ungated 10 Hz poll on a
+"paint authority" tuple needs evidence that the tuple cannot miss a real
+change. The natural harness: drive N stimuli, and after each one let the gated
+poll settle, fingerprint the rendered view, then force an ungated repaint
+(`_painted_authority = None; refresh_from_controller()`) and fingerprint again.
+Any difference is a repaint the gate skipped. Forty-five stimuli, zero misses.
+
+Then the negative control — deliberately dropping two tuple members — **also
+reported zero misses**. The harness was blind, and its clean run had been
+worth nothing.
+
+Two causes, both worth knowing:
+
+1. **The forced repaint resyncs the gate.** Every `_check` re-baselines
+   `_painted_authority`, so a member whose only isolating stimulus arrives as
+   a *sequence* (mouse-down, then a move that crosses a layout threshold) is
+   repaired mid-sequence by the harness itself. The dedicated pin test, which
+   never forces, caught exactly that member (`preferences.geometry`) when the
+   harness could not.
+2. **Eager handlers mask the poll.** The widget already repaints on
+   `on_resize`, `on_descendant_focus`, `on_descendant_blur` and
+   `on_mouse_move`, so several members are only load-bearing in the narrow
+   window those handlers do not cover.
+
+**What to do.** Never accept a differential harness's clean run without a
+negative control, and do not settle for one crippled variant — drop *each*
+member in turn and record which ones the harness can detect. That per-member
+table is the real result: here it showed `screen.size` (3 misses) and
+`display` (1 miss) caught by the harness, `preferences.geometry` caught only
+by a dedicated non-forcing test, and the rest individually redundant with
+`snapshot.generation` because the controller bumps its generation on every
+state, preference and lease change. Redundant is not the same as wrong — those
+members are cheap insurance against a future controller that stops bumping —
+but you must know which is which before you claim the gate is proven.
+
+A corollary from the same task: when a gate keys on an identity tuple, audit
+the test fixtures for that tuple before believing a red. An earlier probe leg
+"failed" because the fake frames were `SimpleNamespace(renderable=..., duration_ms=...)`
+with none of the identity fields set, so `getattr(frame, "paint_digest", None)`
+returned `None` for every frame and two visually different frames collapsed to
+one key. The old code never noticed because it repainted every tick regardless.

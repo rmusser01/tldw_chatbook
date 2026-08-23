@@ -438,6 +438,21 @@ class BaseAppScreen(Screen):
 
         return None
 
+    async def flush_persona_buddy_geometry(self) -> None:
+        """Drain this screen's mounted Buddy view of debounced geometry.
+
+        TASK-21122: geometry writes are coalesced behind a short debounce on
+        the view. The app calls this at exit before Buddy admission closes,
+        so a nudge inside that window still reaches disk.
+        """
+
+        view = self._persona_buddy_view
+        if view is None:
+            return
+        flush = getattr(view, "flush_pending_geometry_persist", None)
+        if callable(flush):
+            await flush()
+
     async def reconcile_persona_buddy_view(self) -> bool:
         """Reconcile one generation; return whether no current view remains."""
 
