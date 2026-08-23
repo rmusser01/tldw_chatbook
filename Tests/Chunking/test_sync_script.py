@@ -196,10 +196,21 @@ def test_sync_subprocess_has_bounded_timeout(monkeypatch, tmp_path):
     assert 0 < sync_call[1]["timeout"] <= 300
 
 
-@pytest.mark.parametrize("sync_fails", [False, True], ids=["success", "failure"])
-def test_owned_temporary_clone_is_removed(monkeypatch, tmp_path, sync_fails):
+@pytest.mark.parametrize(
+    ("failure_stage", "expected_error"),
+    [
+        pytest.param(None, None, id="success"),
+        pytest.param("clone", subprocess.CalledProcessError, id="clone-failure"),
+        pytest.param("checkout", subprocess.TimeoutExpired, id="checkout-timeout"),
+        pytest.param("sync", RuntimeError, id="sync-failure"),
+    ],
+)
+def test_owned_temporary_clone_is_removed(
+    monkeypatch, tmp_path, failure_stage, expected_error
+):
     owned_clone = tmp_path / "owned-clone"
-    subprocess_calls = []
+    subprocess_stages = []
+    sync_calls = []
 
     def fake_mkdtemp(*, prefix):
         assert prefix == "tldw_server_sync_"
@@ -207,12 +218,18 @@ def test_owned_temporary_clone_is_removed(monkeypatch, tmp_path, sync_fails):
         return str(owned_clone)
 
     def fake_run(command, **kwargs):
-        subprocess_calls.append((command, kwargs))
+        stage = "clone" if command[1] == "clone" else "checkout"
+        subprocess_stages.append(stage)
+        if failure_stage == "clone" and stage == "clone":
+            raise subprocess.CalledProcessError(returncode=1, cmd=command)
+        if failure_stage == "checkout" and stage == "checkout":
+            raise subprocess.TimeoutExpired(cmd=command, timeout=kwargs["timeout"])
         return subprocess.CompletedProcess(command, 0)
 
     def fake_sync(worktree):
         assert worktree == owned_clone
-        if sync_fails:
+        sync_calls.append(worktree)
+        if failure_stage == "sync":
             raise RuntimeError("injected sync failure")
         return 0
 
@@ -220,23 +237,34 @@ def test_owned_temporary_clone_is_removed(monkeypatch, tmp_path, sync_fails):
     monkeypatch.setattr(sync_helper.subprocess, "run", fake_run)
     monkeypatch.setattr(sync_helper, "_sync_worktree", fake_sync)
 
-    if sync_fails:
-        with pytest.raises(RuntimeError, match="injected sync failure"):
+    if expected_error is not None:
+        with pytest.raises(expected_error):
             sync_helper._run_with_source(None)
     else:
         assert sync_helper._run_with_source(None) == 0
 
     assert not owned_clone.exists()
-    assert len(subprocess_calls) == 2
-    assert all(0 < call[1]["timeout"] for call in subprocess_calls)
+    expected_stages = ["clone"] if failure_stage == "clone" else ["clone", "checkout"]
+    assert subprocess_stages == expected_stages
+    expected_sync_calls = (
+        [] if failure_stage in {"clone", "checkout"} else [owned_clone]
+    )
+    assert sync_calls == expected_sync_calls
 
 
 def test_supplied_source_is_never_removed(monkeypatch, tmp_path):
     supplied_source = tmp_path / "supplied-source"
-    supplied_source.mkdir()
+    nested = supplied_source / "nested"
+    nested.mkdir(parents=True)
+    sentinel = nested / "sentinel.bin"
+    sentinel_bytes = b"caller-owned\x00source\xff"
+    sentinel.write_bytes(sentinel_bytes)
 
     monkeypatch.setattr(sync_helper, "verify_clean", lambda source: None)
     monkeypatch.setattr(sync_helper, "_sync_worktree", lambda source: 0)
 
     assert sync_helper._run_with_source(str(supplied_source)) == 0
-    assert supplied_source.exists()
+    assert supplied_source.is_dir()
+    assert nested.is_dir()
+    assert sentinel.is_file()
+    assert sentinel.read_bytes() == sentinel_bytes
