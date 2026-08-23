@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 from functools import partial
 from pathlib import Path
 import threading
+import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
 from loguru import logger
@@ -20,6 +23,11 @@ from ...Local_Ingestion.parakeet_v2_artifact import parakeet_reference
 from ...Model_Artifacts.remote_huggingface import (
     RemoteGGUFCandidate,
     ResolvedRemoteCatalog,
+)
+from ...Model_Artifacts.machine_memory import (
+    MachineMemorySnapshot,
+    ProbeReason,
+    SystemMemoryState,
 )
 from ...Model_Artifacts.service import ArtifactRef, ModelArtifactService
 from ...STT.parakeet_sources import (
@@ -70,6 +78,7 @@ from .model_browser_state import install_failure_message
 from .model_curated_view import CuratedView
 from .model_external_view import ExternalModelView
 from .model_installed_view import InstalledView
+from .model_memory_presenter import build_machine_memory_presentation
 from .model_remote_view import RemoteView
 
 if TYPE_CHECKING:
@@ -183,11 +192,22 @@ class LLMScreen(LabScreen):
     and re-synced on every ``refresh_lab_status()`` pass.
     """
 
-    def __init__(self, app_instance: "TldwCli", **kwargs: Any) -> None:
+    def __init__(
+        self,
+        app_instance: "TldwCli",
+        *,
+        machine_memory_wall_clock: Callable[[], datetime] | None = None,
+        machine_memory_monotonic_clock: Callable[[], float] | None = None,
+        **kwargs: Any,
+    ) -> None:
         """Create the Models screen.
 
         Args:
             app_instance: The running application.
+            machine_memory_wall_clock: Injectable local wall clock for the fixed
+                accepted-observation label.
+            machine_memory_monotonic_clock: Injectable monotonic clock retained
+                with accepted machine facts.
             kwargs: Forwarded to ``LabScreen``.
         """
         super().__init__(app_instance, "llm", **kwargs)
@@ -320,6 +340,20 @@ class LLMScreen(LabScreen):
         #: LabScreen recomposition replaces that window, so window-local
         #: ownership alone would strand the handoff with the detached worker.
         self._remote_runtime_handoff: tuple[str, ArtifactRef] | None = None
+        self._machine_memory_snapshot: MachineMemorySnapshot | None = None
+        self._machine_memory_observed_label: str | None = None
+        self._machine_memory_observed_monotonic: float | None = None
+        self._machine_memory_generation = 0
+        self._machine_memory_worker: Worker | None = None
+        self._machine_memory_active = False
+        self._machine_memory_failure: ProbeReason | None = None
+        self._machine_memory_wall_clock = machine_memory_wall_clock or datetime.now
+        self._machine_memory_monotonic_clock = (
+            machine_memory_monotonic_clock or time.monotonic
+        )
+        self._machine_memory_probe_factory: (
+            Callable[[], MachineMemorySnapshot] | None
+        ) = None
         self._audio_cpp_model_request_claim: (
             HandoffClaim[AudioCppModelLibraryRequest] | None
         ) = None
@@ -546,6 +580,121 @@ class LLMScreen(LabScreen):
             return self.llm_window.query_one(RemoteView)
         except NoMatches:
             return None
+
+    def _request_remote_machine_memory(self, *, force: bool) -> None:
+        """Start or hydrate the one process-session machine observation."""
+        if self._machine_memory_active and not force:
+            self._hydrate_remote_machine_memory()
+            return
+        if not force and (
+            self._machine_memory_snapshot is not None
+            or self._machine_memory_generation > 0
+        ):
+            self._hydrate_remote_machine_memory()
+            return
+        self._machine_memory_generation += 1
+        generation = self._machine_memory_generation
+        self._machine_memory_active = True
+        self._machine_memory_failure = None
+        self._hydrate_remote_machine_memory()
+        self._machine_memory_worker = self._run_machine_memory_probe(generation)
+
+    @work(
+        thread=True,
+        group="remote_machine_memory",
+        exclusive=True,
+        exit_on_error=False,
+        description="Observe local model memory capacity",
+    )
+    def _run_machine_memory_probe(self, generation: int) -> None:
+        """Observe bounded local memory off-loop and return only safe facts."""
+        factory = self._machine_memory_probe_factory
+        if factory is None:
+            from ...Model_Artifacts.machine_memory_probe import observe_machine_memory
+
+            factory = observe_machine_memory
+        try:
+            result = factory()
+        except Exception:
+            result = None
+        self.app.call_from_thread(
+            self._apply_machine_memory_result,
+            generation,
+            result,
+        )
+
+    def _apply_machine_memory_result(
+        self,
+        generation: int,
+        result: MachineMemorySnapshot | None,
+    ) -> None:
+        """Apply only the current probe, retaining valid RAM across failures."""
+        if generation != self._machine_memory_generation:
+            return
+        self._machine_memory_active = False
+        self._machine_memory_worker = None
+        accepted = (
+            type(result) is MachineMemorySnapshot
+            and result.system_state
+            in {SystemMemoryState.OBSERVED, SystemMemoryState.PARTIAL}
+            and result.total_bytes is not None
+        )
+        current_is_valid = (
+            type(self._machine_memory_snapshot) is MachineMemorySnapshot
+            and self._machine_memory_snapshot.system_state
+            in {SystemMemoryState.OBSERVED, SystemMemoryState.PARTIAL}
+            and self._machine_memory_snapshot.total_bytes is not None
+        )
+        if accepted:
+            self._machine_memory_snapshot = result
+            self._machine_memory_observed_label = (
+                self._machine_memory_wall_clock().strftime("%H:%M")
+            )
+            self._machine_memory_observed_monotonic = (
+                self._machine_memory_monotonic_clock()
+            )
+            self._machine_memory_failure = None
+        elif current_is_valid:
+            self._machine_memory_failure = (
+                result.system_reason
+                if type(result) is MachineMemorySnapshot
+                and result.system_reason is not None
+                else ProbeReason.INVALID_MEMORY_VALUE
+            )
+        else:
+            self._machine_memory_snapshot = (
+                result if type(result) is MachineMemorySnapshot else None
+            )
+            self._machine_memory_failure = (
+                result.system_reason
+                if type(result) is MachineMemorySnapshot
+                and result.system_reason is not None
+                else ProbeReason.INVALID_MEMORY_VALUE
+            )
+        self._hydrate_remote_machine_memory()
+
+    def _hydrate_remote_machine_memory(self) -> bool:
+        """Publish retained machine facts into the currently mounted RemoteView."""
+        view = self._remote_view()
+        if view is None:
+            return False
+        presentation_snapshot = (
+            self._machine_memory_snapshot
+            if not self._machine_memory_active
+            or (
+                self._machine_memory_snapshot is not None
+                and self._machine_memory_snapshot.total_bytes is not None
+            )
+            else None
+        )
+        presentation = build_machine_memory_presentation(
+            presentation_snapshot,
+            active=self._machine_memory_active,
+            observed_at_label=self._machine_memory_observed_label,
+            failure=self._machine_memory_failure,
+        )
+        view.apply_machine_memory_state(presentation, self._machine_memory_snapshot)
+        return True
 
     def _active_install_view(self) -> "CuratedView | RemoteView | None":
         """Return the view rendering the currently in-flight install, if any.
@@ -2354,6 +2503,15 @@ class LLMScreen(LabScreen):
     # steps below are duplicated, exactly as the curated block duplicates
     # LibraryScreen's own Parakeet v2 shape.
 
+    @on(RemoteView.MachineMemoryRequested)
+    def _remote_machine_memory_requested(
+        self,
+        event: RemoteView.MachineMemoryRequested,
+    ) -> None:
+        """Delegate the presentation-only intent to screen-owned acquisition."""
+        event.stop()
+        self._request_remote_machine_memory(force=event.force)
+
     @on(RemoteView.OpenInstalledRequested)
     def _remote_open_installed_requested(
         self, event: RemoteView.OpenInstalledRequested
@@ -2803,9 +2961,7 @@ class LLMScreen(LabScreen):
             ):
                 view.restore_install_context(catalog, candidate)
             if action == _REMOTE_INSTALL_TERMINAL_FINISH:
-                completed = getattr(
-                    self, "_remote_install_completed_reference", None
-                )
+                completed = getattr(self, "_remote_install_completed_reference", None)
                 if isinstance(completed, ArtifactRef):
                     view.finish_install(message, completed_reference=completed)
                 else:
@@ -3025,6 +3181,7 @@ class LLMScreen(LabScreen):
         if self._model_install_presentation_pending():
             self._hydrate_model_install_progress()
         self._hydrate_external_status()
+        self._hydrate_remote_machine_memory()
         self._replay_remote_runtime_handoff()
 
     def _hydrate_model_install_progress(self) -> None:

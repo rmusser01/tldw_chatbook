@@ -1133,10 +1133,94 @@
     RemoteView .remote-compatibility {
         height: auto;
         margin-bottom: 1;
-        padding: 1;
+        padding: 0 1;
         background: $warning 12%;
         color: $text;
         text-style: bold;
+    }
+
+    RemoteView .remote-variant-guidance {
+        height: auto;
+        margin-top: 1;
+        padding: 0 1;
+        border-left: thick $accent;
+        background: $accent 8%;
+        color: $text;
+    }
+
+    RemoteView .remote-machine-panel {
+        height: auto;
+        margin-top: 1;
+        padding: 1;
+        border: solid $surface-lighten-1;
+        background: $panel;
+    }
+
+    RemoteView .remote-machine-actions {
+        height: auto;
+        min-height: 3;
+        margin-top: 1;
+    }
+
+    RemoteView .remote-machine-actions Button {
+        width: auto;
+        margin-right: 1;
+    }
+
+    RemoteView .remote-fit-outcome,
+    RemoteView .remote-fit-details,
+    RemoteView .remote-fit-advisory,
+    RemoteView .remote-variant-filename {
+        width: 100%;
+        height: auto;
+    }
+
+    RemoteView .remote-fit-outcome {
+        margin-top: 1;
+        text-style: bold;
+    }
+
+    RemoteView .remote-fit-details {
+        color: $text-muted;
+    }
+
+    RemoteView .remote-fit-advisory {
+        color: $warning;
+    }
+
+    RemoteView .remote-variant-controls {
+        height: auto;
+        min-height: 3;
+        margin-top: 1;
+    }
+
+    RemoteView #remote-variant-filter {
+        width: 1fr;
+        min-width: 16;
+    }
+
+    RemoteView #remote-variant-sort {
+        width: 24;
+        min-width: 18;
+        margin-left: 1;
+        margin-bottom: 0;
+    }
+
+    RemoteView .remote-variant-list,
+    RemoteView .remote-variant-facts,
+    RemoteView .remote-variant-summary,
+    RemoteView .remote-variant-empty {
+        height: auto;
+    }
+
+    RemoteView .remote-variant-empty {
+        padding: 1 0;
+    }
+
+    RemoteView .remote-source-review {
+        height: auto;
+        margin-top: 1;
+        color: $text-muted;
     }
 
     RemoteView .remote-detail-section {
@@ -1190,26 +1274,60 @@
     }
 
     RemoteView.-narrow .remote-results-pane {
-        width: 2fr;
+        width: 100%;
         min-width: 0;
+        border-right: none;
     }
 
     RemoteView.-narrow .remote-detail-pane {
-        width: 3fr;
+        width: 100%;
         min-width: 0;
     }
 
     RemoteView.-narrow .remote-header {
+        height: 4;
         padding: 0;
+    }
+
+    RemoteView.-narrow .remote-source {
+        height: 1;
     }
 
     RemoteView.-narrow #remote-model-details {
         padding: 0 1;
     }
 
-    RemoteView.-narrow .remote-action-bar {
+    RemoteView.-narrow #remote-model-status {
+        height: 1;
+        min-height: 1;
+        padding: 0;
+    }
+
+    RemoteView.-narrow .remote-machine-actions {
+        layout: vertical;
+    }
+
+    RemoteView.-narrow .remote-variant-controls {
         layout: vertical;
         min-height: 6;
+        margin-top: 0;
+    }
+
+    RemoteView.-narrow #remote-variant-filter,
+    RemoteView.-narrow #remote-variant-sort {
+        width: 100%;
+        min-width: 0;
+        margin-left: 0;
+    }
+
+    RemoteView.-narrow .remote-action-bar {
+        layout: vertical;
+        min-height: 4;
+        padding: 0;
+    }
+
+    RemoteView.-narrow #remote-model-selection {
+        height: 1;
     }
 
     RemoteView.-narrow #remote-model-selection,

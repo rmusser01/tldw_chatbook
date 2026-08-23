@@ -211,8 +211,8 @@ async def test_rows_render_grouped_sorted_with_tags_and_schema_columns():
         assert app.query_one("#mcp-tools-empty").display is False
 
 
-def test_all_builtin_tools_render_form_column():
-    """Every legacy and descriptor-backed builtin tool renders as a form."""
+def test_builtin_tools_use_form_except_for_nested_spec_schemas():
+    """Nested spec inputs must use honest raw mode; other builtins stay forms."""
     from tldw_chatbook.Library.library_tool_contract import (
         LIBRARY_TOOL_DESCRIPTORS,
     )
@@ -233,8 +233,17 @@ def test_all_builtin_tools_render_form_column():
     assert {tool["name"] for tool in tools} == (
         legacy_tool_names | set(LIBRARY_TOOL_DESCRIPTORS)
     )
+    raw_tool_names = {"library_save_chunk_spec", "library_rechunk_media"}
+    assert {
+        tool["name"] for tool in tools if parse_schema(tool["inputSchema"]) is None
+    } == raw_tool_names
     for tool in tools:
-        assert parse_schema(tool["inputSchema"]) is not None, tool["name"]
+        parsed = parse_schema(tool["inputSchema"])
+        if tool["name"] in raw_tool_names:
+            assert parsed is None
+            assert tool["inputSchema"]["properties"]["spec"]["type"] == "object"
+        else:
+            assert parsed is not None, tool["name"]
 
 
 @pytest.mark.asyncio
