@@ -409,6 +409,34 @@ async def test_rapid_workspace_context_show_hide_restores_exact_geometry() -> No
 
 
 @pytest.mark.asyncio
+async def test_workspace_resize_preserves_visible_contextual_star() -> None:
+    app = _RailHarness(
+        workspace_state=_native_workspace_tree_state(),
+        workspace_tree_expanded_ids=frozenset({"workspace-1"}),
+    )
+
+    async with app.run_test(size=(70, 30)) as pilot:
+        await _settle(pilot)
+        tree = app.query_one(ConsoleWorkspaceTree)
+        tree.move_cursor(tree.conversation_nodes["conversation-1"])
+        await _settle(pilot)
+
+        tray = app.query_one("#console-workspaces-context")
+        initial_content_width = tray._row_content_width
+        assert app.query_one("#console-workspace-context-action-row").display is True
+
+        app.query_one(ConsoleLeftRail).styles.width = 42
+        await _settle(pilot)
+
+        assert tray._row_content_width == initial_content_width + 2
+        action_row = app.query_one("#console-workspace-context-action-row")
+        star = app.query_one("#console-workspace-tree-star", Button)
+        assert action_row.display is True
+        assert star.disabled is False
+        assert star.conversation_id == "conversation-1"
+
+
+@pytest.mark.asyncio
 async def test_native_tree_requests_page_zero_for_initial_persisted_expansion() -> None:
     app = _RailHarness(
         workspace_state=_native_workspace_tree_state(),

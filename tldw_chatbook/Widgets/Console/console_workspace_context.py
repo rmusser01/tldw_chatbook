@@ -346,13 +346,15 @@ _BROWSER_ROW_CHROME_WIDTH = 6
 # Every row button carries a 1-line bottom margin (see the row CSS).
 _ROW_BOTTOM_MARGIN = 1
 # Minimum measured-width change (in cells) that triggers a relabel recompose
-# after the first measurement. The rail body scrollbar is configured one cell
-# wide, but Textual can report a two-cell content-region shift while its frame
-# and scrollbar settle after a child is shown or mounted. Neither shift is a
-# meaningful wrapping change. Recompose only at three cells or more so those
-# transient geometry changes cannot tear down contextual or out-of-band
-# controls; real terminal resizes remain far above this threshold.
-_RELABEL_MIN_WIDTH_DELTA = 3
+# after the first measurement. The rail body scrollbar is one cell wide
+# (`scrollbar-size: 1 1`), so adding or removing rows -- e.g. collapsing a
+# browser section -- toggles the scrollbar and shifts `content_region.width`
+# by exactly one cell. `scrollbar-gutter: stable` reserves that cell in the
+# real app, but a one-cell change never alters two-line wrapping and must not
+# provoke a recompose regardless: recomposing on it would race an in-progress
+# state-change recompose (observed as a collapse failing to render) and, in
+# any environment where the gutter CSS is absent, oscillate the relabel.
+_RELABEL_MIN_WIDTH_DELTA = 2
 
 
 def _conversation_row_render_height(name_line_count: int, subagent_count: int) -> int:
@@ -538,11 +540,13 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         self.show_heading = show_heading
         self.content = content
         self._row_content_width = _FALLBACK_ROW_CONTENT_WIDTH
+        self._row_owner_width = 0
         # False until the first real content-width measurement is adopted.
         # The first measurement always relabels (to replace the pre-measure
         # fallback budget); later ones apply the hysteresis threshold.
         self._row_width_measured = False
         self._workspace_action_fit_generation = 0
+        self._workspace_tree_context_data: Any | None = None
         self.styles.height = "auto"
         self.styles.min_height = 0
 
@@ -812,10 +816,9 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
 
         The first measurement always relabels, replacing the pre-measurement
         fallback budget. Afterwards a change is honored only when it moves at
-        least ``_RELABEL_MIN_WIDTH_DELTA`` cells, so the one- or two-cell
-        scrollbar/frame settling shift (from rows being added or removed)
-        neither races a concurrent state-change recompose nor oscillates the
-        relabel.
+        least ``_RELABEL_MIN_WIDTH_DELTA`` cells, so a one-cell scrollbar
+        toggle (from rows being added or removed) neither races a concurrent
+        state-change recompose nor oscillates the relabel.
 
         Args:
             measured: Freshly measured content-region width in cells.
@@ -845,6 +848,29 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             return False
         measured = int(region.width)
         should_relabel = self._should_relabel_at_width(measured)
+        scroll_parent = self._nearest_scroll_parent()
+        owner_region = getattr(scroll_parent, "content_region", None)
+        owner_width = max(
+            0,
+            int(getattr(owner_region, "width", 0) or getattr(self.region, "width", 0)),
+        )
+        prior_owner_width = self._row_owner_width
+        owner_width_changed = bool(
+            prior_owner_width and owner_width != prior_owner_width
+        )
+        self._row_owner_width = owner_width
+        # Showing/mounting a child can make Textual settle this tray's frame
+        # and content region two cells narrower without changing the owning
+        # rail viewport. That is not new wrapping space and recomposing for it
+        # would discard out-of-band controls. A real two-cell resize changes
+        # the owner width too and must retain the established relabel contract.
+        if (
+            self._row_width_measured
+            and should_relabel
+            and not owner_width_changed
+            and abs(measured - self._row_content_width) == _RELABEL_MIN_WIDTH_DELTA
+        ):
+            should_relabel = False
         # Latch on the first *real* measurement regardless of whether it
         # relabels: when the measured width coincides with the fallback the
         # decision is a no-op, but the tray has still been measured, so a
@@ -1241,22 +1267,39 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             )
             scope_button.tooltip = "RAG Scope: narrow retrieval to this workspace"
             yield self._record_composed_node(scope_button)
+        context_data = self._workspace_tree_context_data
+        context_is_markable = self._workspace_tree_context_is_markable(context_data)
         context_action_row = Horizontal(
             id="console-workspace-context-action-row",
             classes="console-workspace-context-action-row",
         )
-        context_action_row.display = False
+        context_action_row.display = context_is_markable
         with self._record_composed_node(context_action_row):
             star_button = Button(
-                "Star",
+                (
+                    "Unstar"
+                    if context_is_markable
+                    and bool(getattr(context_data, "starred", False))
+                    else "Star"
+                ),
                 id="console-workspace-tree-star",
                 classes="console-workspace-action console-workspace-tree-star",
                 compact=True,
-                disabled=True,
+                disabled=not context_is_markable,
             )
-            star_button.workspace_id = None
-            star_button.conversation_id = None
-            star_button.starred = False
+            star_button.workspace_id = (
+                getattr(context_data, "workspace_id", None)
+                if context_is_markable
+                else None
+            )
+            star_button.conversation_id = (
+                getattr(context_data, "conversation_id", None)
+                if context_is_markable
+                else None
+            )
+            star_button.starred = bool(
+                context_is_markable and getattr(context_data, "starred", False)
+            )
             yield self._record_composed_node(star_button)
 
         yield self._record_composed_node(
@@ -1315,6 +1358,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         is_conversation = self._workspace_tree_context_is_markable(data)
         starred = bool(getattr(data, "starred", False)) if is_conversation else False
         visibility_changed = action_row.display != is_conversation
+        self._workspace_tree_context_data = data if is_conversation else None
         action_row.display = is_conversation
         if visibility_changed:
             self._workspace_action_fit_generation += 1
