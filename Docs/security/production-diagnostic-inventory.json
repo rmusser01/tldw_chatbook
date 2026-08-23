@@ -1398,6 +1398,13 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
+      "call_count": 1,
+      "diagnostic_digest": "520bedd9fcb7c2faceed",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Notes/notes_device_state_store.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
       "call_count": 2,
       "diagnostic_digest": "fd52ab3f664b86181725",
       "owner": "TASK-494",
@@ -3903,9 +3910,9 @@
   "schema_version": 2,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 528,
+    "owner_files": 529,
     "persistent_sink_files": 8,
     "task_492_calls": 1222,
-    "task_494_calls": 7241
+    "task_494_calls": 7242
   }
 }
