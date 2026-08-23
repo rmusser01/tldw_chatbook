@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from types import MethodType
+from unittest.mock import MagicMock
 
 import pytest
 from textual.app import App
 from textual.screen import Screen
 
 from Tests.UI.app_factory import _build_test_app
-from tldw_chatbook import config as config_module
 from tldw_chatbook.UI.Screens.home_screen import HomeScreen
 from tldw_chatbook.UI.Screens.model_catalog_consent import ModelCatalogConsentModal
 
@@ -73,20 +74,11 @@ async def test_app_push_suppresses_modal_in_headless_runs():
 
 
 @pytest.mark.asyncio
-async def test_splash_finishes_before_catalog_consent_and_deny_returns_home(
-    monkeypatch: pytest.MonkeyPatch,
-):
+async def test_splash_finishes_before_catalog_consent_and_deny_returns_home():
     """Consent stays topmost after splash startup and dismisses to Home."""
     app = _build_test_app(configured_default="home")
-
-    get_cli_setting = config_module.get_cli_setting
-
-    def suppress_project_skills(section, *args, **kwargs):
-        if section == "skills" and args[:1] == ("project_skills_prompt_enabled",):
-            return False
-        return get_cli_setting(section, *args, **kwargs)
-
-    monkeypatch.setattr(config_module, "get_cli_setting", suppress_project_skills)
+    project_skills_offer = MagicMock(name="project_skills_offer")
+    app._maybe_offer_project_skills_import = project_skills_offer
 
     observed: list[tuple[bool, tuple[type[Screen], ...]]] = []
 
@@ -167,3 +159,53 @@ async def test_splash_finishes_before_catalog_consent_and_deny_returns_home(
         assert app.screen is home
         assert home.is_mounted
         assert home.query("#home-triage-grid")
+        project_skills_offer.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_first_run_completion_finishes_chat_navigation_before_consent():
+    """Completed first-run navigation finishes before consent can be offered."""
+    from tldw_chatbook.app import TldwCli
+
+    class CompletionHost:
+        current_tab = "home"
+        focus_mode = False
+
+        def __init__(self) -> None:
+            self.events: list[str] = []
+            self.worker_coroutines = []
+
+        async def handle_screen_navigation(self, _message) -> None:
+            self.events.append("navigation-start")
+            await asyncio.sleep(0)
+            self.events.append("navigation-finish")
+
+        def run_worker(self, work, **_kwargs) -> None:
+            self.worker_coroutines.append(work)
+
+        def _schedule_startup_model_catalog_refresh(self, **_kwargs) -> None:
+            self.events.append("consent")
+
+        def post_message(self, _message) -> None:
+            raise AssertionError(
+                "first-run completion must not post navigation; "
+                f"events={self.events!r}, workers={len(self.worker_coroutines)}"
+            )
+
+    host = CompletionHost()
+    try:
+        TldwCli._handle_first_run_wizard_result(
+            host,
+            {"completed": True, "exit_route": "chat", "exit_context": None},
+        )
+
+        assert len(host.worker_coroutines) == 1
+        await host.worker_coroutines[0]
+        assert host.events == [
+            "navigation-start",
+            "navigation-finish",
+            "consent",
+        ]
+    finally:
+        for worker in host.worker_coroutines:
+            worker.close()
