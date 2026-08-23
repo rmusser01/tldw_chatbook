@@ -53,10 +53,15 @@ any real drift signal.
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Cut 35 modules and ~36 ms of import self-time out of `import tldw_chatbook.app`
-(1,700 -> 1,665 total modules; 664 -> 630 `tldw_chatbook.*` modules), added a
-Packaging closure guard for each deferral, and replaced the useless 4,000-module
-budget with one that a regression of this class actually fails.
+Took 35 modules out of the `import tldw_chatbook.app` closure (1,700 -> 1,665
+total; 664 -> 630 `tldw_chatbook.*`), added a Packaging closure guard for each
+deferral, and replaced the useless 4,000-module budget.
+
+**Of the ~36 ms of import self-time, ~15 ms is genuinely removed (items 1 and 2,
+which nothing on the boot path touches) and ~21 ms is RELOCATED to `on_mount`
+(item 3) — still pre-first-paint, so real boot cost there is unchanged.** See
+item 3 for the measurement. The import-closure win is real and is what keeps
+future drift visible to a guard; the wall-clock win is the ~15 ms, not the 36.
 
 ### Census first (measured on this base, not inherited from the review)
 
@@ -96,10 +101,19 @@ reason the review recorded:
 3. **Lasting-sync runtime -> lazy `notes_sync_runtime_owner` property.** The
    `__init__` block moved to `_construct_notes_sync_runtime_owner()`, which imports
    `notes_sync_runtime` and `notes_sync_legacy` function-locally; the property builds
-   under a lock and keeps a setter so test doubles still assign. `on_mount` is the
-   first production reader. `_shutdown_notes_sync_runtime` now returns early when the
-   owner was never built rather than constructing one to shut it down.
-   **-15 modules, ~-21 ms.**
+   under a lock and keeps a setter (both directions) so test doubles still assign.
+   `_shutdown_notes_sync_runtime` returns early when the owner was never built rather
+   than constructing one to shut it down.
+   **-15 modules / ~21 ms out of the IMPORT closure, but RELOCATED, not removed.**
+   `on_mount` reads the property unconditionally to call `.start()`, and Textual
+   dispatches Mount inside `batch_update()` with `_ready()`/first paint in the
+   `finally` after (`textual/app.py:3428-3457`). Probe on a zero-profile boot with no
+   state DB: 0/15 modules resident after `import tldw_chatbook.app`, owner slot still
+   `None` after `TldwCli.__init__`, then **15/15 resident after `run_test()`** with
+   `status='not_configured'` and no state DB created. The TASK-21112 gate suppresses
+   *starting*, not *constructing*. So a real boot still pays these 15 pre-paint; what
+   this leg actually buys is a clean import closure (guardable drift) and zero cost for
+   anything that imports the module without running the app.
 4. **Budgets.** `MAX_MODULE_COUNT` 4,000 -> 2,200 and a new
    `MAX_TLDW_MODULE_COUNT` = 660 against a measured 630. The split is deliberate: the
    TOTAL closure varies by installed extras (`cryptography` via `subscriptions`,
@@ -130,14 +144,18 @@ the substitution actually intercept the deferred import.
 
 ### Deliberately not done
 
-**The Notifications package init is left eager, and that is the honest call.** It is
-10 modules / 4.0 ms, dragged both by `Home/__init__` -> `active_work_adapter` and by
-`app.py:567` — but `TldwCli.__init__` unconditionally calls
-`_wire_watchlists_and_notifications_services()` (app.py:5953), which constructs six of
-those services. Deferring the init would remove them from the *import* closure and
-change real boot cost by ~0, i.e. it would make the new budget look better without the
-app booting faster. A real fix belongs with deferring that wiring (21105 family), not
-with an import-only shuffle.
+**The Notifications package init is left eager.** It is 10 modules / 4.0 ms, dragged
+both by `Home/__init__` -> `active_work_adapter` and by `app.py:567` — but
+`TldwCli.__init__` unconditionally calls `_wire_watchlists_and_notifications_services()`
+(app.py:5953), which constructs six of those services, so deferring the init would
+relocate the cost rather than remove it.
+
+**Consistency note (review round):** item 3 above has exactly this shape — I rejected
+Notifications for a reason that also applies to a deferral I shipped. The difference is
+one of degree, not of kind: item 3 is 15 modules of import closure that a guard can
+watch versus 10, and its construction is at least *conditional in principle* (a gate
+already exists, it just gates the wrong step). Both are honestly labelled above now.
+A real fix for either belongs with deferring the *construction*, not the import.
 
 ### Found while measuring, filed for someone else
 
@@ -179,4 +197,72 @@ budget's headroom.
 - `--collect-only` sweep: 56,876 tests collected, 4 collection errors, byte-identical to
   HEAD's (3x missing `playwright`, 1x pre-existing fixture/parametrize mismatch in
   `Tests/UI/test_library_file_notes_workspace.py`).
+
+### Review fix round (2026-08-23)
+
+Review verdict was FIX-FIRST on the **recorded evidence**, not the code; the mechanics
+survived the attack unchanged. Five fixes, one judgement call.
+
+- **MAJOR-1 — item 3 relocates cost, it does not remove it.** Reproduced with a probe
+  (0/15 -> 15/15 across `run_test()`) and confirmed against the installed Textual 8.2.8
+  that Mount runs inside `batch_update()` with `_ready()` in the `finally`. Corrected
+  the summary (~36 ms removed -> ~15 ms removed + ~21 ms relocated), item 3, the
+  `__init__` comment, and the closure-guard docstring, and reconciled the Notifications
+  paragraph, which had rejected a deferral for the reason this one exhibits.
+- **MAJOR-2 — the budget docstring overstated its teeth.** Measured by reverting each
+  deferral alone in a throwaway `git archive HEAD` copy: panel only **649**, notes-sync
+  only **645**, both PASS 660; only the combined 34 trips it. Replaced the claim with
+  those numbers and named `test_app_import_diet_closure.py` as the per-deferral guard.
+- **MINOR-7a — extras rationale was wrong.** `Prompts_Interop`, `custom_tokenizers` and
+  `Evals/task_loader` *are* on the boot closure (my first grep was mis-anchored), but
+  python-frontmatter/tokenizers/datasets are declared in **no** extra and not in core,
+  so no supported install pulls them, and `datasets` would red HEAVY_MODULES via pandas
+  first. Rewrote around the one real case, `cryptography` via
+  `Subscriptions/security.py:40` (declared in `subscriptions` / `all-tools`). 2200 kept.
+- **MINOR-7b** — types-module docstring: "re-imports every name" -> the three it still
+  uses directly (3 of 12).
+- **MINOR-5** — the setter now takes `_notes_sync_runtime_owner_lock`, so the slot is
+  coherent in both directions. Non-reentrant is safe: the build never assigns through
+  the property.
+
+**Judgement call — gate CONSTRUCTION on the 21112 evidence? NO, not here.** It looked
+like a small change and is not:
+
+1. `legacy_sync_directory_configured` is a 4-line pure `Mapping` check, but it lives in
+   `notes_sync_legacy.py`, whose module-scope imports are `notes_device_state_store`,
+   `notes_sync_filesystem`, `notes_sync_models`, `notes_sync_reconciler` — **evaluating
+   the gate imports 12 of the 15 modules.** It must be relocated to a stdlib-only module
+   first (a second refactor with its own review surface).
+2. It would put the "configured?" predicate in two places. TASK-21112 deliberately
+   centralised it inside `_start_once` (notes_sync_runtime.py:714), which evaluates it
+   on a thread and sets `status='not_configured'`.
+3. `library_screen.py:3212` reads the property, so the skip only survives until Library
+   mounts — and the owner built there would be **unstarted** (`status='stopped'`, which
+   the Library UI renders differently from `'not_configured'`), while
+   `_observe_notes_sync_runtime_start`'s post-start screen refresh would never fire.
+
+That is the start/force-start/re-arm plus Library-fallback entanglement, so it is filed
+rather than done. **Suggested shape for the follow-up**, which avoids the gate-splitting
+entirely: relocate `legacy_sync_directory_configured` to a stdlib-only module *and* make
+`build_notes_sync_legacy_migrator` construct its `NotesDeviceStateStore` lazily, so the
+12-module legacy subtree loads only when a migration actually runs. That turns item 3
+into a real win without touching the start contract.
+
+### Recorded for close-out filing (not fixed here)
+
+- **`_construct_notes_sync_runtime_owner` still has four late-bound reads** —
+  `self.chachanotes_db` (inside a lambda, late-bound before and after), `self.app_config`
+  (x3 uses), `self._instance_lock_status.acquired`, `self.notes_user_id`. My own new
+  lesson is therefore 2/6 applied: only `file_notes_binding` and `notes_scope_service`
+  were captured, on the evidence of an actual failure. The other four are unproven, not
+  proven-safe.
+- **`library_screen.py:3212`'s bare `getattr(app_instance, "notes_sync_runtime_owner",
+  None)`** now swallows an `AttributeError` raised *inside* the build and renders it as
+  "runtime unavailable" (`InertLastingSyncRuntime`). Pre-deferral the attribute always
+  existed, so the `getattr` default could only mean "harness without an app".
+- **`MAX_TLDW_MODULE_COUNT` headroom is probably mis-sized** — 30 modules against a
+  codebase that added a measured +61 in one four-day window. It will likely red on
+  unrelated work within days while still missing any single-deferral regression
+  (649/645 both pass). The per-module closure guard is the durable half; this budget may
+  want to become a ratchet or be re-based on a wider sample.
 <!-- SECTION:NOTES:END -->

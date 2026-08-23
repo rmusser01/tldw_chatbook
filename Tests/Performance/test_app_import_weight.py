@@ -96,14 +96,24 @@ ELIMINATED_MODULES = ("torch", "transformers")
 # * MAX_TLDW_MODULE_COUNT is the drift signal. Only this repo's own modules
 #   count toward it, so it moves when -- and essentially only when -- the
 #   boot import graph changes. It is set just above the measured 630.
+#
+#   Know what this does NOT catch. Measured by reverting each 21108 deferral
+#   on its own and re-running this probe: panel only -> 649, notes-sync chain
+#   only -> 645. Both PASS. Only the combined 34-module regression trips 660.
+#   The per-deferral guard is
+#   `Tests/Packaging/test_app_import_diet_closure.py`, which names each
+#   module; this budget is the coarse net under it, not a substitute.
 # * MAX_MODULE_COUNT stays a catastrophic-regression tripwire with real
-#   slack, because the TOTAL closure legitimately varies by environment:
-#   `Subscriptions/security.py` imports `cryptography` when the
-#   `subscriptions`/`all-tools` extras are installed (~tens of modules with
-#   cffi), and `Prompts_Interop`/`custom_tokenizers`/`Evals.task_loader`
-#   likewise import python-frontmatter/tokenizers/datasets when present.
-#   Pinning the total near 1,665 would fail on a fully-extras dev box for
-#   reasons that have nothing to do with boot-path drift.
+#   slack, because the TOTAL closure varies with what is installed. The one
+#   case reachable through a DECLARED extra: `Subscriptions/security.py:40`
+#   attempts `cryptography` on the boot path, and `cryptography` ships in the
+#   `subscriptions` / `all-tools` extras (tens of modules, with cffi). The
+#   boot path also probes python-frontmatter, tokenizers and datasets
+#   (`Prompts_Interop`, `Utils/custom_tokenizers`, `Evals/task_loader`), but
+#   none of those three is declared in any extra or in core, so no supported
+#   install pulls them -- and `datasets` would red HEAVY_MODULES via pandas
+#   long before it moved this number. Pinning the total near 1,665 would fail
+#   on an all-tools dev box for a reason unrelated to boot-path drift.
 # * MAX_IMPORT_SECONDS deliberately stays at 8.0s: it is a hang tripwire, not
 #   a perf assertion. A genuinely cold run (no .pyc anywhere, cold FS cache)
 #   was measured at 5.6s on the machine above, so a "tightened" time bound
@@ -234,9 +244,12 @@ def test_app_import_own_module_count_stays_at_the_post_diet_size(
     The tight axis (TASK-21108). ``tldw_chatbook.*`` module residency after
     ``import tldw_chatbook.app`` depends only on this repo's import graph, not
     on which optional third-party extras happen to be installed, so it is the
-    axis that can sit just above reality: 630 measured, 660 allowed. The
-    TASK-21108 diet itself removed 34 -- a regression of that class fails
-    here, which is the whole point of the budget.
+    axis that can sit just above reality: 630 measured, 660 allowed.
+
+    It catches a regression the SIZE of the whole 21108 diet (34 modules), not
+    any single piece of it: reverting the panel deferral alone measures 649 and
+    the notes-sync chain alone 645, both of which PASS here. Per-deferral
+    coverage is ``Tests/Packaging/test_app_import_diet_closure.py``.
 
     Args:
         tmp_path: pytest fixture; isolated dir for the subprocess's HOME/XDG.

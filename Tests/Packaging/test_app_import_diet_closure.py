@@ -23,6 +23,14 @@ self-time:
    eagerly. The owner is now built by the lazy ``notes_sync_runtime_owner``
    property, whose first production reader is ``on_mount``.
 
+   Scope note, so this guard is not read as more than it is: for item 3 that
+   is a RELOCATION, not a removal. ``on_mount`` reads the property
+   unconditionally, and Textual runs Mount before first paint, so a real boot
+   still pays those 15 modules -- just after import rather than during it
+   (measured: 0/15 resident here, 15/15 after ``run_test()``). Items 1 and 2
+   are genuinely lazy: nothing on the boot path touches them. This file
+   guards the IMPORT closure, which is what keeps future drift visible.
+
 Subprocess-isolated for the same reason as
 ``test_chunking_import_closure.py`` (TASK-21102) and
 ``test_persona_buddy_import_closure.py`` (TASK-21103), whose pattern this

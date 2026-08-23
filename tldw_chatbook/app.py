@@ -6034,11 +6034,26 @@ class TldwCli(
         # TASK-21108: the lasting-sync runtime is built on FIRST ACCESS, not
         # here. Its construction is what drags `Notes/notes_sync_runtime` and
         # (through the TASK-21112 start gate) `Notes/notes_sync_legacy` --
-        # together 15 modules and ~21 ms of import self-time in the
-        # `import tldw_chatbook.app` closure, measured 2026-08-23 -- onto the
-        # boot path for an object nothing reads until
+        # together 15 modules and ~21 ms, measured 2026-08-23 -- into the
+        # `import tldw_chatbook.app` closure, for an object nothing reads until
         # `on_mount` starts it. The property below still accepts assignment,
         # so a test can substitute a runtime double exactly as before.
+        #
+        # BE HONEST ABOUT WHAT THIS BUYS. `on_mount` reads the property
+        # unconditionally to call `.start()`, and Textual dispatches Mount
+        # inside `batch_update()` with `_ready()`/first paint in the `finally`
+        # after it (textual/app.py:3428-3457). So on a real boot these 15
+        # modules are RELOCATED from import time to mount time, still before
+        # first paint -- measured: 0/15 resident after `import
+        # tldw_chatbook.app`, 15/15 after `run_test()` on a zero-profile
+        # boot. The TASK-21112 gate suppresses STARTING, not CONSTRUCTING.
+        # What this does buy is a clean import closure (so the guard can see
+        # future drift) and no cost at all for consumers that import the
+        # module without running the app. Gating construction on the same
+        # evidence would make it a real win, but the evidence lives in
+        # `notes_sync_legacy` -- reading it imports 12 of the 15 -- and it
+        # would split the "configured?" decision that TASK-21112 centralised
+        # in `_start_once`. Tracked as a follow-up, deliberately not done here.
         #
         # The two collaborators the eager build READ here are captured here
         # too, so deferring WHEN the owner is built does not also change
@@ -6191,8 +6206,15 @@ class TldwCli(
 
     @notes_sync_runtime_owner.setter
     def notes_sync_runtime_owner(self, owner: "NotesSyncRuntimeOwner") -> None:
-        """Substitute the runtime owner (tests install doubles this way)."""
-        self._notes_sync_runtime_owner = owner
+        """Substitute the runtime owner (tests install doubles this way).
+
+        Takes the same lock as the getter so the slot is coherent in both
+        directions: an assignment racing a first read cannot interleave with
+        the build. Non-reentrant is safe here because the build never assigns
+        through this property.
+        """
+        with self._notes_sync_runtime_owner_lock:
+            self._notes_sync_runtime_owner = owner
 
     def _build_rag_admin_services(self) -> None:
         """Construct the RAG admin service trio on first access (task-254).

@@ -12,9 +12,12 @@ modules and ~13 ms of import self-time exclusive to the panel, measured
 
 The draft-validation cluster therefore lives here: the bounds, the realtime
 sibling draft, the two detach/validate helpers, and the snapshot itself. The
-panel re-imports every name from this module, so ``panel.
-SpeechTTSPanelDraftSnapshot`` remains the SAME class object -- the identity
-checks above and the panel's own tests keep working unchanged.
+panel re-imports the three names it still uses directly
+(``SpeechTTSPanelDraftSnapshot``, ``_RealtimeSettingsDraft``,
+``_MAX_DRAFT_REVISION``); the other nine are reached through those. Because
+they are re-exports rather than copies, ``panel.SpeechTTSPanelDraftSnapshot``
+remains the SAME class object -- the identity checks above and the panel's own
+tests keep working unchanged.
 
 Nothing here performs widget, filesystem, config, or provider I/O; the only
 non-stdlib dependency is ``UI/Screens/settings_speech_tts``, the pure
