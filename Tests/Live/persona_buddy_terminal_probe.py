@@ -5,23 +5,45 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import fcntl
+import errno
 import json
 import os
 from pathlib import Path
-import pty
 import select
 import signal
 import struct
 import subprocess
 import sys
 import tempfile
-import termios
 import time
 from typing import Any
 
+if os.name != "nt":
+    import fcntl
+    import pty
+    import termios
+else:  # pragma: no cover - exercised by the Windows CLI smoke contract
+    fcntl = None
+    pty = None
+    termios = None
+
 _TIMEOUT_SECONDS = 12.0
 _DIAGNOSTIC_BYTES = 16_000
+# One 80x24 Textual full repaint is normally tens of KiB. This ceiling keeps the
+# exact state-local evidence bounded while leaving generous room for styled cells.
+_CAPTURE_BYTES = 256 * 1024
+_CAPTURE_FORBIDDEN = (
+    b"/private/",
+    b"/tmp/",
+    b"/var/",
+    b"/home/",
+    b"/users/",
+    b"\\users\\",
+    b"tldw_config_path",
+    b"config.toml",
+    b"provider_inventory",
+    b"api_settings",
+)
 _CAPTURE_NAMES = (
     "normal.ansi",
     "alert.ansi",
@@ -98,13 +120,20 @@ class _ProbeChildFailure(RuntimeError):
         self.diagnostic_tail = diagnostic_tail
 
 
-def _atomic_write_text(path: Path, value: str) -> None:
+def _atomic_write_text(
+    path: Path, value: str, *, inject_replace_failure: bool = False
+) -> None:
     """Replace one evidence file only after its complete contents are durable."""
 
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    temporary.write_text(value, encoding="utf-8")
-    temporary.replace(path)
+    try:
+        temporary.write_text(value, encoding="utf-8")
+        if inject_replace_failure:
+            raise OSError("persona_buddy_terminal_report_publish_injected")
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _atomic_write_bytes(path: Path, value: bytes) -> None:
@@ -112,12 +141,24 @@ def _atomic_write_bytes(path: Path, value: bytes) -> None:
 
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    temporary.write_bytes(value)
-    temporary.replace(path)
+    try:
+        temporary.write_bytes(value)
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
-def _atomic_write_json(path: Path, value: dict[str, Any]) -> None:
-    _atomic_write_text(path, json.dumps(value, sort_keys=True))
+def _atomic_write_json(
+    path: Path,
+    value: dict[str, Any],
+    *,
+    inject_replace_failure: bool = False,
+) -> None:
+    _atomic_write_text(
+        path,
+        json.dumps(value, sort_keys=True),
+        inject_replace_failure=inject_replace_failure,
+    )
 
 
 def _bounded_utf8_tail(value: str, limit: int = _DIAGNOSTIC_BYTES) -> str:
@@ -376,7 +417,7 @@ def _child(preferences_path: Path, report_path: Path) -> int:
             await self.push_screen(ProbeScreen(self, "first"))
             asyncio.get_running_loop().add_signal_handler(
                 signal.SIGUSR1,
-                self._write_probe_report,
+                self._request_full_repaint,
             )
             asyncio.get_running_loop().add_signal_handler(
                 signal.SIGUSR2,
@@ -396,6 +437,12 @@ def _child(preferences_path: Path, report_path: Path) -> int:
             )
             self.call_after_refresh(self._capture_focus_guard)
             self.set_interval(0.10, self._write_probe_report)
+
+        def _request_full_repaint(self) -> None:
+            """Force one whole-screen repaint for exact external evidence."""
+
+            self.screen.refresh(layout=True, repaint=True)
+            self.call_after_refresh(self._write_probe_report)
 
         def _capture_focus_guard(self) -> None:
             screen = self.screen
@@ -666,7 +713,20 @@ def _child(preferences_path: Path, report_path: Path) -> int:
 
 
 def _set_size(fd: int, columns: int, rows: int) -> None:
+    if fcntl is None or termios is None:  # pragma: no cover - POSIX-only caller
+        raise RuntimeError("persona_buddy_terminal_posix_pty_unavailable")
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, columns, 0, 0))
+
+
+def _read_pty(fd: int) -> bytes:
+    """Read one PTY chunk, treating Linux's EIO-on-slave-close as clean EOF."""
+
+    try:
+        return os.read(fd, 65536)
+    except OSError as error:
+        if error.errno == errno.EIO:
+            return b""
+        raise
 
 
 def _drain_for(fd: int, duration: float) -> bytes:
@@ -679,12 +739,19 @@ def _drain_for(fd: int, duration: float) -> bytes:
             [fd], [], [], min(0.02, deadline - time.monotonic())
         )
         if ready:
-            captured.extend(os.read(fd, 65536))
+            chunk = _read_pty(fd)
+            if not chunk:
+                break
+            captured.extend(chunk)
     return bytes(captured)
 
 
 def _drain_until_quiet(
-    fd: int, *, timeout: float = 0.50, quiet_seconds: float = 0.05
+    fd: int,
+    *,
+    timeout: float = 0.50,
+    quiet_seconds: float = 0.05,
+    max_bytes: int | None = None,
 ) -> bytes:
     """Drain until the PTY has stayed quiet, bounded by one hard deadline."""
 
@@ -695,8 +762,87 @@ def _drain_until_quiet(
         ready, _, _ = select.select([fd], [], [], wait)
         if not ready:
             break
-        captured.extend(os.read(fd, 65536))
+        chunk = _read_pty(fd)
+        if not chunk:
+            break
+        if max_bytes is not None and len(captured) + len(chunk) > max_bytes:
+            raise ValueError("persona_buddy_terminal_capture_too_large")
+        captured.extend(chunk)
     return bytes(captured)
+
+
+def _ansi_sequences_are_complete(value: bytes) -> bool:
+    """Return whether every ESC sequence ends at a valid control boundary."""
+
+    index = 0
+    length = len(value)
+    while index < length:
+        if value[index] != 0x1B:
+            index += 1
+            continue
+        index += 1
+        if index >= length:
+            return False
+        introducer = value[index]
+        index += 1
+        if introducer == ord("["):
+            while index < length and not 0x40 <= value[index] <= 0x7E:
+                index += 1
+            if index >= length:
+                return False
+            index += 1
+        elif introducer in (ord("]"), ord("P"), ord("_"), ord("^")):
+            while index < length:
+                if value[index] == 0x07:
+                    index += 1
+                    break
+                if (
+                    value[index] == 0x1B
+                    and index + 1 < length
+                    and value[index + 1] == ord("\\")
+                ):
+                    index += 2
+                    break
+                index += 1
+            else:
+                return False
+        else:
+            while 0x20 <= introducer <= 0x2F:
+                if index >= length:
+                    return False
+                introducer = value[index]
+                index += 1
+            if not 0x30 <= introducer <= 0x7E:
+                return False
+    return True
+
+
+def _validate_terminal_capture(value: bytes) -> None:
+    """Fail closed unless one exact terminal state is bounded and replay-safe."""
+
+    if not value:
+        raise ValueError("persona_buddy_terminal_capture_empty")
+    if len(value) > _CAPTURE_BYTES:
+        raise ValueError("persona_buddy_terminal_capture_too_large")
+    value.decode("utf-8")
+    lowered = value.lower()
+    if any(marker in lowered for marker in _CAPTURE_FORBIDDEN):
+        raise ValueError("persona_buddy_terminal_capture_private_content")
+    if not _ansi_sequences_are_complete(value):
+        raise ValueError("persona_buddy_terminal_capture_incomplete_ansi")
+
+
+def _capture_fresh_repaint(fd: int, request_repaint: Any | None = None) -> bytes:
+    """Discard old PTY traffic, request a full repaint, and retain only that state."""
+
+    _drain_until_quiet(fd)
+    if request_repaint is None:
+        os.write(fd, b"\x0c")
+    else:
+        request_repaint()
+    captured = _drain_until_quiet(fd, max_bytes=_CAPTURE_BYTES)
+    _validate_terminal_capture(captured)
+    return captured
 
 
 def _send_mouse(fd: int, code: int, x: int, y: int, *, release: bool = False) -> None:
@@ -720,7 +866,10 @@ def _run_child(
     phase: str,
     capture_dir: Path | None = None,
     inject_child_failure: bool = False,
+    inject_startup_noise: bool = False,
 ) -> dict[str, Any]:
+    if pty is None:  # pragma: no cover - parent skips this path on Windows
+        raise RuntimeError("persona_buddy_terminal_posix_pty_unavailable")
     master, slave = pty.openpty()
     _set_size(slave, 80, 24)
     isolated = preferences.parent
@@ -740,6 +889,8 @@ def _run_child(
     for directory in (isolated / "home", isolated / "config", isolated / "data"):
         directory.mkdir(parents=True, exist_ok=True)
     command = [sys.executable, str(Path(__file__).resolve())]
+    if inject_startup_noise:
+        command.append("--inject-startup-noise")
     if inject_child_failure:
         command.append("--inject-child-failure")
     command.extend(("--child", str(preferences), str(report)))
@@ -764,8 +915,10 @@ def _run_child(
     def capture(name: str) -> None:
         if capture_dir is None:
             return
-        terminal_output.extend(_drain_until_quiet(master))
-        _atomic_write_bytes(capture_dir / name, bytes(terminal_output))
+        _atomic_write_bytes(
+            capture_dir / name,
+            _capture_fresh_repaint(master, lambda: process.send_signal(signal.SIGUSR1)),
+        )
 
     try:
         initial_deadline = time.monotonic() + _TIMEOUT_SECONDS
@@ -1154,26 +1307,137 @@ def _run_child(
             process.wait(timeout=2)
 
 
+def _rollback_managed_captures(capture_output: Path | None) -> None:
+    """Remove only regular managed artifacts, preserving unrelated directories."""
+
+    if capture_output is None or not capture_output.is_dir():
+        return
+    for name in _CAPTURE_NAMES:
+        target = capture_output / name
+        if not target.is_dir():
+            target.unlink(missing_ok=True)
+
+
+def _preflight_atomic_directory(directory: Path, target_name: str) -> None:
+    """Prove an atomic target's parent is writable without touching the target."""
+
+    directory.mkdir(parents=True, exist_ok=True)
+    probe = directory / f".{target_name}.{os.getpid()}.admission.tmp"
+    created = False
+    try:
+        with probe.open("xb"):
+            created = True
+    finally:
+        if created:
+            probe.unlink(missing_ok=True)
+
+
+def _admit_outputs(report_output: Path | None, capture_output: Path | None) -> None:
+    """Validate all caller-owned output locations before starting a child."""
+
+    if capture_output is None:
+        raise OSError("persona_buddy_terminal_capture_directory_required")
+    if capture_output.exists() and not capture_output.is_dir():
+        raise OSError("persona_buddy_terminal_capture_directory_not_directory")
+    capture_output.mkdir(parents=True, exist_ok=True)
+    _preflight_atomic_directory(capture_output, "capture")
+    if report_output is not None:
+        if report_output.exists() and report_output.is_dir():
+            raise OSError("persona_buddy_terminal_report_is_directory")
+        _preflight_atomic_directory(report_output.parent, report_output.name)
+
+
+def _failure_sibling(report_output: Path | None) -> Path:
+    if report_output is not None:
+        return report_output.with_name(
+            f".{report_output.name}.{os.getpid()}.{time.monotonic_ns()}.failure.json"
+        )
+    return Path(tempfile.gettempdir()) / (
+        f"persona-buddy-terminal-{os.getpid()}.{time.monotonic_ns()}.failure.json"
+    )
+
+
+def _persist_structured_failure(
+    failure: _ProbeChildFailure,
+    *,
+    report_output: Path | None,
+    root: Path,
+    temporary: str | None,
+) -> tuple[dict[str, Any], Path]:
+    """Persist bounded failure evidence, falling back from an unusable target."""
+
+    diagnostic = failure.diagnostic_tail.replace(str(root), "<REPO_ROOT>")
+    if temporary is not None:
+        diagnostic = diagnostic.replace(temporary, "<TEMP_ROOT>")
+    diagnostic = _bounded_utf8_tail(diagnostic)
+    preferred_report = report_output
+    if preferred_report is None or preferred_report.is_dir():
+        preferred_report = _failure_sibling(report_output)
+    diagnostic_path = preferred_report.with_name(
+        f"{preferred_report.stem}.diagnostic.log"
+    ).resolve()
+    try:
+        _atomic_write_text(diagnostic_path, diagnostic)
+    except OSError:
+        diagnostic_path = (
+            Path(tempfile.gettempdir())
+            / f"persona-buddy-terminal-{os.getpid()}.diagnostic.log"
+        ).resolve()
+        _atomic_write_text(diagnostic_path, diagnostic)
+    checks = {name: False for name in _CHECK_NAMES}
+    result = {
+        "status": "FAIL",
+        "category": failure.category,
+        "phase": failure.phase,
+        "parent_return_code": 1,
+        "child_return_code": failure.child_return_code,
+        "diagnostic_tail": diagnostic,
+        "diagnostic_artifact": str(diagnostic_path),
+        "checks": checks,
+        "check_statuses": {name: "not_run" for name in _CHECK_NAMES},
+    }
+    try:
+        _atomic_write_json(preferred_report, result)
+    except OSError:
+        fallback_report = _failure_sibling(report_output)
+        try:
+            _atomic_write_json(fallback_report, result)
+        except OSError:
+            fallback_report = (
+                Path(tempfile.gettempdir())
+                / f"persona-buddy-terminal-{os.getpid()}.failure.json"
+            )
+            _atomic_write_json(fallback_report, result)
+    return result, diagnostic_path
+
+
 def _parent(
     report_output: Path | None = None,
     *,
     capture_output: Path | None = None,
     inject_child_failure: bool = False,
     inject_publication_failure: bool = False,
+    inject_report_publication_failure: bool = False,
+    inject_startup_noise: bool = False,
 ) -> int:
     if os.name == "nt":
         print("SKIP persona_buddy_terminal windows_no_posix_pty")
         return 0
     root = Path(__file__).resolve().parents[2]
-    if capture_output is not None:
-        capture_output.mkdir(parents=True, exist_ok=True)
-        for name in _CAPTURE_NAMES:
-            (capture_output / name).unlink(missing_ok=True)
-    with tempfile.TemporaryDirectory(prefix="persona-buddy-terminal-") as temporary:
-        try:
+    temporary: str | None = None
+    phase = "parent:admission"
+    child_return_code = 0
+    try:
+        _admit_outputs(report_output, capture_output)
+        _rollback_managed_captures(capture_output)
+        with tempfile.TemporaryDirectory(
+            prefix="persona-buddy-terminal-"
+        ) as temporary_value:
+            temporary = temporary_value
             isolated = Path(temporary)
             preferences = isolated / "persona_buddy.json"
             staged_captures = isolated / "captures"
+            phase = "first:startup"
             first = _run_child(
                 root=root,
                 preferences=preferences,
@@ -1182,12 +1446,14 @@ def _parent(
                 phase="first",
                 capture_dir=staged_captures,
                 inject_child_failure=inject_child_failure,
+                inject_startup_noise=inject_startup_noise,
             )
             restored = json.loads(preferences.read_text(encoding="utf-8"))
             restored["open"] = True
             preferences.write_text(
                 json.dumps(restored, sort_keys=True), encoding="utf-8"
             )
+            phase = "restore:startup"
             second = _run_child(
                 root=root,
                 preferences=preferences,
@@ -1246,50 +1512,50 @@ def _parent(
                 "first": first,
                 "second": second,
             }
+            phase = "parent:report"
+            if report_output is not None:
+                _atomic_write_json(
+                    report_output,
+                    result,
+                    inject_replace_failure=inject_report_publication_failure,
+                )
+            phase = "parent:capture"
             if all(checks.values()) and capture_output is not None:
                 _publish_capture_group(
                     staged_captures,
                     capture_output,
                     inject_failure=inject_publication_failure,
                 )
-            if report_output is not None:
-                _atomic_write_json(report_output, result)
             print(json.dumps(result, sort_keys=True))
             if not all(checks.values()):
                 print("FAIL persona_buddy_terminal")
                 return 1
             print("PASS persona_buddy_terminal")
             return 0
-        except _ProbeChildFailure as failure:
-            diagnostic = failure.diagnostic_tail.replace(str(root), "<REPO_ROOT>")
-            diagnostic = diagnostic.replace(temporary, "<TEMP_ROOT>")
-            diagnostic = _bounded_utf8_tail(diagnostic)
-            if report_output is not None:
-                artifact = report_output.with_name(
-                    f"{report_output.stem}.diagnostic.log"
-                ).resolve()
-            else:
-                artifact = (
-                    Path(tempfile.gettempdir())
-                    / f"persona-buddy-terminal-{os.getpid()}.diagnostic.log"
-                ).resolve()
-            _atomic_write_text(artifact, diagnostic)
-            checks = {name: False for name in _CHECK_NAMES}
-            result = {
-                "status": "FAIL",
-                "category": failure.category,
-                "phase": failure.phase,
-                "parent_return_code": 1,
-                "child_return_code": failure.child_return_code,
-                "diagnostic_tail": diagnostic,
-                "diagnostic_artifact": str(artifact),
-                "checks": checks,
-                "check_statuses": {name: "not_run" for name in _CHECK_NAMES},
-            }
-            if report_output is not None:
-                _atomic_write_json(report_output, result)
-            print(json.dumps(result, sort_keys=True))
-            raise RuntimeError(f"{failure.category} artifact={artifact}") from failure
+    except _ProbeChildFailure as caught_failure:
+        failure = caught_failure
+        child_return_code = failure.child_return_code
+    except OSError as error:
+        category = {
+            "parent:admission": "persona_buddy_terminal_output_admission",
+            "parent:report": "persona_buddy_terminal_report_publish",
+            "parent:capture": "persona_buddy_terminal_capture_publish",
+        }.get(phase, "persona_buddy_terminal_probe_failure")
+        failure = _ProbeChildFailure(
+            category=category,
+            phase=phase,
+            child_return_code=child_return_code,
+            diagnostic_tail=f"{type(error).__name__}: {category}",
+        )
+    _rollback_managed_captures(capture_output)
+    result, artifact = _persist_structured_failure(
+        failure,
+        report_output=report_output,
+        root=root,
+        temporary=temporary,
+    )
+    print(json.dumps(result, sort_keys=True))
+    raise RuntimeError(f"{failure.category} artifact={artifact}") from failure
 
 
 def main() -> int:
@@ -1303,10 +1569,28 @@ def main() -> int:
     parser.add_argument(
         "--inject-publication-failure", action="store_true", help=argparse.SUPPRESS
     )
+    parser.add_argument(
+        "--inject-report-publication-failure",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--inject-startup-noise", action="store_true", help=argparse.SUPPRESS
+    )
     arguments = parser.parse_args()
     if arguments.child:
         if arguments.preferences is None or arguments.report is None:
             return 2
+        if arguments.inject_startup_noise:
+            os.write(
+                sys.stderr.fileno(),
+                (
+                    b"PERSONA_BUDDY_PRIVATE_STARTUP_MARKER "
+                    b"/private/tmp/private-checkout/config.toml provider_inventory\n"
+                    + b"x"
+                    * (_CAPTURE_BYTES * 2)
+                ),
+            )
         if arguments.inject_child_failure:
             raise RuntimeError("persona_buddy_injected_child_failure")
         return _child(arguments.preferences, arguments.report)
@@ -1318,6 +1602,10 @@ def main() -> int:
             capture_output=arguments.capture_dir,
             inject_child_failure=arguments.inject_child_failure,
             inject_publication_failure=arguments.inject_publication_failure,
+            inject_report_publication_failure=(
+                arguments.inject_report_publication_failure
+            ),
+            inject_startup_noise=arguments.inject_startup_noise,
         )
     except RuntimeError as error:
         print(str(error), file=sys.stderr)

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import importlib.util
+import ast
+import errno
 import json
 import os
 from pathlib import Path
@@ -49,6 +51,7 @@ def test_probe_persists_four_exact_visual_state_captures(tmp_path: Path) -> None
             str(report),
             "--capture-dir",
             str(captures),
+            "--inject-startup-noise",
         ],
         check=False,
         capture_output=True,
@@ -73,7 +76,18 @@ def test_probe_persists_four_exact_visual_state_captures(tmp_path: Path) -> None
 
     artifacts = {path.name for path in captures.iterdir()}
     assert artifacts == _CAPTURE_NAMES
-    assert all((captures / name).stat().st_size > 0 for name in artifacts)
+    capture_values = {(captures / name).read_bytes() for name in artifacts}
+    assert len(capture_values) == len(_CAPTURE_NAMES)
+    for value in capture_values:
+        assert 0 < len(value) <= 256 * 1024
+        assert value.decode("utf-8")
+        assert b"\x1b[" in value
+        for forbidden in (
+            b"PERSONA_BUDDY_PRIVATE_STARTUP_MARKER",
+            b"/private/tmp/private-checkout/config.toml",
+            b"provider_inventory",
+        ):
+            assert forbidden not in value
     assert "Traceback" not in completed.stdout
     assert "Traceback" not in completed.stderr
     serialized = json.dumps(payload, sort_keys=True)
@@ -144,6 +158,104 @@ def test_diagnostic_tail_is_bounded_in_utf8_bytes_and_retains_category() -> None
     assert encoded.decode("utf-8") == diagnostic
     assert diagnostic.startswith(f"{category}\n")
     assert diagnostic.endswith("é")
+
+
+def test_terminal_capture_rejects_overflow_private_content_and_partial_ansi() -> None:
+    probe = _load_probe_module()
+
+    assert probe._CAPTURE_BYTES <= 256 * 1024
+    with pytest.raises(ValueError, match="capture_too_large"):
+        probe._validate_terminal_capture(b"x" * (probe._CAPTURE_BYTES + 1))
+    with pytest.raises(ValueError, match="capture_private_content"):
+        probe._validate_terminal_capture(
+            b"\x1b[2J/private/tmp/private-checkout/config.toml"
+        )
+    with pytest.raises(ValueError, match="capture_incomplete_ansi"):
+        probe._validate_terminal_capture(b"\x1b[2J\x1b[")
+    with pytest.raises(UnicodeDecodeError):
+        probe._validate_terminal_capture(b"\x1b[2J\xc3")
+
+
+def test_repaint_capture_discards_cumulative_stream_before_fresh_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probe = _load_probe_module()
+    private_noise = (
+        b"PERSONA_BUDDY_PRIVATE_STARTUP_MARKER "
+        b"/private/tmp/private-checkout/config.toml provider_inventory\n"
+        + b"x"
+        * (probe._CAPTURE_BYTES * 2)
+    )
+    state = b"\x1b[2J\x1b[Hfresh exact state\x1b[0m"
+    drains = iter((private_noise, state))
+    writes: list[bytes] = []
+
+    monkeypatch.setattr(
+        probe, "_drain_until_quiet", lambda *_args, **_kwargs: next(drains)
+    )
+    monkeypatch.setattr(probe.os, "write", lambda _fd, value: writes.append(value))
+
+    assert probe._capture_fresh_repaint(7) == state
+    assert writes == [b"\x0c"]
+
+
+def test_drain_helpers_treat_linux_eio_as_clean_eof(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probe = _load_probe_module()
+    monkeypatch.setattr(probe.select, "select", lambda *_args: ([7], [], []))
+
+    def raise_eio(*_args):
+        raise OSError(errno.EIO, "pty eof")
+
+    monkeypatch.setattr(probe.os, "read", raise_eio)
+    assert probe._drain_for(7, 0.01) == b""
+    assert probe._drain_until_quiet(7, timeout=0.01) == b""
+
+
+def test_drain_helpers_propagate_non_eio_oserror(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probe = _load_probe_module()
+    monkeypatch.setattr(probe.select, "select", lambda *_args: ([7], [], []))
+
+    def raise_bad_fd(*_args):
+        raise OSError(errno.EBADF, "bad fd")
+
+    monkeypatch.setattr(probe.os, "read", raise_bad_fd)
+    with pytest.raises(OSError, match="bad fd"):
+        probe._drain_for(7, 0.01)
+    with pytest.raises(OSError, match="bad fd"):
+        probe._drain_until_quiet(7, timeout=0.01)
+
+
+def test_posix_modules_are_imported_only_below_the_platform_guard() -> None:
+    probe = Path(__file__).with_name("persona_buddy_terminal_probe.py")
+    tree = ast.parse(probe.read_text(encoding="utf-8"))
+    top_level = {
+        alias.name
+        for node in tree.body
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    }
+
+    assert {"fcntl", "pty", "termios"}.isdisjoint(top_level)
+    source = probe.read_text(encoding="utf-8")
+    assert (
+        'if os.name == "nt":\n        print("SKIP persona_buddy_terminal windows_no_posix_pty")'
+        in source
+    )
+
+
+def test_output_preflight_never_removes_an_unrelated_collision(tmp_path: Path) -> None:
+    probe = _load_probe_module()
+    collision = tmp_path / f".capture.{os.getpid()}.admission.tmp"
+    collision.write_text("caller-owned", encoding="utf-8")
+
+    with pytest.raises(FileExistsError):
+        probe._preflight_atomic_directory(tmp_path, "capture")
+
+    assert collision.read_text(encoding="utf-8") == "caller-owned"
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX PTY capability required")
@@ -238,6 +350,125 @@ def test_capture_publication_failure_rolls_back_managed_group(tmp_path: Path) ->
     assert payload["category"] in completed.stderr
     assert not any((captures / name).exists() for name in _CAPTURE_NAMES)
     assert unrelated.read_text(encoding="utf-8") == "caller-owned"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX PTY capability required")
+def test_capture_directory_regular_file_fails_structured_before_child(
+    tmp_path: Path,
+) -> None:
+    probe = Path(__file__).with_name("persona_buddy_terminal_probe.py")
+    report = tmp_path / "failure-report.json"
+    report.write_text('{"status":"STALE"}', encoding="utf-8")
+    capture_file = tmp_path / "captures"
+    capture_file.write_text("caller-owned", encoding="utf-8")
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(probe),
+            "--inject-child-failure",
+            "--report",
+            str(report),
+            "--capture-dir",
+            str(capture_file),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert completed.returncode == 1
+    payload = json.loads(report.read_text(encoding="utf-8"))
+    assert payload["status"] == "FAIL"
+    assert payload["category"] == "persona_buddy_terminal_output_admission"
+    assert payload["phase"] == "parent:admission"
+    assert payload["child_return_code"] == 0
+    assert capture_file.read_text(encoding="utf-8") == "caller-owned"
+    assert "Traceback" not in completed.stderr
+    assert not list(tmp_path.glob(".*.tmp"))
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX PTY capability required")
+def test_report_directory_fails_to_safe_sibling_before_child_and_rolls_back(
+    tmp_path: Path,
+) -> None:
+    probe = Path(__file__).with_name("persona_buddy_terminal_probe.py")
+    report_dir = tmp_path / "reportdir"
+    report_dir.mkdir()
+    keeper = report_dir / "keep.txt"
+    keeper.write_text("caller-owned", encoding="utf-8")
+    captures = tmp_path / "captures"
+    captures.mkdir()
+    for name in _CAPTURE_NAMES:
+        (captures / name).write_text("stale", encoding="utf-8")
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(probe),
+            "--inject-child-failure",
+            "--report",
+            str(report_dir),
+            "--capture-dir",
+            str(captures),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert completed.returncode == 1
+    failure_reports = list(tmp_path.glob(".reportdir.*.failure.json"))
+    assert len(failure_reports) == 1
+    failure_report = failure_reports[0]
+    payload = json.loads(failure_report.read_text(encoding="utf-8"))
+    assert payload["status"] == "FAIL"
+    assert payload["category"] == "persona_buddy_terminal_output_admission"
+    assert payload["phase"] == "parent:admission"
+    assert payload["child_return_code"] == 0
+    assert keeper.read_text(encoding="utf-8") == "caller-owned"
+    assert report_dir.is_dir()
+    assert not any((captures / name).exists() for name in _CAPTURE_NAMES)
+    assert "Traceback" not in completed.stderr
+    assert not list(tmp_path.glob(".reportdir.*.tmp"))
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX PTY capability required")
+def test_report_replace_failure_is_structured_and_leaves_no_captures_or_temp(
+    tmp_path: Path,
+) -> None:
+    probe = Path(__file__).with_name("persona_buddy_terminal_probe.py")
+    report = tmp_path / "report.json"
+    report.write_text('{"status":"STALE"}', encoding="utf-8")
+    captures = tmp_path / "captures"
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(probe),
+            "--inject-report-publication-failure",
+            "--report",
+            str(report),
+            "--capture-dir",
+            str(captures),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert completed.returncode == 1
+    payload = json.loads(report.read_text(encoding="utf-8"))
+    assert payload["status"] == "FAIL"
+    assert payload["category"] == "persona_buddy_terminal_report_publish"
+    assert payload["phase"] == "parent:report"
+    assert payload["child_return_code"] == 0
+    assert not any((captures / name).exists() for name in _CAPTURE_NAMES)
+    assert "Traceback" not in completed.stderr
+    assert not list(tmp_path.glob(".*.tmp"))
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX PTY capability required")
