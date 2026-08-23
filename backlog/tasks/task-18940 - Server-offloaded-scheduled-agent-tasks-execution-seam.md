@@ -60,3 +60,7 @@ Reason: cross-system service contract (client↔server execution ownership, resu
 5. Reconciliation with 18937–18939 semantics; per-task model payload
 6. Live verification against a real server; docs (schedules.md is a stub — this task should also give it its real content)
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+**Client slice 1 (2026-08-23, `feat/18940-owner-filter`): single-owner execution.** ADR-077 decision 1 landed client-side: `PriorityQueue.load` drops server-scoped rows (`owner_id` starting `server:`) at the queue seam — both load paths — so no tick, reload, or variant can ever dispatch one locally (notifications arrive via the server feed instead; no local missed-fire state, per decision 6). Run-now refuses at all three seams (workbench toast with precise copy, service returns None, loop returns False without consuming the row). Local-owner rows unchanged (pinned). Tests: `Tests/Scheduling/test_owner_filter.py` (7 — predicate, both queue paths, tick-never-dispatches with row untouched, loop/service refusals, local-row no-regression). Scheduling suite 335 passed (2 pre-existing dev failures reproduced with changes stashed: briefing wiring getter tests); scheduling UI suites 56 passed (5 unrelated settings-module collection errors also pre-exist on clean dev in this worktree — persona coordinator DB handle at import). Docs: schedules.md gains the server-scheduled callout the ADR's Consequences section requires.

@@ -16,7 +16,10 @@ from tldw_chatbook.Scheduling.constants import (
     SCHEDULER_POLL_INTERVAL_SECONDS,
     coerce_positive_float,
 )
-from tldw_chatbook.Scheduling.scheduler.queue import PriorityQueue
+from tldw_chatbook.Scheduling.scheduler.queue import (
+    PriorityQueue,
+    is_server_scoped_owner,
+)
 from tldw_chatbook.Scheduling.services.briefing_projection import BriefingProjection
 from tldw_chatbook.Scheduling.services.watchlist_projection import WatchlistProjection
 
@@ -473,6 +476,18 @@ class SchedulerLoop:
         self.queue.remove(task_id)
         row = await asyncio.to_thread(self.db.get_reminder_task, task_id)
         if row is None:
+            return False
+
+        # ADR-077 decision 1: server-scoped rows are the server's to
+        # execute. A local manual run would either double-execute against
+        # the server's own firing or consume a row this side never owns --
+        # refuse honestly rather than dispatch on the wrong side.
+        if is_server_scoped_owner(row.get("owner_id")):
+            logger.warning(
+                "Manual reminder run refused for task {task_id}: "
+                "server-scoped rows are executed by the server (ADR-077)",
+                task_id=task_id,
+            )
             return False
 
         succeeded = await self.dispatch_reminder(

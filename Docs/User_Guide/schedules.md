@@ -153,6 +153,14 @@ A reminder that is both queued and run manually dispatches exactly once —
 the pending scheduled occurrence is claimed by the manual run rather than
 firing twice.
 
+**Server-scheduled reminders cannot be run from here.** When the Schedules
+owner is a connected server, reminders synced to it carry a server scope:
+the **server** executes them on schedule and delivers the notification
+through the server feed, and the local scheduler never fires them (no
+double execution — one owner, one executor). Pressing **r** on one refuses
+with a toast saying so. This is the single-owner execution rule the
+server-offload design is built on; local-owner reminders are unaffected.
+
 ## Execution timeouts
 
 A scheduled task's handler is bounded: if it is still running after its
