@@ -1220,19 +1220,27 @@ before `rollback_mutation`. Run:
 Expected RED: the shared event trace begins with `release` before prior-state
 projection. Restore and rerun GREEN.
 
-- [x] **Step 4: Mutate replacement safety**
+- [x] **Step 4: Mutate replacement acknowledgement and current-claim safety**
 
-Temporarily remove the exact-current-claim guard around release or
-acknowledgement. Run:
+First replace guarded `acknowledge_current(claim)` with unguarded
+`acknowledge(claim)`. Run the in-guard replacement race:
 
 ```bash
 ../../.venv/bin/python -B -m pytest -q \
-  Tests/UI/test_console_session_settings.py::test_first_chat_replacement_and_session_switch_during_create_roll_back_old_target \
-  Tests/UI/test_console_session_settings.py::test_first_chat_ack_exception_after_replacement_preserves_replacement
+  Tests/UI/test_console_session_settings.py::test_first_chat_guarded_ack_replacement_rolls_back_original_claim
 ```
 
-Expected RED: the replacement claim is released or acknowledged. Restore and
-rerun GREEN.
+Then independently remove the `fence_matches` current-claim conjunct. Run the
+replacement-only post-create race:
+
+```bash
+../../.venv/bin/python -B -m pytest -q \
+  Tests/UI/test_console_session_settings.py::test_first_chat_current_claim_fence_blocks_replacement_target_projection
+```
+
+Expected RED: the acknowledgement mutant settles the original after the guard
+stages a replacement; the current-claim mutant projects target defaults before
+rollback. Apply the exact inverse patch after each subprobe and rerun GREEN.
 
 - [x] **Step 5: Mutate guarded acknowledgement**
 
@@ -1298,8 +1306,8 @@ HEAD unchanged. Mutation probes produce no commit.
 
 **Task 4 execution evidence (2026-08-22):**
 
-- Final mutation candidate HEAD was
-  `1acee40a8a75f566c4db54624b8d6dcd14273238`. The committed `session.py`
+- Final replacement-completion candidate HEAD was
+  `1311b11003d8618939bbd6b4f8b8513b95fa60da`. The committed `session.py`
   blob was `fee6e6c40f8c4c5a2591d947028d7aee0c7257be`, its file SHA-256 was
   `a2551c3e7a9832e6c67f7b2ca77a616ac658d9ba0ec3824050b2c30681bcb17f`,
   and the clean binary-diff SHA-256 was
@@ -1316,9 +1324,14 @@ HEAD unchanged. Mutation probes produce no commit.
   was `project, release, store-rollback, project` instead of `project,
   store-rollback, project, release`. Exact restoration produced `1 passed`.
 - Replacing `acknowledge_current(claim)` with `acknowledge(claim)` produced
-  `1 failed, 1 passed`: the acknowledgement-exception replacement case returned
-  `True` instead of `False`, bypassing the current-revision replacement guard.
-  Exact restoration produced `2 passed`.
+  `1 failed`: the guarded-ack replacement case returned `True` instead of
+  `False` after the generation guard staged a replacement. Exact restoration
+  produced `1 passed`.
+- Removing `self.app_instance.pending_handoffs.is_current_claim(claim)`
+  produced `1 failed`: observed control projections were `[('openai', 'model-a'),
+  ('prior-control-provider', 'prior-control-model')]` instead of only the prior
+  projection in the replacement-only post-create race. Exact restoration
+  produced `1 passed`.
 - Treating false guarded acknowledgement as success produced `1 failed`: the
   consumer returned `True` instead of rolling back and requeueing. Exact
   restoration produced `1 passed`.
@@ -1331,7 +1344,7 @@ HEAD unchanged. Mutation probes produce no commit.
   produced `1 passed`.
 - The independent structural non-vacuity oracle passed (`1 passed`). The final
   combined mutation-target and structural selection passed `8 passed, 2
-  warnings in 3.43s`.
+  warnings in 3.14s`.
 - Every probe used an explicit inverse patch. Final `git diff --check` passed,
   the `TASK3070_MUTATION` scan found zero residue, `git status --porcelain` was
   empty, HEAD and both checksums were unchanged, and the probes created no
