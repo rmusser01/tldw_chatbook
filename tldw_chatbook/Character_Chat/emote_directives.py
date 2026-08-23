@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
+
+from tldw_chatbook.Character_Chat.visual_identity import (
+    CUSTOM_EXPRESSION_PREFIX,
+    normalize_expression_key,
+)
 
 EMOTE_EVENT_LIMIT = 5
 EMOTE_PROMPT_STATE_LIMIT = 25
@@ -117,6 +122,75 @@ def parse_character_emote_directives(text: str) -> CharacterEmoteParseResult:
         clean_text="".join(clean_parts),
         events=tuple(events),
     )
+
+
+def project_character_emote_states(
+    assets: Iterable[Mapping[str, object] | object],
+) -> tuple[str, ...]:
+    """Project ordered safe emote slugs from canonical expression keys."""
+
+    candidates: list[tuple[str, str]] = []
+    keys_by_slug: dict[str, set[str]] = {}
+    for asset in assets:
+        raw_key = (
+            asset.get("expression_key")
+            if isinstance(asset, Mapping)
+            else getattr(asset, "expression_key", None)
+        )
+        if not isinstance(raw_key, str):
+            continue
+        slug = (
+            raw_key[len(CUSTOM_EXPRESSION_PREFIX) :]
+            if raw_key.startswith(CUSTOM_EXPRESSION_PREFIX)
+            else raw_key
+        )
+        if normalize_character_emote_state(slug) != slug:
+            continue
+        if normalize_expression_key(slug) != raw_key:
+            continue
+        candidates.append((slug, raw_key))
+        keys_by_slug.setdefault(slug, set()).add(raw_key)
+
+    states: list[str] = []
+    seen: set[str] = set()
+    for slug, _raw_key in candidates:
+        if slug in seen or len(keys_by_slug[slug]) != 1:
+            continue
+        states.append(slug)
+        seen.add(slug)
+    return tuple(states)
+
+
+def append_character_emote_prompt_instruction(
+    system_prompt: str,
+    states: Iterable[str],
+) -> str:
+    """Append the pinned emote instruction with a bounded safe inventory."""
+
+    safe_states: list[str] = []
+    seen: set[str] = set()
+    for state in states:
+        normalized = normalize_character_emote_state(state)
+        if normalized != state or state in seen:
+            continue
+        safe_states.append(state)
+        seen.add(state)
+
+    visible_states = safe_states[:EMOTE_PROMPT_STATE_LIMIT]
+    hidden_count = len(safe_states) - len(visible_states)
+    suffix = f" (+{hidden_count} more)" if hidden_count else ""
+    prefer = (
+        f" Prefer these available states: {', '.join(visible_states)}{suffix}."
+        if visible_states
+        else ""
+    )
+    instruction = (
+        "When the character expression should change, emit a standalone line exactly "
+        "like `Emote: <state>`."
+        f"{prefer} Do not emit an emote after every sentence."
+    )
+    base = system_prompt.strip()
+    return f"{base}\n\n{instruction}" if base else instruction
 
 
 class CharacterEmoteStreamParser:

@@ -12,8 +12,10 @@ from tldw_chatbook.Character_Chat.emote_directives import (
     STREAM_PREFIX_BUFFER_LIMIT,
     CharacterEmoteEvent,
     CharacterEmoteStreamParser,
+    append_character_emote_prompt_instruction,
     normalize_character_emote_state,
     parse_character_emote_directives,
+    project_character_emote_states,
 )
 
 pytestmark = pytest.mark.unit
@@ -168,3 +170,48 @@ def test_flush_accepts_unterminated_directive_that_cancel_discards() -> None:
     assert parser.push("Emote: surprised").events == ()
 
     assert parser.flush().events == (CharacterEmoteEvent("surprised", 0),)
+
+
+def test_prompt_projection_uses_only_round_tripping_canonical_keys() -> None:
+    assets = [
+        {"expression_key": "neutral", "display_label": "Wrong label"},
+        {"expression_key": "custom:quiet_focus", "display_label": "Ignore me"},
+        {"expression_key": "joy", "display_label": "Alias"},
+        {"expression_key": "custom:joy", "display_label": "Alias collision"},
+        {"expression_key": "custom:thinking-hard"},
+        {"expression_key": "../../bad"},
+        {"expression_key": "happy"},
+        {"expression_key": "neutral"},
+        {"display_label": "label-only-must-not-project"},
+    ]
+
+    assert project_character_emote_states(assets) == (
+        "neutral",
+        "quiet_focus",
+        "happy",
+    )
+
+
+def test_prompt_projection_keeps_first_asset_order_and_caps_instruction() -> None:
+    assets = [
+        {"expression_key": f"custom:state_{index}"}
+        for index in range(27)
+    ]
+    states = project_character_emote_states(assets)
+
+    assert states == tuple(f"state_{index}" for index in range(27))
+    instruction = append_character_emote_prompt_instruction(" Base prompt ", states)
+    visible = ", ".join(f"state_{index}" for index in range(25))
+    assert instruction == (
+        "Base prompt\n\n"
+        "When the character expression should change, emit a standalone line exactly "
+        "like `Emote: <state>`. Prefer these available states: "
+        f"{visible} (+2 more). Do not emit an emote after every sentence."
+    )
+
+
+def test_prompt_instruction_handles_empty_base_and_inventory() -> None:
+    assert append_character_emote_prompt_instruction("", ()) == (
+        "When the character expression should change, emit a standalone line exactly "
+        "like `Emote: <state>`. Do not emit an emote after every sentence."
+    )
