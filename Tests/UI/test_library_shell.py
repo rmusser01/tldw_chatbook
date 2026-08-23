@@ -177,8 +177,17 @@ def _build_test_app(
     Forwards ``configured_default`` to the shared factory (TASK-19602: two
     call sites pass it; this local wrapper used to shadow the shared
     signature and reject it).
+
+    ``preserve_profile_admission`` is now forwarded too (TASK-21280). The
+    shared factory clears ``library_new_profile_admission`` by default, so a
+    wrapper that swallowed this flag left a new-profile test with the
+    admission still cleared underneath it -- which is how
+    ``test_library_real_config_creation_admits_fresh_profile_to_starter``
+    stopped settling to Starter.
     """
-    app = _build_tldw_test_app(configured_default)
+    app = _build_tldw_test_app(
+        configured_default, preserve_profile_admission=preserve_profile_admission
+    )
     if not preserve_profile_admission:
         app.library_new_profile_admission = False
     return app
