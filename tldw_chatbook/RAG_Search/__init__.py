@@ -13,9 +13,15 @@ submodule -- e.g. the lightweight ``ingestion_indexing`` seam that
 Guarded by ``Tests/Packaging/test_chunking_import_closure.py``.
 
 Semantics preserved from the eager version: when the underlying import fails
-(missing optional RAG dependencies), the resolved name degrades to a stub
-class whose constructor raises ``ImportError`` -- the failure just surfaces
-at first use instead of at package import.
+(missing optional RAG dependencies), the names the eager fallback stubbed --
+and ONLY those -- degrade to stub classes whose constructors raise
+``ImportError``; every other name raises ``AttributeError`` (so a
+from-import raises ``ImportError``), exactly as when the eager fallback left
+it undefined. Feature detection depends on that split (e.g.
+``Tests/RAG/test_rag_dependencies.py``'s ``check_rag_services`` probes
+``from tldw_chatbook.RAG_Search import create_rag_service``); pinned by
+``Tests/RAG/test_rag_search_facade.py``. The failure surfaces at first use
+instead of at package import.
 """
 
 from typing import Any
@@ -34,6 +40,14 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "create_config_for_testing": ("simplified", "create_config_for_testing"),
     "ChunkingService": ("chunking_service", "ChunkingService"),
 }
+
+#: The names the eager version's ImportError fallback DEFINED as stubs
+#: (three stub classes plus the ``RAGService = IndexingService`` alias).
+#: Every other export was left undefined by the fallback, so on resolution
+#: failure those raise AttributeError instead of degrading to a stub.
+_STUB_ON_FAILURE = frozenset(
+    {"EmbeddingsService", "ChunkingService", "IndexingService", "RAGService"}
+)
 
 __all__ = [
     "EmbeddingsService",
@@ -93,6 +107,13 @@ def __getattr__(name: str) -> Any:
         logging.getLogger(__name__).error(
             f"Failed to import simplified RAG services: {e}"
         )
+        if name not in _STUB_ON_FAILURE:
+            # The eager fallback left this name undefined: keep raising so a
+            # from-import surfaces ImportError (feature-detection contract).
+            raise AttributeError(
+                f"module {__name__!r} has no attribute {name!r} "
+                f"(RAG dependencies unavailable: {e})"
+            ) from e
         value = _unavailable_stub(name, e)
 
     globals()[name] = value  # cache: subsequent accesses skip __getattr__

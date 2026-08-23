@@ -2001,12 +2001,39 @@ _INGEST_HEAVY_TYPES = frozenset({"audio", "video"})
 # The lazily imported classes are the SAME objects the raising code
 # (``_ingest_job_options`` -> ``Chunking.template_runtime`` /
 # ``chunking_interop_library``) raises, so the except clause catches exactly
-# what it always caught -- and whenever a template error can actually be in
-# flight, those modules are already resident, making this a sys.modules hit.
+# what it always caught.
+#
+# (task-21102 review round) Because ``except _template_resolution_errors()``
+# evaluates this for EVERY exception reaching that clause -- not only
+# template errors -- the matcher must be inert for unrelated errors:
+# * If ``tldw_chatbook.Chunking`` is not resident, no template error can be
+#   in flight (an instance of its exception classes cannot exist without the
+#   defining modules having been imported), so return ``()`` -- which
+#   matches nothing -- WITHOUT importing ~39 Chunking modules as a side
+#   effect of handling an unrelated exception.
+# * If the imports themselves fail (broken install), also return ``()`` so
+#   the ORIGINAL in-flight exception propagates with its own class instead
+#   of being replaced by a ModuleNotFoundError raised from the except
+#   clause.
+# Guarded by ``Tests/App/test_template_error_lazy_matching.py``.
 def _template_resolution_errors() -> tuple[type[Exception], ...]:
-    """Return the named template-resolution error types, imported lazily."""
-    from tldw_chatbook.Chunking.chunking_interop_library import InvalidTemplateError
-    from tldw_chatbook.Chunking.template_runtime import TemplateResolutionError
+    """Return the named template-resolution error types, imported lazily.
+
+    Returns:
+        ``(TemplateResolutionError, InvalidTemplateError)`` when the
+        Chunking package is resident and importable; ``()`` otherwise, so
+        that using this as an ``except`` matcher never masks an unrelated
+        in-flight exception and never imports Chunking as a side effect.
+    """
+    if "tldw_chatbook.Chunking" not in sys.modules:
+        return ()
+    try:
+        from tldw_chatbook.Chunking.chunking_interop_library import (
+            InvalidTemplateError,
+        )
+        from tldw_chatbook.Chunking.template_runtime import TemplateResolutionError
+    except Exception:
+        return ()
 
     return (TemplateResolutionError, InvalidTemplateError)
 

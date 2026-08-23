@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-22'
-updated_date: '2026-08-23 03:55'
+updated_date: '2026-08-23 04:16'
 labels:
   - performance
   - startup
@@ -47,41 +47,13 @@ nothing - all six must break.
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Broke every eager import chain that executed the Chunking package (~15k LOC: first-party shim + vendored engine + langdetect attempt + nltk find_spec scan) during `import tldw_chatbook.app`. Verified via an import-hook edge tracer, not just the pinned survey lines - dev had moved and one extra chain existed.
+## Review fix round (2026-08-23)
 
-**One source of truth for ENGINE_VERSION:** new stdlib-only (zero-import) module `tldw_chatbook/chunking_engine_version.py` holds the pin string. It must live OUTSIDE `Chunking/` because importing any `Chunking.*` submodule executes the package `__init__` and with it the whole engine. `Chunking/Chunk_Lib.py` now re-imports it (same object, so `Tests/Local_Ingestion/test_engine_version_stamp.py::test_engine_version_reexported_from_package`'s identity assertion holds), and the persist seam imports the pin module directly. No vendored file touched (vendored code is only `Chunking/engine/`; Chunk_Lib is first-party).
+Adversarial review confirmed all headline claims but returned one Major + one Minor; both fixed.
 
-**Conversions (7 chains, the survey's 6 + 1 found on my base):**
-1. `Local_Ingestion/local_file_ingestion.py` - `ENGINE_VERSION` now from the pin module. This alone also freed `Library/ingest_preflight.py`, `Library/web_clip_request.py`, and `Library/ingest_capabilities.py` (they import only chunking-free names from it).
-2. `RAG_Search/__init__.py` - PEP-562 lazy facade (`__getattr__` + cache + `__dir__`); the legacy stub-on-ImportError fallback is preserved per-name (constructor raises the same "RAG services not available" ImportError, now at first use). This also removed the eager `.simplified` tree (~70 modules incl. `chunking_service`, `enhanced_chunking_service`, `parent_child_adapter`).
-3. `Media/local_media_reading_service.py` - `ChunkingService` import moved into `_chunk_text` (its sole use).
-4. `RAG_Admin/local_rag_admin_service.py` - `get_chunking_service` moved into `__init__` (exact falsy-or semantics preserved); `AUTO_SENTINEL` moved into `_decorate_template_record`.
-5. `RAG_Admin/template_validation.py` (the extra chain, via `rag_admin_scope_service` <- `RAG_Admin/__init__` <- app.py) - the three `Chunking.engine.regex_safety` helpers became lazy pass-through wrappers.
-6. `app.py` - the two template-error imports became `_template_resolution_errors()`, evaluated in the except clause of the sole handler (`except _template_resolution_errors() as exc:`); by the time a template error can be in flight, `_ingest_job_options` has already imported the raising modules, so the caught types are the identical class objects.
+**MAJOR-1 (except-clause matcher ran for EVERY exception):** `except _template_resolution_errors() as exc:` evaluated the lazy imports for any exception reaching the ingest-dispatch handler, (a) replacing an unrelated in-flight error with `ModuleNotFoundError` on Chunking-broken installs and (b) importing ~39 Chunking modules mid-exception-handling on healthy ones. Fix in `app.py` `_template_resolution_errors()`: return `()` when `"tldw_chatbook.Chunking" not in sys.modules` (no template error can be in flight if the defining package never imported), and wrap the imports in `try/except Exception: return ()` so a broken env lets the ORIGINAL exception propagate. New subprocess-isolated `Tests/App/test_template_error_lazy_matching.py` (3 tests, red-first: the two guard tests failed on the pre-fix code with exactly the review's two outcomes - `OUTCOME:replaced-by:ModuleNotFoundError` and the 39-module side-import list - and the third anti-overcorrection test pins that both named error types still match once Chunking is resident, so a degenerate always-`()` mutation also reddens).
 
-**Guard (red-first):** `Tests/Packaging/test_chunking_import_closure.py`, following TASK-21104's subprocess-isolated pattern: asserts no `tldw_chatbook.Chunking*` and no `langdetect` in `sys.modules` after `import tldw_chatbook.app`, plus anti-vacuity checks that the converted modules are still in the closure; second test pins the pin-module's chunking-free import + Chunk_Lib identity. Red before the fix (40 Chunking modules listed), green after. Honest scope: langdetect/nltk are not installed in this venv, so that half bites only on envs that have them; the module-residency assertion is what pins the boot path.
+**MINOR-2 (facade widened the deps-absent surface):** the first facade cut stubbed all 10 re-exports; base's eager fallback defined only `EmbeddingsService`/`ChunkingService`/`IndexingService` (+ `RAGService` alias) and left the other 6 undefined, so `from tldw_chatbook.RAG_Search import create_rag_service` raised ImportError - which `Tests/RAG/test_rag_dependencies.py`'s `check_rag_services` uses as feature detection (it would have flipped False->True on deps-absent installs). Fix in `RAG_Search/__init__.py`: `_STUB_ON_FAILURE` frozenset restores the exact base split - the 4 base names degrade to stubs, all others raise AttributeError (chained from the ImportError) so from-imports raise ImportError. New subprocess-isolated `Tests/RAG/test_rag_search_facade.py` (2 tests, red-first: the deps-absent test failed on the all-stubs facade at `RAGConfig`).
 
-**Warm `python -X importtime` (isolated HOME/XDG/TLDW_CONFIG_PATH, runs 1/2/3; logs in test-logs/):**
-| metric | before | after |
-| app cumulative (run 3, warm) | 810.8 ms (runs: 1178/784/811) | 730.9 ms (runs: 749/727/731) |
-| tldw_chatbook.Chunking* modules resident | 43 | 0 |
-| Chunking self-time sum | 11.4 ms | 0 |
-| total modules after app import | 1831 | 1757 |
-(`Internal_Prompts` also left the boot closure - it was only reached through Chunk_Lib.)
-
-**Tests (all counts read, teed to test-logs/; base = 3c3c919fc):**
-- Guard: 2 passed (red-first verified).
-- Tests/Chunking minus test_sync_script: 547 passed, 3 failed, 39 skipped, 1 xfailed, 1 error - failure set IDENTICAL to base baseline (semantic/golden-cjk/template-rag + transformers-offline error; missing optional deps in this venv).
-- Tests/Chunking/test_sync_script.py: 8 passed (base: 8 passed). NOTE: an intermediate red here was self-inflicted - my first full-suite run hit the Bash timeout mid-test and left the test's "# local edit" marker in the vendored `engine/constants.py`; restored Edit-based, rerun green.
-- Tests/Local_Ingestion (minus numpy-dependent parakeet file, uncollectable on base too): 348 passed, 2 failed, 3 skipped - identical to base.
-- Library preflight/web_clip/rechunk: 117 passed, 1 failed (egress redirect; in base baseline).
-- RAG_Admin + Media(3 files) + RAG/test_chunking_service + Packaging + engine_version_stamp: 234 passed (base 232, +2 = new guard), 8 failed, 42 errors - failure/error sets byte-identical to base (packaging build-env errors, nltk-dependent chunking_service tests, rag-admin wiring reds from the known Actor_Packs crash).
-- Tests/App: 166 passed, 8 failed - A/B'd on a throwaway base worktree: identical 8 failures (known pre-existing Actor_Packs `'NoneType' object has no attribute 'execute_query'` crash).
-- Facade consumers (Library rag-mode/media-chunk-tool/student-story/local-rag-search, RAG fusion/citation-capture/parent-child/ingestion-indexing): 365 passed, 1 failed, 10 skipped - the 1 failure identical on base.
-- Tests/Performance/test_app_import_weight.py: 3 passed, 3 skipped.
-- Full collect-only: 55045 collected (base 55043, +2), 33 collection errors - error set identical to base (optional deps absent from venv).
-
-**Files:** new `tldw_chatbook/chunking_engine_version.py`, `Tests/Packaging/test_chunking_import_closure.py`; modified `app.py`, `Chunking/Chunk_Lib.py`, `Local_Ingestion/local_file_ingestion.py`, `RAG_Search/__init__.py`, `Media/local_media_reading_service.py`, `RAG_Admin/local_rag_admin_service.py`, `RAG_Admin/template_validation.py`.
-
-**Deliberately not touched:** `Library/library_rechunk_service.py:42-44` still imports Chunk_Lib/template_runtime at module scope - it is not in the app import closure (verified by residency probe) and legitimately uses the engine; `Widgets/chunk_preview_modal.py`, `media_details_widget.py`, `Local_Ingestion/XML_Ingestion.py` likewise closure-absent.
+**Re-verification:** fix-round tests 7 passed (3+2 new, 2 closure guards); Tests/App 169 passed / 8 failed - failure set byte-identical to base (Actor_Packs crash); facade-consumer batch 365 passed / 1 failed / 10 skipped (the 1 identical on base); mixed RAG_Admin+Media+Packaging batch 234 passed / 8 failed / 42 errors - set identical to baseline; Local_Ingestion 348/2/3 and Library 117/1 unchanged; collect-only 55,050 (+5 new tests), same 33 pre-existing errors. `Tests/RAG/test_rag_dependencies.py` itself contains no test functions (0 collected; it is a diagnostic script module) - its `check_rag_services` contract is pinned by the new facade test instead.
 <!-- SECTION:NOTES:END -->
