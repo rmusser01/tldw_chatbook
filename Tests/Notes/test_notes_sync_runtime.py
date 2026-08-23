@@ -30,7 +30,10 @@ from tldw_chatbook.Notes.notes_sync_models import (
     NotesSyncSerializationProfile,
 )
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
-from tldw_chatbook.Notes.notes_sync_executor import NotesSyncExecutor
+from tldw_chatbook.Notes.notes_sync_executor import (
+    NotesSyncExecutionResult,
+    NotesSyncExecutor,
+)
 from tldw_chatbook.Notes.notes_sync_filesystem import PosixNotesSyncFilesystem
 from tldw_chatbook.Notes.notes_sync_reconciler import (
     BindingObservation,
@@ -284,11 +287,14 @@ class _Executor:
 
     async def execute(self, request: object):
         self.executed.append(request)
-        return type(
-            "Result",
-            (),
-            {"state": NotesSyncOperationState.COMPLETED, "reason_code": None},
-        )()
+        return NotesSyncExecutionResult(
+            operation_id=getattr(
+                request,
+                "operation_id",
+                getattr(request, "action_id", "operation-1"),
+            ),
+            state=NotesSyncOperationState.COMPLETED,
+        )
 
     async def reconstruct_request(self, operation_id: str) -> object:
         self.reconstructed.append(operation_id)
@@ -524,11 +530,14 @@ class _BlockingExecutor(_Executor):
         self.executed.append(request)
         self.started.set()
         await self.release.wait()
-        return type(
-            "Result",
-            (),
-            {"state": NotesSyncOperationState.COMPLETED, "reason_code": None},
-        )()
+        return NotesSyncExecutionResult(
+            operation_id=getattr(
+                request,
+                "operation_id",
+                getattr(request, "action_id", "operation-1"),
+            ),
+            state=NotesSyncOperationState.COMPLETED,
+        )
 
 
 class _InvalidatingExecutor(_Executor):
@@ -539,11 +548,14 @@ class _InvalidatingExecutor(_Executor):
     async def execute(self, request: object):
         self.executed.append(request)
         self.invalidate()
-        return type(
-            "Result",
-            (),
-            {"state": NotesSyncOperationState.COMPLETED, "reason_code": None},
-        )()
+        return NotesSyncExecutionResult(
+            operation_id=getattr(
+                request,
+                "operation_id",
+                getattr(request, "action_id", "operation-1"),
+            ),
+            state=NotesSyncOperationState.COMPLETED,
+        )
 
 
 class _InvalidatingReconstructExecutor(_Executor):
@@ -2222,7 +2234,7 @@ async def test_manual_apply_rechecks_that_the_root_is_still_active(
 
 
 @pytest.mark.asyncio
-async def test_manual_apply_cannot_clear_an_attention_plan_with_an_empty_apply(
+async def test_manual_empty_apply_keeps_content_conflict_attention(
     tmp_path: Path,
 ) -> None:
     adapter = _Adapter([_input(file_digest=_B, note_digest=_C)])
@@ -2230,10 +2242,12 @@ async def test_manual_apply_cannot_clear_an_attention_plan_with_an_empty_apply(
     await owner.start()
     reviewed = await owner.check_root("root-1")
 
-    with pytest.raises(ValueError, match="not_executable"):
-        await owner.apply_reviewed("root-1", reviewed.observation_token, ())
+    result = await owner.apply_reviewed("root-1", reviewed.observation_token, ())
 
     root = owner.snapshot().roots[0]
+    assert result.unresolved_conflicts == 1
+    assert result.attention_remains is True
+    assert result.fresh_plan == reviewed
     assert (root.status, root.next_action) == ("needs_attention", "review_changes")
     assert adapter.executor.executed == []
     await owner.shutdown()

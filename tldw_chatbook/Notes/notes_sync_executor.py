@@ -46,6 +46,13 @@ from tldw_chatbook.Notes.notes_sync_models import (
 from tldw_chatbook.Notes.sync_paths import SafeSyncBytes, SafeSyncFileIdentity
 
 
+CONFLICT_RECOVERY_RETENTION_NS = 30 * 24 * 60 * 60 * 1_000_000_000
+_RESOLUTION_JOURNAL_ACTIONS = {
+    "resolve_keep_file": NotesSyncActionKind.UPDATE_NOTE,
+    "resolve_keep_note": NotesSyncActionKind.UPDATE_FILE,
+}
+
+
 class NotesSyncRecoveryChoice(StrEnum):
     """Bounded choices exposed for an unresolved operation."""
 
@@ -386,6 +393,7 @@ class NotesSyncExecutionRequest:
     desired_title: str
     recovery_id: str
     recovery_expires_at: int
+    journal_kind: str | None = None
     direction_override: NotesSyncDirectionOverride | None = None
     candidate_note_scope_id: str | None = None
     candidate_note_id: str | None = None
@@ -459,6 +467,10 @@ class NotesSyncExecutionRequest:
             raise ValueError("desired_title must be bounded non-empty text.")
         if type(self.recovery_expires_at) is not int or self.recovery_expires_at <= 0:
             raise ValueError("recovery_expires_at must be positive.")
+        if self.journal_kind is not None and (
+            _RESOLUTION_JOURNAL_ACTIONS.get(self.journal_kind) is not self.action_kind
+        ):
+            raise ValueError("journal_kind must match the reviewed conflict action.")
         if self.direction_override is not None:
             if type(self.direction_override) is not NotesSyncDirectionOverride:
                 raise TypeError(
@@ -638,8 +650,9 @@ class NotesSyncExecutor:
         """Rebuild one private request from durable intent and fresh authorities."""
 
         operation = self._store.get_operation(operation_id)
+        resolution_action = _RESOLUTION_JOURNAL_ACTIONS.get(operation.kind)
         try:
-            operation_action = NotesSyncActionKind(operation.kind)
+            operation_action = resolution_action or NotesSyncActionKind(operation.kind)
         except ValueError:
             raise RuntimeError("recovery_authority_changed") from None
         if operation_action in {
@@ -670,6 +683,10 @@ class NotesSyncExecutor:
             recovery_title = self._required_metadata_text(metadata, "recovery_title")
         except (KeyError, TypeError, ValueError):
             raise RuntimeError("recovery_authority_changed") from None
+        if action is not operation_action or metadata.get("underlying_action_kind") != (
+            action.value if resolution_action is not None else None
+        ):
+            raise RuntimeError("recovery_authority_changed")
         raw_override = metadata.get("direction_override")
         try:
             direction_override = (
@@ -706,9 +723,14 @@ class NotesSyncExecutor:
                 raise RuntimeError("recovery_authority_changed") from None
             payload_digest = hashlib.sha256(recovery.payload).hexdigest()
             if (
-                payload_digest != reviewed_binding.get("content_digest")
-                or operation.expected_note_version
-                != reviewed_binding.get("note_version")
+                (
+                    resolution_action is None
+                    and (
+                        payload_digest != reviewed_binding.get("content_digest")
+                        or operation.expected_note_version
+                        != reviewed_binding.get("note_version")
+                    )
+                )
                 or self.stable_identity_digest(current_file)
                 != reviewed_binding.get("stable_identity_digest")
                 or _file_serialization(current_file) != binding.serialization
@@ -747,8 +769,11 @@ class NotesSyncExecutor:
             if (
                 hashlib.sha256(recovery.payload).hexdigest()
                 != operation.expected_file_digest
-                or file.observation.content_digest
-                != reviewed_binding.get("content_digest")
+                or (
+                    resolution_action is None
+                    and file.observation.content_digest
+                    != reviewed_binding.get("content_digest")
+                )
                 or self.stable_identity_digest(file)
                 != reviewed_binding.get("stable_identity_digest")
                 or file.observation.serialization
@@ -768,6 +793,7 @@ class NotesSyncExecutor:
             desired_title=desired_title,
             recovery_id=recovery.recovery_id,
             recovery_expires_at=recovery.expires_at,
+            journal_kind=(operation.kind if resolution_action is not None else None),
             direction_override=direction_override,
         )
 
@@ -2106,7 +2132,9 @@ class NotesSyncExecutor:
 
     async def _validate_initial(self, request: NotesSyncExecutionRequest) -> None:
         binding = self._require_owner_identity(request)
-        if request.action_kind is NotesSyncActionKind.UPDATE_NOTE:
+        if request.journal_kind is not None:
+            pass
+        elif request.action_kind is NotesSyncActionKind.UPDATE_NOTE:
             if (
                 binding.note_version != request.note.version
                 or binding.content_digest != request.note.content_digest
@@ -2163,6 +2191,8 @@ class NotesSyncExecutor:
             "recovery_title": request.note.title,
             "windows_observation": type(request.file) is WindowsNotesSyncObservation,
         }
+        if request.journal_kind is not None:
+            intent["underlying_action_kind"] = request.action_kind.value
         intent["cleanup_padding"] = _cleanup_padding(intent)
         metadata = _encode_recovery_intent(intent)
         decision = self._store.admit_operation_recovery(
@@ -2170,7 +2200,7 @@ class NotesSyncExecutor:
                 operation_id=request.operation_id,
                 root_id=request.root_id,
                 binding_id=request.binding_id,
-                kind=request.action_kind.value,
+                kind=request.journal_kind or request.action_kind.value,
                 state=NotesSyncOperationState.PENDING,
                 reason_code=None,
                 observation_token=request.observation_token,
@@ -2196,7 +2226,7 @@ class NotesSyncExecutor:
         if (
             operation.root_id != request.root_id
             or operation.binding_id != request.binding_id
-            or operation.kind != request.action_kind.value
+            or operation.kind != (request.journal_kind or request.action_kind.value)
             or operation.observation_token != request.observation_token
             or operation.expected_note_version != request.note.version
             or operation.expected_file_digest
@@ -2337,6 +2367,8 @@ class NotesSyncExecutor:
             != _encoded_override(request.direction_override)
             or metadata.get("logical_folder_id") != request.logical_folder_id
             or metadata.get("recovery_title") != request.note.title
+            or metadata.get("underlying_action_kind")
+            != (request.action_kind.value if request.journal_kind is not None else None)
         ):
             raise RuntimeError("recovery_authority_changed")
 

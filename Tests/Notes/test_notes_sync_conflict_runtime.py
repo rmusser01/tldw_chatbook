@@ -13,12 +13,17 @@ import pytest
 
 from tldw_chatbook.Notes.notes_device_state_store import NotesSyncRootRecord
 from tldw_chatbook.Notes.notes_sync_conflicts import (
+    ConflictApplyResult,
     ConflictComparison,
+    ConflictSelection,
+    NotesSyncConflictChoice,
     build_conflict_comparison,
+    conflict_resolution_operation_id,
 )
 from tldw_chatbook.Notes.notes_sync_authority import NotesSyncNoteSnapshot
 from tldw_chatbook.Notes.notes_sync_filesystem import NotesSyncFileSnapshot
 from tldw_chatbook.Notes.notes_sync_models import (
+    NotesSyncActionKind,
     NotesSyncDirection,
     NotesSyncFileIdentity,
     NotesSyncFileObservation,
@@ -28,12 +33,24 @@ from tldw_chatbook.Notes.notes_sync_models import (
 )
 from tldw_chatbook.Notes.notes_sync_reconciler import (
     BindingObservation,
+    DeletionGroup,
+    ManagedPlacementEffect,
+    ManagedPlacementEffectKind,
+    ReconciliationAttention,
+    ReconciliationAttentionKind,
     ReconciliationInput,
+    ReconciliationSkip,
+    ReconciliationSkipKind,
     plan_reconciliation,
 )
 from tldw_chatbook.Notes.notes_sync_runtime import (
     NotesSyncRuntimeOwner,
     _ProductionRuntimeAdapter,
+)
+from tldw_chatbook.Notes.notes_sync_executor import (
+    NotesSyncDirectionOverride,
+    NotesSyncExecutionRequest,
+    NotesSyncExecutionResult,
 )
 from tldw_chatbook.Notes.sync_paths import SafeSyncBytes, SafeSyncFileIdentity
 
@@ -43,6 +60,7 @@ _A = "a" * 64
 _B = "b" * 64
 _C = "c" * 64
 _PHASE_TIMEOUT = 1.0
+_CONFLICT_RETENTION_NS = 30 * 24 * 60 * 60 * 1_000_000_000
 
 
 async def _wait(event: asyncio.Event) -> None:
@@ -62,10 +80,11 @@ def _input(
     generation: int = 1,
     file_digest: str = _B,
     note_digest: str = _A,
+    direction: NotesSyncDirection = NotesSyncDirection.BIDIRECTIONAL,
 ) -> ReconciliationInput:
     return ReconciliationInput(
         root_id=root_id,
-        direction=NotesSyncDirection.BIDIRECTIONAL,
+        direction=direction,
         bindings=(
             BindingObservation(
                 binding_id="binding-1",
@@ -87,13 +106,17 @@ def _input(
     )
 
 
-def _root(root_id: str = "root-1") -> NotesSyncRootRecord:
+def _root(
+    root_id: str = "root-1",
+    *,
+    direction: NotesSyncDirection = NotesSyncDirection.BIDIRECTIONAL,
+) -> NotesSyncRootRecord:
     return NotesSyncRootRecord(
         root_id=root_id,
         note_scope_id="local_note",
         logical_folder_id="folder-1",
         canonical_path=f"/private/{root_id}",
-        direction=NotesSyncDirection.BIDIRECTIONAL,
+        direction=direction,
         state=NotesSyncRootState.ACTIVE,
     )
 
@@ -153,7 +176,8 @@ class _Executor:
         self.adapter.inputs["root-1"] = _input(
             generation=2, file_digest=_A, note_digest=_A
         )
-        return SimpleNamespace(
+        return NotesSyncExecutionResult(
+            operation_id=getattr(_request, "operation_id", "operation-1"),
             state=NotesSyncOperationState.COMPLETED,
             reason_code=None,
         )
@@ -229,6 +253,143 @@ class _Adapter:
         self.live_bundles.discard(observation_token)
 
 
+class _SubsetExecutor:
+    def __init__(
+        self,
+        adapter: "_SubsetAdapter",
+        final_input: ReconciliationInput,
+        *,
+        stop_binding_id: str | None = None,
+    ) -> None:
+        self.adapter = adapter
+        self.final_input = final_input
+        self.stop_binding_id = stop_binding_id
+        self.requests: list[object] = []
+
+    async def execute(self, request: object) -> NotesSyncExecutionResult:
+        self.requests.append(request)
+        binding_id = getattr(request, "binding_id")
+        operation_id = getattr(request, "operation_id")
+        if binding_id == self.stop_binding_id:
+            return NotesSyncExecutionResult(
+                operation_id=operation_id,
+                state=NotesSyncOperationState.FIRST_AUTHORITY_APPLIED,
+            )
+        self.adapter.inputs[self.final_input.root_id] = self.final_input
+        return NotesSyncExecutionResult(
+            operation_id=operation_id,
+            state=NotesSyncOperationState.COMPLETED,
+        )
+
+
+class _SubsetAdapter(_Adapter):
+    def __init__(
+        self,
+        initial: ReconciliationInput,
+        final: ReconciliationInput,
+        *,
+        stop_binding_id: str | None = None,
+    ) -> None:
+        super().__init__(initial)
+        self.executor = _SubsetExecutor(
+            self,
+            final,
+            stop_binding_id=stop_binding_id,
+        )
+
+    async def build_execution_request(
+        self, root: object, _observations: object, _plan: object, action: object
+    ) -> object:
+        return SimpleNamespace(
+            operation_id=f"safe-{action.action_id}",
+            root_id=root.root_id,
+            binding_id=action.binding_id,
+            action_kind=action.kind,
+            direction_override=None,
+        )
+
+    async def build_conflict_execution_request(
+        self,
+        root: object,
+        _observations: object,
+        plan: object,
+        selection: ConflictSelection,
+    ) -> object:
+        action_kind = (
+            NotesSyncActionKind.UPDATE_NOTE
+            if selection.choice is NotesSyncConflictChoice.KEEP_FILE
+            else NotesSyncActionKind.UPDATE_FILE
+        )
+        return SimpleNamespace(
+            operation_id=f"conflict-{selection.binding_id}",
+            root_id=root.root_id,
+            binding_id=selection.binding_id,
+            action_kind=action_kind,
+            journal_kind=f"resolve_{selection.choice.value}",
+            direction_override=None,
+            observation_token=plan.observation_token,
+        )
+
+
+def _reviewed_subset_input(
+    *,
+    direction: NotesSyncDirection = NotesSyncDirection.BIDIRECTIONAL,
+    resolved: frozenset[str] = frozenset(),
+    conflict_count: int = 2,
+) -> ReconciliationInput:
+    bindings: list[BindingObservation] = [
+        BindingObservation(
+            binding_id="binding-safe",
+            baseline_file_digest=(_B if resolved else _A),
+            baseline_note_digest=(_B if resolved else _A),
+            baseline_identity_digest=_C,
+            baseline_relative_path="safe.md",
+            file_digest=_B,
+            note_digest=(_B if resolved else _A),
+            file_identity_digest=_C,
+            relative_path="safe.md",
+            note_scope_id="local_note",
+            note_id="note-safe",
+            note_version=2,
+        )
+    ]
+    for index, (file_digest, note_digest) in enumerate(
+        ((_B, _C), (_C, _B), (_B, _C))[:conflict_count],
+        start=1,
+    ):
+        binding_id = f"binding-{index}"
+        if binding_id in resolved:
+            baseline_file = file_digest
+            baseline_note = file_digest
+            note_digest = file_digest
+        else:
+            baseline_file = _A
+            baseline_note = _A
+        bindings.append(
+            BindingObservation(
+                binding_id=binding_id,
+                baseline_file_digest=baseline_file,
+                baseline_note_digest=baseline_note,
+                baseline_identity_digest=_C,
+                baseline_relative_path=f"note-{index}.md",
+                file_digest=file_digest,
+                note_digest=note_digest,
+                file_identity_digest=_C,
+                relative_path=f"note-{index}.md",
+                note_scope_id="local_note",
+                note_id=f"note-{index}",
+                note_version=2,
+            )
+        )
+    return ReconciliationInput(
+        root_id="root-1",
+        direction=direction,
+        bindings=tuple(bindings),
+        observation_generation=1,
+        expected_generation=1,
+    )
+
+
 def _owner(
     adapter: _Adapter,
     *roots: NotesSyncRootRecord,
@@ -290,7 +451,7 @@ async def test_two_reviewed_apply_paths_share_one_root_lock_and_reobserve() -> N
             *(() if second is None else (second,)),
         )
 
-    assert adapter.observe_calls == ["root-1", "root-1"]
+    assert adapter.observe_calls == ["root-1", "root-1", "root-1"]
     assert adapter.executor.mutations == 1
     assert any(isinstance(result, ValueError) for result in results)
 
@@ -466,7 +627,8 @@ async def test_locked_execution_helper_does_not_reacquire_root_lock() -> None:
     owner._mutation_lock = guarded_lock
     result = await owner.apply_reviewed("root-1", token, (action_id,))
 
-    assert len(result) == 1
+    assert type(result) is ConflictApplyResult
+    assert len(result.results) == 1
     assert acquisitions == 1
 
 
@@ -747,4 +909,499 @@ async def test_comparison_requires_final_token_even_if_plan_claims_equality(
         await owner.compare_conflict("root-1", reviewed.observation_token, "binding-1")
 
     assert adapter.comparison_builds == 0
+    assert adapter.live_bundles == set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    (
+        "direction",
+        "choice",
+        "action",
+        "override_expected",
+        "file_digest",
+        "note_digest",
+    ),
+    (
+        (
+            NotesSyncDirection.BIDIRECTIONAL,
+            NotesSyncConflictChoice.KEEP_FILE,
+            NotesSyncActionKind.UPDATE_NOTE,
+            False,
+            _B,
+            _C,
+        ),
+        (
+            NotesSyncDirection.BIDIRECTIONAL,
+            NotesSyncConflictChoice.KEEP_NOTE,
+            NotesSyncActionKind.UPDATE_FILE,
+            False,
+            _B,
+            _C,
+        ),
+        (
+            NotesSyncDirection.FOLDER_TO_NOTES,
+            NotesSyncConflictChoice.KEEP_FILE,
+            NotesSyncActionKind.UPDATE_NOTE,
+            False,
+            _B,
+            _C,
+        ),
+        (
+            NotesSyncDirection.FOLDER_TO_NOTES,
+            NotesSyncConflictChoice.KEEP_NOTE,
+            NotesSyncActionKind.UPDATE_FILE,
+            True,
+            _B,
+            _C,
+        ),
+        (
+            NotesSyncDirection.NOTES_TO_FOLDER,
+            NotesSyncConflictChoice.KEEP_FILE,
+            NotesSyncActionKind.UPDATE_NOTE,
+            True,
+            _B,
+            _C,
+        ),
+        (
+            NotesSyncDirection.NOTES_TO_FOLDER,
+            NotesSyncConflictChoice.KEEP_NOTE,
+            NotesSyncActionKind.UPDATE_FILE,
+            False,
+            _B,
+            _C,
+        ),
+        (
+            NotesSyncDirection.FOLDER_TO_NOTES,
+            NotesSyncConflictChoice.KEEP_FILE,
+            NotesSyncActionKind.UPDATE_NOTE,
+            False,
+            _A,
+            _C,
+        ),
+        (
+            NotesSyncDirection.FOLDER_TO_NOTES,
+            NotesSyncConflictChoice.KEEP_NOTE,
+            NotesSyncActionKind.UPDATE_FILE,
+            True,
+            _A,
+            _C,
+        ),
+        (
+            NotesSyncDirection.NOTES_TO_FOLDER,
+            NotesSyncConflictChoice.KEEP_FILE,
+            NotesSyncActionKind.UPDATE_NOTE,
+            True,
+            _B,
+            _A,
+        ),
+        (
+            NotesSyncDirection.NOTES_TO_FOLDER,
+            NotesSyncConflictChoice.KEEP_NOTE,
+            NotesSyncActionKind.UPDATE_FILE,
+            False,
+            _B,
+            _A,
+        ),
+    ),
+)
+async def test_production_keep_file_and_keep_note_requests_preserve_direction(
+    direction: NotesSyncDirection,
+    choice: NotesSyncConflictChoice,
+    action: NotesSyncActionKind,
+    override_expected: bool,
+    file_digest: str,
+    note_digest: str,
+) -> None:
+    note_text = "note side"
+    file_text = "file side"
+    note = NotesSyncNoteSnapshot(
+        note_scope_id="local_note",
+        note_id="note-1",
+        title="Title",
+        content=note_text,
+        version=5,
+        content_digest=hashlib.sha256(note_text.encode()).hexdigest(),
+    )
+    file = NotesSyncFileSnapshot(
+        observation=NotesSyncFileObservation(
+            relative_path="note.md",
+            identity=NotesSyncFileIdentity(1, 2, 1),
+            content_digest=hashlib.sha256(file_text.encode()).hexdigest(),
+            size_bytes=len(file_text),
+            serialization=NotesSyncSerializationProfile(False, "lf", False, 0o600),
+        ),
+        text=file_text,
+        raw_bytes=file_text.encode(),
+        reviewed_state=SafeSyncBytes(
+            relative_path=Path("note.md"),
+            content=file_text.encode(),
+            identity=SafeSyncFileIdentity(1, 2, 1),
+            mode=0o600,
+            size=len(file_text),
+            mtime_ns=9,
+            ctime_ns=8,
+            owner_user=1,
+            owner_group=1,
+            flags=0,
+            extended_attributes=(),
+            has_extended_acl=False,
+        ),
+        representation_digest=_A,
+    )
+    observed = _input(
+        file_digest=file_digest,
+        note_digest=note_digest,
+        direction=direction,
+    )
+    plan = plan_reconciliation(observed)
+    assert plan.attention[0].reason_code in {
+        "both_sides_changed",
+        "out_of_direction_change",
+    }
+    root = _root(direction=direction)
+    adapter = object.__new__(_ProductionRuntimeAdapter)
+    adapter._bundles = {
+        plan.observation_token: {
+            "binding-1": SimpleNamespace(
+                record=SimpleNamespace(
+                    binding_id="binding-1",
+                    root_id="root-1",
+                    normalized_relative_path="note.md",
+                    note_scope_id="local_note",
+                    note_id="note-1",
+                    serialization=file.observation.serialization,
+                ),
+                note=note,
+                file=file,
+            )
+        }
+    }
+    before = __import__("time").time_ns()
+
+    request = await adapter.build_conflict_execution_request(
+        root,
+        observed,
+        plan,
+        ConflictSelection("binding-1", choice),
+    )
+
+    assert type(request) is NotesSyncExecutionRequest
+    assert request.action_kind is action
+    assert request.journal_kind == f"resolve_{choice.value}"
+    assert request.direction is direction
+    assert request.operation_id == conflict_resolution_operation_id(
+        "root-1", "binding-1", plan.observation_token, choice
+    )
+    assert before + _CONFLICT_RETENTION_NS <= request.recovery_expires_at
+    assert isinstance(request.direction_override, NotesSyncDirectionOverride) is (
+        override_expected
+    )
+    if request.direction_override is not None:
+        assert request.direction_override.action_kind is action
+        assert request.direction_override.observation_token == plan.observation_token
+
+
+@pytest.mark.asyncio
+async def test_selected_keep_file_executes_while_skip_remains_attention() -> None:
+    initial = _reviewed_subset_input()
+    final = _reviewed_subset_input(resolved=frozenset({"binding-1"}))
+    adapter = _SubsetAdapter(initial, final)
+    owner = _owner(adapter, _root())
+    token = _install_review(owner, initial)
+    safe_id = owner._reviews["root-1"].safe_actions[0].action_id
+
+    result = await owner.apply_reviewed(
+        "root-1",
+        token,
+        (safe_id,),
+        (
+            ConflictSelection("binding-1", NotesSyncConflictChoice.KEEP_FILE),
+            ConflictSelection("binding-2", NotesSyncConflictChoice.SKIP),
+        ),
+    )
+
+    assert type(result) is ConflictApplyResult
+    assert result.safe_completed == 1
+    assert result.conflicts_resolved == 1
+    assert result.unresolved_conflicts == 1
+    assert result.attention_remains is True
+    assert result.partial is False
+    assert result.needs_recovery is False
+    assert result.fresh_plan is not None
+    assert [request.binding_id for request in adapter.executor.requests] == [
+        "binding-safe",
+        "binding-1",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_safe_actions_run_in_plan_order_before_conflicts_in_binding_order() -> (
+    None
+):
+    initial = _reviewed_subset_input(conflict_count=3)
+    final = _reviewed_subset_input(
+        resolved=frozenset({"binding-1", "binding-2"}),
+        conflict_count=3,
+    )
+    adapter = _SubsetAdapter(initial, final)
+    owner = _owner(adapter, _root())
+    token = _install_review(owner, initial)
+    safe_id = owner._reviews["root-1"].safe_actions[0].action_id
+
+    result = await owner.apply_reviewed(
+        "root-1",
+        token,
+        (safe_id,),
+        (
+            ConflictSelection("binding-2", NotesSyncConflictChoice.KEEP_NOTE),
+            ConflictSelection("binding-3", NotesSyncConflictChoice.SKIP),
+            ConflictSelection("binding-1", NotesSyncConflictChoice.KEEP_FILE),
+        ),
+    )
+
+    assert [request.binding_id for request in adapter.executor.requests] == [
+        "binding-safe",
+        "binding-1",
+        "binding-2",
+    ]
+    assert result.safe_completed == 1
+    assert result.conflicts_resolved == 2
+    assert result.unresolved_conflicts == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "direction",
+    (
+        NotesSyncDirection.BIDIRECTIONAL,
+        NotesSyncDirection.FOLDER_TO_NOTES,
+        NotesSyncDirection.NOTES_TO_FOLDER,
+    ),
+)
+async def test_reviewed_conflict_apply_never_changes_root_direction(
+    direction: NotesSyncDirection,
+) -> None:
+    initial = _reviewed_subset_input(direction=direction)
+    final = _reviewed_subset_input(
+        direction=direction,
+        resolved=frozenset({"binding-1"}),
+    )
+    adapter = _SubsetAdapter(initial, final)
+    root = _root(direction=direction)
+    owner = _owner(adapter, root)
+    token = _install_review(owner, initial)
+
+    await owner.apply_reviewed(
+        "root-1",
+        token,
+        (),
+        (ConflictSelection("binding-1", NotesSyncConflictChoice.KEEP_NOTE),),
+    )
+
+    assert owner._store.get_root("root-1").direction is direction
+
+
+@pytest.mark.asyncio
+async def test_nonterminal_conflict_stops_later_work_and_reports_honest_partial() -> (
+    None
+):
+    initial = _reviewed_subset_input(conflict_count=3)
+    final = _reviewed_subset_input(conflict_count=3)
+    adapter = _SubsetAdapter(initial, final, stop_binding_id="binding-1")
+    owner = _owner(adapter, _root())
+    token = _install_review(owner, initial)
+    safe_id = owner._reviews["root-1"].safe_actions[0].action_id
+
+    result = await owner.apply_reviewed(
+        "root-1",
+        token,
+        (safe_id,),
+        (
+            ConflictSelection("binding-2", NotesSyncConflictChoice.KEEP_NOTE),
+            ConflictSelection("binding-1", NotesSyncConflictChoice.KEEP_FILE),
+        ),
+    )
+
+    assert [request.binding_id for request in adapter.executor.requests] == [
+        "binding-safe",
+        "binding-1",
+    ]
+    assert result.safe_completed == 1
+    assert result.conflicts_resolved == 0
+    assert result.partial is True
+    assert result.needs_recovery is True
+    assert result.fresh_plan is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "case",
+    (
+        "deletion_group",
+        "deletion_attention",
+        "pause",
+        "managed_placement",
+        "root_skip",
+        "capability_skip",
+        "ineligible_reason",
+    ),
+)
+async def test_non_content_blockers_refuse_before_recovery_admission(
+    monkeypatch: pytest.MonkeyPatch,
+    case: str,
+) -> None:
+    import tldw_chatbook.Notes.notes_sync_runtime as runtime_module
+
+    observed = _input(file_digest=_B, note_digest=_C)
+    plan = plan_reconciliation(observed)
+    deletion = ReconciliationAttention(
+        ReconciliationAttentionKind.DELETION_REVIEW,
+        "file_missing",
+        "binding-1",
+    )
+    if case == "deletion_group":
+        plan = replace(
+            plan, attention=(), deletion_groups=(DeletionGroup((deletion,)),)
+        )
+    elif case == "deletion_attention":
+        plan = replace(plan, attention=(deletion,))
+    elif case == "pause":
+        plan = replace(
+            plan,
+            attention=(
+                ReconciliationAttention(
+                    ReconciliationAttentionKind.PAUSE,
+                    "duplicate_authority",
+                    "binding-1",
+                ),
+            ),
+        )
+    elif case == "managed_placement":
+        plan = replace(
+            plan,
+            managed_placement_effects=(
+                ManagedPlacementEffect(
+                    ManagedPlacementEffectKind.FILE_MOVE,
+                    "binding-1",
+                ),
+            ),
+        )
+    elif case in {"root_skip", "capability_skip"}:
+        plan = replace(
+            plan,
+            attention=(),
+            skips=(
+                ReconciliationSkip(
+                    (
+                        ReconciliationSkipKind.OFFLINE
+                        if case == "root_skip"
+                        else ReconciliationSkipKind.CAPABILITY
+                    ),
+                    "root_offline" if case == "root_skip" else "write_unsupported",
+                ),
+            ),
+        )
+    else:
+        plan = replace(
+            plan,
+            attention=(
+                ReconciliationAttention(
+                    ReconciliationAttentionKind.CONFLICT,
+                    "duplicate_authority",
+                    "binding-1",
+                ),
+            ),
+        )
+    adapter = _SubsetAdapter(observed, observed)
+    owner = _owner(adapter, _root())
+    owner._reviews["root-1"] = plan
+    monkeypatch.setattr(runtime_module, "plan_reconciliation", lambda _value: plan)
+
+    with pytest.raises(ValueError, match="not_executable"):
+        await owner.apply_reviewed(
+            "root-1",
+            plan.observation_token,
+            (),
+            (ConflictSelection("binding-1", NotesSyncConflictChoice.KEEP_FILE),),
+        )
+
+    assert adapter.executor.requests == []
+    assert adapter.live_bundles == set()
+
+
+@pytest.mark.asyncio
+async def test_activation_review_refuses_before_recovery_admission() -> None:
+    observed = _input(file_digest=_B, note_digest=_C)
+    root = replace(_root(), last_status_code="migration_review_required")
+    adapter = _SubsetAdapter(observed, observed)
+    owner = _owner(adapter, root)
+    token = _install_review(owner, observed)
+
+    with pytest.raises(ValueError, match="not_executable"):
+        await owner.apply_reviewed(
+            "root-1",
+            token,
+            (),
+            (ConflictSelection("binding-1", NotesSyncConflictChoice.KEEP_FILE),),
+        )
+
+    assert adapter.executor.requests == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ("unknown", "duplicate"))
+async def test_invalid_conflict_selection_refuses_before_recovery_admission(
+    case: str,
+) -> None:
+    observed = _input(file_digest=_B, note_digest=_C)
+    adapter = _SubsetAdapter(observed, observed)
+    owner = _owner(adapter, _root())
+    token = _install_review(owner, observed)
+    selection = ConflictSelection(
+        "binding-other" if case == "unknown" else "binding-1",
+        NotesSyncConflictChoice.KEEP_FILE,
+    )
+    selections = (selection, selection) if case == "duplicate" else (selection,)
+
+    with pytest.raises(ValueError, match="selection"):
+        await owner.apply_reviewed("root-1", token, (), selections)
+
+    assert adapter.executor.requests == []
+    assert adapter.live_bundles == set()
+
+
+@pytest.mark.asyncio
+async def test_apply_requires_final_observation_token_even_if_plan_claims_equality(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tldw_chatbook.Notes.notes_sync_runtime as runtime_module
+
+    observed = _input(file_digest=_B, note_digest=_C)
+    adapter = _SubsetAdapter(observed, observed)
+    owner = _owner(adapter, _root())
+    reviewed = plan_reconciliation(observed)
+    owner._reviews["root-1"] = reviewed
+    stale_token = hashlib.sha256(b"stale-apply").hexdigest()
+
+    class _EqualPlan:
+        root_id = reviewed.root_id
+        observation_token = stale_token
+        safe_actions = reviewed.safe_actions
+        attention = reviewed.attention
+        skips = reviewed.skips
+        managed_placement_effects = reviewed.managed_placement_effects
+        deletion_groups = reviewed.deletion_groups
+
+        def __eq__(self, _other: object) -> bool:
+            return True
+
+    monkeypatch.setattr(
+        runtime_module, "plan_reconciliation", lambda _value: _EqualPlan()
+    )
+
+    with pytest.raises(ValueError, match="stale_review"):
+        await owner.apply_reviewed("root-1", reviewed.observation_token, (), ())
+
+    assert adapter.executor.requests == []
     assert adapter.live_bundles == set()

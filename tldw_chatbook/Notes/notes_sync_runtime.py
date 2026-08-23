@@ -11,7 +11,7 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 from types import MappingProxyType
-from typing import Protocol
+from typing import Protocol, cast
 from uuid import uuid4
 
 from tldw_chatbook.Notes.note_import_discovery import (
@@ -28,8 +28,12 @@ from tldw_chatbook.Notes.notes_device_state_store import (
 )
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService, ScopeType
 from tldw_chatbook.Notes.notes_sync_conflicts import (
+    ConflictApplyResult,
     ConflictComparison,
+    ConflictSelection,
+    NotesSyncConflictChoice,
     build_conflict_comparison,
+    conflict_resolution_operation_id,
     eligible_conflict_reason,
 )
 from tldw_chatbook.Notes.notes_sync_authority import (
@@ -51,7 +55,10 @@ from tldw_chatbook.Notes.notes_sync_models import (
     validate_notes_sync_opaque_id,
 )
 from tldw_chatbook.Notes.notes_sync_executor import (
+    CONFLICT_RECOVERY_RETENTION_NS,
+    NotesSyncDirectionOverride,
     NotesSyncExecutionRequest,
+    NotesSyncExecutionResult,
     NotesSyncExecutor,
 )
 from tldw_chatbook.Notes.notes_sync_filesystem import (
@@ -66,6 +73,7 @@ from tldw_chatbook.Notes.notes_sync_legacy import (
 )
 from tldw_chatbook.Notes.notes_sync_reconciler import (
     BindingObservation,
+    ReconciliationAttention,
     ReconciliationAttentionKind,
     ReconciliationInput,
     ReconciliationPlan,
@@ -256,6 +264,14 @@ class _RuntimeAdapter(Protocol):
         observations: ReconciliationInput,
         plan: ReconciliationPlan,
         action: NotesSyncAction,
+    ) -> object: ...
+
+    async def build_conflict_execution_request(
+        self,
+        root: NotesSyncRootRecord,
+        observations: ReconciliationInput,
+        plan: ReconciliationPlan,
+        selection: ConflictSelection,
     ) -> object: ...
 
     def executor_for(
@@ -602,6 +618,58 @@ class _ProductionRuntimeAdapter:
             candidate_serialization=(
                 binding.record.serialization
                 if action.kind is NotesSyncActionKind.CREATE_FILE
+                else None
+            ),
+        )
+
+    async def build_conflict_execution_request(
+        self,
+        root: NotesSyncRootRecord,
+        observations: ReconciliationInput,
+        plan: ReconciliationPlan,
+        selection: ConflictSelection,
+    ) -> NotesSyncExecutionRequest:
+        """Build one occurrence-only Keep file/Keep note request."""
+
+        action_kind = {
+            NotesSyncConflictChoice.KEEP_FILE: NotesSyncActionKind.UPDATE_NOTE,
+            NotesSyncConflictChoice.KEEP_NOTE: NotesSyncActionKind.UPDATE_FILE,
+        }.get(selection.choice)
+        if action_kind is None:
+            raise ValueError("conflict_choice_not_executable")
+        operation_id = conflict_resolution_operation_id(
+            root.root_id,
+            selection.binding_id,
+            plan.observation_token,
+            selection.choice,
+        )
+        action = NotesSyncAction(
+            action_id=operation_id,
+            kind=action_kind,
+            binding_id=selection.binding_id,
+            reason_code="reviewed_conflict_resolution",
+        )
+        request = await self.build_execution_request(root, observations, plan, action)
+        override_needed = (
+            action_kind is NotesSyncActionKind.UPDATE_NOTE
+            and root.direction is NotesSyncDirection.NOTES_TO_FOLDER
+        ) or (
+            action_kind is NotesSyncActionKind.UPDATE_FILE
+            and root.direction is NotesSyncDirection.FOLDER_TO_NOTES
+        )
+        return replace(
+            request,
+            operation_id=operation_id,
+            recovery_id=f"recovery-{operation_id}",
+            recovery_expires_at=time.time_ns() + CONFLICT_RECOVERY_RETENTION_NS,
+            journal_kind=f"resolve_{selection.choice.value}",
+            direction_override=(
+                NotesSyncDirectionOverride(
+                    review_id=operation_id,
+                    action_kind=action_kind,
+                    observation_token=plan.observation_token,
+                )
+                if override_needed
                 else None
             ),
         )
@@ -1279,15 +1347,29 @@ class NotesSyncRuntimeOwner:
         self,
         root_id: str,
         observation_token: str,
-        action_ids: tuple[str, ...],
-    ) -> tuple[object, ...]:
-        """Apply only selected actions after rebuilding fresh private authority."""
+        safe_action_ids: tuple[str, ...],
+        selections: tuple[ConflictSelection, ...] = (),
+    ) -> ConflictApplyResult:
+        """Apply safe work plus an exact reviewed conflict subset."""
 
         task = self._admit_task(root_id)
         try:
             reviewed = self._reviews.get(root_id)
             if reviewed is None or reviewed.observation_token != observation_token:
                 raise ValueError("stale_review")
+            if type(safe_action_ids) is not tuple or any(
+                type(action_id) is not str for action_id in safe_action_ids
+            ):
+                raise TypeError("safe_action_ids must be a tuple of strings")
+            if len(set(safe_action_ids)) != len(safe_action_ids):
+                raise ValueError("reviewed_action_selection_duplicate")
+            if type(selections) is not tuple or any(
+                type(selection) is not ConflictSelection for selection in selections
+            ):
+                raise TypeError("selections must be a tuple of ConflictSelection")
+            selection_ids = tuple(selection.binding_id for selection in selections)
+            if len(set(selection_ids)) != len(selection_ids):
+                raise ValueError("conflict_selection_duplicate")
             lock = self._mutation_lock(root_id)
             async with lock:
                 root = await asyncio.to_thread(self._store.get_root, root_id)
@@ -1296,29 +1378,180 @@ class NotesSyncRuntimeOwner:
                 if root.state is not NotesSyncRootState.ACTIVE:
                     await self._publish(root_id, "paused", "resume_sync")
                     raise RuntimeError("sync_root_not_active")
-                authority = await self._fresh_authority(root)
-                assert_review_current(reviewed, authority.observations)
-                if authority.plan != reviewed:
-                    raise ValueError("stale_review")
-                blocked = self._blocked_plan_status(authority.plan)
-                if blocked is not None:
-                    self._blocked_roots.add(root_id)
-                    await self._publish(root_id, *blocked)
+                if (
+                    root.last_status_code
+                    in {
+                        "activation_recovery_required",
+                        "migration_review_required",
+                    }
+                    or root_id in self._setup_reviews
+                ):
                     raise ValueError("review_not_executable")
-                selected_ids = set(action_ids)
-                selected = tuple(
-                    action
-                    for action in authority.plan.safe_actions
-                    if action.action_id in selected_ids
-                    and action.kind in _EXECUTABLE_ACTIONS
+                self._require_authority(root_id, "plan")
+                observations = await self._adapter.observe_root(root)
+                observed_token = _observation_token(observations)
+                plan: ReconciliationPlan | None = None
+                try:
+                    plan = plan_reconciliation(observations)
+                    self._require_authority(root_id, "plan")
+                    if observations.root_id != root_id or plan.root_id != root_id:
+                        raise RuntimeError("root_observation_mismatch")
+                    if observations.direction is not root.direction:
+                        raise RuntimeError("root_direction_changed")
+                    if plan.observation_token != observation_token:
+                        raise ValueError("stale_review")
+                    assert_review_current(reviewed, observations)
+                    if plan != reviewed:
+                        raise ValueError("stale_review")
+                    eligible = self._eligible_conflicts(plan)
+                    if self._reviewed_plan_has_non_content_blocker(plan):
+                        self._blocked_roots.add(root_id)
+                        await self._publish(
+                            root_id, "needs_attention", "review_changes"
+                        )
+                        raise ValueError("review_not_executable")
+                    if any(binding_id not in eligible for binding_id in selection_ids):
+                        raise ValueError("conflict_selection_mismatch")
+                    if any(
+                        selection.choice is NotesSyncConflictChoice.KEEP_BOTH
+                        for selection in selections
+                    ):
+                        raise ValueError("review_not_executable")
+                    selected_safe_ids = set(safe_action_ids)
+                    safe_actions = tuple(
+                        action
+                        for action in plan.safe_actions
+                        if action.action_id in selected_safe_ids
+                        and action.kind in _EXECUTABLE_ACTIONS
+                    )
+                    if len(safe_actions) != len(selected_safe_ids):
+                        raise ValueError("reviewed_action_mismatch")
+                    requests: dict[str, object] = {}
+                    for action in safe_actions:
+                        self._require_authority(root_id, "write")
+                        requests[
+                            action.action_id
+                        ] = await self._adapter.build_execution_request(
+                            root, observations, plan, action
+                        )
+                    conflict_actions: list[NotesSyncAction] = []
+                    mutating = sorted(
+                        (
+                            selection
+                            for selection in selections
+                            if selection.choice is not NotesSyncConflictChoice.SKIP
+                        ),
+                        key=lambda selection: selection.binding_id,
+                    )
+                    for selection in mutating:
+                        self._require_authority(root_id, "write")
+                        request = await self._adapter.build_conflict_execution_request(
+                            root, observations, plan, selection
+                        )
+                        action = NotesSyncAction(
+                            action_id=getattr(request, "operation_id"),
+                            kind=getattr(request, "action_kind"),
+                            binding_id=selection.binding_id,
+                            reason_code=eligible[selection.binding_id].reason_code,
+                        )
+                        requests[action.action_id] = request
+                        conflict_actions.append(action)
+                    authority = _FreshAuthority(
+                        observations,
+                        plan,
+                        MappingProxyType(requests),
+                    )
+                finally:
+                    release = getattr(self._adapter, "release_observation", None)
+                    if callable(release):
+                        release(observed_token)
+
+                actions = (*safe_actions, *conflict_actions)
+                raw_results = (
+                    await self._execute_locked(
+                        root,
+                        authority,
+                        actions,
+                        publish_terminal=False,
+                    )
+                    if actions
+                    else ()
                 )
-                if len(selected) != len(selected_ids):
-                    raise ValueError("reviewed_action_mismatch")
-                if not selected:
-                    return ()
-                return await self._execute_locked(root, authority, selected)
+                if any(
+                    type(result) is not NotesSyncExecutionResult
+                    for result in raw_results
+                ):
+                    raise RuntimeError("invalid_execution_result")
+                results = cast(tuple[NotesSyncExecutionResult, ...], tuple(raw_results))
+                completed = tuple(
+                    result.state is NotesSyncOperationState.COMPLETED
+                    for result in results
+                )
+                safe_result_count = min(len(results), len(safe_actions))
+                safe_completed = sum(completed[:safe_result_count])
+                conflict_completed = sum(completed[len(safe_actions) :])
+                all_completed = len(results) == len(actions) and all(completed)
+                needs_recovery = any(not value for value in completed)
+                partial = not all_completed and (
+                    any(completed) or len(results) < len(actions)
+                )
+                fresh_plan: ReconciliationPlan | None = None
+                unresolved = len(eligible) - conflict_completed
+                attention_remains = unresolved > 0 or not all_completed
+                if all_completed:
+                    fresh = await self._fresh_authority(root)
+                    fresh_plan = fresh.plan
+                    self._reviews[root_id] = fresh_plan
+                    unresolved = len(self._eligible_conflicts(fresh_plan))
+                    blocked = self._blocked_plan_status(fresh_plan)
+                    attention_remains = blocked is not None
+                    if blocked is None:
+                        self._blocked_roots.discard(root_id)
+                        await self._publish(root_id, "up_to_date", "sync_now")
+                    else:
+                        self._blocked_roots.add(root_id)
+                        await self._publish(root_id, *blocked)
+                return ConflictApplyResult(
+                    results=results,
+                    safe_completed=safe_completed,
+                    conflicts_resolved=conflict_completed,
+                    unresolved_conflicts=unresolved,
+                    attention_remains=attention_remains,
+                    partial=partial,
+                    needs_recovery=needs_recovery,
+                    fresh_plan=fresh_plan,
+                )
         finally:
             self._finish_task(root_id, task)
+
+    @staticmethod
+    def _eligible_conflicts(
+        plan: ReconciliationPlan,
+    ) -> dict[str, ReconciliationAttention]:
+        managed = {effect.binding_id for effect in plan.managed_placement_effects}
+        return {
+            attention.binding_id: attention
+            for attention in plan.attention
+            if attention.kind is ReconciliationAttentionKind.CONFLICT
+            and attention.binding_id is not None
+            and eligible_conflict_reason(
+                attention.reason_code,
+                managed=attention.binding_id in managed,
+            )
+        }
+
+    @classmethod
+    def _reviewed_plan_has_non_content_blocker(
+        cls,
+        plan: ReconciliationPlan,
+    ) -> bool:
+        eligible = cls._eligible_conflicts(plan)
+        return bool(
+            plan.deletion_groups
+            or plan.managed_placement_effects
+            or plan.skips
+            or any(attention.binding_id not in eligible for attention in plan.attention)
+        )
 
     async def _execute(
         self,
@@ -1335,6 +1568,8 @@ class NotesSyncRuntimeOwner:
         root: NotesSyncRootRecord,
         authority: _FreshAuthority,
         actions: tuple[NotesSyncAction, ...],
+        *,
+        publish_terminal: bool = True,
     ) -> tuple[object, ...]:
         self._require_authority(root.root_id, "write")
         executor = self._adapter.executor_for(
@@ -1393,7 +1628,8 @@ class NotesSyncRuntimeOwner:
                 else:
                     await self._publish(root.root_id, "partial", "review_changes")
                 return tuple(results)
-        await self._publish(root.root_id, "up_to_date", "sync_now")
+        if publish_terminal:
+            await self._publish(root.root_id, "up_to_date", "sync_now")
         return tuple(results)
 
     async def _classify_incomplete_block(
