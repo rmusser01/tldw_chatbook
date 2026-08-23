@@ -113,6 +113,36 @@ def test_prompt_loader_unknown_pairing_raises():
         prompt_loader.load_prompt("chunking", "Not A Real Prompt")
 
 
+def test_prompt_loader_shim_maps_proposition_profiles():
+    """The vendored propositions strategy calls load_prompt for three
+    OPTIONAL profile overrides (propositions.py:321/334/347 at the pin).
+    Chatbook ships no override for them, so a known pairing resolves to ""
+    and the strategy's built-in instruction applies — byte-faithful to
+    upstream's absent-override behavior (``if override:`` → default)."""
+    from tldw_chatbook.Chunking._shims.Utils import prompt_loader
+    for name in ("proposition_claimify", "proposition_gemma_aps",
+                 "proposition_generic"):
+        assert prompt_loader.load_prompt("chunking", name) == ""
+
+
+def test_prompt_loader_known_covers_vendored_propositions_calls():
+    """Source-scan pin: every literal load_prompt(category, name) pair the
+    vendored file actually passes must be a known pairing, so the
+    raise-loudly contract can never fire from inside the vendored engine
+    (a KeyError there escapes chunk() — the per-window try does not cover
+    _build_llm_prompt)."""
+    import re
+    from pathlib import Path
+    from tldw_chatbook.Chunking._shims.Utils import prompt_loader
+    src = (Path(__file__).resolve().parents[2] / "tldw_chatbook" / "Chunking"
+           / "engine" / "strategies" / "propositions.py").read_text()
+    pairs = set(re.findall(
+        r'load_prompt\(\s*"([^"]+)"\s*,\s*"([^"]+)"\s*\)', src))
+    assert pairs, "scan found no load_prompt call sites — anchor drifted"
+    assert pairs <= set(prompt_loader._KNOWN), \
+        f"unmapped load_prompt pairs in the vendored strategy: {pairs - set(prompt_loader._KNOWN)}"
+
+
 def test_prompt_loader_flat_alias():
     # The plan-documented flat path re-exports the Utils implementation that
     # the vendored engine actually imports (rolling_summarize.py:13).

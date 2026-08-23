@@ -2,13 +2,6 @@ import re
 
 import pytest
 
-# --- Ported (chunking-engine-parity Task 4) ---------------------------------
-# Upstream file: tldw_Server_API/tests/Chunking/test_propositions_strategy.py
-# Skipped: strategies/propositions.py is deferred to sub-project #6; not in the Phase-A vendored set. Remove this block when the module is vendored in
-# its own sub-project and re-sync the test from upstream.
-pytest.importorskip("tldw_chatbook.NoSuchDeferredModule",
-                    reason="skipped: strategies/propositions.py is deferred to sub-project #6; not in the Phase-A vendored set")
-
 from tldw_chatbook.Chunking.engine import Chunker
 from tldw_chatbook.Chunking.engine.strategies.propositions import PropositionChunkingStrategy
 

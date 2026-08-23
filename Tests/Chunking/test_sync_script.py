@@ -57,6 +57,42 @@ def test_manifest_auto_planner_vendored_not_excluded():
     assert not (vendored & excluded)  # spec §0.2: never both lists
 
 
+def test_manifest_propositions_vendored_not_excluded():
+    """2026-08-23 propositions spec §5: the 39th file is a MOVE from
+    `excluded` to `vendored` in BOTH the manifest and the sync script's
+    VENDORED list — never both lists."""
+    vendored = set(manifest_vendored())
+    excluded = set(manifest_excluded())
+    assert "strategies/propositions.py" in vendored
+    assert "strategies/propositions.py" not in excluded
+    assert not (vendored & excluded)
+    # the move is mirrored in the sync script's own list (single source per
+    # tool; the manifest documents, the script acts)
+    sync_src = SYNC.read_text()
+    assert '"strategies/propositions.py"' in sync_src
+
+
+def test_propositions_importable_zero_new_shims():
+    """2026-08-23 propositions spec §5: the file resolves with ZERO new
+    shims — its only server import (prompt_loader) lands on #1's existing
+    `_shims/Utils/prompt_loader` via the second rewrite rule; `..base` is
+    relative and already vendored."""
+    mod = importlib.import_module(
+        "tldw_chatbook.Chunking.engine.strategies.propositions")
+    from tldw_chatbook.Chunking.engine.strategies.propositions import (
+        PropositionChunkingStrategy,
+    )
+    assert callable(PropositionChunkingStrategy)
+    # the rewritten import binds to the existing shim, not a new one
+    from tldw_chatbook.Chunking._shims.Utils.prompt_loader import load_prompt
+    assert mod.load_prompt is load_prompt
+    # ...and no shim may reference the strategy back (zero shims, both ways)
+    shims_root = REPO / "tldw_chatbook" / "Chunking" / "_shims"
+    for py in shims_root.rglob("*.py"):
+        assert "engine.strategies.propositions" not in py.read_text(), \
+            f"{py.name} references the propositions strategy"
+
+
 def test_auto_planner_importable_zero_new_shims():
     """Spec §4.1: auto_planner.py is stdlib-only at the pin, so the synced
     file must carry no _shims reference at all — zero rewritten lines."""
@@ -69,10 +105,11 @@ def test_auto_planner_importable_zero_new_shims():
 
 
 def test_engine_tree_complete():
-    # auto-selection task 1 (spec §4.1): vendoring auto_planner.py takes the
-    # manifest 36 -> 37 entries (the engine tree goes 37 -> 38 .py files
-    # counting the chatbook-authored __init__.py).
-    assert len(manifest_vendored()) == 37
+    # propositions vendoring (2026-08-23 spec §5): the manifest goes 37 -> 38
+    # entries and the engine tree 38 -> 39 .py files (counting the
+    # chatbook-authored __init__.py) — the spec's "39th file".
+    assert len(manifest_vendored()) == 38
+    assert len([p for p in ENGINE.rglob("*.py")]) == 39
     for rel in manifest_vendored():
         assert (ENGINE / rel).exists(), f"missing vendored file {rel}"
     for rel in manifest_extra():
@@ -85,11 +122,14 @@ def test_engine_tree_complete():
     assert (ENGINE / "templates.py").exists()
     # auto_planner.py is vendored (spec §4.1) and importable (see below)
     assert (ENGINE / "auto_planner.py").exists()
-    # excluded-by-design files must NOT exist
+    # strategies/propositions.py is vendored (2026-08-23 spec §5) and
+    # importable (see below)
+    assert (ENGINE / "strategies" / "propositions.py").exists()
+    # descope-ruled / not-vendored files must NOT exist (spec §4 ledger)
     for rel in ("template_initialization.py",
                 "async_chunker.py", "auto_boundary_assistant.py",
-                "strategies/propositions.py", "utils/proposition_eval.py"):
-        assert not (ENGINE / rel).exists(), f"deferred file vendored: {rel}"
+                "utils/proposition_eval.py"):
+        assert not (ENGINE / rel).exists(), f"descoped file vendored: {rel}"
     # upstream's own __init__ must not be vendored (chatbook-authored instead)
     assert "load_and_log_configs" not in (ENGINE / "__init__.py").read_text()
 
