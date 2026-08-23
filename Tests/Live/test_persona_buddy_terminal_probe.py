@@ -378,6 +378,102 @@ def test_output_preflight_never_removes_an_unrelated_collision(tmp_path: Path) -
     assert capture_collision.read_bytes() == b"caller-owned capture collision"
 
 
+def test_last_resort_diagnostic_reserves_random_owned_destination(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    probe = _load_probe_module()
+    monkeypatch.setattr(probe.tempfile, "gettempdir", lambda: str(tmp_path))
+    old_fallback = tmp_path / f"persona-buddy-terminal-{os.getpid()}.diagnostic.log"
+    old_fallback.write_bytes(b"caller-owned diagnostic sentinel")
+    report = tmp_path / "failure.json"
+    preferred_diagnostic = tmp_path / "failure.diagnostic.log"
+    original_write = probe._atomic_write_text
+
+    def fail_preferred_diagnostic(path, value, **kwargs):
+        if path == preferred_diagnostic:
+            raise OSError("diagnostic_publish_impossible")
+        return original_write(path, value, **kwargs)
+
+    monkeypatch.setattr(probe, "_atomic_write_text", fail_preferred_diagnostic)
+    failure = probe._ProbeChildFailure(
+        category="persona_buddy_terminal_probe_failure",
+        phase="parent:report",
+        child_return_code=1,
+        diagnostic_tail=(
+            "persona_buddy_terminal_probe_failure\n" + "é" * probe._DIAGNOSTIC_BYTES
+        ),
+    )
+
+    result, diagnostic_path, actual_report = probe._persist_structured_failure(
+        failure,
+        report_output=report,
+        root=tmp_path / "repo",
+        temporary=None,
+    )
+
+    assert old_fallback.read_bytes() == b"caller-owned diagnostic sentinel"
+    assert diagnostic_path != old_fallback
+    assert diagnostic_path.parent == tmp_path
+    assert diagnostic_path.name.startswith("persona-buddy-terminal-")
+    assert diagnostic_path.name.endswith(".diagnostic.log")
+    assert diagnostic_path.read_text(encoding="utf-8") == result["diagnostic_tail"]
+    assert len(diagnostic_path.read_bytes()) <= probe._DIAGNOSTIC_BYTES
+    assert result["diagnostic_artifact"] == str(diagnostic_path)
+    assert actual_report == report
+    assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_last_resort_report_reserves_random_owned_destination_and_cleans_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    probe = _load_probe_module()
+    monkeypatch.setattr(probe.tempfile, "gettempdir", lambda: str(tmp_path))
+    old_fallback = tmp_path / f"persona-buddy-terminal-{os.getpid()}.failure.json"
+    old_fallback.write_bytes(b"caller-owned report sentinel")
+    report_attempts: list[Path] = []
+
+    def fail_report_publication(path, _value, **_kwargs):
+        report_attempts.append(path)
+        raise OSError("report_publish_impossible")
+
+    monkeypatch.setattr(probe, "_atomic_write_json", fail_report_publication)
+    failure = probe._ProbeChildFailure(
+        category="persona_buddy_terminal_probe_failure",
+        phase="parent:report",
+        child_return_code=1,
+        diagnostic_tail="persona_buddy_terminal_probe_failure",
+    )
+
+    result, diagnostic_path, actual_report = probe._persist_structured_failure(
+        failure,
+        report_output=tmp_path / "failure.json",
+        root=tmp_path / "repo",
+        temporary=None,
+    )
+
+    assert len(report_attempts) == 2
+    assert old_fallback.read_bytes() == b"caller-owned report sentinel"
+    assert actual_report != old_fallback
+    assert actual_report.parent == tmp_path
+    assert actual_report.name.startswith("persona-buddy-terminal-")
+    assert actual_report.name.endswith(".failure.json")
+    assert json.loads(actual_report.read_text(encoding="utf-8")) == result
+    assert diagnostic_path.is_file()
+    assert not list(tmp_path.glob("*.tmp"))
+
+    before_failed_write = set(tmp_path.iterdir())
+
+    def fail_fsync(_descriptor):
+        raise OSError("fallback_fsync_impossible")
+
+    monkeypatch.setattr(probe.os, "fsync", fail_fsync)
+    with pytest.raises(OSError, match="fallback_fsync_impossible"):
+        probe._write_exclusive_fallback_text("failure", suffix=".failure.json")
+    assert set(tmp_path.iterdir()) == before_failed_write
+
+
 @pytest.mark.skipif(os.name == "nt", reason="POSIX PTY capability required")
 def test_injected_child_failure_persists_atomic_parent_evidence(tmp_path: Path) -> None:
     probe = Path(__file__).with_name("persona_buddy_terminal_probe.py")
@@ -555,6 +651,7 @@ def test_report_directory_fails_to_safe_sibling_before_child_and_rolls_back(
     assert report_dir.is_dir()
     assert not any((captures / name).exists() for name in _CAPTURE_NAMES)
     assert "Traceback" not in completed.stderr
+    assert str(failure_report) in completed.stderr
     assert not list(tmp_path.glob(".reportdir.*.tmp"))
 
 

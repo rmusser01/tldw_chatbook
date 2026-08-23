@@ -175,6 +175,30 @@ def _atomic_write_json(
     )
 
 
+def _write_exclusive_fallback_text(value: str, *, suffix: str) -> Path:
+    """Write one last-resort artifact to its exclusively reserved destination."""
+
+    descriptor, fallback_name = tempfile.mkstemp(
+        prefix="persona-buddy-terminal-",
+        suffix=suffix,
+        dir=tempfile.gettempdir(),
+    )
+    fallback = Path(fallback_name).resolve()
+    stream = None
+    try:
+        stream = os.fdopen(descriptor, "w", encoding="utf-8")
+        with stream:
+            stream.write(value)
+            stream.flush()
+            os.fsync(stream.fileno())
+    except Exception:
+        if stream is None:
+            os.close(descriptor)
+        fallback.unlink(missing_ok=True)
+        raise
+    return fallback
+
+
 def _bounded_utf8_tail(value: str, limit: int = _DIAGNOSTIC_BYTES) -> str:
     """Retain the diagnostic category and a UTF-8-safe tail within ``limit`` bytes."""
 
@@ -1387,7 +1411,7 @@ def _persist_structured_failure(
     report_output: Path | None,
     root: Path,
     temporary: str | None,
-) -> tuple[dict[str, Any], Path]:
+) -> tuple[dict[str, Any], Path, Path]:
     """Persist bounded failure evidence, falling back from an unusable target."""
 
     diagnostic = failure.diagnostic_tail.replace(str(root), "<REPO_ROOT>")
@@ -1403,11 +1427,10 @@ def _persist_structured_failure(
     try:
         _atomic_write_text(diagnostic_path, diagnostic)
     except OSError:
-        diagnostic_path = (
-            Path(tempfile.gettempdir())
-            / f"persona-buddy-terminal-{os.getpid()}.diagnostic.log"
-        ).resolve()
-        _atomic_write_text(diagnostic_path, diagnostic)
+        diagnostic_path = _write_exclusive_fallback_text(
+            diagnostic,
+            suffix=".diagnostic.log",
+        )
     supplied_checks = failure.checks or {}
     checks = {name: bool(supplied_checks.get(name, False)) for name in _CHECK_NAMES}
     result = {
@@ -1430,6 +1453,7 @@ def _persist_structured_failure(
             for name in _CHECK_NAMES
         },
     }
+    actual_report = preferred_report
     try:
         _atomic_write_json(preferred_report, result)
     except OSError:
@@ -1437,12 +1461,12 @@ def _persist_structured_failure(
         try:
             _atomic_write_json(fallback_report, result)
         except OSError:
-            fallback_report = (
-                Path(tempfile.gettempdir())
-                / f"persona-buddy-terminal-{os.getpid()}.failure.json"
+            fallback_report = _write_exclusive_fallback_text(
+                json.dumps(result, sort_keys=True),
+                suffix=".failure.json",
             )
-            _atomic_write_json(fallback_report, result)
-    return result, diagnostic_path
+        actual_report = fallback_report
+    return result, diagnostic_path, actual_report
 
 
 def _parent(
@@ -1596,14 +1620,16 @@ def _parent(
             diagnostic_tail=f"{type(error).__name__}: {category}",
         )
     _rollback_managed_captures(capture_output)
-    result, artifact = _persist_structured_failure(
+    result, artifact, failure_report = _persist_structured_failure(
         failure,
         report_output=report_output,
         root=root,
         temporary=temporary,
     )
     print(json.dumps(result, sort_keys=True))
-    raise RuntimeError(f"{failure.category} artifact={artifact}") from failure
+    raise RuntimeError(
+        f"{failure.category} report={failure_report} artifact={artifact}"
+    ) from failure
 
 
 def main() -> int:
