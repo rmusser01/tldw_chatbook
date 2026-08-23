@@ -15,6 +15,7 @@ import random
 import re
 import os
 import secrets
+import shutil
 import signal
 import sqlite3
 import stat
@@ -110,6 +111,30 @@ BLOCKING_ATTEMPT_STATES = frozenset(
 _ATTEMPT_ID = re.compile(r"^attempt-(\d{4})$")
 _MEASURED_VERDICTS = frozenset({"pass", "regression", "inconclusive"})
 _CAMPAIGN_VERDICTS = _MEASURED_VERDICTS | {"smoke"}
+REVIEWED_ARTIFACTS = (
+    "README.md",
+    "real-provider-three-turn.raw.jsonl",
+    "real-provider-three-turn.manifest.json",
+    "real-provider-three-turn.summary.json",
+    "real-provider-three-turn-summary.md",
+)
+_REVIEW_RECEIPT_FIELDS = frozenset(
+    {
+        "artifact_set_sha256",
+        "attempt_id",
+        "decision",
+        "findings",
+        "privacy_confirmed",
+        "reviewed_at",
+        "reviewer",
+        "verdict",
+    }
+)
+_REVIEW_DECISIONS = frozenset({"approved", "changes_required"})
+_REVIEW_SEVERITIES = frozenset({"critical", "important", "minor"})
+_REVIEWER_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}$")
+_FINDING_CODE = re.compile(r"^[a-z][a-z0-9_]{0,127}$")
+_REVIEW_FILENAME = re.compile(r"^review-(\d{3})\.json$")
 _ATTEMPT_REASON_CATEGORIES = {
     "failed": frozenset({"provider", "acquisition", "interrupted"}),
     "invalid": frozenset(
@@ -219,6 +244,328 @@ _SCHEDULED_CHILD_SPEC_KEYS_WITH_MODE = _SCHEDULED_CHILD_SPEC_KEYS | {"mode"}
 
 def _sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _sha256_review_file(path: Path) -> str:
+    """Hash one regular file without following a final symlink."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise RuntimeError("review_artifact_set_invalid") from exc
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            raise RuntimeError("review_artifact_set_invalid")
+        digest = hashlib.sha256()
+        while chunk := os.read(descriptor, 1024 * 1024):
+            digest.update(chunk)
+        after = os.fstat(descriptor)
+        if (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+        ) != (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+        ):
+            raise RuntimeError("review_artifact_set_invalid")
+        return digest.hexdigest()
+    finally:
+        os.close(descriptor)
+
+
+def canonical_artifact_hashes(
+    root: Path,
+    artifact_paths: Sequence[str | Path] = REVIEWED_ARTIFACTS,
+) -> dict[str, str]:
+    """Return the exact reviewed five-file relative-path hash mapping."""
+    relative_paths = tuple(Path(path) for path in artifact_paths)
+    if any(path.is_absolute() or len(path.parts) != 1 for path in relative_paths):
+        raise RuntimeError("review_artifact_path_invalid")
+    names = tuple(path.as_posix() for path in relative_paths)
+    if len(names) != len(set(names)) or set(names) != set(REVIEWED_ARTIFACTS):
+        raise RuntimeError("review_artifact_set_invalid")
+    _reject_lexical_symlinks(root, "review_artifact_set_invalid")
+    try:
+        if not root.is_dir() or root.is_symlink():
+            raise RuntimeError("review_artifact_set_invalid")
+        entries = {path.name: path for path in root.iterdir()}
+    except OSError as exc:
+        raise RuntimeError("review_artifact_set_invalid") from exc
+    allowed_entries = set(REVIEWED_ARTIFACTS) | {
+        "reviews",
+        "confirmatory-review-receipt.json",
+    }
+    if not set(entries).issubset(allowed_entries):
+        raise RuntimeError("review_artifact_set_invalid")
+    reviews = entries.get("reviews")
+    if reviews is not None and (reviews.is_symlink() or not reviews.is_dir()):
+        raise RuntimeError("review_artifact_set_invalid")
+    if not set(REVIEWED_ARTIFACTS).issubset(entries):
+        raise RuntimeError("review_artifact_set_invalid")
+    return {
+        name: _sha256_review_file(entries[name]) for name in sorted(REVIEWED_ARTIFACTS)
+    }
+
+
+def canonical_artifact_digest(root: Path) -> str:
+    """Hash canonical JSON of the exact reviewed artifact mapping."""
+    payload = json.dumps(
+        canonical_artifact_hashes(root), sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _read_review_receipt(path: Path) -> dict[str, Any]:
+    """Read one exact, content-free review receipt without following symlinks."""
+    try:
+        if path.is_symlink() or not path.is_file():
+            raise RuntimeError("review_receipt_invalid")
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags)
+        try:
+            before = os.fstat(descriptor)
+            if not stat.S_ISREG(before.st_mode):
+                raise RuntimeError("review_receipt_invalid")
+            chunks: list[bytes] = []
+            while chunk := os.read(descriptor, 64 * 1024):
+                chunks.append(chunk)
+            after = os.fstat(descriptor)
+            if (
+                before.st_dev,
+                before.st_ino,
+                before.st_size,
+                before.st_mtime_ns,
+            ) != (
+                after.st_dev,
+                after.st_ino,
+                after.st_size,
+                after.st_mtime_ns,
+            ):
+                raise RuntimeError("review_receipt_invalid")
+        finally:
+            os.close(descriptor)
+        parsed = json.loads(b"".join(chunks))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("review_receipt_invalid") from exc
+    if not isinstance(parsed, dict):
+        raise RuntimeError("review_receipt_invalid")
+    if privacy_violations(parsed):
+        raise RuntimeError("review_receipt_privacy_violation")
+    if set(parsed) != _REVIEW_RECEIPT_FIELDS:
+        raise RuntimeError("review_receipt_fields_invalid")
+    if parsed.get("privacy_confirmed") is not True:
+        raise RuntimeError("review_receipt_privacy_invalid")
+    attempt_id = parsed.get("attempt_id")
+    digest = parsed.get("artifact_set_sha256")
+    verdict = parsed.get("verdict")
+    decision = parsed.get("decision")
+    reviewer = parsed.get("reviewer")
+    reviewed_at = parsed.get("reviewed_at")
+    if not isinstance(attempt_id, str) or not _ATTEMPT_ID.fullmatch(attempt_id):
+        raise RuntimeError("review_receipt_attempt_invalid")
+    if not isinstance(digest, str) or not _SHA256.fullmatch(digest):
+        raise RuntimeError("review_receipt_digest_invalid")
+    _require_campaign_enum(
+        verdict, _CAMPAIGN_VERDICTS, "review_receipt_verdict_invalid"
+    )
+    _require_campaign_enum(
+        decision, _REVIEW_DECISIONS, "review_receipt_decision_invalid"
+    )
+    if not isinstance(reviewer, str) or not _REVIEWER_ID.fullmatch(reviewer):
+        raise RuntimeError("review_receipt_reviewer_invalid")
+    if not isinstance(reviewed_at, str):
+        raise RuntimeError("review_receipt_timestamp_invalid")
+    try:
+        time.strptime(reviewed_at, "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError as exc:
+        raise RuntimeError("review_receipt_timestamp_invalid") from exc
+    findings = parsed.get("findings")
+    if not isinstance(findings, list):
+        raise RuntimeError("review_receipt_findings_invalid")
+    normalized_findings: set[tuple[str, str]] = set()
+    for finding in findings:
+        if not isinstance(finding, dict) or set(finding) != {"severity", "code"}:
+            raise RuntimeError("review_receipt_findings_invalid")
+        severity = finding.get("severity")
+        code = finding.get("code")
+        if (
+            not isinstance(severity, str)
+            or severity not in _REVIEW_SEVERITIES
+            or not isinstance(code, str)
+            or not _FINDING_CODE.fullmatch(code)
+            or (severity, code) in normalized_findings
+        ):
+            raise RuntimeError("review_receipt_findings_invalid")
+        normalized_findings.add((severity, code))
+    if decision == "changes_required" and not findings:
+        raise RuntimeError("review_receipt_findings_invalid")
+    return parsed
+
+
+def _review_attempt_root(campaign_root: Path, attempt_id: str) -> Path:
+    if not isinstance(attempt_id, str) or not _ATTEMPT_ID.fullmatch(attempt_id):
+        raise RuntimeError("campaign_attempt_id_invalid")
+    _reject_lexical_symlinks(campaign_root, "campaign_root_invalid")
+    return campaign_root / "attempts" / attempt_id
+
+
+def _validate_receipt_location(attempt_root: Path, receipt_path: Path) -> None:
+    expected_parent = attempt_root / "reviews"
+    absolute_receipt = Path(os.path.abspath(receipt_path))
+    absolute_parent = Path(os.path.abspath(expected_parent))
+    if absolute_receipt.parent != absolute_parent or not _REVIEW_FILENAME.fullmatch(
+        absolute_receipt.name
+    ):
+        raise RuntimeError("review_receipt_location_invalid")
+    _reject_lexical_symlinks(receipt_path, "review_receipt_location_invalid")
+
+
+def _register_receipt_identity(attempt_root: Path, receipt_path: Path) -> None:
+    """Pin one registered receipt's bytes in a content-free marker."""
+    registry = attempt_root / "reviews" / ".registered"
+    if registry.exists() or registry.is_symlink():
+        if not registry.is_dir() or registry.is_symlink():
+            raise RuntimeError("review_receipt_registry_invalid")
+    else:
+        _mkdir_namespace(registry)
+    receipt_sha256 = _sha256_review_file(receipt_path)
+    prefix = f"{receipt_path.name}--"
+    expected_name = f"{prefix}{receipt_sha256}"
+    try:
+        entries = tuple(registry.iterdir())
+    except OSError as exc:
+        raise RuntimeError("review_receipt_registry_invalid") from exc
+    for entry in entries:
+        name, separator, digest = entry.name.rpartition("--")
+        if (
+            not separator
+            or not _REVIEW_FILENAME.fullmatch(name)
+            or not _SHA256.fullmatch(digest)
+            or not entry.is_dir()
+            or entry.is_symlink()
+            or any(entry.iterdir())
+        ):
+            raise RuntimeError("review_receipt_registry_invalid")
+    matching = [entry.name for entry in entries if entry.name.startswith(prefix)]
+    if matching and matching != [expected_name]:
+        raise RuntimeError("review_receipt_changed")
+    if not matching:
+        _mkdir_namespace(registry / expected_name)
+
+
+def register_review_receipt(
+    campaign_root: Path, attempt_id: str, receipt_path: Path
+) -> dict[str, Any]:
+    """Bind one review to the current five-file set and campaign lineage."""
+    attempt_root = _review_attempt_root(campaign_root, attempt_id)
+    _validate_receipt_location(attempt_root, receipt_path)
+    receipt = _read_review_receipt(receipt_path)
+    hashes = canonical_artifact_hashes(attempt_root)
+    digest = hashlib.sha256(
+        json.dumps(hashes, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    lineage = attempt_lineage(campaign_root / "attempts.jsonl")
+    if (
+        not lineage
+        or lineage[-1]["attempt_id"] != attempt_id
+        or lineage[-1]["state"] not in {"complete_pending_review", "changes_required"}
+    ):
+        raise RuntimeError("review_attempt_state_invalid")
+    current = lineage[-1]
+    if (
+        receipt["attempt_id"] != attempt_id
+        or receipt["artifact_set_sha256"] != digest
+        or receipt["verdict"] != current["verdict"]
+        or hashes["real-provider-three-turn.raw.jsonl"] != current["raw_sha256"]
+    ):
+        raise RuntimeError("review_receipt_binding_mismatch")
+    _register_receipt_identity(attempt_root, receipt_path)
+    if current["state"] == "changes_required":
+        reviews_root = attempt_root / "reviews"
+        rejected_digests = {
+            prior["artifact_set_sha256"]
+            for path in reviews_root.iterdir()
+            if path != receipt_path
+            and path.is_file()
+            and not path.is_symlink()
+            and (prior := _read_review_receipt(path))["decision"] == "changes_required"
+        }
+        if digest in rejected_digests:
+            raise RuntimeError("review_artifact_digest_not_changed")
+        complete_attempt_measurement(
+            campaign_root / "attempts.jsonl",
+            attempt_id,
+            verdict=current["verdict"],
+            raw_sha256=current["raw_sha256"],
+        )
+    if receipt["decision"] == "changes_required":
+        append_attempt_state(
+            campaign_root / "attempts.jsonl",
+            {
+                "attempt_id": attempt_id,
+                "state": "changes_required",
+                "verdict": receipt["verdict"],
+                "raw_sha256": hashes["real-provider-three-turn.raw.jsonl"],
+                "reason_category": "receipt",
+            },
+        )
+    return receipt
+
+
+def promote_reviewed_artifacts(
+    campaign_root: Path,
+    attempt_id: str,
+    receipt_path: Path,
+    destination: Path,
+) -> str:
+    """Copy one approved reviewed set to a sibling and atomically publish it."""
+    if destination.exists() or destination.is_symlink():
+        raise RuntimeError("review_destination_exists")
+    _reject_lexical_symlinks(destination.parent, "review_destination_invalid")
+    if not destination.parent.is_dir() or destination.parent.is_symlink():
+        raise RuntimeError("review_destination_invalid")
+    stage = destination.parent / f".{destination.name}.task-20010-stage"
+    if stage.exists() or stage.is_symlink():
+        raise RuntimeError("review_promotion_stage_exists")
+    receipt = _read_review_receipt(receipt_path)
+    if receipt["decision"] != "approved":
+        raise RuntimeError("review_receipt_not_approved")
+    receipt = register_review_receipt(campaign_root, attempt_id, receipt_path)
+    attempt_root = _review_attempt_root(campaign_root, attempt_id)
+    reviewed_digest = receipt["artifact_set_sha256"]
+    source_receipt_sha256 = _sha256_review_file(receipt_path)
+    if canonical_artifact_digest(attempt_root) != reviewed_digest:
+        raise RuntimeError("review_receipt_binding_mismatch")
+
+    _mkdir_namespace(stage)
+    for name in REVIEWED_ARTIFACTS:
+        shutil.copy2(attempt_root / name, stage / name)
+    copied_receipt = stage / "confirmatory-review-receipt.json"
+    shutil.copy2(receipt_path, copied_receipt)
+
+    if canonical_artifact_digest(attempt_root) != reviewed_digest:
+        raise RuntimeError("review_promotion_source_changed")
+    if _sha256_review_file(receipt_path) != source_receipt_sha256:
+        raise RuntimeError("review_promotion_source_changed")
+    if canonical_artifact_digest(stage) != reviewed_digest:
+        raise RuntimeError("review_promotion_copy_mismatch")
+    if (
+        _sha256_review_file(copied_receipt) != source_receipt_sha256
+        or _read_review_receipt(copied_receipt) != receipt
+    ):
+        raise RuntimeError("review_promotion_copy_mismatch")
+    if destination.exists() or destination.is_symlink():
+        raise RuntimeError("review_destination_exists")
+    try:
+        _rename_namespace(stage, destination)
+    except OSError as exc:
+        raise RuntimeError("review_promotion_rename_failed") from exc
+    return reviewed_digest
 
 
 def verify_original_evidence(candidate_root: Path) -> dict[str, str]:
@@ -7096,6 +7443,48 @@ def run_campaign_maintenance_action(args: argparse.Namespace) -> int:
     if args.campaign_action == "recover":
         event = recover_interrupted_attempt(args.campaign_root)
         write_boundary_event(sys.stdout, {"event": "campaign_recovered", **event})
+        return 0
+    attempt_root = _review_attempt_root(args.campaign_root, args.attempt_id)
+    if args.campaign_action == "digest":
+        digest = canonical_artifact_digest(attempt_root)
+        write_boundary_event(
+            sys.stdout,
+            {
+                "event": "artifact_digest",
+                "attempt_id": args.attempt_id,
+                "artifact_set_sha256": digest,
+            },
+        )
+        return 0
+    if args.campaign_action == "register-review":
+        receipt = register_review_receipt(
+            args.campaign_root, args.attempt_id, args.review_receipt
+        )
+        write_boundary_event(
+            sys.stdout,
+            {
+                "event": "review_registered",
+                "attempt_id": args.attempt_id,
+                "artifact_set_sha256": receipt["artifact_set_sha256"],
+                "decision": receipt["decision"],
+            },
+        )
+        return 0
+    if args.campaign_action == "promote":
+        digest = promote_reviewed_artifacts(
+            args.campaign_root,
+            args.attempt_id,
+            args.review_receipt,
+            args.destination,
+        )
+        write_boundary_event(
+            sys.stdout,
+            {
+                "event": "campaign_promoted",
+                "attempt_id": args.attempt_id,
+                "artifact_set_sha256": digest,
+            },
+        )
         return 0
     raise RuntimeError(f"campaign_action_unavailable:{args.campaign_action}")
 

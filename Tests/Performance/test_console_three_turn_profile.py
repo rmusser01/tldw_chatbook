@@ -26,6 +26,15 @@ import pytest
 from Tests.Performance import run_console_three_turn_profile as profile
 
 
+REVIEWED_ARTIFACT_NAMES = {
+    "README.md",
+    "real-provider-three-turn.raw.jsonl",
+    "real-provider-three-turn.manifest.json",
+    "real-provider-three-turn.summary.json",
+    "real-provider-three-turn-summary.md",
+}
+
+
 def test_balanced_arm_order_rotates_complete_triples() -> None:
     balanced_arm_order = getattr(profile, "balanced_arm_order", None)
 
@@ -4165,6 +4174,455 @@ def test_campaign_actions_parse_without_provider_contact_arguments(
     assert arguments.campaign_action == action
     assert arguments.endpoint is None
     assert arguments.model is None
+
+
+def _write_reviewed_artifacts(root: Path) -> dict[str, bytes]:
+    root.mkdir(parents=True, exist_ok=True)
+    values = {
+        "README.md": b"# Confirmation\n",
+        "real-provider-three-turn.raw.jsonl": b'{"event":"sample"}\n',
+        "real-provider-three-turn.manifest.json": b"{}\n",
+        "real-provider-three-turn.summary.json": b'{"overall_verdict":"pass"}\n',
+        "real-provider-three-turn-summary.md": b"# Result\n",
+    }
+    for name, value in values.items():
+        (root / name).write_bytes(value)
+    return values
+
+
+def test_canonical_artifact_digest_hashes_exact_sorted_five_file_map(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "attempt"
+    values = _write_reviewed_artifacts(root)
+    expected_map = {
+        name: hashlib.sha256(value).hexdigest()
+        for name, value in sorted(values.items())
+    }
+    expected = hashlib.sha256(
+        json.dumps(expected_map, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+    assert profile.canonical_artifact_digest(root) == expected
+
+
+@pytest.mark.parametrize("problem", ("missing", "extra", "symlink"))
+def test_canonical_artifact_digest_rejects_noncanonical_set(
+    tmp_path: Path, problem: str
+) -> None:
+    root = tmp_path / "attempt"
+    _write_reviewed_artifacts(root)
+    if problem == "missing":
+        (root / "README.md").unlink()
+    elif problem == "extra":
+        (root / "notes.txt").write_text("extra", encoding="utf-8")
+    else:
+        (root / "README.md").unlink()
+        (root / "README.md").symlink_to(root / "real-provider-three-turn-summary.md")
+
+    with pytest.raises(RuntimeError, match="^review_artifact_set_invalid$"):
+        profile.canonical_artifact_digest(root)
+
+
+def test_canonical_artifact_digest_allows_receipts_outside_reviewed_set(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "attempt"
+    _write_reviewed_artifacts(root)
+    before = profile.canonical_artifact_digest(root)
+    reviews = root / "reviews"
+    reviews.mkdir()
+    (reviews / "review-001.json").write_text("{}\n", encoding="utf-8")
+
+    assert profile.canonical_artifact_digest(root) == before
+
+
+def test_canonical_artifact_hashes_reject_absolute_artifact_paths(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "attempt"
+    _write_reviewed_artifacts(root)
+
+    with pytest.raises(RuntimeError, match="^review_artifact_path_invalid$"):
+        profile.canonical_artifact_hashes(
+            root, [*(REVIEWED_ARTIFACT_NAMES - {"README.md"}), root / "README.md"]
+        )
+
+
+def _prepare_review_attempt(tmp_path: Path) -> tuple[Path, Path, str, str]:
+    campaign = tmp_path / "campaign"
+    attempt = profile.create_attempt_root(campaign, "attempt-0001")
+    values = _write_reviewed_artifacts(attempt)
+    raw_sha256 = hashlib.sha256(
+        values["real-provider-three-turn.raw.jsonl"]
+    ).hexdigest()
+    profile.append_attempt_state(
+        campaign / "attempts.jsonl",
+        {"attempt_id": "attempt-0001", "state": "running"},
+    )
+    profile.complete_attempt_measurement(
+        campaign / "attempts.jsonl",
+        "attempt-0001",
+        verdict="pass",
+        raw_sha256=raw_sha256,
+    )
+    return campaign, attempt, profile.canonical_artifact_digest(attempt), raw_sha256
+
+
+def _write_review_receipt(
+    attempt: Path,
+    digest: str,
+    *,
+    decision: str = "approved",
+    filename: str = "review-001.json",
+) -> Path:
+    findings = (
+        []
+        if decision == "approved"
+        else [{"severity": "important", "code": "report_verdict_mismatch"}]
+    )
+    receipt = {
+        "artifact_set_sha256": digest,
+        "attempt_id": "attempt-0001",
+        "decision": decision,
+        "findings": findings,
+        "privacy_confirmed": True,
+        "reviewed_at": "2026-08-23T00:00:00Z",
+        "reviewer": "independent-reviewer",
+        "verdict": "pass",
+    }
+    reviews = attempt / "reviews"
+    reviews.mkdir(exist_ok=True)
+    path = reviews / filename
+    path.write_text(json.dumps(receipt, sort_keys=True) + "\n", encoding="utf-8")
+    return path
+
+
+def test_review_receipt_has_exact_privacy_safe_schema(tmp_path: Path) -> None:
+    campaign, attempt, digest, _raw_sha256 = _prepare_review_attempt(tmp_path)
+    receipt_path = _write_review_receipt(attempt, digest)
+
+    receipt = profile.register_review_receipt(campaign, "attempt-0001", receipt_path)
+
+    assert set(receipt) == {
+        "artifact_set_sha256",
+        "attempt_id",
+        "decision",
+        "findings",
+        "privacy_confirmed",
+        "reviewed_at",
+        "reviewer",
+        "verdict",
+    }
+    assert receipt["decision"] == "approved"
+    assert profile.attempt_lineage(campaign / "attempts.jsonl")[-1]["state"] == (
+        "complete_pending_review"
+    )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "code"),
+    (
+        ({"unknown": True}, "review_receipt_fields_invalid"),
+        ({"api_key": "secret"}, "review_receipt_privacy_violation"),
+        ({"privacy_confirmed": False}, "review_receipt_privacy_invalid"),
+        ({"reviewer": "/Users/person"}, "review_receipt_privacy_violation"),
+        (
+            {"findings": [{"severity": "important", "code": "raw secret value"}]},
+            "review_receipt_findings_invalid",
+        ),
+    ),
+)
+def test_review_receipt_rejects_unknown_or_sensitive_fields(
+    tmp_path: Path, mutation: dict[str, object], code: str
+) -> None:
+    campaign, attempt, digest, _raw_sha256 = _prepare_review_attempt(tmp_path)
+    receipt_path = _write_review_receipt(attempt, digest)
+    receipt = json.loads(receipt_path.read_bytes())
+    receipt.update(mutation)
+    receipt_path.write_text(json.dumps(receipt) + "\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match=f"^{code}$"):
+        profile.register_review_receipt(campaign, "attempt-0001", receipt_path)
+
+
+@pytest.mark.parametrize("field", ("attempt_id", "artifact_set_sha256", "verdict"))
+def test_review_registration_rejects_attempt_digest_or_verdict_mismatch(
+    tmp_path: Path, field: str
+) -> None:
+    campaign, attempt, digest, _raw_sha256 = _prepare_review_attempt(tmp_path)
+    receipt_path = _write_review_receipt(attempt, digest)
+    receipt = json.loads(receipt_path.read_bytes())
+    receipt[field] = {
+        "attempt_id": "attempt-0002",
+        "artifact_set_sha256": "f" * 64,
+        "verdict": "regression",
+    }[field]
+    receipt_path.write_text(json.dumps(receipt) + "\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="^review_receipt_binding_mismatch$"):
+        profile.register_review_receipt(campaign, "attempt-0001", receipt_path)
+
+
+def test_changes_required_preserves_raw_and_blocks_reacquisition(
+    tmp_path: Path,
+) -> None:
+    campaign, attempt, digest, raw_sha256 = _prepare_review_attempt(tmp_path)
+    receipt_path = _write_review_receipt(attempt, digest, decision="changes_required")
+
+    profile.register_review_receipt(campaign, "attempt-0001", receipt_path)
+
+    assert profile.attempt_lineage(campaign / "attempts.jsonl")[-1] == {
+        "attempt_id": "attempt-0001",
+        "state": "changes_required",
+        "verdict": "pass",
+        "raw_sha256": raw_sha256,
+        "reason_category": "receipt",
+    }
+    with pytest.raises(
+        RuntimeError, match="campaign_acquisition_blocked:changes_required"
+    ):
+        profile.require_campaign_acquisition(campaign / "attempts.jsonl")
+
+
+def test_corrected_derived_artifacts_require_new_digest_and_receipt(
+    tmp_path: Path,
+) -> None:
+    campaign, attempt, digest, raw_sha256 = _prepare_review_attempt(tmp_path)
+    rejected = _write_review_receipt(attempt, digest, decision="changes_required")
+    profile.register_review_receipt(campaign, "attempt-0001", rejected)
+
+    unchanged = _write_review_receipt(attempt, digest, filename="review-002.json")
+    with pytest.raises(RuntimeError, match="^review_artifact_digest_not_changed$"):
+        profile.register_review_receipt(campaign, "attempt-0001", unchanged)
+
+    (attempt / "README.md").write_text("# Corrected confirmation\n", encoding="utf-8")
+    corrected_digest = profile.canonical_artifact_digest(attempt)
+    approved = _write_review_receipt(
+        attempt, corrected_digest, filename="review-003.json"
+    )
+    profile.register_review_receipt(campaign, "attempt-0001", approved)
+
+    assert (
+        hashlib.sha256(
+            (attempt / "real-provider-three-turn.raw.jsonl").read_bytes()
+        ).hexdigest()
+        == raw_sha256
+    )
+    lineage = profile.attempt_lineage(campaign / "attempts.jsonl")
+    assert [event["state"] for event in lineage] == [
+        "running",
+        "complete_pending_review",
+        "changes_required",
+        "complete_pending_review",
+    ]
+    assert lineage[-1]["raw_sha256"] == raw_sha256
+
+
+def test_registered_receipt_is_immutable(tmp_path: Path) -> None:
+    campaign, attempt, digest, _raw_sha256 = _prepare_review_attempt(tmp_path)
+    receipt = _write_review_receipt(attempt, digest)
+    profile.register_review_receipt(campaign, "attempt-0001", receipt)
+    payload = json.loads(receipt.read_bytes())
+    payload["reviewed_at"] = "2026-08-23T00:00:01Z"
+    receipt.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="^review_receipt_changed$"):
+        profile.promote_reviewed_artifacts(
+            campaign, "attempt-0001", receipt, tmp_path / "published"
+        )
+
+
+@pytest.mark.parametrize("problem", ("missing", "non_approved", "attempt", "digest"))
+def test_promotion_rejects_missing_nonapproved_or_mismatched_receipt(
+    tmp_path: Path, problem: str
+) -> None:
+    campaign, attempt, digest, _raw_sha256 = _prepare_review_attempt(tmp_path)
+    receipt = _write_review_receipt(attempt, digest)
+    if problem == "missing":
+        receipt.unlink()
+    else:
+        payload = json.loads(receipt.read_bytes())
+        if problem == "non_approved":
+            payload["decision"] = "changes_required"
+            payload["findings"] = [
+                {"severity": "important", "code": "report_verdict_mismatch"}
+            ]
+        elif problem == "attempt":
+            payload["attempt_id"] = "attempt-0002"
+        else:
+            payload["artifact_set_sha256"] = "f" * 64
+        receipt.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    destination = tmp_path / "published"
+
+    with pytest.raises(RuntimeError):
+        profile.promote_reviewed_artifacts(
+            campaign, "attempt-0001", receipt, destination
+        )
+
+    assert not destination.exists()
+    assert attempt.is_dir()
+
+
+def test_promotion_rejects_any_preexisting_destination(tmp_path: Path) -> None:
+    campaign, attempt, digest, _raw_sha256 = _prepare_review_attempt(tmp_path)
+    receipt = _write_review_receipt(attempt, digest)
+    destination = tmp_path / "published"
+    destination.mkdir()
+    (destination / "README.md").write_text("occupied\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="^review_destination_exists$"):
+        profile.promote_reviewed_artifacts(
+            campaign, "attempt-0001", receipt, destination
+        )
+
+    assert (destination / "README.md").read_text(encoding="utf-8") == "occupied\n"
+
+
+def test_promotion_rejects_source_changed_after_review(tmp_path: Path) -> None:
+    campaign, attempt, digest, _raw_sha256 = _prepare_review_attempt(tmp_path)
+    receipt = _write_review_receipt(attempt, digest)
+    (attempt / "README.md").write_text("changed after review\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="^review_receipt_binding_mismatch$"):
+        profile.promote_reviewed_artifacts(
+            campaign, "attempt-0001", receipt, tmp_path / "published"
+        )
+
+
+def test_promotion_rejects_destination_copy_corruption(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    campaign, attempt, digest, _raw_sha256 = _prepare_review_attempt(tmp_path)
+    receipt = _write_review_receipt(attempt, digest)
+    destination = tmp_path / "published"
+    real_copy2 = shutil.copy2
+
+    def corrupt_copy(source: Path, target: Path) -> Path:
+        result = Path(real_copy2(source, target))
+        if Path(source).name == "README.md":
+            result.write_text("corrupt copy\n", encoding="utf-8")
+        return result
+
+    monkeypatch.setattr(profile.shutil, "copy2", corrupt_copy)
+
+    with pytest.raises(RuntimeError, match="^review_promotion_copy_mismatch$"):
+        profile.promote_reviewed_artifacts(
+            campaign, "attempt-0001", receipt, destination
+        )
+
+    assert not destination.exists()
+    assert (attempt / "README.md").read_bytes() == b"# Confirmation\n"
+
+
+def test_promotion_rejects_source_mutation_between_copy_and_verification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    campaign, attempt, digest, _raw_sha256 = _prepare_review_attempt(tmp_path)
+    receipt = _write_review_receipt(attempt, digest)
+    destination = tmp_path / "published"
+    real_copy2 = shutil.copy2
+
+    def mutate_source_after_copy(source: Path, target: Path) -> Path:
+        result = Path(real_copy2(source, target))
+        if Path(source) == receipt:
+            (attempt / "README.md").write_text(
+                "mutated during copy\n", encoding="utf-8"
+            )
+        return result
+
+    monkeypatch.setattr(profile.shutil, "copy2", mutate_source_after_copy)
+
+    with pytest.raises(RuntimeError, match="^review_promotion_source_changed$"):
+        profile.promote_reviewed_artifacts(
+            campaign, "attempt-0001", receipt, destination
+        )
+
+    assert not destination.exists()
+
+
+def test_successful_promotion_publishes_exact_five_plus_receipt(
+    tmp_path: Path,
+) -> None:
+    campaign, attempt, digest, _raw_sha256 = _prepare_review_attempt(tmp_path)
+    receipt = _write_review_receipt(attempt, digest)
+    destination = tmp_path / "published"
+
+    profile.promote_reviewed_artifacts(campaign, "attempt-0001", receipt, destination)
+
+    assert {path.name for path in destination.iterdir()} == (
+        REVIEWED_ARTIFACT_NAMES | {"confirmatory-review-receipt.json"}
+    )
+    assert profile.canonical_artifact_digest(destination) == digest
+    assert (
+        json.loads((destination / "confirmatory-review-receipt.json").read_bytes())[
+            "artifact_set_sha256"
+        ]
+        == digest
+    )
+    assert attempt.is_dir()
+
+
+def test_digest_register_and_promote_actions_never_contact_provider(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    campaign, attempt, digest, _raw_sha256 = _prepare_review_attempt(tmp_path)
+    receipt = _write_review_receipt(attempt, digest)
+    destination = tmp_path / "published"
+    monkeypatch.setattr(
+        profile,
+        "preflight_provider",
+        lambda *_args: pytest.fail("maintenance action contacted provider"),
+    )
+
+    assert (
+        profile.main(
+            [
+                "--campaign-action",
+                "digest",
+                "--campaign-root",
+                str(campaign),
+                "--attempt-id",
+                "attempt-0001",
+            ]
+        )
+        == 0
+    )
+    assert json.loads(capsys.readouterr().out)["artifact_set_sha256"] == digest
+    assert (
+        profile.main(
+            [
+                "--campaign-action",
+                "register-review",
+                "--campaign-root",
+                str(campaign),
+                "--attempt-id",
+                "attempt-0001",
+                "--review-receipt",
+                str(receipt),
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    assert (
+        profile.main(
+            [
+                "--campaign-action",
+                "promote",
+                "--campaign-root",
+                str(campaign),
+                "--attempt-id",
+                "attempt-0001",
+                "--review-receipt",
+                str(receipt),
+                "--destination",
+                str(destination),
+            ]
+        )
+        == 0
+    )
+    assert json.loads(capsys.readouterr().out)["event"] == "campaign_promoted"
 
 
 def test_parse_arguments_rejects_incomplete_or_unpinned_acquisition(
