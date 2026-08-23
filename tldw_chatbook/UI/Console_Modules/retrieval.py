@@ -211,10 +211,16 @@ class ConsoleRetrievalController:
             launch,
             user_message=draft,
         )
+        return result
+
+    def _release_frozen_console_staged_rag(
+        self, launch: ConsoleLiveWorkLaunch | None, result: Any
+    ) -> None:
+        """Release one exact frozen launch only after turn acceptance."""
+
         context = getattr(result, "context", None)
         if launch is not None and isinstance(context, str) and context.strip():
             self._release_consumed_launch(launch, result)
-        return result
 
     def _build_console_retrieval_scope_state(self) -> ConsoleRetrievalScopeState:
         """Return the cached effective scope for the active session."""

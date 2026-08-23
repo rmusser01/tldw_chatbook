@@ -625,6 +625,16 @@ class ConsolePromptQueueCoordinator:
             return
         await self._after_turn(session_id, result)
 
+    def recovered_entry_is_accepted(self, session_id: str, entry_id: str) -> bool:
+        """Return whether the exact reclaimed entry crossed acceptance."""
+
+        chain = self._chains.get(session_id)
+        return bool(
+            chain is not None
+            and chain.current_entry_id == entry_id
+            and chain.accepted_live_turn
+        )
+
     async def recover_and_drain(
         self,
         session_id: str,

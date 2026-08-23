@@ -635,6 +635,9 @@ class ConsoleChatSession:
     updated_at: str = field(default_factory=_utc_now_iso)
     pending_attachments: list[PendingAttachment] = field(default_factory=list)
     one_shot_prefill: str | None = None
+    #: Live opaque identity for the one-shot slot. Every write, including
+    #: clearing or re-arming the same text, advances this token.
+    one_shot_prefill_revision: int = 0
     #: RAG retrieval scope (task-9) for a not-yet-persisted session -- see
     #: ``SessionScopeHolder``. ``persist_session_if_needed`` flushes it
     #: through to durable storage exactly once, at first persistence.
@@ -1909,6 +1912,7 @@ class ConsoleChatStore:
         with self._preparation_lock:
             preparation = self._preparations_by_session.get(session_id)
             if preparation is None or preparation.state not in {
+                ConsoleTurnPreparationState.COMMITTING,
                 ConsoleTurnPreparationState.ACCEPTED,
                 ConsoleTurnPreparationState.DISPATCH_STARTED,
                 ConsoleTurnPreparationState.DISPATCHED,
@@ -2493,7 +2497,28 @@ class ConsoleChatStore:
         """Arm (or clear, with ``None``) the one-shot response prefill."""
         session = self._session_or_raise(session_id)
         session.one_shot_prefill = prefill
+        session.one_shot_prefill_revision += 1
         return session
+
+    def session_one_shot_prefill_snapshot(
+        self, session_id: str
+    ) -> tuple[str | None, int]:
+        """Return the current one-shot value and its opaque live revision."""
+
+        session = self._session_or_raise(session_id)
+        return session.one_shot_prefill, session.one_shot_prefill_revision
+
+    def consume_session_one_shot_prefill(
+        self, session_id: str, expected_revision: int
+    ) -> bool:
+        """Clear only the exact revision captured by an accepted turn."""
+
+        session = self._session_or_raise(session_id)
+        if session.one_shot_prefill_revision != expected_revision:
+            return False
+        session.one_shot_prefill = None
+        session.one_shot_prefill_revision += 1
+        return True
 
     def pending_attachments(self, session_id: str) -> list[PendingAttachment]:
         """Return the staged attachments for a session (stage order).

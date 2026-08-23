@@ -1671,6 +1671,15 @@ class ConsolePreparationOutcome:
     error_code: str | None
 
 
+@dataclass(slots=True)
+class _PreparedEvidenceLease:
+    """Live-only exact staged launch held until the turn is accepted."""
+
+    launch: Any
+    capture_result: Any | None = None
+    released: bool = False
+
+
 @dataclass(frozen=True, slots=True)
 class _PreparedSendContinuation:
     """Bounded volatile inputs needed to continue one admitted send."""
@@ -1679,8 +1688,9 @@ class _PreparedSendContinuation:
     attachments: tuple[PendingAttachment, ...]
     prefill: str | None
     prefill_from_one_shot: bool
+    one_shot_prefill_revision: int | None
     staged_evidence_frozen: bool
-    staged_evidence: Any | None
+    staged_evidence: _PreparedEvidenceLease | None
 
 
 @dataclass(frozen=True)
@@ -2011,6 +2021,10 @@ class ConsoleChatController:
         # by the ACTIVE (viewed) session -- see its own docstring.
         self._active_assistant_message_ids: dict[str, str] = {}
         self._active_stream_tasks: dict[str, asyncio.Task] = {}
+        # Volatile-only Task-13 owner fence. It starts before submit's first
+        # await and ends only after the submit finalizer; Task 14 will add
+        # durable recovery/checkpoint semantics.
+        self._active_submit_tasks: dict[str, asyncio.Task] = {}
         self._provider_continuation_recovery_sessions: set[str] = set()
         self._stop_requested = False
         #: F5 fix (Qodo wave): set ONLY by ``shutdown()`` and NEVER reset
@@ -3792,6 +3806,37 @@ class ConsoleChatController:
             )
             return result
         except BaseException:
+            if (
+                preparation.queue_entry_id is not None
+                and self.prompt_queue_coordinator.recovered_entry_is_accepted(
+                    preparation.session_id, preparation.queue_entry_id
+                )
+            ):
+                assistant_message_id = None
+                rows = self.store.messages_for_session(preparation.session_id)
+                for index, row in enumerate(rows):
+                    if row.id == preparation.transient_user_message_id:
+                        assistant_message_id = next(
+                            (
+                                candidate.id
+                                for candidate in rows[index + 1 :]
+                                if candidate.role is ConsoleMessageRole.ASSISTANT
+                            ),
+                            None,
+                        )
+                        break
+                result = ConsoleSubmitResult(
+                    True,
+                    True,
+                    "Accepted turn failed before provider dispatch.",
+                    session_id=preparation.session_id,
+                    user_message_id=preparation.transient_user_message_id,
+                    assistant_message_id=assistant_message_id,
+                    terminal_status=ConsoleRunStatus.FAILED,
+                    origin=ConsoleSubmissionOrigin.QUEUED,
+                    queue_entry_id=preparation.queue_entry_id,
+                )
+                return result
             return self._prepared_action_refusal(
                 self._preparation_by_id(preparation_id),
                 "Prepared send could not continue.",
@@ -4069,6 +4114,64 @@ class ConsoleChatController:
         _resume_preparation_id: str | None = None,
         _resume_resolution: Any | None = None,
     ) -> ConsoleSubmitResult:
+        """Fence one complete submit lifecycle for close and shutdown."""
+
+        if self._disposed or self._shutdown_requested.is_set():
+            return ConsoleSubmitResult(False, False, "Console is shutting down.")
+        active_task = asyncio.current_task()
+        owner_key = session_id or self.store.active_session_id
+        if active_task is None:
+            return await self._submit_draft_inner(
+                draft,
+                session_id=session_id,
+                origin=origin,
+                queue_entry_id=queue_entry_id,
+                queue_authorization=queue_authorization,
+                wake_authorization=wake_authorization,
+                _resume_preparation_id=_resume_preparation_id,
+                _resume_resolution=_resume_resolution,
+            )
+        task_key = owner_key or f"pending-submit:{id(active_task)}"
+        self._active_submit_tasks[task_key] = active_task
+        try:
+            return await self._submit_draft_inner(
+                draft,
+                session_id=session_id,
+                origin=origin,
+                queue_entry_id=queue_entry_id,
+                queue_authorization=queue_authorization,
+                wake_authorization=wake_authorization,
+                _resume_preparation_id=_resume_preparation_id,
+                _resume_resolution=_resume_resolution,
+            )
+        except asyncio.CancelledError:
+            if not self._shutdown_requested.is_set():
+                raise
+            return ConsoleSubmitResult(
+                False,
+                False,
+                "Console shut down before turn acceptance.",
+                session_id=owner_key or None,
+                origin=origin,
+                queue_entry_id=queue_entry_id,
+            )
+        finally:
+            for key, task in tuple(self._active_submit_tasks.items()):
+                if task is active_task:
+                    self._active_submit_tasks.pop(key, None)
+
+    async def _submit_draft_inner(
+        self,
+        draft: str,
+        *,
+        session_id: str | None = None,
+        origin: ConsoleSubmissionOrigin = ConsoleSubmissionOrigin.MANUAL,
+        queue_entry_id: str | None = None,
+        queue_authorization: QueueGenerationAuthorization | None = None,
+        wake_authorization: AgentWakeAuthorization | None = None,
+        _resume_preparation_id: str | None = None,
+        _resume_resolution: Any | None = None,
+    ) -> ConsoleSubmitResult:
         """Submit a composer draft through native Console validation and provider resolution.
 
         PR3a-2 Task 5: ``origin=AGENT_WAKE`` (requires a coordinator-issued
@@ -4222,6 +4325,12 @@ class ConsoleChatController:
                     else None
                 ),
             )
+        active_task = asyncio.current_task()
+        if active_task is not None:
+            for key, task in tuple(self._active_submit_tasks.items()):
+                if task is active_task and key != session.id:
+                    self._active_submit_tasks.pop(key, None)
+            self._active_submit_tasks[session.id] = active_task
         # PR3a-2 Task 5: a wake never touches the user's staged state --
         # pending attachments belong to the USER's next send and must be
         # neither embedded nor cleared by a machine turn.
@@ -4385,7 +4494,12 @@ class ConsoleChatController:
             # only drops "failed" rows). Fail it, then re-raise so the caller
             # still sees the probe failure. (A wake echoed nothing: None guard.)
             if echoed_user is not None:
-                self.store.mark_message_send_blocked(echoed_user.id)
+                if self._shutdown_requested.is_set():
+                    self.store.delete_message(echoed_user.id)
+                    session.title = pre_send_title
+                    session.persisted_conversation_id = pre_send_conversation_id
+                else:
+                    self.store.mark_message_send_blocked(echoed_user.id)
             raise
         if not getattr(resolution, "ready", False):
             visible_copy = self._blocked_visible_copy(
@@ -4441,7 +4555,9 @@ class ConsoleChatController:
                 queue_generation = self.prompt_queue_registry.snapshot(
                     session.id
                 ).revision
-            one_shot_prefill = self.store.session_one_shot_prefill(session.id)
+            one_shot_prefill, captured_prefill_revision = (
+                self.store.session_one_shot_prefill_snapshot(session.id)
+            )
             frozen_prefill, frozen_prefill_from_one_shot = self._resolve_submit_prefill(
                 session.id
             )
@@ -4489,8 +4605,17 @@ class ConsoleChatController:
                     attachments=tuple(pendings),
                     prefill=frozen_prefill,
                     prefill_from_one_shot=frozen_prefill_from_one_shot,
+                    one_shot_prefill_revision=(
+                        captured_prefill_revision
+                        if frozen_prefill_from_one_shot
+                        else None
+                    ),
                     staged_evidence_frozen=staged_evidence_frozen,
-                    staged_evidence=staged_evidence,
+                    staged_evidence=(
+                        _PreparedEvidenceLease(staged_evidence)
+                        if staged_evidence is not None
+                        else None
+                    ),
                 )
             )
             prepared_continuation = self._prepared_send_continuations[
@@ -4634,13 +4759,25 @@ class ConsoleChatController:
             if origin is ConsoleSubmissionOrigin.AGENT_WAKE:
                 # The one-shot prefill is USER-staged state; a wake must
                 # not consume (and thereby destroy) it.
-                prefill, prefill_from_one_shot = None, False
+                prefill, prefill_from_one_shot, one_shot_prefill_revision = (
+                    None,
+                    False,
+                    None,
+                )
             elif prepared_continuation is not None:
                 prefill = prepared_continuation.prefill
                 prefill_from_one_shot = prepared_continuation.prefill_from_one_shot
+                one_shot_prefill_revision = (
+                    prepared_continuation.one_shot_prefill_revision
+                )
             else:
                 prefill, prefill_from_one_shot = self._resolve_submit_prefill(
                     session.id
+                )
+                one_shot_prefill_revision = (
+                    self.store.session_one_shot_prefill_snapshot(session.id)[1]
+                    if prefill_from_one_shot
+                    else None
                 )
             terminal_citation_finalizer = self._build_terminal_citation_finalizer(
                 context=citation_context,
@@ -4736,6 +4873,22 @@ class ConsoleChatController:
                 if preparation is not None:
                     self._rollback_committing_preparation(preparation.preparation_id)
                 raise
+        if self._disposed or self._shutdown_requested.is_set():
+            if echoed_user is not None:
+                try:
+                    self.store.mark_message_send_blocked(echoed_user.id)
+                except KeyError:
+                    pass
+            if preparation is not None:
+                self._rollback_committing_preparation(preparation.preparation_id)
+            return ConsoleSubmitResult(
+                False,
+                False,
+                "Console shut down before turn acceptance.",
+                session_id=session.id,
+                origin=origin,
+                queue_entry_id=queue_entry_id,
+            )
         # TASK-485: the turn is confirmed to proceed — flush the deferred USER
         # echo to durable storage now (creating the conversation), BEFORE the
         # assistant row, so a reload shows the user's prompt ahead of its reply.
@@ -4789,6 +4942,7 @@ class ConsoleChatController:
                 ConsoleTurnPreparationState.ACCEPTED,
             ):
                 raise RuntimeError("Prepared turn changed before acceptance.")
+            self._release_prepared_evidence(prepared_continuation)
             for pending in pendings:
                 self.store.consume_pending_attachment(session.id, pending.attachment_id)
             self._notify_submission_accepted(
@@ -4807,6 +4961,7 @@ class ConsoleChatController:
                 assistant_message_id=assistant.id,
                 prefill=prefill,
                 prefill_from_one_shot=prefill_from_one_shot,
+                one_shot_prefill_revision=one_shot_prefill_revision,
                 skill_bindings=skill_bindings,
                 skill_bundle_block=skill_bundle_block,
                 citation_repair_session=citation_repair_session,
@@ -4829,6 +4984,18 @@ class ConsoleChatController:
                 self._settle_accepted_preparation(preparation.preparation_id)
             return result
         except BaseException:
+            if assistant is not None:
+                try:
+                    self.store.mark_message_failed(assistant.id)
+                    self._set_run_state(
+                        ConsoleRunState(
+                            ConsoleRunStatus.FAILED,
+                            "Accepted turn failed before provider dispatch.",
+                        ),
+                        session_id=session.id,
+                    )
+                except KeyError:
+                    pass
             if preparation is not None:
                 current = self._preparation_by_id(preparation.preparation_id)
                 if (
@@ -5145,6 +5312,7 @@ class ConsoleChatController:
         repair_session = self._active_citation_repair_sessions.get(session_id)
         self.clear_original_attempts_for_session(session_id)
         owns_active_stream = self._active_stream_belongs_to_session(session_id)
+        submit_task = self._active_submit_tasks.get(session_id)
         if repair_session is not None and owns_active_stream:
             repair_session.cancel_reason = "session_close"
         if owns_active_stream:
@@ -5162,6 +5330,9 @@ class ConsoleChatController:
                 # than falling back to the active-session default.
                 session_id=session_id,
             )
+        if submit_task is not None and submit_task is not asyncio.current_task():
+            self._signal_stop(session_id=session_id)
+            submit_task.cancel()
         previous_active_id = self.store.active_session_id
         closed = self.store.close_session(session_id)
         self.prompt_queue_coordinator.remove_session(session_id)
@@ -7610,7 +7781,7 @@ class ConsoleChatController:
         self.begin_shutdown()
         for message_id in tuple(self._original_attempts):
             self.clear_original_attempt(message_id)
-        tasks = dict(self._active_stream_tasks)
+        tasks = {**self._active_submit_tasks, **self._active_stream_tasks}
         if not tasks:
             if self._owns_scratch_spaces:
                 await asyncio.to_thread(self._scratch_spaces.dispose)
@@ -7661,6 +7832,8 @@ class ConsoleChatController:
                 self._active_stream_tasks.pop(session_id, None)
                 self._active_assistant_message_ids.pop(session_id, None)
                 self._active_cancel_events.pop(session_id, None)
+            if self._active_submit_tasks.get(session_id) is task:
+                self._active_submit_tasks.pop(session_id, None)
         if self._owns_scratch_spaces:
             await asyncio.to_thread(self._scratch_spaces.dispose)
 
@@ -7696,6 +7869,14 @@ class ConsoleChatController:
                     continue
                 self._abandon_preparation(preparation.preparation_id)
             self._shutdown_requested.set()
+            try:
+                current = asyncio.current_task()
+            except RuntimeError:
+                current = None
+            for session_id, task in tuple(self._active_submit_tasks.items()):
+                self._signal_stop(session_id=session_id)
+                if task is not current:
+                    task.cancel()
             self._cancel_headless_rounds()
 
     def _cancel_headless_rounds(self) -> None:
@@ -9921,28 +10102,22 @@ class ConsoleChatController:
         return self._pinned_prefill_for_session(session_id), False
 
     def _consume_one_shot_prefill(
-        self, assistant_message_id: str, used_prefill: str | None
+        self, assistant_message_id: str, used_revision: int | None
     ) -> None:
         """Clear the armed one-shot after a send that used it terminated
         ``complete`` or ``stopped``. Blocked and failed sends never call
         this, so retry reproduces the original intent (spec §2).
 
-        Compare-and-clear: ``used_prefill`` is the exact one-shot text this
-        send consumed (or ``None`` if this send did not use a one-shot at
-        all, in which case this is a no-op). The session's armed one-shot
-        slot is only cleared when it still holds that same text. If a
-        ``/prefill`` re-armed a *different* one-shot while this send was
-        streaming, that newer one-shot must survive the in-flight send's
-        completion untouched.
+        ``used_revision`` is the opaque slot identity captured at admission.
+        Re-arming even identical text creates a newer identity and survives.
         """
-        if used_prefill is None:
+        if used_revision is None:
             return
         try:
             session_id = self.store.session_id_for_message(assistant_message_id)
         except KeyError:
             return
-        if self.store.session_one_shot_prefill(session_id) == used_prefill:
-            self.store.set_session_one_shot_prefill(session_id, None)
+        self.store.consume_session_one_shot_prefill(session_id, used_revision)
 
     async def _apply_skill_substitution(
         self, provider_messages: list[dict[str, Any]]
@@ -10569,7 +10744,15 @@ class ConsoleChatController:
             )
             record("retrieval_failed", "Retrieval failed", "failed")
             return None, None, None, None
-        return self._normalize_rag_capture(captured)
+        normalized = self._normalize_rag_capture(captured)
+        if normalized[2] is not None:
+            record(
+                "retrieval_candidates_selected",
+                "Retrieval candidates selected",
+                "completed",
+            )
+        record("retrieval_completed", "Retrieval completed", "completed")
+        return normalized
 
     async def _capture_frozen_rag_context(
         self,
@@ -10584,7 +10767,8 @@ class ConsoleChatController:
     ]:
         """Capture only evidence frozen at original send admission."""
 
-        if continuation.staged_evidence is None:
+        lease = continuation.staged_evidence
+        if lease is None:
             return None, None, None, None
         owner = getattr(self._rag_capture_provider, "__self__", None)
         provider = getattr(owner, "_capture_frozen_console_staged_rag", None)
@@ -10594,7 +10778,7 @@ class ConsoleChatController:
             captured = await provider(
                 draft,
                 turn_context,
-                continuation.staged_evidence,
+                lease.launch,
             )
         except asyncio.CancelledError:
             raise
@@ -10604,7 +10788,23 @@ class ConsoleChatController:
                 f"reason=capture_provider_failure; draft_length={len(draft)}"
             )
             return None, None, None, None
+        lease.capture_result = captured
         return self._normalize_rag_capture(captured)
+
+    def _release_prepared_evidence(
+        self, continuation: _PreparedSendContinuation | None
+    ) -> None:
+        """Release a captured launch at the exact accepted-turn boundary."""
+
+        lease = continuation.staged_evidence if continuation is not None else None
+        if lease is None or lease.released or lease.capture_result is None:
+            return
+        owner = getattr(self._rag_capture_provider, "__self__", None)
+        release = getattr(owner, "_release_frozen_console_staged_rag", None)
+        if not callable(release):
+            return
+        release(lease.launch, lease.capture_result)
+        lease.released = True
 
     @staticmethod
     def _normalize_rag_capture(
@@ -10635,12 +10835,6 @@ class ConsoleChatController:
             if isinstance(captured_prompt_id, str) and captured_prompt_id.strip()
             else None
         )
-        if prompt_evidence_set_id is not None:
-            record(
-                "retrieval_candidates_selected",
-                "Retrieval candidates selected",
-                "completed",
-            )
         captured_repair_contract = getattr(
             captured,
             "citation_repair_contract",
@@ -10653,7 +10847,6 @@ class ConsoleChatController:
             and captured_repair_contract.evidence_context == context
             else None
         )
-        record("retrieval_completed", "Retrieval completed", "completed")
         return context, builder, prompt_evidence_set_id, repair_contract
 
     @staticmethod
@@ -11634,6 +11827,7 @@ class ConsoleChatController:
         variant_mode: bool = False,
         prefill: str | None = None,
         prefill_from_one_shot: bool = False,
+        one_shot_prefill_revision: int | None = None,
         skill_bindings: tuple[str, ...] = (),
         skill_bundle_block: str = "",
         citation_repair_session: ConsoleCitationRepairSession | None = None,
@@ -11649,6 +11843,7 @@ class ConsoleChatController:
                 variant_mode=variant_mode,
                 prefill=prefill,
                 prefill_from_one_shot=prefill_from_one_shot,
+                one_shot_prefill_revision=one_shot_prefill_revision,
                 skill_bindings=skill_bindings,
                 skill_bundle_block=skill_bundle_block,
                 citation_repair_session=citation_repair_session,
@@ -11678,6 +11873,7 @@ class ConsoleChatController:
         variant_mode: bool = False,
         prefill: str | None = None,
         prefill_from_one_shot: bool = False,
+        one_shot_prefill_revision: int | None = None,
         skill_bindings: tuple[str, ...] = (),
         skill_bundle_block: str = "",
         citation_repair_session: ConsoleCitationRepairSession | None = None,
@@ -11943,6 +12139,7 @@ class ConsoleChatController:
                 variant_mode=variant_mode,
                 prefill=prefill,
                 prefill_from_one_shot=prefill_from_one_shot,
+                one_shot_prefill_revision=one_shot_prefill_revision,
                 citation_repair_session=citation_repair_session,
                 stream_signals=stream_signals,
                 continuation_sidecar=continuation_sidecar,
@@ -12386,6 +12583,28 @@ class ConsoleChatController:
                 "cost_cache_ttl_record_failed"
             )
 
+    def _accepted_shutdown_before_dispatch(
+        self, assistant_message_id: str, session_id: str
+    ) -> ConsoleSubmitResult:
+        """Settle an accepted owner without claiming an external dispatch."""
+
+        try:
+            self.store.mark_message_failed(assistant_message_id)
+        except KeyError:
+            return self._session_closed_result(session_id=session_id)
+        self._set_run_state(
+            ConsoleRunState(
+                ConsoleRunStatus.STOPPED,
+                "Console shut down before provider dispatch.",
+            ),
+            session_id=session_id,
+        )
+        return ConsoleSubmitResult(
+            True,
+            True,
+            "Console shut down before provider dispatch.",
+        )
+
     async def _run_direct_provider_reply(
         self,
         *,
@@ -12396,6 +12615,7 @@ class ConsoleChatController:
         variant_mode: bool,
         prefill: str | None,
         prefill_from_one_shot: bool,
+        one_shot_prefill_revision: int | None,
         citation_repair_session: ConsoleCitationRepairSession | None,
         stream_signals: ConsoleProviderStreamSignals | None,
         continuation_sidecar: tuple[ProviderContinuationSidecar, ...] = (),
@@ -12415,7 +12635,7 @@ class ConsoleChatController:
             owner_id = self.store.session_id_for_message(assistant_message_id)
         except KeyError:
             return self._session_closed_result()
-        one_shot_used = prefill if prefill_from_one_shot else None
+        one_shot_used = one_shot_prefill_revision if prefill_from_one_shot else None
         if prefill:
             provider_messages = [
                 *provider_messages,
@@ -12495,6 +12715,10 @@ class ConsoleChatController:
                 status="started",
             )
         try:
+            if self._disposed or self._shutdown_requested.is_set():
+                return self._accepted_shutdown_before_dispatch(
+                    assistant_message_id, owner_id
+                )
             if preparation_id is not None and not self._transition_preparation(
                 preparation_id,
                 ConsoleTurnPreparationState.ACCEPTED,
@@ -13408,6 +13632,10 @@ class ConsoleChatController:
         # (agent_models.py) is what bounds a run overall, but only once
         # control returns to a checkpoint the loop actually polls -- it is
         # not a hard timeout on an in-flight, zero-chunk provider call.
+        if self._disposed or self._shutdown_requested.is_set():
+            return self._accepted_shutdown_before_dispatch(
+                assistant_message_id, session_id
+            )
         if preparation_id is not None and not self._transition_preparation(
             preparation_id,
             ConsoleTurnPreparationState.ACCEPTED,
