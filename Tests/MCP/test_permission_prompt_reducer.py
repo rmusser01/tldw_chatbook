@@ -202,6 +202,25 @@ def test_recommendations_sort_by_count_then_last_seen():
     assert [r.tool_name for r in report.recommendations] == ["most", "newer", "older"]
 
 
+def test_recommendations_sort_missing_last_seen_after_known_timestamps():
+    """Catches unknown timestamps ranking ahead of known recent approvals."""
+    tools = [
+        _tool("local:docs", "unknown"),
+        _tool("local:docs", "known"),
+    ]
+    records = [
+        _record("local:docs", "unknown", "approved", ts=""),
+        _record("local:docs", "unknown", "approved", ts=""),
+        _record("local:docs", "known", "approved", ts="2026-08-01T20:00:00+00:00"),
+        _record("local:docs", "known", "approved", ts="2026-08-01T20:01:00+00:00"),
+    ]
+    states = {(tool.server_key, tool.name): _state("ask") for tool in tools}
+
+    report = build_permission_prompt_report(records, tools, states)
+
+    assert [r.tool_name for r in report.recommendations] == ["known", "unknown"]
+
+
 def test_format_report_distinguishes_an_empty_local_log():
     report = PermissionPromptReport(
         recommendations=[],

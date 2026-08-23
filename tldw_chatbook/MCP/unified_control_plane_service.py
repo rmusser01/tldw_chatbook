@@ -2657,7 +2657,17 @@ class UnifiedMCPControlPlaneService:
         min_approved_count: int = DEFAULT_MIN_APPROVED_COUNT,
         limit: int = 200,
     ) -> PermissionPromptReport:
-        """Return local MCP permission prompt-reduction recommendations."""
+        """Return local MCP permission prompt-reduction recommendations.
+
+        Args:
+            min_approved_count: Minimum prompted approvals required for a
+                recommendation.
+            limit: Maximum recent local execution records to analyze.
+
+        Returns:
+            A telemetry-free report based on local MCP metadata and current
+            permission state.
+        """
         report, _tools = await self._permission_prompt_recommendation_snapshot(
             min_approved_count=min_approved_count,
             limit=limit,
@@ -2673,12 +2683,25 @@ class UnifiedMCPControlPlaneService:
     ) -> PermissionPromptRecommendation:
         """Persist a currently recommended tool-level allow.
 
+        Args:
+            server_key: Stable key for the recommendation's MCP server.
+            tool_name: Name of the recommended tool.
+            min_approved_count: Minimum prompted approvals required for a
+                recommendation.
+
+        Returns:
+            The recommendation whose hash-safe tool-level allow was persisted.
+
         Raises:
             KeyError: If the requested server and tool pair is not a current
                 prompt-reduction recommendation.
+            RuntimeError: If the MCP permission store is unavailable.
         """
         normalized_key = str(server_key or "").strip()
         normalized_tool = str(tool_name or "").strip()
+        store = self.permission_store
+        if store is None:
+            raise RuntimeError("MCP permission store unavailable")
         report, tools_by_key = await self._permission_prompt_recommendation_snapshot(
             min_approved_count=min_approved_count,
             limit=200,

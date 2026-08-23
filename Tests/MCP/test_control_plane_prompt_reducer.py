@@ -181,3 +181,22 @@ async def test_apply_permission_prompt_recommendation_rejects_non_recommended_to
 
     with pytest.raises(KeyError, match="No prompt-reduction recommendation"):
         await service.apply_permission_prompt_recommendation("local:docs", "search")
+
+
+@pytest.mark.asyncio
+async def test_apply_permission_prompt_recommendation_requires_permission_store(
+    tmp_path,
+):
+    """Catches reporting success when the recommended allow cannot persist."""
+    service, store = _service(tmp_path, [_profile_record()])
+    _append_approved(store, ts="2026-08-01T20:00:00+00:00")
+    _append_approved(store, ts="2026-08-01T20:05:00+00:00")
+    service._execution_log = MCPExecutionLog(
+        Path(store.path).with_name("mcp_execution_log.jsonl")
+    )
+    service.local_service.store = None
+
+    with pytest.raises(RuntimeError, match="MCP permission store unavailable"):
+        await service.apply_permission_prompt_recommendation(
+            "local:docs", "search"
+        )

@@ -48,6 +48,7 @@ from typing import Any
 
 from loguru import logger
 
+from tldw_chatbook.MCP.execution_log import APPROVED_SESSION_DECISION
 from tldw_chatbook.MCP.hub_tool_catalog import (
     HubTool,
     builtin_tools_from_inventory,
@@ -718,7 +719,9 @@ class MCPToolProvider:
             # (and the model-facing execution record) distinct so Findings
             # mode can tell "server default was allow" apart from "the
             # user approved this session".
-            return self._execute(tool, call_args, decision="approved-session")
+            return self._execute(
+                tool, call_args, decision=APPROVED_SESSION_DECISION
+            )
 
         # state == "ask"
         if self._approval_callback is None:
@@ -806,7 +809,9 @@ class MCPToolProvider:
                 tool,
                 what="approve_for_session",
             )
-            decision = "approved-session" if already_approved else "approved"
+            decision = (
+                APPROVED_SESSION_DECISION if already_approved else "approved"
+            )
             return self._execute(tool, args, decision=decision)
         if verdict == "always_allow":
             self._safe_side_effect(

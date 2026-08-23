@@ -20,6 +20,8 @@ from tldw_chatbook.Utils.private_paths import (
 )
 from tldw_chatbook.Utils.persistent_diagnostics import safe_metadata_token
 
+APPROVED_SESSION_DECISION = "approved-session"
+
 
 @dataclass(frozen=True)
 class ExecutionRecord:

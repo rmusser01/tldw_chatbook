@@ -47,6 +47,7 @@ class PermissionPromptRecommendation:
 
     @property
     def tool_id(self) -> str:
+        """Return the stable server-and-tool identifier for this candidate."""
         return f"{self.server_key}::{self.tool_name}"
 
 
@@ -64,7 +65,15 @@ class PermissionPromptReport:
 def format_permission_prompt_report(
     report: PermissionPromptReport, *, max_recommendations: int = 8
 ) -> str:
-    """Render a compact Console-safe prompt-reduction report."""
+    """Render a compact Console-safe prompt-reduction report.
+
+    Args:
+        report: Prompt-reduction analysis to render.
+        max_recommendations: Maximum candidate rows to include.
+
+    Returns:
+        A plain-text report suitable for the Console system-message surface.
+    """
     lines = ["MCP prompt recommendations"]
     lines.append(
         "Recent local MCP log: "
@@ -222,6 +231,7 @@ def build_permission_prompt_report(
     recommendations.sort(
         key=lambda item: (
             -item.approved_count,
+            item.last_seen == "",
             _reverse_sort_text(item.last_seen),
             item.server_label.casefold(),
             item.tool_name.casefold(),

@@ -22,6 +22,7 @@ from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.widgets import Button, DataTable, Input, Select, Static
 
+from tldw_chatbook.MCP.execution_log import APPROVED_SESSION_DECISION
 from tldw_chatbook.MCP.readiness import HubAction
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import format_duration_ms
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import state_text
@@ -82,7 +83,7 @@ def _finding_field(finding: Mapping[str, Any], key: str) -> str:
 _DECISION_OPTIONS: list[tuple[str, str]] = [
     ("Allowed", "allowed"),
     ("Approved", "approved"),
-    ("Approved (session)", "approved-session"),
+    ("Approved (session)", APPROVED_SESSION_DECISION),
     ("Denied", "denied"),
     ("Denied (timeout)", "denied-timeout"),
     ("Denied (no decision)", "denied-unresolved"),
@@ -108,6 +109,7 @@ _BLOCKED_DECISIONS = {"denied", "denied-timeout", "denied-unresolved"}
 _DECISION_KIND: dict[str, str] = {
     "allowed": "ready",
     "approved": "ready",
+    APPROVED_SESSION_DECISION: "ready",
     "denied": "error",
     "denied-timeout": "error",
     "downgraded": "warning",
