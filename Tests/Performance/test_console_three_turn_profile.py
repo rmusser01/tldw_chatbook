@@ -738,6 +738,74 @@ def test_campaign_measured_verdict_always_enters_pending_review(
         profile.require_campaign_acquisition(ledger)
 
 
+def test_disposable_smoke_uses_explicit_nonstatistical_verdict(tmp_path: Path) -> None:
+    ledger = tmp_path / "attempts.jsonl"
+    profile.append_attempt_state(
+        ledger, _attempt_event("attempt-0001", "running")
+    )
+
+    event = profile.complete_attempt_measurement(
+        ledger,
+        "attempt-0001",
+        verdict="smoke",
+        raw_sha256="a" * 64,
+    )
+
+    assert event["verdict"] == "smoke"
+    with pytest.raises(RuntimeError, match="campaign_acquisition_blocked"):
+        profile.require_campaign_acquisition(ledger)
+    with pytest.raises(RuntimeError, match="^campaign_verdict_mismatch$"):
+        profile.append_attempt_state(
+            ledger,
+            _attempt_event(
+                "attempt-0001",
+                "changes_required",
+                verdict="pass",
+                raw_sha256="a" * 64,
+                reason_category="report",
+            ),
+        )
+
+
+@pytest.mark.parametrize(
+    ("iterations", "burn_in_blocks", "verdict"),
+    ((1, 1, "pass"), (30, 5, "smoke")),
+)
+def test_acquisition_rejects_verdict_from_the_other_schedule_kind(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    iterations: int,
+    burn_in_blocks: int,
+    verdict: str,
+) -> None:
+    campaign = tmp_path / "campaign"
+    attempt = _acquire_attempt(campaign)
+    monkeypatch.setattr(profile, "acquire_campaign_attempt", lambda _root: attempt)
+
+    def parent(args) -> int:
+        args.acquisition_pin_callback(verdict=verdict, raw_sha256="a" * 64)
+        return 0
+
+    monkeypatch.setattr(profile, "run_parent_mode", parent)
+
+    with pytest.raises(RuntimeError, match="^campaign_schedule_verdict_mismatch$"):
+        profile.run_acquisition_action(
+            SimpleNamespace(
+                campaign_root=campaign,
+                iterations=iterations,
+                burn_in_blocks=burn_in_blocks,
+            )
+        )
+
+    assert profile.read_acquisition_pin(campaign, attempt.attempt_id) is None
+    assert profile.attempt_lineage(campaign / "attempts.jsonl")[-1] == {
+        "attempt_id": attempt.attempt_id,
+        "state": "invalid",
+        "reason_category": "product",
+    }
+    assert not (campaign / ".campaign-lock").exists()
+
+
 def test_campaign_correctable_derived_changes_preserve_raw_hash_and_lineage(
     tmp_path: Path,
 ) -> None:
@@ -1629,6 +1697,75 @@ def test_campaign_recovery_marks_running_ledger_without_attempt_root_interrupted
     assert profile.attempt_lineage(ledger) == (running, event)
     assert not (tmp_path / ".campaign-lock").exists()
     assert not (tmp_path / ".campaign-recovery").exists()
+
+
+@pytest.mark.parametrize(
+    ("state", "reason_category"),
+    (("failed", "provider"), ("invalid", "privacy")),
+)
+def test_campaign_recovery_releases_dead_owner_after_durable_terminal(
+    tmp_path: Path, state: str, reason_category: str
+) -> None:
+    attempt = _acquire_attempt(tmp_path)
+    ledger = tmp_path / "attempts.jsonl"
+    terminal = _attempt_event(
+        attempt.attempt_id, state, reason_category=reason_category
+    )
+    profile.append_attempt_state(ledger, terminal)
+    before = ledger.read_bytes()
+
+    assert profile.recover_interrupted_attempt(
+        tmp_path, process_start_probe=lambda _pid: None
+    ) == terminal
+
+    assert ledger.read_bytes() == before
+    assert not (tmp_path / ".campaign-lock").exists()
+    assert not (tmp_path / ".campaign-recovery").exists()
+
+
+def test_campaign_recovery_refuses_live_owner_after_durable_terminal(
+    tmp_path: Path,
+) -> None:
+    attempt = _acquire_attempt(tmp_path)
+    ledger = tmp_path / "attempts.jsonl"
+    terminal = _attempt_event(
+        attempt.attempt_id, "failed", reason_category="provider"
+    )
+    profile.append_attempt_state(ledger, terminal)
+    before = ledger.read_bytes()
+
+    with pytest.raises(RuntimeError, match="^campaign_lock_owner_live$"):
+        profile.recover_interrupted_attempt(
+            tmp_path, process_start_probe=lambda _pid: _OWNER_START
+        )
+
+    assert ledger.read_bytes() == before
+    assert (tmp_path / ".campaign-lock").is_dir()
+    assert not (tmp_path / ".campaign-recovery").exists()
+
+
+@pytest.mark.parametrize("marker", (".campaign-recovery", ".campaign-release"))
+@pytest.mark.parametrize("empty_marker", (False, True))
+def test_campaign_recovery_finishes_terminal_lock_marker_without_appending(
+    tmp_path: Path, marker: str, empty_marker: bool
+) -> None:
+    attempt = _acquire_attempt(tmp_path)
+    ledger = tmp_path / "attempts.jsonl"
+    terminal = _attempt_event(
+        attempt.attempt_id, "invalid", reason_category="raw"
+    )
+    profile.append_attempt_state(ledger, terminal)
+    before = ledger.read_bytes()
+    (tmp_path / ".campaign-lock").rename(tmp_path / marker)
+    if empty_marker:
+        (tmp_path / marker / "owner.json").unlink()
+
+    assert profile.recover_interrupted_attempt(
+        tmp_path, process_start_probe=lambda _pid: None
+    ) == terminal
+
+    assert ledger.read_bytes() == before
+    assert not (tmp_path / marker).exists()
 
 
 def test_campaign_recovery_finishes_owned_marker_after_interrupted_append(
@@ -3721,6 +3858,88 @@ def test_parse_arguments_accepts_confirmatory_acquisition_with_fixed_candidate(
 
 
 @pytest.mark.parametrize(
+    ("iterations", "burn_in_blocks", "kind", "conversation_count"),
+    ((30, 5, "official", 108), (1, 1, "disposable_smoke", 9)),
+)
+def test_campaign_acquisition_accepts_only_registered_schedule_shapes(
+    tmp_path: Path,
+    iterations: int,
+    burn_in_blocks: int,
+    kind: str,
+    conversation_count: int,
+) -> None:
+    arguments = profile.parse_arguments(
+        [
+            "--endpoint",
+            "http://127.0.0.1:9099",
+            "--model",
+            "fixture.gguf",
+            "--campaign-root",
+            str(tmp_path),
+            "--iterations",
+            str(iterations),
+            "--burn-in-blocks",
+            str(burn_in_blocks),
+            "--candidate-sha",
+            profile.CANDIDATE_SHA,
+        ]
+    )
+
+    assert profile.campaign_schedule_contract(
+        arguments.iterations, arguments.burn_in_blocks
+    ) == {
+        "kind": kind,
+        "iterations": iterations,
+        "burn_in_blocks": burn_in_blocks,
+        "conversation_count": conversation_count,
+    }
+
+
+@pytest.mark.parametrize(
+    ("iterations", "burn_in_blocks"),
+    ((30, 0), (1, 0), (30, 1), (2, 1), (29, 5), (31, 5), (1, 5)),
+)
+def test_campaign_acquisition_rejects_unregistered_schedule_shapes(
+    tmp_path: Path, iterations: int, burn_in_blocks: int
+) -> None:
+    with pytest.raises(SystemExit):
+        profile.parse_arguments(
+            [
+                "--endpoint",
+                "http://127.0.0.1:9099",
+                "--model",
+                "fixture.gguf",
+                "--campaign-root",
+                str(tmp_path),
+                "--iterations",
+                str(iterations),
+                "--burn-in-blocks",
+                str(burn_in_blocks),
+                "--candidate-sha",
+                profile.CANDIDATE_SHA,
+            ]
+        )
+
+
+def test_legacy_output_root_rejects_campaign_burn_in(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit):
+        profile.parse_arguments(
+            [
+                "--endpoint",
+                "http://127.0.0.1:9099",
+                "--model",
+                "fixture.gguf",
+                "--output-root",
+                str(tmp_path),
+                "--burn-in-blocks",
+                "1",
+                "--candidate-sha",
+                profile.CANDIDATE_SHA,
+            ]
+        )
+
+
+@pytest.mark.parametrize(
     ("action", "extra"),
     [
         ("recover", []),
@@ -4351,10 +4570,27 @@ def test_child_mode_retains_exact_schedule_position(
     assert [row["schedule_position"] for row in rows] == [5, 5]
 
 
+@pytest.mark.parametrize(
+    ("iterations", "burn_in_blocks", "schedule_kind", "finalization_failure"),
+    (
+        (30, 5, "official", None),
+        (30, 5, "official", "manifest"),
+        (30, 5, "official", "summary"),
+        (30, 5, "official", "run_complete"),
+        (1, 1, "disposable_smoke", None),
+    ),
+)
 def test_confirmatory_parent_preflights_before_samples_and_routes_exact_schedule(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    iterations: int,
+    burn_in_blocks: int,
+    schedule_kind: str,
+    finalization_failure: str | None,
 ) -> None:
-    output = tmp_path / "run"
+    campaign = tmp_path / "campaign"
+    attempt = _acquire_attempt(campaign)
+    output = attempt.root
     harness = {"revision": "1" * 40, "runner_sha256": "2" * 64}
     monkeypatch.setattr(profile, "current_harness_identity", lambda _root: harness)
     monkeypatch.setattr(
@@ -4468,35 +4704,85 @@ def test_confirmatory_parent_preflights_before_samples_and_routes_exact_schedule
         return profile.ChildResult("complete", 0, terminal)
 
     monkeypatch.setattr(profile, "run_child_with_watchdog", child)
+    finalization: list[str] = []
+    real_write_json = profile._write_json
+
+    def write_json(path: Path, value: dict[str, object]) -> None:
+        kind = "manifest" if path.name.endswith("manifest.json") else "summary"
+        finalization.append(kind)
+        if finalization_failure == kind:
+            raise RuntimeError(f"{kind}_finalization_failed")
+        real_write_json(path, value)
+
+    real_boundary = profile.write_boundary_event
+
+    def boundary(destination, event):
+        if event.get("event") == "run_complete":
+            finalization.append("run_complete")
+            if finalization_failure == "run_complete":
+                raise RuntimeError("run_complete_finalization_failed")
+        real_boundary(destination, event)
+
+    monkeypatch.setattr(profile, "_write_json", write_json)
+    monkeypatch.setattr(profile, "write_boundary_event", boundary)
+
+    def pin(*, verdict: str, raw_sha256: str) -> dict[str, object]:
+        finalization.append("pin")
+        return profile.write_acquisition_pin(
+            campaign,
+            attempt.attempt_id,
+            verdict=verdict,
+            raw_sha256=raw_sha256,
+        )
+
     args = SimpleNamespace(
         output_root=output,
         control_sha=profile.CONTROL_SHA,
         candidate_sha=profile.CANDIDATE_SHA,
         endpoint="http://127.0.0.1:9099",
         model="fixture.gguf",
-        iterations=30,
-        burn_in_blocks=5,
+        iterations=iterations,
+        burn_in_blocks=burn_in_blocks,
         sample_timeout=1.0,
-        attempt_id="attempt-0001",
-        campaign_root=tmp_path / "campaign",
+        attempt_id=attempt.attempt_id,
+        campaign_root=campaign,
+        acquisition_pin_callback=pin,
     )
 
+    if finalization_failure is not None:
+        with pytest.raises(RuntimeError, match=f"{finalization_failure}_finalization_failed"):
+            profile.run_parent_mode(args)
+        pinned = profile.read_acquisition_pin(campaign, attempt.attempt_id)
+        assert pinned is not None
+        assert finalization[0] == "pin"
+        assert profile.recover_interrupted_attempt(
+            campaign, process_start_probe=lambda _pid: None
+        ) == pinned
+        with pytest.raises(
+            RuntimeError, match="campaign_acquisition_blocked:complete_pending_review"
+        ):
+            profile.require_campaign_acquisition(campaign / "attempts.jsonl")
+        return
+
     assert profile.run_parent_mode(args) == 0
+    assert finalization == ["pin", "manifest", "summary", "run_complete"]
     preflights = [spec for spec, _cwd in child_specs[:3]]
     samples = child_specs[3:]
-    schedule = profile.sample_schedule(30, burn_in_blocks=5)
+    schedule = profile.sample_schedule(
+        iterations, burn_in_blocks=burn_in_blocks
+    )
     raw_rows = [
         json.loads(line)
         for line in (output / "real-provider-three-turn.raw.jsonl")
         .read_text()
         .splitlines()
     ]
-    assert len(samples) == 108
+    assert len(samples) == len(schedule)
     assert sum(
         row["event"] == "child_start" and row["phase"] != "protocol_preflight"
         for row in raw_rows
-    ) == 108
-    assert sum(row["event"] == "sample" for row in raw_rows) == 108
+    ) == len(schedule)
+    assert sum(row["event"] == "sample" for row in raw_rows) == len(schedule)
     assert [spec["mode"] for spec in preflights] == ["protocol_preflight"] * 3
     assert [spec["arm"] for spec in preflights] == list(profile.ARMS)
     assert [spec["schedule_position"] for spec, _cwd in samples] == list(
@@ -4504,7 +4790,7 @@ def test_confirmatory_parent_preflights_before_samples_and_routes_exact_schedule
     )
     assert [cwd for spec, cwd in samples if spec["arm"] == "control"] == [
         roots["control"]
-    ] * 36
+    ] * sum(item.arm == "control" for item in schedule)
     assert all(
         cwd == roots["candidate"]
         for spec, cwd in samples
@@ -4514,16 +4800,27 @@ def test_confirmatory_parent_preflights_before_samples_and_routes_exact_schedule
     summary = json.loads(
         (output / "real-provider-three-turn.summary.json").read_text()
     )
-    assert summary["sample_count"] == 93
-    assert summary["excluded_burn_in_sample_count"] == 15
+    statistics_row_count = len(schedule) - burn_in_blocks * len(profile.ARMS)
+    assert summary["sample_count"] == statistics_row_count
+    assert summary["excluded_burn_in_sample_count"] == (
+        burn_in_blocks * len(profile.ARMS)
+    )
     assert summary["burn_in_contract_status"] == "passed"
-    assert len(summary_inputs) == 1
-    assert len(summary_inputs[0]) == 93
-    assert not any(row["phase"] == "burn_in" for row in summary_inputs[0])
+    if iterations >= 2:
+        assert len(summary_inputs) == 1
+        assert len(summary_inputs[0]) == statistics_row_count
+        assert not any(row["phase"] == "burn_in" for row in summary_inputs[0])
+    else:
+        assert summary_inputs == []
+        assert summary["overall_verdict"] == "smoke"
     manifest = json.loads(
         (output / "real-provider-three-turn.manifest.json").read_text()
     )
-    assert manifest["burn_in_blocks"] == 5
+    assert manifest["burn_in_blocks"] == burn_in_blocks
+    assert manifest["campaign_schedule"] == profile.campaign_schedule_contract(
+        iterations, burn_in_blocks
+    )
+    assert manifest["campaign_schedule"]["kind"] == schedule_kind
     assert manifest["protocol_equivalence"]["status"] == "passed"
     assert [row["schedule_position"] for row in manifest["sample_schedule"]] == list(
         range(len(schedule))
@@ -5156,13 +5453,19 @@ def test_main_acquisition_owns_attempt_through_pending_review(
 
     def parent(args):
         calls.append(("parent", args.output_root, args.attempt_id))
-        (args.output_root / "real-provider-three-turn.raw.jsonl").write_bytes(b"raw\n")
+        raw = b"raw\n"
+        (args.output_root / "real-provider-three-turn.raw.jsonl").write_bytes(raw)
         (args.output_root / "real-provider-three-turn.summary.json").write_text(
-            json.dumps({"overall_verdict": "inconclusive"}), encoding="utf-8"
+            json.dumps({"overall_verdict": "smoke"}), encoding="utf-8"
         )
         (args.output_root / "real-provider-three-turn.manifest.json").write_text(
             "{}", encoding="utf-8"
         )
+        args.completed_acquisition = {
+            "verdict": "smoke",
+            "raw_sha256": hashlib.sha256(raw).hexdigest(),
+        }
+        args.acquisition_pin_callback(**args.completed_acquisition)
         return 0
 
     monkeypatch.setattr(profile, "run_parent_mode", parent)
@@ -5185,17 +5488,19 @@ def test_main_acquisition_owns_attempt_through_pending_review(
             "http://127.0.0.1:9099",
             "--model",
             "fixture.gguf",
-            "--campaign-root",
-            str(campaign),
-            "--burn-in-blocks",
-            "1",
+                "--campaign-root",
+                str(campaign),
+                "--iterations",
+                "1",
+                "--burn-in-blocks",
+                "1",
             "--candidate-sha",
             profile.CANDIDATE_SHA,
         ]
     ) == 0
     assert [call[0] for call in calls] == ["acquire", "parent", "complete", "release"]
     assert calls[2][3] == {
-        "verdict": "inconclusive",
+        "verdict": "smoke",
         "raw_sha256": hashlib.sha256(b"raw\n").hexdigest(),
     }
 
@@ -5240,6 +5545,128 @@ def test_pre_acquisition_failure_preserves_terminal_append_failure_and_lock(
     assert (campaign / ".campaign-lock").is_dir()
 
 
+@pytest.mark.parametrize(
+    ("code", "state", "reason_category"),
+    (
+        ("provider_preflight_models_failed", "failed", "provider"),
+        ("harness_worktree_dirty", "failed", "acquisition"),
+        ("confirmation_raw_invalid", "invalid", "raw"),
+        ("protocol_preflight_contract_failed", "invalid", "product"),
+        ("confirmation_run_invalid", "invalid", "completeness"),
+        ("listener_identity_changed", "invalid", "isolation"),
+        ("retained_evidence_privacy_violation", "invalid", "privacy"),
+        ("protocol_preflight_thread_survivor", "invalid", "ownership"),
+        ("unknown_acquisition_error", "failed", "acquisition"),
+    ),
+)
+def test_predefinitive_failure_classification_is_explicit(
+    code: str, state: str, reason_category: str
+) -> None:
+    assert profile.acquisition_failure_event(
+        "attempt-0001", RuntimeError(code)
+    ) == {
+        "attempt_id": "attempt-0001",
+        "state": state,
+        "reason_category": reason_category,
+    }
+
+
+@pytest.mark.parametrize(
+    ("code", "state", "reason_category"),
+    (
+        ("provider_preflight_models_failed", "failed", "provider"),
+        ("retained_evidence_privacy_violation", "invalid", "privacy"),
+    ),
+)
+def test_predefinitive_action_failure_records_classified_terminal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    code: str,
+    state: str,
+    reason_category: str,
+) -> None:
+    campaign = tmp_path / "campaign"
+    attempt = _acquire_attempt(campaign)
+    monkeypatch.setattr(profile, "acquire_campaign_attempt", lambda _root: attempt)
+    monkeypatch.setattr(
+        profile,
+        "run_parent_mode",
+        lambda _args: (_ for _ in ()).throw(RuntimeError(code)),
+    )
+
+    with pytest.raises(RuntimeError, match=f"^{code}$"):
+        profile.run_acquisition_action(SimpleNamespace(campaign_root=campaign))
+
+    assert profile.attempt_lineage(campaign / "attempts.jsonl")[-1] == {
+        "attempt_id": attempt.attempt_id,
+        "state": state,
+        "reason_category": reason_category,
+    }
+    assert not (campaign / ".campaign-lock").exists()
+
+
+def test_acquisition_action_rejects_lexical_campaign_symlink(tmp_path: Path) -> None:
+    external = tmp_path / "external-acquire"
+    external.mkdir()
+    campaign = tmp_path / "campaign-link"
+    campaign.symlink_to(external, target_is_directory=True)
+
+    with pytest.raises(RuntimeError, match="^campaign_root_invalid$"):
+        profile.run_acquisition_action(SimpleNamespace(campaign_root=campaign))
+
+    assert list(external.iterdir()) == []
+
+
+def test_acquisition_action_rejects_campaign_with_symlink_ancestor(
+    tmp_path: Path,
+) -> None:
+    external = tmp_path / "external-acquire-parent"
+    external.mkdir()
+    linked_parent = tmp_path / "linked-parent"
+    linked_parent.symlink_to(external, target_is_directory=True)
+
+    with pytest.raises(RuntimeError, match="^campaign_root_invalid$"):
+        profile.run_acquisition_action(
+            SimpleNamespace(campaign_root=linked_parent / "campaign")
+        )
+
+    assert list(external.iterdir()) == []
+
+
+def test_recover_action_rejects_lexical_campaign_symlink(tmp_path: Path) -> None:
+    external = tmp_path / "external-recover"
+    owner = _acquire_lock(external)
+    campaign = tmp_path / "campaign-link"
+    campaign.symlink_to(external, target_is_directory=True)
+
+    with pytest.raises(RuntimeError, match="^campaign_root_invalid$"):
+        profile.run_campaign_maintenance_action(
+            SimpleNamespace(campaign_action="recover", campaign_root=campaign)
+        )
+
+    assert profile._read_lock_owner(external / ".campaign-lock") == owner
+
+
+def test_recover_action_rejects_campaign_with_symlink_ancestor(
+    tmp_path: Path,
+) -> None:
+    external = tmp_path / "external-recover-parent"
+    campaign = external / "campaign"
+    owner = _acquire_lock(campaign)
+    linked_parent = tmp_path / "linked-parent"
+    linked_parent.symlink_to(external, target_is_directory=True)
+
+    with pytest.raises(RuntimeError, match="^campaign_root_invalid$"):
+        profile.run_campaign_maintenance_action(
+            SimpleNamespace(
+                campaign_action="recover",
+                campaign_root=linked_parent / "campaign",
+            )
+        )
+
+    assert profile._read_lock_owner(campaign / ".campaign-lock") == owner
+
+
 def _completed_parent_artifacts(args: SimpleNamespace) -> None:
     raw = b"protocol-valid-raw\n"
     (args.output_root / "real-provider-three-turn.raw.jsonl").write_bytes(raw)
@@ -5253,11 +5680,19 @@ def _completed_parent_artifacts(args: SimpleNamespace) -> None:
         "verdict": "pass",
         "raw_sha256": hashlib.sha256(raw).hexdigest(),
     }
+    args.acquisition_pin_callback(**args.completed_acquisition)
 
 
-def test_acquisition_pin_is_campaign_state_not_attempt_artifact(tmp_path: Path) -> None:
+def test_acquisition_pin_is_atomic_empty_campaign_marker_not_attempt_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     campaign = tmp_path / "campaign"
     attempt_root = profile.create_attempt_root(campaign, "attempt-0001")
+    monkeypatch.setattr(
+        profile.tempfile,
+        "mkstemp",
+        lambda *_args, **_kwargs: pytest.fail("pin used a staging tempfile"),
+    )
 
     event = profile.write_acquisition_pin(
         campaign,
@@ -5266,10 +5701,12 @@ def test_acquisition_pin_is_campaign_state_not_attempt_artifact(tmp_path: Path) 
         raw_sha256="a" * 64,
     )
 
-    pin_path = campaign / "acquisition-pins/attempt-0001.json"
-    assert pin_path.read_bytes() == (
-        json.dumps(event, sort_keys=True) + "\n"
-    ).encode("utf-8")
+    marker = campaign / (
+        "acquisition-pins/attempt-0001--pass--" + "a" * 64
+    )
+    assert marker.is_dir()
+    assert list(marker.iterdir()) == []
+    assert list(marker.parent.iterdir()) == [marker]
     assert profile.read_acquisition_pin(campaign, "attempt-0001") == event
     assert list(attempt_root.iterdir()) == []
 
@@ -5322,46 +5759,23 @@ def test_acquisition_pin_rejects_partial_namespace_write(tmp_path: Path) -> None
 
 
 @pytest.mark.parametrize(
-    ("payload", "error"),
+    "marker_name",
     (
-        (b'{"attempt_id":', "campaign_acquisition_pin_invalid"),
-        (
-            json.dumps(
-                {
-                    "attempt_id": "attempt-0001",
-                    "state": "complete_pending_review",
-                    "verdict": "pass",
-                    "raw_sha256": "a" * 64,
-                    "pid": 123,
-                },
-                sort_keys=True,
-            ).encode("utf-8")
-            + b"\n",
-            "campaign_event_privacy_violation",
-        ),
-        (
-            json.dumps(
-                {
-                    "attempt_id": "attempt-0001",
-                    "state": "complete_pending_review",
-                    "verdict": "pass",
-                    "raw_sha256": "a" * 64,
-                },
-                sort_keys=True,
-            ).encode("utf-8"),
-            "campaign_acquisition_pin_invalid",
-        ),
+        "attempt-0001--pass--bad-hash",
+        "attempt-0001--unknown--" + "a" * 64,
+        "attempt-0001--pass--" + "A" * 64,
+        "attempt-0001--pass--" + "a" * 64 + "--pid-123",
     ),
 )
-def test_acquisition_pin_rejects_partial_private_or_noncanonical_state(
-    tmp_path: Path, payload: bytes, error: str
+def test_acquisition_pin_rejects_private_or_noncanonical_marker(
+    tmp_path: Path, marker_name: str
 ) -> None:
     campaign = tmp_path / "campaign"
     pins = campaign / "acquisition-pins"
     pins.mkdir(parents=True)
-    (pins / "attempt-0001.json").write_bytes(payload)
+    (pins / marker_name).mkdir()
 
-    with pytest.raises(RuntimeError, match=f"^{error}$"):
+    with pytest.raises(RuntimeError, match="^campaign_acquisition_pin_invalid$"):
         profile.read_acquisition_pin(campaign, "attempt-0001")
 
 
@@ -5389,7 +5803,9 @@ def test_pending_ledger_failure_keeps_raw_verdict_pin_blocking_and_resumable(
             RuntimeError("pending_ledger_write_failed")
         ),
     )
-    args = SimpleNamespace(campaign_root=campaign)
+    args = SimpleNamespace(
+        campaign_root=campaign, iterations=30, burn_in_blocks=5
+    )
 
     with pytest.raises(RuntimeError, match="pending_ledger_write_failed"):
         profile.run_acquisition_action(args)
@@ -5450,7 +5866,11 @@ def test_post_acquisition_manifest_failure_stays_pending_and_releases_lock(
     )
 
     with pytest.raises(RuntimeError, match="manifest_finalization_failed"):
-        profile.run_acquisition_action(SimpleNamespace(campaign_root=campaign))
+        profile.run_acquisition_action(
+            SimpleNamespace(
+                campaign_root=campaign, iterations=30, burn_in_blocks=5
+            )
+        )
 
     lineage = profile.attempt_lineage(campaign / "attempts.jsonl")
     assert lineage[-1] == profile.read_acquisition_pin(campaign, attempt.attempt_id)
@@ -5488,7 +5908,11 @@ def test_recovery_finishes_lock_release_when_pending_append_raised_after_commit(
     monkeypatch.setattr(profile, "complete_attempt_measurement", complete_then_fail)
 
     with pytest.raises(RuntimeError, match="pending_ledger_post_commit_failed"):
-        profile.run_acquisition_action(SimpleNamespace(campaign_root=campaign))
+        profile.run_acquisition_action(
+            SimpleNamespace(
+                campaign_root=campaign, iterations=30, burn_in_blocks=5
+            )
+        )
 
     pin = profile.read_acquisition_pin(campaign, attempt.attempt_id)
     assert profile.attempt_lineage(campaign / "attempts.jsonl")[-1] == pin

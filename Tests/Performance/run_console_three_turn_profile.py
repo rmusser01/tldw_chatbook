@@ -109,6 +109,7 @@ BLOCKING_ATTEMPT_STATES = frozenset(
 )
 _ATTEMPT_ID = re.compile(r"^attempt-(\d{4})$")
 _MEASURED_VERDICTS = frozenset({"pass", "regression", "inconclusive"})
+_CAMPAIGN_VERDICTS = _MEASURED_VERDICTS | {"smoke"}
 _ATTEMPT_REASON_CATEGORIES = {
     "failed": frozenset({"provider", "acquisition", "interrupted"}),
     "invalid": frozenset(
@@ -1603,7 +1604,7 @@ def _validate_attempt_event(event: Mapping[str, Any]) -> dict[str, Any]:
     if state in {"complete_pending_review", "changes_required"}:
         _require_campaign_enum(
             record.get("verdict"),
-            _MEASURED_VERDICTS,
+            _CAMPAIGN_VERDICTS,
             "campaign_verdict_invalid",
         )
         raw_sha256 = record.get("raw_sha256")
@@ -1751,6 +1752,19 @@ def next_attempt_id(events: Sequence[Mapping[str, Any]]) -> str:
     return f"attempt-{number:04d}"
 
 
+def _reject_lexical_symlinks(path: Path, error_code: str) -> None:
+    """Reject a symlink in any existing component without resolving the path."""
+    absolute = path if path.is_absolute() else Path.cwd() / path
+    current = Path(absolute.anchor)
+    try:
+        for component in absolute.parts[1:]:
+            current /= component
+            if current.is_symlink():
+                raise RuntimeError(error_code)
+    except OSError as exc:
+        raise RuntimeError(error_code) from exc
+
+
 def create_attempt_root(campaign_root: Path, attempt_id: str) -> Path:
     """Create one fresh numbered staging root without removing prior evidence."""
     if not _ATTEMPT_ID.fullmatch(attempt_id):
@@ -1810,7 +1824,7 @@ def complete_attempt_measurement(
     verdict: str,
     raw_sha256: str,
 ) -> dict[str, Any]:
-    """Record any protocol-valid measured verdict as pending independent review."""
+    """Record a protocol-valid official or smoke verdict as pending review."""
     event = {
         "attempt_id": attempt_id,
         "state": "complete_pending_review",
@@ -2088,8 +2102,7 @@ def acquire_campaign_lock(
     owner_token_factory: Callable[[], str] = lambda: secrets.token_hex(32),
 ) -> CampaignLockOwner:
     """Atomically acquire one campaign lock and write only private owner metadata."""
-    if campaign_root.is_symlink():
-        raise RuntimeError("campaign_root_invalid")
+    _reject_lexical_symlinks(campaign_root, "campaign_root_invalid")
     _mkdir_namespace(campaign_root, parents=True, exist_ok=True)
     lock_root = campaign_root / ".campaign-lock"
     release_root = campaign_root / ".campaign-release"
@@ -2254,11 +2267,9 @@ def release_campaign_attempt(campaign_root: Path, attempt: CampaignAttempt) -> N
     release_campaign_lock(campaign_root, attempt.owner)
 
 
-def _acquisition_pin_path(
-    campaign_root: Path, attempt_id: str, *, create_namespace: bool
+def _acquisition_pin_namespace(
+    campaign_root: Path, *, create: bool
 ) -> Path | None:
-    if not _ATTEMPT_ID.fullmatch(attempt_id):
-        raise RuntimeError("campaign_acquisition_pin_invalid")
     campaign, _ = _strict_owned_directory(
         campaign_root, parent=None, error_code="campaign_acquisition_pin_invalid"
     )
@@ -2266,7 +2277,7 @@ def _acquisition_pin_path(
     if pins_root.is_symlink():
         raise RuntimeError("campaign_acquisition_pin_invalid")
     if not pins_root.exists():
-        if not create_namespace:
+        if not create:
             return None
         _mkdir_namespace(pins_root)
     pins, _ = _strict_owned_directory(
@@ -2274,50 +2285,62 @@ def _acquisition_pin_path(
         parent=campaign,
         error_code="campaign_acquisition_pin_invalid",
     )
+    return pins
+
+
+def _acquisition_pin_events(pins: Path) -> tuple[dict[str, Any], ...]:
+    """Decode an empty atomic marker directory into its canonical event."""
     try:
-        if any(
-            entry.is_symlink()
-            or not entry.is_file()
-            or not entry.name.endswith(".json")
-            or not _ATTEMPT_ID.fullmatch(entry.name.removesuffix(".json"))
-            for entry in pins.iterdir()
-        ):
-            raise RuntimeError("campaign_acquisition_pin_invalid")
+        entries = list(pins.iterdir())
     except OSError as exc:
         raise RuntimeError("campaign_acquisition_pin_invalid") from exc
-    return pins / f"{attempt_id}.json"
+    if len(entries) > 1:
+        raise RuntimeError("campaign_acquisition_pin_invalid")
+    events: list[dict[str, Any]] = []
+    for entry in entries:
+        try:
+            if entry.is_symlink() or not entry.is_dir() or any(entry.iterdir()):
+                raise RuntimeError("campaign_acquisition_pin_invalid")
+        except OSError as exc:
+            raise RuntimeError("campaign_acquisition_pin_invalid") from exc
+        parts = entry.name.split("--")
+        if len(parts) != 3:
+            raise RuntimeError("campaign_acquisition_pin_invalid")
+        attempt_id, verdict, raw_sha256 = parts
+        try:
+            event = _validate_attempt_event(
+                {
+                    "attempt_id": attempt_id,
+                    "state": "complete_pending_review",
+                    "verdict": verdict,
+                    "raw_sha256": raw_sha256,
+                }
+            )
+        except RuntimeError as exc:
+            raise RuntimeError("campaign_acquisition_pin_invalid") from exc
+        if entry.name != f"{attempt_id}--{verdict}--{raw_sha256}":
+            raise RuntimeError("campaign_acquisition_pin_invalid")
+        events.append(event)
+    return tuple(events)
 
 
 def read_acquisition_pin(
     campaign_root: Path, attempt_id: str
 ) -> dict[str, Any] | None:
     """Read one canonical raw/verdict pin, or return ``None`` when absent."""
-    path = _acquisition_pin_path(
-        campaign_root, attempt_id, create_namespace=False
+    if not _ATTEMPT_ID.fullmatch(attempt_id):
+        raise RuntimeError("campaign_acquisition_pin_invalid")
+    pins = _acquisition_pin_namespace(campaign_root, create=False)
+    if pins is None:
+        return None
+    return next(
+        (
+            event
+            for event in _acquisition_pin_events(pins)
+            if event["attempt_id"] == attempt_id
+        ),
+        None,
     )
-    if path is None:
-        return None
-    if not path.exists():
-        if path.is_symlink():
-            raise RuntimeError("campaign_acquisition_pin_invalid")
-        return None
-    if not path.is_file() or path.is_symlink():
-        raise RuntimeError("campaign_acquisition_pin_invalid")
-    try:
-        payload = path.read_bytes()
-        parsed = json.loads(payload)
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise RuntimeError("campaign_acquisition_pin_invalid") from exc
-    if not isinstance(parsed, dict):
-        raise RuntimeError("campaign_acquisition_pin_invalid")
-    record = _validate_attempt_event(parsed)
-    if (
-        record.get("attempt_id") != attempt_id
-        or record.get("state") != "complete_pending_review"
-        or payload != (json.dumps(record, sort_keys=True) + "\n").encode("utf-8")
-    ):
-        raise RuntimeError("campaign_acquisition_pin_invalid")
-    return record
 
 
 def write_acquisition_pin(
@@ -2336,30 +2359,19 @@ def write_acquisition_pin(
             "raw_sha256": raw_sha256,
         }
     )
-    path = _acquisition_pin_path(
-        campaign_root, attempt_id, create_namespace=True
-    )
-    assert path is not None
-    existing = read_acquisition_pin(campaign_root, attempt_id)
-    if existing is not None:
-        if existing != event:
+    pins = _acquisition_pin_namespace(campaign_root, create=True)
+    assert pins is not None
+    existing = _acquisition_pin_events(pins)
+    if existing:
+        if existing != (event,):
             raise RuntimeError("campaign_acquisition_pin_mismatch")
-        return existing
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=".acquisition-pin-", dir=path.parent
-    )
-    temporary = Path(temporary_name)
+        return existing[0]
+    marker = pins / f"{attempt_id}--{verdict}--{raw_sha256}"
     try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-            stream.write(json.dumps(event, sort_keys=True) + "\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-        _fsync_directory(path.parent)
-        _rename_namespace(temporary, path)
-    except BaseException:
-        if temporary.exists() and not temporary.is_symlink():
-            _unlink_namespace(temporary)
-        raise
+        _mkdir_namespace(marker)
+    except FileExistsError as exc:
+        if read_acquisition_pin(campaign_root, attempt_id) != event:
+            raise RuntimeError("campaign_acquisition_pin_mismatch") from exc
     return event
 
 
@@ -2369,6 +2381,7 @@ def recover_interrupted_attempt(
     process_start_probe: Callable[[int], str | None] = process_start_identity,
 ) -> dict[str, Any]:
     """Recover a dead running attempt to its durable pin or interrupted failure."""
+    _reject_lexical_symlinks(campaign_root, "campaign_root_invalid")
     lock_root = campaign_root / ".campaign-lock"
     recovery_root = campaign_root / ".campaign-recovery"
     ledger = campaign_root / "attempts.jsonl"
@@ -2383,6 +2396,64 @@ def recover_interrupted_attempt(
         if recovering_attempt_id is not None
         else None
     )
+    completed_interrupted_recovery = (
+        latest is not None
+        and latest
+        == {
+            "attempt_id": latest["attempt_id"],
+            "state": "failed",
+            "reason_category": "interrupted",
+        }
+        and (recovery_root.exists() or recovery_root.is_symlink())
+    )
+    if (
+        latest is not None
+        and latest["state"] in {"failed", "invalid"}
+        and orphan_id is None
+        and not completed_interrupted_recovery
+    ):
+        if pinned_event is not None:
+            raise RuntimeError("campaign_acquisition_pin_mismatch")
+        release_root = campaign_root / ".campaign-release"
+        markers = [
+            marker
+            for marker in (lock_root, recovery_root, release_root)
+            if marker.exists() or marker.is_symlink()
+        ]
+        if not markers:
+            return latest
+        if len(markers) != 1:
+            raise RuntimeError("campaign_recovery_owner_conflict")
+        marker = markers[0]
+        if marker in {recovery_root, release_root} and _is_empty_private_directory(
+            marker
+        ):
+            _rmdir_namespace(marker)
+            return latest
+        owner = _read_lock_owner(marker)
+        observed_start = _probe_process_start_identity(
+            process_start_probe, owner.pid, allow_dead=True
+        )
+        if observed_start == owner.process_start_sha256:
+            if marker == recovery_root:
+                _preserve_recovery_rollback(
+                    campaign_root, recovery_root, owner
+                )
+            raise RuntimeError("campaign_lock_owner_live")
+        if marker == lock_root:
+            try:
+                _rename_namespace(lock_root, recovery_root)
+            except OSError as exc:
+                raise RuntimeError("campaign_recovery_lost") from exc
+            recovered_owner = _read_lock_owner(recovery_root)
+            if recovered_owner != owner:
+                _preserve_recovery_rollback(
+                    campaign_root, recovery_root, recovered_owner
+                )
+                raise RuntimeError("campaign_lock_owner_mismatch")
+            marker = recovery_root
+        _delete_exact_lock_root(marker, owner)
+        return latest
     if (recovery_root.exists() or recovery_root.is_symlink()) and (
         lock_root.exists() or lock_root.is_symlink()
     ):
@@ -2553,6 +2624,44 @@ def safe_error_origin(error: BaseException) -> str:
     frames = traceback.extract_tb(error.__traceback__)
     value = frames[-1].name if frames else "unknown"
     return value if re.fullmatch(r"[A-Za-z0-9_<>.-]{1,120}", value) else "unknown"
+
+
+def acquisition_failure_event(
+    attempt_id: str, error: BaseException
+) -> dict[str, str]:
+    """Map a pre-definitive failure to one declared retryable category."""
+    code = safe_error_code(error)
+    state = "invalid"
+    if code.startswith("provider_"):
+        state, category = "failed", "provider"
+    elif "privacy" in code:
+        category = "privacy"
+    elif "ownership" in code or "thread_survivor" in code:
+        category = "ownership"
+    elif code.startswith("listener_") or "isolation" in code:
+        category = "isolation"
+    elif "raw" in code:
+        category = "raw"
+    elif code in {
+        "confirmation_run_invalid",
+        "confirmation_sample_failed",
+        "original_run_validation_failed",
+        "parent_sample_validation_failed",
+    }:
+        category = "completeness"
+    elif code == "campaign_schedule_verdict_mismatch" or code.startswith(
+        "protocol_"
+    ) or code.startswith(
+        ("workspace_", "tool_schema_", "mounted_sample_")
+    ):
+        category = "product"
+    else:
+        state, category = "failed", "acquisition"
+    return {
+        "attempt_id": attempt_id,
+        "state": state,
+        "reason_category": category,
+    }
 
 
 async def await_owned_cleanup(awaitable: Any) -> None:
@@ -3164,6 +3273,23 @@ def sample_schedule(
     return tuple(schedule)
 
 
+def campaign_schedule_contract(
+    iterations: int, burn_in_blocks: int
+) -> dict[str, Any]:
+    """Return one pre-registered campaign shape or reject arbitrary counts."""
+    kind = {(30, 5): "official", (1, 1): "disposable_smoke"}.get(
+        (iterations, burn_in_blocks)
+    )
+    if kind is None:
+        raise ValueError("campaign_schedule_unregistered")
+    return {
+        "kind": kind,
+        "iterations": iterations,
+        "burn_in_blocks": burn_in_blocks,
+        "conversation_count": len(ARMS) * (1 + burn_in_blocks + iterations),
+    }
+
+
 def install_target_root(target_root: Path) -> None:
     """Clear candidate modules and make one immutable target import-first."""
     resolved = target_root.resolve()
@@ -3313,8 +3439,17 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
             parser.error("acquire requires --endpoint and --model")
         if (parsed.output_root is None) == (parsed.campaign_root is None):
             parser.error("acquire requires exactly one output root")
-        if parsed.burn_in_blocks and parsed.candidate_sha != CANDIDATE_SHA:
-            parser.error("burn-in requires the fixed candidate revision")
+        if parsed.campaign_root is not None:
+            if parsed.candidate_sha != CANDIDATE_SHA:
+                parser.error("campaign requires the fixed candidate revision")
+            try:
+                campaign_schedule_contract(
+                    parsed.iterations, parsed.burn_in_blocks
+                )
+            except ValueError:
+                parser.error("campaign schedule must be official 30/5 or smoke 1/1")
+        elif parsed.burn_in_blocks:
+            parser.error("legacy output-root mode requires zero burn-in")
     else:
         if parsed.campaign_root is None:
             parser.error("campaign action requires --campaign-root")
@@ -6713,6 +6848,9 @@ def run_parent_mode(args: argparse.Namespace) -> int:
     if confirmatory:
         manifest.update(
             {
+                "campaign_schedule": campaign_schedule_contract(
+                    args.iterations, burn_in_blocks
+                ),
                 "protocol_equivalence": {"status": "passed", "mismatches": []},
                 "protocol_preflight": protocol_rows,
                 "original_harness": {
@@ -6732,10 +6870,14 @@ def run_parent_mode(args: argparse.Namespace) -> int:
     summary["burn_in_contract_status"] = "passed"
     if privacy_violations(manifest) or privacy_violations(summary):
         raise RuntimeError("retained_evidence_privacy_violation")
-    args.completed_acquisition = {
+    completed_acquisition = {
         "verdict": summary["overall_verdict"],
         "raw_sha256": _sha256_file(raw_path),
     }
+    pin_callback = getattr(args, "acquisition_pin_callback", None)
+    if pin_callback is not None:
+        pin_callback(**completed_acquisition)
+    args.completed_acquisition = completed_acquisition
     _write_json(run_root / "real-provider-three-turn.manifest.json", manifest)
     _write_json(run_root / "real-provider-three-turn.summary.json", summary)
     write_boundary_event(
@@ -6751,11 +6893,27 @@ def run_parent_mode(args: argparse.Namespace) -> int:
 
 def run_acquisition_action(args: argparse.Namespace) -> int:
     """Hold one campaign attempt through acquisition and pending-review state."""
-    campaign_root = args.campaign_root.resolve()
+    campaign_root = args.campaign_root
     attempt = acquire_campaign_attempt(campaign_root)
     owned_args = argparse.Namespace(**vars(args))
     owned_args.output_root = attempt.root
     owned_args.attempt_id = attempt.attempt_id
+
+    def pin_acquisition(**values: Any) -> dict[str, Any]:
+        verdict = str(values["verdict"])
+        schedule = campaign_schedule_contract(
+            owned_args.iterations, owned_args.burn_in_blocks
+        )
+        if (verdict == "smoke") != (schedule["kind"] == "disposable_smoke"):
+            raise RuntimeError("campaign_schedule_verdict_mismatch")
+        return write_acquisition_pin(
+            campaign_root,
+            attempt.attempt_id,
+            verdict=verdict,
+            raw_sha256=str(values["raw_sha256"]),
+        )
+
+    owned_args.acquisition_pin_callback = pin_acquisition
     terminal_recorded = False
     primary: BaseException | None = None
     try:
@@ -6785,11 +6943,7 @@ def run_acquisition_action(args: argparse.Namespace) -> int:
             try:
                 append_attempt_state(
                     campaign_root / "attempts.jsonl",
-                    {
-                        "attempt_id": attempt.attempt_id,
-                        "state": "invalid",
-                        "reason_category": "product",
-                    },
+                    acquisition_failure_event(attempt.attempt_id, primary),
                 )
             except BaseException as terminal_failure:
                 raise BaseExceptionGroup(
@@ -6803,12 +6957,14 @@ def run_acquisition_action(args: argparse.Namespace) -> int:
             raw_sha256 = str(completed["raw_sha256"])
         except (KeyError, TypeError) as exc:
             raise RuntimeError("confirmation_acquisition_state_invalid") from exc
-        pending = write_acquisition_pin(
-            campaign_root,
-            attempt.attempt_id,
-            verdict=verdict,
-            raw_sha256=raw_sha256,
-        )
+        pending = read_acquisition_pin(campaign_root, attempt.attempt_id)
+        if pending != {
+            "attempt_id": attempt.attempt_id,
+            "state": "complete_pending_review",
+            "verdict": verdict,
+            "raw_sha256": raw_sha256,
+        }:
+            raise RuntimeError("confirmation_acquisition_pin_missing")
         complete_attempt_measurement(
             campaign_root / "attempts.jsonl",
             attempt.attempt_id,
@@ -6847,7 +7003,7 @@ def run_acquisition_action(args: argparse.Namespace) -> int:
 def run_campaign_maintenance_action(args: argparse.Namespace) -> int:
     """Dispatch provider-free campaign maintenance operations."""
     if args.campaign_action == "recover":
-        event = recover_interrupted_attempt(args.campaign_root.resolve())
+        event = recover_interrupted_attempt(args.campaign_root)
         write_boundary_event(sys.stdout, {"event": "campaign_recovered", **event})
         return 0
     raise RuntimeError(f"campaign_action_unavailable:{args.campaign_action}")
