@@ -336,9 +336,9 @@ class LLMScreen(LabScreen):
         self._machine_memory_worker: Worker | None = None
         self._machine_memory_active = False
         self._machine_memory_failure: ProbeReason | None = None
-        self._machine_memory_probe_factory: Callable[[], MachineMemorySnapshot] | None = (
-            None
-        )
+        self._machine_memory_probe_factory: (
+            Callable[[], MachineMemorySnapshot] | None
+        ) = None
         self._audio_cpp_model_request_claim: (
             HandoffClaim[AudioCppModelLibraryRequest] | None
         ) = None
@@ -2941,9 +2941,7 @@ class LLMScreen(LabScreen):
             ):
                 view.restore_install_context(catalog, candidate)
             if action == _REMOTE_INSTALL_TERMINAL_FINISH:
-                completed = getattr(
-                    self, "_remote_install_completed_reference", None
-                )
+                completed = getattr(self, "_remote_install_completed_reference", None)
                 if isinstance(completed, ArtifactRef):
                     view.finish_install(message, completed_reference=completed)
                 else:

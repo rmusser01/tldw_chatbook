@@ -467,6 +467,10 @@ class RemoteView(Widget):
         padding: 0;
     }
 
+    RemoteView.-narrow .remote-machine-actions {
+        layout: vertical;
+    }
+
     RemoteView.-narrow .remote-variant-controls {
         layout: vertical;
         min-height: 6;
@@ -1704,6 +1708,7 @@ class RemoteView(Widget):
         self._set_metadata_controls_disabled(False)
         if self._completed_reference is not None:
             self.refresh(recompose=True)
+            self.call_next(self._apply_pane_visibility)
             return
         self._set_status(message or self._default_status())
 

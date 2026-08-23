@@ -13,6 +13,8 @@ from textual.widgets import Button, Input, Select, Static
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.config import get_cli_setting as _real_get_cli_setting
 from tldw_chatbook.Model_Artifacts.machine_memory import (
+    AcceleratorMemoryObservation,
+    AcceleratorSource,
     AcceleratorState,
     GIB,
     MachineMemorySnapshot,
@@ -86,6 +88,11 @@ def _assert_painted_inside(app, widget, parent) -> None:
     assert widget.region.bottom <= bounds.bottom
 
 
+def _remote_text(remote) -> str:
+    """Return the current Remote presentation text without markup rendering."""
+    return "\n".join(str(item.renderable) for item in remote.query(Static))
+
+
 def _machine_snapshot(
     *,
     total_gib: int = 32,
@@ -94,27 +101,38 @@ def _machine_snapshot(
     system_reason: ProbeReason | None = None,
     accelerator_state: AcceleratorState = AcceleratorState.NOT_OBSERVED,
     accelerator_reason: ProbeReason | None = None,
+    device_count: int = 0,
 ) -> MachineMemorySnapshot:
     """Build one complete bounded probe result for screen lifecycle tests."""
     has_capacity = system_state in {
         SystemMemoryState.OBSERVED,
         SystemMemoryState.PARTIAL,
     }
+    accelerators = tuple(
+        AcceleratorMemoryObservation(
+            vendor="nvidia",
+            label=f"Production evidence GPU {index} with a bounded long label",
+            total_bytes=(index + 1) * 8 * GIB,
+            shared=False,
+            source=AcceleratorSource.NVIDIA_SMI,
+        )
+        for index in range(device_count)
+    )
     return MachineMemorySnapshot(
         platform="linux",
         architecture="x86_64",
         system_state=system_state,
-        accelerator_state=accelerator_state,
+        accelerator_state=(
+            AcceleratorState.OBSERVED if accelerators else accelerator_state
+        ),
         total_bytes=total_gib * GIB if has_capacity else None,
         available_bytes=(
-            available_gib * GIB
-            if has_capacity and available_gib is not None
-            else None
+            available_gib * GIB if has_capacity and available_gib is not None else None
         ),
         memory_kind=MemoryKind.SYSTEM if has_capacity else MemoryKind.UNKNOWN,
-        accelerators=(),
+        accelerators=accelerators,
         system_reason=system_reason,
-        accelerator_reason=accelerator_reason,
+        accelerator_reason=None if accelerators else accelerator_reason,
     )
 
 
@@ -169,9 +187,7 @@ def test_stale_machine_memory_result_cannot_replace_newer_snapshot() -> None:
     current = _machine_snapshot(total_gib=32)
     screen._machine_memory_snapshot = current
 
-    LLMScreen._apply_machine_memory_result(
-        screen, 1, _machine_snapshot(total_gib=64)
-    )
+    LLMScreen._apply_machine_memory_result(screen, 1, _machine_snapshot(total_gib=64))
 
     assert screen._machine_memory_snapshot is current
     screen._hydrate_remote_machine_memory.assert_not_called()
@@ -821,8 +837,8 @@ async def test_empty_models_recovery_routes_hold_at_80_columns(
 
 
 @pytest.mark.asyncio
-async def test_remote_two_pane_install_action_stays_inside_real_models_body_at_80_columns():
-    """Remote's panes must fit the actual Lab body, not a full-width harness."""
+async def test_remote_drill_down_install_action_stays_inside_real_models_body_at_80_columns():
+    """The production body uses one complete pane at its measured width."""
     from tldw_chatbook.UI.Screens.model_remote_view import RemoteView
 
     app = _app()
@@ -834,7 +850,10 @@ async def test_remote_two_pane_install_action_stays_inside_real_models_body_at_8
             row for row in _rail_rows(screen) if row.lab_view_key == "remote"
         )
         remote_row.press()
-        await pilot.pause()
+        assert await _wait_for(
+            lambda: screen.query_one(LLMManagementWindow).active_view == "remote",
+            pilot,
+        )
 
         window = screen.query_one(LLMManagementWindow)
         remote = window.query_one("#remote-models-view", RemoteView)
@@ -849,54 +868,442 @@ async def test_remote_two_pane_install_action_stays_inside_real_models_body_at_8
             resolved,
             None,
         )
-        await pilot.pause()
+        remote._show_repository_detail()
+        assert await _wait_for(
+            lambda: (
+                remote.has_class("-single-pane")
+                and remote.query_one(".remote-detail-pane").display
+                and bool(remote.query("#remote-variant-filter"))
+                and bool(remote.query(".remote-candidate"))
+            ),
+            pilot,
+        )
 
         parent = window.query_one("#llm-view-remote")
         results_pane = remote.query_one(".remote-results-pane")
         detail_pane = remote.query_one(".remote-detail-pane")
-        search = remote.query_one("#remote-model-search", Button)
         variant_filter = remote.query_one("#remote-variant-filter", Input)
         variant_sort = remote.query_one("#remote-variant-sort", Select)
         candidate = remote.query_one(".remote-candidate", Button)
         selection = remote.query_one("#remote-model-selection", Static)
         install = remote.query_one("#remote-model-install", Button)
 
-        _assert_painted_inside(app, results_pane, parent)
+        assert remote.has_class("-single-pane")
+        assert results_pane.display is False
+        assert results_pane not in app.screen._compositor.visible_widgets
+        assert detail_pane.display is True
         _assert_painted_inside(app, detail_pane, parent)
-        details = remote.query_one("#remote-model-details")
+        back = remote.query_one("#remote-back-to-results", Button)
+        _assert_painted_inside(app, back, parent)
 
-        app.screen.set_focus(query)
-        await pilot.press("tab")
-        assert app.focused is search
-        await pilot.press("tab")
-        assert app.focused is details
-        _assert_painted_inside(app, details, parent)
-        await pilot.press("tab")
-        assert app.focused is variant_filter
-        _assert_painted_inside(app, variant_filter, parent)
-        assert variant_filter.region.y >= details.content_region.y
-        assert variant_filter.region.bottom <= details.content_region.bottom
+        for control in (variant_filter, variant_sort, candidate):
+            control.scroll_visible(
+                animate=False,
+                immediate=True,
+                force=True,
+                top=True,
+            )
+            assert await _wait_for(
+                lambda control=control: (
+                    control in app.screen._compositor.visible_widgets
+                ),
+                pilot,
+            )
+            _assert_painted_inside(app, control, parent)
 
-        await pilot.press("tab")
-        assert app.focused is variant_sort
-        _assert_painted_inside(app, variant_sort, parent)
-        assert variant_sort.region.y >= details.content_region.y
-        assert variant_sort.region.bottom <= details.content_region.bottom
-
-        await pilot.press("tab")
-        assert app.focused is candidate
+        app.screen.set_focus(candidate)
+        assert await _wait_for(lambda: app.focused is candidate, pilot)
         _assert_painted_inside(app, candidate, parent)
-        assert candidate.region.y >= details.content_region.y
-        assert candidate.region.bottom <= details.content_region.bottom
-
         await pilot.press("enter")
-        assert str(selection.renderable).startswith("Selected: model-q4.gguf")
+        assert await _wait_for(
+            lambda: str(selection.renderable).startswith("Selected: model-q4.gguf"),
+            pilot,
+        )
         _assert_painted_inside(app, selection, parent)
 
         await pilot.press("tab")
-        assert app.focused is install
+        assert await _wait_for(lambda: app.focused is install, pilot)
         _assert_painted_inside(app, install, parent)
-        assert results_pane.region.right <= detail_pane.region.x
+
+
+@pytest.mark.asyncio
+async def test_remote_memory_scenarios_survive_recompose_at_80_columns():
+    """Production rails, drill-down, refresh, and remount retain memory facts."""
+    from dataclasses import replace
+
+    from tldw_chatbook.Model_Artifacts.remote_huggingface import RemoteModelSummary
+    from tldw_chatbook.UI.Screens.model_remote_view import RemoteView
+
+    repository = (
+        "publisher-with-long-name/model-with-an-even-longer-exact-repository-name"
+    )
+    filename = f"models/{'long-reviewed-variant-' * 7}Q4_K_M.gguf"
+    resolved = _resolved_remote_model(
+        repository,
+        filename=filename,
+        total_bytes=4 * GIB,
+    )
+    exact_resolved = replace(resolved, warnings=("exact-resolution-complete",))
+    summary = RemoteModelSummary(
+        repository=repository,
+        private=False,
+        gated="none",
+        downloads=12_345,
+        likes=678,
+        last_modified="2026-08-01T00:00:00Z",
+    )
+
+    class _Adapter:
+        def __init__(self) -> None:
+            self.search_calls: list[str] = []
+            self.resolve_calls: list[str] = []
+
+        async def search(self, query: str, *, token=None):
+            self.search_calls.append(query)
+            return (summary,)
+
+        async def resolve(self, requested: str, *, token=None):
+            self.resolve_calls.append(requested)
+            return resolved if len(self.resolve_calls) == 1 else exact_resolved
+
+    class _Resolver:
+        def resolve(self, _repository: str) -> None:
+            return None
+
+    accepted = _machine_snapshot(total_gib=32, available_gib=10, device_count=3)
+    refreshed = _machine_snapshot(total_gib=32, available_gib=10, device_count=3)
+    stale = _machine_snapshot(total_gib=64, available_gib=64)
+    probe_starts = (threading.Event(), threading.Event())
+    probe_releases = (threading.Event(), threading.Event())
+    probe_results = (accepted, refreshed)
+    probe_calls: list[int] = []
+
+    def observe_memory() -> MachineMemorySnapshot:
+        index = len(probe_calls)
+        probe_calls.append(index)
+        probe_starts[index].set()
+        if not probe_releases[index].wait(10):
+            raise RuntimeError("test-controlled memory probe was not released")
+        return probe_results[index]
+
+    async def assert_painted(control, parent, pilot, app) -> None:
+        control.scroll_visible(
+            animate=False,
+            immediate=True,
+            force=True,
+            top=True,
+        )
+        assert await _wait_for(
+            lambda: control in app.screen._compositor.visible_widgets,
+            pilot,
+        ), (
+            control.id,
+            control.region,
+            control.display,
+            getattr(control, "disabled", None),
+            remote.query_one("#remote-model-details").scroll_offset,
+            remote.query_one("#remote-model-details").content_region,
+        )
+        _assert_painted_inside(app, control, parent)
+
+    async def assert_scroll_section_painted(
+        section,
+        viewport,
+        parent,
+        expected_widgets,
+        pilot,
+        app,
+    ) -> None:
+        """Prove a tall scroll section and its expected copy paint in slices."""
+
+        def painted_intersection(widget) -> bool:
+            clipped = widget.region.intersection(viewport.content_region)
+            clipped = clipped.intersection(parent.content_region)
+            return clipped.width > 0 and clipped.height > 0
+
+        section.scroll_visible(
+            animate=False,
+            immediate=True,
+            force=True,
+            top=True,
+        )
+        assert await _wait_for(
+            lambda: (
+                section in app.screen._compositor.visible_widgets
+                and painted_intersection(section)
+            ),
+            pilot,
+        )
+        assert section.region.x >= parent.content_region.x
+        assert section.region.right <= parent.content_region.right
+
+        for widget, expected_text in expected_widgets:
+            widget.scroll_visible(
+                animate=False,
+                immediate=True,
+                force=True,
+                top=True,
+            )
+            assert await _wait_for(
+                lambda widget=widget: (
+                    widget in app.screen._compositor.visible_widgets
+                    and painted_intersection(widget)
+                ),
+                pilot,
+            )
+            assert expected_text in str(widget.renderable)
+
+    def current_candidate_ready(remote) -> bool:
+        candidates = list(remote.query(".remote-candidate").results(Button))
+        return (
+            len(candidates) == 1
+            and candidates[0].display
+            and candidates[0].region.width > 0
+            and candidates[0].region.height > 0
+        )
+
+    adapter = _Adapter()
+    app = _app()
+    try:
+        async with app.run_test(size=(80, 24)) as pilot:
+            assert app.CSS_PATH == TldwCli.CSS_PATH
+            screen = await _models_screen(app)
+            assert await _wait_for(lambda: bool(screen.query(RemoteView)), pilot)
+            window = screen.query_one(LLMManagementWindow)
+            remote = screen.query_one(RemoteView)
+            remote._adapter_factory = lambda: adapter
+            remote._credential_resolver_factory = _Resolver
+            screen._machine_memory_probe_factory = observe_memory
+
+            remote_row = next(
+                row for row in _rail_rows(screen) if row.lab_view_key == "remote"
+            )
+            remote_row.press()
+            assert await _wait_for(lambda: window.active_view == "remote", pilot)
+            parent = window.query_one("#llm-view-remote")
+
+            rail = screen.query_one("#lab-rail")
+            rail_handle = screen.query_one("#lab-rail-handle")
+            assert rail.display is True
+            assert rail_handle.display is False
+            assert await _wait_for(lambda: remote.has_class("-single-pane"), pilot)
+            screen.query_one("#lab-rail-collapse", Button).press()
+            assert await _wait_for(
+                lambda: (
+                    not rail.display
+                    and rail_handle.display
+                    and remote.has_class("-single-pane")
+                ),
+                pilot,
+            )
+            screen.query_one("#lab-rail-open", Button).press()
+            assert await _wait_for(
+                lambda: (
+                    rail.display
+                    and not rail_handle.display
+                    and remote.has_class("-single-pane")
+                ),
+                pilot,
+            )
+
+            query = remote.query_one("#remote-model-query", Input)
+            query.value = "memory model"
+            remote.query_one("#remote-model-search", Button).press()
+            assert await _wait_for(lambda: bool(remote.query(".remote-result")), pilot)
+            result = remote.query_one(".remote-result", Button)
+            result.focus()
+            assert await _wait_for(lambda: app.focused is result, pilot)
+            result.press()
+            assert await _wait_for(
+                lambda: (
+                    remote.query_one(".remote-detail-pane").display
+                    and probe_starts[0].is_set()
+                    and adapter.resolve_calls == [repository]
+                ),
+                pilot,
+            )
+            assert remote.query_one(".remote-results-pane").display is False
+            assert "Machine memory: Checking local memory…" in _remote_text(remote)
+            assert "Memory scenario: Checking local memory…" in _remote_text(remote)
+            assert repository in _remote_text(remote)
+            assert filename in _remote_text(remote)
+
+            back = remote.query_one("#remote-back-to-results", Button)
+            await assert_painted(back, parent, pilot, app)
+            back.press()
+            assert await _wait_for(
+                lambda: (
+                    remote.query_one(".remote-results-pane").display
+                    and app.focused is result
+                ),
+                pilot,
+            )
+            assert remote.query_one(".remote-result", Button) is result
+
+            query.value = repository
+            remote.query_one("#remote-model-search", Button).press()
+            assert await _wait_for(
+                lambda: (
+                    remote.query_one(".remote-detail-pane").display
+                    and len(adapter.resolve_calls) == 2
+                    and remote._resolved is exact_resolved
+                    and "exact-resolution-complete" in _remote_text(remote)
+                    and current_candidate_ready(remote)
+                ),
+                pilot,
+            )
+            assert adapter.search_calls == ["memory model"]
+            assert adapter.resolve_calls == [repository, repository]
+            assert probe_calls == [0]
+
+            candidate = remote.query_one(".remote-candidate", Button)
+            await assert_painted(candidate, parent, pilot, app)
+            candidate.focus()
+            assert await _wait_for(lambda: app.focused is candidate, pilot)
+            probe_releases[0].set()
+            assert await _wait_for(
+                lambda: (
+                    screen._machine_memory_snapshot is accepted
+                    and "64K scenario within RAM budget" in _remote_text(remote)
+                ),
+                pilot,
+            )
+            assert remote.query_one(".remote-candidate", Button) is candidate
+            assert app.focused is candidate
+            assert "64K may need more free RAM now" in _remote_text(remote)
+            assert "VRAM observed on 3 devices" in _remote_text(remote)
+
+            panel = remote.query_one(".remote-machine-panel")
+            toggle = remote.query_one("#remote-machine-details-toggle", Button)
+            recheck = remote.query_one("#remote-machine-recheck", Button)
+            model_details = remote.query_one("#remote-model-details")
+            await assert_scroll_section_painted(
+                panel,
+                model_details,
+                parent,
+                (
+                    (
+                        remote.query_one("#remote-machine-headline", Static),
+                        "Machine memory: 32.0 GiB RAM",
+                    ),
+                    (
+                        remote.query_one("#remote-machine-evidence", Static),
+                        "VRAM observed on 3 devices",
+                    ),
+                ),
+                pilot,
+                app,
+            )
+            for control in (toggle, candidate):
+                await assert_painted(control, parent, pilot, app)
+            candidate.focus()
+            assert await _wait_for(lambda: app.focused is candidate, pilot)
+            for _ in range(8):
+                previous_focus = app.focused
+                await pilot.press("shift+tab")
+                assert await _wait_for(
+                    lambda: app.focused is not previous_focus,
+                    pilot,
+                )
+                if app.focused is recheck:
+                    break
+            assert app.focused is recheck
+            assert recheck in app.screen._compositor.visible_widgets
+            _assert_painted_inside(app, recheck, parent)
+
+            exact_details = remote.query_one("#remote-machine-estimate-details", Static)
+            assert exact_details.display is False
+            toggle.press()
+            assert await _wait_for(lambda: exact_details.display, pilot)
+            assert all(
+                device.label in str(exact_details.renderable)
+                for device in accepted.accelerators
+            )
+
+            candidate.focus()
+            await pilot.press("enter")
+            selection = remote.query_one("#remote-model-selection", Static)
+            install = remote.query_one("#remote-model-install", Button)
+            assert await _wait_for(
+                lambda: (
+                    str(selection.renderable).startswith(f"Selected: {filename}")
+                    and not install.disabled
+                ),
+                pilot,
+            )
+            await assert_painted(selection, parent, pilot, app)
+            await assert_painted(install, parent, pilot, app)
+
+            initial_generation = screen._machine_memory_generation
+            recheck.focus()
+            await pilot.press("enter")
+            assert await _wait_for(
+                lambda: (
+                    probe_starts[1].is_set()
+                    and screen._machine_memory_generation == initial_generation + 1
+                    and screen._machine_memory_active
+                    and str(recheck.label) == "Checking…"
+                    and recheck.disabled
+                ),
+                pilot,
+            )
+            screen._apply_machine_memory_result(initial_generation, stale)
+            assert screen._machine_memory_snapshot is accepted
+            assert screen._machine_memory_active is True
+            assert "VRAM observed on 3 devices" in _remote_text(remote)
+
+            probe_releases[1].set()
+            assert await _wait_for(
+                lambda: (
+                    screen._machine_memory_snapshot is refreshed
+                    and not screen._machine_memory_active
+                    and not recheck.disabled
+                ),
+                pilot,
+            )
+            assert remote.query_one(".remote-candidate", Button) is candidate
+            assert not install.disabled
+            candidate.focus()
+            await pilot.press("tab")
+            assert await _wait_for(lambda: app.focused is install, pilot)
+            await assert_painted(install, parent, pilot, app)
+
+            old_remote = remote
+            await screen.recompose()
+            assert await _wait_for(
+                lambda: (
+                    bool(screen.query(RemoteView))
+                    and screen.query_one(RemoteView) is not old_remote
+                    and screen.query_one(RemoteView)._machine_snapshot is refreshed
+                ),
+                pilot,
+                attempts=500,
+            )
+            fresh_remote = screen.query_one(RemoteView)
+            assert fresh_remote._machine_presentation.action_disabled is False
+            assert probe_calls == [0, 1]
+
+            fresh_window = screen.query_one(LLMManagementWindow)
+            fresh_remote._adapter_factory = lambda: adapter
+            fresh_remote._credential_resolver_factory = _Resolver
+            next(
+                row for row in _rail_rows(screen) if row.lab_view_key == "remote"
+            ).press()
+            assert await _wait_for(lambda: fresh_window.active_view == "remote", pilot)
+            fresh_remote.query_one("#remote-model-query", Input).value = repository
+            fresh_remote.query_one("#remote-model-search", Button).press()
+            assert await _wait_for(
+                lambda: (
+                    bool(fresh_remote.query(".remote-candidate"))
+                    and "64K scenario within RAM budget" in _remote_text(fresh_remote)
+                    and "VRAM observed on 3 devices" in _remote_text(fresh_remote)
+                ),
+                pilot,
+            )
+            assert probe_calls == [0, 1]
+    finally:
+        for release in probe_releases:
+            release.set()
 
 
 @pytest.mark.asyncio
@@ -928,7 +1335,14 @@ async def test_remote_completion_and_runtime_choice_fit_real_models_at_80_column
             resolved,
             None,
         )
-        await pilot.pause()
+        remote._show_repository_detail()
+        assert await _wait_for(
+            lambda: (
+                remote.query_one(".remote-detail-pane").display
+                and bool(remote.query(".remote-candidate"))
+            ),
+            pilot,
+        )
         remote.query_one(".remote-candidate", Button).press()
         await pilot.pause()
 
@@ -940,18 +1354,32 @@ async def test_remote_completion_and_runtime_choice_fit_real_models_at_80_column
         await pilot.pause()
 
         parent = window.query_one("#llm-view-remote")
+        detail_pane = remote.query_one(".remote-detail-pane")
         open_installed = remote.query_one("#remote-model-open-installed", Button)
         configure = remote.query_one("#remote-model-configure-runtime", Button)
+        assert await _wait_for(
+            lambda: all(
+                widget in app.screen._compositor.visible_widgets
+                for widget in (detail_pane, open_installed, configure)
+            ),
+            pilot,
+        )
+        _assert_painted_inside(app, detail_pane, parent)
         _assert_painted_inside(app, open_installed, parent)
         _assert_painted_inside(app, configure, parent)
+        assert open_installed.disabled is False
+        assert configure.disabled is False
         assert (
             open_installed.region.bottom <= configure.region.y
             or open_installed.region.right <= configure.region.x
         )
 
         open_installed.focus()
+        assert await _wait_for(lambda: app.focused is open_installed, pilot)
+        _assert_painted_inside(app, open_installed, parent)
         await pilot.press("tab")
-        assert app.focused is configure
+        assert await _wait_for(lambda: app.focused is configure, pilot)
+        _assert_painted_inside(app, configure, parent)
         await pilot.press("enter")
         await pilot.pause()
 
@@ -2794,6 +3222,8 @@ def _resolved_remote_model(
     repository: str = "owner/repository",
     *,
     license_id: str = "apache-2.0",
+    filename: str = "model-q4.gguf",
+    total_bytes: int = 1024,
 ):
     from tldw_chatbook.Model_Artifacts.remote_huggingface import (
         RemoteGGUFCandidate,
@@ -2804,9 +3234,9 @@ def _resolved_remote_model(
     commit = "a" * 40
     digest = "b" * 64
     candidate = RemoteGGUFCandidate(
-        label=f"{repository} · model-q4.gguf",
-        files=(RemoteGGUFFile("model-q4.gguf", 1024, digest),),
-        total_bytes=1024,
+        label=f"{repository} · {filename}",
+        files=(RemoteGGUFFile(filename, total_bytes, digest),),
+        total_bytes=total_bytes,
     )
     return ResolvedRemoteModel(
         repository=repository,
@@ -4111,10 +4541,7 @@ def test_open_installed_switches_and_reveals_exact_reference_without_activation(
         reference,
     )
     installed.reveal_reference.assert_called_once_with(reference)
-    assert not any(
-        call[0] == "activate"
-        for call in installed.method_calls
-    )
+    assert not any(call[0] == "activate" for call in installed.method_calls)
 
 
 @pytest.mark.asyncio
@@ -4265,9 +4692,11 @@ async def test_pending_runtime_handoff_replays_into_recomposed_models_window(
 
         screen.refresh(recompose=True)
         assert await _wait_for(
-            lambda: screen.llm_window is not first_window
-            and screen.llm_window is not None
-            and screen.llm_window.is_attached,
+            lambda: (
+                screen.llm_window is not first_window
+                and screen.llm_window is not None
+                and screen.llm_window.is_attached
+            ),
             pilot,
         )
         replacement = screen.llm_window

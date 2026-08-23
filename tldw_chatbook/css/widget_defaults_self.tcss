@@ -1148,6 +1148,46 @@
         color: $text;
     }
 
+    RemoteView .remote-machine-panel {
+        height: auto;
+        margin-top: 1;
+        padding: 1;
+        border: solid $surface-lighten-1;
+        background: $panel;
+    }
+
+    RemoteView .remote-machine-actions {
+        height: auto;
+        min-height: 3;
+        margin-top: 1;
+    }
+
+    RemoteView .remote-machine-actions Button {
+        width: auto;
+        margin-right: 1;
+    }
+
+    RemoteView .remote-fit-outcome,
+    RemoteView .remote-fit-details,
+    RemoteView .remote-fit-advisory,
+    RemoteView .remote-variant-filename {
+        width: 100%;
+        height: auto;
+    }
+
+    RemoteView .remote-fit-outcome {
+        margin-top: 1;
+        text-style: bold;
+    }
+
+    RemoteView .remote-fit-details {
+        color: $text-muted;
+    }
+
+    RemoteView .remote-fit-advisory {
+        color: $warning;
+    }
+
     RemoteView .remote-variant-controls {
         height: auto;
         min-height: 3;
@@ -1234,12 +1274,13 @@
     }
 
     RemoteView.-narrow .remote-results-pane {
-        width: 2fr;
+        width: 100%;
         min-width: 0;
+        border-right: none;
     }
 
     RemoteView.-narrow .remote-detail-pane {
-        width: 3fr;
+        width: 100%;
         min-width: 0;
     }
 
@@ -1260,6 +1301,10 @@
         height: 1;
         min-height: 1;
         padding: 0;
+    }
+
+    RemoteView.-narrow .remote-machine-actions {
+        layout: vertical;
     }
 
     RemoteView.-narrow .remote-variant-controls {
