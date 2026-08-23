@@ -156,7 +156,10 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
         pass
 
     class ActivateRequested(Message):
-        pass
+        def __init__(self, root_id: str, observation_token: str) -> None:
+            super().__init__()
+            self.root_id = root_id
+            self.observation_token = observation_token
 
     class PageRequested(Message):
         def __init__(self, delta: int) -> None:
@@ -756,8 +759,10 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                 )
             else:
                 if self.snapshot.review.activation:
-                    yield Button(
+                    yield _ReviewActionButton(
                         "Activate reviewed root",
+                        review_root_id=self.snapshot.review.root_id,
+                        review_observation_token=self.snapshot.review.observation_token,
                         id="notes-sync-activate",
                         classes="library-canvas-action",
                         compact=True,
@@ -1008,7 +1013,7 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             or not diff.display
         ):
             return
-        diff.focus()
+        self.screen.set_focus(diff)
 
     def _current_conflict_focus_request(self) -> tuple[str, str, str] | None:
         review = self.snapshot.review
@@ -1103,7 +1108,7 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             same_canvas_origin or no_initial_origin or old_canvas_origin_lost_focus
         ):
             return
-        view.focus()
+        self.screen.set_focus(view)
         self._handled_conflict_focus_request = request
 
     def focus_first_safe_control(self) -> None:
@@ -1158,7 +1163,14 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                 )
             )
         elif button_id == "notes-sync-activate":
-            self.post_message(self.ActivateRequested())
+            if not isinstance(event.button, _ReviewActionButton):
+                return
+            self.post_message(
+                self.ActivateRequested(
+                    event.button.review_root_id,
+                    event.button.review_observation_token,
+                )
+            )
         elif button_id.startswith("notes-sync-conflict-view-"):
             if not isinstance(event.button, _ReviewActionButton):
                 return
@@ -1223,7 +1235,9 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             comparison = self.query_one(f"#notes-sync-comparison-{index}")
             choices.display = True
             comparison.display = False
-            self.query_one(f"#notes-sync-conflict-view-{index}", Button).focus()
+            self.screen.set_focus(
+                self.query_one(f"#notes-sync-conflict-view-{index}", Button)
+            )
         elif button_id.startswith("notes-sync-receipt-undo-"):
             self.post_message(
                 self.UndoRequested(self._root_id(), event.button.name or "")

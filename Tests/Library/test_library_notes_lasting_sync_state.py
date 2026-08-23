@@ -531,3 +531,44 @@ def test_conflict_review_row_repr_does_not_expose_title_or_relative_path() -> No
     assert "Private release title" not in projected
     assert "private/releases/note.md" not in projected
     assert projected == "LastingSyncReviewRow(<private>)"
+
+
+@pytest.mark.parametrize("field", ("conflict_title", "conflict_relative_path"))
+@pytest.mark.parametrize("invalid", (0, False))
+def test_conflict_review_labels_reject_falsey_non_strings(
+    field: str, invalid: object
+) -> None:
+    values = {"conflict_title": "", "conflict_relative_path": ""}
+    values[field] = invalid
+
+    with pytest.raises((TypeError, ValueError)):
+        LastingSyncReviewRow(
+            "bind-1",
+            "attention",
+            "Both changed",
+            conflict_eligible=True,
+            **values,
+        )
+
+
+@pytest.mark.parametrize(
+    "factory", (lasting_state.LastingSyncReview, lasting_state.LastingSyncHistory)
+)
+@pytest.mark.parametrize("invalid", (0, False))
+def test_review_and_history_roots_reject_falsey_non_strings(
+    factory: object, invalid: object
+) -> None:
+    with pytest.raises((TypeError, ValueError)):
+        factory(root_id=invalid)
+
+
+@pytest.mark.parametrize("invalid", (0, False))
+def test_review_token_rejects_falsey_non_strings(invalid: object) -> None:
+    with pytest.raises((TypeError, ValueError)):
+        lasting_state.LastingSyncReview(observation_token=invalid)
+
+
+def test_empty_optional_review_and_history_identifiers_remain_valid() -> None:
+    LastingSyncReviewRow("bind-1", "safe", "No change")
+    lasting_state.LastingSyncReview()
+    lasting_state.LastingSyncHistory()

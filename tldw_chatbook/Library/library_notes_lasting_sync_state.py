@@ -168,6 +168,11 @@ class LastingSyncReviewRow:
     conflict_relative_path: str = ""
 
     def __post_init__(self) -> None:
+        if (
+            type(self.conflict_title) is not str
+            or type(self.conflict_relative_path) is not str
+        ):
+            raise TypeError("conflict labels must be strings")
         if type(self.choices) is not tuple:
             raise TypeError("choices must be a tuple")
         validate_notes_sync_opaque_id(self.item_id, field_name="item_id")
@@ -246,6 +251,8 @@ class LastingSyncReview:
     apply_blocker: LastingSyncApplyBlocker = LastingSyncApplyBlocker.NOTHING_SELECTED
 
     def __post_init__(self) -> None:
+        if type(self.root_id) is not str or type(self.observation_token) is not str:
+            raise TypeError("review identifiers must be strings")
         if self.root_id:
             validate_notes_sync_opaque_id(self.root_id, field_name="root_id")
         if self.observation_token:
@@ -377,6 +384,8 @@ class LastingSyncHistory:
     unavailable: bool = False
 
     def __post_init__(self) -> None:
+        if type(self.root_id) is not str:
+            raise TypeError("history root_id must be a string")
         if self.root_id:
             validate_notes_sync_opaque_id(self.root_id, field_name="root_id")
         if type(self.rows) is not tuple or any(

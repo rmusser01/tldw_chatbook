@@ -270,12 +270,14 @@ class LibraryNotesSyncController:
         self._review_labels: dict[str, RuntimeConflictLabel] = {}
         self._selections: dict[tuple[str, str], NotesSyncConflictChoice] = {}
         self._apply_in_flight: set[tuple[str, str]] = set()
+        self._activate_in_flight: set[tuple[str, str]] = set()
         self._comparison_generation = 0
         self._expanded_binding_id: str | None = None
         self._projection_root_id: str | None = None
         self._receipt_generation = 0
         self._history_generation = 0
         self._history_request_page = 1
+        self._history_origin: tuple[str, str, str] | None = None
         self._lifecycle_epoch = 0
         self._state = initial_lasting_sync_snapshot(
             lasting_available=runtime.snapshot().status in _SETUP_READY_STATUSES
@@ -507,6 +509,7 @@ class LibraryNotesSyncController:
         if self._lifecycle_epoch >= _LIFECYCLE_EPOCH_MAX:
             raise RuntimeError("controller lifecycle epoch exhausted")
         self._apply_in_flight.clear()
+        self._history_origin = None
         self._lifecycle_epoch += 1
         return self._lifecycle_epoch
 
@@ -849,6 +852,23 @@ class LibraryNotesSyncController:
         self._publish()
 
     async def apply_reviewed(self, root_id: str, observation_token: str) -> None:
+        provenance = (root_id, observation_token)
+        if provenance in self._apply_in_flight:
+            self._state = replace(
+                self._state,
+                status_line="Apply is already running for this review.",
+            )
+            self._publish()
+            return
+        self._apply_in_flight.add(provenance)
+        try:
+            await self._apply_reviewed_claimed(root_id, observation_token)
+        finally:
+            self._apply_in_flight.discard(provenance)
+
+    async def _apply_reviewed_claimed(
+        self, root_id: str, observation_token: str
+    ) -> None:
         review = self._state.review
         plan = self._review_plan
         epoch = self._lifecycle_epoch
@@ -869,14 +889,6 @@ class LibraryNotesSyncController:
             )
             self._publish()
             return
-        provenance = (root_id, observation_token)
-        if provenance in self._apply_in_flight:
-            self._state = replace(
-                self._state,
-                status_line="Apply is already running for this review.",
-            )
-            self._publish()
-            return
         if not review.can_apply:
             self._state = replace(
                 self._state,
@@ -886,7 +898,6 @@ class LibraryNotesSyncController:
             return
         action_ids = tuple(action.action_id for action in plan.safe_actions)
         selections = self._current_selections()
-        self._apply_in_flight.add(provenance)
         try:
             result = await self._runtime.apply_reviewed(
                 root_id,
@@ -939,7 +950,6 @@ class LibraryNotesSyncController:
                 status_line="Apply returned an invalid result. Check again.",
             )
             self._publish()
-            self._apply_in_flight.discard(provenance)
             return
         if not self._lifecycle_is_current(root_id, epoch):
             return
@@ -972,7 +982,6 @@ class LibraryNotesSyncController:
                 receipt_line="",
             )
             self._publish()
-            self._apply_in_flight.discard(provenance)
             return
 
         installed = await self._install_review(
@@ -1029,7 +1038,6 @@ class LibraryNotesSyncController:
             )
         self.refresh_roots(publish=False)
         self._publish()
-        self._apply_in_flight.discard(provenance)
 
     async def sync_now(self, root_id: str) -> None:
         """Run the runtime's existing mutation-free manual reconciliation."""
@@ -1568,6 +1576,17 @@ class LibraryNotesSyncController:
         """Load one fresh bounded durable resolution-history page."""
 
         validate_lasting_sync_history_page(page)
+        review = self._state.review
+        if (
+            self._state.phase in {"review", "receipt"}
+            and review.root_id == root_id
+            and review.observation_token
+        ):
+            self._history_origin = (
+                self._state.phase,
+                root_id,
+                review.observation_token,
+            )
         generation = self._start_history_request(root_id, page)
         epoch = self._lifecycle_epoch
         self._clear_comparison()
@@ -1599,6 +1618,28 @@ class LibraryNotesSyncController:
         )
         self._publish()
 
+    def return_from_resolution_history(self) -> None:
+        """Restore the exact review or receipt that opened current history."""
+
+        origin = self._history_origin
+        if self._state.phase != "history" or origin is None:
+            return
+        phase, root_id, observation_token = origin
+        review = self._state.review
+        if (
+            phase not in {"review", "receipt"}
+            or self._state.history.root_id != root_id
+            or self._projection_root_id != root_id
+            or review.root_id != root_id
+            or review.observation_token != observation_token
+        ):
+            self._history_origin = None
+            return
+        self._state = replace(
+            self._state, phase="receipt" if phase == "receipt" else "review"
+        )
+        self._publish()
+
     def stage_root_action(self, root_id: str, action: str) -> None:
         """Keep controls without a completed runtime seam explicit and inert."""
 
@@ -1621,62 +1662,84 @@ class LibraryNotesSyncController:
         )
         self._publish()
 
-    async def activate_root(self, root_id: str) -> bool:
-        available = self._state.lasting_available
-        authorization = self._state.review.observation_token
-        epoch = self._begin_bound_control_lifecycle(root_id)
-        if not available:
+    async def activate_root(self, root_id: str, observation_token: str) -> bool:
+        provenance = (root_id, observation_token)
+        if provenance in self._activate_in_flight:
             self._state = replace(
                 self._state,
-                status_line="Lasting folder sync is unavailable until the reviewed cutover.",
+                status_line="Activation is already running for this review.",
             )
             self._publish()
             return False
-        self._state = replace(
-            self._state,
-            phase="activating",
-            status_line="Activating the reviewed sync root…",
-        )
-        self._publish()
+        review = self._state.review
+        plan = self._review_plan
+        if (
+            self._state.phase != "review"
+            or not self._state.lasting_available
+            or plan is None
+            or review.root_id != root_id
+            or review.observation_token != observation_token
+            or not review.activation
+            or root_id != self._projection_root_id
+            or plan.root_id != root_id
+            or plan.observation_token != observation_token
+        ):
+            self._state = replace(
+                self._state,
+                status_line="Activation unavailable. Check the current migration review again.",
+            )
+            self._publish()
+            return False
+        self._activate_in_flight.add(provenance)
         try:
-            result = await self._runtime.activate_root(root_id, authorization)
-        except Exception:
+            epoch = self._begin_bound_control_lifecycle(root_id)
+            self._state = replace(
+                self._state,
+                phase="activating",
+                status_line="Activating the reviewed sync root…",
+            )
+            self._publish()
+            try:
+                result = await self._runtime.activate_root(root_id, observation_token)
+            except Exception:
+                if not self._lifecycle_is_current(root_id, epoch):
+                    return False
+                self._state = replace(
+                    self._state,
+                    phase="review",
+                    status_line="Activation failed. Review settings, then check again.",
+                )
+                self._publish()
+                return False
             if not self._lifecycle_is_current(root_id, epoch):
                 return False
+            accepted = bool(getattr(result, "accepted", False))
+            applied_count = getattr(result, "applied_count", 0)
+            recovery = not accepted and getattr(result, "status", "") in {
+                "failed",
+                "partial",
+                "needs_attention",
+            }
             self._state = replace(
                 self._state,
-                phase="review",
-                status_line="Activation failed. Review settings, then check again.",
+                phase="receipt" if accepted else "roots" if recovery else "review",
+                status_line=(
+                    "Sync root activated."
+                    if accepted
+                    else "Activation needs attention. Open root recovery."
+                    if recovery
+                    else "Activation needs attention. Review settings, then check again."
+                ),
+                receipt_line=(
+                    f"{applied_count} applied · durable receipt recorded"
+                    if accepted
+                    else ""
+                ),
             )
-            self._publish()
-            return False
-        if not self._lifecycle_is_current(root_id, epoch):
-            return False
-        accepted = bool(getattr(result, "accepted", False))
-        applied_count = getattr(result, "applied_count", 0)
-        recovery = not accepted and getattr(result, "status", "") in {
-            "failed",
-            "partial",
-            "needs_attention",
-        }
-        self._state = replace(
-            self._state,
-            phase="receipt" if accepted else "roots" if recovery else "review",
-            status_line=(
-                "Sync root activated."
-                if accepted
-                else "Activation needs attention. Open root recovery."
-                if recovery
-                else "Activation needs attention. Review settings, then check again."
-            ),
-            receipt_line=(
-                f"{applied_count} applied · durable receipt recorded"
-                if accepted
-                else ""
-            ),
-        )
-        self.refresh_roots()
-        return accepted
+            self.refresh_roots()
+            return accepted
+        finally:
+            self._activate_in_flight.discard(provenance)
 
     async def pause_root(self, root_id: str) -> None:
         epoch = self._begin_bound_control_lifecycle(root_id)

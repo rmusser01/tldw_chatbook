@@ -514,6 +514,45 @@ async def test_conflict_comparison_is_literal_scrollable_and_return_restores_vie
         ) == ("root-1", "c" * 64)
 
 
+async def test_validated_return_focus_handoff_is_synchronous() -> None:
+    comparison = ConflictComparison(
+        "bind-1",
+        "Release note",
+        "notes/release.md",
+        1,
+        None,
+        2,
+        3,
+        1,
+        4,
+        1,
+        "-old\n+new\n",
+        False,
+        False,
+    )
+    snapshot = replace(
+        initial_lasting_sync_snapshot(lasting_available=True),
+        phase="review",
+        review=_conflict_review(),
+        comparison=comparison,
+    )
+    app = _Host(snapshot)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        canvas = app.query_one(LibraryNotesAddFromFilesCanvas)
+        back = app.query_one("#notes-sync-back", Button)
+        view = app.query_one("#notes-sync-conflict-view-0", Button)
+        returned = app.query_one("#notes-sync-comparison-return-0", Button)
+        returned.focus()
+        await pilot.pause()
+        canvas._button_pressed(Button.Pressed(returned))
+
+        assert app.focused is view
+        app.screen.set_focus(back)
+        await pilot.pause()
+        assert app.focused is back
+
+
 async def test_deferred_comparison_focus_rechecks_origin_before_moving(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -563,6 +602,44 @@ async def test_deferred_comparison_focus_rechecks_origin_before_moving(
         assert app.focused is back
 
 
+async def test_validated_comparison_focus_handoff_is_synchronous() -> None:
+    comparison = ConflictComparison(
+        "bind-1",
+        "Release note",
+        "notes/release.md",
+        1,
+        None,
+        2,
+        3,
+        1,
+        4,
+        1,
+        "-old\n+new\n",
+        False,
+        False,
+    )
+    snapshot = replace(
+        initial_lasting_sync_snapshot(lasting_available=True),
+        phase="review",
+        review=_conflict_review(),
+        comparison=comparison,
+    )
+    app = _Host(snapshot)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        canvas = app.query_one(LibraryNotesAddFromFilesCanvas)
+        view = app.query_one("#notes-sync-conflict-view-0", Button)
+        diff = app.query_one("#notes-sync-comparison-diff-0", TextArea)
+        view.focus()
+        await pilot.pause()
+        canvas._focus_published_comparison("bind-1", view, diff)
+
+        assert app.focused is diff
+        app.screen.set_focus(view)
+        await pilot.pause()
+        assert app.focused is view
+
+
 async def test_post_apply_focus_request_targets_first_remaining_conflict_once() -> None:
     snapshot = replace(
         initial_lasting_sync_snapshot(lasting_available=True),
@@ -591,6 +668,29 @@ async def test_post_apply_focus_request_targets_first_remaining_conflict_once() 
                 conflict_focus_binding_id="bind-1",
             )
         )
+        await pilot.pause()
+        assert app.focused is back
+
+
+async def test_validated_conflict_request_focus_handoff_is_synchronous() -> None:
+    snapshot = replace(
+        initial_lasting_sync_snapshot(lasting_available=True),
+        phase="review",
+        review=_conflict_review(),
+        conflict_focus_binding_id="bind-1",
+    )
+    app = _Host(snapshot)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        canvas = app.query_one(LibraryNotesAddFromFilesCanvas)
+        back = app.query_one("#notes-sync-back", Button)
+        view = app.query_one("#notes-sync-conflict-view-0", Button)
+        back.focus()
+        await pilot.pause()
+        canvas._focus_requested_conflict(("root-1", "c" * 64, "bind-1"), back, True)
+
+        assert app.focused is view
+        app.screen.set_focus(back)
         await pilot.pause()
         assert app.focused is back
 
@@ -1033,8 +1133,48 @@ async def test_activation_review_posts_distinct_activate_message() -> None:
         assert await pilot.click("#notes-sync-activate")
         await pilot.pause()
 
-    assert any(
-        type(message).__name__ == "ActivateRequested" for message in app.messages
+    activate = next(
+        message
+        for message in app.messages
+        if type(message).__name__ == "ActivateRequested"
+    )
+    assert (activate.root_id, activate.observation_token) == (
+        "root-1",
+        "d" * 64,
+    )
+
+
+async def test_queued_activate_keeps_rendered_review_provenance() -> None:
+    review = LastingSyncReview(
+        root_id="root-1",
+        observation_token="d" * 64,
+        activation=True,
+    )
+    snapshot = replace(
+        initial_lasting_sync_snapshot(lasting_available=True),
+        phase="review",
+        review=review,
+    )
+    app = _Host(snapshot)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        canvas = app.query_one(LibraryNotesAddFromFilesCanvas)
+        original = app.query_one("#notes-sync-activate", Button)
+        canvas.sync_state(
+            replace(snapshot, review=replace(review, observation_token="e" * 64))
+        )
+        await pilot.pause()
+        canvas._button_pressed(Button.Pressed(original))
+        await pilot.pause()
+
+    activate = next(
+        message
+        for message in app.messages
+        if type(message).__name__ == "ActivateRequested"
+    )
+    assert (activate.root_id, activate.observation_token) == (
+        "root-1",
+        "d" * 64,
     )
 
 

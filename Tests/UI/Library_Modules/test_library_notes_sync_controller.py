@@ -362,7 +362,7 @@ async def test_migration_review_is_activation_typed_and_uses_activate_path() -> 
     root_id = "legacy-root-" + "a" * 40
 
     await controller.check_migration(root_id)
-    await controller.activate_root(root_id)
+    await controller.activate_root(root_id, TOKEN)
 
     assert controller.snapshot.review.activation is True
     assert runtime.calls == [
@@ -459,7 +459,7 @@ async def test_inert_controller_never_calls_activation() -> None:
         import_controller=_ImportController(),
     )
 
-    result = await controller.activate_root("root-1")
+    result = await controller.activate_root("root-1", TOKEN)
 
     assert result is False
     assert runtime.calls == []
@@ -476,8 +476,10 @@ async def test_active_fake_publishes_activating_before_truthful_review_required_
         import_controller=_ImportController(),
         publish_snapshot=lambda snapshot: phases.append(snapshot.phase),
     )
+    await controller.check_migration("root-1")
+    phases.clear()
 
-    accepted = await controller.activate_root("root-1")
+    accepted = await controller.activate_root("root-1", TOKEN)
 
     assert accepted is False
     assert "activating" in phases
@@ -498,8 +500,9 @@ async def test_activation_failure_is_bounded_redacted_and_leaves_activating_phas
         runtime=runtime,
         import_controller=_ImportController(),
     )
+    await controller.check_migration("root-1")
 
-    accepted = await controller.activate_root("root-1")
+    accepted = await controller.activate_root("root-1", TOKEN)
 
     assert accepted is False
     assert controller.snapshot.phase == "review"
@@ -1926,7 +1929,7 @@ async def test_new_check_supersedes_pending_activate_and_control_publication() -
         runtime=runtime,
         import_controller=_ImportController(),
     )
-    await controller.check_root("root-1")
+    await controller.check_migration("root-1")
     activate_started = asyncio.Event()
     release_activate = asyncio.Event()
 
@@ -1938,7 +1941,7 @@ async def test_new_check_supersedes_pending_activate_and_control_publication() -
         return NotesSyncControlResult(True, "up_to_date", "sync_now")
 
     runtime.activate_root = delayed_activate
-    pending_activate = asyncio.create_task(controller.activate_root("root-1"))
+    pending_activate = asyncio.create_task(controller.activate_root("root-1", TOKEN))
     await activate_started.wait()
     runtime.check_plan = _conflict_plan(token=TOKEN_2)
     await controller.check_root("root-1")
@@ -2005,8 +2008,15 @@ async def test_failed_fresh_review_paths_clear_prior_authority(operation: str) -
         runtime=runtime,
         import_controller=_ImportController(),
     )
-    await controller.check_root("root-1")
-    assert controller.snapshot.review.can_apply is True
+    if operation == "activate":
+        await controller.check_migration("root-1")
+    else:
+        await controller.check_root("root-1")
+    assert (
+        controller.snapshot.review.activation
+        if operation == "activate"
+        else controller.snapshot.review.can_apply
+    )
 
     async def fail(*args: object, **kwargs: object) -> object:
         raise RuntimeError("operation unavailable")
@@ -2021,7 +2031,7 @@ async def test_failed_fresh_review_paths_clear_prior_authority(operation: str) -
         await controller.check_setup()
     elif operation == "activate":
         runtime.activate_root = fail
-        await controller.activate_root("root-1")
+        await controller.activate_root("root-1", TOKEN)
     else:
         runtime.pause_root = fail
         await controller.pause_root("root-1")
@@ -2038,7 +2048,7 @@ async def _invoke_root_control(
     controller: LibraryNotesSyncController, operation: str
 ) -> None:
     if operation == "activate":
-        await controller.activate_root("root-1")
+        await controller.activate_root("root-1", TOKEN)
     elif operation == "pause":
         await controller.pause_root("root-1")
     elif operation == "resume":
@@ -2055,7 +2065,7 @@ async def _invoke_root_control(
 
 @pytest.mark.parametrize(
     "operation",
-    ["activate", "pause", "resume", "retarget", "disconnect", "cleanup", "stage"],
+    ["pause", "resume", "retarget", "disconnect", "cleanup", "stage"],
 )
 @pytest.mark.parametrize("pending_kind", ["apply", "check"])
 async def test_same_root_control_supersedes_pending_review_work(
@@ -2099,7 +2109,9 @@ async def test_same_root_control_supersedes_pending_review_work(
     assert controller.snapshot == control_snapshot
 
 
-async def test_unavailable_activation_supersedes_pending_same_root_check() -> None:
+async def test_unavailable_activation_does_not_supersede_pending_same_root_check() -> (
+    None
+):
     runtime = _Runtime()
     runtime.snapshot = lambda: NotesSyncRuntimeSnapshot(
         "awaiting_cutover", "finish_upgrade"
@@ -2120,12 +2132,12 @@ async def test_unavailable_activation_supersedes_pending_same_root_check() -> No
     runtime.check_root = delayed_check
     pending = asyncio.create_task(controller.check_root("root-1"))
     await started.wait()
-    assert await controller.activate_root("root-1") is False
-    unavailable_snapshot = controller.snapshot
+    assert await controller.activate_root("root-1", TOKEN) is False
     release.set()
     await pending
 
-    assert controller.snapshot == unavailable_snapshot
+    assert controller.snapshot.phase == "review"
+    assert controller.snapshot.review.observation_token == TOKEN_2
     assert controller._review_plan is None  # noqa: SLF001 - authority contract
 
 
@@ -2420,3 +2432,122 @@ async def test_stale_history_sentinel_cannot_overwrite_newer_page() -> None:
     assert controller.snapshot == current
     assert controller.snapshot.history.page == 2
     assert controller.snapshot.history.rows[0].item_label == "Page two"
+
+
+async def test_activate_rejects_detached_review_provenance() -> None:
+    runtime = _Runtime()
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+    await controller.check_migration("root-1")
+    runtime.check_plan = _conflict_plan(token=TOKEN_2)
+    await controller.check_migration("root-1")
+    calls_before = tuple(runtime.calls)
+
+    accepted = await controller.activate_root("root-1", TOKEN)
+
+    assert accepted is False
+    assert tuple(runtime.calls) == calls_before
+
+
+async def test_duplicate_in_flight_activate_invokes_runtime_once() -> None:
+    runtime = _Runtime()
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+    await controller.check_migration("root-1")
+    started = asyncio.Event()
+    release = asyncio.Event()
+    invocations = 0
+
+    async def delayed_activate(
+        root_id: str, authorization: object
+    ) -> NotesSyncControlResult:
+        nonlocal invocations
+        invocations += 1
+        started.set()
+        await release.wait()
+        return NotesSyncControlResult(True, "up_to_date", "sync_now")
+
+    runtime.activate_root = delayed_activate
+    first = asyncio.create_task(controller.activate_root("root-1", TOKEN))
+    await started.wait()
+    await controller.check_migration("root-1")
+    second = asyncio.create_task(controller.activate_root("root-1", TOKEN))
+    await asyncio.sleep(0)
+    assert invocations == 1
+    release.set()
+    await asyncio.gather(first, second)
+
+
+@pytest.mark.parametrize("failure", (ValueError("stale_review"), OSError("failed")))
+async def test_apply_claim_is_released_on_runtime_error(failure: Exception) -> None:
+    runtime = _Runtime()
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+    await controller.check_root("root-1")
+
+    async def fail(*args: object, **kwargs: object) -> ConflictApplyResult:
+        raise failure
+
+    successful_apply = runtime.apply_reviewed
+    runtime.apply_reviewed = fail
+    await controller.apply_reviewed("root-1", TOKEN)
+
+    assert controller._apply_in_flight == set()
+    runtime.apply_reviewed = successful_apply
+    await controller.check_root("root-1")
+    await controller.apply_reviewed("root-1", TOKEN)
+    assert controller.snapshot.phase == "receipt"
+
+
+async def test_history_return_restores_review_origin() -> None:
+    runtime = _Runtime()
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+    await controller.check_root("root-1")
+    await controller.show_resolution_history("root-1")
+
+    controller.return_from_resolution_history()
+
+    assert controller.snapshot.phase == "review"
+
+
+async def test_history_return_restores_receipt_origin() -> None:
+    runtime = _Runtime()
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+    await controller.check_root("root-1")
+    await controller.apply_reviewed("root-1", TOKEN)
+    assert controller.snapshot.phase == "receipt"
+    await controller.show_resolution_history("root-1")
+
+    controller.return_from_resolution_history()
+
+    assert controller.snapshot.phase == "receipt"
+
+
+async def test_history_origin_is_revoked_by_new_review_lifecycle() -> None:
+    runtime = _Runtime()
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+    await controller.check_root("root-1")
+    await controller.show_resolution_history("root-1")
+    runtime.check_plan = _conflict_plan(token=TOKEN_2)
+    await controller.check_root("root-1")
+
+    assert controller._history_origin is None
+    controller.return_from_resolution_history()
+
+    assert controller.snapshot.phase == "review"
+    assert controller.snapshot.review.observation_token == TOKEN_2

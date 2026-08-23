@@ -26609,12 +26609,12 @@ class LibraryScreen(BaseAppScreen):
         self, event: LibraryNotesAddFromFilesCanvas.ActivateRequested
     ) -> None:
         event.stop()
-        root_id = self._library_notes_sync_controller.snapshot.review.root_id
-        if root_id:
-            await self._library_notes_sync_controller.activate_root(root_id)
-            if self._library_notes_sync_controller.snapshot.phase == "roots":
-                self._library_notes_view = "lasting_roots"
-                _sync_library_canvas(self, "notes")
+        await self._library_notes_sync_controller.activate_root(
+            event.root_id, event.observation_token
+        )
+        if self._library_notes_sync_controller.snapshot.phase == "roots":
+            self._library_notes_view = "lasting_roots"
+            _sync_library_canvas(self, "notes")
 
     @on(LibraryNotesAddFromFilesCanvas.ChoiceRequested)
     def handle_library_notes_lasting_choice(
@@ -26700,9 +26700,7 @@ class LibraryScreen(BaseAppScreen):
         self, event: LibraryNotesAddFromFilesCanvas.HistoryReturnRequested
     ) -> None:
         event.stop()
-        self._library_notes_sync_controller.set_review_page(
-            self._library_notes_sync_controller.snapshot.review.page
-        )
+        self._library_notes_sync_controller.return_from_resolution_history()
 
     @on(LibraryNotesAddFromFilesCanvas.PageRequested)
     def handle_library_notes_lasting_review_page(
