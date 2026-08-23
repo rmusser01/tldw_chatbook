@@ -282,6 +282,44 @@ def test_full_trace_aliases_credentials_embedded_in_envelope_identifiers() -> No
     "profile",
     ["safe_summary", "redacted_diagnostic", "full_trace"],
 )
+def test_credentials_are_scrubbed_from_usage_envelope_and_pem_fields(
+    profile: str,
+) -> None:
+    pem = (
+        "-----BEGIN PRIVATE KEY-----\n"
+        "TOP-SECRET-PRIVATE-MATERIAL\n"
+        "-----END PRIVATE KEY-----"
+    )
+    snapshot = _snapshot(
+        _record(
+            label=pem,
+            status=f"password={SECRET_VALUES[2]}",
+            usage=ProviderUsage(
+                uncached_input=1,
+                output=1,
+                provider=SECRET_VALUES[1],
+                model="model-a",
+            ),
+            payload={"private_key": pem},
+        )
+    )
+
+    payload = _build(snapshot, profile, confirm_full=profile == "full_trace")
+    serialized = json.dumps(payload)
+
+    assert "TOP-SECRET-PRIVATE-MATERIAL" not in serialized
+    for secret in SECRET_VALUES:
+        assert secret not in serialized
+    assert any(
+        item["reason"] == "credential"
+        for item in payload["manifest"]["redaction_provenance"]
+    )
+
+
+@pytest.mark.parametrize(
+    "profile",
+    ["safe_summary", "redacted_diagnostic", "full_trace"],
+)
 def test_credentials_are_absent_from_serialized_bytes_in_every_profile(
     profile: str,
 ) -> None:
@@ -363,6 +401,45 @@ def test_preflight_counts_overlapping_redaction_and_truncation_once_each() -> No
     assert preflight.privacy_inventory["observed"] == sum(
         decision.source_state == "observed" for decision in preflight.field_decisions
     )
+
+
+def test_safe_summary_coarsens_timing_and_records_provenance() -> None:
+    payload = _build(
+        _snapshot(
+            _record(
+                observed_at=12.875,
+                step_started_at=10.625,
+                first_token_at=11.875,
+                completed_at=13.625,
+            )
+        ),
+        trajectory_export.TraceExportProfile.SAFE_SUMMARY,
+    )
+    event = payload["events"][0]
+
+    assert event["observed_at"] == 12.0
+    assert event["step_started_at"] == 10.0
+    assert event["first_token_at"] == 11.0
+    assert event["completed_at"] == 13.0
+    assert all(
+        event["field_states"][field] == "truncated"
+        for field in (
+            "observed_at",
+            "step_started_at",
+            "first_token_at",
+            "completed_at",
+        )
+    )
+    assert {
+        item["field"]
+        for item in payload["manifest"]["redaction_provenance"]
+        if item["reason"] == "coarse_timing_1s"
+    } == {
+        "observed_at",
+        "step_started_at",
+        "first_token_at",
+        "completed_at",
+    }
 
 
 def test_builder_rejects_a_preflight_from_a_different_snapshot() -> None:
@@ -455,6 +532,17 @@ def test_malformed_digest_is_rejected_actionably() -> None:
         trajectory_import.load_imported_trace(payload)
 
 
+def test_resigned_bundle_cannot_claim_digest_authenticity() -> None:
+    payload = _build(_snapshot())
+    payload["integrity"]["authenticity"] = True
+    _resign(payload)
+
+    with pytest.raises(
+        trajectory_import.TrajectoryImportError, match="authenticity.*false"
+    ):
+        trajectory_import.load_imported_trace(payload)
+
+
 @pytest.mark.parametrize(
     ("mutation", "message"),
     [
@@ -465,7 +553,22 @@ def test_malformed_digest_is_rejected_actionably() -> None:
             lambda p: p["manifest"]["privacy_inventory"].update(redacted=-1),
             "privacy_inventory",
         ),
+        (
+            lambda p: p["manifest"]["privacy_inventory"].pop("sensitive"),
+            "privacy_inventory.*sensitive",
+        ),
+        (lambda p: p["manifest"].pop("missing_metadata"), "missing_metadata"),
+        (lambda p: p["manifest"].pop("redaction_provenance"), "redaction_provenance"),
         (lambda p: p["events"].__setitem__(0, "bad-event"), r"events\[0\]"),
+        (lambda p: p["events"][0].pop("observed_at"), r"events\[0\].observed_at"),
+        (
+            lambda p: p["events"][0].pop("field_provenance"),
+            r"events\[0\].field_provenance",
+        ),
+        (
+            lambda p: p["events"][0].pop("redaction_provenance"),
+            r"events\[0\].redaction_provenance",
+        ),
         (lambda p: p["events"][0].update(seq="not-an-integer"), r"events\[0\].seq"),
         (lambda p: p["events"][0].update(kind=[]), r"events\[0\].kind"),
         (lambda p: p["events"][0].update(turn_id={}), r"events\[0\].turn_id"),

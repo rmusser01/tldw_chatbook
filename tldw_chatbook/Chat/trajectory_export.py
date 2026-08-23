@@ -234,6 +234,12 @@ class TraceExportPreflight:
 
 
 _MATERIAL_FIELDS = ("content_preview", "payload", "variants", "model", "provider")
+_TIMING_FIELDS = (
+    "observed_at",
+    "step_started_at",
+    "first_token_at",
+    "completed_at",
+)
 _IDENTITY_DOMAINS = {
     "event_id": "event",
     "conversation_id": "conversation",
@@ -250,13 +256,19 @@ _NON_OBSERVED_STATES = frozenset(
     {"redacted", "truncated", "omitted", "not_available", "capture_failed"}
 )
 _CREDENTIAL_KEY_RE = re.compile(
-    r"(?:^|[_-])(?:api[_-]?key|authorization|auth|access[_-]?token|"
+    r"(?:^|[_-])(?:api[_-]?key|private[_-]?key|authorization|auth|access[_-]?token|"
     r"refresh[_-]?token|token|password|passwd|secret|credential)(?:$|[_-])",
     re.IGNORECASE,
 )
 _CREDENTIAL_VALUE_RES = (
+    re.compile(
+        r"-----BEGIN [^-\n]*PRIVATE KEY-----.*?"
+        r"-----END [^-\n]*PRIVATE KEY-----",
+        re.IGNORECASE | re.DOTALL,
+    ),
     re.compile(r"\b(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE),
     re.compile(r"\bsk-[A-Za-z0-9_-]{8,}", re.IGNORECASE),
+    re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
     re.compile(
         r"\b(?:api[_ -]?key|token|password|passwd|secret)\s*[:=]\s*\S+",
         re.IGNORECASE,
@@ -265,6 +277,7 @@ _CREDENTIAL_VALUE_RES = (
 _CONTENT_KEYS = frozenset(
     {"args", "arguments", "body", "content", "input", "output", "prompt", "result"}
 )
+_CREDENTIAL_SAFE_KEYS = frozenset({"first_token_at"})
 _IDENTIFIER_KEY_RE = re.compile(r"(?:^|[_-])(?:id|identifier|uuid)s?$", re.IGNORECASE)
 
 
@@ -286,7 +299,11 @@ def _credential_text(value: str) -> tuple[str, bool]:
 
 
 def _has_credential(value: Any, key: str = "") -> bool:
-    if key and (_CREDENTIAL_KEY_RE.search(key) or _credential_text(key)[1]):
+    if (
+        key
+        and key.lower() not in _CREDENTIAL_SAFE_KEYS
+        and (_CREDENTIAL_KEY_RE.search(key) or _credential_text(key)[1])
+    ):
         return True
     if isinstance(value, Mapping):
         return any(_has_credential(item, str(name)) for name, item in value.items())
@@ -310,7 +327,11 @@ def _govern_value(
     key: str = "",
 ) -> tuple[Any, list[dict[str, str]], bool, bool]:
     """Return governed value, provenance, truncated flag, sensitive flag."""
-    if key and _CREDENTIAL_KEY_RE.search(key):
+    if (
+        key
+        and key.lower() not in _CREDENTIAL_SAFE_KEYS
+        and _CREDENTIAL_KEY_RE.search(key)
+    ):
         return (
             "[credential redacted]",
             [{"field": path, "state": "redacted", "reason": "credential"}],
@@ -393,6 +414,11 @@ def _govern_value(
 
 def _record_dict(record: TrajectoryRecord) -> dict[str, Any]:
     usage = dataclasses.asdict(record.usage) if record.usage is not None else None
+    state_aliases = {
+        "legacy_missing": "not_available",
+        "missing": "not_available",
+        "source_unavailable": "not_available",
+    }
     return {
         "event_id": record.event_id,
         "seq": record.seq,
@@ -420,7 +446,10 @@ def _record_dict(record: TrajectoryRecord) -> dict[str, Any]:
         "payload": record.payload,
         "variants": list(record.variants),
         "depth": record.depth,
-        "field_states": dict(record.field_states),
+        "field_states": {
+            str(field): state_aliases.get(str(state), str(state))
+            for field, state in record.field_states.items()
+        },
         "sensitivity": record.sensitivity,
     }
 
@@ -547,6 +576,79 @@ def _prepare_field(
     )
 
 
+def _prepare_safe_timing(
+    event: dict[str, Any],
+) -> tuple[list[TraceFieldDecision], list[dict[str, str]]]:
+    """Bucket safe-summary timing to whole seconds with explicit provenance."""
+    decisions: list[TraceFieldDecision] = []
+    provenance: list[dict[str, str]] = []
+    for field in _TIMING_FIELDS:
+        value = event[field]
+        source_state = str(event["field_states"].get(field) or "observed")
+        if source_state in _NON_OBSERVED_STATES:
+            if source_state in _MISSING_STATES | {"omitted"}:
+                event[field] = None
+            decisions.append(
+                TraceFieldDecision(
+                    str(event["event_id"]),
+                    field,
+                    source_state,
+                    f"source_{source_state}",
+                    False,
+                    source_state,
+                )
+            )
+            provenance.append(
+                {
+                    "event_id": str(event["event_id"]),
+                    "field": field,
+                    "state": source_state,
+                    "reason": f"source_{source_state}",
+                }
+            )
+            continue
+        if value is None:
+            continue
+        event[field] = float(int(float(value)))
+        event["field_states"][field] = "truncated"
+        decisions.append(
+            TraceFieldDecision(
+                str(event["event_id"]),
+                field,
+                "truncated",
+                "coarse_timing_1s",
+                False,
+            )
+        )
+        provenance.append(
+            {
+                "event_id": str(event["event_id"]),
+                "field": field,
+                "state": "truncated",
+                "reason": "coarse_timing_1s",
+            }
+        )
+    return decisions, provenance
+
+
+def _scrub_event_credentials(
+    event: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, str]]]:
+    """Credential-scrub the complete serialized event as the final privacy gate."""
+    scrubbed, nested, _, _ = _govern_value(
+        event,
+        profile=TraceExportProfile.FULL_TRACE,
+        path="event",
+    )
+    normalized = []
+    for item in nested:
+        field = item["field"]
+        if field.startswith("event."):
+            field = field[len("event.") :]
+        normalized.append({**item, "field": field})
+    return dict(scrubbed), normalized
+
+
 def preflight_trace_export(
     snapshot: TrajectorySnapshot,
     *,
@@ -586,8 +688,43 @@ def preflight_trace_export(
                 entry = {"event_id": event["event_id"], **item}
                 event_provenance.append(entry)
                 provenance.append(entry)
+        if selected is TraceExportProfile.SAFE_SUMMARY:
+            timing_decisions, timing_provenance = _prepare_safe_timing(event)
+            decisions.extend(timing_decisions)
+            for entry in timing_provenance:
+                root_field = re.split(r"[.[]", entry["field"], maxsplit=1)[0]
+                field_provenance[root_field] = {
+                    "state": entry["state"],
+                    "reason": entry["reason"],
+                    "sensitivity": record.sensitivity or "unspecified",
+                }
+                event_provenance.append(entry)
+                provenance.append(entry)
         event["field_provenance"] = field_provenance
         event["redaction_provenance"] = event_provenance
+        event, credential_provenance = _scrub_event_credentials(event)
+        credential_roots: set[str] = set()
+        for item in credential_provenance:
+            entry = {"event_id": str(event["event_id"]), **item}
+            event["redaction_provenance"].append(entry)
+            provenance.append(entry)
+            credential_roots.add(re.split(r"[.[]", item["field"], maxsplit=1)[0])
+        for field in sorted(credential_roots):
+            event["field_states"][field] = "redacted"
+            event["field_provenance"][field] = {
+                "state": "redacted",
+                "reason": "credential",
+                "sensitivity": record.sensitivity or "unspecified",
+            }
+            decisions.append(
+                TraceFieldDecision(
+                    str(event["event_id"]),
+                    field,
+                    "redacted",
+                    "credential",
+                    True,
+                )
+            )
         prepared_events.append(event)
 
     states = [decision.state for decision in decisions]
@@ -756,12 +893,13 @@ def build_trace_export(
     events.append(export_event)
     missing_metadata = [
         {
-            "event_id": decision.event_id,
-            "field": decision.field,
-            "state": decision.state,
+            "event_id": str(event["event_id"]),
+            "field": str(field),
+            "state": str(state),
         }
-        for decision in preflight.field_decisions
-        if decision.state in _MISSING_STATES
+        for event in preflight.prepared_events
+        for field, state in event["field_states"].items()
+        if state in _MISSING_STATES
     ]
     manifest = {
         "schema_version": TRACE_EXPORT_VERSION,
