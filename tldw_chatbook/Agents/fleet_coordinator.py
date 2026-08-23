@@ -142,6 +142,7 @@ class RetainedTranscript:
     messages: tuple[dict, ...]
     steering: tuple[tuple[str, str], ...]
     retained_at: float
+    steering_with_causes: tuple[tuple[str, str, str | None], ...] = ()
 
 
 class FleetCoordinator:
@@ -598,9 +599,9 @@ class FleetCoordinator:
             return False  # cannot be size-bounded, so it is not kept
         if size > self._retained_transcript_max_chars:
             return False
+        steering_with_causes = tuple(self._steering.pop(handle_id, []))
         steering = tuple(
-            (source, text)
-            for source, text, _cause in self._steering.pop(handle_id, [])
+            (source, text) for source, text, _cause in steering_with_causes
         )
         self._retained[handle_id] = RetainedTranscript(
             handle_id=handle_id,
@@ -611,6 +612,7 @@ class FleetCoordinator:
             messages=tuple(dict(m) for m in messages),
             steering=steering,
             retained_at=self._clock(),
+            steering_with_causes=steering_with_causes,
         )
         self._evict_over_cap_locked()
         return True

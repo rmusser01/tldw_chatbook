@@ -44,6 +44,7 @@ from tldw_chatbook.Agents.agent_models import (
     RUNTIME_TOOL_NAMES,
     STEERING_SOURCE_USER,
     TERMINAL_RUN_STATUSES,
+    TRACE_STEP_INDEX_BASE,
     SPAWN_TOOL_NAME,
     STEP_ERROR,
     STEP_MODEL,
@@ -381,12 +382,14 @@ def console_run_budget() -> RunBudget:
     except Exception:  # noqa: BLE001 -- config import must never break a run
         return DEFAULT_CONSOLE_RUN_BUDGET
 
-    def _int(key: str, default: int, minimum: int) -> int:
+    def _int(
+        key: str, default: int, minimum: int, maximum: int | None = None
+    ) -> int:
         try:
             raw = get_cli_setting("console", key, default)
         except Exception:  # noqa: BLE001
             return default
-        return coerce_int_setting(raw, default, minimum=minimum)
+        return coerce_int_setting(raw, default, minimum=minimum, maximum=maximum)
 
     def _float(key: str, default: float, minimum: float) -> float:
         try:
@@ -415,6 +418,7 @@ def console_run_budget() -> RunBudget:
             "agent_max_steps",
             DEFAULT_CONSOLE_AGENT_MAX_STEPS,
             MIN_CONSOLE_AGENT_MAX_STEPS,
+            TRACE_STEP_INDEX_BASE - 1,
         ),
         max_wall_seconds=_float(
             "agent_max_wall_seconds",

@@ -1198,6 +1198,42 @@ def test_spawn_creates_linked_child_with_clean_context(db):
     assert db.count_subagent_runs("c") == 1
 
 
+def test_inline_spawn_capture_failure_never_links_child_to_absent_step(db, monkeypatch):
+    original_insert = db.insert_steps_at_indices
+
+    def fail_spawn_capture(run_id, indexed_steps):
+        if any(step["kind"] == "spawn" for _index, step in indexed_steps):
+            raise RuntimeError("persistent spawn capture failure")
+        return original_insert(run_id, indexed_steps)
+
+    monkeypatch.setattr(db, "insert_steps_at_indices", fail_spawn_capture)
+    service, _chat = make_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "inspect"}),
+            "child done",
+            "parent done",
+        ],
+    )
+    parent_id, outcome = service.run_turn(
+        conversation_id="inline-spawn-capture",
+        messages=[{"role": "user", "content": "delegate"}],
+        config=CFG,
+        api_endpoint="llama_cpp",
+    )
+    join_fleet_children(service)
+    assert outcome.status == RUN_DONE
+    rows = db.list_runs("inline-spawn-capture", include_superseded=True)
+    parent = next(row for row in rows if row["id"] == parent_id)
+    child = next(row for row in rows if row["agent_kind"] == "subagent")
+    diagnostic = next(step for step in parent["steps"] if step["kind"] == "capture_failed")
+    diagnostic_id = f"agent-step:{parent_id}:{diagnostic['index']}"
+    assert child["spawn_event_id"] == diagnostic_id
+    assert next(
+        step for step in child["steps"] if step["kind"] == "agent_run_reserved"
+    )["parent_event_id"] == diagnostic_id
+
+
 def test_spawn_propagates_workspace_note_to_child_prompt(db):
     """A non-default workspace note rides the parent config onto the child's
     config, so a spawned sub-agent -- which operates on the same workspace
@@ -1431,6 +1467,7 @@ def test_agent_lifecycle_capture_failure_uses_actual_diagnostic_cause_after_relo
     db, monkeypatch, failed_kind
 ):
     original_insert = db.insert_steps_at_indices
+    original_terminal = db.set_terminal_with_step
     failed = False
 
     def fail_lifecycle_once(run_id, indexed_steps):
@@ -1443,6 +1480,16 @@ def test_agent_lifecycle_capture_failure_uses_actual_diagnostic_cause_after_relo
         return original_insert(run_id, indexed_steps)
 
     monkeypatch.setattr(db, "insert_steps_at_indices", fail_lifecycle_once)
+
+    def fail_terminal_once(run_id, status, result, terminal_step):
+        nonlocal failed
+        if not failed and terminal_step["kind"] == failed_kind:
+            failed = True
+            raise RuntimeError("simulated lifecycle storage failure")
+        return original_terminal(run_id, status, result, terminal_step)
+
+    if failed_kind == "agent_run_completed":
+        monkeypatch.setattr(db, "set_terminal_with_step", fail_terminal_once)
     service, _ = make_service(db, ["safe answer"])
     run_id, outcome = service.run_turn(
         conversation_id=f"capture-failure-{failed_kind}",
@@ -1459,14 +1506,18 @@ def test_agent_lifecycle_capture_failure_uses_actual_diagnostic_cause_after_relo
     assert row["status"] == RUN_DONE
     steps = row["steps"]
     diagnostics = [step for step in steps if step["kind"] == "capture_failed"]
-    assert len(diagnostics) == 1
-    diagnostic = diagnostics[0]
+    expected_diagnostics = 0 if failed_kind == "agent_run_completed" else 1
+    assert len(diagnostics) == expected_diagnostics
     lifecycle_kinds = [
         step["kind"] for step in steps if step["kind"].startswith("agent_run_")
     ]
     assert len(lifecycle_kinds) == len(set(lifecycle_kinds))
-    assert failed_kind not in [step["kind"] for step in steps]
-    assert diagnostic["field_states"][failed_kind] == "not_observed"
+    if failed_kind == "agent_run_completed":
+        assert len([step for step in steps if step["kind"] == failed_kind]) == 1
+    else:
+        diagnostic = diagnostics[0]
+        assert failed_kind not in [step["kind"] for step in steps]
+        assert diagnostic["field_states"][failed_kind] == "not_observed"
     event_ids = {
         f"agent-step:{run_id}:{step['index']}" for step in steps
     } | {f"agent-run:{run_id}"}
@@ -1478,7 +1529,89 @@ def test_agent_lifecycle_capture_failure_uses_actual_diagnostic_cause_after_relo
         assert started["parent_event_id"] == (
             f"agent-step:{run_id}:{diagnostic['index']}"
         )
-    assert len([step for step in steps if step["kind"] == failed_kind]) == 0
+    reopened.close()
+
+
+def test_runtime_observation_and_concurrent_cancellation_share_owner_sequence(
+    db, monkeypatch
+):
+    original_insert = db.insert_steps_at_indices
+    runtime_waiting = threading.Event()
+    release_runtime = threading.Event()
+    blocked = False
+
+    def block_model_request_once(run_id, indexed_steps):
+        nonlocal blocked
+        if not blocked and any(
+            step["kind"] == "model_request_started"
+            for _index, step in indexed_steps
+        ):
+            blocked = True
+            runtime_waiting.set()
+            assert release_runtime.wait(5)
+        return original_insert(run_id, indexed_steps)
+
+    monkeypatch.setattr(db, "insert_steps_at_indices", block_model_request_once)
+    service, _chat = make_service(db, ["safe answer"])
+    result: dict[str, object] = {}
+
+    def run():
+        result["value"] = service.run_turn(
+            conversation_id="owner-seq-race",
+            messages=[{"role": "user", "content": "q"}],
+            config=CFG,
+            api_endpoint="llama_cpp",
+        )
+
+    worker = threading.Thread(target=run)
+    worker.start()
+    assert runtime_waiting.wait(5)
+    run_id = db.list_runs("owner-seq-race", include_superseded=True)[0]["id"]
+    assert db.set_status(run_id, "cancelled") is True
+    service._record_terminal_lifecycle(run_id, "cancelled")
+    release_runtime.set()
+    worker.join(5)
+    assert not worker.is_alive()
+
+    path = db.db_path
+    db.close()
+    reopened = AgentRunsDB(path, client_id="owner-seq-race-reload")
+    row = reopened.get_run(run_id)
+    owner_sequences = [
+        step["owner_seq"]
+        for step in row["steps"]
+        if step["owner_seq"] is not None
+    ]
+    assert len(owner_sequences) == len(set(owner_sequences))
+    assert sorted(owner_sequences) == list(
+        range(min(owner_sequences), max(owner_sequences) + 1)
+    )
+    inputs = {
+        "messages": [],
+        "usage_by_id": {},
+        "traj_rows": [],
+        "variant_sets": [],
+        "compaction_records": [],
+        "agent_runs": [row],
+        "agent_steps": [
+            {**step, "run_id": run_id, "conversation_id": "owner-seq-race"}
+            for step in row["steps"]
+        ],
+    }
+    projected = [
+        (record.event_id, record.source_seq)
+        for turn in derive_trajectory(**inputs).turns
+        for record in turn.records
+    ]
+    assert projected == [
+        (record.event_id, record.source_seq)
+        for turn in derive_trajectory(**inputs).turns
+        for record in turn.records
+    ]
+    projected_sequences = [
+        source_seq for _event_id, source_seq in projected if source_seq is not None
+    ]
+    assert projected_sequences == sorted(projected_sequences)
     reopened.close()
 
 

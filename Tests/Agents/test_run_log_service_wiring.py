@@ -18,6 +18,7 @@ from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Agents.run_log import RunLogWriter
 from tldw_chatbook.Agents.run_log_format import iter_records
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolCatalogRegistry
+from tldw_chatbook.Chat.console_fleet_wake import compose_wake_notice
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
@@ -92,8 +93,11 @@ def test_a_plain_run_writes_records_without_the_caller_wiring_anything(wired):
 def test_real_model_output_is_private_at_log_and_terminal_db_boundaries(wired):
     db, registry, root = wired
     private = (
-        "reasoning_content: private plan; read /Users/alice/secret.txt; "
-        "api_key=sk-private-model-output"
+        "Implemented the parser successfully.\n"
+        "Saved the patch at /Users/alice/secret/parser.py\n"
+        "reasoning_content: private plan\n"
+        "api_key=sk-private-model-output\n"
+        "All 7 parser tests passed."
     )
     service = AgentService(db, registry, chat_call=chat_call_returning(private))
     run_id, outcome = service.run_turn(
@@ -104,18 +108,29 @@ def test_real_model_output_is_private_at_log_and_terminal_db_boundaries(wired):
     )
 
     assert outcome.final_text == private
-    assert db.get_run(run_id)["result"] is None
+    durable_result = db.get_run(run_id)["result"]
+    assert durable_result
+    assert "Implemented the parser successfully." in durable_result
+    assert "All 7 parser tests passed." in durable_result
     records = read_all(root)
     assert len(records) == 1
     assert records[0].type == "model"
-    assert records[0].content == ""
+    assert "Implemented the parser successfully." in records[0].content
+    assert "All 7 parser tests passed." in records[0].content
+    wake_notice = compose_wake_notice([db.get_run(run_id)])
+    assert "Implemented the parser successfully." in wake_notice
+    assert "All 7 parser tests passed." in wake_notice
     decoded = "\n".join(record.content for record in records)
     for forbidden in (
+        "secret/parser.py",
         "reasoning_content",
         "/Users/alice/secret.txt",
         "sk-private-model-output",
+        "private plan",
     ):
         assert forbidden not in decoded
+        assert forbidden not in durable_result
+        assert forbidden not in wake_notice
 
 
 def test_record_numbers_are_unique_across_the_whole_run_tree(wired):

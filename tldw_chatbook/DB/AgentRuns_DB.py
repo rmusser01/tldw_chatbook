@@ -21,6 +21,7 @@ from typing import Sequence, Iterator, Union
 from loguru import logger
 
 from tldw_chatbook.Agents.agent_models import (
+    AGENT_LIFECYCLE_INDEX_BASE,
     AgentDefinition,
     TERMINAL_RUN_STATUSES,
     validate_agent_definition,
@@ -1581,6 +1582,58 @@ class AgentRunsDB(BaseDB):
             )
         return cursor.rowcount > 0
 
+    def set_terminal_with_step(
+        self,
+        run_id: str,
+        status: str,
+        result: str | None,
+        terminal_step: dict,
+    ) -> bool:
+        """Atomically persist a first-writer terminal state and observation."""
+        if status not in TERMINAL_RUN_STATUSES:
+            raise ValueError("status must be terminal")
+        index = terminal_step.get("index")
+        canonical = _canonical_step_payload(index, terminal_step)
+        placeholders = ",".join("?" for _ in TERMINAL_RUN_STATUSES)
+        stamp = _now_iso()
+        with self.transaction() as conn:
+            row = conn.execute(
+                "SELECT status FROM agent_runs WHERE id = ?", (run_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"Unknown run id: {run_id}")
+            existing = conn.execute(
+                "SELECT payload FROM agent_run_steps WHERE run_id = ? AND seq = ?",
+                (run_id, index),
+            ).fetchone()
+            if existing is not None:
+                stored = json.dumps(
+                    json.loads(existing["payload"]),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                if stored != canonical:
+                    raise AgentStepConflictError(
+                        f"step payload conflicts with durable index: {index}"
+                    )
+            if row["status"] in TERMINAL_RUN_STATUSES:
+                return False
+            if existing is None:
+                conn.execute(
+                    "INSERT INTO agent_run_steps (run_id, seq, payload, created_at) "
+                    "VALUES (?, ?, ?, ?)",
+                    (run_id, index, canonical, stamp),
+                )
+            cursor = conn.execute(
+                "UPDATE agent_runs SET status = ?, "
+                "result = COALESCE(?, result), updated_at = ? "
+                f"WHERE id = ? AND status NOT IN ({placeholders})",
+                (status, result, stamp, run_id, *sorted(TERMINAL_RUN_STATUSES)),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("terminal status changed during transaction")
+        return True
+
     def reconcile_orphaned_runs(self) -> int:
         """Mark runs left ``running`` by a crashed process as ``error``.
 
@@ -1634,15 +1687,117 @@ class AgentRunsDB(BaseDB):
         if self.is_memory_db or self.db_path_str in self._swept_paths:
             return 0
         with self.transaction() as conn:
-            cur = conn.execute(
-                "UPDATE agent_runs "
-                "SET status = 'error', "
-                "    result = COALESCE(result, 'Interrupted by app restart'), "
-                "    updated_at = ? "
-                "WHERE status = 'running'",
-                (_now_iso(),),
-            )
-            rowcount = cur.rowcount
+            def run_observations(run_id: str) -> tuple[list[dict], int, str]:
+                parsed: list[dict] = []
+                for step_row in conn.execute(
+                    "SELECT payload FROM agent_run_steps WHERE run_id = ?",
+                    (run_id,),
+                ).fetchall():
+                    try:
+                        parsed.append(json.loads(step_row["payload"]))
+                    except (TypeError, json.JSONDecodeError):
+                        continue
+                ordered = [
+                    step
+                    for step in parsed
+                    if isinstance(step.get("owner_seq"), int)
+                    and isinstance(step.get("index"), int)
+                ]
+                latest = max(
+                    ordered,
+                    key=lambda step: (step["owner_seq"], step["index"]),
+                    default=None,
+                )
+                owner_seq = latest["owner_seq"] if latest is not None else -1
+                parent = (
+                    f"agent-step:{run_id}:{latest['index']}"
+                    if latest is not None
+                    else f"agent-run:{run_id}"
+                )
+                return parsed, owner_seq, parent
+
+            def insert_recovery_diagnostic(
+                run_id: str,
+                index: int,
+                summary: str,
+                field_states: dict[str, str],
+            ) -> None:
+                _steps, owner_seq, parent = run_observations(run_id)
+                diagnostic = {
+                    "index": index,
+                    "kind": "capture_failed",
+                    "summary": summary,
+                    "created_at": observed_at,
+                    "status": "incomplete",
+                    "owner_seq": owner_seq + 1,
+                    "parent_event_id": parent,
+                    "source_event_id": None,
+                    "field_states": {
+                        "payload": "capture_failed",
+                        **field_states,
+                    },
+                    "sensitivity": "diagnostic",
+                }
+                canonical = _canonical_step_payload(index, diagnostic)
+                conn.execute(
+                    "INSERT OR IGNORE INTO agent_run_steps "
+                    "(run_id, seq, payload, created_at) VALUES (?, ?, ?, ?)",
+                    (run_id, index, canonical, observed_at),
+                )
+
+            orphan_ids = [
+                row["id"]
+                for row in conn.execute(
+                    "SELECT id FROM agent_runs WHERE status = 'running'"
+                ).fetchall()
+            ]
+            observed_at = _now_iso()
+            diagnostic_index = AGENT_LIFECYCLE_INDEX_BASE + 500
+            for run_id in orphan_ids:
+                insert_recovery_diagnostic(
+                    run_id,
+                    diagnostic_index,
+                    "Terminal state repaired after app restart",
+                    {"reconciliation": "observed"},
+                )
+                conn.execute(
+                    "UPDATE agent_runs SET status = 'error', "
+                    "result = COALESCE(result, 'Interrupted by app restart'), "
+                    "updated_at = ? WHERE id = ? AND status = 'running'",
+                    (observed_at, run_id),
+                )
+            terminal_kind = {
+                "done": "agent_run_completed",
+                "cancelled": "agent_run_cancelled",
+                "superseded": "agent_run_superseded",
+                "error": "agent_run_failed",
+                "stuck": "agent_run_failed",
+            }
+            terminal_rows = conn.execute(
+                "SELECT id, status FROM agent_runs WHERE status != 'running'"
+            ).fetchall()
+            split_rows = 0
+            repaired_orphans = set(orphan_ids)
+            for row in terminal_rows:
+                if row["id"] in repaired_orphans:
+                    continue
+                expected_kind = terminal_kind.get(row["status"])
+                if expected_kind is None:
+                    continue
+                steps, _owner_seq, _parent = run_observations(row["id"])
+                if any(step.get("kind") == expected_kind for step in steps):
+                    continue
+                insert_recovery_diagnostic(
+                    row["id"],
+                    AGENT_LIFECYCLE_INDEX_BASE + 501,
+                    "Preexisting terminal state lacked lifecycle capture",
+                    {
+                        "reconciliation": "observed",
+                        expected_kind: "not_observed",
+                    },
+                )
+                split_rows += 1
+            rowcount = len(orphan_ids) + split_rows
         self._swept_paths.add(self.db_path_str)
         return rowcount
 

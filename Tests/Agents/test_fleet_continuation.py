@@ -1124,6 +1124,110 @@ def test_undelivered_queued_steering_rides_the_seed_with_original_labels(db):
     assert resumed_payload[-1] == {"role": "user", "content": supervisor_labeled}
 
 
+def test_retained_live_send_preserves_its_cause_on_resumed_steering(db):
+    in_final_call = threading.Event()
+    release_final = threading.Event()
+    holder: dict[str, str] = {}
+
+    def gated_final():
+        in_final_call.set()
+        assert release_final.wait(_JOIN_TIMEOUT)
+        return "first run done"
+
+    def send_while_child_is_finishing():
+        assert in_final_call.wait(_JOIN_TIMEOUT)
+        handle = next(
+            candidate
+            for candidate in coordinator.snapshot()
+            if candidate.status == "running"
+        )
+        holder["handle_id"] = handle.handle_id
+        return fence(
+            SEND_TO_AGENT_TOOL_NAME,
+            {"id": handle.handle_id, "message": "preserve this cause"},
+        )
+
+    def release_then_wait():
+        release_final.set()
+        return fence(WAIT_AGENTS_TOOL_NAME, {})
+
+    def resume():
+        return fence(
+            SEND_TO_AGENT_TOOL_NAME,
+            {"id": holder["handle_id"], "message": "resume now"},
+        )
+
+    service, _chat, coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "causal retained task"}),
+            send_while_child_is_finishing,
+            release_then_wait,
+            "turn one done",
+            resume,
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "turn two done",
+        ],
+        {"causal retained task": [gated_final, "resumed done"]},
+    )
+    run1, outcome1 = _run(service)
+    assert outcome1.status == RUN_DONE
+    _await_retained(coordinator, holder["handle_id"])
+    send_step = next(
+        step
+        for step in db.get_run(run1)["steps"]
+        if step["kind"] == "tool_call"
+        and step["tool_name"] == SEND_TO_AGENT_TOOL_NAME
+    )
+    send_event_id = f"agent-step:{run1}:{send_step['index']}"
+    retained = coordinator.get_retained(holder["handle_id"])
+    assert retained.steering_with_causes == (
+        (STEERING_SOURCE_SUPERVISOR, "preserve this cause", send_event_id),
+    )
+
+    run2, outcome2 = _run(service)
+    assert outcome2.status == RUN_DONE
+    resume_send = next(
+        step
+        for step in db.get_run(run2)["steps"]
+        if step["kind"] == "tool_call"
+        and step["tool_name"] == SEND_TO_AGENT_TOOL_NAME
+    )
+    resume_event_id = f"agent-step:{run2}:{resume_send['index']}"
+    resumed = next(
+        row
+        for row in _subagent_rows(db)
+        if row["resumed_from_run_id"] is not None
+    )
+    assert resumed["spawn_event_id"] == resume_event_id
+    reserved = next(
+        step for step in resumed["steps"] if step["kind"] == "agent_run_reserved"
+    )
+    assert reserved["parent_event_id"] == resume_event_id
+    path = db.db_path
+    db.close()
+    reopened = AgentRunsDB(path, client_id="retained-cause-reload")
+    reloaded = reopened.get_run(resumed["id"])
+    steering = next(
+        step
+        for step in reloaded["steps"]
+        if step["kind"] == "steering"
+        and step["source_event_id"] == send_event_id
+    )
+    assert steering["parent_event_id"] == send_event_id
+    all_rows = reopened.list_runs("c", include_superseded=True)
+    event_ids = {
+        f"agent-run:{row['id']}" for row in all_rows
+    } | {
+        f"agent-step:{row['id']}:{step['index']}"
+        for row in all_rows
+        for step in row["steps"]
+    }
+    assert steering["source_event_id"] in event_ids
+    assert steering["parent_event_id"] in event_ids
+    reopened.close()
+
+
 def test_a_resume_consumes_a_spawn_slot_and_refuses_at_the_budget(db):
     """A resume starts a NEW run, so it costs a spawn slot -- with the one
     slot already spent this turn, the resume is refused in spawn's own

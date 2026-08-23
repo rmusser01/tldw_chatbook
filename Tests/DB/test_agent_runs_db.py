@@ -6,7 +6,7 @@ from contextlib import contextmanager
 import pytest
 
 from tldw_chatbook.Agents.agent_models import AgentDefinition
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB, AgentStepConflictError
 
 
 @pytest.fixture()
@@ -419,6 +419,117 @@ def test_reconcile_preserves_existing_result(tmp_path):
     row = db2.get_run(rid)
     assert row["status"] == "error"
     assert row["result"] == "partial output"  # COALESCE keeps it
+    diagnostics = [step for step in row["steps"] if step["kind"] == "capture_failed"]
+    assert len(diagnostics) == 1
+    assert diagnostics[0]["status"] == "incomplete"
+    assert diagnostics[0]["parent_event_id"] == f"agent-run:{rid}"
+
+
+def test_terminal_status_and_lifecycle_insert_are_atomic_on_fault(tmp_path, monkeypatch):
+    db = AgentRunsDB(tmp_path / "atomic-terminal.db")
+    run_id = db.create_run(conversation_id="c", agent_kind="primary")
+    step = {
+        "index": 10_000_010,
+        "kind": "agent_run_completed",
+        "summary": "Agent run completed",
+        "created_at": "2026-08-22T00:00:00.000000Z",
+        "status": "done",
+        "owner_seq": 0,
+        "parent_event_id": f"agent-run:{run_id}",
+        "source_event_id": None,
+        "field_states": {"payload": "omitted"},
+        "sensitivity": "diagnostic",
+    }
+    real_transaction = db.transaction
+
+    class FaultAfterInsert:
+        def __init__(self, conn):
+            self.conn = conn
+
+        def execute(self, sql, params=()):
+            if sql.startswith("UPDATE agent_runs SET status"):
+                raise sqlite3.OperationalError("injected after lifecycle insert")
+            return self.conn.execute(sql, params)
+
+    @contextmanager
+    def faulting_transaction():
+        with real_transaction() as conn:
+            yield FaultAfterInsert(conn)
+
+    monkeypatch.setattr(db, "transaction", faulting_transaction)
+    with pytest.raises(sqlite3.OperationalError):
+        db.set_terminal_with_step(run_id, "done", "answer", step)
+
+    row = db.get_run(run_id)
+    assert row["status"] == "running"
+    assert row["result"] is None
+    assert not any(step["kind"] == "agent_run_completed" for step in row["steps"])
+
+
+def test_terminal_status_result_and_lifecycle_are_first_writer_wins(db):
+    run_id = db.create_run(conversation_id="c", agent_kind="primary")
+    completed = {
+        "index": 10_000_010,
+        "kind": "agent_run_completed",
+        "summary": "Agent run completed",
+        "created_at": "2026-08-22T00:00:00.000000Z",
+        "status": "done",
+        "owner_seq": 0,
+        "parent_event_id": f"agent-run:{run_id}",
+        "source_event_id": None,
+        "field_states": {"payload": "omitted"},
+        "sensitivity": "diagnostic",
+    }
+    failed = {**completed, "index": 10_000_014, "kind": "agent_run_failed"}
+
+    assert db.set_terminal_with_step(run_id, "done", "answer", completed) is True
+    assert db.set_terminal_with_step(run_id, "error", "late error", failed) is False
+    with pytest.raises(AgentStepConflictError):
+        db.set_terminal_with_step(
+            run_id,
+            "done",
+            "answer",
+            {**completed, "summary": "conflicting terminal observation"},
+        )
+
+    row = db.get_run(run_id)
+    assert row["status"] == "done"
+    assert row["result"] == "answer"
+    assert [step["kind"] for step in row["steps"]] == ["agent_run_completed"]
+
+
+def test_reconcile_marks_preexisting_split_terminal_row_as_incomplete(tmp_path):
+    db_path = tmp_path / "split-terminal.db"
+    setup = AgentRunsDB(db_path)
+    run_id = setup.create_run(conversation_id="c", agent_kind="primary")
+    setup.insert_steps_at_indices(
+        run_id,
+        [
+            (
+                0,
+                {
+                    "index": 0,
+                    "kind": "model_request_started",
+                    "summary": "Model request started",
+                    "owner_seq": 0,
+                    "parent_event_id": f"agent-run:{run_id}",
+                },
+            )
+        ],
+    )
+    assert setup.set_status(run_id, "done", "legacy answer") is True
+    setup.close()
+    AgentRunsDB._swept_paths.discard(str(db_path))
+
+    reopened = AgentRunsDB(db_path)
+    row = reopened.get_run(run_id)
+    assert row["status"] == "done"
+    assert row["result"] == "legacy answer"
+    diagnostic = next(step for step in row["steps"] if step["kind"] == "capture_failed")
+    assert diagnostic["status"] == "incomplete"
+    assert diagnostic["field_states"]["agent_run_completed"] == "not_observed"
+    assert diagnostic["parent_event_id"] == f"agent-step:{run_id}:0"
+    reopened.close()
 
 
 def test_reconcile_idempotent_same_process(tmp_path):

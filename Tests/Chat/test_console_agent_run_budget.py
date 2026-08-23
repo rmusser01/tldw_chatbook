@@ -22,7 +22,13 @@ from __future__ import annotations
 import pytest
 
 from tldw_chatbook import config as config_module
-from tldw_chatbook.Agents.agent_models import RunBudget
+from tldw_chatbook.Agents.agent_models import (
+    AGENT_LIFECYCLE_INDEX_BASE,
+    CONTROL_CAPTURE_INDEX_BASE,
+    TRACE_CAPTURE_INDEX_BASE,
+    TRACE_STEP_INDEX_BASE,
+    RunBudget,
+)
 from tldw_chatbook.Chat.console_agent_bridge import (
     DEFAULT_CONSOLE_MAX_MODEL_TURNS,
     DEFAULT_CONSOLE_MAX_STEPS,
@@ -123,6 +129,18 @@ def test_every_key_is_configurable(monkeypatch):
     assert budget.max_wall_seconds == 90.5
     assert budget.max_total_tokens == 1234
     assert budget.max_tool_call_seconds == 11.0
+
+
+def test_step_limit_is_capped_below_the_trace_storage_band(monkeypatch):
+    assert config_module.MAX_CONSOLE_AGENT_MAX_STEPS == TRACE_STEP_INDEX_BASE - 1
+    assert (
+        TRACE_STEP_INDEX_BASE
+        < TRACE_CAPTURE_INDEX_BASE
+        < CONTROL_CAPTURE_INDEX_BASE
+        < AGENT_LIFECYCLE_INDEX_BASE
+    )
+    _pin_console(monkeypatch, {"agent_max_steps": TRACE_STEP_INDEX_BASE + 99})
+    assert console_run_budget().max_steps == DEFAULT_CONSOLE_MAX_STEPS
 
 
 def test_config_is_re_read_on_every_call(monkeypatch):

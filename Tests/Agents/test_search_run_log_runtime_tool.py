@@ -397,7 +397,7 @@ def test_sensitive_large_result_has_no_recoverable_run_log_handle(
         for record in iter_records(segment.read_bytes())
     ]
     result_record = next(record for record in records if record.type == "tool_result")
-    assert result_record.content == ""
+    assert result_record.content == "[local path withheld]"
 
 
 def test_parent_can_filter_its_log_to_subagent_records_via_kind(tmp_path, monkeypatch):

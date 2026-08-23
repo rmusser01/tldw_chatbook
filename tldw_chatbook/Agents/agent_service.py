@@ -49,6 +49,7 @@ from .agent_models import (
     AGENT_LIFECYCLE_INDEX_BASE,
     AGENT_KIND_PRIMARY,
     AGENT_KIND_SUBAGENT,
+    CONTROL_CAPTURE_INDEX_BASE,
     MAX_STEERING_CHARS,
     RUN_CANCELLED,
     RUN_DONE,
@@ -66,6 +67,8 @@ from .agent_models import (
     STEP_AGENT_RUN_RESUMED,
     STEP_AGENT_RUN_STARTED,
     STEP_AGENT_RUN_SUPERSEDED,
+    STEP_SPAWN,
+    STEP_TOOL_CALL,
     TOOL_OUTCOME_CANCELLED,
     TOOL_OUTCOME_TIMEOUT,
     TERMINAL_RUN_STATUSES,
@@ -84,7 +87,6 @@ from .agent_models import (
     clamp_child_budget,
     contain_child_budget,
     definition_from_row,
-    format_steering_message,
     # Aliased: `_run_one` below has its own `definition_fingerprint: str |
     # None` keyword parameter (the audit value to persist), and that
     # parameter shadows this module-level function for the rest of
@@ -825,6 +827,10 @@ _CHAIN_OF_THOUGHT_RE = re.compile(
     r"\bchain(?:[\s_-]+of[\s_-]+thought)\b", re.IGNORECASE
 )
 _THINK_TAG_RE = re.compile(r"<\s*/?\s*think(?:\s[^>]*)?>", re.IGNORECASE)
+_THINK_BLOCK_RE = re.compile(
+    r"<\s*think(?:\s[^>]*)?>.*?<\s*/\s*think\s*>",
+    re.IGNORECASE | re.DOTALL,
+)
 _UNQUOTED_REASONING_FIELD_RE = re.compile(
     r"(?:^\s*|[,{]\s*|\\n\s*|\\?[\"']\s*)(?:-\s*)?"
     r"(?:reasoning|reasoning[\s_-]+content|chain[\s_-]+of[\s_-]+thought)"
@@ -842,17 +848,50 @@ def _contains_hidden_reasoning(content: str) -> bool:
     return False
 
 
+_DURABLE_SUMMARY_MAX_CHARS = 4_000
+
+
+def _safe_bounded_summary(content: str) -> tuple[str, bool]:
+    """Keep useful output while replacing private lines/blocks."""
+    sanitized = redact_log_line(content, max_length=0)
+    uppered = content.upper()
+    private_key = "-----BEGIN " in uppered and "PRIVATE KEY-----" in uppered
+    if (
+        sanitized == content
+        and not contains_local_path(content)
+        and not _contains_hidden_reasoning(content)
+        and not private_key
+    ):
+        return content, False
+
+    without_think = _THINK_BLOCK_RE.sub("[hidden reasoning withheld]", content)
+    lines: list[str] = []
+    withholding_key = False
+    for line in without_think.splitlines():
+        upper_line = line.upper()
+        if "-----BEGIN " in upper_line and "PRIVATE KEY-----" in upper_line:
+            withholding_key = True
+            lines.append("[private key withheld]")
+            continue
+        if withholding_key:
+            if "-----END " in upper_line and "PRIVATE KEY-----" in upper_line:
+                withholding_key = False
+            continue
+        if _contains_hidden_reasoning(line):
+            lines.append("[hidden reasoning withheld]")
+        elif contains_local_path(line):
+            lines.append("[local path withheld]")
+        else:
+            lines.append(redact_log_line(line, max_length=0))
+    summary = "\n".join(lines).strip()
+    if len(summary) > _DURABLE_SUMMARY_MAX_CHARS:
+        summary = redact_log_line(summary, max_length=_DURABLE_SUMMARY_MAX_CHARS)
+    return summary or "[private output withheld]", True
+
+
 def _safe_run_log_content(_record_type: str, content: str) -> tuple[str, bool]:
     """Return sanitized durable content and whether fidelity was withheld."""
-    if contains_local_path(content):
-        return "", True
-    if _contains_hidden_reasoning(content):
-        return "", True
-    uppered = content.upper()
-    if "-----BEGIN " in uppered and "PRIVATE KEY-----" in uppered:
-        return REDACTION_MARKER, True
-    sanitized = redact_log_line(content, max_length=0)
-    return sanitized, sanitized != content
+    return _safe_bounded_summary(content)
 
 
 def _safe_agent_task_summary(task: str | None) -> str | None:
@@ -872,13 +911,7 @@ def _safe_terminal_result(result: str | None) -> str | None:
     """Keep safe output while withholding private terminal content."""
     if not result:
         return None
-    if contains_local_path(result) or _contains_hidden_reasoning(result):
-        return None
-    uppered = result.upper()
-    if "-----BEGIN " in uppered and "PRIVATE KEY-----" in uppered:
-        return REDACTION_MARKER
-    sanitized = redact_log_line(result, max_length=0)
-    return sanitized or None
+    return _safe_bounded_summary(result)[0]
 
 
 _LIFECYCLE_INDEX = {
@@ -1153,6 +1186,26 @@ def _call_with_timeout(
     return result
 
 
+class _OwnerSeqAllocator:
+    """One process-local, thread-safe observation counter for a run."""
+
+    def __init__(self, next_value: int) -> None:
+        self._next_value = next_value
+        self._lock = threading.Lock()
+
+    def allocate(self, minimum: int | None = None) -> int:
+        with self._lock:
+            if minimum is not None:
+                self._next_value = max(self._next_value, minimum)
+            value = self._next_value
+            self._next_value += 1
+            return value
+
+    def ensure_at_least(self, next_value: int) -> None:
+        with self._lock:
+            self._next_value = max(self._next_value, next_value)
+
+
 class AgentService:
     """Run one agent turn (primary + any sub-agents) and persist it."""
 
@@ -1199,6 +1252,8 @@ class AgentService:
         wall_clock: Callable[[], datetime] = _utc_now,
     ) -> None:
         self.db = db
+        self._owner_seq_allocators: dict[str, _OwnerSeqAllocator] = {}
+        self._owner_seq_allocators_lock = threading.Lock()
         self.registry = registry
         self.chat_call = chat_call or _default_chat_call()
         self.clock = clock
@@ -2350,11 +2405,7 @@ class AgentService:
             # at this child).
             self._revoke_run_approvals(handle.run_id)
             try:
-                updated = self.db.set_status(handle.run_id, RUN_CANCELLED)
-                if updated:
-                    self._record_terminal_lifecycle(
-                        handle.run_id, RUN_CANCELLED
-                    )
+                self._set_terminal_status(handle.run_id, RUN_CANCELLED)
             except Exception:  # noqa: BLE001 — a DB failure here must not
                 # take down a turn that has already produced its answer.
                 logger.warning("could not mark abandoned sub-agent run cancelled")
@@ -2371,6 +2422,27 @@ class AgentService:
             return max(observed, default=-1) + 1
         except Exception:  # noqa: BLE001 — capture never gates execution
             return 0
+
+    def _owner_seq_allocator(self, run_id: str) -> "_OwnerSeqAllocator":
+        """Return this service's one allocator for a run.
+
+        The desktop app owns one AgentService per active Console bridge. A
+        different process/service cannot share this in-memory lock; SQLite
+        still serializes its writes, but cross-service observation ordering is
+        intentionally outside this process-local runtime contract.
+        """
+        with self._owner_seq_allocators_lock:
+            allocator = self._owner_seq_allocators.get(run_id)
+            if allocator is None:
+                allocator = _OwnerSeqAllocator(self._next_owner_seq(run_id))
+                self._owner_seq_allocators[run_id] = allocator
+            return allocator
+
+    def _allocate_owner_seq(self, run_id: str, minimum: int | None = None) -> int:
+        return self._owner_seq_allocator(run_id).allocate(minimum)
+
+    def _ensure_owner_seq_at_least(self, run_id: str, next_value: int) -> None:
+        self._owner_seq_allocator(run_id).ensure_at_least(next_value)
 
     def _latest_durable_event_id(self, run_id: str) -> str:
         """Return the latest actually stored observation, or the run owner."""
@@ -2391,6 +2463,40 @@ class AgentService:
         except Exception:  # noqa: BLE001 — capture never gates execution
             pass
         return f"agent-run:{run_id}"
+
+    def _resolved_control_event_id(
+        self, run_id: str, index: int, kind: str
+    ) -> str | None:
+        """Resolve an intended control event or its durable capture diagnostic."""
+        try:
+            steps = self.db.get_run(run_id)["steps"]
+        except Exception:  # noqa: BLE001 — callers fall back to run ownership
+            return None
+        intended = next(
+            (
+                step
+                for step in steps
+                if step["index"] == index and step["kind"] == kind
+            ),
+            None,
+        )
+        if intended is not None:
+            return f"agent-step:{run_id}:{index}"
+        diagnostic_index = CONTROL_CAPTURE_INDEX_BASE + index
+        failed_key = f"failed_{kind}_{index}"
+        diagnostic = next(
+            (
+                step
+                for step in steps
+                if step["index"] == diagnostic_index
+                and step["kind"] == "capture_failed"
+                and step.get("field_states", {}).get(failed_key) == "not_observed"
+            ),
+            None,
+        )
+        if diagnostic is None:
+            return None
+        return f"agent-step:{run_id}:{diagnostic_index}"
 
     def _append_run_lifecycle(
         self,
@@ -2415,10 +2521,11 @@ class AgentService:
                     if prior is not None
                     else self._next_owner_seq(run_id)
                 )
+                self._ensure_owner_seq_at_least(run_id, next_seq)
                 return next_seq, event_id
         except Exception:  # noqa: BLE001 — insertion below owns diagnostics
             pass
-        sequence = self._next_owner_seq(run_id) if owner_seq is None else owner_seq
+        sequence = self._allocate_owner_seq(run_id, owner_seq)
         step = AgentStep(
             index=index,
             kind=kind,
@@ -2494,6 +2601,99 @@ class AgentService:
             source_event_id=source_event_id,
         )
 
+    @staticmethod
+    def _terminal_lifecycle_kind(status: str) -> str:
+        return {
+            RUN_DONE: STEP_AGENT_RUN_COMPLETED,
+            RUN_CANCELLED: STEP_AGENT_RUN_CANCELLED,
+            RUN_SUPERSEDED: STEP_AGENT_RUN_SUPERSEDED,
+            RUN_ERROR: STEP_AGENT_RUN_FAILED,
+            RUN_STUCK: STEP_AGENT_RUN_FAILED,
+        }.get(status, STEP_AGENT_RUN_FAILED)
+
+    def _set_terminal_status(
+        self,
+        run_id: str,
+        status: str,
+        *,
+        result: str | None = None,
+        parent_event_id: str | None = None,
+        source_event_id: str | None = None,
+        incomplete: bool = False,
+    ) -> bool:
+        """Atomically persist terminal state + observation, retrying once."""
+        try:
+            if self.db.get_run(run_id)["status"] in TERMINAL_RUN_STATUSES:
+                return False
+        except Exception:  # noqa: BLE001 — atomic write below owns truth
+            pass
+        lifecycle_kind = self._terminal_lifecycle_kind(status)
+        index = _LIFECYCLE_INDEX[lifecycle_kind]
+        kind = lifecycle_kind
+        summary = lifecycle_kind.replace("_", " ").capitalize()
+        step_status = status
+        field_states = {"payload": "omitted"}
+        if incomplete:
+            index = AGENT_LIFECYCLE_INDEX_BASE + 700
+            kind = "capture_failed"
+            summary = "Terminal status persisted with incomplete capture"
+            step_status = "incomplete"
+            field_states = {
+                "payload": "capture_failed",
+                lifecycle_kind: "not_observed",
+            }
+        actual_parent = parent_event_id or self._latest_durable_event_id(run_id)
+        step = AgentStep(
+            index=index,
+            kind=kind,
+            summary=summary,
+            created_at=safe_utc_timestamp(self.wall_clock),
+            status=step_status,
+            owner_seq=self._allocate_owner_seq(run_id),
+            parent_event_id=actual_parent,
+            source_event_id=source_event_id,
+            field_states=field_states,
+            sensitivity="diagnostic",
+        )
+        record = _safe_agent_step_record(run_id, step)
+        for attempt in range(2):
+            try:
+                return self.db.set_terminal_with_step(
+                    run_id, status, result, record
+                )
+            except Exception as exc:  # noqa: BLE001 — bounded containment
+                logger.warning(
+                    "could not persist atomic terminal state "
+                    "run_id={} attempt={} error_type={}",
+                    run_id,
+                    attempt + 1,
+                    _safe_exception_type(exc),
+                )
+                try:
+                    if self.db.get_run(run_id)["status"] in TERMINAL_RUN_STATUSES:
+                        return False
+                except Exception:  # noqa: BLE001 — retry owns containment
+                    pass
+        diagnostic = AgentStep(
+            index=AGENT_LIFECYCLE_INDEX_BASE + 800 + (index % 100),
+            kind="capture_failed",
+            summary="Atomic terminal persistence failed",
+            created_at=step.created_at,
+            status="incomplete",
+            owner_seq=self._allocate_owner_seq(run_id),
+            parent_event_id=self._latest_durable_event_id(run_id),
+            field_states={"payload": "capture_failed", kind: "not_observed"},
+            sensitivity="diagnostic",
+        )
+        try:
+            self.db.insert_steps_at_indices(
+                run_id,
+                [(diagnostic.index, _safe_agent_step_record(run_id, diagnostic))],
+            )
+        except Exception:  # noqa: BLE001 — non-recursive containment
+            logger.warning("could not persist atomic terminal diagnostic")
+        return False
+
     def _service_error_step(self, run_id: str, summary: str) -> AgentStep:
         """Allocate a causal error after this run's durable observations."""
         try:
@@ -2514,7 +2714,7 @@ class AgentService:
             summary=summary,
             created_at=safe_utc_timestamp(self.wall_clock),
             status="failed",
-            owner_seq=self._next_owner_seq(run_id),
+            owner_seq=self._allocate_owner_seq(run_id),
             parent_event_id=prior_event_id,
             source_event_id=prior_event_id,
             field_states={"payload": "omitted"},
@@ -2615,24 +2815,18 @@ class AgentService:
                     )
                 except Exception:  # noqa: BLE001 — non-recursive containment
                     logger.warning("could not persist terminal capture diagnostic")
-        self.db.set_status(
-            run_id, outcome.status, result=_safe_terminal_result(outcome.final_text)
+        self._set_terminal_status(
+            run_id,
+            outcome.status,
+            result=_safe_terminal_result(outcome.final_text),
+            parent_event_id=terminal_event_id,
+            source_event_id=(
+                terminal_event_id
+                if outcome.status == RUN_ERROR and terminal_event_id is not None
+                else None
+            ),
+            incomplete=(outcome.status == RUN_ERROR and terminal_event_id is None),
         )
-        try:
-            current_status = self.db.get_run(run_id)["status"]
-        except Exception:  # noqa: BLE001 — terminal capture remains best effort
-            current_status = None
-        if current_status == outcome.status and (
-            outcome.status != RUN_ERROR or terminal_event_id is not None
-        ):
-            self._record_terminal_lifecycle(
-                run_id,
-                outcome.status,
-                parent_event_id=terminal_event_id,
-                source_event_id=(
-                    terminal_event_id if outcome.status == RUN_ERROR else None
-                ),
-            )
 
     def _run_one(
         self,
@@ -2654,6 +2848,7 @@ class AgentService:
         # caller (an ordinary run).
         resumed_from_run_id: str | None = None,
         spawn_event_id: str | None = None,
+        spawn_parent_event_id: str | None = None,
         precreated_run_id: str | None = None,
         lifecycle_owner_seq_start: int | None = None,
         on_run_id: Callable[[str], None] | None = None,
@@ -2668,6 +2863,9 @@ class AgentService:
         drain_mailbox_with_causes: (
             Callable[[], list[tuple[str, str, str | None]]] | None
         ) = None,
+        seeded_steering_with_causes: (
+            tuple[tuple[str, str, str | None], ...]
+        ) = (),
         run_log_writer: "RunLogWriter | None" = None,
         continuation_owner_message_id: str | None = None,
         continuation_durability: Literal["persistent", "ephemeral"] = "persistent",
@@ -2729,7 +2927,9 @@ class AgentService:
                 spawn_event_id=spawn_event_id,
             )
             lifecycle_owner_seq = 0
-            lifecycle_event_id = spawn_event_id or f"agent-run:{run_id}"
+            lifecycle_event_id = (
+                spawn_parent_event_id or spawn_event_id or f"agent-run:{run_id}"
+            )
             if agent_kind == AGENT_KIND_SUBAGENT:
                 lifecycle_owner_seq, lifecycle_event_id = self._append_run_lifecycle(
                     run_id,
@@ -3121,7 +3321,7 @@ class AgentService:
                 STEP_AGENT_RUN_RESERVED,
                 "reserved",
                 owner_seq=0,
-                parent_event_id=child_kwargs.get("spawn_event_id"),
+                parent_event_id=child_kwargs.get("spawn_parent_event_id"),
             )
             owner_seq, lifecycle_event_id = self._append_run_lifecycle(
                 child_run_id,
@@ -3311,9 +3511,7 @@ class AgentService:
                     child_run_id = current.run_id if current is not None else None
                     if child_run_id:
                         try:
-                            updated = self.db.set_status(child_run_id, status)
-                            if updated:
-                                self._record_terminal_lifecycle(child_run_id, status)
+                            self._set_terminal_status(child_run_id, status)
                         except Exception:  # noqa: BLE001
                             logger.warning(
                                 "could not persist terminal status for sub-agent run"
@@ -3344,7 +3542,7 @@ class AgentService:
             )
             try:
                 thread.start()
-            except Exception as exc:  # noqa: BLE001 — thread exhaustion
+            except Exception:  # noqa: BLE001 — thread exhaustion
                 # `Thread.start()` raises RuntimeError ("can't start new
                 # thread") when the process is out of thread slots. Every
                 # piece of state this spawn reserved has to be unwound
@@ -3357,24 +3555,26 @@ class AgentService:
                 # joining an unstarted one raises RuntimeError out of
                 # `run_turn`, skipping `write_manifest()` and
                 # `run_log_writer.close()` (leaking a file descriptor).
-                fleet.finish(
-                    handle.handle_id,
-                    RUN_ERROR,
-                    error=f"could not start sub-agent thread: {exc}",
-                )
-                updated = self.db.set_status(child_run_id, RUN_ERROR)
-                if updated:
-                    self._record_terminal_lifecycle(child_run_id, RUN_ERROR)
-                self._fleet_cancels.pop(handle.handle_id, None)
-                if my_handle_ids and my_handle_ids[-1] == handle.handle_id:
-                    my_handle_ids.pop()
-                # No child was created, so this spawn costs no slot --
-                # same rule as the cap refusal above.
-                sub_agent_spawns -= 1
+                try:
+                    fleet.finish(
+                        handle.handle_id,
+                        RUN_ERROR,
+                        error="could not start sub-agent thread",
+                    )
+                    self._set_terminal_status(child_run_id, RUN_ERROR)
+                except Exception:  # noqa: BLE001 — refusal must reach parent
+                    logger.warning("could not persist failed sub-agent launch")
+                finally:
+                    self._fleet_cancels.pop(handle.handle_id, None)
+                    if my_handle_ids and my_handle_ids[-1] == handle.handle_id:
+                        my_handle_ids.pop()
+                    # No child was created, so this spawn costs no slot --
+                    # same rule as the cap refusal above.
+                    sub_agent_spawns -= 1
                 logger.warning("could not start sub-agent thread")
                 return None, ToolResult(
                     ok=False,
-                    error=f"could not start sub-agent: {exc}",
+                    error="could not start sub-agent thread",
                 )
             self._fleet_threads[handle.handle_id] = thread
             return handle, None
@@ -3574,7 +3774,10 @@ class AgentService:
                 response_reserve_tokens=config.response_reserve_tokens,
             )
             spawn_event_id = (
-                f"agent-step:{run_id}:{spawn_step_index}"
+                self._resolved_control_event_id(run_id, spawn_step_index, STEP_SPAWN)
+                or self._resolved_control_event_id(
+                    run_id, spawn_step_index, STEP_TOOL_CALL
+                )
                 if spawn_step_index is not None
                 else None
             )
@@ -3602,6 +3805,7 @@ class AgentService:
                 task=spawn_task,
                 parent_run_id=run_id,
                 spawn_event_id=spawn_event_id,
+                spawn_parent_event_id=spawn_event_id or f"agent-run:{run_id}",
                 agent_definition=(resolved.name if resolved else None),
                 definition_fingerprint=(
                     compute_definition_fingerprint(resolved) if resolved else None
@@ -3979,20 +4183,15 @@ class AgentService:
                 workspace_context_note=config.workspace_context_note,
             )
             seed = [dict(m) for m in retained.messages]
-            for source, queued_text in retained.steering:
-                seed.append(
-                    {
-                        "role": "user",
-                        "content": format_steering_message(source, queued_text),
-                    }
+            retained_steering = retained.steering_with_causes or tuple(
+                (source, text, None) for source, text in retained.steering
+            )
+            resume_event_id = (
+                self._resolved_control_event_id(
+                    run_id, spawn_step_index, STEP_TOOL_CALL
                 )
-            seed.append(
-                {
-                    "role": "user",
-                    "content": format_steering_message(
-                        STEERING_SOURCE_SUPERVISOR, steer_text
-                    ),
-                }
+                if spawn_step_index is not None
+                else None
             )
             child_kwargs = dict(
                 conversation_id=conversation_id,
@@ -4002,11 +4201,7 @@ class AgentService:
                 agent_kind=AGENT_KIND_SUBAGENT,
                 task=retained.task,
                 parent_run_id=run_id,
-                spawn_event_id=(
-                    f"agent-step:{run_id}:{spawn_step_index}"
-                    if spawn_step_index is not None
-                    else None
-                ),
+                spawn_event_id=resume_event_id,
                 agent_definition=(resolved.name if resolved else None),
                 definition_fingerprint=(
                     compute_definition_fingerprint(resolved) if resolved else None
@@ -4014,6 +4209,13 @@ class AgentService:
                 continuation_durability=continuation_durability,
                 run_log_writer=writer,
                 resumed_from_run_id=retained.run_id,
+                seeded_steering_with_causes=(
+                    *retained_steering,
+                    (STEERING_SOURCE_SUPERVISOR, steer_text, resume_event_id),
+                ),
+            )
+            child_kwargs["spawn_parent_event_id"] = (
+                child_kwargs["spawn_event_id"] or f"agent-run:{run_id}"
             )
             handle, failure = _launch_fleet_child(
                 retained.task, (resolved.name if resolved else None), child_kwargs
@@ -4860,6 +5062,32 @@ class AgentService:
                     step.index,
                     _safe_exception_type(exc),
                 )
+                diagnostic = AgentStep(
+                    index=CONTROL_CAPTURE_INDEX_BASE + step.index,
+                    kind="capture_failed",
+                    summary=f"Control capture failed: {step.kind}",
+                    created_at=step.created_at,
+                    status="incomplete",
+                    owner_seq=step.owner_seq,
+                    parent_event_id=self._latest_durable_event_id(run_id),
+                    field_states={
+                        "payload": "capture_failed",
+                        f"failed_{step.kind}_{step.index}": "not_observed",
+                    },
+                    sensitivity="diagnostic",
+                )
+                try:
+                    self.db.insert_steps_at_indices(
+                        run_id,
+                        [
+                            (
+                                diagnostic.index,
+                                _safe_agent_step_record(run_id, diagnostic),
+                            )
+                        ],
+                    )
+                except Exception:  # noqa: BLE001 — non-recursive containment
+                    logger.warning("could not persist control capture diagnostic")
             if self._on_step is not None:
                 self._on_step(step, agent_kind, run_id)
 
@@ -4934,6 +5162,19 @@ class AgentService:
 
         context_callback_ref["callback"] = observe_context_assembled
 
+        seeded_steering = list(seeded_steering_with_causes)
+
+        def drain_causal_steering() -> list[tuple[str, str, str | None]]:
+            entries = list(seeded_steering)
+            seeded_steering.clear()
+            if drain_mailbox_with_causes is not None:
+                entries.extend(drain_mailbox_with_causes())
+            elif drain_mailbox is not None:
+                entries.extend(
+                    (source, text, None) for source, text in drain_mailbox()
+                )
+            return entries
+
         deps = LoopDeps(
             call_model=call_model,
             call_model_with_continuation=call_model,
@@ -4953,6 +5194,7 @@ class AgentService:
             clock=self.clock,
             wall_clock=self.wall_clock,
             on_step=observe_step,
+            next_owner_seq=lambda: self._allocate_owner_seq(run_id),
             # Runtime progress observations are durable for every real service
             # run. Otherwise control steps can retain links to model events
             # that disappear after restart.
@@ -5026,7 +5268,11 @@ class AgentService:
             # the parameter's own comment above); the pure loop drains it
             # at its protocol-coherent pre-model-call point.
             drain_mailbox=drain_mailbox,
-            drain_mailbox_with_causes=drain_mailbox_with_causes,
+            drain_mailbox_with_causes=(
+                drain_causal_steering
+                if seeded_steering_with_causes or drain_mailbox_with_causes is not None
+                else None
+            ),
             on_record=on_record,
             continuation_context=ContinuationEventContext(
                 owner_message_id=continuation_owner_message_id,

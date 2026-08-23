@@ -72,6 +72,7 @@ from .agent_models import (
     TOOL_OUTCOME_SUCCESS,
     TOOL_OUTCOME_CANCELLED,
     TOOL_OUTCOME_TIMEOUT,
+    TRACE_STEP_INDEX_BASE,
     WAIT_AGENTS_TOOL_NAME,
     AgentConfig,
     AgentStep,
@@ -525,6 +526,7 @@ class LoopDeps:
         Callable[[], list[tuple[str, str, str | None]]] | None
     ) = None
     owner_seq_start: int = 0
+    next_owner_seq: Callable[[], int] | None = None
 
 
 def _continuation_calls_match(
@@ -894,13 +896,20 @@ def run_agent_loop(
     recent_calls: deque = deque(maxlen=LOOP_DETECTION_N * MAX_LOOP_PERIOD)
     context_trace_reserved = False
 
+    def claim_owner_seq() -> int:
+        nonlocal owner_sequence
+        if deps.next_owner_seq is not None:
+            return deps.next_owner_seq()
+        sequence = owner_sequence
+        owner_sequence += 1
+        return sequence
+
     def add(kind: str, *, counts_toward_budget: bool = True, **kw) -> AgentStep:
-        nonlocal budget_steps, owner_sequence
+        nonlocal budget_steps
         if not kw.get("created_at"):
             kw["created_at"] = safe_utc_timestamp(deps.wall_clock)
         if kw.get("owner_seq") is None:
-            kw["owner_seq"] = owner_sequence
-            owner_sequence += 1
+            kw["owner_seq"] = claim_owner_seq()
         step = AgentStep(index=len(steps), kind=kind, **kw)
         steps.append(step)
         if counts_toward_budget:
@@ -916,13 +925,12 @@ def run_agent_loop(
 
     def trace(kind: str, **kw) -> AgentStep:
         """Capture a safe lifecycle observation outside legacy control steps."""
-        nonlocal owner_sequence, trace_steps
+        nonlocal trace_steps
         if not kw.get("created_at"):
             kw["created_at"] = safe_utc_timestamp(deps.wall_clock)
         if kw.get("owner_seq") is None:
-            kw["owner_seq"] = owner_sequence
-            owner_sequence += 1
-        step = AgentStep(index=1_000_000 + trace_steps, kind=kind, **kw)
+            kw["owner_seq"] = claim_owner_seq()
+        step = AgentStep(index=TRACE_STEP_INDEX_BASE + trace_steps, kind=kind, **kw)
         trace_steps += 1
         try:
             deps.on_trace_step(step)
@@ -1177,23 +1185,21 @@ def run_agent_loop(
             if not context_trace_reserved and deps.reserve_context_trace is not None:
                 context_trace_reserved = True
                 attached = AgentStep(
-                    index=1_000_000 + trace_steps,
+                    index=TRACE_STEP_INDEX_BASE + trace_steps,
                     kind="context_attached",
                     created_at=safe_utc_timestamp(deps.wall_clock),
-                    owner_seq=owner_sequence,
+                    owner_seq=claim_owner_seq(),
                 )
                 trace_steps += 1
-                owner_sequence += 1
                 injected = AgentStep(
-                    index=1_000_000 + trace_steps,
+                    index=TRACE_STEP_INDEX_BASE + trace_steps,
                     kind="context_injected",
                     created_at=attached.created_at,
-                    owner_seq=owner_sequence,
+                    owner_seq=claim_owner_seq(),
                     parent_step_index=attached.index,
                     source_step_index=attached.index,
                 )
                 trace_steps += 1
-                owner_sequence += 1
                 try:
                     if deps.reserve_context_trace(attached, injected):
                         context_injected_step = injected

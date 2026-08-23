@@ -240,6 +240,62 @@ def test_fleet_create_capture_failure_chains_to_actual_diagnostic(
     reopened.close()
 
 
+def test_fleet_spawn_capture_failure_uses_durable_diagnostic_as_child_cause(
+    db, monkeypatch
+):
+    original_insert = db.insert_steps_at_indices
+
+    def fail_spawn_capture(run_id, indexed_steps):
+        if any(step["kind"] == "spawn" for _index, step in indexed_steps):
+            raise RuntimeError("persistent spawn capture failure")
+        return original_insert(run_id, indexed_steps)
+
+    monkeypatch.setattr(db, "insert_steps_at_indices", fail_spawn_capture)
+    service, _chat, _coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "inspect"}),
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "parent done",
+        ],
+        {"inspect": ["child done"]},
+    )
+    parent_id, outcome = service.run_turn(
+        conversation_id="spawn-capture-failure",
+        messages=[{"role": "user", "content": "delegate"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+
+    path = db.db_path
+    db.close()
+    reopened = AgentRunsDB(path, client_id="spawn-capture-reload")
+    rows = reopened.list_runs("spawn-capture-failure", include_superseded=True)
+    parent = next(row for row in rows if row["id"] == parent_id)
+    child = next(row for row in rows if row["agent_kind"] == "subagent")
+    diagnostics = [step for step in parent["steps"] if step["kind"] == "capture_failed"]
+    assert len(diagnostics) == 1
+    diagnostic_id = f"agent-step:{parent_id}:{diagnostics[0]['index']}"
+    assert child["spawn_event_id"] == diagnostic_id
+    reserved = next(
+        step for step in child["steps"] if step["kind"] == "agent_run_reserved"
+    )
+    assert reserved["parent_event_id"] == diagnostic_id
+    event_ids = {
+        f"agent-run:{row['id']}" for row in rows
+    } | {
+        f"agent-step:{row['id']}:{step['index']}"
+        for row in rows
+        for step in row["steps"]
+    }
+    for row in rows:
+        for step in row["steps"]:
+            assert step["parent_event_id"] in event_ids
+            assert step["source_event_id"] is None or step["source_event_id"] in event_ids
+    reopened.close()
+
+
 def test_failed_child_and_completed_primary_project_after_reload(db):
     def explode():
         raise RuntimeError("provider exploded with api_key=sk-private-error")

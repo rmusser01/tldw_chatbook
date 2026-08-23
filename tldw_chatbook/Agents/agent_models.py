@@ -56,8 +56,13 @@ STEP_TOOL_CANCELLED = "tool_cancelled"
 # log shows WHEN each entry actually reached the model.
 STEP_STEERING = "steering"
 
-# Append-only agent-run lifecycle observations use a dedicated storage-index
-# band. Runtime trace rows own 1_000_000+, capture diagnostics own 2_000_000+;
+# Append-only agent-run lifecycle observations use dedicated storage-index
+# bands. Control rows must remain below TRACE_STEP_INDEX_BASE; runtime trace
+# rows and capture diagnostics use the following named bands.
+TRACE_STEP_INDEX_BASE = 1_000_000
+TRACE_CAPTURE_INDEX_BASE = 2_000_000
+CONTROL_CAPTURE_INDEX_BASE = 3_000_000
+# Lifecycle stays above every runtime/capture band.
 # keeping lifecycle at 10_000_000+ prevents collisions while owner_seq carries
 # the real observation order independently of this storage identity.
 AGENT_LIFECYCLE_INDEX_BASE = 10_000_000
