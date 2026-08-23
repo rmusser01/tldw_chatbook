@@ -374,6 +374,93 @@ async def test_migration_review_is_activation_typed_and_uses_activate_path() -> 
     ]
 
 
+@pytest.mark.parametrize("source", ("root", "migration"))
+@pytest.mark.parametrize("outcome", ("exception", "malformed"))
+async def test_failed_persisted_check_keeps_exact_retry_provenance(
+    source: str, outcome: str
+) -> None:
+    runtime = _Runtime()
+    attempts = 0
+
+    async def check_root(root_id: str) -> ReconciliationPlan:
+        nonlocal attempts
+        attempts += 1
+        runtime.calls.append(("check_root", root_id))
+        if attempts == 1:
+            if outcome == "exception":
+                raise RuntimeError("check failed")
+            return object()  # type: ignore[return-value]
+        return ReconciliationPlan(
+            root_id=root_id,
+            observation_token=TOKEN,
+            safe_actions=(),
+            attention=(),
+            skips=(),
+            managed_placement_effects=(),
+            deletion_groups=(),
+        )
+
+    runtime.check_root = check_root
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+
+    if source == "migration":
+        await controller.check_migration("root-1")
+    else:
+        await controller.check_root("root-1")
+    failed = controller.snapshot.review
+
+    assert failed.root_id == "root-1"
+    assert len(failed.observation_token) == 64
+    assert failed.source == source
+    assert failed.activation is (source == "migration")
+    assert failed.stale is True
+
+    accepted = await controller.recheck_review(
+        failed.root_id, failed.observation_token, failed.source
+    )
+
+    assert accepted is True
+    assert attempts == 2
+    assert controller.snapshot.review.source == source
+    assert controller.snapshot.review.activation is (source == "migration")
+
+
+@pytest.mark.parametrize("source", ("root", "migration"))
+async def test_older_failed_check_retry_cannot_retarget_newer_failure(
+    source: str,
+) -> None:
+    runtime = _Runtime()
+
+    async def fail(root_id: str) -> ReconciliationPlan:
+        runtime.calls.append(("check_root", root_id))
+        raise RuntimeError("check failed")
+
+    runtime.check_root = fail
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+    check = (
+        controller.check_migration if source == "migration" else controller.check_root
+    )
+    await check("root-1")
+    old = controller.snapshot.review
+    await check("root-1")
+    current = controller.snapshot.review
+    calls_before = tuple(runtime.calls)
+
+    accepted = await controller.recheck_review(
+        old.root_id, old.observation_token, old.source
+    )
+
+    assert current.observation_token != old.observation_token
+    assert accepted is False
+    assert tuple(runtime.calls) == calls_before
+
+
 async def test_stale_review_returns_to_review_with_check_again_and_does_not_retry() -> (
     None
 ):
@@ -1831,7 +1918,7 @@ async def test_successful_mutations_use_safe_local_fallback_when_receipts_fail()
     await controller.refresh_conflict_receipts("root-1")
     await controller.show_resolution_history("root-1")
     history_before_dismiss = controller.snapshot.history
-    controller.return_from_resolution_history()
+    controller.return_from_resolution_history("root-1", TOKEN, 1)
     runtime.active_conflict_receipts = receipt_failure
     statuses.clear()
     await controller.dismiss_conflict_receipt("root-1", TOKEN, "operation-1")
@@ -2537,6 +2624,12 @@ async def test_apply_claim_is_released_on_runtime_error(failure: Exception) -> N
     await controller.check_root("root-1")
     await controller.apply_reviewed("root-1", TOKEN)
     assert controller.snapshot.phase == "receipt"
+    token = controller.snapshot.review.observation_token
+    await controller.show_resolution_history("root-1")
+
+    controller.return_from_resolution_history("root-1", token, 1)
+
+    assert controller.snapshot.phase == "receipt"
 
 
 async def test_history_return_restores_review_origin() -> None:
@@ -2548,7 +2641,7 @@ async def test_history_return_restores_review_origin() -> None:
     await controller.check_root("root-1")
     await controller.show_resolution_history("root-1")
 
-    controller.return_from_resolution_history()
+    controller.return_from_resolution_history("root-1", TOKEN, 1)
 
     assert controller.snapshot.phase == "review"
 
@@ -2562,26 +2655,112 @@ async def test_history_return_restores_receipt_origin() -> None:
     await controller.check_root("root-1")
     await controller.apply_reviewed("root-1", TOKEN)
     assert controller.snapshot.phase == "receipt"
+    token = controller.snapshot.review.observation_token
     await controller.show_resolution_history("root-1")
 
-    controller.return_from_resolution_history()
+    controller.return_from_resolution_history("root-1", token, 1)
 
     assert controller.snapshot.phase == "receipt"
 
 
+@pytest.mark.parametrize("origin", ("review", "receipt"))
+@pytest.mark.parametrize("outcome", ("success", "failure"))
+async def test_history_undo_preserves_exact_return_origin(
+    origin: str, outcome: str
+) -> None:
+    runtime = _Runtime()
+    runtime.history[0] = (_history_row("operation-1", "Note"),)
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+    await controller.check_root("root-1")
+    if origin == "receipt":
+        await controller.apply_reviewed("root-1", TOKEN)
+    token = controller.snapshot.review.observation_token
+    await controller.open_resolution_history("root-1", token)
+
+    if outcome == "failure":
+
+        async def fail_undo(
+            root_id: str, operation_id: str
+        ) -> NotesSyncExecutionResult:
+            runtime.calls.append(("undo_resolution", root_id, operation_id))
+            raise RuntimeError("undo failed")
+
+        runtime.undo_resolution = fail_undo
+
+    await controller.undo_conflict_resolution(
+        "root-1", token, "operation-1", history_page=1
+    )
+
+    assert controller.snapshot.phase == "history"
+    accepted = controller.return_from_resolution_history("root-1", token, 1)
+    assert accepted is True
+    assert controller.snapshot.phase == origin
+
+
+async def test_detached_history_return_cannot_exit_newer_history() -> None:
+    runtime = _Runtime()
+    runtime.history[0] = (_history_row("operation-1", "Note"),)
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+    await controller.check_root("root-1")
+    await controller.open_resolution_history("root-1", TOKEN)
+    controller.return_from_resolution_history("root-1", TOKEN, 1)
+    runtime.check_plan = _conflict_plan(token=TOKEN_2)
+    await controller.check_root("root-1")
+    await controller.open_resolution_history("root-1", TOKEN_2)
+
+    accepted = controller.return_from_resolution_history("root-1", TOKEN, 1)
+
+    assert accepted is False
+    assert controller.snapshot.phase == "history"
+    assert controller.snapshot.review.observation_token == TOKEN_2
+
+
+async def test_detached_review_page_cannot_move_newer_review() -> None:
+    runtime = _Runtime()
+    runtime.check_plan = _conflict_plan(
+        token=TOKEN, bindings=("bind-1", "bind-2"), page_size=1
+    )
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+    await controller.check_root("root-1")
+    runtime.check_plan = _conflict_plan(
+        token=TOKEN_2, bindings=("bind-1", "bind-2"), page_size=1
+    )
+    await controller.check_root("root-1")
+
+    accepted = controller.page_review("root-1", TOKEN, 1, 2)
+
+    assert accepted is False
+    assert controller.snapshot.review.observation_token == TOKEN_2
+    assert controller.snapshot.review.page == 1
+
+
 async def test_history_origin_is_revoked_by_new_review_lifecycle() -> None:
     runtime = _Runtime()
+    runtime.history[0] = (_history_row("operation-1", "Note"),)
     controller = LibraryNotesSyncController(
         runtime=runtime,
         import_controller=_ImportController(),
     )
     await controller.check_root("root-1")
     await controller.show_resolution_history("root-1")
+    await controller.undo_conflict_resolution(
+        "root-1", TOKEN, "operation-1", history_page=1
+    )
+    assert controller._history_origin is not None
     runtime.check_plan = _conflict_plan(token=TOKEN_2)
     await controller.check_root("root-1")
 
     assert controller._history_origin is None
-    controller.return_from_resolution_history()
+    controller.return_from_resolution_history("root-1", TOKEN, 1)
 
     assert controller.snapshot.phase == "review"
     assert controller.snapshot.review.observation_token == TOKEN_2

@@ -187,7 +187,13 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             self.page = page
 
     class HistoryReturnRequested(Message):
-        pass
+        def __init__(
+            self, root_id: str, observation_token: str, from_page: int
+        ) -> None:
+            super().__init__()
+            self.root_id = root_id
+            self.observation_token = observation_token
+            self.from_page = from_page
 
     class ActivateRequested(Message):
         def __init__(self, root_id: str, observation_token: str) -> None:
@@ -196,9 +202,18 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             self.observation_token = observation_token
 
     class PageRequested(Message):
-        def __init__(self, delta: int) -> None:
+        def __init__(
+            self,
+            root_id: str,
+            observation_token: str,
+            from_page: int,
+            page: int,
+        ) -> None:
             super().__init__()
-            self.delta = delta
+            self.root_id = root_id
+            self.observation_token = observation_token
+            self.from_page = from_page
+            self.page = page
 
     class BackRequested(Message):
         pass
@@ -412,15 +427,21 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                     markup=False,
                 )
                 with Horizontal(classes="ds-toolbar"):
-                    yield Button(
+                    yield _ReviewActionButton(
                         "Previous",
+                        review_root_id=review.root_id,
+                        review_observation_token=review.observation_token,
+                        rendered_page=review.page,
                         id="notes-sync-page-previous",
                         classes="library-canvas-action",
                         compact=True,
                         disabled=review.page <= 1,
                     )
-                    yield Button(
+                    yield _ReviewActionButton(
                         "Next",
+                        review_root_id=review.root_id,
+                        review_observation_token=review.observation_token,
+                        rendered_page=review.page,
                         id="notes-sync-page-next",
                         classes="library-canvas-action",
                         compact=True,
@@ -722,8 +743,11 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             compact=True,
             disabled=not history.has_next,
         )
-        yield Button(
+        yield _ReviewActionButton(
             "Return",
+            review_root_id=history.root_id,
+            review_observation_token=self.snapshot.review.observation_token,
+            rendered_page=history.page,
             id="notes-sync-history-return",
             classes="library-canvas-action",
             compact=True,
@@ -1362,11 +1386,33 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                 )
             )
         elif button_id == "notes-sync-history-return":
-            self.post_message(self.HistoryReturnRequested())
-        elif button_id == "notes-sync-page-previous":
-            self.post_message(self.PageRequested(-1))
-        elif button_id == "notes-sync-page-next":
-            self.post_message(self.PageRequested(1))
+            if (
+                not isinstance(event.button, _ReviewActionButton)
+                or event.button.rendered_page is None
+            ):
+                return
+            self.post_message(
+                self.HistoryReturnRequested(
+                    event.button.review_root_id,
+                    event.button.review_observation_token,
+                    event.button.rendered_page,
+                )
+            )
+        elif button_id in {"notes-sync-page-previous", "notes-sync-page-next"}:
+            if (
+                not isinstance(event.button, _ReviewActionButton)
+                or event.button.rendered_page is None
+            ):
+                return
+            delta = -1 if button_id.endswith("previous") else 1
+            self.post_message(
+                self.PageRequested(
+                    event.button.review_root_id,
+                    event.button.review_observation_token,
+                    event.button.rendered_page,
+                    event.button.rendered_page + delta,
+                )
+            )
         elif button_id == "notes-sync-back":
             self.post_message(self.BackRequested())
 

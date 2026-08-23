@@ -1034,6 +1034,91 @@ async def test_check_again_routes_to_its_rendered_review_source(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("source", ("root", "migration"))
+@pytest.mark.parametrize("outcome", ("exception", "malformed"))
+async def test_failed_persisted_check_again_uses_rendered_source_in_mounted_screen(
+    source: str, outcome: str
+) -> None:
+    token = "a" * 64
+    root_id = "root-1"
+    root = NotesSyncRootRuntimeSnapshot(
+        root_id,
+        "paused" if source == "migration" else "needs_attention",
+        "review_migration" if source == "migration" else "review_changes",
+    )
+
+    class _FailedCheckRuntime:
+        def __init__(self) -> None:
+            self.calls: list[tuple[object, ...]] = []
+            self.attempts = 0
+
+        def snapshot(self) -> NotesSyncRuntimeSnapshot:
+            return NotesSyncRuntimeSnapshot("active", "sync_now", (root,))
+
+        async def check_root(self, selected_root: str) -> ReconciliationPlan:
+            self.attempts += 1
+            self.calls.append(("check_root", selected_root))
+            if self.attempts == 1:
+                if outcome == "exception":
+                    raise RuntimeError("check failed")
+                return object()  # type: ignore[return-value]
+            return ReconciliationPlan(
+                root_id=selected_root,
+                observation_token=token,
+                safe_actions=(),
+                attention=(),
+                skips=(),
+                managed_placement_effects=(),
+                deletion_groups=(),
+            )
+
+        async def conflict_labels(
+            self, _root_id: str, _token: str
+        ) -> tuple[RuntimeConflictLabel, ...]:
+            return ()
+
+        async def conflict_history_available(self, _root_id: str) -> bool:
+            return False
+
+    runtime = _FailedCheckRuntime()
+    app = _build_test_app()
+    _seed_conversations(app, [], notes=_two_notes())
+    app.notes_sync_runtime_owner = runtime
+    host = _JourneyHarness(app)
+    async with host.run_test(size=(60, 20)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-notes-add-from-files")
+        screen.query_one("#library-notes-manage-sync-folders", Button).press()
+        selector = (
+            "#notes-sync-root-migration-0"
+            if source == "migration"
+            else "#notes-sync-root-review-0"
+        )
+        (await _wait_for_selector(screen, pilot, selector)).press()
+        retry = await _wait_for_selector(screen, pilot, "#notes-sync-check-again")
+        failed = screen._library_notes_sync_controller.snapshot.review
+
+        assert failed.source == source
+        assert failed.root_id == root_id
+        assert failed.activation is (source == "migration")
+        retry.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: runtime.attempts == 2,
+            message=f"{source} failed Check again did not reach check_root",
+        )
+        await _wait_for_selector(
+            screen,
+            pilot,
+            "#notes-sync-activate" if source == "migration" else "#notes-sync-apply",
+        )
+
+    assert runtime.calls == [("check_root", root_id), ("check_root", root_id)]
+
+
+@pytest.mark.asyncio
 async def test_lasting_attention_survives_a_fresh_screen_and_prioritizes_review() -> (
     None
 ):

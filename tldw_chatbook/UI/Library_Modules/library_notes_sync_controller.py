@@ -714,6 +714,26 @@ class LibraryNotesSyncController:
     async def check_root(self, root_id: str) -> None:
         await self._check_root(root_id, source="root", activation=False)
 
+    @staticmethod
+    def _failed_persisted_review(
+        root_id: str,
+        *,
+        source: LastingSyncReviewSource,
+        activation: bool,
+        epoch: int,
+    ) -> LastingSyncReview:
+        """Return unique, inert provenance for retrying one failed check."""
+
+        return LastingSyncReview(
+            root_id=root_id,
+            observation_token=f"{epoch:064x}",
+            stale=True,
+            next_action="Check again",
+            activation=activation,
+            apply_blocker=LastingSyncApplyBlocker.STALE_REVIEW,
+            source=source,
+        )
+
     async def _check_root(
         self,
         root_id: str,
@@ -734,7 +754,12 @@ class LibraryNotesSyncController:
             self._state = replace(
                 self._state,
                 phase="review",
-                review=replace(self._state.review, next_action="Check again"),
+                review=self._failed_persisted_review(
+                    root_id,
+                    source=source,
+                    activation=activation,
+                    epoch=epoch,
+                ),
                 status_line="Check failed. Review root status, then Check again.",
             )
             self._publish()
@@ -745,6 +770,12 @@ class LibraryNotesSyncController:
             self._state = replace(
                 self._state,
                 phase="review",
+                review=self._failed_persisted_review(
+                    root_id,
+                    source=source,
+                    activation=activation,
+                    epoch=epoch,
+                ),
                 status_line="Check returned an invalid review. Check again.",
             )
             self._publish()
@@ -891,6 +922,31 @@ class LibraryNotesSyncController:
             )
         self._state = replace(self._state, phase="review")
         self._publish()
+
+    def page_review(
+        self,
+        root_id: str,
+        observation_token: str,
+        from_page: int,
+        page: int,
+    ) -> bool:
+        """Page only the exact review provenance that rendered the request."""
+
+        review = self._state.review
+        if (
+            self._state.phase != "review"
+            or self._review_plan is None
+            or root_id != self._projection_root_id
+            or review.root_id != root_id
+            or review.observation_token != observation_token
+            or review.page != from_page
+            or page not in {from_page - 1, from_page + 1}
+            or page < 1
+            or page > review.page_count
+        ):
+            return False
+        self.set_review_page(page)
+        return True
 
     async def apply_reviewed(self, root_id: str, observation_token: str) -> None:
         provenance = (root_id, observation_token)
@@ -1511,7 +1567,10 @@ class LibraryNotesSyncController:
             }
         ):
             return
+        history_origin = self._history_origin if history_page is not None else None
         epoch = self._begin_bound_mutation_lifecycle(root_id)
+        if history_origin is not None:
+            self._history_origin = history_origin
         history_generation = (
             self._start_history_request(root_id, history_page)
             if history_page is not None
@@ -1733,12 +1792,21 @@ class LibraryNotesSyncController:
         await self.show_resolution_history(root_id, page=page)
         return True
 
-    def return_from_resolution_history(self) -> None:
-        """Restore the exact review or receipt that opened current history."""
+    def return_from_resolution_history(
+        self, root_id: str, observation_token: str, from_page: int
+    ) -> bool:
+        """Restore only the exact rendered history and its recorded origin."""
 
         origin = self._history_origin
-        if self._state.phase != "history" or origin is None:
-            return
+        history = self._state.history
+        if (
+            self._state.phase != "history"
+            or origin is None
+            or not self._has_review_provenance(root_id, observation_token)
+            or history.root_id != root_id
+            or history.page != from_page
+        ):
+            return False
         phase, root_id, observation_token = origin
         review = self._state.review
         if (
@@ -1749,11 +1817,12 @@ class LibraryNotesSyncController:
             or review.observation_token != observation_token
         ):
             self._history_origin = None
-            return
+            return False
         self._state = replace(
             self._state, phase="receipt" if phase == "receipt" else "review"
         )
         self._publish()
+        return True
 
     def stage_root_action(self, root_id: str, action: str) -> None:
         """Keep controls without a completed runtime seam explicit and inert."""

@@ -1089,10 +1089,30 @@ async def test_queued_receipt_actions_keep_rendered_review_provenance() -> None:
                 receipts=(replace(receipt, operation_id="operation-2"),),
             )
         )
-        await pilot.pause()
+        await _wait_for(
+            pilot,
+            lambda: (
+                app.query_one("#notes-sync-receipt-undo-0", Button) is not undo
+                and app.query_one("#notes-sync-receipt-dismiss-0", Button)
+                is not dismiss
+                and not undo.is_attached
+                and not dismiss.is_attached
+            ),
+            message="receipt actions did not detach after the newer review rendered",
+        )
         canvas._button_pressed(Button.Pressed(undo))
         canvas._button_pressed(Button.Pressed(dismiss))
-        await pilot.pause()
+        await _wait_for(
+            pilot,
+            lambda: (
+                sum(
+                    type(item).__name__ in {"UndoRequested", "DismissRequested"}
+                    for item in app.messages
+                )
+                == 2
+            ),
+            message="detached receipt actions did not post exactly two messages",
+        )
 
     undo_message = next(
         item for item in app.messages if type(item).__name__ == "UndoRequested"
@@ -1139,6 +1159,7 @@ async def test_queued_history_actions_keep_rendered_page_provenance() -> None:
         canvas = app.query_one(LibraryNotesAddFromFilesCanvas)
         undo = app.query_one("#notes-sync-history-undo-0", Button)
         next_page = app.query_one("#notes-sync-history-next", Button)
+        history_return = app.query_one("#notes-sync-history-return", Button)
         canvas.sync_state(
             replace(
                 snapshot,
@@ -1151,16 +1172,47 @@ async def test_queued_history_actions_keep_rendered_page_provenance() -> None:
                 ),
             )
         )
-        await pilot.pause()
+        await _wait_for(
+            pilot,
+            lambda: (
+                app.query_one("#notes-sync-history-undo-0", Button) is not undo
+                and app.query_one("#notes-sync-history-next", Button) is not next_page
+                and app.query_one("#notes-sync-history-return", Button)
+                is not history_return
+                and not undo.is_attached
+                and not next_page.is_attached
+                and not history_return.is_attached
+            ),
+            message="history actions did not detach after the newer page rendered",
+        )
         canvas._button_pressed(Button.Pressed(undo))
         canvas._button_pressed(Button.Pressed(next_page))
-        await pilot.pause()
+        canvas._button_pressed(Button.Pressed(history_return))
+        await _wait_for(
+            pilot,
+            lambda: (
+                sum(
+                    type(item).__name__
+                    in {
+                        "UndoRequested",
+                        "HistoryPageRequested",
+                        "HistoryReturnRequested",
+                    }
+                    for item in app.messages
+                )
+                == 3
+            ),
+            message="detached history actions did not post exactly three messages",
+        )
 
     undo_message = next(
         item for item in app.messages if type(item).__name__ == "UndoRequested"
     )
     page_message = next(
         item for item in app.messages if type(item).__name__ == "HistoryPageRequested"
+    )
+    return_message = next(
+        item for item in app.messages if type(item).__name__ == "HistoryReturnRequested"
     )
     assert (
         undo_message.root_id,
@@ -1173,6 +1225,65 @@ async def test_queued_history_actions_keep_rendered_page_provenance() -> None:
         page_message.observation_token,
         page_message.from_page,
         page_message.page,
+    ) == ("root-1", "c" * 64, 1, 2)
+    assert (
+        return_message.root_id,
+        return_message.observation_token,
+        return_message.from_page,
+    ) == ("root-1", "c" * 64, 1)
+
+
+async def test_queued_review_page_keeps_rendered_root_token_and_page() -> None:
+    review = LastingSyncReview(
+        root_id="root-1",
+        observation_token="c" * 64,
+        safe_count=2,
+        page=1,
+        page_count=2,
+        source="root",
+    )
+    snapshot = replace(
+        initial_lasting_sync_snapshot(lasting_available=True),
+        phase="review",
+        review=review,
+    )
+    app = _Host(snapshot)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        canvas = app.query_one(LibraryNotesAddFromFilesCanvas)
+        next_page = app.query_one("#notes-sync-page-next", Button)
+        canvas.sync_state(
+            replace(
+                snapshot,
+                review=replace(review, observation_token="d" * 64),
+            )
+        )
+        await _wait_for(
+            pilot,
+            lambda: (
+                app.query_one("#notes-sync-page-next", Button) is not next_page
+                and not next_page.is_attached
+            ),
+            message="review paging action did not detach after newer token rendered",
+        )
+        canvas._button_pressed(Button.Pressed(next_page))
+        await _wait_for(
+            pilot,
+            lambda: (
+                sum(type(item).__name__ == "PageRequested" for item in app.messages)
+                == 1
+            ),
+            message="detached review Page did not post exactly one message",
+        )
+
+    message = next(
+        item for item in app.messages if type(item).__name__ == "PageRequested"
+    )
+    assert (
+        message.root_id,
+        message.observation_token,
+        message.from_page,
+        message.page,
     ) == ("root-1", "c" * 64, 1, 2)
 
 
@@ -1445,9 +1556,23 @@ async def test_queued_check_again_keeps_rendered_review_source() -> None:
                 review=replace(review, observation_token="d" * 64, source="migration"),
             )
         )
-        await pilot.pause()
+        await _wait_for(
+            pilot,
+            lambda: (
+                app.query_one("#notes-sync-check-again", Button) is not original
+                and not original.is_attached
+            ),
+            message="Check again did not detach after newer provenance rendered",
+        )
         canvas._button_pressed(Button.Pressed(original))
-        await pilot.pause()
+        await _wait_for(
+            pilot,
+            lambda: (
+                sum(type(item).__name__ == "CheckRequested" for item in app.messages)
+                == 1
+            ),
+            message="detached Check again did not post exactly one message",
+        )
 
     message = next(
         item for item in app.messages if type(item).__name__ == "CheckRequested"

@@ -26560,15 +26560,21 @@ class LibraryScreen(BaseAppScreen):
         self, event: LibraryNotesAddFromFilesCanvas.HistoryReturnRequested
     ) -> None:
         event.stop()
-        self._library_notes_sync_controller.return_from_resolution_history()
+        self._library_notes_sync_controller.return_from_resolution_history(
+            event.root_id, event.observation_token, event.from_page
+        )
 
     @on(LibraryNotesAddFromFilesCanvas.PageRequested)
     def handle_library_notes_lasting_review_page(
         self, event: LibraryNotesAddFromFilesCanvas.PageRequested
     ) -> None:
         event.stop()
-        page = self._library_notes_sync_controller.snapshot.review.page + event.delta
-        self._library_notes_sync_controller.set_review_page(page)
+        self._library_notes_sync_controller.page_review(
+            event.root_id,
+            event.observation_token,
+            event.from_page,
+            event.page,
+        )
 
     @on(LibraryNotesSyncRootsCanvas.PageRequested)
     def handle_library_notes_lasting_root_page(
