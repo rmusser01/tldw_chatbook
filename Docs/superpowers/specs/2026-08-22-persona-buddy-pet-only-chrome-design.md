@@ -52,7 +52,7 @@ The selected control model is the two-corner overlay:
 - `▾` means Fold in the normal state and `▴` means Open in the folded state.
 - `×` means Close in both states.
 - Both controls use one-glyph labels centered inside compact native Textual buttons at least three cells wide, because Textual's mandatory line padding clips a one-cell button. They retain exact `Fold`/`Open`/`Close` tooltips and the incumbent `c`/`x` keyboard actions.
-- Mouse hover uses the native tooltip. Keyboard focus uses the repository's non-obscuring button focus treatment—accent background plus bold underline, not a one-row heavy outline—and temporarily exposes the exact `Fold`/`Open`/`Close` label inside the pet. That focus help is interaction feedback, not resting chrome.
+- Mouse hover uses the native tooltip. In the 10x4-or-larger pet box, keyboard focus uses the repository's non-obscuring button focus treatment—accent background plus bold underline, not a one-row heavy outline—and temporarily exposes the exact `Fold`/`Open`/`Close` label inside the pet. That focus help is interaction feedback, not resting chrome. Below the 10x4 minimum, the two-button compact fallback retains its one-glyph labels under focus because expanded words cannot coexist with both controls and the resize grip; the same focus treatment, exact tooltip, and keyboard action remain available.
 - The remaining pet surface is the drag target. Existing lower-right resize authority and `HJKL` size bindings remain available; controls never arm drag or resize.
 
 The controls occupy cells inside the portrait bounds and add no layout row or column. They remain visible at rest; hover-only disclosure is rejected because terminal hover support and keyboard discoverability are not reliable enough.
@@ -73,7 +73,7 @@ The two corner controls remain available. The alert uses text plus semantic colo
 
 Folded mode is a real reduced pet thumbnail, not a text strip. It retains `▴` and `×` in opposite corners and remains draggable outside those controls. The thumbnail is prepared through the same bounded renderer and retains the same semantic state, Persona Visual graph, and cache provenance as the full pet. It uses a distinct render authority containing folded mode and the fixed folded `(cols, lines)` budget, plus every incumbent controller, preference, profile, selection, viewport, and view-generation fence. Folded and full preparations are never treated as interchangeable. Animation remains frozen consistently with existing collapsed behavior.
 
-If the effective render area—after both preferred-geometry and viewport constraints—cannot fit the 10x4 thumbnail/control minimum, the existing compact/minimal safety path may degrade to the two labelled-by-tooltip compact icon buttons. That is the only normal case in which the pet disappears without an actionable alert.
+If the effective render area—after both preferred-geometry and viewport constraints—cannot fit the 10x4 thumbnail/control minimum, the existing compact/minimal safety path may degrade to the two labelled-by-tooltip compact icon buttons. Those fallback buttons remain glyph-only under focus so neither control nor the lower-right resize grip can be obscured. That is the only normal case in which the pet disappears without an actionable alert.
 
 ## Fit-to-Frame Geometry
 
@@ -98,7 +98,7 @@ No new module or abstraction is required. The shortest correct implementation re
 
 ## Accessibility and Failure Behavior
 
-- Icons use the incumbent background-plus-bold-underline focus treatment, exact mouse tooltips, transient focus-visible labels, and existing keyboard equivalents; there is no hover-only action and no one-row outline that can obscure a glyph.
+- Icons use the incumbent background-plus-bold-underline focus treatment, exact mouse tooltips, transient focus-visible labels in the 10x4-or-larger pet box, and existing keyboard equivalents; below that minimum the two-button fallback stays glyph-only under focus so both controls and resize remain operable. There is no hover-only action and no one-row outline that can obscure a glyph.
 - Actionable alerts use stable text and semantic color.
 - Decode, resolver, missing-asset, and stale-authority behavior remains fail-soft and path-free.
 - If no current prepared frame exists, the view retains the last current frame or existing fallback behavior; it does not paint speculative prose.
@@ -109,7 +109,7 @@ No new module or abstraction is required. The shortest correct implementation re
 Focused tests must begin RED and prove:
 
 - the normal mounted widget contains no default words, an ordinary single-frame visual touches every inner content edge, a one-pixel control fixture occupies only the 10x4 operable minimum, and varying frame dimensions retain one non-jittering maximum animation box;
-- only `▾`/`▴` and `×` remain as visible glyphs inside operable compact buttons, with tooltips, focus-visible labels, non-obscuring focus paint, hit regions, keyboard behavior, drag exclusion, and resize preservation;
+- only `▾`/`▴` and `×` remain as visible glyphs inside operable compact buttons, with tooltips, non-obscuring focus paint, transient focus-visible labels only when the 10x4 pet box fits, hit regions, keyboard behavior, drag exclusion, and resize preservation;
 - non-actionable states remain wordless while exact actionable states replace the portrait with fixed labels and restore it afterward;
 - folded mode paints a bounded real thumbnail under a distinct folded size authority and only an effective preferred/viewport area below 10x4 reaches the two-button fallback;
 - preferred geometry drives render budget while the accepted visual's maximum prepared dimensions drive one stable display box, with no persistence, per-frame jitter, or feedback loop;
