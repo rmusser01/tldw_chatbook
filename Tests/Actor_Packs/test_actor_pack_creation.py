@@ -306,11 +306,30 @@ def test_foundation_writes_no_archives_visuals_or_chats(
         assert row is not None and int(row[0]) == 0
 
 
-def test_app_owns_creation_only_after_recovery_and_before_surfaces() -> None:
+def test_app_defers_recovery_and_the_mutation_path_self_gates() -> None:
+    """task-21106 rewired the old ``recover-before-creation-service`` pin.
+
+    Construction must no longer run recovery at all — the synchronous SQLite
+    call in ``__init__`` cost every boot and crashed the test app factory
+    (disarming the CSS cliff guard). The ordering guarantee the old pin
+    protected now lives inside the coordinator: ``create_persona`` calls the
+    idempotent ``ensure_recovered()`` before consulting the quarantine block,
+    so a mutation can never be admitted against unreconciled intents no
+    matter who mounts first (behavioral proof:
+    ``test_create_persona_runs_recovery_before_admitting_the_mutation`` in
+    test_persona_actor_pack_coordinator.py).
+    """
     from tldw_chatbook.app import TldwCli
 
     wiring = inspect.getsource(TldwCli._wire_character_persona_services)
-    recovery = wiring.index(".recover()")
+    assert ".recover()" not in wiring, (
+        "recovery is back on the construction path (task-21106 regression)"
+    )
     creation = wiring.index("ActorPackCreationService(")
     scope = wiring.index("CharacterPersonaScopeService(")
-    assert recovery < creation < scope
+    assert creation < scope
+
+    create = inspect.getsource(PersonaActorPackCoordinator.create_persona)
+    assert create.index("self.ensure_recovered()") < create.index(
+        "self._blocked_intent_ids"
+    )

@@ -384,10 +384,7 @@ from .Character_Chat.server_chat_dictionary_service import ServerChatDictionaryS
 from .Character_Chat.server_character_persona_service import (
     ServerCharacterPersonaService,
 )
-from .Actor_Packs.persona_coordinator import (
-    PersonaActorPackCoordinator,
-    PersonaActorPackCoordinatorError,
-)
+from .Actor_Packs.persona_coordinator import PersonaActorPackCoordinator
 from .Actor_Packs.creation import ActorPackCreationService
 from .Actor_Packs.repository import ActorPackRepository
 from .Persona_Buddy import (
@@ -6607,19 +6604,15 @@ class TldwCli(
             self.actor_pack_repository,
             self.local_character_persona_service,
         )
+        # task-21106: crash recovery no longer runs here — synchronous SQLite
+        # during __init__ cost every boot and crashed the test app factory
+        # (which builds the app with chachanotes_db=None), silently disarming
+        # the CSS parse-cache cliff guard. `ensure_actor_pack_recovery` now
+        # runs it once per app session: kicked on a background thread from
+        # `_schedule_deferred_startup_work`, and hard-gated ahead of the
+        # Personas screen's first library read and (inside the coordinator)
+        # every `create_persona` mutation.
         self.actor_pack_recovery_error: str | None = None
-        try:
-            recovery = self.persona_actor_pack_coordinator.recover()
-        except PersonaActorPackCoordinatorError:
-            self.actor_pack_recovery_error = "actor_pack_recovery_failed"
-            self.loguru_logger.error("Actor Pack recovery failed: actor_pack_recovery_failed")
-        else:
-            if recovery.blocked_intent_ids:
-                self.actor_pack_recovery_error = "actor_pack_recovery_blocked"
-                self.loguru_logger.warning(
-                    "Actor Pack recovery retained quarantined intents: "
-                    "actor_pack_recovery_blocked"
-                )
         self.actor_pack_creation_service = ActorPackCreationService(
             self.chachanotes_db,
             self.actor_pack_repository,
@@ -6646,6 +6639,41 @@ class TldwCli(
             server_service=self.server_chat_dictionary_service,
             policy_enforcer=self.service_policy_enforcer,
         )
+
+    def ensure_actor_pack_recovery(self) -> None:
+        """Run Actor Pack crash recovery once per app session (task-21106).
+
+        Safe to call from any thread and idempotent: the once-guard lives on
+        the coordinator (screens are never cached, so a per-mount flag would
+        re-run recovery on every Personas visit). Callers that may touch
+        recovery-affected state before the deferred startup kick has finished
+        call this first — from a worker thread, because a non-trivial recovery
+        does real SQLite work.
+
+        Preserves the exact `__init__`-era outcome mapping: a coordination
+        failure records ``actor_pack_recovery_failed``; retained quarantined
+        intents record ``actor_pack_recovery_blocked``. With no ChaChaNotes DB
+        (the test app factory builds the app without one) recovery is skipped
+        entirely, matching a boot where the profile store never opened.
+        """
+        coordinator = getattr(self, "persona_actor_pack_coordinator", None)
+        if coordinator is None or getattr(self, "chachanotes_db", None) is None:
+            return
+        first_run = not coordinator.recovery_attempted
+        recovery = coordinator.ensure_recovered()
+        if coordinator.recovery_error is not None:
+            self.actor_pack_recovery_error = "actor_pack_recovery_failed"
+            if first_run:
+                self.loguru_logger.error(
+                    "Actor Pack recovery failed: actor_pack_recovery_failed"
+                )
+        elif recovery is not None and recovery.blocked_intent_ids:
+            self.actor_pack_recovery_error = "actor_pack_recovery_blocked"
+            if first_run:
+                self.loguru_logger.warning(
+                    "Actor Pack recovery retained quarantined intents: "
+                    "actor_pack_recovery_blocked"
+                )
 
     def _wire_chat_conversation_services(self) -> None:
         trace_db = getattr(self, "chachanotes_db", None)
@@ -11493,6 +11521,19 @@ class TldwCli(
     def _schedule_deferred_startup_work(self) -> None:
         """Start nonessential services after the first interactive UI frame."""
 
+        # task-21106: Actor Pack crash recovery moved here from __init__ —
+        # synchronous SQLite has no place on the construction path. A thread
+        # worker (not a coroutine) because recovery does blocking DB I/O; the
+        # coordinator's own once-guard makes every later surface-side call
+        # (Personas mount, create_persona) a cached no-op.
+        self.run_worker(
+            self.ensure_actor_pack_recovery,
+            name="deferred_actor_pack_recovery",
+            group="actor_pack_recovery",
+            thread=True,
+            exclusive=True,
+            exit_on_error=False,
+        )
         self.set_timer(
             DEFERRED_DB_SIZE_UPDATE_DELAY_SECONDS,
             self._schedule_footer_status_updates,

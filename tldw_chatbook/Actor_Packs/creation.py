@@ -14,11 +14,14 @@ from typing import Any
 from pydantic import ValidationError
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
-from tldw_chatbook.tldw_api.character_persona_schemas import (
-    CharacterCreateRequest,
-    LocalPersonaProfileCreate,
-)
 
+# task-21106: `tldw_api.character_persona_schemas` (79 pydantic models, ~34 ms)
+# must NOT be imported at module scope — this module sits on the
+# `import tldw_chatbook.app` path and a module-scope import here defeats
+# tldw_api's PEP 562 lazy facade (task-285 phase 2; regression net:
+# Tests/Utils/test_tldw_api_schema_deferral.py). The two schema classes are
+# imported function-locally at their `model_validate` call sites, the same
+# pattern `Character_Chat/local_character_persona_service.py` uses.
 from .contracts import ActorPackValidationError, validate_actor_portrait
 from .persona_coordinator import (
     PersonaActorPackCoordinator,
@@ -85,6 +88,10 @@ class ActorPackCreationService:
         Raises:
             ActorPackCreationError: If validation, authority, or persistence fails.
         """
+
+        from tldw_chatbook.tldw_api.character_persona_schemas import (  # noqa: PLC0415
+            CharacterCreateRequest,
+        )
 
         self._begin_operation()
         try:
@@ -158,6 +165,10 @@ class ActorPackCreationService:
         Raises:
             ActorPackCreationError: If validation, authority, or persistence fails.
         """
+
+        from tldw_chatbook.tldw_api.character_persona_schemas import (  # noqa: PLC0415
+            LocalPersonaProfileCreate,
+        )
 
         self._begin_operation()
         try:

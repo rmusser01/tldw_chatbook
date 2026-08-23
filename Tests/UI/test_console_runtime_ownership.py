@@ -487,17 +487,50 @@ def test_persona_buddy_is_app_owned_and_shutdown_after_console_producers():
 
 @pytest.mark.unit
 def test_actor_pack_recovery_precedes_character_persona_surfaces():
-    """Cross-store recovery runs before scope services and Buddy construction."""
+    """Cross-store recovery is gated ahead of every affected surface.
+
+    task-21106 rewrote what this pin means. Recovery no longer runs inside
+    ``_wire_character_persona_services`` — synchronous SQLite during
+    ``__init__`` cost every boot and crashed the test app factory — so the
+    old ``local_service < coordinator < recover() < scope`` source ordering
+    is gone by design. The guarantee it protected now has three seams, and
+    this test pins all of them:
+
+    - the deferred-startup worker kicks ``ensure_actor_pack_recovery`` on a
+      thread right after first paint (ahead of any user-driven Console/Buddy
+      persona read);
+    - the Personas surface awaits the same idempotent gate before its first
+      library read (behavioral proof in test_actor_pack_recovery_seam.py);
+    - the coordinator itself runs ``ensure_recovered`` before admitting a
+      ``create_persona`` mutation, so no caller ordering can bypass it.
+    """
     import inspect
 
+    from tldw_chatbook.Actor_Packs.persona_coordinator import (
+        PersonaActorPackCoordinator,
+    )
     from tldw_chatbook.app import TldwCli
+    from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
 
     wiring = inspect.getsource(TldwCli._wire_character_persona_services)
     local_service = wiring.index("LocalCharacterPersonaService(")
     coordinator = wiring.index("PersonaActorPackCoordinator(")
-    recovery = wiring.index(".recover()")
     scope = wiring.index("CharacterPersonaScopeService(")
-    assert local_service < coordinator < recovery < scope, wiring
+    assert local_service < coordinator < scope, wiring
+    assert ".recover()" not in wiring, (
+        "recovery is back on the construction path (task-21106 regression)"
+    )
+
+    deferred = inspect.getsource(TldwCli._schedule_deferred_startup_work)
+    assert "ensure_actor_pack_recovery" in deferred, deferred
+
+    personas_load = inspect.getsource(PersonasScreen._load_after_mount)
+    assert "ensure_actor_pack_recovery" in personas_load, personas_load
+
+    create = inspect.getsource(PersonaActorPackCoordinator.create_persona)
+    assert create.index("self.ensure_recovered()") < create.index(
+        "self._blocked_intent_ids"
+    ), create
 
     initializer = inspect.getsource(TldwCli.__init__)
     wiring_call = initializer.index("self._wire_character_persona_services()")

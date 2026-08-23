@@ -1569,6 +1569,16 @@ class PersonasScreen(BaseAppScreen):
     async def _load_after_mount(self) -> None:
         """Load the character library once the screen is already on screen."""
         try:
+            # task-21106: Actor Pack crash recovery must land before this
+            # surface reads persona/library state (the coordinator docstring's
+            # "before affected surfaces mount"). Once-per-app-session — the
+            # guard lives on the coordinator, so re-mounts are a cached no-op —
+            # and off-thread, because a non-trivial recovery does real SQLite.
+            ensure_recovery = getattr(
+                self.app_instance, "ensure_actor_pack_recovery", None
+            )
+            if callable(ensure_recovery):
+                await asyncio.to_thread(ensure_recovery)
             # Must precede everything below: `_apply_pending_restore` and the
             # selection sync assume the full center-view DOM (task-2725).
             await self._mount_deferred_center_views()
