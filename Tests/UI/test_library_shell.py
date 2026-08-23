@@ -1952,9 +1952,32 @@ async def test_library_graduation_announcement_clears_on_direct_item_open() -> N
             )
 
             await screen._open_library_item_by_id("media", "media-direct")
+            # task-21116: admission is observed via the STABLE route change.
+            #
+            # This wait used to sample ``_library_media_view == "viewer"``,
+            # which is a TRANSIENT this test never meant to pin. This
+            # onboarding app wires no media service, so the detail worker's
+            # unavailable-item fallback flips the view straight back to
+            # "list" -- measured at BASE (30c7e1fe9) too: the value
+            # immediately after the await was "viewer", and every single
+            # subsequent poll was already "list". The old assertion passed
+            # only because the pre-conversion open had no await point after
+            # ``run_worker`` and so returned inside that one-sample window;
+            # the converted open awaits its targeted canvas projection, and
+            # the window closes first.
+            #
+            # The subject of this test -- the graduation announcement
+            # clearing on a direct item open -- is unaffected: it is driven
+            # by ``_acknowledge_library_destination_change`` ->
+            # ``_sync_library_lifecycle_status``, an in-place
+            # ``Static.update`` that never depended on a recompose. Verified
+            # on both trees: announcement "" and row "browse-media" after
+            # the open, and this retargeted condition passes at BASE as
+            # well, so it measures the feature rather than the change.
             await _wait_for_condition(
                 pilot,
-                lambda: screen._library_media_view == "viewer",
+                lambda: screen._library_selected_row_id
+                == LIBRARY_ROW_BROWSE_MEDIA,
                 message="direct media destination was not admitted",
             )
             await pilot.pause()

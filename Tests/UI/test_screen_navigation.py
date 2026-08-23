@@ -2648,8 +2648,13 @@ def test_action_library_media_viewer_back_returns_to_list_and_refocuses_it():
     focus_calls = []
     timer_calls = []
     worker_requests = []
+    scheduled = []
     screen.refresh = lambda recompose=False: refresh_calls.append(recompose)
     screen.call_after_refresh = lambda callback: focus_calls.append(callback)
+    # task-21116: the exit now schedules a targeted viewer->list canvas
+    # swap via ``call_next`` instead of an inline whole-screen recompose;
+    # capture the continuation so this synchronous harness can drive it.
+    screen.call_next = lambda callback, *args: scheduled.append((callback, args))
     # ``_arm_library_list_entry_focus`` also arms a settle-window timer
     # (task-2856) -- stub it out, a real ``set_timer`` needs a running
     # event loop this synchronous test has none of.
@@ -2666,6 +2671,18 @@ def test_action_library_media_viewer_back_returns_to_list_and_refocuses_it():
     screen.action_library_media_viewer_back()
 
     assert screen._library_media_view == "list"
+    # task-21116: no whole-screen recompose at click time -- the exit is a
+    # scheduled canvas-child swap plus the entry-focus arm.
+    assert refresh_calls == []
+    [(continuation, continuation_args)] = scheduled
+    assert continuation == screen._apply_library_media_list_return
+    assert continuation_args == (None,)
+    import asyncio
+
+    asyncio.run(continuation(*continuation_args))
+    # On this unmounted harness the targeted replacement is unavailable, so
+    # the continuation takes its legacy whole-screen fallback -- and still
+    # runs the exact task-2856 AC1 focus/timer sequence afterwards.
     assert refresh_calls == [True]
     assert timer_calls == [
         (LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS, screen._disarm_library_list_entry_focus)
