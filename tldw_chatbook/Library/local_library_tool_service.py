@@ -60,6 +60,7 @@ from tldw_chatbook.Library.library_tool_contract import (
     validate_search_query,
 )
 from tldw_chatbook.Notes.note_folder_models import (
+    FolderCapabilityError,
     FolderCollisionError,
     FolderValidationError,
     normalize_folder_name,
@@ -132,6 +133,21 @@ def _storage_error_payload() -> dict[str, Any]:
         "The local Library store could not complete the operation.",
         retryable=True,
     ).to_payload()
+
+
+def _folder_capability_unavailable() -> LibraryToolError:
+    """The folder seam's named capability refusal (Qodo review pin).
+
+    ``NotesScopeService`` raises ``FolderCapabilityError`` when the pinned
+    scope's folder repository is absent or lacks the operation; mapping it
+    here keeps the deployment-shape failure a NAMED ``feature_unavailable``
+    instead of the generic scrubbed ``storage_error``.
+    """
+    return LibraryToolError(
+        ERROR_FEATURE_UNAVAILABLE,
+        "Folder operations are not available for the local note folder"
+        " backend in this deployment.",
+    )
 
 
 def _run(value: Any) -> Any:
@@ -864,7 +880,13 @@ class LocalLibraryToolService:
                 "folder must be a single valid folder name (one level, no"
                 " slashes, not '.' or '..')"
             ) from None
-        found = self._find_note_folder(requested.key)
+        try:
+            found = self._find_note_folder(requested.key)
+        except FolderCapabilityError:
+            # The seam's own capability refusal (a scope without folder
+            # support) is the NAMED feature_unavailable, never the scrubbed
+            # storage_error the generic handler would return.
+            raise _folder_capability_unavailable() from None
         if found is not None:
             return found
         try:
@@ -876,6 +898,8 @@ class LocalLibraryToolService:
                     user_id=self._notes_user_id,
                 )
             )
+        except FolderCapabilityError:
+            raise _folder_capability_unavailable() from None
         except FolderCollisionError:
             # Lost the create race: the concurrent winner is now visible to
             # the lookup, and the placement target converges on ONE folder.
@@ -899,8 +923,9 @@ class LocalLibraryToolService:
         Rows go through the legacy interop (the notes UI's own row-writer);
         folders/placements go through the async scope service (bridged with
         the established ``_run``/``asyncio.run`` pattern). Order matters:
-        validate -> policy -> folder-ensure -> row write -> attach, so a
-        folder failure never lands an orphaned note row.
+        validate -> policy -> update pre-flight (id/existence/version) ->
+        folder-ensure -> row write -> attach, so a folder failure never
+        lands an orphaned note row and a failed update never mints a folder.
         """
         del descriptor  # routing already resolved; the operation is singular
         # Deferred import: the DB module is heavy and only the exception
@@ -912,7 +937,35 @@ class LocalLibraryToolService:
         )
         # Policy before ANY backend touch (spec §6).
         self._enforce_save_note_policy()
-        # Folder first: a failed folder-ensure must not orphan a note row.
+
+        # Update pre-flight (Qodo review): for UPDATE calls the id parse,
+        # the not_found existence check, and the version read all run BEFORE
+        # the folder-ensure, so a deterministically failing update (unknown
+        # id, stale version) never mints a folder for a call that then
+        # fails. The ``update_note`` ConflictError below stays as the race
+        # backstop (a version moving between the read and the row write is
+        # the one accepted folder-residual window).
+        raw_id: str | None = None
+        if note_id is not None:
+            _, raw_id = parse_public_id(note_id, expected_type="note")
+            row = backend.get_note_by_id(self._notes_user_id, raw_id)
+            if row is None:
+                raise _not_found("The requested Library item was not found.")
+            stored_version = row.get("version") if isinstance(row, Mapping) else None
+            try:
+                stale = int(stored_version) != int(expected_version)
+            except (TypeError, ValueError):
+                stale = False  # unreadable version: the row write arbitrates
+            if stale:
+                raise LibraryToolError(
+                    ERROR_CONTENT_CHANGED,
+                    "The note changed since the expected version was read;"
+                    " re-read it (library_get_note) and retry with the"
+                    " current version.",
+                    details={"hint": "re_read_and_retry"},
+                )
+
+        # Folder next: a failed folder-ensure must not orphan a note row.
         folder = (
             self._ensure_note_folder(folder_name) if folder_name is not None else None
         )
@@ -927,9 +980,6 @@ class LocalLibraryToolService:
             version = 1
             created = True
         else:
-            _, raw_id = parse_public_id(note_id, expected_type="note")
-            if backend.get_note_by_id(self._notes_user_id, raw_id) is None:
-                raise _not_found("The requested Library item was not found.")
             try:
                 updated = backend.update_note(
                     self._notes_user_id,

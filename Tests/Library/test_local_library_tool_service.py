@@ -945,15 +945,27 @@ class FakeNotesScopeService:
         #: folder is absent -- simulating a concurrent create winning the race
         #: (the folder then appears on the re-query).
         self.collision_on_next_create = False
+        #: Seam method names whose call raises FolderCapabilityError -- the
+        #: deployment-without-folder-support shape (the scope service's own
+        #: ``_raise_folder_capability_error`` path).
+        self.capability_errors: tuple[str, ...] = ()
 
     async def list_note_folder_children(
         self, *, scope, parent_id, limit, offset, user_id=None
     ):
-        from tldw_chatbook.Notes.note_folder_models import normalize_folder_name
+        from tldw_chatbook.Notes.note_folder_models import (
+            FolderCapabilityError,
+            normalize_folder_name,
+        )
 
         self.calls.append(
             ("list_note_folder_children", {"parent_id": parent_id, "user_id": user_id})
         )
+        if "list_note_folder_children" in self.capability_errors:
+            raise FolderCapabilityError(
+                reason_code="folder_list_unsupported",
+                user_message="Folder listing is not available for this scope.",
+            )
         ordered = sorted(self._folders.values(), key=lambda f: f["name"])
         page = ordered[offset : offset + limit]
         end = offset + len(page)
@@ -970,11 +982,17 @@ class FakeNotesScopeService:
 
     async def create_note_folder(self, *, scope, name, parent_id, user_id=None):
         from tldw_chatbook.Notes.note_folder_models import (
+            FolderCapabilityError,
             FolderCollisionError,
             normalize_folder_name,
         )
 
         self.calls.append(("create_note_folder", {"name": name}))
+        if "create_note_folder" in self.capability_errors:
+            raise FolderCapabilityError(
+                reason_code="folder_create_unsupported",
+                user_message="Folder creation is not available for this scope.",
+            )
         key = normalize_folder_name(name).key
         if key in self._folders:
             raise FolderCollisionError(
@@ -1059,7 +1077,9 @@ def test_save_note_schema_bounds_match_the_spec():
     assert schema["properties"]["title"]["minLength"] == 1
     assert schema["properties"]["content"]["maxLength"] == 100_000
     assert schema["properties"]["content"]["minLength"] == 1
-    assert schema["properties"]["folder"]["maxLength"] == 256
+    # 255, not 256: the folder model's normalize_folder_name refuses
+    # segments longer than 255 chars -- the contract bound must equal it.
+    assert schema["properties"]["folder"]["maxLength"] == 255
     assert schema["properties"]["folder"]["minLength"] == 1
     assert schema["properties"]["note_id"]["maxLength"] == 128
     assert schema["properties"]["expected_version"]["minimum"] == 1
@@ -1170,6 +1190,52 @@ def test_save_note_unknown_note_id_maps_to_not_found():
     assert all(call[0] != "update_note" for call in notes.calls)
 
 
+def test_save_note_failed_update_never_mints_the_folder():
+    # Qodo review: for UPDATE calls the not_found pre-check and the version
+    # read run BEFORE the folder-ensure, so a deterministically failing
+    # update (unknown note id, stale version) cannot mint a folder for a
+    # call that then fails. Only the update race residual (the version
+    # moving between the read and the row write) may leave a folder behind.
+    unknown_scope = FakeNotesScopeService()
+    unknown = _save_service(
+        notes_service=FakeSaveNotesBackend(), notes_scope_service=unknown_scope
+    )
+    result = unknown.invoke(
+        "library_save_note",
+        {
+            "title": "T",
+            "content": "c",
+            "folder": "Study",
+            "note_id": _public_id("note", "missing-note"),
+            "expected_version": 1,
+        },
+    )
+    assert _error_code(result) == "not_found"
+    # No folder minted for a dead note id: the seam was never touched.
+    assert unknown_scope.calls == []
+
+    stale_scope = FakeNotesScopeService()
+    stale = _save_service(
+        notes_service=FakeSaveNotesBackend(
+            notes={"note-1": {"title": "T", "content": "c", "version": 7}}
+        ),
+        notes_scope_service=stale_scope,
+    )
+    result = stale.invoke(
+        "library_save_note",
+        {
+            "title": "T",
+            "content": "c2",
+            "folder": "Study",
+            "note_id": _public_id("note", "note-1"),
+            "expected_version": 6,
+        },
+    )
+    assert _error_code(result) == "content_changed"
+    # No folder minted for a stale version: the seam was never touched.
+    assert stale_scope.calls == []
+
+
 def test_save_note_rejects_wrong_type_and_malformed_note_ids():
     service = _save_service()
     wrong_type = service.invoke(
@@ -1209,10 +1275,10 @@ def test_save_note_over_long_fields_name_the_limit_at_invoke_time():
     assert "100000" in long_content["error"]["message"]
 
     long_folder = service.invoke(
-        "library_save_note", {"title": "t", "content": "c", "folder": "f" * 257}
+        "library_save_note", {"title": "t", "content": "c", "folder": "f" * 256}
     )
     assert _error_code(long_folder) == "invalid_argument"
-    assert "256" in long_folder["error"]["message"]
+    assert "255" in long_folder["error"]["message"]
 
     # Exactly-at-limit is NOT over-long: the checks are strict '>' and the
     # boundary value still reaches the row-writer.
@@ -1220,6 +1286,37 @@ def test_save_note_over_long_fields_name_the_limit_at_invoke_time():
         "library_save_note", {"title": "t" * 512, "content": "c" * 100_000}
     )
     assert at_limit.get("error", {}).get("code") != "invalid_argument"
+
+
+def test_save_note_folder_bound_matches_the_folder_model_segment_limit():
+    # Qodo review: the folder model's normalize_folder_name refuses segments
+    # over 255 chars, so the schema maxLength and the invoke-time guard must
+    # both be 255 -- a 256-char name must never pass the contract only to die
+    # at the model, and the model's own 255 boundary must survive end-to-end.
+    from tldw_chatbook.Notes.note_folder_models import (
+        FolderValidationError,
+        normalize_folder_name,
+    )
+
+    with pytest.raises(FolderValidationError):
+        normalize_folder_name("f" * 256)
+    assert normalize_folder_name("f" * 255).display == "f" * 255
+
+    schema = LIBRARY_TOOL_DESCRIPTORS["library_save_note"].input_schema
+    assert schema["properties"]["folder"]["maxLength"] == 255
+
+    service = _save_service()
+    rejected = service.invoke(
+        "library_save_note", {"title": "t", "content": "c", "folder": "f" * 256}
+    )
+    assert _error_code(rejected) == "invalid_argument"
+    assert "255" in rejected["error"]["message"]
+
+    accepted = service.invoke(
+        "library_save_note", {"title": "t", "content": "c", "folder": "f" * 255}
+    )
+    assert "error" not in accepted
+    assert accepted["item"]["folder"] == "f" * 255
 
 
 def test_save_note_folder_ensure_is_idempotent_across_saves():
@@ -1281,6 +1378,38 @@ def test_save_note_folder_without_scope_service_is_feature_unavailable():
     assert _error_code(result) == "feature_unavailable"
     # Refused before the row write: no orphan note lands unfiled.
     assert notes.calls == []
+
+
+def test_save_note_folder_capability_error_maps_to_feature_unavailable():
+    # Qodo review: the seam's own capability failure (a deployment whose
+    # scope cannot list/create folders raises FolderCapabilityError) is the
+    # NAMED feature_unavailable -- not the scrubbed generic storage_error.
+    notes = FakeSaveNotesBackend()
+    create_blocked = FakeNotesScopeService()
+    create_blocked.capability_errors = ("create_note_folder",)
+    service = _save_service(notes_service=notes, notes_scope_service=create_blocked)
+
+    result = service.invoke(
+        "library_save_note", {"title": "A", "content": "a", "folder": "Study"}
+    )
+
+    assert _error_code(result) == "feature_unavailable"
+    assert "folder operations are not available" in result["error"]["message"].lower()
+    # Refused before the row write: no orphan note lands unfiled.
+    assert notes.calls == []
+
+    listing_blocked = FakeNotesScopeService()
+    listing_blocked.capability_errors = ("list_note_folder_children",)
+    service = _save_service(
+        notes_service=FakeSaveNotesBackend(), notes_scope_service=listing_blocked
+    )
+
+    result = service.invoke(
+        "library_save_note", {"title": "A", "content": "a", "folder": "Study"}
+    )
+
+    assert _error_code(result) == "feature_unavailable"
+    assert "folder operations are not available" in result["error"]["message"].lower()
 
 
 def test_save_note_policy_denial_precedes_every_backend_call():

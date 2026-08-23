@@ -71,7 +71,10 @@ SPEC_SAVE_NAME_MAX_CHARS = 120
 SPEC_SAVE_DESCRIPTION_MAX_CHARS = 2_000
 SAVE_NOTE_TITLE_MAX_CHARS = 512
 SAVE_NOTE_CONTENT_MAX_CHARS = 100_000
-SAVE_NOTE_FOLDER_MAX_CHARS = 256
+#: 255, not 256: the folder model's ``normalize_folder_name`` refuses any
+#: segment longer than 255 characters, so this bound must equal the model's
+#: own limit -- a schema-passing 256-char name would die at the model.
+SAVE_NOTE_FOLDER_MAX_CHARS = 255
 
 # -- Structured errors (spec §9) -------------------------------------------------
 
@@ -356,9 +359,9 @@ def _save_note_schema() -> dict:
     """The note-save input schema (student-workflow spec §4.1).
 
     Bounds are input-side ``maxLength`` literals in the spec-save precedent
-    style (title 512 / content 100_000 / folder 256; minLength 1 on the
-    text bodies) so an agent cannot push a megabyte into the notes DB
-    through the tool.
+    style (title 512 / content 100_000 / folder 255 -- the folder model's
+    own segment limit; minLength 1 on the text bodies) so an agent cannot
+    push a megabyte into the notes DB through the tool.
     """
     return {
         "type": "object",
