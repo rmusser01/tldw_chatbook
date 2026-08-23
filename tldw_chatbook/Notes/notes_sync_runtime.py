@@ -7,8 +7,10 @@ import hashlib
 import sqlite3
 import time
 import weakref
+from collections import OrderedDict
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from types import MappingProxyType
 from typing import Protocol, cast
@@ -30,6 +32,8 @@ from tldw_chatbook.Notes.notes_scope_service import NotesScopeService, ScopeType
 from tldw_chatbook.Notes.notes_sync_conflicts import (
     ConflictApplyResult,
     ConflictComparison,
+    ConflictHistoryRow,
+    ConflictReceipt,
     ConflictSelection,
     NotesSyncConflictChoice,
     build_conflict_comparison,
@@ -812,6 +816,13 @@ class NotesSyncRuntimeOwner:
         self._mutation_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
             weakref.WeakValueDictionary()
         )
+        self._active_receipts: dict[
+            str,
+            OrderedDict[
+                str,
+                tuple[str, NotesSyncConflictChoice],
+            ],
+        ] = {}
         self._status = "starting"
         self._next_action = "wait"
         self._admission_open = False
@@ -834,6 +845,163 @@ class NotesSyncRuntimeOwner:
             self._next_action,
             tuple(self._root_status[key] for key in sorted(self._root_status)),
         )
+
+    def _remember_conflict_receipt(
+        self,
+        root_id: str,
+        binding_id: str,
+        operation_id: str,
+        choice: NotesSyncConflictChoice,
+    ) -> None:
+        """Retain one current-runtime receipt, superseding the same item."""
+
+        validate_notes_sync_opaque_id(root_id, field_name="root_id")
+        validate_notes_sync_opaque_id(binding_id, field_name="binding_id")
+        validate_notes_sync_opaque_id(operation_id, field_name="operation_id")
+        if (
+            type(choice) is not NotesSyncConflictChoice
+            or choice is NotesSyncConflictChoice.SKIP
+        ):
+            raise TypeError("choice must be a mutating NotesSyncConflictChoice")
+        receipts = self._active_receipts.setdefault(root_id, OrderedDict())
+        for prior_id, (prior_binding, _prior_choice) in tuple(receipts.items()):
+            if prior_binding == binding_id and prior_id != operation_id:
+                receipts.pop(prior_id)
+        receipts[operation_id] = (binding_id, choice)
+        receipts.move_to_end(operation_id)
+        while len(receipts) > 100:
+            receipts.popitem(last=False)
+
+    def active_conflict_receipts(self, root_id: str) -> tuple[ConflictReceipt, ...]:
+        """Return bounded insertion-ordered receipts for this process only."""
+
+        validate_notes_sync_opaque_id(root_id, field_name="root_id")
+        return tuple(
+            ConflictReceipt(
+                operation_id,
+                choice,
+                "completed",
+                True,
+            )
+            for operation_id, (_binding_id, choice) in self._active_receipts.get(
+                root_id, OrderedDict()
+            ).items()
+        )
+
+    def dismiss_conflict_receipt(self, root_id: str, operation_id: str) -> None:
+        """Dismiss one process-local receipt without changing durable history."""
+
+        validate_notes_sync_opaque_id(root_id, field_name="root_id")
+        validate_notes_sync_opaque_id(operation_id, field_name="operation_id")
+        receipts = self._active_receipts.get(root_id)
+        if receipts is not None:
+            receipts.pop(operation_id, None)
+
+    async def undo_resolution(
+        self,
+        root_id: str,
+        source_operation_id: str,
+    ) -> NotesSyncExecutionResult:
+        """Run one durable linked Undo under the root mutation authority."""
+
+        validate_notes_sync_opaque_id(root_id, field_name="root_id")
+        validate_notes_sync_opaque_id(
+            source_operation_id, field_name="source_operation_id"
+        )
+        task = self._admit_task(root_id)
+        try:
+            async with self._mutation_lock(root_id):
+                root = await asyncio.to_thread(self._store.get_root, root_id)
+                if root.root_id != root_id:
+                    raise RuntimeError("root_authority_mismatch")
+                if root.state is not NotesSyncRootState.ACTIVE:
+                    raise RuntimeError("sync_root_not_active")
+                self._require_authority(root_id, "write")
+
+                def require_write(_state: object) -> None:
+                    self._require_authority(root_id, "write")
+
+                executor = cast(
+                    NotesSyncExecutor,
+                    self._adapter.executor_for(
+                        root,
+                        after_stage=require_write,
+                    ),
+                )
+                result = await executor.undo_resolution(root_id, source_operation_id)
+                self._require_authority(root_id, "write")
+                if type(result) is not NotesSyncExecutionResult:
+                    raise RuntimeError("invalid_execution_result")
+                if result.state is NotesSyncOperationState.COMPLETED:
+                    self.dismiss_conflict_receipt(root_id, source_operation_id)
+                    fresh = await self._fresh_authority(root)
+                    self._reviews[root_id] = fresh.plan
+                return result
+        finally:
+            self._finish_task(root_id, task)
+
+    async def resolution_history(
+        self,
+        root_id: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        now: int | None = None,
+    ) -> tuple[ConflictHistoryRow, ...]:
+        """Return one bounded durable history page without private labels."""
+
+        current_time = time.time_ns() if now is None else now
+        records = await asyncio.to_thread(
+            self._store.list_resolution_history,
+            root_id,
+            limit=limit,
+            offset=offset,
+            now=current_time,
+        )
+        choices = {
+            "resolve_keep_file": NotesSyncConflictChoice.KEEP_FILE,
+            "resolve_keep_note": NotesSyncConflictChoice.KEEP_NOTE,
+            "resolve_keep_both": NotesSyncConflictChoice.KEEP_BOTH,
+        }
+        return tuple(
+            ConflictHistoryRow(
+                operation_id=record.operation_id,
+                choice=choices[record.kind],
+                state=("undone" if record.undone else record.state.value),
+                completed_at=(
+                    self._history_timestamp(record.completed_at)
+                    if record.completed_at is not None
+                    else None
+                ),
+                updated_at=self._history_timestamp(record.updated_at),
+                undo_available=(
+                    not record.undone
+                    and record.state is NotesSyncOperationState.COMPLETED
+                    and record.undo_state is None
+                    and record.recovery_expires_at is not None
+                    and record.recovery_expires_at > current_time
+                ),
+                undo_reason=(
+                    "Undone"
+                    if record.undone
+                    else (
+                        "Changed since resolution"
+                        if record.undo_state is not None
+                        else (
+                            "Undo expired"
+                            if record.recovery_expires_at is None
+                            or record.recovery_expires_at <= current_time
+                            else None
+                        )
+                    )
+                ),
+            )
+            for record in records
+        )
+
+    @staticmethod
+    def _history_timestamp(value: int) -> str:
+        return datetime.fromtimestamp(value / 1_000_000_000, UTC).isoformat()
 
     async def start(self, *, force: bool = False) -> None:
         """Initialize once and remain inert unless both cutover gates match.
@@ -1522,6 +1690,18 @@ class NotesSyncRuntimeOwner:
                 safe_result_count = min(len(results), len(safe_actions))
                 safe_completed = sum(completed[:safe_result_count])
                 conflict_completed = sum(completed[len(safe_actions) :])
+                for selection, result in zip(
+                    mutating,
+                    results[len(safe_actions) :],
+                    strict=False,
+                ):
+                    if result.state is NotesSyncOperationState.COMPLETED:
+                        self._remember_conflict_receipt(
+                            root_id,
+                            selection.binding_id,
+                            result.operation_id,
+                            selection.choice,
+                        )
                 all_completed = len(results) == len(actions) and all(completed)
                 needs_recovery = any(result.recovery_required for result in results)
                 partial = not all_completed and (

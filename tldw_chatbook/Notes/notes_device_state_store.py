@@ -19,6 +19,7 @@ from loguru import logger
 
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 from tldw_chatbook.Notes import notes_device_state_schema
+from tldw_chatbook.Notes.notes_sync_conflicts import linked_undo_operation_id
 from tldw_chatbook.Notes.notes_sync_models import (
     NotesSyncBindingState,
     NotesSyncDirection,
@@ -155,6 +156,14 @@ _CONFLICT_SUBSTAGE_STATES = {
 }
 _CONFLICT_OPAQUE_ID_CAPACITY = 256
 _CONFLICT_VERSION_CAPACITY = 20
+_UNDO_SUBSTAGES = (
+    "recovery_admitted",
+    "authority_restored",
+    "opposite_verified",
+    "binding_updated",
+    "copy_cleanup_complete",
+    "verified",
+)
 
 
 def _now() -> int:
@@ -337,6 +346,31 @@ class NotesSyncRecoveryRecord:
 
     def __repr__(self) -> str:
         return f"NotesSyncRecoveryRecord(recovery_id={self.recovery_id!r})"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class NotesSyncResolutionHistoryRecord:
+    """Private durable facts for one conflict-resolution history row."""
+
+    operation_id: str
+    binding_id: str
+    kind: str
+    state: NotesSyncOperationState
+    reason_code: str | None
+    completed_at: int | None
+    updated_at: int
+    recovery_expires_at: int | None
+    undo_state: NotesSyncOperationState | None
+    undo_reason_code: str | None
+
+    @property
+    def undone(self) -> bool:
+        """Return whether the deterministic linked Undo completed."""
+
+        return self.undo_state is NotesSyncOperationState.COMPLETED
+
+    def __repr__(self) -> str:
+        return "NotesSyncResolutionHistoryRecord(<private>)"
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -1387,6 +1421,79 @@ class NotesDeviceStateStore:
             for row in rows
         )
 
+    def list_resolution_history(
+        self,
+        root_id: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        now: int | None = None,
+    ) -> tuple[NotesSyncResolutionHistoryRecord, ...]:
+        """Return one bounded newest-first page of reviewed resolutions."""
+
+        validate_notes_sync_opaque_id(root_id, field_name="root_id")
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("limit must be between 1 and 100.")
+        if type(offset) is not int or offset < 0:
+            raise ValueError("offset must be non-negative.")
+        if now is not None and (type(now) is not int or now <= 0):
+            raise ValueError("now must be positive.")
+        with self.transaction() as connection:
+            rows = connection.execute(
+                """
+                SELECT operation_id, binding_id, kind, state, reason_code,
+                       updated_at
+                FROM notes_sync_operations
+                WHERE root_id = ?
+                  AND kind IN (
+                    'resolve_keep_file', 'resolve_keep_note', 'resolve_keep_both'
+                  )
+                ORDER BY updated_at DESC, operation_id DESC
+                LIMIT ? OFFSET ?
+                """,
+                (root_id, limit, offset),
+            ).fetchall()
+            result: list[NotesSyncResolutionHistoryRecord] = []
+            for row in rows:
+                operation_id, binding_id, kind, state, reason_code, updated_at = row
+                undo_id = linked_undo_operation_id(root_id, operation_id)
+                undo = connection.execute(
+                    "SELECT state, reason_code FROM notes_sync_operations "
+                    "WHERE operation_id = ? AND root_id = ? "
+                    "AND kind = 'undo_resolution'",
+                    (undo_id, root_id),
+                ).fetchone()
+                recovery = connection.execute(
+                    "SELECT expires_at FROM notes_sync_recovery WHERE operation_id = ?",
+                    (operation_id,),
+                ).fetchone()
+                operation_state = NotesSyncOperationState(state)
+                result.append(
+                    NotesSyncResolutionHistoryRecord(
+                        operation_id=operation_id,
+                        binding_id=binding_id,
+                        kind=kind,
+                        state=operation_state,
+                        reason_code=reason_code,
+                        completed_at=(
+                            updated_at
+                            if operation_state is NotesSyncOperationState.COMPLETED
+                            else None
+                        ),
+                        updated_at=updated_at,
+                        recovery_expires_at=(
+                            recovery[0] if recovery is not None else None
+                        ),
+                        undo_state=(
+                            NotesSyncOperationState(undo[0])
+                            if undo is not None
+                            else None
+                        ),
+                        undo_reason_code=(undo[1] if undo is not None else None),
+                    )
+                )
+        return tuple(result)
+
     def transition_operation(
         self,
         operation_id: str,
@@ -1695,6 +1802,85 @@ class NotesDeviceStateStore:
                 "The requested operation cannot enter attention."
             )
         return self.get_operation(operation_id)
+
+    def advance_undo_substage(
+        self,
+        *,
+        operation_id: str,
+        recovery_id: str,
+        expected_substage: str,
+        next_substage: str,
+        expected_metadata_length: int,
+    ) -> None:
+        """Replace one padded linked-Undo checkpoint without changing capacity."""
+
+        validate_notes_sync_opaque_id(operation_id, field_name="operation_id")
+        validate_notes_sync_opaque_id(recovery_id, field_name="recovery_id")
+        if type(expected_metadata_length) is not int or expected_metadata_length <= 0:
+            raise ValueError("expected_metadata_length must be positive.")
+        try:
+            index = _UNDO_SUBSTAGES.index(expected_substage)
+        except ValueError:
+            raise NotesDeviceStateError("The Undo substage is corrupt.") from None
+        if (
+            index + 1 >= len(_UNDO_SUBSTAGES)
+            or _UNDO_SUBSTAGES[index + 1] != next_substage
+        ):
+            raise NotesDeviceStateError(
+                "The requested Undo substage transition is not allowed."
+            )
+        longest = max(map(len, _UNDO_SUBSTAGES))
+        with self.transaction(immediate=True) as connection:
+            row = connection.execute(
+                "SELECT operation.kind, recovery.payload, recovery.metadata "
+                "FROM notes_sync_operations AS operation "
+                "JOIN notes_sync_recovery AS recovery "
+                "ON recovery.operation_id = operation.operation_id "
+                "WHERE operation.operation_id = ? AND recovery.recovery_id = ?",
+                (operation_id, recovery_id),
+            ).fetchone()
+            if row is None:
+                raise NotesDeviceStateError("The linked Undo recovery does not exist.")
+            kind, payload, metadata = row
+            if (
+                kind != "undo_resolution"
+                or type(payload) is not bytes
+                or type(metadata) is not bytes
+                or len(metadata) != expected_metadata_length
+            ):
+                raise NotesDeviceStateError("The linked Undo recovery is corrupt.")
+            try:
+                decoded = json.loads(metadata.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                raise NotesDeviceStateError(
+                    "The linked Undo recovery is corrupt."
+                ) from None
+            if (
+                not isinstance(decoded, dict)
+                or decoded.get("undo_payload_digest")
+                != hashlib.sha256(payload).hexdigest()
+                or decoded.get("undo_substage") != expected_substage
+                or decoded.get("undo_substage_padding")
+                != " " * (longest - len(expected_substage))
+            ):
+                raise NotesDeviceStateError("The linked Undo substage is corrupt.")
+            decoded["undo_substage"] = next_substage
+            decoded["undo_substage_padding"] = " " * (longest - len(next_substage))
+            replacement = json.dumps(
+                decoded,
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+            if len(replacement) != expected_metadata_length:
+                raise NotesDeviceStateError("The linked Undo recovery length drifted.")
+            changed = connection.execute(
+                "UPDATE notes_sync_recovery SET metadata = ? "
+                "WHERE recovery_id = ? AND operation_id = ? AND metadata = ?",
+                (replacement, recovery_id, operation_id, metadata),
+            ).rowcount
+            if changed != 1:
+                raise NotesDeviceStateError("The linked Undo substage is stale.")
 
     def mark_operation_partial_attention(
         self,
@@ -2105,6 +2291,7 @@ __all__ = [
     "NotesSyncOperationRecord",
     "NotesSyncRecoveryRecord",
     "NotesSyncRecoveryAdmission",
+    "NotesSyncResolutionHistoryRecord",
     "NotesSyncRootRecord",
     "NotesSyncRootSummary",
     "NotesSyncStoreSetting",

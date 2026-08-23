@@ -37,6 +37,7 @@ from tldw_chatbook.Notes.notes_sync_authority import (
     ManualFolderRequest,
     ManualPlacementRequest,
     NotesScopeSyncAuthority,
+    NotesSyncAuthorityError,
     NotesSyncNoteSnapshot,
     VerifiedFolder,
     VerifiedPlacement,
@@ -47,6 +48,7 @@ from tldw_chatbook.Notes.notes_sync_executor import (
     NotesSyncExecutor,
     NotesSyncKeepBothAuthority,
 )
+from tldw_chatbook.Notes.notes_sync_conflicts import linked_undo_operation_id
 from tldw_chatbook.Notes.notes_sync_filesystem import (
     NotesSyncFileSnapshot,
     PosixNotesSyncFilesystem,
@@ -158,6 +160,21 @@ class _KeepBothAuthority(FakeNoteAuthority):
         self.copy_note: NotesSyncNoteSnapshot | None = None
         self.placement: VerifiedPlacement | None = None
         self.effects: list[str] = []
+        self.deleted_copy = False
+        self.cancel_after_delete = False
+
+    async def observe(self, note_id: str) -> NotesSyncNoteSnapshot:
+        if self.copy_note is not None and note_id == self.copy_note.note_id:
+            if self.deleted_copy:
+                raise NotesSyncAuthorityError("note_missing")
+            return self.copy_note
+        return await super().observe(note_id)
+
+    async def delete(self, expected: NotesSyncNoteSnapshot) -> None:
+        assert self.copy_note == expected
+        self.deleted_copy = True
+        if self.cancel_after_delete:
+            raise asyncio.CancelledError
 
     async def create_or_verify_manual_folder(
         self, request: ManualFolderRequest
@@ -1266,7 +1283,7 @@ async def test_keep_both_restart_reconstructs_all_private_authority_after_admiss
 
     assert reconstructed.keep_both == request.keep_both
     result = await fresh_executor.resume(reconstructed)
-    assert result.state is NotesSyncOperationState.COMPLETED
+    assert result.state is NotesSyncOperationState.COMPLETED, result.reason_code
 
 
 @pytest.mark.asyncio
@@ -2047,3 +2064,456 @@ async def test_each_selected_conflict_gets_thirty_days_from_its_own_admission(
     assert store.load_operation_recovery(second_request.operation_id).expires_at == (
         second_now + executor_module.CONFLICT_RECOVERY_RETENTION_NS
     )
+
+
+@pytest.mark.parametrize(
+    ("journal_kind", "action"),
+    (
+        ("resolve_keep_file", NotesSyncActionKind.UPDATE_NOTE),
+        ("resolve_keep_note", NotesSyncActionKind.UPDATE_FILE),
+    ),
+)
+@pytest.mark.asyncio
+async def test_undo_resolution_restores_conflict_with_fresh_active_binding(
+    tmp_path: Path,
+    journal_kind: str,
+    action: NotesSyncActionKind,
+) -> None:
+    store, _database = _execution_store(tmp_path)
+    note = _note(content="note side", version=4)
+    file = _file(content="file side")
+    notes = FakeNoteAuthority(note)
+    files = _PathPreservingFilesystem(file)
+    request = replace(
+        _request(action=action, note=note, file=file),
+        journal_kind=journal_kind,
+    )
+    executor = NotesSyncExecutor(store, notes, files, recovery_capacity_bytes=65_536)
+
+    resolved = await executor.execute(request)
+    source_before = store.get_operation(request.operation_id)
+    undone = await executor.undo_resolution("root-1", request.operation_id)
+
+    assert resolved.state is NotesSyncOperationState.COMPLETED
+    assert undone.state is NotesSyncOperationState.COMPLETED
+    assert notes.snapshot.content == "note side"
+    assert files.snapshot.text == "file side"
+    binding = store.get_binding("binding-1")
+    assert binding.state is NotesSyncBindingState.ACTIVE
+    assert binding.note_version == notes.snapshot.version
+    assert binding.content_digest == hashlib.sha256(b"before").hexdigest()
+    assert store.get_operation(request.operation_id) == source_before
+    linked = linked_undo_operation_id("root-1", request.operation_id)
+    assert store.get_operation(linked).kind == "undo_resolution"
+
+    duplicate = await executor.undo_resolution("root-1", request.operation_id)
+    assert duplicate.state is NotesSyncOperationState.COMPLETED
+    assert notes.replace_calls == (
+        2 if action is NotesSyncActionKind.UPDATE_NOTE else 0
+    )
+    assert files.replace_calls == (
+        2 if action is NotesSyncActionKind.UPDATE_FILE else 0
+    )
+
+
+@pytest.mark.asyncio
+async def test_second_resolution_after_undo_uses_fresh_note_version(
+    tmp_path: Path,
+) -> None:
+    store, _database = _execution_store(tmp_path)
+    note = _note(content="note side", version=4)
+    file = _file(content="file side")
+    notes = FakeNoteAuthority(note)
+    files = _PathPreservingFilesystem(file)
+    first = replace(
+        _request(action=NotesSyncActionKind.UPDATE_NOTE, note=note, file=file),
+        journal_kind="resolve_keep_file",
+    )
+    executor = NotesSyncExecutor(store, notes, files, recovery_capacity_bytes=65_536)
+    assert (await executor.execute(first)).state is NotesSyncOperationState.COMPLETED
+    assert (
+        await executor.undo_resolution("root-1", first.operation_id)
+    ).state is NotesSyncOperationState.COMPLETED
+    second = replace(
+        _request(
+            action=NotesSyncActionKind.UPDATE_NOTE,
+            note=notes.snapshot,
+            file=files.snapshot,
+            operation_id="operation-2",
+        ),
+        observation_token="observation-2",
+        journal_kind="resolve_keep_file",
+    )
+
+    result = await executor.execute(second)
+
+    assert result.state is NotesSyncOperationState.COMPLETED, result.reason_code
+    assert store.get_binding("binding-1").note_version == notes.snapshot.version
+
+
+@pytest.mark.asyncio
+async def test_undo_keep_both_restores_before_deleting_only_unchanged_copy(
+    tmp_path: Path,
+) -> None:
+    store, _database = _execution_store(tmp_path)
+    note = _note(content="note side", version=4)
+    file = _file(content="file side")
+    notes = _KeepBothAuthority(note)
+    files = _PathPreservingFilesystem(file)
+    request = _keep_both_request(note, file)
+    executor = NotesSyncExecutor(store, notes, files, recovery_capacity_bytes=65_536)
+    assert (await executor.execute(request)).state is NotesSyncOperationState.COMPLETED
+
+    result = await executor.undo_resolution("root-1", request.operation_id)
+
+    assert result.state is NotesSyncOperationState.COMPLETED, result.reason_code
+    assert notes.snapshot.content == "note side"
+    assert files.snapshot.text == "file side"
+    assert notes.deleted_copy is True
+    assert store.get_binding("binding-1").note_version == notes.snapshot.version
+
+
+@pytest.mark.asyncio
+async def test_undo_keep_both_refuses_edited_copy_without_mutating_authority(
+    tmp_path: Path,
+) -> None:
+    store, _database = _execution_store(tmp_path)
+    note = _note(content="note side", version=4)
+    file = _file(content="file side")
+    notes = _KeepBothAuthority(note)
+    files = _PathPreservingFilesystem(file)
+    request = _keep_both_request(note, file)
+    executor = NotesSyncExecutor(store, notes, files, recovery_capacity_bytes=65_536)
+    assert (await executor.execute(request)).state is NotesSyncOperationState.COMPLETED
+    assert notes.copy_note is not None
+    notes.copy_note = replace(
+        notes.copy_note,
+        content="edited copy",
+        content_digest=hashlib.sha256(b"edited copy").hexdigest(),
+        version=notes.copy_note.version + 1,
+    )
+    note_before = notes.snapshot
+
+    result = await executor.undo_resolution("root-1", request.operation_id)
+
+    assert result.state is NotesSyncOperationState.NEEDS_ATTENTION
+    assert result.reason_code == "changed_since_resolution"
+    assert notes.snapshot == note_before
+    assert notes.deleted_copy is False
+
+
+@pytest.mark.asyncio
+async def test_undo_expiry_boundary_and_wrong_root_refuse_before_admission(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tldw_chatbook.Notes.notes_device_state_store as store_module
+
+    now = 1_000_000_000
+    monkeypatch.setattr(store_module, "_now", lambda: now)
+    store, _database = _execution_store(tmp_path)
+    note = _note(content="note side", version=4)
+    file = _file(content="file side")
+    notes = FakeNoteAuthority(note)
+    files = _PathPreservingFilesystem(file)
+    request = replace(
+        _request(action=NotesSyncActionKind.UPDATE_NOTE, note=note, file=file),
+        journal_kind="resolve_keep_file",
+    )
+    executor = NotesSyncExecutor(store, notes, files, recovery_capacity_bytes=65_536)
+    assert (await executor.execute(request)).state is NotesSyncOperationState.COMPLETED
+    expiry = store.load_operation_recovery(request.operation_id).expires_at
+
+    with pytest.raises(ValueError, match="wrong_root"):
+        await executor.undo_resolution(
+            "root-other", request.operation_id, now=expiry - 1
+        )
+    expired = await executor.undo_resolution("root-1", request.operation_id, now=expiry)
+
+    assert expired.reason_code == "undo_expired"
+    assert (
+        store.find_operation(linked_undo_operation_id("root-1", request.operation_id))
+        is None
+    )
+    assert notes.snapshot.content == "file side"
+
+
+@pytest.mark.asyncio
+async def test_linked_undo_restart_never_reads_deleted_source_recovery(
+    tmp_path: Path,
+) -> None:
+    store, database = _execution_store(tmp_path)
+    note = _note(content="note side", version=4)
+    file = _file(content="file side")
+    notes = FakeNoteAuthority(note)
+    files = _PathPreservingFilesystem(file)
+    request = replace(
+        _request(action=NotesSyncActionKind.UPDATE_NOTE, note=note, file=file),
+        journal_kind="resolve_keep_file",
+    )
+    assert (
+        await NotesSyncExecutor(
+            store, notes, files, recovery_capacity_bytes=65_536
+        ).execute(request)
+    ).state is NotesSyncOperationState.COMPLETED
+
+    linked = linked_undo_operation_id("root-1", request.operation_id)
+
+    def crash_after_undo_admission(state: NotesSyncOperationState) -> None:
+        if (
+            state is NotesSyncOperationState.RECOVERY_ADMITTED
+            and store.find_operation(linked) is not None
+        ):
+            raise InjectedCrash
+
+    executor = NotesSyncExecutor(
+        store,
+        notes,
+        files,
+        recovery_capacity_bytes=65_536,
+        after_stage=crash_after_undo_admission,
+    )
+    with pytest.raises(InjectedCrash):
+        await executor.undo_resolution("root-1", request.operation_id)
+    with store.transaction(immediate=True) as connection:
+        connection.execute(
+            "DELETE FROM notes_sync_recovery WHERE operation_id = ?",
+            (request.operation_id,),
+        )
+
+    reopened = NotesSyncExecutor(
+        NotesDeviceStateStore(database),
+        notes,
+        files,
+        recovery_capacity_bytes=65_536,
+    )
+    reconstructed = await reopened.reconstruct_request(linked)
+    result = await reopened.resume(reconstructed)
+
+    assert result.state is NotesSyncOperationState.COMPLETED
+    assert notes.snapshot.content == "note side"
+
+
+@pytest.mark.parametrize(
+    "crash_state",
+    (
+        NotesSyncOperationState.RECOVERY_ADMITTED,
+        NotesSyncOperationState.FIRST_AUTHORITY_APPLIED,
+        NotesSyncOperationState.SECOND_AUTHORITY_APPLIED,
+        NotesSyncOperationState.BINDING_UPDATED,
+        NotesSyncOperationState.VERIFIED,
+    ),
+)
+@pytest.mark.asyncio
+async def test_linked_undo_restarts_after_every_durable_boundary(
+    tmp_path: Path,
+    crash_state: NotesSyncOperationState,
+) -> None:
+    store, database = _execution_store(tmp_path)
+    note = _note(content="note side", version=4)
+    file = _file(content="file side")
+    notes = FakeNoteAuthority(note)
+    files = _PathPreservingFilesystem(file)
+    request = replace(
+        _request(action=NotesSyncActionKind.UPDATE_NOTE, note=note, file=file),
+        journal_kind="resolve_keep_file",
+    )
+    executor = NotesSyncExecutor(store, notes, files, recovery_capacity_bytes=65_536)
+    assert (await executor.execute(request)).state is NotesSyncOperationState.COMPLETED
+    linked = linked_undo_operation_id("root-1", request.operation_id)
+
+    def crash(state: NotesSyncOperationState) -> None:
+        if state is crash_state:
+            raise InjectedCrash
+
+    crashing = NotesSyncExecutor(
+        store,
+        notes,
+        files,
+        recovery_capacity_bytes=65_536,
+        after_stage=crash,
+    )
+    with pytest.raises(InjectedCrash):
+        await crashing.undo_resolution("root-1", request.operation_id)
+    assert store.list_resolution_history("root-1")[0].undone is False
+
+    reopened_store = NotesDeviceStateStore(database)
+    reopened = NotesSyncExecutor(
+        reopened_store,
+        notes,
+        files,
+        recovery_capacity_bytes=65_536,
+    )
+    result = await reopened.resume(await reopened.reconstruct_request(linked))
+
+    assert result.state is NotesSyncOperationState.COMPLETED, result.reason_code
+    assert reopened_store.list_resolution_history("root-1")[0].undone is True
+    assert notes.snapshot.content == "note side"
+    assert files.snapshot.text == "file side"
+
+
+@pytest.mark.asyncio
+async def test_linked_undo_substages_are_length_neutral_one_byte_below_capacity(
+    tmp_path: Path,
+) -> None:
+    calibration = tmp_path / "calibration"
+    calibration.mkdir()
+    store, _database = _execution_store(calibration)
+    note = _note(content="note side", version=4)
+    file = _file(content="file side")
+    request = replace(
+        _request(action=NotesSyncActionKind.UPDATE_NOTE, note=note, file=file),
+        journal_kind="resolve_keep_file",
+    )
+    notes = FakeNoteAuthority(note)
+    files = _PathPreservingFilesystem(file)
+    executor = NotesSyncExecutor(store, notes, files, recovery_capacity_bytes=65_536)
+    assert (await executor.execute(request)).state is NotesSyncOperationState.COMPLETED
+    assert (
+        await executor.undo_resolution("root-1", request.operation_id)
+    ).state is NotesSyncOperationState.COMPLETED
+    with store.transaction() as connection:
+        used = int(
+            connection.execute(
+                "SELECT SUM(length(payload) + length(metadata)) "
+                "FROM notes_sync_recovery"
+            ).fetchone()[0]
+        )
+
+    constrained = tmp_path / "constrained"
+    constrained.mkdir()
+    store, _database = _execution_store(constrained)
+    notes = FakeNoteAuthority(note)
+    files = _PathPreservingFilesystem(file)
+    lengths: list[int] = []
+    linked = linked_undo_operation_id("root-1", request.operation_id)
+
+    def record_length(_state: NotesSyncOperationState) -> None:
+        recovery = store.find_operation_recovery(linked)
+        if recovery is not None:
+            lengths.append(len(recovery.metadata))
+
+    executor = NotesSyncExecutor(
+        store,
+        notes,
+        files,
+        recovery_capacity_bytes=used + 1,
+        after_stage=record_length,
+    )
+    assert (await executor.execute(request)).state is NotesSyncOperationState.COMPLETED
+    result = await executor.undo_resolution("root-1", request.operation_id)
+
+    assert result.state is NotesSyncOperationState.COMPLETED, result.reason_code
+    assert len(lengths) == 5
+    assert len(set(lengths)) == 1
+    with store.transaction() as connection:
+        final_used = int(
+            connection.execute(
+                "SELECT SUM(length(payload) + length(metadata)) "
+                "FROM notes_sync_recovery"
+            ).fetchone()[0]
+        )
+    assert final_used == used
+    assert final_used == (used + 1) - 1
+
+
+@pytest.mark.parametrize("effect", ("restoration", "binding", "copy_cleanup"))
+@pytest.mark.asyncio
+async def test_linked_undo_resumes_after_cancellation_following_named_effect(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    effect: str,
+) -> None:
+    store, _database = _execution_store(tmp_path)
+    note = _note(content="note side", version=4)
+    file = _file(content="file side")
+    notes: FakeNoteAuthority
+    if effect == "copy_cleanup":
+        notes = _KeepBothAuthority(note)
+        request = _keep_both_request(note, file)
+    else:
+        notes = FakeNoteAuthority(note)
+        request = replace(
+            _request(action=NotesSyncActionKind.UPDATE_NOTE, note=note, file=file),
+            journal_kind="resolve_keep_file",
+        )
+    files = _PathPreservingFilesystem(file)
+    executor = NotesSyncExecutor(store, notes, files, recovery_capacity_bytes=65_536)
+    assert (await executor.execute(request)).state is NotesSyncOperationState.COMPLETED
+
+    restore_commit: object | None = None
+    if effect == "restoration":
+        notes._cancel_after_replace = True
+    elif effect == "binding":
+        original_commit = store.commit_binding_stage
+
+        def cancelling_commit(*args: object, **kwargs: object) -> object:
+            original_commit(*args, **kwargs)
+            raise asyncio.CancelledError
+
+        monkeypatch.setattr(store, "commit_binding_stage", cancelling_commit)
+        restore_commit = original_commit
+    else:
+        assert isinstance(notes, _KeepBothAuthority)
+        notes.cancel_after_delete = True
+
+    with pytest.raises(asyncio.CancelledError):
+        await executor.undo_resolution("root-1", request.operation_id)
+
+    notes._cancel_after_replace = False
+    if restore_commit is not None:
+        monkeypatch.setattr(store, "commit_binding_stage", restore_commit)
+    if isinstance(notes, _KeepBothAuthority):
+        notes.cancel_after_delete = False
+    linked = linked_undo_operation_id("root-1", request.operation_id)
+    result = await executor.resume(await executor.reconstruct_request(linked))
+
+    assert result.state is NotesSyncOperationState.COMPLETED, result.reason_code
+    assert notes.snapshot.content == "note side"
+    assert files.snapshot.text == "file side"
+
+
+def test_resolution_history_is_newest_first_bounded_and_derives_undone(
+    tmp_path: Path,
+) -> None:
+    store, _database = _execution_store(tmp_path)
+    with store.transaction(immediate=True) as connection:
+        for index, kind in enumerate(
+            (
+                "update_note",
+                "resolve_keep_file",
+                "resolve_keep_note",
+                "resolve_keep_both",
+            )
+        ):
+            operation_id = f"history-{index}"
+            connection.execute(
+                "INSERT INTO notes_sync_operations "
+                "(operation_id, root_id, binding_id, kind, state, reason_code, "
+                "observation_token, expected_note_version, expected_file_digest, "
+                "created_at, updated_at) VALUES (?, 'root-1', 'binding-1', ?, "
+                "'completed', NULL, 'token-1', 4, ?, ?, ?)",
+                (operation_id, kind, "a" * 64, index + 1, index + 1),
+            )
+        source_id = "history-1"
+        undo_id = linked_undo_operation_id("root-1", source_id)
+        connection.execute(
+            "INSERT INTO notes_sync_operations "
+            "(operation_id, root_id, binding_id, kind, state, reason_code, "
+            "observation_token, expected_note_version, expected_file_digest, "
+            "created_at, updated_at) VALUES (?, 'root-1', 'binding-1', "
+            "'undo_resolution', 'completed', NULL, ?, 4, ?, 8, 8)",
+            (undo_id, source_id, "a" * 64),
+        )
+
+    rows = store.list_resolution_history("root-1", limit=100, offset=0, now=9)
+
+    assert [row.operation_id for row in rows] == [
+        "history-3",
+        "history-2",
+        "history-1",
+    ]
+    assert rows[-1].undone is True
+    assert all(row.kind.startswith("resolve_keep_") for row in rows)
+    with pytest.raises(ValueError, match="limit"):
+        store.list_resolution_history("root-1", limit=101)

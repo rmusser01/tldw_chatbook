@@ -172,6 +172,10 @@ class _Executor:
         self.resume_entered = asyncio.Event()
         self.resume_release = asyncio.Event()
         self.mutations = 0
+        self.undo_calls: list[tuple[str, str]] = []
+        self.undo_entered = asyncio.Event()
+        self.undo_release = asyncio.Event()
+        self.undo_release.set()
 
     async def execute(self, _request: object) -> object:
         self.entered.set()
@@ -199,6 +203,23 @@ class _Executor:
         )
         return SimpleNamespace(
             state=NotesSyncOperationState.COMPLETED,
+            reason_code=None,
+        )
+
+    async def undo_resolution(
+        self, root_id: str, source_operation_id: str
+    ) -> NotesSyncExecutionResult:
+        self.undo_entered.set()
+        await self.undo_release.wait()
+        self.undo_calls.append((root_id, source_operation_id))
+        self.mutations += 1
+        self.adapter.inputs[root_id] = _input(
+            generation=2, file_digest=_A, note_digest=_A
+        )
+        return NotesSyncExecutionResult(
+            operation_id=f"undo-{source_operation_id}",
+            state=NotesSyncOperationState.COMPLETED,
+            recovery_required=False,
             reason_code=None,
         )
 
@@ -1690,3 +1711,82 @@ async def test_apply_requires_final_observation_token_even_if_plan_claims_equali
 
     assert adapter.executor.requests == []
     assert adapter.live_bundles == set()
+
+
+def test_active_receipts_are_ordered_capped_dismissed_and_superseded() -> None:
+    owner = _owner(_Adapter(_input()), _root())
+    for index in range(101):
+        owner._remember_conflict_receipt(
+            "root-1",
+            f"binding-{index}",
+            f"operation-{index}",
+            NotesSyncConflictChoice.KEEP_FILE,
+        )
+
+    receipts = owner.active_conflict_receipts("root-1")
+
+    assert len(receipts) == 100
+    assert receipts[0].operation_id == "operation-1"
+    assert receipts[-1].operation_id == "operation-100"
+    owner.dismiss_conflict_receipt("root-1", "operation-50")
+    assert "operation-50" not in {
+        receipt.operation_id for receipt in owner.active_conflict_receipts("root-1")
+    }
+    owner._remember_conflict_receipt(
+        "root-1",
+        "binding-100",
+        "operation-new",
+        NotesSyncConflictChoice.KEEP_NOTE,
+    )
+    superseded = owner.active_conflict_receipts("root-1")
+    assert "operation-100" not in {receipt.operation_id for receipt in superseded}
+    assert superseded[-1].operation_id == "operation-new"
+    assert _owner(_Adapter(_input()), _root()).active_conflict_receipts("root-1") == ()
+
+
+@pytest.mark.asyncio
+async def test_undo_resolution_is_root_serialized_refreshes_and_dismisses_receipt() -> (
+    None
+):
+    adapter = _Adapter(_input())
+    owner = _owner(adapter, _root())
+    owner._remember_conflict_receipt(
+        "root-1",
+        "binding-1",
+        "source-operation",
+        NotesSyncConflictChoice.KEEP_FILE,
+    )
+
+    result = await owner.undo_resolution("root-1", "source-operation")
+
+    assert result.state is NotesSyncOperationState.COMPLETED
+    assert adapter.executor.undo_calls == [("root-1", "source-operation")]
+    assert owner.active_conflict_receipts("root-1") == ()
+    assert adapter.observe_calls == ["root-1"]
+    assert owner._reviews["root-1"] == plan_reconciliation(adapter.inputs["root-1"])
+
+
+@pytest.mark.asyncio
+async def test_apply_and_undo_share_root_lock_and_loser_revalidates() -> None:
+    observed = _input(file_digest=_B, note_digest=_C)
+    adapter = _Adapter(observed)
+    adapter.executor.undo_release.clear()
+    owner = _owner(adapter, _root())
+    token = _install_review(owner, observed)
+    lock = _ObservedLock()
+    owner._mutation_locks["root-1"] = lock
+
+    undo = asyncio.create_task(owner.undo_resolution("root-1", "source-operation"))
+    await _wait(adapter.executor.undo_entered)
+    apply = asyncio.create_task(owner.apply_reviewed("root-1", token, (), ()))
+    await _wait(lock.waiting)
+    adapter.executor.undo_release.set()
+    undo_result, apply_result = await asyncio.gather(
+        undo, apply, return_exceptions=True
+    )
+
+    assert isinstance(undo_result, NotesSyncExecutionResult)
+    assert undo_result.state is NotesSyncOperationState.COMPLETED
+    assert isinstance(apply_result, ValueError)
+    assert str(apply_result) == "stale_review"
+    assert adapter.executor.mutations == 1

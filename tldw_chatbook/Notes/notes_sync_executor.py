@@ -6,6 +6,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from enum import StrEnum
@@ -35,6 +36,7 @@ from tldw_chatbook.Notes.notes_sync_filesystem import (
     NotesSyncPrivateCleanupHandle,
     WindowsNotesSyncObservation,
 )
+from tldw_chatbook.Notes.notes_sync_conflicts import linked_undo_operation_id
 from tldw_chatbook.Notes.notes_sync_models import (
     NotesSyncActionKind,
     NotesSyncBindingState,
@@ -61,6 +63,14 @@ CONFLICT_SUBSTAGES = (
     "bound_note_updated",
     "file_reverified",
     "binding_updated",
+    "verified",
+)
+UNDO_SUBSTAGES = (
+    "recovery_admitted",
+    "authority_restored",
+    "opposite_verified",
+    "binding_updated",
+    "copy_cleanup_complete",
     "verified",
 )
 _CONFLICT_OPAQUE_ID_CAPACITY = 256
@@ -235,6 +245,7 @@ _ATTENTION_CHOICES = (
 _INTERNAL_REASONS = frozenset(
     {
         "binding_authority_changed",
+        "changed_since_resolution",
         "direction_disallows_action",
         "file_observation_failed",
         "folder_owner_missing",
@@ -585,6 +596,34 @@ class NotesSyncExecutionRequest:
 
 
 @dataclass(frozen=True, slots=True, repr=False)
+class NotesSyncUndoRequest:
+    """Private self-contained authority for one linked resolution Undo."""
+
+    operation_id: str
+    root_id: str
+    binding_id: str
+    source_operation_id: str
+    recovery_id: str
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("operation_id", self.operation_id),
+            ("root_id", self.root_id),
+            ("binding_id", self.binding_id),
+            ("source_operation_id", self.source_operation_id),
+            ("recovery_id", self.recovery_id),
+        ):
+            validate_notes_sync_opaque_id(value, field_name=name)
+        if self.operation_id != linked_undo_operation_id(
+            self.root_id, self.source_operation_id
+        ):
+            raise ValueError("operation_id must be the deterministic linked Undo ID.")
+
+    def __repr__(self) -> str:
+        return "NotesSyncUndoRequest(<private>)"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class NotesSyncExecutionResult:
     """Path-, content-, and hash-free result of one executor call."""
 
@@ -760,22 +799,83 @@ class NotesSyncExecutor:
 
     async def resume(
         self,
-        request: NotesSyncExecutionRequest,
+        request: NotesSyncExecutionRequest | NotesSyncUndoRequest,
     ) -> NotesSyncExecutionResult:
         """Resume only when current authorities match reviewed or intended state."""
 
+        if isinstance(request, NotesSyncUndoRequest):
+            return await self._serialized(
+                request.operation_id,
+                lambda: self._run_undo(request, admit=False),
+            )
         return await self._serialized(
             request.operation_id,
             lambda: self._run(request, allow_attention=True),
         )
 
+    async def undo_resolution(
+        self,
+        root_id: str,
+        source_operation_id: str,
+        *,
+        now: int | None = None,
+    ) -> NotesSyncExecutionResult:
+        """Admit or resume the deterministic linked Undo for one resolution."""
+
+        validate_notes_sync_opaque_id(root_id, field_name="root_id")
+        validate_notes_sync_opaque_id(
+            source_operation_id, field_name="source_operation_id"
+        )
+        operation_id = linked_undo_operation_id(root_id, source_operation_id)
+
+        async def run() -> NotesSyncExecutionResult:
+            operation = self._store.find_operation(operation_id)
+            if operation is not None:
+                request = await self._reconstruct_undo_request(operation)
+                return await self._run_undo(request, admit=False)
+            source = self._store.get_operation(source_operation_id)
+            if source.root_id != root_id:
+                raise ValueError("wrong_root")
+            if (
+                source.kind not in _RESOLUTION_JOURNAL_ACTIONS
+                or source.state is not NotesSyncOperationState.COMPLETED
+                or source.binding_id is None
+            ):
+                return self._result(
+                    operation_id,
+                    NotesSyncOperationState.NEEDS_ATTENTION,
+                    "undo_unavailable",
+                )
+            source_recovery = self._store.find_operation_recovery(source_operation_id)
+            current_time = time.time_ns() if now is None else now
+            if type(current_time) is not int or current_time <= 0:
+                raise ValueError("now must be positive.")
+            if source_recovery is None or source_recovery.expires_at <= current_time:
+                return self._result(
+                    operation_id,
+                    NotesSyncOperationState.NEEDS_ATTENTION,
+                    "undo_expired",
+                )
+            request = NotesSyncUndoRequest(
+                operation_id,
+                root_id,
+                source.binding_id,
+                source_operation_id,
+                f"recovery-{operation_id}",
+            )
+            return await self._run_undo(request, admit=True)
+
+        return await self._serialized(operation_id, run)
+
     async def reconstruct_request(
         self,
         operation_id: str,
-    ) -> NotesSyncExecutionRequest:
+    ) -> NotesSyncExecutionRequest | NotesSyncUndoRequest:
         """Rebuild one private request from durable intent and fresh authorities."""
 
         operation = self._store.get_operation(operation_id)
+        if operation.kind == "undo_resolution":
+            return await self._reconstruct_undo_request(operation)
         resolution_action = _RESOLUTION_JOURNAL_ACTIONS.get(operation.kind)
         try:
             operation_action = resolution_action or NotesSyncActionKind(operation.kind)
@@ -1095,6 +1195,616 @@ class NotesSyncExecutor:
                 else None
             ),
         )
+
+    async def _reconstruct_undo_request(
+        self,
+        operation: NotesSyncOperationRecord,
+    ) -> NotesSyncUndoRequest:
+        if (
+            operation.kind != "undo_resolution"
+            or operation.binding_id is None
+            or operation.state is NotesSyncOperationState.COMPLETED
+        ):
+            if operation.state is NotesSyncOperationState.COMPLETED:
+                recovery = self._store.load_operation_recovery(operation.operation_id)
+                metadata = self._recovery_metadata(recovery)
+                source_id = self._required_metadata_text(
+                    metadata, "source_operation_id"
+                )
+                return NotesSyncUndoRequest(
+                    operation.operation_id,
+                    operation.root_id,
+                    operation.binding_id
+                    or self._required_metadata_text(metadata, "binding_id"),
+                    source_id,
+                    recovery.recovery_id,
+                )
+            raise RuntimeError("recovery_authority_changed")
+        recovery = self._store.load_operation_recovery(operation.operation_id)
+        metadata = self._recovery_metadata(recovery)
+        source_id = self._required_metadata_text(metadata, "source_operation_id")
+        if (
+            operation.observation_token != source_id
+            or operation.operation_id
+            != linked_undo_operation_id(operation.root_id, source_id)
+        ):
+            raise RuntimeError("recovery_authority_changed")
+        self._undo_material(recovery, metadata)
+        return NotesSyncUndoRequest(
+            operation.operation_id,
+            operation.root_id,
+            operation.binding_id,
+            source_id,
+            recovery.recovery_id,
+        )
+
+    async def _run_undo(
+        self,
+        request: NotesSyncUndoRequest,
+        *,
+        admit: bool,
+    ) -> NotesSyncExecutionResult:
+        admitted = not admit
+        try:
+            if admit:
+                if not await self._admit_undo(request):
+                    return self._result(
+                        request.operation_id,
+                        NotesSyncOperationState.NEEDS_ATTENTION,
+                        "recovery_capacity_exceeded",
+                    )
+                admitted = True
+                self._stage(NotesSyncOperationState.RECOVERY_ADMITTED)
+            operation = self._store.get_operation(request.operation_id)
+            if operation.state is NotesSyncOperationState.COMPLETED:
+                return self._result(request.operation_id, operation.state)
+            if operation.state is NotesSyncOperationState.NEEDS_ATTENTION:
+                return self._result(
+                    request.operation_id,
+                    operation.state,
+                    operation.reason_code or "changed_since_resolution",
+                )
+            return await self._advance_undo(request)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            reason = self._bounded_reason(error)
+            if reason in {
+                "stale_observation",
+                "binding_authority_changed",
+                "postcondition_failed",
+                "recovery_authority_changed",
+            }:
+                reason = "changed_since_resolution"
+            if admitted:
+                self._persist_attention_best_effort(request.operation_id, reason)
+            return self._result(
+                request.operation_id,
+                NotesSyncOperationState.NEEDS_ATTENTION,
+                reason,
+            )
+
+    async def _admit_undo(self, request: NotesSyncUndoRequest) -> bool:
+        source = self._store.get_operation(request.source_operation_id)
+        source_recovery = self._store.load_operation_recovery(
+            request.source_operation_id
+        )
+        source_metadata = self._recovery_metadata(source_recovery)
+        if (
+            source.root_id != request.root_id
+            or source.binding_id != request.binding_id
+            or source.kind not in _RESOLUTION_JOURNAL_ACTIONS
+            or source.state is not NotesSyncOperationState.COMPLETED
+        ):
+            raise RuntimeError("recovery_authority_changed")
+        root = self._store.get_root(request.root_id)
+        if root.state is not NotesSyncRootState.ACTIVE:
+            raise RuntimeError("binding_authority_changed")
+        binding = self._store.get_binding(request.binding_id)
+        note_id = self._required_metadata_text(source_metadata, "note_id")
+        relative_path = self._required_metadata_text(
+            source_metadata, "file_relative_path"
+        )
+        note = await self._observe_note(note_id)
+        file = await self._observe_file_path(relative_path)
+        if not isinstance(file, NotesSyncFileSnapshot):
+            raise RuntimeError("changed_since_resolution")
+        if (
+            binding.root_id != request.root_id
+            or binding.state is not NotesSyncBindingState.ACTIVE
+            or binding.note_id != note.note_id
+            or binding.note_scope_id != note.note_scope_id
+            or binding.normalized_relative_path != relative_path
+            or binding.note_version != note.version
+            or binding.content_digest != note.content_digest
+            or binding.serialization != file.observation.serialization
+            or binding.stable_identity_digest != self.stable_identity_digest(file)
+        ):
+            raise RuntimeError("changed_since_resolution")
+        if source.kind == "resolve_keep_both":
+            await self._require_undo_copy(source_metadata, source_recovery.payload)
+        payload = json.dumps(
+            {
+                "post_file_payload": base64.b64encode(file.raw_bytes).decode("ascii"),
+                "post_note_content": note.content,
+                "source_payload": base64.b64encode(source_recovery.payload).decode(
+                    "ascii"
+                ),
+            },
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        longest = max(map(len, UNDO_SUBSTAGES))
+        metadata: dict[str, object] = {
+            "binding_id": request.binding_id,
+            "current_binding": self._encoded_binding(binding),
+            "file_relative_path": relative_path,
+            "post_file_representation_digest": file.representation_digest,
+            "post_file_reviewed_state": _encoded_reviewed_state(file),
+            "post_note_content_digest": note.content_digest,
+            "post_note_scope_id": note.note_scope_id,
+            "post_note_id": note.note_id,
+            "post_note_title": note.title,
+            "post_note_updated_at": note.updated_at,
+            "post_note_version": note.version,
+            "source_kind": source.kind,
+            "source_metadata": base64.b64encode(source_recovery.metadata).decode(
+                "ascii"
+            ),
+            "source_operation_id": request.source_operation_id,
+            "undo_payload_digest": hashlib.sha256(payload).hexdigest(),
+            "undo_substage": "recovery_admitted",
+            "undo_substage_padding": " " * (longest - len("recovery_admitted")),
+        }
+        decision = self._store.admit_operation_recovery(
+            NotesSyncOperationRecord(
+                operation_id=request.operation_id,
+                root_id=request.root_id,
+                binding_id=request.binding_id,
+                kind="undo_resolution",
+                state=NotesSyncOperationState.PENDING,
+                reason_code=None,
+                observation_token=request.source_operation_id,
+                expected_note_version=note.version,
+                expected_file_digest=file.representation_digest,
+            ),
+            NotesSyncRecoveryRecord(
+                recovery_id=request.recovery_id,
+                operation_id=request.operation_id,
+                payload=payload,
+                metadata=_encode_recovery_intent(metadata),
+                expires_at=source_recovery.expires_at,
+            ),
+            capacity_bytes=self._capacity,
+            retention_ns=CONFLICT_RECOVERY_RETENTION_NS,
+        )
+        return decision.admitted
+
+    @staticmethod
+    def _encoded_binding(binding: NotesSyncBindingRecord) -> dict[str, object]:
+        return {
+            "content_digest": binding.content_digest,
+            "note_version": binding.note_version,
+            "serialization": {
+                "final_newline": binding.serialization.final_newline,
+                "mode": binding.serialization.mode,
+                "newline": binding.serialization.newline,
+                "utf8_bom": binding.serialization.utf8_bom,
+            },
+            "stable_identity_digest": binding.stable_identity_digest,
+        }
+
+    def _undo_material(
+        self,
+        recovery: NotesSyncRecoveryRecord,
+        metadata: dict[str, object],
+    ) -> tuple[dict[str, object], dict[str, object]]:
+        if (
+            metadata.get("undo_payload_digest")
+            != hashlib.sha256(recovery.payload).hexdigest()
+        ):
+            raise RuntimeError("recovery_authority_changed")
+        stage = metadata.get("undo_substage")
+        longest = max(map(len, UNDO_SUBSTAGES))
+        if (
+            type(stage) is not str
+            or stage not in UNDO_SUBSTAGES
+            or metadata.get("undo_substage_padding") != " " * (longest - len(stage))
+        ):
+            raise RuntimeError("recovery_authority_changed")
+        try:
+            payload = json.loads(recovery.payload.decode("utf-8"))
+            encoded_source = metadata["source_metadata"]
+            if not isinstance(payload, dict) or type(encoded_source) is not str:
+                raise ValueError
+            source_metadata = json.loads(
+                base64.b64decode(encoded_source, validate=True).decode("utf-8")
+            )
+            if not isinstance(source_metadata, dict):
+                raise ValueError
+            for field in (
+                "post_file_payload",
+                "post_note_content",
+                "source_payload",
+            ):
+                if type(payload.get(field)) is not str:
+                    raise ValueError
+        except (
+            KeyError,
+            TypeError,
+            ValueError,
+            UnicodeDecodeError,
+            json.JSONDecodeError,
+        ):
+            raise RuntimeError("recovery_authority_changed") from None
+        return payload, source_metadata
+
+    async def _advance_undo(
+        self,
+        request: NotesSyncUndoRequest,
+    ) -> NotesSyncExecutionResult:
+        while True:
+            operation = self._store.get_operation(request.operation_id)
+            recovery = self._store.load_operation_recovery(request.operation_id)
+            metadata = self._recovery_metadata(recovery)
+            payload, source_metadata = self._undo_material(recovery, metadata)
+            if operation.state is NotesSyncOperationState.RECOVERY_ADMITTED:
+                _, cancelled = await self._joined_thread_call(
+                    lambda: asyncio.run(
+                        self._restore_undo_authority(request, payload, source_metadata)
+                    )
+                )
+                self._store.transition_operation(
+                    request.operation_id,
+                    NotesSyncOperationState.FIRST_AUTHORITY_APPLIED,
+                )
+                self._checkpoint_undo(
+                    request, "recovery_admitted", "authority_restored"
+                )
+                self._stage(NotesSyncOperationState.FIRST_AUTHORITY_APPLIED)
+                if cancelled:
+                    raise asyncio.CancelledError
+                continue
+            if operation.state is NotesSyncOperationState.FIRST_AUTHORITY_APPLIED:
+                if metadata.get("undo_substage") == "recovery_admitted":
+                    await self._require_undo_restored(payload, source_metadata)
+                    self._checkpoint_undo(
+                        request, "recovery_admitted", "authority_restored"
+                    )
+                await self._verify_undo_opposite(payload, source_metadata)
+                self._store.transition_operation(
+                    request.operation_id,
+                    NotesSyncOperationState.SECOND_AUTHORITY_APPLIED,
+                )
+                self._checkpoint_undo(
+                    request, "authority_restored", "opposite_verified"
+                )
+                self._stage(NotesSyncOperationState.SECOND_AUTHORITY_APPLIED)
+                continue
+            if operation.state is NotesSyncOperationState.SECOND_AUTHORITY_APPLIED:
+                if metadata.get("undo_substage") == "authority_restored":
+                    await self._verify_undo_opposite(payload, source_metadata)
+                    self._checkpoint_undo(
+                        request, "authority_restored", "opposite_verified"
+                    )
+                note, file = await self._require_undo_restored(payload, source_metadata)
+                binding = self._store.get_binding(request.binding_id)
+                original = source_metadata.get("binding")
+                if not isinstance(original, dict):
+                    raise RuntimeError("recovery_authority_changed")
+                replacement = replace(
+                    binding,
+                    normalized_relative_path=self._required_metadata_text(
+                        source_metadata, "file_relative_path"
+                    ),
+                    stable_identity_digest=self.stable_identity_digest(file),
+                    serialization=self._decoded_binding_serialization(original),
+                    content_digest=self._required_metadata_text(
+                        original, "content_digest"
+                    ),
+                    note_version=note.version,
+                    state=NotesSyncBindingState.ACTIVE,
+                )
+                _, cancelled = await self._joined_thread_call(
+                    lambda: self._store.commit_binding_stage(
+                        request.operation_id,
+                        expected=binding,
+                        replacement=replacement,
+                    )
+                )
+                self._checkpoint_undo(request, "opposite_verified", "binding_updated")
+                self._stage(NotesSyncOperationState.BINDING_UPDATED)
+                if cancelled:
+                    raise asyncio.CancelledError
+                continue
+            if operation.state is NotesSyncOperationState.BINDING_UPDATED:
+                stage = metadata.get("undo_substage")
+                if stage == "opposite_verified":
+                    note, file = await self._require_undo_restored(
+                        payload, source_metadata
+                    )
+                    self._require_undo_binding(request, note, file, source_metadata)
+                    self._checkpoint_undo(
+                        request, "opposite_verified", "binding_updated"
+                    )
+                    stage = "binding_updated"
+                if stage == "binding_updated":
+                    if metadata.get("source_kind") == "resolve_keep_both":
+                        _, cancelled = await self._joined_thread_call(
+                            lambda: asyncio.run(
+                                self._cleanup_undo_copy(source_metadata, payload)
+                            )
+                        )
+                    else:
+                        cancelled = False
+                    self._checkpoint_undo(
+                        request, "binding_updated", "copy_cleanup_complete"
+                    )
+                    if cancelled:
+                        raise asyncio.CancelledError
+                self._store.transition_operation(
+                    request.operation_id,
+                    NotesSyncOperationState.VERIFIED,
+                )
+                self._checkpoint_undo(request, "copy_cleanup_complete", "verified")
+                self._stage(NotesSyncOperationState.VERIFIED)
+                continue
+            if operation.state is NotesSyncOperationState.VERIFIED:
+                stage = metadata.get("undo_substage")
+                if stage == "binding_updated":
+                    if metadata.get("source_kind") == "resolve_keep_both":
+                        await self._cleanup_undo_copy(source_metadata, payload)
+                    self._checkpoint_undo(
+                        request, "binding_updated", "copy_cleanup_complete"
+                    )
+                    stage = "copy_cleanup_complete"
+                if stage == "copy_cleanup_complete":
+                    self._checkpoint_undo(request, "copy_cleanup_complete", "verified")
+                note, file = await self._require_undo_restored(payload, source_metadata)
+                self._require_undo_binding(request, note, file, source_metadata)
+                if metadata.get("source_kind") == "resolve_keep_both":
+                    await self._require_undo_copy_missing(source_metadata)
+                self._store.transition_operation(
+                    request.operation_id,
+                    NotesSyncOperationState.COMPLETED,
+                )
+                return self._result(
+                    request.operation_id, NotesSyncOperationState.COMPLETED
+                )
+            if operation.state is NotesSyncOperationState.COMPLETED:
+                return self._result(request.operation_id, operation.state)
+            raise RuntimeError("changed_since_resolution")
+
+    def _checkpoint_undo(
+        self,
+        request: NotesSyncUndoRequest,
+        current: str,
+        following: str,
+    ) -> None:
+        recovery = self._store.load_operation_recovery(request.operation_id)
+        self._store.advance_undo_substage(
+            operation_id=request.operation_id,
+            recovery_id=request.recovery_id,
+            expected_substage=current,
+            next_substage=following,
+            expected_metadata_length=len(recovery.metadata),
+        )
+
+    async def _restore_undo_authority(
+        self,
+        request: NotesSyncUndoRequest,
+        payload: dict[str, object],
+        source_metadata: dict[str, object],
+    ) -> None:
+        action = NotesSyncActionKind(
+            self._required_metadata_text(source_metadata, "underlying_action_kind")
+        )
+        source_payload = base64.b64decode(str(payload["source_payload"]), validate=True)
+        note_id = self._required_metadata_text(source_metadata, "note_id")
+        relative_path = self._required_metadata_text(
+            source_metadata, "file_relative_path"
+        )
+        if action is NotesSyncActionKind.UPDATE_NOTE:
+            current = await self._observe_note(note_id)
+            original_digest = hashlib.sha256(source_payload).hexdigest()
+            if (
+                current.content_digest == original_digest
+                and current.title
+                == self._required_metadata_text(source_metadata, "recovery_title")
+            ):
+                return
+            if current.version != self._required_metadata_int(
+                self._recovery_metadata(
+                    self._store.load_operation_recovery(request.operation_id)
+                ),
+                "post_note_version",
+            ) or current.content_digest != self._required_metadata_text(
+                self._recovery_metadata(
+                    self._store.load_operation_recovery(request.operation_id)
+                ),
+                "post_note_content_digest",
+            ):
+                raise RuntimeError("changed_since_resolution")
+            await self._notes.replace(
+                current,
+                title=self._required_metadata_text(source_metadata, "recovery_title"),
+                content=source_payload.decode("utf-8"),
+            )
+            return
+        current_file = await self._observe_file_path(relative_path)
+        if not isinstance(current_file, NotesSyncFileSnapshot):
+            raise RuntimeError("changed_since_resolution")
+        if current_file.raw_bytes == source_payload:
+            return
+        post_payload = base64.b64decode(
+            str(payload["post_file_payload"]), validate=True
+        )
+        if current_file.raw_bytes != post_payload:
+            raise RuntimeError("changed_since_resolution")
+        original = source_metadata.get("binding")
+        if not isinstance(original, dict):
+            raise RuntimeError("recovery_authority_changed")
+        await asyncio.to_thread(
+            self._filesystem.replace,
+            relative_path,
+            _logical_text(
+                source_payload, self._decoded_binding_serialization(original)
+            ),
+            expected=current_file,
+        )
+
+    async def _verify_undo_opposite(
+        self,
+        payload: dict[str, object],
+        source_metadata: dict[str, object],
+    ) -> None:
+        action = NotesSyncActionKind(
+            self._required_metadata_text(source_metadata, "underlying_action_kind")
+        )
+        if action is NotesSyncActionKind.UPDATE_NOTE:
+            file = await self._observe_file_path(
+                self._required_metadata_text(source_metadata, "file_relative_path")
+            )
+            if not isinstance(
+                file, NotesSyncFileSnapshot
+            ) or file.raw_bytes != base64.b64decode(
+                str(payload["post_file_payload"]), validate=True
+            ):
+                raise RuntimeError("changed_since_resolution")
+        else:
+            note = await self._observe_note(
+                self._required_metadata_text(source_metadata, "note_id")
+            )
+            if note.content != payload["post_note_content"]:
+                raise RuntimeError("changed_since_resolution")
+
+    async def _require_undo_restored(
+        self,
+        payload: dict[str, object],
+        source_metadata: dict[str, object],
+    ) -> tuple[NotesSyncNoteSnapshot, NotesSyncFileSnapshot]:
+        note = await self._observe_note(
+            self._required_metadata_text(source_metadata, "note_id")
+        )
+        file = await self._observe_file_path(
+            self._required_metadata_text(source_metadata, "file_relative_path")
+        )
+        if not isinstance(file, NotesSyncFileSnapshot):
+            raise RuntimeError("changed_since_resolution")
+        source_payload = base64.b64decode(str(payload["source_payload"]), validate=True)
+        action = NotesSyncActionKind(
+            self._required_metadata_text(source_metadata, "underlying_action_kind")
+        )
+        if action is NotesSyncActionKind.UPDATE_NOTE:
+            if note.content_digest != hashlib.sha256(
+                source_payload
+            ).hexdigest() or file.raw_bytes != base64.b64decode(
+                str(payload["post_file_payload"]), validate=True
+            ):
+                raise RuntimeError("changed_since_resolution")
+        elif (
+            file.raw_bytes != source_payload
+            or note.content != payload["post_note_content"]
+        ):
+            raise RuntimeError("changed_since_resolution")
+        return note, file
+
+    async def _require_undo_copy(
+        self,
+        source_metadata: dict[str, object],
+        source_payload: bytes,
+    ) -> NotesSyncNoteSnapshot:
+        copy = await self._observe_note(
+            self._required_metadata_text(source_metadata, "conflict_copy_note_id")
+        )
+        raw_version = source_metadata.get("conflict_copy_note_version")
+        if (
+            type(raw_version) is not str
+            or str(copy.version) != raw_version
+            or copy.title
+            != self._required_metadata_text(source_metadata, "conflict_copy_title")
+            or copy.content != source_payload.decode("utf-8")
+        ):
+            raise RuntimeError("changed_since_resolution")
+        placement = await self._notes.verify_manual_placement(
+            ManualPlacementRequest(
+                self._required_metadata_text(
+                    source_metadata, "conflict_root_actual_folder_id"
+                ),
+                copy.note_id,
+                copy.version,
+            )
+        )
+        raw_placement_version = source_metadata.get("conflict_placement_version")
+        if (
+            type(raw_placement_version) is not str
+            or placement.membership_id
+            != self._required_metadata_text(
+                source_metadata, "conflict_placement_membership_id"
+            )
+            or str(placement.version) != raw_placement_version
+            or placement.note_id != copy.note_id
+            or placement.folder_id
+            != self._required_metadata_text(
+                source_metadata, "conflict_root_actual_folder_id"
+            )
+        ):
+            raise RuntimeError("changed_since_resolution")
+        return copy
+
+    async def _cleanup_undo_copy(
+        self,
+        source_metadata: dict[str, object],
+        payload: dict[str, object],
+    ) -> None:
+        source_payload = base64.b64decode(str(payload["source_payload"]), validate=True)
+        try:
+            copy = await self._require_undo_copy(source_metadata, source_payload)
+        except NotesSyncAuthorityError as error:
+            if error.reason_code == "note_missing":
+                return
+            raise
+        await self._notes.delete(copy)
+
+    async def _require_undo_copy_missing(
+        self,
+        source_metadata: dict[str, object],
+    ) -> None:
+        note_id = self._required_metadata_text(source_metadata, "conflict_copy_note_id")
+        try:
+            await self._observe_note(note_id)
+        except NotesSyncAuthorityError as error:
+            if error.reason_code == "note_missing":
+                return
+            raise
+        raise RuntimeError("changed_since_resolution")
+
+    def _require_undo_binding(
+        self,
+        request: NotesSyncUndoRequest,
+        note: NotesSyncNoteSnapshot,
+        file: NotesSyncFileSnapshot,
+        source_metadata: dict[str, object],
+    ) -> None:
+        binding = self._store.get_binding(request.binding_id)
+        original = source_metadata.get("binding")
+        if not isinstance(original, dict):
+            raise RuntimeError("recovery_authority_changed")
+        if (
+            binding.root_id != request.root_id
+            or binding.note_id != note.note_id
+            or binding.note_scope_id != note.note_scope_id
+            or binding.normalized_relative_path
+            != self._required_metadata_text(source_metadata, "file_relative_path")
+            or binding.state is not NotesSyncBindingState.ACTIVE
+            or binding.note_version != note.version
+            or binding.content_digest
+            != self._required_metadata_text(original, "content_digest")
+            or binding.serialization != self._decoded_binding_serialization(original)
+            or binding.stable_identity_digest != self.stable_identity_digest(file)
+        ):
+            raise RuntimeError("changed_since_resolution")
 
     async def resolve_filesystem_cleanup(
         self,
@@ -3338,6 +4048,16 @@ class NotesSyncExecutor:
         return value
 
     @staticmethod
+    def _required_metadata_int(
+        metadata: dict[str, object],
+        field_name: str,
+    ) -> int:
+        value = metadata.get(field_name)
+        if type(value) is not int or value < 0:
+            raise RuntimeError("recovery_authority_changed")
+        return value
+
+    @staticmethod
     def _optional_metadata_text(
         metadata: dict[str, object],
         field_name: str,
@@ -3932,4 +4652,5 @@ __all__ = [
     "NotesSyncExecutionResult",
     "NotesSyncExecutor",
     "NotesSyncRecoveryChoice",
+    "NotesSyncUndoRequest",
 ]
