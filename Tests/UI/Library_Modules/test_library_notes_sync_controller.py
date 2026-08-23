@@ -1815,3 +1815,77 @@ async def test_same_root_controls_publish_only_the_newest_completion() -> None:
     await pending
 
     assert controller.snapshot == newest_snapshot
+
+
+async def test_undo_invalidates_active_review_but_preserves_receipt_history_context() -> (
+    None
+):
+    runtime = _Runtime()
+    runtime.receipts = (_receipt("operation-1", "Note"),)
+    runtime.history[0] = (_history_row("operation-1", "Note"),)
+    runtime.check_plan = _conflict_plan()
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+    await controller.refresh_conflict_receipts("root-1")
+    await controller.show_resolution_history("root-1")
+    await controller.check_root("root-1")
+    controller.stage_attention_choice("bind-1", "Keep file")
+    await controller.show_conflict_comparison("bind-1")
+
+    await controller.undo_conflict_resolution("root-1", "operation-1")
+
+    assert controller._review_plan is None  # noqa: SLF001 - authority contract
+    assert controller._selections == {}  # noqa: SLF001 - token authority contract
+    assert controller.snapshot.review.stale is True
+    assert controller.snapshot.review.can_apply is False
+    assert controller.snapshot.comparison is None
+    assert controller.snapshot.receipts == ()
+    assert controller.snapshot.history.rows[0].state == "undone"
+    assert controller.snapshot.history.rows[0].undo_available is False
+
+
+@pytest.mark.parametrize("pending_kind", ["apply", "check"])
+async def test_undo_supersedes_pending_same_root_review_work(
+    pending_kind: str,
+) -> None:
+    runtime = _Runtime()
+    runtime.receipts = (_receipt("operation-1", "Note"),)
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+    await controller.refresh_conflict_receipts("root-1")
+    await controller.check_root("root-1")
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    if pending_kind == "apply":
+        original_apply = runtime.apply_reviewed
+
+        async def delayed_apply(*args: object, **kwargs: object) -> ConflictApplyResult:
+            started.set()
+            await release.wait()
+            return await original_apply(*args, **kwargs)
+
+        runtime.apply_reviewed = delayed_apply
+        pending = asyncio.create_task(controller.apply_reviewed())
+    else:
+
+        async def delayed_check(root_id: str) -> ReconciliationPlan:
+            started.set()
+            await release.wait()
+            return _conflict_plan(root_id=root_id, token=TOKEN_2)
+
+        runtime.check_root = delayed_check
+        pending = asyncio.create_task(controller.check_root("root-1"))
+
+    await started.wait()
+    await controller.undo_conflict_resolution("root-1", "operation-1")
+    undo_snapshot = controller.snapshot
+    release.set()
+    await pending
+
+    assert controller.snapshot == undo_snapshot
+    assert controller.snapshot.receipts == ()

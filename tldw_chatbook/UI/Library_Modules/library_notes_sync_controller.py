@@ -381,6 +381,14 @@ class LibraryNotesSyncController:
         self._invalidate_review_authority()
         return self._lifecycle_epoch
 
+    def _begin_bound_mutation_lifecycle(self, root_id: str) -> int:
+        if root_id != self._projection_root_id:
+            self._switch_projection_root(root_id)
+        else:
+            self._advance_lifecycle()
+        self._invalidate_review_authority()
+        return self._lifecycle_epoch
+
     def _start_receipt_request(self, root_id: str) -> int:
         self._switch_projection_root(root_id)
         self._receipt_generation += 1
@@ -1121,8 +1129,7 @@ class LibraryNotesSyncController:
     async def undo_conflict_resolution(self, root_id: str, operation_id: str) -> None:
         """Run one durable linked Undo and refresh the remaining receipts."""
 
-        self._switch_projection_root(root_id)
-        epoch = self._lifecycle_epoch
+        epoch = self._begin_bound_mutation_lifecycle(root_id)
         history_page = (
             self._state.history.page
             if self._state.phase == "history" and self._state.history.root_id == root_id
