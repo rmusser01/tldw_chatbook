@@ -4177,7 +4177,14 @@ class ConsoleChatController:
             )
 
     def _detach_closed_submit_tasks(self) -> tuple[str, ...]:
-        """Drop closed-loop task owners and return exclusively owned preparations."""
+        """Detach closed-loop owners for emergency fail-closed cleanup.
+
+        A closed event loop cannot terminally cancel or await its pending tasks
+        through public asyncio APIs. This helper therefore removes only the
+        controller's volatile ownership and returns exclusively owned
+        preparations for synchronous cleanup. It does not promise a terminal
+        Task state or suppress Python's destroyed-pending-task diagnostic.
+        """
 
         with self._active_submit_tasks_lock:
             closed_preparations: list[str] = []
@@ -7925,6 +7932,12 @@ class ConsoleChatController:
         """Stop and await EVERY session's active stream task before owner
         teardown.
 
+        This is the supported clean lifecycle boundary. It must run on, or be
+        coordinated with, every task's live owner loop before that loop closes.
+        Under that ordering, shutdown signals cancellation, awaits all
+        non-current submit and stream tasks to terminal state, and leaves no
+        pending/destroyed-task or never-awaited-coroutine diagnostic.
+
         Task 3b requirement 3: unlike ``stop_active_run`` (deliberately
         scoped to the VIEWED session only), teardown is global across THIS
         controller instance's OWN sessions -- a background run must never
@@ -8043,6 +8056,16 @@ class ConsoleChatController:
         The PERMANENT form (app exit / `prepare_for_quit`). `_disposed`
         is what stops a later `begin_visit()` from handing this instance a
         fresh, unset cancellation Event.
+
+        Callers should follow this fence with awaited :meth:`shutdown` while
+        task owner loops are alive. If an owner loop is already closed, this
+        method enters emergency fail-closed detachment: it synchronously drops
+        controller/store volatile ownership, removes exclusively owned
+        preparation sidecars, cannot dispatch, and never calls closed-loop
+        scheduling/cancellation APIs. Public asyncio provides no way to make
+        that abandoned pending Task terminal, so this emergency path cannot
+        promise clean shutdown, recovery, durability, or suppression of
+        Python's ``Task was destroyed but it is pending!`` diagnostic.
         """
 
         self._disposed = True

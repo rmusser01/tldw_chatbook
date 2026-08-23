@@ -7497,6 +7497,29 @@ the legacy-to-current boundary, while leaving the production missing-input
 guard strict. Refresh absolute schema-version, table, index, and trigger
 inventories in the same delivery.
 
+## Private asyncio warning suppression makes lifecycle evidence vacuous (TASK-19900.3, 2026-08-23)
+
+Task 13's first closed-loop cleanup probe set the private
+`Task._log_destroy_pending` flag to false and manually called
+`task.get_coro().close()` before garbage collection. The test then reported no
+pending-task or never-awaited diagnostic and the implementation report treated
+that as shutdown evidence. A replacement probe using only a public event-loop
+exception handler, warning capture, and weak references exposed the real
+boundary: awaited controller shutdown while the owner loop was alive reached a
+terminal Task with no lifecycle diagnostic, but closing the loop first made
+terminal cancellation/await impossible and correctly produced `Task was
+destroyed but it is pending!` when the detached Task was collected.
+
+For asyncio lifecycle tests, assert the supported ordering directly: call and
+await the owner's shutdown API before closing its loop, then collect the Task
+and owner and require no public diagnostic. Test an already-closed-loop
+emergency separately: require fail-closed ownership cleanup and no dispatch,
+capture the expected destroyed-pending diagnostic through the loop's public
+exception handler, and assert warning capture contains no unhandled
+never-awaited coroutine. Never mutate private Task warning flags or manually
+close its coroutine; those operations change the behavior the test is meant to
+observe.
+
 ---
 
 ## UI lifecycle tests must stop before optional native backends (TASK-21201, 2026-08-23)

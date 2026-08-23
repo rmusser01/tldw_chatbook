@@ -253,8 +253,9 @@ settles only preparation identities exclusive to unreachable tasks, then drops
 their bounded outcome and continuation sidecars. A live peer sharing the same
 session and preparation remains authoritative; its normal cancellation/finalizer
 path still owns cleanup. Removing the controller's strong registry edge breaks
-the bidirectional ownership cycle; weak-reference collection after explicit safe
-test-coroutine teardown proves the closed task is no longer retained.
+the bidirectional ownership cycle. Public weak-reference collection now proves
+the closed task is no longer retained while the closed loop's exception handler
+honestly captures Python's expected destroyed-pending-task diagnostic.
 
 Shutdown snapshots submit and stream owners before the queue tombstone. An
 explicit `try/finally` retains a queue or presentation-callback exception while
@@ -264,13 +265,24 @@ exception. The off-thread
 scheduled callback consumes that exception only after cleanup so asyncio cannot
 log its raw text; live task cancellation remains marshalled to each owner loop.
 
+The original round-5 test evidence incorrectly set private asyncio
+`_log_destroy_pending` flags and manually closed Task coroutines before garbage
+collection. Its claim of no pending-task/coroutine warning on the emergency
+already-closed-loop path is retracted: those test-only operations suppressed the
+behavior under review. The no-diagnostic claim applies only to supported
+shutdown coordinated with live owner loops. Emergency closed-loop detachment is
+fail-closed ownership cleanup, not terminal Task shutdown, recovery, or
+durability; public asyncio correctly reports `Task was destroyed but it is
+pending!` when the abandoned pending Task is later collected.
+
 Pre-edit reproducibility used the exact round-4 gates: 623 passed/1 inherited
 Requests warning for the affected gate and 100 passed/1 inherited warning for
 the companion gate. The first debug RED was 3 expected failures; an added
 off-thread privacy RED failed with the raw callback exception in the loop error
-handler. Final focused debug verification was 4 passed/1 inherited warning with
-no destroyed-pending-task, never-awaited-coroutine, asyncio, or RuntimeError
-warning. The final exact commands were:
+handler. The historical 4-test debug run remains evidence for ownership cleanup
+and callback privacy, but its blanket no-warning conclusion is invalid for the
+emergency closed-loop case and is superseded by the lifecycle correction below.
+The historical exact commands were:
 
 ```bash
 PYTHONASYNCIODEBUG=1 ../../.venv/bin/python -m pytest Tests/Chat/test_console_automatic_library_preparation.py::test_closed_loop_pending_submit_drops_exact_volatile_ownership Tests/Chat/test_console_automatic_library_preparation.py::test_closed_loop_peer_never_blocks_same_session_live_submit_shutdown Tests/Chat/test_console_automatic_library_preparation.py::test_shutdown_callback_failure_rethrows_after_all_task_cleanup -q
@@ -299,3 +311,38 @@ does. Source/privacy scans find no new log or credential sink, and
 owns volatile preparation and shutdown authority. TASK-19900.3 remains In
 Progress with all 22 acceptance criteria unchecked because Task14+ durability,
 checkpoint reconstruction, and recovery UI remain out of scope.
+
+## Lifecycle evidence correction
+
+All three Task-13 test-only uses of private asyncio warning suppression and
+manual Task-coroutine closure are removed. The supported probe now starts a real
+automatic submit, awaits `ConsoleChatController.shutdown()` while its owner loop
+is alive, closes that loop, drops the submit/controller references, and proves
+through public exception handling, warning capture, and weak references that
+the task and controller collect with no destroyed-pending or never-awaited
+diagnostic. Registry, preparation, outcome, and continuation ownership are
+empty and the provider is never called.
+
+The emergency probe deliberately closes the owner loop first, calls
+`begin_shutdown()`, and proves exact synchronous volatile detachment, no
+provider call, no closed-loop API error, and a broken controller/task ownership
+cycle. Its public loop exception handler then captures the one expected `Task
+was destroyed but it is pending!` diagnostic after GC; warning capture proves
+the test leaves no unhandled never-awaited coroutine. A mixed closed/live probe
+shows that the closed peer cannot remove a live same-session preparation and
+that awaited shutdown still takes the live owner to normal terminal cleanup.
+
+The exact clean-head baselines were 627 affected tests and 100 companion tests,
+each with the inherited Requests dependency warning. RED changed only the
+emergency public-diagnostic expectation and failed because the old private
+suppression kept the handler empty. Final `PYTHONASYNCIODEBUG=1` lifecycle focus
+was 5 passed/1 inherited warning; the exact affected gate is now 628 passed/1
+inherited warning, and companions remain 100 passed/1 inherited warning. The
+expected emergency Task diagnostic is captured and asserted data, not an
+uncaptured pytest warning. Production behavior is unchanged; only controller
+lifecycle docstrings now state the supported and emergency contracts. ADR
+required: no. ADR path:
+`backlog/decisions/079-console-library-conversation-authority.md`. TASK-19900.3
+remains In Progress with all 22 acceptance criteria unchecked; this correction
+makes no Task14+ durability, reconstruction, recovery, or clean emergency
+shutdown claim.
