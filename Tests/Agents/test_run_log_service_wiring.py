@@ -131,6 +131,57 @@ def test_writer_lease_revocation_fails_closed_without_recreating_root(tmp_path):
     assert not snapshot.root.exists()
 
 
+def test_writer_failure_logs_do_not_persist_private_scratch_locator(
+    tmp_path,
+    monkeypatch,
+):
+    scratch = tmp_path / "PRIVATE_SCRATCH_LOCATOR"
+    scratch.mkdir()
+    warnings: list[str] = []
+    sink_id = run_log_module.logger.add(
+        lambda message: warnings.append(str(message)),
+        format="{message}",
+        level="WARNING",
+    )
+
+    @contextlib.contextmanager
+    def unavailable_scope():
+        raise OSError(f"lease failed at {scratch}/secret-token")
+        yield scratch
+
+    try:
+        refused = RunLogWriter(root=scratch, access_scope=unavailable_scope)
+        refused.bind("run-refused")
+
+        writer = RunLogWriter(
+            root=scratch,
+            access_scope=lambda: contextlib.nullcontext(scratch),
+        )
+        writer.bind("run-write")
+
+        def fail_write(*_args, **_kwargs):
+            raise OSError(f"write failed at {scratch}/.agent-runs/private")
+
+        monkeypatch.setattr(writer, "_write_bytes", fail_write)
+        assert (
+            writer.append(
+                run_id="run-write",
+                kind="primary",
+                type="model",
+                content="content",
+            )
+            is None
+        )
+    finally:
+        run_log_module.logger.remove(sink_id)
+
+    warning_text = "".join(warnings)
+    assert "access scope unavailable" in warning_text
+    assert "append failed" in warning_text
+    assert str(scratch) not in warning_text
+    assert "secret-token" not in warning_text
+
+
 def test_builtin_tool_result_log_does_not_persist_private_scratch_locator(tmp_path):
     scratch = tmp_path / "private-scratch"
     scratch.mkdir()

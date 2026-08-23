@@ -134,18 +134,26 @@ ownership, provider-boundary, and cross-thread teardown decision.
   honestly classified authority-unavailable refusal; and every cited public
   API plus the adjacent scratch lifecycle APIs now has complete Google-style
   sections. Red-to-green regressions cover both behavioral fixes.
+- Reproducing the required Derived Artifacts check exposed a stale diagnostic
+  inventory and a related privacy seam: run-log I/O exception tracebacks could
+  persist a private scratch locator on failure. Scratch-adjacent diagnostics now
+  retain only fixed text plus exception-class categories; a regression injects
+  locator-bearing lease/write failures and proves neither locator nor token
+  reaches the log sink. Every inventory delta was statement-reviewed before
+  regenerating the checked-in artifact.
 - A broad UI diagnostic found ten Workspace-create Pilot failures. Untouched
   latest `dev` reproduced all ten because the bare harness omitted the modal's
   production CSS. Loading `WorkspaceCreateModal.BUNDLED_CSS` restored real
   geometry and made the complete modal module pass 23 / 23; the incident is
   recorded in `backlog/docs/lessons-testing-evidence.md`.
-- Final post-review verification on latest `dev`: 398 targeted authority/
+- Final post-review verification on latest `dev`: 399 targeted authority/
   lifecycle/provider/artifact tests passed; 137 activity-presentation tests
   passed; 56 focused mounted Console/Workspace UI tests passed; the backlog
   filename/frontmatter guard and its 3 tests passed. Ruff and Python
   compilation passed for every changed Python file; `git diff --check` and the
-  diff secret-pattern scan were clean. A full repository sweep was not run,
-  per repository policy.
+  diff secret-pattern scan were clean. The complete required Derived Artifacts
+  command sequence also reproduces cleanly. A full repository sweep was not
+  run, per repository policy.
 - ADR: implemented and linked
   `backlog/decisions/082-console-per-chat-private-scratch-space.md`; no further
   ADR was needed for the review fixes because they directly enforce ADR-082's

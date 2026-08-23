@@ -1022,9 +1022,10 @@ class ConsoleRuntime:
                 )
         try:
             await asyncio.to_thread(self._scratch_spaces.dispose)
-        except Exception:  # noqa: BLE001 - quit must continue after cleanup failure
-            logger.opt(exception=True).warning(
-                "Console runtime: scratch cleanup failed at dispose."
+        except Exception as exc:  # noqa: BLE001 - quit must continue after cleanup failure
+            logger.warning(
+                "Console runtime: scratch cleanup failed at dispose category={}",
+                type(exc).__name__,
             )
         # Controller shutdown begins by terminally fencing the fleet-wake
         # coordinator. Only after every trusted producer is tombstoned may

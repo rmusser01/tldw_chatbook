@@ -349,8 +349,11 @@ def resolve_log_root(
         )
         with workspace_scope:
             roots = allowed_file_roots(write=True, sandbox_root=sandbox)
-    except Exception:
-        logger.opt(exception=True).warning("run log: cannot resolve any root")
+    except Exception as exc:
+        logger.warning(
+            "run log: cannot resolve any root category={}",
+            exc.__class__.__name__,
+        )
         return None
     if not roots:
         return None
@@ -559,9 +562,10 @@ class RunLogWriter:
         try:
             with self._access_scope():
                 self._bind_under_scope(run_id)
-        except Exception:
-            logger.opt(exception=True).warning(
-                "run log: access scope unavailable; logging disabled"
+        except Exception as exc:
+            logger.warning(
+                "run log: access scope unavailable; logging disabled category={}",
+                exc.__class__.__name__,
             )
             self._active = False
 
@@ -630,8 +634,11 @@ class RunLogWriter:
         if self._on_bound is not None:
             try:
                 self._on_bound(run_id, root)
-            except Exception:  # noqa: BLE001 -- observers never break logging
-                logger.opt(exception=True).debug("run log: on_bound callback failed")
+            except Exception as exc:  # noqa: BLE001 -- observers never break logging
+                logger.debug(
+                    "run log: on_bound callback failed category={}",
+                    exc.__class__.__name__,
+                )
 
     def _migrate_legacy_dir(self, root: Path, legacy_name: str, dotted: Path) -> None:
         """Move a pre-TASK-1270 undotted log tree under its dotted name.
@@ -731,10 +738,11 @@ class RunLogWriter:
                 legacy.rmdir()
             except OSError:
                 pass
-        except Exception:
-            logger.opt(exception=True).warning(
+        except Exception as exc:
+            logger.warning(
                 "run log: legacy directory migration failed; historical "
-                "logs may remain reachable until a future run retries"
+                "logs may remain reachable until a future run retries category={}",
+                exc.__class__.__name__,
             )
 
     def _segment_path(self) -> Path:
@@ -800,9 +808,10 @@ class RunLogWriter:
                     status=status,
                     call_id=call_id,
                 )
-        except Exception:
-            logger.opt(exception=True).warning(
-                "run log: access scope unavailable; logging disabled"
+        except Exception as exc:
+            logger.warning(
+                "run log: access scope unavailable; logging disabled category={}",
+                exc.__class__.__name__,
             )
             self._active = False
             return None
@@ -870,15 +879,19 @@ class RunLogWriter:
                     # fsync the segment being retired; it will not be
                     # appended to again.
                     self._write_bytes(self._segment_path(), b"", sync=True)
-                except Exception:  # noqa: BLE001 — durability is best-effort
-                    logger.opt(exception=True).warning("run log: segment fsync failed")
+                except Exception as exc:  # noqa: BLE001 — durability is best-effort
+                    logger.warning(
+                        "run log: segment fsync failed category={}",
+                        exc.__class__.__name__,
+                    )
                 self._segment_index += 1
                 self._segment_size = 0
             try:
                 self._write_bytes(self._segment_path(), payload)
-            except Exception:
-                logger.opt(exception=True).warning(
-                    "run log: append failed; logging disabled for this run"
+            except Exception as exc:
+                logger.warning(
+                    "run log: append failed; logging disabled for this run category={}",
+                    exc.__class__.__name__,
                 )
                 self._active = False
                 return None
@@ -892,9 +905,10 @@ class RunLogWriter:
         try:
             with self._access_scope():
                 self._write_manifest_under_scope(metadata)
-        except Exception:
-            logger.opt(exception=True).warning(
-                "run log: access scope unavailable; logging disabled"
+        except Exception as exc:
+            logger.warning(
+                "run log: access scope unavailable; logging disabled category={}",
+                exc.__class__.__name__,
             )
             self._active = False
 
@@ -921,8 +935,11 @@ class RunLogWriter:
                 json.dumps(payload, indent=2, default=str).encode("utf-8"),
                 sync=True,
             )
-        except Exception:  # noqa: BLE001 — convenience metadata only
-            logger.opt(exception=True).warning("run log: manifest write failed")
+        except Exception as exc:  # noqa: BLE001 — convenience metadata only
+            logger.warning(
+                "run log: manifest write failed category={}",
+                exc.__class__.__name__,
+            )
 
     def close(self) -> None:
         """Flush the final segment while holding configured file authority."""
@@ -931,9 +948,10 @@ class RunLogWriter:
         try:
             with self._access_scope():
                 self._close_under_scope()
-        except Exception:
-            logger.opt(exception=True).warning(
-                "run log: access scope unavailable; logging disabled"
+        except Exception as exc:
+            logger.warning(
+                "run log: access scope unavailable; logging disabled category={}",
+                exc.__class__.__name__,
             )
             self._active = False
 
@@ -943,8 +961,11 @@ class RunLogWriter:
             return
         try:
             self._write_bytes(self._segment_path(), b"", sync=True)
-        except Exception:  # noqa: BLE001 — best-effort durability
-            logger.opt(exception=True).warning("run log: final fsync failed")
+        except Exception as exc:  # noqa: BLE001 — best-effort durability
+            logger.warning(
+                "run log: final fsync failed category={}",
+                exc.__class__.__name__,
+            )
 
 
 def _now_iso() -> str:
