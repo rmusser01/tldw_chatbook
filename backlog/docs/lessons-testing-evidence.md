@@ -6865,3 +6865,86 @@ phantom tables — `IF`, `column`, `as` — from prose in `#` comments that says
 new oracle against the old one rather than asserting it alone: the static scan
 and a live fully-migrated `CharactersRAGDB(":memory:")` agree exactly, 69
 substantive tables, symmetric difference empty.
+
+## A packaging test that reads the packaging config is the identity function; assert against the built artifact (TASK-19860, 2026-08-22)
+
+**Incident.** `tldw_chatbook/DB/migrations/` held 32 `.sql` files. Four separate
+hand-maintained lists said which of them ship: `pyproject.toml`'s
+`package-data` (13), `MANIFEST.in` (11), `Packaging/check_manifest.py` (13),
+and `Tests/Packaging/test_installed_distribution.py`'s
+`RUNTIME_MIGRATION_PATHS` (13 -- one of its fifteen constants was even defined
+twice, with the same value). A wheel built from that config carried 13 files.
+`pip install` + first launch died with
+`SchemaError: Migration from V40 to V41 failed ... No such file or directory:
+chachanotes_v40_to_v41_persona_visual.sql`. **The application did not start
+after a normal install, and had not been able to for two schema bumps.**
+
+**Two things made it survive a packaging suite that already had ~90 tests.**
+
+1. *The tests agreed with the config instead of with reality.* `check_manifest`
+   and the test both required exactly the 13 names the config shipped, so a
+   green run meant "the wheel contains what we listed", never "the wheel
+   contains what exists". Adding a migration and forgetting the lists produced
+   no red anywhere.
+2. *The runtime symptom under-reported by 19 files.* `_initialize_schema` walks
+   v4 -> current and aborts at the FIRST missing script, so one `SchemaError`
+   named one file. Fixing only that file would have moved the wall to v45, and
+   the next report would have looked like a new bug. Aborting-at-first is a
+   reporting property, and here it hid 95% of the defect.
+
+**The rule.** Build the wheel and the sdist and read the members out of the
+`ZipFile`/`TarFile`. If the assertion can be satisfied by editing
+`pyproject.toml`, it is testing the config, not the artifact -- and it goes on
+passing the day someone changes build backends. Report *every* missing file in
+one assertion message; a per-file `parametrize` that stops at the first still
+tells you one name at a time.
+
+**This does not contradict TASK-19045's "do not generate the literal".** That
+rule forbids re-deriving an expectation from *the artifact it guards*. The
+derivation has to come from somewhere independent: here the expectation is the
+`.sql` files in the source tree, and -- separately -- the `.sql` names the
+artifact's own `ChaChaNotes_DB.py` opens, parsed out of the shipped module.
+Neither is the packaging config, so neither can be satisfied by editing it.
+Both fail closed: an empty derivation is a red check ("no migration reads
+detected; the detector has drifted"), never a vacuous pass.
+
+**Mutation-check it against the artifact, not the test.** Enumerating 31 of 32
+files in `pyproject.toml` and rebuilding made four independent tests name
+`chachanotes_v45_to_v46_sync_log_retention.sql` and made the installed-wheel
+probe die with the real `SchemaError` -- which is what proves the test is
+wired to the build and not to a fixture.
+
+**Audit the neighbours, and do it against the artifact too.** Grouping every
+non-`.py` file under `tldw_chatbook/` by directory and extension and diffing
+each group against the wheel and sdist took one script and cleared 60 groups:
+one real defect (migrations), one deliberate partial
+(`embedding_configs_examples.toml`, forbidden in the wheel on purpose), and
+three deliberately explicit single-file lists (the pinned TTS manifest and the
+vendored `LICENSE` notices). Recording *why* each of those stays enumerated is
+the part that keeps the next person from "helpfully" globbing them.
+
+**Addendum from the independent review: "absent from both artifacts" is not
+evidence of "excluded by design".** The group audit above sorts every group
+into shipped / absent / partial, and the *absent* bucket was read as
+intentional. Two of its members were not. `Evals/eval_datasets/*.json` is read
+at runtime — `Evals/eval_templates/research.py` resolves an absolute path into
+it and passes it to the runner as `dataset_name`, which the runner probes with
+`Path(...).exists()`; absent from the artifact, the bundled research template
+loses its dataset and **nothing raises**, which is exactly why it outlived the
+migrations, whose absence at least produced a `SchemaError`. And
+`LLM_Calls/LICENSE` / `tldw_api/LICENSE` — Apache-2.0 texts for two subtrees
+this project deliberately re-licenses — shipped in neither artifact while the
+modules they cover shipped in both. Note the shape of that second one: the
+reason recorded for keeping licences enumerated ("a fixed legal obligation per
+package, not a growing directory") is *true*, and it is precisely what makes an
+incomplete list a breach rather than an oversight. A stated reason justifies
+the mechanism; it says nothing about whether the list is complete, and both
+have to be checked separately.
+
+So the audit needs a positive probe, not only a grouping: for every non-`.py`
+file under the package, grep the packaged Python for its basename, and treat
+any hit that is missing from the wheel as guilty until explained. That sweep is
+~20 lines, ran in a second over 190 assets and 1,813 modules, and it is what
+surfaced both. Filter the noise by hand — generic names (`README.md`,
+`LICENSE`, `pyproject.toml`, `.DS_Store`) match string literals all over the
+tree — 15 raw hits, 3 real.
