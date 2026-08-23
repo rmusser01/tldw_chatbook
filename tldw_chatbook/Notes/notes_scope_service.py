@@ -331,6 +331,123 @@ class NotesScopeService:
             parent_id=parent_id,
         )
 
+    async def get_note_folder_by_path_for_sync(
+        self,
+        *,
+        scope: ScopeType | str,
+        path_segments: Sequence[str],
+        user_id: str | None = None,
+    ) -> NoteFolder | None:
+        """Read one exact active local folder for lasting-sync recovery."""
+
+        repository = self._folder_repository_for_action(
+            scope=scope, user_id=user_id, action="list", operation="list"
+        )
+        return await self._run_folder_repository(
+            repository.get_folder_by_path,
+            tuple(path_segments),
+        )
+
+    async def get_note_folder_by_id_for_sync(
+        self,
+        *,
+        scope: ScopeType | str,
+        folder_id: str,
+        include_deleted: bool = True,
+        user_id: str | None = None,
+    ) -> NoteFolder | None:
+        """Read one exact local folder ID, including tombstones when requested."""
+
+        repository = self._folder_repository_for_action(
+            scope=scope, user_id=user_id, action="list", operation="list"
+        )
+        return await self._run_folder_repository(
+            repository.get_folder,
+            folder_id,
+            include_deleted=include_deleted,
+        )
+
+    async def create_manual_note_folder_for_sync(
+        self,
+        *,
+        scope: ScopeType | str,
+        folder_id: str,
+        name: str,
+        parent_id: str | None,
+        user_id: str | None = None,
+    ) -> NoteFolder:
+        """Create one caller-identified local manual folder for recovery."""
+
+        repository = self._folder_repository_for_action(
+            scope=scope, user_id=user_id, action="create", operation="create"
+        )
+        return await self._run_folder_repository(
+            repository.create_folder,
+            folder_id=folder_id,
+            name=name,
+            parent_id=parent_id,
+        )
+
+    async def get_manual_note_placement_for_sync(
+        self,
+        *,
+        scope: ScopeType | str,
+        folder_id: str,
+        note_id: str,
+        include_deleted: bool = True,
+        user_id: str | None = None,
+    ) -> tuple[NoteFolderMembership, bool] | None:
+        """Read one exact local manual placement and its deletion state."""
+
+        repository = self._folder_repository_for_action(
+            scope=scope, user_id=user_id, action="list", operation="membership"
+        )
+        return await self._run_folder_repository(
+            repository.get_exact_manual_membership,
+            folder_id=folder_id,
+            note_id=note_id,
+            include_deleted=include_deleted,
+        )
+
+    async def list_note_placements_for_sync(
+        self,
+        *,
+        scope: ScopeType | str,
+        note_id: str,
+        user_id: str | None = None,
+    ) -> tuple[NoteFolderMembership, ...]:
+        """Read every active local placement for one conflict-copy note."""
+
+        repository = self._folder_repository_for_action(
+            scope=scope, user_id=user_id, action="list", operation="membership"
+        )
+        return await self._run_folder_repository(
+            repository.list_memberships,
+            note_ids=(note_id,),
+            include_inactive=True,
+        )
+
+    async def create_manual_note_placement_for_sync(
+        self,
+        *,
+        scope: ScopeType | str,
+        folder_id: str,
+        note_id: str,
+        expected_note_version: int,
+        user_id: str | None = None,
+    ) -> NoteFolderMembership:
+        """Create one exact active manual placement for lasting-sync recovery."""
+
+        repository = self._folder_repository_for_action(
+            scope=scope, user_id=user_id, action="update", operation="membership"
+        )
+        return await self._run_folder_repository(
+            repository.attach_manual,
+            folder_id=folder_id,
+            note_id=note_id,
+            expected_note_version=expected_note_version,
+        )
+
     async def load_note_folder_search(
         self,
         *,

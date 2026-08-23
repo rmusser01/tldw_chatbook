@@ -18,7 +18,10 @@ from tldw_chatbook.Notes.notes_sync_conflicts import (
     ConflictSelection,
     NotesSyncConflictChoice,
     build_conflict_comparison,
+    conflict_copies_folder_id,
+    conflict_copy_note_id,
     conflict_resolution_operation_id,
+    conflict_root_folder_id,
 )
 from tldw_chatbook.Notes.notes_sync_authority import NotesSyncNoteSnapshot
 from tldw_chatbook.Notes.notes_sync_filesystem import NotesSyncFileSnapshot
@@ -51,6 +54,7 @@ from tldw_chatbook.Notes.notes_sync_executor import (
     NotesSyncDirectionOverride,
     NotesSyncExecutionRequest,
     NotesSyncExecutionResult,
+    NotesSyncKeepBothAuthority,
 )
 from tldw_chatbook.Notes.sync_paths import SafeSyncBytes, SafeSyncFileIdentity
 
@@ -331,7 +335,11 @@ class _SubsetAdapter(_Adapter):
     ) -> object:
         action_kind = (
             NotesSyncActionKind.UPDATE_NOTE
-            if selection.choice is NotesSyncConflictChoice.KEEP_FILE
+            if selection.choice
+            in {
+                NotesSyncConflictChoice.KEEP_FILE,
+                NotesSyncConflictChoice.KEEP_BOTH,
+            }
             else NotesSyncActionKind.UPDATE_FILE
         )
         return SimpleNamespace(
@@ -1117,6 +1125,117 @@ async def test_production_keep_file_and_keep_note_requests_preserve_direction(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("direction", "file_digest", "note_digest", "override_expected"),
+    (
+        (NotesSyncDirection.BIDIRECTIONAL, _B, _C, False),
+        (NotesSyncDirection.FOLDER_TO_NOTES, _A, _C, False),
+        (NotesSyncDirection.NOTES_TO_FOLDER, _B, _A, True),
+    ),
+)
+async def test_production_keep_both_request_carries_complete_deterministic_authority(
+    direction: NotesSyncDirection,
+    file_digest: str,
+    note_digest: str,
+    override_expected: bool,
+) -> None:
+    note_text = "note side"
+    file_text = "file side"
+    note = NotesSyncNoteSnapshot(
+        "local_note",
+        "note-1",
+        "Original",
+        note_text,
+        5,
+        hashlib.sha256(note_text.encode()).hexdigest(),
+    )
+    file = NotesSyncFileSnapshot(
+        observation=NotesSyncFileObservation(
+            "note.md",
+            NotesSyncFileIdentity(1, 2, 1),
+            hashlib.sha256(file_text.encode()).hexdigest(),
+            len(file_text),
+            NotesSyncSerializationProfile(False, "lf", False, 0o600),
+        ),
+        text=file_text,
+        raw_bytes=file_text.encode(),
+        reviewed_state=SafeSyncBytes(
+            Path("note.md"),
+            file_text.encode(),
+            SafeSyncFileIdentity(1, 2, 1),
+            0o600,
+            len(file_text),
+            9,
+            8,
+            1,
+            1,
+            0,
+            (),
+            False,
+        ),
+        representation_digest=_A,
+    )
+    observed = _input(
+        file_digest=file_digest,
+        note_digest=note_digest,
+        direction=direction,
+    )
+    plan = plan_reconciliation(observed)
+    adapter = object.__new__(_ProductionRuntimeAdapter)
+    adapter._bundles = {
+        plan.observation_token: {
+            "binding-1": SimpleNamespace(
+                record=SimpleNamespace(
+                    binding_id="binding-1",
+                    root_id="root-1",
+                    note_scope_id="local_note",
+                    note_id="note-1",
+                    normalized_relative_path="note.md",
+                    serialization=file.observation.serialization,
+                ),
+                note=note,
+                file=file,
+            )
+        }
+    }
+
+    class _FolderService:
+        async def get_note_folder_by_id_for_sync(self, **_kwargs: object) -> object:
+            return SimpleNamespace(
+                folder_id="folder-1", name="My synced notes", deleted=False
+            )
+
+    adapter._service = _FolderService()
+    adapter._user_id = "user-1"
+    root = _root(direction=direction)
+    request = await adapter.build_conflict_execution_request(
+        root,
+        observed,
+        plan,
+        ConflictSelection("binding-1", NotesSyncConflictChoice.KEEP_BOTH),
+    )
+
+    assert type(request) is NotesSyncExecutionRequest
+    assert request.action_kind is NotesSyncActionKind.UPDATE_NOTE
+    assert request.journal_kind == "resolve_keep_both"
+    assert isinstance(request.keep_both, NotesSyncKeepBothAuthority)
+    assert request.keep_both.parent_folder_id == conflict_copies_folder_id("local_note")
+    assert request.keep_both.root_folder_id == conflict_root_folder_id(
+        "local_note", "root-1"
+    )
+    assert request.keep_both.copy_note_id == conflict_copy_note_id(
+        "root-1", "binding-1", plan.observation_token
+    )
+    assert request.keep_both.parent_folder_name == "Conflict copies"
+    assert request.keep_both.root_folder_name == "My synced notes"
+    assert request.keep_both.copy_title == "Original"
+    assert isinstance(request.direction_override, NotesSyncDirectionOverride) is (
+        override_expected
+    )
+    assert root.direction is direction
+
+
+@pytest.mark.asyncio
 async def test_selected_keep_file_executes_while_skip_remains_attention() -> None:
     initial = _reviewed_subset_input()
     final = _reviewed_subset_input(resolved=frozenset({"binding-1"}))
@@ -1154,6 +1273,42 @@ async def test_selected_keep_file_executes_while_skip_remains_attention() -> Non
         "binding-safe",
         "binding-1",
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "direction",
+    (
+        NotesSyncDirection.BIDIRECTIONAL,
+        NotesSyncDirection.FOLDER_TO_NOTES,
+        NotesSyncDirection.NOTES_TO_FOLDER,
+    ),
+)
+async def test_keep_both_is_admitted_only_by_reviewed_runtime_without_direction_change(
+    direction: NotesSyncDirection,
+) -> None:
+    initial = _reviewed_subset_input(direction=direction, conflict_count=1)
+    final = _reviewed_subset_input(
+        direction=direction,
+        conflict_count=1,
+        resolved=frozenset({"binding-1"}),
+    )
+    adapter = _SubsetAdapter(initial, final)
+    root = _root(direction=direction)
+    owner = _owner(adapter, root)
+    token = _install_review(owner, initial)
+
+    result = await owner.apply_reviewed(
+        "root-1",
+        token,
+        (),
+        (ConflictSelection("binding-1", NotesSyncConflictChoice.KEEP_BOTH),),
+    )
+
+    assert result.conflicts_resolved == 1
+    assert adapter.executor.requests[0].journal_kind == "resolve_keep_both"
+    assert adapter.executor.requests[0].action_kind is NotesSyncActionKind.UPDATE_NOTE
+    assert owner._store.get_root("root-1").direction is direction
 
 
 @pytest.mark.asyncio

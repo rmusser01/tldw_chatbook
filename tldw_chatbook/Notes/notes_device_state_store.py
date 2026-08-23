@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import sqlite3
 import threading
 import time
@@ -129,6 +131,28 @@ _OPERATION_TRANSITIONS: Mapping[
     }
 )
 _SETTING_KEYS = frozenset({"cutover_marker", "recovery_capacity"})
+_CONFLICT_SUBSTAGES = (
+    "recovery_admitted",
+    "folders_established",
+    "copy_created",
+    "placement_created",
+    "copy_verified",
+    "bound_note_updated",
+    "file_reverified",
+    "binding_updated",
+    "verified",
+)
+_CONFLICT_SUBSTAGE_STATES = {
+    "recovery_admitted": NotesSyncOperationState.RECOVERY_ADMITTED,
+    "folders_established": NotesSyncOperationState.RECOVERY_ADMITTED,
+    "copy_created": NotesSyncOperationState.RECOVERY_ADMITTED,
+    "placement_created": NotesSyncOperationState.RECOVERY_ADMITTED,
+    "copy_verified": NotesSyncOperationState.RECOVERY_ADMITTED,
+    "bound_note_updated": NotesSyncOperationState.FIRST_AUTHORITY_APPLIED,
+    "file_reverified": NotesSyncOperationState.SECOND_AUTHORITY_APPLIED,
+    "binding_updated": NotesSyncOperationState.BINDING_UPDATED,
+    "verified": NotesSyncOperationState.VERIFIED,
+}
 
 
 def _now() -> int:
@@ -1385,6 +1409,113 @@ class NotesDeviceStateStore:
             ).rowcount
         if changed != 1:
             raise NotesDeviceStateError("The requested operation transition is stale.")
+        return self.get_operation(operation_id)
+
+    def advance_conflict_substage(
+        self,
+        *,
+        operation_id: str,
+        recovery_id: str,
+        expected_operation_state: NotesSyncOperationState,
+        expected_substage: str,
+        next_substage: str,
+        expected_payload_digest: str,
+        expected_metadata_length: int,
+    ) -> NotesSyncOperationRecord:
+        """Advance one exact Keep-both checkpoint without growing recovery."""
+
+        validate_notes_sync_opaque_id(operation_id, field_name="operation_id")
+        validate_notes_sync_opaque_id(recovery_id, field_name="recovery_id")
+        validate_notes_sync_digest(
+            expected_payload_digest, field_name="expected_payload_digest"
+        )
+        if type(expected_operation_state) is not NotesSyncOperationState:
+            raise TypeError("expected_operation_state must be an operation state.")
+        if type(expected_metadata_length) is not int or expected_metadata_length <= 0:
+            raise ValueError("expected_metadata_length must be positive.")
+        try:
+            stage_index = _CONFLICT_SUBSTAGES.index(expected_substage)
+        except ValueError:
+            raise NotesDeviceStateError("The conflict substage is corrupt.") from None
+        if (
+            stage_index + 1 >= len(_CONFLICT_SUBSTAGES)
+            or _CONFLICT_SUBSTAGES[stage_index + 1] != next_substage
+        ):
+            raise NotesDeviceStateError(
+                "The requested conflict substage transition is not allowed."
+            )
+        expected_current_state = _CONFLICT_SUBSTAGE_STATES[expected_substage]
+        if expected_substage == "file_reverified":
+            expected_current_state = NotesSyncOperationState.BINDING_UPDATED
+        if expected_operation_state is not expected_current_state:
+            raise NotesDeviceStateError("The conflict substage state is corrupt.")
+        next_state = _CONFLICT_SUBSTAGE_STATES[next_substage]
+        longest = max(map(len, _CONFLICT_SUBSTAGES))
+        with self.transaction(immediate=True) as connection:
+            row = connection.execute(
+                "SELECT operation.kind, operation.state, recovery.payload, "
+                "recovery.metadata FROM notes_sync_operations AS operation "
+                "JOIN notes_sync_recovery AS recovery "
+                "ON recovery.operation_id = operation.operation_id "
+                "WHERE operation.operation_id = ? AND recovery.recovery_id = ?",
+                (operation_id, recovery_id),
+            ).fetchone()
+            if row is None:
+                raise NotesDeviceStateError(
+                    "The requested conflict recovery does not exist."
+                )
+            kind, state, payload, metadata = row
+            if (
+                kind != "resolve_keep_both"
+                or state != expected_operation_state.value
+                or type(payload) is not bytes
+                or type(metadata) is not bytes
+                or len(metadata) != expected_metadata_length
+                or hashlib.sha256(payload).hexdigest() != expected_payload_digest
+            ):
+                raise NotesDeviceStateError("The conflict recovery is corrupt.")
+            try:
+                decoded = json.loads(metadata.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                raise NotesDeviceStateError(
+                    "The conflict recovery is corrupt."
+                ) from None
+            expected_padding = " " * (longest - len(expected_substage))
+            if (
+                not isinstance(decoded, dict)
+                or decoded.get("conflict_substage") != expected_substage
+                or decoded.get("conflict_substage_padding") != expected_padding
+            ):
+                raise NotesDeviceStateError("The conflict substage is corrupt.")
+            decoded["conflict_substage"] = next_substage
+            decoded["conflict_substage_padding"] = " " * (longest - len(next_substage))
+            replacement = json.dumps(
+                decoded,
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+            if len(replacement) != expected_metadata_length:
+                raise NotesDeviceStateError("The conflict recovery length drifted.")
+            updated = connection.execute(
+                "UPDATE notes_sync_recovery SET metadata = ? "
+                "WHERE recovery_id = ? AND operation_id = ? AND metadata = ?",
+                (replacement, recovery_id, operation_id, metadata),
+            ).rowcount
+            advanced = connection.execute(
+                "UPDATE notes_sync_operations SET state = ?, reason_code = NULL, "
+                "updated_at = ? WHERE operation_id = ? AND state = ?",
+                (
+                    next_state.value,
+                    _now(),
+                    operation_id,
+                    expected_operation_state.value,
+                ),
+            ).rowcount
+            if updated != 1 or advanced != 1:
+                raise NotesDeviceStateError(
+                    "The conflict substage transition is stale."
+                )
         return self.get_operation(operation_id)
 
     def mark_operation_attention(

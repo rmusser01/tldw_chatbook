@@ -20,8 +20,13 @@ from tldw_chatbook.Notes.notes_device_state_store import (
     NotesSyncRecoveryRecord,
 )
 from tldw_chatbook.Notes.notes_sync_authority import (
+    ConflictNoteRequest,
+    ManualFolderRequest,
+    ManualPlacementRequest,
     NotesSyncAuthorityError,
     NotesSyncNoteSnapshot,
+    VerifiedFolder,
+    VerifiedPlacement,
 )
 from tldw_chatbook.Notes.notes_sync_filesystem import (
     NotesSyncFilesystemError,
@@ -47,9 +52,21 @@ from tldw_chatbook.Notes.sync_paths import SafeSyncBytes, SafeSyncFileIdentity
 
 
 CONFLICT_RECOVERY_RETENTION_NS = 30 * 24 * 60 * 60 * 1_000_000_000
+CONFLICT_SUBSTAGES = (
+    "recovery_admitted",
+    "folders_established",
+    "copy_created",
+    "placement_created",
+    "copy_verified",
+    "bound_note_updated",
+    "file_reverified",
+    "binding_updated",
+    "verified",
+)
 _RESOLUTION_JOURNAL_ACTIONS = {
     "resolve_keep_file": NotesSyncActionKind.UPDATE_NOTE,
     "resolve_keep_note": NotesSyncActionKind.UPDATE_FILE,
+    "resolve_keep_both": NotesSyncActionKind.UPDATE_NOTE,
 }
 
 
@@ -93,6 +110,41 @@ class NotesSyncDirectionOverride:
 
     def __repr__(self) -> str:
         return "NotesSyncDirectionOverride(<private>)"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class NotesSyncKeepBothAuthority:
+    """Private deterministic conflict-copy authority admitted before mutation."""
+
+    parent_folder_id: str
+    parent_folder_name: str
+    root_folder_id: str
+    root_folder_name: str
+    copy_note_id: str
+    copy_title: str
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("parent_folder_id", self.parent_folder_id),
+            ("root_folder_id", self.root_folder_id),
+            ("copy_note_id", self.copy_note_id),
+        ):
+            validate_notes_sync_opaque_id(value, field_name=name)
+        for name, value in (
+            ("parent_folder_name", self.parent_folder_name),
+            ("root_folder_name", self.root_folder_name),
+            ("copy_title", self.copy_title),
+        ):
+            if (
+                type(value) is not str
+                or not value
+                or len(value) > 4096
+                or "\x00" in value
+            ):
+                raise ValueError(f"{name} must be bounded non-empty text.")
+
+    def __repr__(self) -> str:
+        return "NotesSyncKeepBothAuthority(<private>)"
 
 
 class NotesSyncExecutionPartialError(RuntimeError):
@@ -197,11 +249,15 @@ _INTERNAL_REASONS = frozenset(
 _TYPED_REASON_CODES = frozenset(
     {
         "comparison_root_unavailable",
+        "conflict_copy_collision",
         "destination_exists",
         "deletion_postcondition_failed",
         "duplicate_stable_identity",
         "expected_path_mismatch",
         "file_observation_failed",
+        "folder_authority_changed",
+        "folder_mutation_failed",
+        "folder_observation_failed",
         "guarded_rename_unavailable",
         "invalid_relative_path",
         "link_or_reparse",
@@ -224,6 +280,9 @@ _TYPED_REASON_CODES = frozenset(
         "note_scope_changed",
         "operation_failed",
         "parent_identity_changed",
+        "placement_authority_changed",
+        "placement_mutation_failed",
+        "placement_observation_failed",
         "replacement_cleanup_pending",
         "replacement_commit_unverified",
         "replacement_postcondition_failed",
@@ -408,6 +467,7 @@ class NotesSyncExecutionRequest:
     recovery_expires_at: int
     journal_kind: str | None = None
     direction_override: NotesSyncDirectionOverride | None = None
+    keep_both: NotesSyncKeepBothAuthority | None = None
     candidate_note_scope_id: str | None = None
     candidate_note_id: str | None = None
     candidate_relative_path: str | None = None
@@ -484,6 +544,10 @@ class NotesSyncExecutionRequest:
             _RESOLUTION_JOURNAL_ACTIONS.get(self.journal_kind) is not self.action_kind
         ):
             raise ValueError("journal_kind must match the reviewed conflict action.")
+        if (self.journal_kind == "resolve_keep_both") != (
+            type(self.keep_both) is NotesSyncKeepBothAuthority
+        ):
+            raise ValueError("keep_both authority must match journal_kind.")
         if self.direction_override is not None:
             if type(self.direction_override) is not NotesSyncDirectionOverride:
                 raise TypeError(
@@ -577,6 +641,26 @@ class _NoteAuthority(Protocol):
     ) -> NotesSyncNoteSnapshot: ...
 
     async def delete(self, expected: NotesSyncNoteSnapshot) -> None: ...
+
+    async def create_or_verify_manual_folder(
+        self, request: ManualFolderRequest
+    ) -> VerifiedFolder: ...
+
+    async def create_or_verify_conflict_note(
+        self, request: ConflictNoteRequest
+    ) -> NotesSyncNoteSnapshot: ...
+
+    async def create_or_verify_manual_placement(
+        self, request: ManualPlacementRequest
+    ) -> VerifiedPlacement: ...
+
+    async def verify_conflict_note(
+        self, request: ConflictNoteRequest
+    ) -> NotesSyncNoteSnapshot: ...
+
+    async def verify_manual_placement(
+        self, request: ManualPlacementRequest
+    ) -> VerifiedPlacement: ...
 
     async def reconcile_managed_memberships(
         self,
@@ -789,6 +873,11 @@ class NotesSyncExecutor:
                 content=original_content,
                 version=operation.expected_note_version,
                 content_digest=payload_digest,
+                updated_at=(
+                    self._optional_metadata_text(metadata, "recovery_updated_at")
+                    if operation.kind == "resolve_keep_both"
+                    else None
+                ),
             )
             file = current_file
             if _file_representation_digest(file) != operation.expected_file_digest:
@@ -824,6 +913,31 @@ class NotesSyncExecutor:
                 != self._decoded_binding_serialization(reviewed_binding)
             ):
                 raise RuntimeError("recovery_authority_changed")
+        keep_both = None
+        if operation.kind == "resolve_keep_both":
+            try:
+                keep_both = NotesSyncKeepBothAuthority(
+                    parent_folder_id=self._required_metadata_text(
+                        metadata, "conflict_parent_folder_id"
+                    ),
+                    parent_folder_name=self._required_metadata_text(
+                        metadata, "conflict_parent_folder_name"
+                    ),
+                    root_folder_id=self._required_metadata_text(
+                        metadata, "conflict_root_folder_id"
+                    ),
+                    root_folder_name=self._required_metadata_text(
+                        metadata, "conflict_root_folder_name"
+                    ),
+                    copy_note_id=self._required_metadata_text(
+                        metadata, "conflict_copy_note_id"
+                    ),
+                    copy_title=self._required_metadata_text(
+                        metadata, "conflict_copy_title"
+                    ),
+                )
+            except (KeyError, TypeError, ValueError):
+                raise RuntimeError("recovery_authority_changed") from None
         return NotesSyncExecutionRequest(
             operation_id=operation.operation_id,
             root_id=operation.root_id,
@@ -839,6 +953,7 @@ class NotesSyncExecutor:
             recovery_expires_at=recovery.expires_at,
             journal_kind=(operation.kind if resolution_action is not None else None),
             direction_override=direction_override,
+            keep_both=keep_both,
         )
 
     async def _reconstruct_new_request(
@@ -1544,6 +1659,8 @@ class NotesSyncExecutor:
     ) -> NotesSyncExecutionResult:
         if type(request) is not NotesSyncExecutionRequest:
             raise TypeError("request must be a NotesSyncExecutionRequest.")
+        if request.journal_kind == "resolve_keep_both":
+            return await self._run_keep_both(request, allow_attention=allow_attention)
         if request.action_kind in {
             NotesSyncActionKind.CREATE_NOTE,
             NotesSyncActionKind.CREATE_FILE,
@@ -1649,6 +1766,52 @@ class NotesSyncExecutor:
                 self._persist_attention_best_effort(
                     request.operation_id, "cancelled_after_admission"
                 )
+            raise
+        except Exception as exc:
+            reason = self._bounded_reason(exc)
+            if admitted:
+                self._record_failure_attention(request, exc, reason)
+            return self._result(
+                request.operation_id,
+                NotesSyncOperationState.NEEDS_ATTENTION,
+                reason,
+            )
+
+    async def _run_keep_both(
+        self,
+        request: NotesSyncExecutionRequest,
+        *,
+        allow_attention: bool,
+    ) -> NotesSyncExecutionResult:
+        admitted = False
+        try:
+            operation = self._store.find_operation(request.operation_id)
+            if operation is None:
+                await self._validate_initial(request)
+                if not self._admit_keep_both(request):
+                    return self._result(
+                        request.operation_id,
+                        NotesSyncOperationState.NEEDS_ATTENTION,
+                        "recovery_capacity_exceeded",
+                    )
+                admitted = True
+                self._stage(NotesSyncOperationState.RECOVERY_ADMITTED)
+            else:
+                admitted = True
+                self._validate_operation(request, operation)
+                if operation.state is NotesSyncOperationState.COMPLETED:
+                    return self._result(request.operation_id, operation.state)
+                self._validate_keep_both_recovery(request)
+                if operation.state is NotesSyncOperationState.NEEDS_ATTENTION:
+                    if not allow_attention:
+                        return self._result(
+                            request.operation_id,
+                            operation.state,
+                            operation.reason_code or "operation_needs_attention",
+                        )
+                    self._restore_keep_both_operation_state(request.operation_id)
+            return await self._advance_keep_both(request)
+        except asyncio.CancelledError:
             raise
         except Exception as exc:
             reason = self._bounded_reason(exc)
@@ -2267,6 +2430,69 @@ class NotesSyncExecutor:
         )
         return decision.admitted
 
+    def _admit_keep_both(self, request: NotesSyncExecutionRequest) -> bool:
+        authority = request.keep_both
+        assert authority is not None
+        note, file = self._keep_both_authorities(request)
+        binding = self._store.get_binding(request.binding_id)
+        longest = max(map(len, CONFLICT_SUBSTAGES))
+        intent: dict[str, object] = {
+            "action": NotesSyncActionKind.UPDATE_NOTE.value,
+            "binding": {
+                "content_digest": binding.content_digest,
+                "note_version": binding.note_version,
+                "serialization": {
+                    "final_newline": binding.serialization.final_newline,
+                    "mode": binding.serialization.mode,
+                    "newline": binding.serialization.newline,
+                    "utf8_bom": binding.serialization.utf8_bom,
+                },
+                "stable_identity_digest": binding.stable_identity_digest,
+            },
+            "conflict_copy_note_id": authority.copy_note_id,
+            "conflict_copy_title": authority.copy_title,
+            "conflict_parent_folder_id": authority.parent_folder_id,
+            "conflict_parent_folder_name": authority.parent_folder_name,
+            "conflict_root_folder_id": authority.root_folder_id,
+            "conflict_root_folder_name": authority.root_folder_name,
+            "conflict_substage": "recovery_admitted",
+            "conflict_substage_padding": " " * (longest - len("recovery_admitted")),
+            "desired_digest": _file_content_digest(file),
+            "desired_title": request.desired_title,
+            "direction": request.direction.value,
+            "direction_override": _encoded_override(request.direction_override),
+            "file_relative_path": _file_relative_path(file),
+            "logical_folder_id": request.logical_folder_id,
+            "note_id": note.note_id,
+            "note_scope_id": note.note_scope_id,
+            "recovery_title": note.title,
+            "recovery_updated_at": note.updated_at,
+            "underlying_action_kind": NotesSyncActionKind.UPDATE_NOTE.value,
+        }
+        decision = self._store.admit_operation_recovery(
+            NotesSyncOperationRecord(
+                operation_id=request.operation_id,
+                root_id=request.root_id,
+                binding_id=request.binding_id,
+                kind="resolve_keep_both",
+                state=NotesSyncOperationState.PENDING,
+                reason_code=None,
+                observation_token=request.observation_token,
+                expected_note_version=note.version,
+                expected_file_digest=_file_representation_digest(file),
+            ),
+            NotesSyncRecoveryRecord(
+                recovery_id=request.recovery_id,
+                operation_id=request.operation_id,
+                payload=note.content.encode("utf-8"),
+                metadata=_encode_recovery_intent(intent),
+                expires_at=request.recovery_expires_at,
+            ),
+            capacity_bytes=self._capacity,
+            retention_ns=CONFLICT_RECOVERY_RETENTION_NS,
+        )
+        return decision.admitted
+
     def _validate_operation(
         self,
         request: NotesSyncExecutionRequest,
@@ -2389,6 +2615,389 @@ class NotesSyncExecutor:
                 return self._result(request.operation_id, state)
             raise RuntimeError("operation_needs_attention")
 
+    async def _advance_keep_both(
+        self,
+        request: NotesSyncExecutionRequest,
+    ) -> NotesSyncExecutionResult:
+        while True:
+            stage = self._keep_both_substage(request)
+            cancelled = False
+            if stage == "recovery_admitted":
+                self._require_reviewed_owner(request)
+                _, cancelled = await self._joined_thread_call(
+                    lambda: asyncio.run(
+                        self._establish_conflict_folders(request, checkpoint=True)
+                    )
+                )
+            elif stage == "folders_established":
+                _, cancelled = await self._joined_thread_call(
+                    lambda: asyncio.run(
+                        self._create_conflict_copy(request, checkpoint=True)
+                    )
+                )
+            elif stage == "copy_created":
+                _, cancelled = await self._joined_thread_call(
+                    lambda: asyncio.run(
+                        self._create_conflict_placement(request, checkpoint=True)
+                    )
+                )
+            elif stage == "placement_created":
+                _, cancelled = await self._joined_thread_call(
+                    lambda: asyncio.run(
+                        self._verify_conflict_copy_pair(request, checkpoint=True)
+                    )
+                )
+            elif stage == "copy_verified":
+                _, cancelled = await self._joined_thread_call(
+                    lambda: asyncio.run(self._update_bound_note(request))
+                )
+            elif stage == "bound_note_updated":
+                _, cancelled = await self._joined_thread_call(
+                    lambda: asyncio.run(self._reverify_keep_both_file(request))
+                )
+            elif stage == "file_reverified":
+                _, cancelled = await self._joined_thread_call(
+                    lambda: asyncio.run(self._commit_keep_both_binding(request))
+                )
+            elif stage == "binding_updated":
+                _, cancelled = await self._joined_thread_call(
+                    lambda: asyncio.run(self._final_verify_keep_both(request))
+                )
+            elif stage == "verified":
+                await self._require_keep_both_desired(request)
+                await self._verify_conflict_copy_pair(request, checkpoint=False)
+                self._transition(
+                    request.operation_id, NotesSyncOperationState.COMPLETED
+                )
+                return self._result(
+                    request.operation_id, NotesSyncOperationState.COMPLETED
+                )
+            else:  # pragma: no cover - validated by _keep_both_substage
+                raise RuntimeError("recovery_authority_changed")
+            if cancelled:
+                raise asyncio.CancelledError
+
+    async def _establish_conflict_folders(
+        self,
+        request: NotesSyncExecutionRequest,
+        *,
+        checkpoint: bool,
+    ) -> VerifiedFolder:
+        authority = request.keep_both
+        assert authority is not None
+        parent = await self._notes.create_or_verify_manual_folder(
+            ManualFolderRequest(
+                authority.parent_folder_id,
+                None,
+                authority.parent_folder_name,
+                (authority.parent_folder_name,),
+            )
+        )
+        child = await self._notes.create_or_verify_manual_folder(
+            ManualFolderRequest(
+                authority.root_folder_id,
+                parent.folder_id,
+                authority.root_folder_name,
+                (authority.parent_folder_name, authority.root_folder_name),
+            )
+        )
+        if checkpoint:
+            self._checkpoint_keep_both(
+                request,
+                "recovery_admitted",
+                "folders_established",
+                NotesSyncOperationState.RECOVERY_ADMITTED,
+            )
+            self._stage(NotesSyncOperationState.RECOVERY_ADMITTED)
+        return child
+
+    def _conflict_note_request(
+        self, request: NotesSyncExecutionRequest
+    ) -> ConflictNoteRequest:
+        authority = request.keep_both
+        assert authority is not None
+        note, _ = self._keep_both_authorities(request)
+        return ConflictNoteRequest(
+            authority.copy_note_id,
+            authority.copy_title,
+            note.content,
+        )
+
+    async def _create_conflict_copy(
+        self,
+        request: NotesSyncExecutionRequest,
+        *,
+        checkpoint: bool,
+    ) -> NotesSyncNoteSnapshot:
+        copy = await self._notes.create_or_verify_conflict_note(
+            self._conflict_note_request(request)
+        )
+        if checkpoint:
+            self._checkpoint_keep_both(
+                request,
+                "folders_established",
+                "copy_created",
+                NotesSyncOperationState.RECOVERY_ADMITTED,
+            )
+            self._stage(NotesSyncOperationState.RECOVERY_ADMITTED)
+        return copy
+
+    async def _placement_request(
+        self, request: NotesSyncExecutionRequest
+    ) -> ManualPlacementRequest:
+        child = await self._establish_conflict_folders(request, checkpoint=False)
+        copy = await self._notes.verify_conflict_note(
+            self._conflict_note_request(request)
+        )
+        return ManualPlacementRequest(child.folder_id, copy.note_id, copy.version)
+
+    async def _create_conflict_placement(
+        self,
+        request: NotesSyncExecutionRequest,
+        *,
+        checkpoint: bool,
+    ) -> VerifiedPlacement:
+        placement_request = await self._placement_request(request)
+        placement = await self._notes.create_or_verify_manual_placement(
+            placement_request
+        )
+        if checkpoint:
+            self._checkpoint_keep_both(
+                request,
+                "copy_created",
+                "placement_created",
+                NotesSyncOperationState.RECOVERY_ADMITTED,
+            )
+            self._stage(NotesSyncOperationState.RECOVERY_ADMITTED)
+        return placement
+
+    async def _verify_conflict_copy_pair(
+        self,
+        request: NotesSyncExecutionRequest,
+        *,
+        checkpoint: bool,
+    ) -> tuple[NotesSyncNoteSnapshot, VerifiedPlacement]:
+        note_request = self._conflict_note_request(request)
+        copy = await self._notes.verify_conflict_note(note_request)
+        placement_request = await self._placement_request(request)
+        placement = await self._notes.verify_manual_placement(placement_request)
+        if copy.note_id != placement.note_id:
+            raise RuntimeError("recovery_authority_changed")
+        if checkpoint:
+            self._checkpoint_keep_both(
+                request,
+                "placement_created",
+                "copy_verified",
+                NotesSyncOperationState.RECOVERY_ADMITTED,
+            )
+            self._stage(NotesSyncOperationState.RECOVERY_ADMITTED)
+        return copy, placement
+
+    async def _update_bound_note(self, request: NotesSyncExecutionRequest) -> None:
+        reviewed_note, reviewed_file = self._keep_both_authorities(request)
+        self._require_reviewed_owner(request)
+        note, file = await self._observe(request)
+        target, source = self._classify(request, note, file)
+        if not source or target == "stale":
+            raise RuntimeError("stale_observation")
+        if target == "original":
+            await self._notes.replace(
+                reviewed_note,
+                title=request.desired_title,
+                content=reviewed_file.text,
+            )
+        await self._require_keep_both_desired(request)
+        self._checkpoint_keep_both(
+            request,
+            "copy_verified",
+            "bound_note_updated",
+            NotesSyncOperationState.RECOVERY_ADMITTED,
+        )
+        self._stage(NotesSyncOperationState.FIRST_AUTHORITY_APPLIED)
+
+    async def _reverify_keep_both_file(
+        self, request: NotesSyncExecutionRequest
+    ) -> None:
+        await self._require_keep_both_desired(request)
+        self._checkpoint_keep_both(
+            request,
+            "bound_note_updated",
+            "file_reverified",
+            NotesSyncOperationState.FIRST_AUTHORITY_APPLIED,
+        )
+        self._stage(NotesSyncOperationState.SECOND_AUTHORITY_APPLIED)
+
+    async def _commit_keep_both_binding(
+        self, request: NotesSyncExecutionRequest
+    ) -> None:
+        note, file = await self._require_keep_both_desired(request)
+        binding = self._require_owner_identity(request)
+        if self._binding_matches_reviewed(
+            binding,
+            self._recovery_metadata(
+                self._store.load_operation_recovery(request.operation_id)
+            ),
+        ):
+            self._store.commit_binding_stage(
+                request.operation_id,
+                expected=binding,
+                replacement=replace(
+                    binding,
+                    normalized_relative_path=_file_relative_path(file),
+                    stable_identity_digest=self.stable_identity_digest(file),
+                    serialization=_file_serialization(file),
+                    content_digest=note.content_digest,
+                    note_version=note.version,
+                ),
+            )
+        elif self._binding_matches_current(request, binding, note, file):
+            operation = self._store.get_operation(request.operation_id)
+            if operation.state is NotesSyncOperationState.SECOND_AUTHORITY_APPLIED:
+                self._store.transition_operation(
+                    request.operation_id, NotesSyncOperationState.BINDING_UPDATED
+                )
+        else:
+            raise RuntimeError("binding_authority_changed")
+        self._checkpoint_keep_both(
+            request,
+            "file_reverified",
+            "binding_updated",
+            NotesSyncOperationState.BINDING_UPDATED,
+        )
+        self._stage(NotesSyncOperationState.BINDING_UPDATED)
+
+    async def _final_verify_keep_both(self, request: NotesSyncExecutionRequest) -> None:
+        note, file = await self._require_keep_both_desired(request)
+        self._require_current_owner(request, note=note, file=file)
+        await self._verify_conflict_copy_pair(request, checkpoint=False)
+        self._checkpoint_keep_both(
+            request,
+            "binding_updated",
+            "verified",
+            NotesSyncOperationState.BINDING_UPDATED,
+        )
+        self._stage(NotesSyncOperationState.VERIFIED)
+
+    async def _require_keep_both_desired(
+        self, request: NotesSyncExecutionRequest
+    ) -> tuple[
+        NotesSyncNoteSnapshot,
+        NotesSyncFileSnapshot | WindowsNotesSyncObservation,
+    ]:
+        note, file = await self._observe(request)
+        target, source = self._classify(request, note, file)
+        if not source or target != "desired":
+            raise RuntimeError("postcondition_failed")
+        return note, file
+
+    def _checkpoint_keep_both(
+        self,
+        request: NotesSyncExecutionRequest,
+        current: str,
+        following: str,
+        expected_state: NotesSyncOperationState,
+    ) -> None:
+        recovery = self._store.load_operation_recovery(request.operation_id)
+        self._store.advance_conflict_substage(
+            operation_id=request.operation_id,
+            recovery_id=request.recovery_id,
+            expected_operation_state=expected_state,
+            expected_substage=current,
+            next_substage=following,
+            expected_payload_digest=hashlib.sha256(recovery.payload).hexdigest(),
+            expected_metadata_length=len(recovery.metadata),
+        )
+
+    def _keep_both_substage(self, request: NotesSyncExecutionRequest) -> str:
+        recovery = self._store.load_operation_recovery(request.operation_id)
+        metadata = self._recovery_metadata(recovery)
+        stage = metadata.get("conflict_substage")
+        if type(stage) is not str or stage not in CONFLICT_SUBSTAGES:
+            raise RuntimeError("recovery_authority_changed")
+        longest = max(map(len, CONFLICT_SUBSTAGES))
+        if metadata.get("conflict_substage_padding") != " " * (longest - len(stage)):
+            raise RuntimeError("recovery_authority_changed")
+        return stage
+
+    def _validate_keep_both_recovery(self, request: NotesSyncExecutionRequest) -> None:
+        recovery = self._store.load_recovery(request.recovery_id)
+        authority = request.keep_both
+        assert authority is not None
+        note, file = self._keep_both_authorities(request)
+        metadata = self._recovery_metadata(recovery)
+        if (
+            recovery.operation_id != request.operation_id
+            or recovery.payload != note.content.encode("utf-8")
+            or metadata.get("action") != NotesSyncActionKind.UPDATE_NOTE.value
+            or metadata.get("underlying_action_kind")
+            != NotesSyncActionKind.UPDATE_NOTE.value
+            or metadata.get("direction") != request.direction.value
+            or metadata.get("direction_override")
+            != _encoded_override(request.direction_override)
+            or metadata.get("desired_digest") != _file_content_digest(file)
+            or metadata.get("desired_title") != request.desired_title
+            or metadata.get("logical_folder_id") != request.logical_folder_id
+            or metadata.get("conflict_parent_folder_id") != authority.parent_folder_id
+            or metadata.get("conflict_parent_folder_name")
+            != authority.parent_folder_name
+            or metadata.get("conflict_root_folder_id") != authority.root_folder_id
+            or metadata.get("conflict_root_folder_name") != authority.root_folder_name
+            or metadata.get("conflict_copy_note_id") != authority.copy_note_id
+            or metadata.get("conflict_copy_title") != authority.copy_title
+            or metadata.get("recovery_updated_at") != note.updated_at
+        ):
+            raise RuntimeError("recovery_authority_changed")
+        self._keep_both_substage(request)
+
+    def _restore_keep_both_operation_state(self, operation_id: str) -> None:
+        recovery = self._store.load_operation_recovery(operation_id)
+        metadata = self._recovery_metadata(recovery)
+        stage = metadata.get("conflict_substage")
+        if type(stage) is not str:
+            raise RuntimeError("recovery_authority_changed")
+        target = {
+            "recovery_admitted": NotesSyncOperationState.RECOVERY_ADMITTED,
+            "folders_established": NotesSyncOperationState.RECOVERY_ADMITTED,
+            "copy_created": NotesSyncOperationState.RECOVERY_ADMITTED,
+            "placement_created": NotesSyncOperationState.RECOVERY_ADMITTED,
+            "copy_verified": NotesSyncOperationState.RECOVERY_ADMITTED,
+            "bound_note_updated": NotesSyncOperationState.FIRST_AUTHORITY_APPLIED,
+            "file_reverified": NotesSyncOperationState.SECOND_AUTHORITY_APPLIED,
+            "binding_updated": NotesSyncOperationState.BINDING_UPDATED,
+            "verified": NotesSyncOperationState.VERIFIED,
+        }.get(stage)
+        if target is None:
+            raise RuntimeError("recovery_authority_changed")
+        current = self._store.transition_operation(
+            operation_id, NotesSyncOperationState.RECOVERY_ADMITTED
+        ).state
+        path = (
+            NotesSyncOperationState.FIRST_AUTHORITY_APPLIED,
+            NotesSyncOperationState.SECOND_AUTHORITY_APPLIED,
+            NotesSyncOperationState.BINDING_UPDATED,
+            NotesSyncOperationState.VERIFIED,
+        )
+        for state in path:
+            if current is target:
+                break
+            current = self._store.transition_operation(operation_id, state).state
+
+    @staticmethod
+    def _keep_both_authorities(
+        request: NotesSyncExecutionRequest,
+    ) -> tuple[
+        NotesSyncNoteSnapshot,
+        NotesSyncFileSnapshot | WindowsNotesSyncObservation,
+    ]:
+        note = request.note
+        file = request.file
+        if type(note) is not NotesSyncNoteSnapshot or type(file) not in {
+            NotesSyncFileSnapshot,
+            WindowsNotesSyncObservation,
+        }:
+            raise RuntimeError("recovery_authority_changed")
+        return note, file
+
     def _validate_recovery(self, request: NotesSyncExecutionRequest) -> None:
         recovery = self._store.load_recovery(request.recovery_id)
         if recovery.operation_id != request.operation_id:
@@ -2440,6 +3049,16 @@ class NotesSyncExecutor:
     ) -> str:
         value = metadata.get(field_name)
         if type(value) is not str:
+            raise RuntimeError("recovery_authority_changed")
+        return value
+
+    @staticmethod
+    def _optional_metadata_text(
+        metadata: dict[str, object],
+        field_name: str,
+    ) -> str | None:
+        value = metadata.get(field_name)
+        if value is not None and type(value) is not str:
             raise RuntimeError("recovery_authority_changed")
         return value
 

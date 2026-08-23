@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+import threading
 from dataclasses import replace
 from pathlib import Path
 
@@ -23,21 +25,54 @@ from Tests.Notes.test_notes_sync_executor import (
 from tldw_chatbook.Notes.notes_device_state_store import (
     NotesDeviceStateStore,
     NotesSyncBindingRecord,
+    NotesSyncOperationRecord,
+    NotesSyncRecoveryRecord,
+    NotesSyncRootRecord,
+)
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
+from tldw_chatbook.Notes.notes_scope_service import NotesScopeService, ScopeType
+from tldw_chatbook.Notes.notes_sync_authority import (
+    ConflictNoteRequest,
+    ManualFolderRequest,
+    ManualPlacementRequest,
+    NotesScopeSyncAuthority,
+    NotesSyncNoteSnapshot,
+    VerifiedFolder,
+    VerifiedPlacement,
 )
 from tldw_chatbook.Notes.notes_sync_executor import (
     NotesSyncDirectionOverride,
     NotesSyncExecutionRequest,
     NotesSyncExecutor,
+    NotesSyncKeepBothAuthority,
+)
+from tldw_chatbook.Notes.notes_sync_filesystem import (
+    NotesSyncFileSnapshot,
+    PosixNotesSyncFilesystem,
 )
 from tldw_chatbook.Notes.notes_sync_models import (
     NotesSyncActionKind,
     NotesSyncBindingState,
     NotesSyncDirection,
     NotesSyncOperationState,
+    NotesSyncRootState,
 )
 
 
 pytestmark = pytest.mark.unit
+
+_CONFLICT_SUBSTAGES = (
+    "recovery_admitted",
+    "folders_established",
+    "copy_created",
+    "placement_created",
+    "copy_verified",
+    "bound_note_updated",
+    "file_reverified",
+    "binding_updated",
+    "verified",
+)
 
 
 class _AdmissionCheckingFilesystem(FakeFilesystem):
@@ -66,10 +101,820 @@ class _PathPreservingFilesystem(FakeFilesystem):
         return self.snapshot
 
 
+class _KeepBothAuthority(FakeNoteAuthority):
+    def __init__(self, snapshot: NotesSyncNoteSnapshot) -> None:
+        super().__init__(snapshot)
+        self.folders: dict[str, VerifiedFolder] = {}
+        self.copy_note: NotesSyncNoteSnapshot | None = None
+        self.placement: VerifiedPlacement | None = None
+        self.effects: list[str] = []
+
+    async def create_or_verify_manual_folder(
+        self, request: ManualFolderRequest
+    ) -> VerifiedFolder:
+        self.effects.append(
+            "parent_folder" if request.parent_id is None else "child_folder"
+        )
+        verified = self.folders.get(request.folder_id)
+        if verified is None:
+            verified = VerifiedFolder(
+                request.folder_id,
+                request.parent_id,
+                "/" + "/".join(request.path_segments).casefold(),
+                1,
+            )
+            self.folders[request.folder_id] = verified
+        return verified
+
+    async def create_or_verify_conflict_note(
+        self, request: ConflictNoteRequest
+    ) -> NotesSyncNoteSnapshot:
+        self.effects.append("copy_note")
+        if self.copy_note is None:
+            self.copy_note = NotesSyncNoteSnapshot(
+                "local_note",
+                request.note_id,
+                request.title,
+                request.content,
+                1,
+                hashlib.sha256(request.content.encode()).hexdigest(),
+            )
+        assert self.copy_note.title == request.title
+        assert self.copy_note.content == request.content
+        return self.copy_note
+
+    async def create_or_verify_manual_placement(
+        self, request: ManualPlacementRequest
+    ) -> VerifiedPlacement:
+        self.effects.append("placement")
+        if self.placement is None:
+            self.placement = VerifiedPlacement(
+                "placement-1", request.folder_id, request.note_id, 1
+            )
+        return self.placement
+
+    async def verify_conflict_note(
+        self, request: ConflictNoteRequest
+    ) -> NotesSyncNoteSnapshot:
+        self.effects.append("verify_copy")
+        assert self.copy_note is not None
+        assert self.copy_note.content == request.content
+        return self.copy_note
+
+    async def verify_manual_placement(
+        self, request: ManualPlacementRequest
+    ) -> VerifiedPlacement:
+        self.effects.append("verify_placement")
+        assert self.placement is not None
+        return self.placement
+
+
+class _DatabaseLocalNotes:
+    """Adapt the real local Notes database to the scope-service call shape."""
+
+    def __init__(self, database: CharactersRAGDB) -> None:
+        self.database = database
+
+    def get_note_by_id(self, user_id: str, note_id: str) -> object:
+        del user_id
+        record = self.database.get_note_by_id(note_id)
+        if record is not None and not isinstance(record.get("last_modified"), str):
+            record["last_modified"] = record["last_modified"].isoformat()
+        return record
+
+    def update_note(
+        self,
+        user_id: str,
+        note_id: str,
+        update_data: dict[str, object],
+        expected_version: int,
+    ) -> object:
+        del user_id
+        return self.database.update_note(note_id, update_data, expected_version)
+
+    def add_note(
+        self,
+        user_id: str,
+        title: str,
+        content: str,
+        *,
+        note_id: str,
+    ) -> object:
+        del user_id
+        return self.database.add_note(title, content, note_id)
+
+
+def _real_keep_both_authority(database: CharactersRAGDB) -> NotesScopeSyncAuthority:
+    return NotesScopeSyncAuthority(
+        NotesScopeService(
+            _DatabaseLocalNotes(database),
+            None,
+            folder_repository=LocalNoteFolderRepository(database),
+        ),
+        scope=ScopeType.LOCAL_NOTE,
+        user_id="user-1",
+    )
+
+
+class _BlockingKeepBothAuthority:
+    def __init__(
+        self,
+        authority: NotesScopeSyncAuthority,
+        store: NotesDeviceStateStore,
+        target: str,
+    ) -> None:
+        self.authority = authority
+        self.store = store
+        self.target = target
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self._blocked = False
+        self.calls: list[str] = []
+
+    def _substage(self) -> str:
+        recovery = self.store.find_operation_recovery("operation-1")
+        if recovery is None:
+            return ""
+        return json.loads(recovery.metadata)["conflict_substage"]
+
+    def _pause(self, target: str) -> None:
+        self.calls.append(f"pause:{target}:{self._substage()}")
+        if self.target != target or self._blocked:
+            return
+        self._blocked = True
+        self.started.set()
+        assert self.release.wait(5)
+
+    async def observe(self, note_id: str) -> NotesSyncNoteSnapshot:
+        result = await self.authority.observe(note_id)
+        stage_target = {
+            "bound_note_updated": "file_recheck",
+            "file_reverified": "binding_update",
+            "binding_updated": "final_verification",
+        }.get(self._substage())
+        if stage_target is not None:
+            self._pause(stage_target)
+        return result
+
+    async def replace(
+        self,
+        expected: NotesSyncNoteSnapshot,
+        *,
+        title: str,
+        content: str,
+    ) -> NotesSyncNoteSnapshot:
+        result = await self.authority.replace(expected, title=title, content=content)
+        self._pause("bound_note")
+        return result
+
+    async def create_or_verify_manual_folder(
+        self, request: ManualFolderRequest
+    ) -> VerifiedFolder:
+        result = await self.authority.create_or_verify_manual_folder(request)
+        self._pause("parent_folder" if request.parent_id is None else "child_folder")
+        return result
+
+    async def create_or_verify_conflict_note(
+        self, request: ConflictNoteRequest
+    ) -> NotesSyncNoteSnapshot:
+        result = await self.authority.create_or_verify_conflict_note(request)
+        self._pause("copy_note")
+        return result
+
+    async def create_or_verify_manual_placement(
+        self, request: ManualPlacementRequest
+    ) -> VerifiedPlacement:
+        try:
+            result = await self.authority.create_or_verify_manual_placement(request)
+        except Exception as error:
+            self.calls.append(f"placement_error:{type(error).__name__}:{error}")
+            raise
+        self._pause("placement")
+        return result
+
+    async def verify_conflict_note(
+        self, request: ConflictNoteRequest
+    ) -> NotesSyncNoteSnapshot:
+        try:
+            result = await self.authority.verify_conflict_note(request)
+        except Exception as error:
+            self.calls.append(f"verify_error:{type(error).__name__}:{error}")
+            raise
+        try:
+            stage = self._substage()
+        except Exception as error:
+            self.calls.append(f"stage_error:{type(error).__name__}:{error}")
+            raise
+        self.calls.append(f"verify_stage:{stage}")
+        if stage == "placement_created":
+            self._pause("copy_verification")
+        return result
+
+    async def verify_manual_placement(
+        self, request: ManualPlacementRequest
+    ) -> VerifiedPlacement:
+        return await self.authority.verify_manual_placement(request)
+
+
+def _keep_both_request(
+    note: NotesSyncNoteSnapshot,
+    file: NotesSyncFileSnapshot,
+    *,
+    direction: NotesSyncDirection = NotesSyncDirection.BIDIRECTIONAL,
+) -> NotesSyncExecutionRequest:
+    request = replace(
+        _request(
+            action=NotesSyncActionKind.UPDATE_NOTE,
+            note=note,
+            file=file,
+        ),
+        direction=direction,
+        journal_kind="resolve_keep_both",
+        keep_both=NotesSyncKeepBothAuthority(
+            parent_folder_id="conflict-parent",
+            parent_folder_name="Conflict copies",
+            root_folder_id="conflict-child",
+            root_folder_name="My synced notes",
+            copy_note_id="conflict-copy-note",
+            copy_title=note.title,
+        ),
+    )
+    if direction is NotesSyncDirection.NOTES_TO_FOLDER:
+        request = replace(
+            request,
+            direction_override=NotesSyncDirectionOverride(
+                request.operation_id,
+                NotesSyncActionKind.UPDATE_NOTE,
+                request.observation_token,
+            ),
+        )
+    return request
+
+
+async def _prepare_real_keep_both(
+    tmp_path: Path,
+) -> tuple[
+    Path,
+    Path,
+    Path,
+    NotesDeviceStateStore,
+    CharactersRAGDB,
+    NotesScopeSyncAuthority,
+    NotesSyncExecutionRequest,
+]:
+    notes_path = tmp_path / "notes.sqlite3"
+    state_path = tmp_path / "state.sqlite3"
+    sync_root = tmp_path / "sync-root"
+    sync_root.mkdir()
+    (sync_root / "note.md").write_bytes(b"file side")
+    database = CharactersRAGDB(notes_path, client_id="before")
+    assert database.add_note("Title", "before", "note-1") == "note-1"
+    for version in range(1, 4):
+        assert database.update_note(
+            "note-1", {"title": "Title", "content": "before"}, version
+        )
+    authority = _real_keep_both_authority(database)
+    store = NotesDeviceStateStore(state_path)
+    store.create_root(
+        NotesSyncRootRecord(
+            root_id="root-1",
+            note_scope_id="local_note",
+            logical_folder_id="folder-1",
+            canonical_path=str(sync_root.resolve()),
+            direction=NotesSyncDirection.BIDIRECTIONAL,
+            state=NotesSyncRootState.ACTIVE,
+        )
+    )
+    with PosixNotesSyncFilesystem(sync_root) as filesystem:
+        note = await authority.observe("note-1")
+        file = filesystem.observe("note.md")
+    store.create_binding(
+        NotesSyncBindingRecord(
+            binding_id="binding-1",
+            root_id="root-1",
+            note_scope_id="local_note",
+            note_id="note-1",
+            normalized_relative_path="note.md",
+            stable_identity_digest=NotesSyncExecutor.stable_identity_digest(file),
+            state=NotesSyncBindingState.ACTIVE,
+            serialization=file.observation.serialization,
+            content_digest=note.content_digest,
+            note_version=note.version,
+        )
+    )
+    return (
+        notes_path,
+        state_path,
+        sync_root,
+        store,
+        database,
+        authority,
+        _keep_both_request(note, file),
+    )
+
+
 def test_conflict_recovery_retention_is_exactly_thirty_days() -> None:
     assert executor_module.CONFLICT_RECOVERY_RETENTION_NS == (
         30 * 24 * 60 * 60 * 1_000_000_000
     )
+
+
+@pytest.mark.asyncio
+async def test_keep_both_executes_exact_copy_before_bound_note_sequence(
+    tmp_path: Path,
+) -> None:
+    store, _database = _execution_store(tmp_path)
+    note = _note(content="before", version=4)
+    file = _file(content="file side")
+    notes = _KeepBothAuthority(note)
+    files = FakeFilesystem(file)
+    request = _keep_both_request(note, file)
+
+    result = await NotesSyncExecutor(
+        store,
+        notes,
+        files,
+        recovery_capacity_bytes=65_536,
+    ).execute(request)
+
+    assert result.state is NotesSyncOperationState.COMPLETED, result.reason_code
+    assert notes.copy_note is not None
+    assert (notes.copy_note.title, notes.copy_note.content) == ("Title", "before")
+    assert notes.snapshot.content == "file side"
+    assert [
+        notes.effects.index(effect)
+        for effect in (
+            "parent_folder",
+            "child_folder",
+            "copy_note",
+            "placement",
+        )
+    ] == sorted(
+        notes.effects.index(effect)
+        for effect in (
+            "parent_folder",
+            "child_folder",
+            "copy_note",
+            "placement",
+        )
+    )
+    assert notes.effects.index("placement") < notes.effects.index("verify_placement")
+    binding = store.get_binding("binding-1")
+    assert (binding.content_digest, binding.note_version) == (
+        notes.snapshot.content_digest,
+        notes.snapshot.version,
+    )
+    metadata = json.loads(store.load_operation_recovery(request.operation_id).metadata)
+    assert metadata["conflict_substage"] == "verified"
+    assert {
+        key: metadata[key]
+        for key in (
+            "conflict_parent_folder_id",
+            "conflict_parent_folder_name",
+            "conflict_root_folder_id",
+            "conflict_root_folder_name",
+            "conflict_copy_note_id",
+            "conflict_copy_title",
+        )
+    } == {
+        "conflict_parent_folder_id": "conflict-parent",
+        "conflict_parent_folder_name": "Conflict copies",
+        "conflict_root_folder_id": "conflict-child",
+        "conflict_root_folder_name": "My synced notes",
+        "conflict_copy_note_id": "conflict-copy-note",
+        "conflict_copy_title": "Title",
+    }
+
+
+@pytest.mark.asyncio
+async def test_keep_both_restart_reconstructs_all_private_authority_after_admission(
+    tmp_path: Path,
+) -> None:
+    store, database = _execution_store(tmp_path)
+    note = _note(content="before", version=4)
+    file = _file(content="file side")
+    request = _keep_both_request(note, file)
+
+    def crash_after_admission(stage: NotesSyncOperationState) -> None:
+        if stage is NotesSyncOperationState.RECOVERY_ADMITTED:
+            raise InjectedCrash
+
+    with pytest.raises(InjectedCrash):
+        await NotesSyncExecutor(
+            store,
+            _KeepBothAuthority(note),
+            FakeFilesystem(file),
+            recovery_capacity_bytes=65_536,
+            after_stage=crash_after_admission,
+        ).execute(request)
+
+    reopened = NotesDeviceStateStore(database)
+    fresh_notes = _KeepBothAuthority(note)
+    fresh_files = FakeFilesystem(file)
+    fresh_executor = NotesSyncExecutor(
+        reopened,
+        fresh_notes,
+        fresh_files,
+        recovery_capacity_bytes=65_536,
+    )
+    reconstructed = await fresh_executor.reconstruct_request(request.operation_id)
+
+    assert reconstructed.keep_both == request.keep_both
+    result = await fresh_executor.resume(reconstructed)
+    assert result.state is NotesSyncOperationState.COMPLETED
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("crash_substage", _CONFLICT_SUBSTAGES)
+async def test_keep_both_restart_reopens_every_durable_substage_with_real_authority(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    crash_substage: str,
+) -> None:
+    if not PosixNotesSyncFilesystem.supports_writes():
+        pytest.skip("guarded POSIX replacement is unavailable")
+    notes_path = tmp_path / "notes.sqlite3"
+    state_path = tmp_path / "state.sqlite3"
+    sync_root = tmp_path / "sync-root"
+    sync_root.mkdir()
+    (sync_root / "note.md").write_bytes(b"file side")
+    database = CharactersRAGDB(notes_path, client_id="restart-before")
+    assert database.add_note("Title", "before", "note-1") == "note-1"
+    for version in range(1, 4):
+        assert database.update_note(
+            "note-1", {"title": "Title", "content": "before"}, version
+        )
+    authority = _real_keep_both_authority(database)
+    store = NotesDeviceStateStore(state_path)
+    store.create_root(
+        NotesSyncRootRecord(
+            root_id="root-1",
+            note_scope_id="local_note",
+            logical_folder_id="folder-1",
+            canonical_path=str(sync_root.resolve()),
+            direction=NotesSyncDirection.BIDIRECTIONAL,
+            state=NotesSyncRootState.ACTIVE,
+        )
+    )
+    with PosixNotesSyncFilesystem(sync_root) as filesystem:
+        note = await authority.observe("note-1")
+        file = filesystem.observe("note.md")
+        store.create_binding(
+            NotesSyncBindingRecord(
+                binding_id="binding-1",
+                root_id="root-1",
+                note_scope_id="local_note",
+                note_id="note-1",
+                normalized_relative_path="note.md",
+                stable_identity_digest=NotesSyncExecutor.stable_identity_digest(file),
+                state=NotesSyncBindingState.ACTIVE,
+                serialization=file.observation.serialization,
+                content_digest=note.content_digest,
+                note_version=note.version,
+            )
+        )
+        request = _keep_both_request(note, file)
+        original_advance = store.advance_conflict_substage
+
+        def crash_after_checkpoint(*args: object, **kwargs: object) -> object:
+            result = original_advance(*args, **kwargs)
+            if kwargs.get("next_substage") == crash_substage:
+                raise InjectedCrash
+            return result
+
+        monkeypatch.setattr(store, "advance_conflict_substage", crash_after_checkpoint)
+
+        def crash_after_admission(stage: NotesSyncOperationState) -> None:
+            if (
+                crash_substage == "recovery_admitted"
+                and stage is NotesSyncOperationState.RECOVERY_ADMITTED
+            ):
+                raise InjectedCrash
+
+        with pytest.raises(InjectedCrash):
+            await NotesSyncExecutor(
+                store,
+                authority,
+                filesystem,
+                recovery_capacity_bytes=65_536,
+                after_stage=crash_after_admission,
+            ).execute(request)
+    database.close_connection()
+
+    reopened_store = NotesDeviceStateStore(state_path)
+    reopened_database = CharactersRAGDB(notes_path, client_id="restart-after")
+    fresh_authority = _real_keep_both_authority(reopened_database)
+    with PosixNotesSyncFilesystem(sync_root) as fresh_filesystem:
+        fresh_executor = NotesSyncExecutor(
+            reopened_store,
+            fresh_authority,
+            fresh_filesystem,
+            recovery_capacity_bytes=65_536,
+        )
+        reconstructed = await fresh_executor.reconstruct_request("operation-1")
+        result = await fresh_executor.resume(reconstructed)
+
+    assert result.state is NotesSyncOperationState.COMPLETED, result.reason_code
+    assert reopened_database.get_note_by_id("note-1")["content"] == "file side"
+    connection = reopened_database.get_connection()
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM note_folders WHERE deleted = 0"
+        ).fetchone()[0]
+        == 2
+    )
+    assert (
+        connection.execute("SELECT COUNT(*) FROM notes WHERE deleted = 0").fetchone()[0]
+        == 2
+    )
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM note_folder_memberships WHERE deleted = 0"
+        ).fetchone()[0]
+        == 1
+    )
+    reopened_database.close_connection()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("cancel_target", "following_substage"),
+    (
+        ("parent_folder", "folders_established"),
+        ("child_folder", "folders_established"),
+        ("copy_note", "copy_created"),
+        ("placement", "placement_created"),
+        ("copy_verification", "copy_verified"),
+        ("bound_note", "bound_note_updated"),
+        ("file_recheck", "file_reverified"),
+        ("binding_update", "binding_updated"),
+        ("final_verification", "verified"),
+    ),
+)
+async def test_keep_both_cancellation_joins_effect_and_checkpoint_then_fresh_resumes(
+    tmp_path: Path,
+    cancel_target: str,
+    following_substage: str,
+) -> None:
+    if not PosixNotesSyncFilesystem.supports_writes():
+        pytest.skip("guarded POSIX replacement is unavailable")
+    (
+        notes_path,
+        state_path,
+        sync_root,
+        store,
+        database,
+        authority,
+        request,
+    ) = await _prepare_real_keep_both(tmp_path)
+    blocking = _BlockingKeepBothAuthority(authority, store, cancel_target)
+    with PosixNotesSyncFilesystem(sync_root) as filesystem:
+        task = asyncio.create_task(
+            NotesSyncExecutor(
+                store,
+                blocking,
+                filesystem,
+                recovery_capacity_bytes=65_536,
+            ).execute(request)
+        )
+        started = await asyncio.to_thread(blocking.started.wait, 5)
+        if not started:
+            unexpected = await task
+            pytest.fail(
+                "effect did not begin: "
+                f"{unexpected.state}/{unexpected.reason_code}/{blocking.calls}/"
+                f"{json.loads(store.load_operation_recovery('operation-1').metadata)}"
+            )
+        task.cancel()
+        blocking.release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    metadata = json.loads(store.load_operation_recovery("operation-1").metadata)
+    assert metadata["conflict_substage"] == following_substage
+    database.close_connection()
+
+    reopened_database = CharactersRAGDB(notes_path, client_id="after")
+    fresh_authority = _real_keep_both_authority(reopened_database)
+    reopened_store = NotesDeviceStateStore(state_path)
+    with PosixNotesSyncFilesystem(sync_root) as fresh_filesystem:
+        fresh_executor = NotesSyncExecutor(
+            reopened_store,
+            fresh_authority,
+            fresh_filesystem,
+            recovery_capacity_bytes=65_536,
+        )
+        reconstructed = await fresh_executor.reconstruct_request("operation-1")
+        result = await fresh_executor.resume(reconstructed)
+
+    assert result.state is NotesSyncOperationState.COMPLETED, result.reason_code
+    reopened_database.close_connection()
+
+
+def test_keep_both_substage_cas_is_capacity_neutral_and_exactly_forward(
+    tmp_path: Path,
+) -> None:
+    store, _database = _execution_store(tmp_path)
+    payload = b"note side"
+    longest = max(map(len, _CONFLICT_SUBSTAGES))
+    metadata = json.dumps(
+        {
+            "conflict_substage": "recovery_admitted",
+            "conflict_substage_padding": " " * (longest - len("recovery_admitted")),
+            "private": "authority",
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    admitted = store.admit_operation_recovery(
+        NotesSyncOperationRecord(
+            operation_id="operation-keep-both",
+            root_id="root-1",
+            binding_id="binding-1",
+            kind="resolve_keep_both",
+            state=NotesSyncOperationState.PENDING,
+            reason_code=None,
+            observation_token="observation-1",
+            expected_note_version=4,
+            expected_file_digest="a" * 64,
+        ),
+        NotesSyncRecoveryRecord(
+            recovery_id="recovery-keep-both",
+            operation_id="operation-keep-both",
+            payload=payload,
+            metadata=metadata,
+            expires_at=10_000,
+        ),
+        capacity_bytes=len(payload) + len(metadata),
+    )
+    assert admitted.admitted is True
+    expected_length = len(metadata)
+    expected_state = NotesSyncOperationState.RECOVERY_ADMITTED
+    for current, following in zip(_CONFLICT_SUBSTAGES, _CONFLICT_SUBSTAGES[1:]):
+        if following == "bound_note_updated":
+            next_state = NotesSyncOperationState.FIRST_AUTHORITY_APPLIED
+        elif following == "file_reverified":
+            next_state = NotesSyncOperationState.SECOND_AUTHORITY_APPLIED
+        elif following == "binding_updated":
+            store.transition_operation(
+                "operation-keep-both", NotesSyncOperationState.BINDING_UPDATED
+            )
+            expected_state = NotesSyncOperationState.BINDING_UPDATED
+            next_state = NotesSyncOperationState.BINDING_UPDATED
+        elif following == "verified":
+            next_state = NotesSyncOperationState.VERIFIED
+        else:
+            next_state = expected_state
+        store.advance_conflict_substage(
+            operation_id="operation-keep-both",
+            recovery_id="recovery-keep-both",
+            expected_operation_state=expected_state,
+            expected_substage=current,
+            next_substage=following,
+            expected_payload_digest=hashlib.sha256(payload).hexdigest(),
+            expected_metadata_length=expected_length,
+        )
+        recovery = store.load_operation_recovery("operation-keep-both")
+        decoded = json.loads(recovery.metadata)
+        assert len(recovery.metadata) == expected_length
+        assert decoded["conflict_substage"] == following
+        assert len(decoded["conflict_substage_padding"]) == longest - len(following)
+        assert store.get_operation("operation-keep-both").state is next_state
+        expected_state = next_state
+
+
+@pytest.mark.parametrize(
+    ("current", "following"),
+    (
+        ("unknown", "folders_established"),
+        ("recovery_admitted", "copy_created"),
+        ("copy_created", "folders_established"),
+    ),
+)
+def test_keep_both_substage_cas_rejects_unknown_skip_and_backward(
+    tmp_path: Path,
+    current: str,
+    following: str,
+) -> None:
+    store, _database = _execution_store(tmp_path)
+    longest = max(map(len, _CONFLICT_SUBSTAGES))
+    metadata = json.dumps(
+        {
+            "conflict_substage": current,
+            "conflict_substage_padding": " " * max(0, longest - len(current)),
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    payload = b"note side"
+    store.admit_operation_recovery(
+        NotesSyncOperationRecord(
+            "operation-keep-both",
+            "root-1",
+            "binding-1",
+            "resolve_keep_both",
+            NotesSyncOperationState.PENDING,
+            None,
+            "observation-1",
+            4,
+            "a" * 64,
+        ),
+        NotesSyncRecoveryRecord(
+            "recovery-keep-both",
+            "operation-keep-both",
+            payload,
+            metadata,
+            10_000,
+        ),
+        capacity_bytes=4096,
+    )
+
+    with pytest.raises(Exception, match="substage|corrupt|allowed"):
+        store.advance_conflict_substage(
+            operation_id="operation-keep-both",
+            recovery_id="recovery-keep-both",
+            expected_operation_state=NotesSyncOperationState.RECOVERY_ADMITTED,
+            expected_substage=current,
+            next_substage=following,
+            expected_payload_digest=hashlib.sha256(payload).hexdigest(),
+            expected_metadata_length=len(metadata),
+        )
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    ("padding", "metadata_length", "payload_digest", "operation_state"),
+)
+def test_keep_both_substage_cas_rejects_padding_length_digest_and_state_drift(
+    tmp_path: Path,
+    corruption: str,
+) -> None:
+    store, _database = _execution_store(tmp_path)
+    payload = b"note side"
+    longest = max(map(len, _CONFLICT_SUBSTAGES))
+    metadata = json.dumps(
+        {
+            "conflict_substage": "recovery_admitted",
+            "conflict_substage_padding": " " * (longest - len("recovery_admitted")),
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    store.admit_operation_recovery(
+        NotesSyncOperationRecord(
+            "operation-keep-both",
+            "root-1",
+            "binding-1",
+            "resolve_keep_both",
+            NotesSyncOperationState.PENDING,
+            None,
+            "observation-1",
+            4,
+            "a" * 64,
+        ),
+        NotesSyncRecoveryRecord(
+            "recovery-keep-both",
+            "operation-keep-both",
+            payload,
+            metadata,
+            10_000,
+        ),
+        capacity_bytes=4096,
+    )
+    if corruption == "padding":
+        decoded = json.loads(metadata)
+        decoded["conflict_substage_padding"] = (
+            "x" + decoded["conflict_substage_padding"][1:]
+        )
+        with store.transaction(immediate=True) as connection:
+            connection.execute(
+                "UPDATE notes_sync_recovery SET metadata = ? WHERE recovery_id = ?",
+                (
+                    json.dumps(decoded, separators=(",", ":"), sort_keys=True).encode(),
+                    "recovery-keep-both",
+                ),
+            )
+
+    with pytest.raises(Exception, match="corrupt|substage|state"):
+        store.advance_conflict_substage(
+            operation_id="operation-keep-both",
+            recovery_id="recovery-keep-both",
+            expected_operation_state=(
+                NotesSyncOperationState.PENDING
+                if corruption == "operation_state"
+                else NotesSyncOperationState.RECOVERY_ADMITTED
+            ),
+            expected_substage="recovery_admitted",
+            next_substage="folders_established",
+            expected_payload_digest=(
+                "0" * 64
+                if corruption == "payload_digest"
+                else hashlib.sha256(payload).hexdigest()
+            ),
+            expected_metadata_length=(
+                len(metadata) + 1 if corruption == "metadata_length" else len(metadata)
+            ),
+        )
 
 
 @pytest.mark.parametrize(

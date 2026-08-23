@@ -33,7 +33,10 @@ from tldw_chatbook.Notes.notes_sync_conflicts import (
     ConflictSelection,
     NotesSyncConflictChoice,
     build_conflict_comparison,
+    conflict_copies_folder_id,
+    conflict_copy_note_id,
     conflict_resolution_operation_id,
+    conflict_root_folder_id,
     eligible_conflict_reason,
 )
 from tldw_chatbook.Notes.notes_sync_authority import (
@@ -60,6 +63,7 @@ from tldw_chatbook.Notes.notes_sync_executor import (
     NotesSyncExecutionRequest,
     NotesSyncExecutionResult,
     NotesSyncExecutor,
+    NotesSyncKeepBothAuthority,
 )
 from tldw_chatbook.Notes.notes_sync_filesystem import (
     NotesSyncFileSnapshot,
@@ -629,11 +633,12 @@ class _ProductionRuntimeAdapter:
         plan: ReconciliationPlan,
         selection: ConflictSelection,
     ) -> NotesSyncExecutionRequest:
-        """Build one occurrence-only Keep file/Keep note request."""
+        """Build one occurrence-only reviewed conflict request."""
 
         action_kind = {
             NotesSyncConflictChoice.KEEP_FILE: NotesSyncActionKind.UPDATE_NOTE,
             NotesSyncConflictChoice.KEEP_NOTE: NotesSyncActionKind.UPDATE_FILE,
+            NotesSyncConflictChoice.KEEP_BOTH: NotesSyncActionKind.UPDATE_NOTE,
         }.get(selection.choice)
         if action_kind is None:
             raise ValueError("conflict_choice_not_executable")
@@ -650,6 +655,37 @@ class _ProductionRuntimeAdapter:
             reason_code="reviewed_conflict_resolution",
         )
         request = await self.build_execution_request(root, observations, plan, action)
+        keep_both: NotesSyncKeepBothAuthority | None = None
+        if selection.choice is NotesSyncConflictChoice.KEEP_BOTH:
+            binding = self._bundles.get(plan.observation_token, {}).get(
+                selection.binding_id
+            )
+            if binding is None or binding.note is None:
+                raise RuntimeError("private_conflict_authority_missing")
+            if root.logical_folder_id is None:
+                raise RuntimeError("folder_owner_missing")
+            logical_folder = await self._service.get_note_folder_by_id_for_sync(
+                scope=ScopeType.LOCAL_NOTE,
+                folder_id=root.logical_folder_id,
+                include_deleted=True,
+                user_id=self._user_id,
+            )
+            if logical_folder is None or logical_folder.deleted:
+                raise RuntimeError("folder_owner_missing")
+            keep_both = NotesSyncKeepBothAuthority(
+                parent_folder_id=conflict_copies_folder_id(root.note_scope_id),
+                parent_folder_name="Conflict copies",
+                root_folder_id=conflict_root_folder_id(
+                    root.note_scope_id, root.root_id
+                ),
+                root_folder_name=logical_folder.name,
+                copy_note_id=conflict_copy_note_id(
+                    root.root_id,
+                    selection.binding_id,
+                    plan.observation_token,
+                ),
+                copy_title=binding.note.title,
+            )
         override_needed = (
             action_kind is NotesSyncActionKind.UPDATE_NOTE
             and root.direction is NotesSyncDirection.NOTES_TO_FOLDER
@@ -663,6 +699,7 @@ class _ProductionRuntimeAdapter:
             recovery_id=f"recovery-{operation_id}",
             recovery_expires_at=time.time_ns() + CONFLICT_RECOVERY_RETENTION_NS,
             journal_kind=f"resolve_{selection.choice.value}",
+            keep_both=keep_both,
             direction_override=(
                 NotesSyncDirectionOverride(
                     review_id=operation_id,
@@ -1412,11 +1449,6 @@ class NotesSyncRuntimeOwner:
                         raise ValueError("review_not_executable")
                     if any(binding_id not in eligible for binding_id in selection_ids):
                         raise ValueError("conflict_selection_mismatch")
-                    if any(
-                        selection.choice is NotesSyncConflictChoice.KEEP_BOTH
-                        for selection in selections
-                    ):
-                        raise ValueError("review_not_executable")
                     selected_safe_ids = set(safe_action_ids)
                     safe_actions = tuple(
                         action

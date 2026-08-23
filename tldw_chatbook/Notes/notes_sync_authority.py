@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime
 
+from tldw_chatbook.Notes.note_folder_models import (
+    NoteFolder,
+    NoteFolderMembership,
+    join_normalized_folder_path,
+    normalize_folder_name,
+)
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService, ScopeType
 from tldw_chatbook.Notes.notes_sync_models import (
     validate_notes_sync_digest,
@@ -21,6 +27,80 @@ class NotesSyncAuthorityError(RuntimeError):
     def __init__(self, reason_code: str) -> None:
         self.reason_code = validate_notes_sync_reason_code(reason_code)
         super().__init__(reason_code)
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class ManualFolderRequest:
+    folder_id: str
+    parent_id: str | None
+    name: str
+    path_segments: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        validate_notes_sync_opaque_id(self.folder_id, field_name="folder_id")
+        if self.parent_id is not None:
+            validate_notes_sync_opaque_id(self.parent_id, field_name="parent_id")
+        if type(self.path_segments) is not tuple or not self.path_segments:
+            raise TypeError("path_segments must be a non-empty tuple.")
+        normalized = tuple(normalize_folder_name(value) for value in self.path_segments)
+        name = normalize_folder_name(self.name)
+        if normalized[-1].key != name.key:
+            raise ValueError("name must match the final path segment.")
+
+    def __repr__(self) -> str:
+        return "ManualFolderRequest(<private>)"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class VerifiedFolder:
+    folder_id: str
+    parent_id: str | None
+    normalized_path: str
+    version: int
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class ConflictNoteRequest:
+    note_id: str
+    title: str
+    content: str
+
+    def __post_init__(self) -> None:
+        validate_notes_sync_opaque_id(self.note_id, field_name="note_id")
+        if type(self.title) is not str or type(self.content) is not str:
+            raise TypeError("title and content must be strings.")
+        if not self.title or len(self.title) > 4096 or "\x00" in self.title:
+            raise ValueError("title must be bounded non-empty text.")
+
+    def __repr__(self) -> str:
+        return "ConflictNoteRequest(<private>)"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class ManualPlacementRequest:
+    folder_id: str
+    note_id: str
+    expected_note_version: int
+
+    def __post_init__(self) -> None:
+        validate_notes_sync_opaque_id(self.folder_id, field_name="folder_id")
+        validate_notes_sync_opaque_id(self.note_id, field_name="note_id")
+        if (
+            type(self.expected_note_version) is not int
+            or self.expected_note_version < 0
+        ):
+            raise ValueError("expected_note_version must be non-negative.")
+
+    def __repr__(self) -> str:
+        return "ManualPlacementRequest(<private>)"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class VerifiedPlacement:
+    membership_id: str
+    folder_id: str
+    note_id: str
+    version: int
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -80,6 +160,13 @@ def _bounded_reason(error: Exception, fallback: str) -> str:
     }:
         return reason
     return fallback
+
+
+def _normalized_folder_path(path_segments: tuple[str, ...]) -> str:
+    path = ""
+    for segment in path_segments:
+        path = join_normalized_folder_path(path, normalize_folder_name(segment).key)
+    return path
 
 
 class NotesScopeSyncAuthority:
@@ -199,6 +286,120 @@ class NotesScopeSyncAuthority:
         if str(record.get("id")) != expected.note_id or not record.get("deleted"):
             raise NotesSyncAuthorityError("note_postcondition_failed")
 
+    async def create_or_verify_manual_folder(
+        self,
+        request: ManualFolderRequest,
+    ) -> VerifiedFolder:
+        """Create at most one local manual folder, or verify the exact winner."""
+
+        if type(request) is not ManualFolderRequest:
+            raise TypeError("request must be a ManualFolderRequest.")
+        self._require_local_copy_scope()
+        expected_path = _normalized_folder_path(request.path_segments)
+        deterministic = await self._read_folder_id(request.folder_id)
+        if deterministic is not None and not self._folder_matches(
+            deterministic, request, expected_path
+        ):
+            raise NotesSyncAuthorityError("folder_authority_changed")
+        existing = await self._read_folder_path(request.path_segments)
+        if existing is not None:
+            return self._verified_folder(existing, request, expected_path)
+        if deterministic is not None:
+            return self._verified_folder(deterministic, request, expected_path)
+        try:
+            await self._service.create_manual_note_folder_for_sync(
+                scope=self._scope,
+                folder_id=request.folder_id,
+                name=normalize_folder_name(request.name).display,
+                parent_id=request.parent_id,
+                user_id=self._user_id,
+            )
+        except Exception:
+            pass
+        winner = await self._read_folder_path(request.path_segments)
+        if winner is None:
+            winner = await self._read_folder_id(request.folder_id)
+        if winner is None:
+            raise NotesSyncAuthorityError("folder_mutation_failed")
+        return self._verified_folder(winner, request, expected_path)
+
+    async def create_or_verify_conflict_note(
+        self,
+        request: ConflictNoteRequest,
+    ) -> NotesSyncNoteSnapshot:
+        """Create at most one local conflict copy, or verify its exact winner."""
+
+        if type(request) is not ConflictNoteRequest:
+            raise TypeError("request must be a ConflictNoteRequest.")
+        self._require_local_copy_scope()
+        existing = await self._read_conflict_note(request.note_id)
+        if existing is not None:
+            return self._verify_conflict_note(existing, request)
+        try:
+            await self._service.create_note_for_sync(
+                scope=self._scope,
+                note_id=request.note_id,
+                title=request.title,
+                content=request.content,
+                user_id=self._user_id,
+            )
+        except Exception:
+            pass
+        winner = await self._read_conflict_note(request.note_id)
+        if winner is None:
+            raise NotesSyncAuthorityError("note_mutation_failed")
+        return self._verify_conflict_note(winner, request)
+
+    async def create_or_verify_manual_placement(
+        self,
+        request: ManualPlacementRequest,
+    ) -> VerifiedPlacement:
+        """Create at most one local manual placement, or verify its exact winner."""
+
+        if type(request) is not ManualPlacementRequest:
+            raise TypeError("request must be a ManualPlacementRequest.")
+        self._require_local_copy_scope()
+        existing = await self._read_manual_placement(request)
+        if existing is not None:
+            membership, deleted = existing
+            if deleted:
+                raise NotesSyncAuthorityError("placement_authority_changed")
+            return self._verified_placement(membership, request)
+        try:
+            await self._service.create_manual_note_placement_for_sync(
+                scope=self._scope,
+                folder_id=request.folder_id,
+                note_id=request.note_id,
+                expected_note_version=request.expected_note_version,
+                user_id=self._user_id,
+            )
+        except Exception:
+            pass
+        winner = await self._read_manual_placement(request)
+        if winner is None or winner[1]:
+            raise NotesSyncAuthorityError("placement_mutation_failed")
+        return self._verified_placement(winner[0], request)
+
+    async def verify_conflict_note(
+        self, request: ConflictNoteRequest
+    ) -> NotesSyncNoteSnapshot:
+        """Read and verify one exact active conflict-copy note."""
+
+        existing = await self._read_conflict_note(request.note_id)
+        if existing is None:
+            raise NotesSyncAuthorityError("conflict_copy_collision")
+        return self._verify_conflict_note(existing, request)
+
+    async def verify_manual_placement(
+        self, request: ManualPlacementRequest
+    ) -> VerifiedPlacement:
+        """Read and verify one exact active manual placement."""
+
+        existing = await self._read_manual_placement(request)
+        if existing is None or existing[1]:
+            raise NotesSyncAuthorityError("placement_authority_changed")
+        return self._verified_placement(existing[0], request)
+
     async def reconcile_managed_memberships(
         self,
         *,
@@ -218,6 +419,145 @@ class NotesScopeSyncAuthority:
             raise NotesSyncAuthorityError(
                 _bounded_reason(exc, "membership_mutation_failed")
             ) from None
+
+    def _require_local_copy_scope(self) -> None:
+        if self._scope is not ScopeType.LOCAL_NOTE:
+            raise NotesSyncAuthorityError("server_contract_missing")
+
+    async def _read_folder_id(self, folder_id: str) -> NoteFolder | None:
+        try:
+            return await self._service.get_note_folder_by_id_for_sync(
+                scope=self._scope,
+                folder_id=folder_id,
+                include_deleted=True,
+                user_id=self._user_id,
+            )
+        except Exception:
+            raise NotesSyncAuthorityError("folder_observation_failed") from None
+
+    async def _read_folder_path(
+        self, path_segments: tuple[str, ...]
+    ) -> NoteFolder | None:
+        try:
+            return await self._service.get_note_folder_by_path_for_sync(
+                scope=self._scope,
+                path_segments=path_segments,
+                user_id=self._user_id,
+            )
+        except Exception:
+            raise NotesSyncAuthorityError("folder_observation_failed") from None
+
+    @staticmethod
+    def _folder_matches(
+        folder: NoteFolder,
+        request: ManualFolderRequest,
+        expected_path: str,
+    ) -> bool:
+        return (
+            not folder.deleted
+            and folder.parent_id == request.parent_id
+            and folder.normalized_path == expected_path
+            and normalize_folder_name(folder.name).key
+            == normalize_folder_name(request.name).key
+        )
+
+    @classmethod
+    def _verified_folder(
+        cls,
+        folder: NoteFolder,
+        request: ManualFolderRequest,
+        expected_path: str,
+    ) -> VerifiedFolder:
+        if not cls._folder_matches(folder, request, expected_path):
+            raise NotesSyncAuthorityError("folder_authority_changed")
+        return VerifiedFolder(
+            folder_id=folder.folder_id,
+            parent_id=folder.parent_id,
+            normalized_path=folder.normalized_path,
+            version=folder.version,
+        )
+
+    async def _read_conflict_note(self, note_id: str) -> NotesSyncNoteSnapshot | None:
+        try:
+            record = await self._service.get_note_for_sync(
+                scope=self._scope,
+                note_id=note_id,
+                user_id=self._user_id,
+            )
+        except Exception as exc:
+            if type(exc) is RuntimeError and str(exc) == "note_missing":
+                return None
+            raise NotesSyncAuthorityError("note_observation_failed") from None
+        if bool(record.get("deleted", False)):
+            raise NotesSyncAuthorityError("conflict_copy_collision")
+        return self._snapshot(record, expected_note_id=note_id)
+
+    @staticmethod
+    def _verify_conflict_note(
+        note: NotesSyncNoteSnapshot,
+        request: ConflictNoteRequest,
+    ) -> NotesSyncNoteSnapshot:
+        if note.title != request.title or note.content != request.content:
+            raise NotesSyncAuthorityError("conflict_copy_collision")
+        return note
+
+    async def _read_manual_placement(
+        self,
+        request: ManualPlacementRequest,
+    ) -> tuple[NoteFolderMembership, bool] | None:
+        try:
+            placements = await self._service.list_note_placements_for_sync(
+                scope=self._scope,
+                note_id=request.note_id,
+                user_id=self._user_id,
+            )
+            exact = await self._service.get_manual_note_placement_for_sync(
+                scope=self._scope,
+                folder_id=request.folder_id,
+                note_id=request.note_id,
+                include_deleted=True,
+                user_id=self._user_id,
+            )
+        except Exception:
+            raise NotesSyncAuthorityError("placement_observation_failed") from None
+        if any(
+            placement.folder_id != request.folder_id
+            or placement.ownership != "manual"
+            or placement.owner_id
+            or not placement.owner_active
+            for placement in placements
+        ):
+            raise NotesSyncAuthorityError("placement_authority_changed")
+        if (
+            exact is not None
+            and not exact[1]
+            and (
+                len(placements) != 1
+                or placements[0].membership_id != exact[0].membership_id
+            )
+        ):
+            raise NotesSyncAuthorityError("placement_authority_changed")
+        return exact
+
+    @staticmethod
+    def _verified_placement(
+        membership: NoteFolderMembership,
+        request: ManualPlacementRequest,
+    ) -> VerifiedPlacement:
+        if (
+            membership.folder_id != request.folder_id
+            or membership.note_id != request.note_id
+            or membership.ownership != "manual"
+            or membership.owner_id
+            or not membership.owner_active
+        ):
+            raise NotesSyncAuthorityError("placement_authority_changed")
+        return VerifiedPlacement(
+            membership_id=membership.membership_id,
+            folder_id=membership.folder_id,
+            note_id=membership.note_id,
+            version=membership.version,
+        )
 
     def _snapshot(
         self,
@@ -261,7 +601,12 @@ class NotesScopeSyncAuthority:
 
 
 __all__ = [
+    "ConflictNoteRequest",
+    "ManualFolderRequest",
+    "ManualPlacementRequest",
     "NotesScopeSyncAuthority",
     "NotesSyncAuthorityError",
     "NotesSyncNoteSnapshot",
+    "VerifiedFolder",
+    "VerifiedPlacement",
 ]
