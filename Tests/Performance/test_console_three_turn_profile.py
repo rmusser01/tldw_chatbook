@@ -4902,6 +4902,37 @@ def test_prepare_target_worktree_refuses_completed_target_tombstone_before_git(
     assert list(target.iterdir()) == []
 
 
+@pytest.mark.parametrize("name", ("control", "candidate"))
+def test_prepare_target_worktree_rechecks_reserved_namespace_after_git_success(
+    tmp_path: Path,
+    name: str,
+) -> None:
+    run_root = tmp_path / "run"
+    target = run_root / name
+    quarantine = run_root / f".{name}-cleanup"
+
+    def fake_run(command, **_kwargs):
+        assert command[:4] == ["git", "worktree", "add", "--detach"]
+        target.mkdir(parents=True)
+        quarantine.mkdir()
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    with pytest.raises(
+        RuntimeError,
+        match=rf"^target_worktree_failed:{name}:cleanup_reserved$",
+    ):
+        profile.prepare_target_worktree(
+            tmp_path / "repository",
+            run_root,
+            name=name,
+            revision=profile.CANDIDATE_SHA,
+            run_command=fake_run,
+        )
+
+    assert target.is_dir()
+    assert quarantine.is_dir()
+
+
 def test_remove_target_worktree_partial_no_owned_rechecks_before_success(
     tmp_path: Path,
 ) -> None:
@@ -4963,6 +4994,93 @@ def test_remove_target_worktree_partial_no_owned_rejects_orphan_receipt(
         )
 
     assert receipt.read_bytes() == b"{}\n"
+
+
+@pytest.mark.parametrize("name", ("control", "candidate"))
+def test_remove_target_worktree_partial_no_owned_rechecks_injected_receipt(
+    tmp_path: Path,
+    name: str,
+) -> None:
+    repository = tmp_path / "repository"
+    run_root = tmp_path / "run"
+    run_root.mkdir()
+    receipt = run_root / f".{name}-cleanup-receipt.json"
+    registration_checks = 0
+
+    def fake_run(command, **_kwargs):
+        nonlocal registration_checks
+        assert command == ["git", "worktree", "list", "--porcelain"]
+        registration_checks += 1
+        if registration_checks == 2:
+            receipt.write_bytes(b"{}\n")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    with pytest.raises(
+        RuntimeError,
+        match=rf"^target_worktree_admin_marker_conflict:{name}$",
+    ):
+        profile._remove_target_worktree(
+            repository,
+            run_root,
+            name=name,
+            run_command=fake_run,
+            allow_unregistered_owned=True,
+        )
+
+    assert registration_checks == 2
+    assert receipt.read_bytes() == b"{}\n"
+
+
+@pytest.mark.parametrize("name", ("control", "candidate"))
+@pytest.mark.parametrize("registered", (False, True), ids=("local", "registered"))
+def test_remove_target_worktree_final_verifier_rejects_injected_cleanup_orphan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+    registered: bool,
+) -> None:
+    repository = tmp_path / "repository"
+    run_root = tmp_path / "run"
+    target = run_root / name
+
+    def empty_registrations(*_args, **_kwargs):
+        return frozenset()
+
+    if registered:
+        repository = _init_real_worktree_repository(tmp_path)
+        _add_real_worktree(repository, target, branch=name)
+        original_registrations = profile._worktree_registrations
+    else:
+        target.mkdir(parents=True)
+        original_registrations = empty_registrations
+    orphan = run_root / f".{name}-cleanup-orphan-injected"
+    registration_checks = 0
+
+    def inject_on_final_registration(*args, **kwargs):
+        nonlocal registration_checks
+        registrations = original_registrations(*args, **kwargs)
+        registration_checks += 1
+        final_check = 3 if registered else 2
+        if registration_checks == final_check:
+            orphan.mkdir()
+        return registrations
+
+    monkeypatch.setattr(
+        profile, "_worktree_registrations", inject_on_final_registration
+    )
+    with pytest.raises(
+        RuntimeError,
+        match=rf"^target_worktree_admin_marker_conflict:{name}$",
+    ):
+        profile._remove_target_worktree(
+            repository,
+            run_root,
+            name=name,
+            allow_unregistered_owned=not registered,
+        )
+
+    assert orphan.is_dir()
+    assert target.is_dir()
 
 
 @pytest.mark.parametrize("checkpoint", ("receipt_published", "target_cleared"))

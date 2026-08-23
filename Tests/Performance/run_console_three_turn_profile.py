@@ -3141,6 +3141,14 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     return parser.parse_args(arguments)
 
 
+def _is_target_cleanup_namespace(name: str, entry_name: str) -> bool:
+    return (
+        entry_name.startswith(f".{name}-cleanup")
+        or entry_name.startswith(f"..{name}-cleanup")
+        or entry_name.startswith(".campaign-worktree-cleanup-")
+    )
+
+
 def prepare_target_worktree(
     repository_root: Path,
     run_root: Path,
@@ -3162,12 +3170,12 @@ def prepare_target_worktree(
     for entry in os.scandir(root):
         if entry.name == name:
             raise RuntimeError(f"target_worktree_failed:{name}:target_exists")
-        if entry.name.startswith(f".{name}-cleanup") or entry.name.startswith(
-            f"..{name}-cleanup"
-        ) or entry.name.startswith(".campaign-worktree-cleanup-"):
+        if _is_target_cleanup_namespace(name, entry.name):
             raise RuntimeError(
                 f"target_worktree_failed:{name}:cleanup_reserved"
             )
+    root_metadata = root.stat(follow_symlinks=False)
+    root_identity = (root_metadata.st_dev, root_metadata.st_ino)
     command = ["git", "worktree", "add", "--detach", str(target), revision]
     try:
         completed = run_command(
@@ -3181,6 +3189,54 @@ def prepare_target_worktree(
         primary = exc
     else:
         if completed.returncode == 0 and target.is_dir():
+            root_descriptor: int | None = None
+            target_descriptor: int | None = None
+            try:
+                root_descriptor = _open_identity_bound_directory(
+                    root,
+                    root_identity,
+                    error_code=(
+                        f"target_worktree_failed:{name}:cleanup_reserved"
+                    ),
+                )
+                target_descriptor = os.open(
+                    name,
+                    _directory_open_flags(),
+                    dir_fd=root_descriptor,
+                )
+                expected_target = os.fstat(target_descriptor)
+                current_descriptor = os.open(
+                    name,
+                    _directory_open_flags(),
+                    dir_fd=root_descriptor,
+                )
+                try:
+                    current_target = os.fstat(current_descriptor)
+                    if (
+                        expected_target.st_dev,
+                        expected_target.st_ino,
+                    ) != (current_target.st_dev, current_target.st_ino):
+                        raise RuntimeError(
+                            f"target_worktree_failed:{name}:cleanup_reserved"
+                        )
+                finally:
+                    os.close(current_descriptor)
+                if any(
+                    _is_target_cleanup_namespace(name, entry.name)
+                    for entry in os.scandir(root_descriptor)
+                ):
+                    raise RuntimeError(
+                        f"target_worktree_failed:{name}:cleanup_reserved"
+                    )
+            except OSError as exc:
+                raise RuntimeError(
+                    f"target_worktree_failed:{name}:cleanup_reserved"
+                ) from exc
+            finally:
+                if target_descriptor is not None:
+                    os.close(target_descriptor)
+                if root_descriptor is not None:
+                    os.close(root_descriptor)
             return target
         primary = RuntimeError(f"target_worktree_failed:{name}")
 
@@ -5672,6 +5728,7 @@ def _verify_target_worktree_terminal(
     expected_target_identity: tuple[int, int] | None,
     *,
     run_command: Any,
+    local_receipts: str = "none",
 ) -> None:
     registrations = _worktree_registrations(
         repository_root, run_command=run_command
@@ -5695,18 +5752,62 @@ def _verify_target_worktree_terminal(
                     "target_worktree_admin_marker_conflict"
                 ) from exc
             observed.append((owned_name, descriptor))
+        observed_name: str | None = None
         if expected_target_identity is None:
             if observed:
                 raise RuntimeError("target_worktree_admin_marker_conflict")
-            return
-        if len(observed) != 1:
+        else:
+            if len(observed) != 1:
+                raise RuntimeError("target_worktree_admin_marker_conflict")
+            observed_name, descriptor = observed[0]
+            metadata = os.fstat(descriptor)
+            if expected_target_identity != (
+                metadata.st_dev,
+                metadata.st_ino,
+            ) or any(os.scandir(descriptor)):
+                raise RuntimeError("target_worktree_admin_marker_conflict")
+        allowed_cleanup_names = (
+            set() if observed_name is None else {observed_name}
+        )
+        if local_receipts == "complete":
+            if expected_target_identity is None or (
+                _local_target_receipt_identity(
+                    root_descriptor, target, name
+                )
+                != expected_target_identity
+                or not _local_target_receipt_is_terminal(root_descriptor, name)
+            ):
+                raise RuntimeError("target_worktree_admin_marker_conflict")
+            allowed_cleanup_names.update(
+                {
+                    _local_target_receipt_name(name),
+                    _local_target_terminal_name(name),
+                }
+            )
+        elif local_receipts != "none":
             raise RuntimeError("target_worktree_admin_marker_conflict")
-        _owned_name, descriptor = observed[0]
-        metadata = os.fstat(descriptor)
-        if expected_target_identity != (
-            metadata.st_dev,
-            metadata.st_ino,
-        ) or any(os.scandir(descriptor)):
+        if observed_name is not None:
+            current_descriptor = os.open(
+                observed_name,
+                _directory_open_flags(),
+                dir_fd=root_descriptor,
+            )
+            try:
+                current = os.fstat(current_descriptor)
+                if expected_target_identity != (
+                    current.st_dev,
+                    current.st_ino,
+                ) or any(os.scandir(current_descriptor)):
+                    raise RuntimeError(
+                        "target_worktree_admin_marker_conflict"
+                    )
+            finally:
+                os.close(current_descriptor)
+        if any(
+            _is_target_cleanup_namespace(name, entry.name)
+            and entry.name not in allowed_cleanup_names
+            for entry in os.scandir(root_descriptor)
+        ):
             raise RuntimeError("target_worktree_admin_marker_conflict")
     finally:
         for _owned_name, descriptor in observed:
@@ -5799,22 +5900,6 @@ def _remove_target_worktree(
         owned_descriptor: int | None = None
         try:
             if owned_name is None:
-                for receipt_name in (
-                    _local_target_receipt_name(name),
-                    _local_target_terminal_name(name),
-                ):
-                    try:
-                        os.stat(
-                            receipt_name,
-                            dir_fd=root_descriptor,
-                            follow_symlinks=False,
-                        )
-                    except FileNotFoundError:
-                        continue
-                    else:
-                        raise RuntimeError(
-                            f"target_worktree_admin_marker_conflict:{name}"
-                        )
                 try:
                     _verify_target_worktree_terminal(
                         repository_root,
@@ -5895,6 +5980,7 @@ def _remove_target_worktree(
                     name,
                     receipt_identity,
                     run_command=run_command,
+                    local_receipts="complete",
                 )
             except RuntimeError as exc:
                 if str(exc) == "target_worktree_admin_marker_conflict":
