@@ -1776,6 +1776,77 @@ def test_campaign_recover_is_idempotent_after_pending_attempt_release(
     assert not (tmp_path / ".campaign-release").exists()
 
 
+@pytest.mark.parametrize("verdict", ("pass", "smoke"))
+@pytest.mark.parametrize("empty_release", (False, True))
+def test_campaign_recover_finishes_pending_release_marker_without_probe(
+    tmp_path: Path, verdict: str, empty_release: bool
+) -> None:
+    attempt = _acquire_attempt(tmp_path)
+    ledger = tmp_path / "attempts.jsonl"
+    pending = profile.write_acquisition_pin(
+        tmp_path,
+        attempt.attempt_id,
+        verdict=verdict,
+        raw_sha256="a" * 64,
+    )
+    profile.complete_attempt_measurement(
+        ledger,
+        attempt.attempt_id,
+        verdict=verdict,
+        raw_sha256="a" * 64,
+    )
+    release = tmp_path / ".campaign-release"
+    (tmp_path / ".campaign-lock").rename(release)
+    if empty_release:
+        (release / "owner.json").unlink()
+    before = ledger.read_bytes()
+
+    assert profile.recover_interrupted_attempt(
+        tmp_path,
+        process_start_probe=lambda _pid: pytest.fail("terminal owner was probed"),
+    ) == pending
+
+    assert ledger.read_bytes() == before
+    assert not release.exists()
+
+
+@pytest.mark.parametrize(
+    "conflict_marker",
+    (".campaign-lock", ".campaign-recovery", ".campaign-rollback"),
+)
+def test_campaign_recover_rejects_conflicting_pending_release_markers(
+    tmp_path: Path, conflict_marker: str
+) -> None:
+    attempt = _acquire_attempt(tmp_path)
+    pending = profile.write_acquisition_pin(
+        tmp_path,
+        attempt.attempt_id,
+        verdict="pass",
+        raw_sha256="a" * 64,
+    )
+    profile.complete_attempt_measurement(
+        tmp_path / "attempts.jsonl",
+        attempt.attempt_id,
+        verdict=str(pending["verdict"]),
+        raw_sha256=str(pending["raw_sha256"]),
+    )
+    release = tmp_path / ".campaign-release"
+    (tmp_path / ".campaign-lock").rename(release)
+    _write_campaign_owner(
+        tmp_path / conflict_marker,
+        profile.CampaignLockOwner(456, "c" * 64, "d" * 64),
+    )
+
+    with pytest.raises(RuntimeError, match="^campaign_recovery_owner_conflict$"):
+        profile.recover_interrupted_attempt(
+            tmp_path,
+            process_start_probe=lambda _pid: pytest.fail("conflict was probed"),
+        )
+
+    assert (tmp_path / conflict_marker).is_dir()
+    assert release.is_dir()
+
+
 @pytest.mark.parametrize("marker", (".campaign-recovery", ".campaign-release"))
 @pytest.mark.parametrize("empty_marker", (False, True))
 def test_campaign_recovery_finishes_terminal_lock_marker_without_appending(
@@ -5745,6 +5816,62 @@ def test_acquisition_action_rejects_campaign_with_symlink_ancestor(
     assert list(external.iterdir()) == []
 
 
+def test_darwin_system_tmp_alias_supports_task6_campaign_path() -> None:
+    if sys.platform != "darwin":
+        pytest.skip("Darwin owns the /tmp -> /private/tmp compatibility alias")
+    tmp_alias = Path("/tmp")
+    if (
+        not tmp_alias.is_symlink()
+        or os.readlink(tmp_alias) not in {"private/tmp", "/private/tmp"}
+        or tmp_alias.resolve(strict=True) != Path("/private/tmp")
+    ):
+        pytest.skip("host does not expose the standard Darwin /tmp alias")
+    created = subprocess.run(
+        ["mktemp", "-d", "/tmp/tldw-task6-campaign.XXXXXX"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    campaign = Path(created.stdout.strip())
+    try:
+        arguments = profile.parse_arguments(
+            [
+                "--endpoint",
+                "http://127.0.0.1:9099",
+                "--model",
+                "fixture.gguf",
+                "--campaign-root",
+                str(campaign),
+                "--iterations",
+                "1",
+                "--burn-in-blocks",
+                "1",
+                "--candidate-sha",
+                profile.CANDIDATE_SHA,
+            ]
+        )
+        assert str(arguments.campaign_root).startswith("/tmp/")
+
+        attempt = profile.acquire_campaign_attempt(
+            arguments.campaign_root,
+            pid=123,
+            process_start_probe=lambda _pid: _OWNER_START,
+            owner_token_factory=lambda: "b" * 64,
+        )
+        recovered = profile.recover_interrupted_attempt(
+            arguments.campaign_root, process_start_probe=lambda _pid: None
+        )
+
+        assert recovered == {
+            "attempt_id": attempt.attempt_id,
+            "state": "failed",
+            "reason_category": "interrupted",
+        }
+        assert not (campaign / ".campaign-lock").exists()
+    finally:
+        shutil.rmtree(campaign)
+
+
 def test_recover_action_rejects_lexical_campaign_symlink(tmp_path: Path) -> None:
     external = tmp_path / "external-recover"
     owner = _acquire_lock(external)
@@ -5837,13 +5964,14 @@ def test_pin_marker_survives_parent_fsync_failure_without_retryable_terminal(
     )
     pins_root = campaign / "acquisition-pins"
     real_fsync = profile._fsync_directory
-    injected = False
+    pin_fsync_calls = 0
 
     def fail_after_marker_mkdir(path: Path) -> None:
-        nonlocal injected
-        if path == pins_root and not injected:
-            injected = True
-            raise OSError("injected pin parent fsync failure")
+        nonlocal pin_fsync_calls
+        if path == pins_root:
+            pin_fsync_calls += 1
+            if pin_fsync_calls == 1:
+                raise OSError("injected pin parent fsync failure")
         real_fsync(path)
 
     monkeypatch.setattr(profile, "_fsync_directory", fail_after_marker_mkdir)
@@ -5853,7 +5981,7 @@ def test_pin_marker_survives_parent_fsync_failure_without_retryable_terminal(
 
     assert profile.run_acquisition_action(args) == 0
 
-    assert injected is True
+    assert pin_fsync_calls == 2
     pending = profile.read_acquisition_pin(campaign, attempt.attempt_id)
     assert pending is not None
     assert profile.attempt_lineage(campaign / "attempts.jsonl")[-1] == pending
@@ -5862,6 +5990,55 @@ def test_pin_marker_survives_parent_fsync_failure_without_retryable_terminal(
         campaign,
         process_start_probe=lambda _pid: pytest.fail("released owner was probed"),
     ) == pending
+    with pytest.raises(
+        RuntimeError, match="campaign_acquisition_blocked:complete_pending_review"
+    ):
+        profile.require_campaign_acquisition(campaign / "attempts.jsonl")
+
+
+def test_persistent_pin_parent_fsync_failure_stays_running_until_recovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    campaign = tmp_path / "campaign"
+    attempt = _acquire_attempt(campaign)
+    monkeypatch.setattr(profile, "acquire_campaign_attempt", lambda _root: attempt)
+    monkeypatch.setattr(
+        profile,
+        "run_parent_mode",
+        lambda args: _completed_parent_artifacts(args) or 0,
+    )
+    pins_root = campaign / "acquisition-pins"
+    real_fsync = profile._fsync_directory
+    persistent_failure = True
+
+    def fail_pin_parent_fsync(path: Path) -> None:
+        if persistent_failure and path == pins_root:
+            raise OSError("persistent pin parent fsync failure")
+        real_fsync(path)
+
+    monkeypatch.setattr(profile, "_fsync_directory", fail_pin_parent_fsync)
+    args = SimpleNamespace(
+        campaign_root=campaign, iterations=30, burn_in_blocks=5
+    )
+
+    with pytest.raises(
+        RuntimeError, match="^campaign_acquisition_pin_durability_failed$"
+    ):
+        profile.run_acquisition_action(args)
+
+    pin = profile.read_acquisition_pin(campaign, attempt.attempt_id)
+    assert pin is not None
+    assert profile.attempt_lineage(campaign / "attempts.jsonl") == (
+        {"attempt_id": attempt.attempt_id, "state": "running"},
+    )
+    assert (campaign / ".campaign-lock").is_dir()
+    persistent_failure = False
+
+    assert profile.recover_interrupted_attempt(
+        campaign, process_start_probe=lambda _pid: None
+    ) == pin
+    assert profile.attempt_lineage(campaign / "attempts.jsonl")[-1] == pin
+    assert not (campaign / ".campaign-lock").exists()
     with pytest.raises(
         RuntimeError, match="campaign_acquisition_blocked:complete_pending_review"
     ):

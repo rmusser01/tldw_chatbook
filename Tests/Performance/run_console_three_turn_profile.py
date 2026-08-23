@@ -1759,7 +1759,13 @@ def _reject_lexical_symlinks(path: Path, error_code: str) -> None:
     try:
         for component in absolute.parts[1:]:
             current /= component
-            if current.is_symlink():
+            if current.is_symlink() and not (
+                sys.platform == "darwin"
+                and current == Path("/tmp")
+                and current.lstat().st_uid == 0
+                and os.readlink(current) in {"private/tmp", "/private/tmp"}
+                and current.resolve(strict=True) == Path("/private/tmp")
+            ):
                 raise RuntimeError(error_code)
     except OSError as exc:
         raise RuntimeError(error_code) from exc
@@ -2343,6 +2349,14 @@ def read_acquisition_pin(
     )
 
 
+def _fsync_acquisition_pin_namespace(pins: Path) -> None:
+    """Require a visible acquisition pin directory entry to be durable."""
+    try:
+        _fsync_directory(pins)
+    except OSError as exc:
+        raise RuntimeError("campaign_acquisition_pin_durability_failed") from exc
+
+
 def write_acquisition_pin(
     campaign_root: Path,
     attempt_id: str,
@@ -2365,12 +2379,14 @@ def write_acquisition_pin(
     if existing:
         if existing != (event,):
             raise RuntimeError("campaign_acquisition_pin_mismatch")
+        _fsync_acquisition_pin_namespace(pins)
         return existing[0]
     marker = pins / f"{attempt_id}--{verdict}--{raw_sha256}"
     try:
         _mkdir_namespace(marker)
     except BaseException as exc:
         if read_acquisition_pin(campaign_root, attempt_id) == event:
+            _fsync_acquisition_pin_namespace(pins)
             return event
         if isinstance(exc, FileExistsError):
             raise RuntimeError("campaign_acquisition_pin_mismatch") from exc
@@ -2400,6 +2416,11 @@ def recover_interrupted_attempt(
         if recovering_attempt_id is not None
         else None
     )
+    if pinned_event is not None:
+        pins = _acquisition_pin_namespace(campaign_root, create=False)
+        if pins is None:
+            raise RuntimeError("campaign_acquisition_pin_invalid")
+        _fsync_acquisition_pin_namespace(pins)
     completed_interrupted_recovery = (
         latest is not None
         and latest
@@ -2457,6 +2478,29 @@ def recover_interrupted_attempt(
             marker = recovery_root
         _delete_exact_lock_root(marker, owner)
         return latest
+    if (
+        pinned_event is not None
+        and latest == pinned_event
+        and (release_root.exists() or release_root.is_symlink())
+    ):
+        markers = [
+            marker
+            for marker in (
+                lock_root,
+                recovery_root,
+                release_root,
+                campaign_root / ".campaign-rollback",
+            )
+            if marker.exists() or marker.is_symlink()
+        ]
+        if markers != [release_root]:
+            raise RuntimeError("campaign_recovery_owner_conflict")
+        if _is_empty_private_directory(release_root):
+            _rmdir_namespace(release_root)
+        else:
+            release_owner = _read_lock_owner(release_root)
+            _delete_exact_lock_root(release_root, release_owner)
+        return pinned_event
     if pinned_event is not None and latest == pinned_event and not any(
         marker.exists() or marker.is_symlink()
         for marker in (lock_root, recovery_root, release_root)
@@ -6910,9 +6954,10 @@ def run_acquisition_action(args: argparse.Namespace) -> int:
     owned_args.output_root = attempt.root
     owned_args.attempt_id = attempt.attempt_id
     intended_pin: dict[str, Any] | None = None
+    pin_durability_failed = False
 
     def pin_acquisition(**values: Any) -> dict[str, Any]:
-        nonlocal intended_pin
+        nonlocal intended_pin, pin_durability_failed
         verdict = str(values["verdict"])
         schedule = campaign_schedule_contract(
             owned_args.iterations, owned_args.burn_in_blocks
@@ -6927,12 +6972,19 @@ def run_acquisition_action(args: argparse.Namespace) -> int:
                 "raw_sha256": str(values["raw_sha256"]),
             }
         )
-        return write_acquisition_pin(
-            campaign_root,
-            attempt.attempt_id,
-            verdict=str(intended_pin["verdict"]),
-            raw_sha256=str(intended_pin["raw_sha256"]),
-        )
+        try:
+            return write_acquisition_pin(
+                campaign_root,
+                attempt.attempt_id,
+                verdict=str(intended_pin["verdict"]),
+                raw_sha256=str(intended_pin["raw_sha256"]),
+            )
+        except BaseException as exc:
+            pin_durability_failed = (
+                safe_error_code(exc)
+                == "campaign_acquisition_pin_durability_failed"
+            )
+            raise
 
     owned_args.acquisition_pin_callback = pin_acquisition
     terminal_recorded = False
@@ -6961,7 +7013,7 @@ def run_acquisition_action(args: argparse.Namespace) -> int:
         if completed is None:
             observed_pin = read_acquisition_pin(campaign_root, attempt.attempt_id)
             if intended_pin is not None:
-                if observed_pin != intended_pin:
+                if pin_durability_failed or observed_pin != intended_pin:
                     raise primary or RuntimeError(
                         "confirmation_acquisition_pin_mismatch"
                     )
