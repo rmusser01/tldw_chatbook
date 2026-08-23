@@ -14965,8 +14965,9 @@ class SettingsScreen(BaseAppScreen):
 
         Renders nothing when no workspace is selected. The built-in Default
         workspace gets ONLY the protection notice -- it keeps its identity
-        (no rename/archive) and stays tool-less (no folder bindings, see
-        Task 10). An archived workspace (final review Finding 3) gets ONLY
+        (no rename/archive) and cannot add external folder bindings (see Task
+        10); its Console Chats still have private scratch. An archived
+        workspace (final review Finding 3) gets ONLY
         an explanatory note + Unarchive -- rename/set-active/archive/folder
         controls are withheld since they act on a workspace_id that is
         currently archived. Every other workspace gets rename + set-active
@@ -14993,8 +14994,9 @@ class SettingsScreen(BaseAppScreen):
         with Vertical(id="settings-workspace-card", classes="settings-focus-card"):
             if record.workspace_id == DEFAULT_WORKSPACE_ID:
                 yield Static(
-                    "The built-in Default workspace keeps its identity and "
-                    "stays tool-less; create a workspace to bind folders.",
+                    "Chats in the built-in Default workspace use private "
+                    "scratch. Create a named Workspace only to bind external "
+                    "folders.",
                     classes="settings-detail-row",
                 )
                 return

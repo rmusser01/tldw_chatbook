@@ -24,6 +24,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleRunStatus,
 )
 from tldw_chatbook.Widgets.Console import (
+    ConsoleBoundedSection,
     ConsoleWorkspaceContextTray,
     ConsoleWorkspaceSwitcherModal,
 )
@@ -1477,8 +1478,11 @@ async def test_console_workspace_context_keeps_status_rows_below_grouped_browser
             console._toggle_console_rail_section("details")
         await pilot.pause()
 
-        details_tray = console.query_one("#console-workspace-details")
         left_rail_body = console.query_one("#console-left-rail-body")
+        details_section = console.query_one(
+            "#console-bounded-section-details", ConsoleBoundedSection
+        )
+        left_rail = console.query_one("#console-left-rail")
         conversation_list = console.query_one("#console-workspace-conversations")
         sync_label = console.query_one("#console-workspace-sync-label")
         server_readiness = console.query_one(
@@ -1486,21 +1490,30 @@ async def test_console_workspace_context_keeps_status_rows_below_grouped_browser
         )
         handoff_label = console.query_one("#console-workspace-handoff-label")
         composer = console.query_one("#console-native-composer")
-        details_bottom = details_tray.region.y + details_tray.region.height
-
         assert _static_plain(console, "#console-workspace-sync-label") == "Sync"
         assert sync_label.region.y > conversation_list.region.y
         assert server_readiness.region.y > conversation_list.region.y
 
         assert getattr(conversation_list, "max_scroll_y", 0) == 0
         assert left_rail_body.max_scroll_y > 0
-        left_rail_body.scroll_end(animate=False)
+        left_rail.activate_section("details")
+        await _wait_for_condition(
+            pilot,
+            lambda: (details_section.allocation or 0) > 1,
+        )
+        left_rail_body.scroll_to_widget(
+            details_section, animate=False, immediate=True
+        )
+        details_section.viewport.scroll_to_widget(
+            handoff_label, animate=False, immediate=True
+        )
         await pilot.pause(0.1)
 
         assert left_rail_body.scroll_y > 0
-        assert handoff_label.region.y >= details_tray.region.y
-        assert handoff_label.region.y + handoff_label.region.height <= details_bottom
-        assert handoff_label.region.y + handoff_label.region.height <= composer.region.y
+        lines = _render_screen_lines(console)
+        handoff_x, handoff_y = _find_text_in_row(lines, "ACP")
+        assert handoff_y < composer.region.y
+        assert console.get_widget_at(handoff_x, handoff_y)[0] is handoff_label
 
 
 @pytest.mark.asyncio
@@ -1728,57 +1741,71 @@ async def test_console_workspace_many_conversations_keep_lower_status_reachable(
             console, pilot, "#console-new-workspace-conversation"
         )
 
-        workspace_context = console.query_one("#console-workspace-context")
-        details_tray = console.query_one("#console-workspace-details")
         left_rail_body = console.query_one("#console-left-rail-body")
+        conversations_section = console.query_one(
+            "#console-bounded-section-conversations", ConsoleBoundedSection
+        )
+        details_section = console.query_one(
+            "#console-bounded-section-details", ConsoleBoundedSection
+        )
+        left_rail = console.query_one("#console-left-rail")
         conversation_list = console.query_one("#console-workspace-conversations")
         new_conversation = console.query_one(
             "#console-new-workspace-conversation", Button
         )
-        # TASK-14810 adds two peer disclosure headers above Conversations.
-        # At 34 rows the action can start just below the viewport, so drive
-        # the real rail scroll affordance before checking its hit target.
-        new_conversation.scroll_visible(animate=False)
-        await pilot.pause(0.1)
-        server_readiness = console.query_one(
-            "#console-workspace-server-readiness-label"
+        # The bounded-section allocator gives large conversation lists their
+        # own viewport. Drive both current scroll owners before hit-testing.
+        left_rail.activate_section("conversations")
+        await _wait_for_condition(
+            pilot,
+            lambda: (conversations_section.allocation or 0) > 1,
         )
+        left_rail_body.scroll_to_widget(
+            conversations_section, animate=False, immediate=True
+        )
+        conversations_section.viewport.scroll_to_widget(
+            new_conversation, animate=False, immediate=True
+        )
+        await pilot.pause(0.1)
         handoff_label = console.query_one("#console-workspace-handoff-label")
         composer = console.query_one("#console-native-composer")
-        hit_x = new_conversation.region.x + max(0, new_conversation.region.width // 2)
-        hit_y = new_conversation.region.y + max(0, new_conversation.region.height // 2)
+        lines = _render_screen_lines(console)
+        hit_x, hit_y = _find_text_in_row(lines, "New conversation")
         hit_widget, _region = console.get_widget_at(hit_x, hit_y)
 
-        workspace_bottom = workspace_context.region.y + workspace_context.region.height
-        details_bottom = details_tray.region.y + details_tray.region.height
-
-        assert conversation_list.region.height > left_rail_body.region.height
         assert (
-            new_conversation.region.y + new_conversation.region.height
-            <= composer.region.y
+            conversations_section.desired_content_lines
+            > conversations_section.viewport.content_region.height
         )
-        assert (
-            new_conversation.region.y + new_conversation.region.height
-            <= workspace_bottom
+        assert hit_y < composer.region.y
+        assert hit_widget.id == new_conversation.id
+        assert _static_plain(console, "#console-workspace-server-readiness-label") == (
+            "Server"
         )
-        assert hit_widget is new_conversation
-        assert server_readiness.region.y > conversation_list.region.y
 
         assert getattr(conversation_list, "max_scroll_y", 0) == 0
-        assert left_rail_body.max_scroll_y > 0
-        left_rail_body.scroll_end(animate=False)
+        assert conversations_section.viewport.max_scroll_y > 0
+        left_rail.activate_section("details")
+        await _wait_for_condition(
+            pilot,
+            lambda: (details_section.allocation or 0) > 1,
+        )
+        left_rail_body.scroll_to_widget(
+            details_section, animate=False, immediate=True
+        )
+        details_section.viewport.scroll_to_widget(
+            handoff_label, animate=False, immediate=True
+        )
         await pilot.pause(0.1)
 
-        assert left_rail_body.scroll_y > 0
-        assert handoff_label.region.y >= details_tray.region.y
-        assert handoff_label.region.y + handoff_label.region.height <= details_bottom
-        assert handoff_label.region.y + handoff_label.region.height <= composer.region.y
+        lines = _render_screen_lines(console)
+        handoff_x, handoff_y = _find_text_in_row(lines, "ACP")
+        assert handoff_y < composer.region.y
+        assert console.get_widget_at(handoff_x, handoff_y)[0] is handoff_label
 
 
 @pytest.mark.asyncio
-async def test_console_workspace_sync_while_scrolled_keeps_scroll_range_stable() -> (
-    None
-):
+async def test_console_workspace_sync_while_local_section_scrolled_keeps_range_stable() -> None:
     app = _build_test_app()
     _configure_native_ready_console(app)
     service = app.workspace_registry_service
@@ -1808,18 +1835,20 @@ async def test_console_workspace_sync_while_scrolled_keeps_scroll_range_stable()
             "#console-workspace-context",
             ConsoleWorkspaceContextTray,
         )
-        left_rail_body = console.query_one("#console-left-rail-body")
-        assert workspace_context._nearest_scroll_parent() is left_rail_body
-        assert left_rail_body.max_scroll_y > 0
+        conversations_section = console.query_one(
+            "#console-bounded-section-conversations", ConsoleBoundedSection
+        )
+        viewport = conversations_section.viewport
+        assert viewport.max_scroll_y > 0
 
-        scroll_y = max(1, min(8, left_rail_body.max_scroll_y - 1))
-        initial_max_scroll_y = left_rail_body.max_scroll_y
+        scroll_y = max(1, min(8, viewport.max_scroll_y - 1))
+        initial_max_scroll_y = viewport.max_scroll_y
         initial_height = str(workspace_context.styles.height)
-        left_rail_body.scroll_to(y=scroll_y, animate=False)
+        viewport.scroll_to(y=scroll_y, animate=False, immediate=True)
         await pilot.pause(0.1)
-        assert left_rail_body.scroll_y == scroll_y, (
-            left_rail_body.scroll_y,
-            left_rail_body.max_scroll_y,
+        assert viewport.scroll_y == scroll_y, (
+            viewport.scroll_y,
+            viewport.max_scroll_y,
             str(workspace_context.styles.height),
             workspace_context.region.height,
             workspace_context.virtual_region.height,
@@ -1829,19 +1858,19 @@ async def test_console_workspace_sync_while_scrolled_keeps_scroll_range_stable()
         await _wait_for_condition(
             pilot,
             lambda: (
-                left_rail_body.scroll_y == scroll_y
+                viewport.scroll_y == scroll_y
                 and str(workspace_context.styles.height) == initial_height
             ),
         )
 
-        assert left_rail_body.scroll_y == scroll_y, (
-            left_rail_body.scroll_y,
-            left_rail_body.max_scroll_y,
+        assert viewport.scroll_y == scroll_y, (
+            viewport.scroll_y,
+            viewport.max_scroll_y,
             str(workspace_context.styles.height),
             workspace_context.region.height,
             workspace_context.virtual_region.height,
         )
-        assert left_rail_body.max_scroll_y == initial_max_scroll_y
+        assert viewport.max_scroll_y == initial_max_scroll_y
         assert str(workspace_context.styles.height) == initial_height
 
 
@@ -2151,6 +2180,16 @@ def _render_screen_lines(console) -> list[str]:
     ]
 
 
+def _find_text_in_row(lines: list[str], text: str) -> tuple[int, int]:
+    """Return the screen-cell coordinate of visible plain text."""
+
+    for y, line in enumerate(lines):
+        index = line.find(text)
+        if index >= 0:
+            return cell_len(line[:index]), y
+    raise AssertionError(f"No rendered row contains {text!r}")
+
+
 def _find_caret_in_row_with(lines: list[str], label_text: str) -> tuple[int, int]:
     """Return the (x, y) SCREEN coordinates of the caret glyph on the row
     containing ``label_text``, using cumulative CELL width up to the glyph
@@ -2164,6 +2203,41 @@ def _find_caret_in_row_with(lines: list[str], label_text: str) -> tuple[int, int
                 if idx != -1:
                     return cell_len(line[:idx]), y
     raise AssertionError(f"No caret found on a rendered row containing {label_text!r}")
+
+
+@pytest.mark.asyncio
+async def test_narrow_details_rail_paints_full_private_scratch_value() -> None:
+    """The human-visible rail must not reduce the authority value to ``Priva…``."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 55)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-runtime-value")
+        if not console._current_console_rail_state().details_open:
+            console._toggle_console_rail_section("details")
+        await pilot.pause()
+
+        details_section = console.query_one(
+            "#console-bounded-section-details", ConsoleBoundedSection
+        )
+        left_rail = console.query_one("#console-left-rail")
+        runtime_value = console.query_one("#console-workspace-runtime-value")
+        left_rail.activate_section("details")
+        await _wait_for_condition(
+            pilot,
+            lambda: (details_section.allocation or 0) > 1,
+        )
+        details_section.viewport.scroll_to_widget(
+            runtime_value, animate=False, immediate=True
+        )
+        await pilot.pause(0.1)
+
+        rendered_rows = _render_screen_lines(console)
+        assert any(
+            "Local files" in row and "Private scratch" in row
+            for row in rendered_rows
+        ), [row for row in rendered_rows if "Local" in row or "Priva" in row]
 
 
 @pytest.mark.asyncio
@@ -2219,18 +2293,27 @@ async def test_section_header_caret_is_clickable_at_its_rendered_screen_coordina
         await _seed_console_transcript_message(console)
         await pilot.pause(0.3)
 
-        conversations_body = console.query_one(
-            "#console-rail-section-body-conversations"
+        conversations_section = console.query_one(
+            "#console-bounded-section-conversations", ConsoleBoundedSection
         )
+        left_rail = console.query_one("#console-left-rail")
         chats_toggle = console.query_one(
             "#console-conversation-browser-section-toggle-chats", Button
         )
-        conversations_body.scroll_to_widget(chats_toggle, animate=False)
+        left_rail.activate_section("conversations")
+        await _wait_for_condition(
+            pilot,
+            lambda: (conversations_section.allocation or 0) > 1,
+        )
+        conversations_section.viewport.scroll_to_widget(
+            chats_toggle, animate=False, immediate=True
+        )
         await pilot.pause()
 
         # Click #1 at the CARET'S rendered screen coordinates: collapse.
         lines = _render_screen_lines(console)
         x, y = _find_caret_in_row_with(lines, "Chats")
+        assert console.screen.get_widget_at(x, y)[0] is chats_toggle
         landed = await pilot.click(offset=(x, y))
         assert landed, "click at the caret's rendered coordinates missed the toggle"
         await pilot.pause(0.3)
@@ -2239,7 +2322,9 @@ async def test_section_header_caret_is_clickable_at_its_rendered_screen_coordina
             for text in _conversation_row_texts(console)
         ), "collapse via glyph-coordinate click did not take effect"
 
-        conversations_body.scroll_to_widget(chats_toggle, animate=False)
+        conversations_section.viewport.scroll_to_widget(
+            chats_toggle, animate=False, immediate=True
+        )
         await pilot.pause()
 
         # Click #2: re-locate the caret in the FRESHLY rendered pane (not
@@ -2365,16 +2450,23 @@ async def test_empty_copy_estimator_handles_three_plus_line_wrap() -> None:
             == rows_height + header_count + empty_copies_height
         ), "the estimator disagrees with the real settled Static heights"
 
-        # TASK-15110 caps each expanded rail section and gives it its own
-        # scrollbar. Mirror the user action that reveals the last browser
-        # group before applying the same coordinate-honest hit-test.
-        conversations_body = console.query_one(
-            "#console-rail-section-body-conversations"
+        # The current bounded section owns local overflow. Mirror the user
+        # action that reveals the final browser group before hit-testing it.
+        conversations_section = console.query_one(
+            "#console-bounded-section-conversations", ConsoleBoundedSection
         )
+        left_rail = console.query_one("#console-left-rail")
         chats_toggle = console.query_one(
             "#console-conversation-browser-section-toggle-chats", Button
         )
-        conversations_body.scroll_to_widget(chats_toggle, animate=False)
+        left_rail.activate_section("conversations")
+        await _wait_for_condition(
+            pilot,
+            lambda: (conversations_section.allocation or 0) > 1,
+        )
+        conversations_section.viewport.scroll_to_widget(
+            chats_toggle, animate=False, immediate=True
+        )
         await pilot.pause()
 
         # Coordinate-honest: "Chats" (the LAST section, rendered after the
@@ -2422,7 +2514,7 @@ def test_console_workspace_runtime_label_is_case_insensitive() -> None:
         ConsoleWorkspaceDetailsTray._friendly_status_label(
             "Runtime: 2 bindings, 1 Ready, 1 Missing"
         )
-        == "File tools: 1 ready, 1 missing"
+        == "Local file tools: 1 ready, 1 missing"
     )
 
 
@@ -2530,8 +2622,8 @@ async def test_console_workspace_context_exposes_new_conversation_for_default_wo
             console,
             label_selector="#console-workspace-runtime-label",
             value_selector="#console-workspace-runtime-value",
-            label="File tools",
-            value_contains="Off in Default",
+            label="Local files",
+            value_contains="Private scratch",
         )
         # TASK-715: unconfigured server features collapse into one line
         # instead of a Server status row.
@@ -2632,25 +2724,23 @@ async def test_conversation_row_shows_placeholder_when_no_active_conversation() 
 
 
 @pytest.mark.asyncio
-async def test_status_label_width_is_thirteen() -> None:
-    """I1 (final review): "Conversation" is exactly 12 characters -- the old
-    fixed label-column width -- so at `width: 12` the label filled its whole
-    cell with zero gutter before the value column starts. Widened to 13 so
-    every label (the 12-char "Conversation" included) leaves at least one
-    blank cell of separation; see the composited-output pin below for what
-    that actually buys on screen."""
-    from textual.app import App
-
+async def test_status_label_width_preserves_one_cell_gutter() -> None:
+    """Status labels grow only enough to retain one readable gutter cell."""
     class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield ConsoleWorkspaceStatusPair(
                 "Workspace", "demo", label_id="l", value_id="v"
             )
+            yield ConsoleWorkspaceStatusPair(
+                "Local file tools", "Private scratch", label_id="fl", value_id="fv"
+            )
 
     app = TestApp()
     async with app.run_test():
-        label = app.query_one(".console-workspace-status-label")
-        assert label.styles.width.value == 13
+        assert app.query_one("#l").styles.width.value == 13
+        assert app.query_one("#fl").styles.width.value == 17
+        assert app.query_one("#v").styles.min_width.value == 10
+        assert app.query_one("#fv").styles.min_width.value == 6
 
 
 def _composited_rows(container) -> list[str]:
@@ -2776,7 +2866,6 @@ async def test_status_pair_value_truncates_instead_of_letter_stacking() -> None:
     """TASK-384: at a narrow rail the value column shrinks to a few cells; the
     value must nowrap+ellipsize (so "Default" reads "De…") rather than word-wrap
     into a "Def / aul / t" letter stack, with the full value on hover."""
-    from textual.app import App
     from textual.widgets import Static
 
     class TestApp(ConsolidatedCSSApp):
@@ -2797,7 +2886,6 @@ async def test_status_pair_value_truncates_instead_of_letter_stacking() -> None:
 async def test_status_pair_value_tooltip_escapes_markup() -> None:
     """Qodo #821: the value tooltip renders Rich markup, so a value with bracket
     tokens must be escaped (shown literally, not interpreted)."""
-    from textual.app import App
     from textual.widgets import Static
 
     class TestApp(ConsolidatedCSSApp):
@@ -2944,8 +3032,8 @@ async def test_console_workspace_context_renders_server_readiness_handoff_and_ac
             console,
             label_selector="#console-workspace-runtime-label",
             value_selector="#console-workspace-runtime-value",
-            label="File tools",
-            value_contains="0 ready, 1 missing",
+            label="Local files",
+            value_contains="Private scratch",
         )
         assert "Handoff" in text
         assert "Source note - copy" in text

@@ -8,6 +8,7 @@ import os
 import threading
 import time
 from dataclasses import replace
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -916,9 +917,7 @@ def test_usage_accounting_failure_never_flips_a_streamed_run_to_error(
     def _boom(*_args, **_kwargs):
         raise RuntimeError("usage extraction exploded")
 
-    monkeypatch.setattr(
-        console_agent_bridge, "_openai_usage_from_provider_call", _boom
-    )
+    monkeypatch.setattr(console_agent_bridge, "_openai_usage_from_provider_call", _boom)
     warnings: list[str] = []
     sink_id = logger.add(warnings.append, level="WARNING", format="{message}")
     try:
@@ -1171,6 +1170,51 @@ def test_run_reply_threads_session_workspace_id_end_to_end(tmp_path, monkeypatch
     assert wfr.current_run_workspace_id() is None  # cleared after the run
 
 
+def test_run_reply_threads_captured_scratch_end_to_end(tmp_path, monkeypatch):
+    """The live run's file dispatch observes its captured private sandbox."""
+    import tldw_chatbook.config as config
+    from tldw_chatbook.Tools import workspace_file_roots as wfr
+    from tldw_chatbook.Tools.file_operation_tools import ReadFileTool
+
+    real_setting = config.get_cli_setting
+
+    def enable_read_file(section, key, default=None):
+        if section == "tools" and key == "read_file_enabled":
+            return True
+        return real_setting(section, key, default)
+
+    observed: list[Path | None] = []
+    real_execute = ReadFileTool.execute
+
+    async def recording_execute(self, file_path, **kwargs):
+        observed.append(wfr.current_run_sandbox_root())
+        return await real_execute(self, file_path, **kwargs)
+
+    monkeypatch.setattr(config, "get_cli_setting", enable_read_file)
+    monkeypatch.setattr(ReadFileTool, "execute", recording_execute)
+
+    scratch = tmp_path / "chat-a"
+    scratch.mkdir()
+    marker = scratch / "marker.txt"
+    marker.write_text("chat-a", encoding="utf-8")
+    scripts = [[_fence("read_file", {"file_path": str(marker)})], ["done"]]
+    bridge, _db, store, session, aid = _bridge(tmp_path / "run", scripts)
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        aid,
+        builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
+        scratch_root=scratch,
+        scratch_lease=lambda: contextlib.nullcontext(scratch),
+    )
+
+    assert outcome.status == "done"
+    assert observed == [scratch.resolve()]
+    assert wfr.current_run_sandbox_root() is None
+
+
 class _RecordingGateway:
     """Records each turn's system prompt (messages[0]) and answers 'ok'."""
 
@@ -1208,9 +1252,7 @@ def test_run_reply_appends_workspace_note_for_a_non_default_workspace(
     assistant = store.append_message(
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     )
-    bridge = ConsoleAgentBridge(
-        agent_runs_db=db, store=store, provider_gateway=gateway
-    )
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
 
     outcome = _run(
         bridge, store, session, assistant.id, session_system_prompt="BASE PROMPT"
@@ -1237,9 +1279,7 @@ def test_run_reply_adds_no_workspace_note_for_the_default_workspace(
     assistant = store.append_message(
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     )
-    bridge = ConsoleAgentBridge(
-        agent_runs_db=db, store=store, provider_gateway=gateway
-    )
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
 
     outcome = _run(
         bridge, store, session, assistant.id, session_system_prompt="BASE PROMPT"
@@ -1426,9 +1466,7 @@ def test_native_multi_call_round_emits_one_thinking_marker_with_resume_parity(
         "tool",
         "tool",
     ]
-    assert sum(
-        marker.activity_presentation.kind == "thinking" for marker in live
-    ) == 1
+    assert sum(marker.activity_presentation.kind == "thinking" for marker in live) == 1
     assert _activity_marker_signature(resumed) == _activity_marker_signature(live)
 
 
@@ -3500,21 +3538,15 @@ def test_live_and_resume_change_marker_inventory_has_content_and_metadata_parity
     inventory = [
         (
             CHANGE_KIND_TURN,
-            TurnChangeRecord(
-                root="/turn", files_changed=1, adds=2, dels=3
-            ),
+            TurnChangeRecord(root="/turn", files_changed=1, adds=2, dels=3),
         ),
         (
             CHANGE_KIND_SUBAGENT_POST_TURN,
-            TurnChangeRecord(
-                root="/post", files_changed=2, adds=4, dels=5
-            ),
+            TurnChangeRecord(root="/post", files_changed=2, adds=4, dels=5),
         ),
         (
             CHANGE_KIND_TURN_CONCURRENT_SUBAGENT,
-            TurnChangeRecord(
-                root="/concurrent", files_changed=3, adds=6, dels=7
-            ),
+            TurnChangeRecord(root="/concurrent", files_changed=3, adds=6, dels=7),
         ),
         (
             CHANGE_KIND_TURN,
@@ -3882,9 +3914,7 @@ def test_resume_marker_messages_heals_disclosure_when_live_append_never_happened
     assert len(blocks) == 1
     block = blocks[0][1]
     assert len(block) == 1  # no marker-worthy steps -- only the healed row
-    assert block[0].content == format_diff_feedback_disclosure(
-        db.notes_for_run(run_id)
-    )
+    assert block[0].content == format_diff_feedback_disclosure(db.notes_for_run(run_id))
     assert "healed disclosure" in block[0].content
 
 
@@ -4843,9 +4873,7 @@ def test_append_to_last_user_message_stacks_two_sequential_calls_in_order():
     messages = [original_message]
 
     after_bundle, attached_1 = _append_to_last_user_message(messages, "BUNDLE")
-    after_feedback, attached_2 = _append_to_last_user_message(
-        after_bundle, "FEEDBACK"
-    )
+    after_feedback, attached_2 = _append_to_last_user_message(after_bundle, "FEEDBACK")
 
     assert attached_1 is True
     assert attached_2 is True
@@ -5159,6 +5187,67 @@ def test_compose_run_registry_and_allowed_no_workspace_id_is_unchanged():
     result = registry.invoke_by_name("probe_workspace", {})
     assert result.ok, result.error
     assert '"workspace": null' in result.content
+
+
+def test_run_registry_binds_builtin_provider_to_captured_scratch(tmp_path):
+    scratch = tmp_path / "chat-a"
+    scratch.mkdir()
+
+    registry, _allowed, _builtin_names, _local_names = (
+        _compose_run_registry_and_allowed(
+            {},
+            builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
+            workspace_id="workspace-default",
+            scratch_root=scratch,
+            scratch_lease=lambda: contextlib.nullcontext(scratch),
+        )
+    )
+
+    provider = registry._providers[0]
+    assert provider.sandbox_root == scratch.resolve()
+
+
+@pytest.mark.parametrize("missing", ["root", "lease"])
+def test_run_registry_rejects_incomplete_scratch_authority(tmp_path, missing):
+    scratch = tmp_path / "chat-a"
+    scratch.mkdir()
+    kwargs = {
+        "scratch_root": scratch,
+        "scratch_lease": lambda: contextlib.nullcontext(scratch),
+    }
+    kwargs["scratch_root" if missing == "root" else "scratch_lease"] = None
+
+    with pytest.raises(ValueError, match="supplied together"):
+        _compose_run_registry_and_allowed({}, **kwargs)
+
+
+def test_two_console_runs_cannot_dispatch_across_scratch_roots(tmp_path):
+    from tldw_chatbook.Tools.file_operation_tools import ReadFileTool
+
+    root_a = tmp_path / "chat-a"
+    root_b = tmp_path / "chat-b"
+    root_a.mkdir()
+    root_b.mkdir()
+    marker = root_a / "marker.txt"
+    marker.write_text("chat-a", encoding="utf-8")
+    registry_b, _allowed, _builtin_names, _local_names = (
+        _compose_run_registry_and_allowed(
+            {},
+            builtin_gate=_FakeBuiltinGateForRegistry(refuse=False),
+            workspace_id="workspace-default",
+            scratch_root=root_b,
+            scratch_lease=lambda: contextlib.nullcontext(root_b),
+        )
+    )
+    registry_b._providers[0]._tools["read_file"] = ReadFileTool()
+
+    result = registry_b.invoke_by_name(
+        "read_file",
+        {"file_path": str(marker)},
+    )
+
+    assert result.ok is False
+    assert "outside" in str(result.error).lower()
 
 
 class _StubWriteFileTool:
@@ -5683,9 +5772,7 @@ def test_run_reply_forwards_review_tool_calls_hook_to_agent_service(tmp_path):
     # PR2a Task 5: an AgentService-wired hook takes `(calls, run_id)`.
     def hook(calls, run_id):
         captured_batches.append(list(calls))
-        return {
-            "calculator": CONTROLLER_USER_DENIED_REFUSAL.format(name="calculator")
-        }
+        return {"calculator": CONTROLLER_USER_DENIED_REFUSAL.format(name="calculator")}
 
     outcome = _run(bridge, store, session, aid, review_tool_calls=hook)
 

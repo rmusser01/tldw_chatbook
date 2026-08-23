@@ -123,6 +123,7 @@ from tldw_chatbook.Chat.console_context_repository import (
     ConsoleContextRepository,
     ConsoleMemoryRecord,
 )
+from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
 from tldw_chatbook.Chat.console_prepared_request import (
     CONTINUATION_OWNER_KEY,
     PreparedConsoleRequest,
@@ -1273,6 +1274,12 @@ def build_tool_review_hook(
                         call.args,
                         workspace_id=workspace_id,
                         roots_cache=path_roots_cache,
+                        sandbox_root=getattr(builtin_provider, "sandbox_root", None),
+                        sandbox_lease=getattr(
+                            builtin_provider,
+                            "sandbox_lease",
+                            None,
+                        ),
                     ),
                 )
             )
@@ -1721,6 +1728,7 @@ class ConsoleChatController:
         ]
         | None = None,
         buddy_sink: "PersonaBuddyConsoleAdapter | None" = None,
+        scratch_spaces: ConsoleScratchSpaceManager | None = None,
     ) -> None:
         self.store = store
         self.provider_gateway = provider_gateway
@@ -1745,6 +1753,8 @@ class ConsoleChatController:
         self.system_prompt = system_prompt
         self._agent_bridge = agent_bridge
         self._buddy_sink = buddy_sink
+        self._owns_scratch_spaces = scratch_spaces is None
+        self._scratch_spaces = scratch_spaces or ConsoleScratchSpaceManager()
         self._agent_runtime_enabled = agent_runtime_enabled
         self._skills_service = skills_service
         self._skill_substitution_enabled = skill_substitution_enabled
@@ -4103,6 +4113,19 @@ class ConsoleChatController:
         Returns:
             The session activated after closing, or ``None`` when no sessions remain.
         """
+        # Revoke file authority before any close action can wake a worker or
+        # remove the owning session from the store.
+        self._scratch_spaces.close(session_id)
+        forget_file_authority = getattr(
+            self._agent_bridge,
+            "forget_session_file_authority",
+            None,
+        )
+        if callable(forget_file_authority):
+            try:
+                forget_file_authority(session_id)
+            except Exception:  # noqa: BLE001 -- teardown remains best-effort
+                logger.warning("close_session could not forget run-log authority")
         # Queue tombstone MUST precede stop/cancel: cancellation can wake a
         # terminal callback, which must observe that no next claim is legal.
         self.prompt_queue_coordinator.mark_closing(session_id)
@@ -5577,24 +5600,15 @@ class ConsoleChatController:
                 initiator="agent",
             )
 
-        # expanduser() before resolve(): a configured "~/repo" must land
-        # under the user's home, not literal "~" under the cwd.
         if project_root is None:
-            raw_root = str(
-                (
-                    turn_context.tool_configuration.get("workspace_root", "")
-                    if turn_context is not None
-                    else get_cli_setting("console", "workspace_root", "")
-                )
-                or ""
-            ).strip()
-            root = (
-                Path(raw_root).expanduser().resolve()
-                if raw_root
-                else Path(os.getcwd()).resolve()
-            )
+            snapshot = turn_context.scratch_space if turn_context is not None else None
+            if snapshot is None:
+                return None, None
+            root = snapshot.root
+            authority_scope = functools.partial(self._scratch_spaces.lease, snapshot)
         else:
             root = project_root
+            authority_scope = None
         subscriptions_db = getattr(self.app, "subscriptions_db", None)
         watchlists_service = WatchlistsToolService(
             db_resolver=lambda: subscriptions_db,
@@ -5605,6 +5619,8 @@ class ConsoleChatController:
         provider = LocalToolProvider(
             workspace_root=root,
             allow_write=allow_write,
+            authority_scope=authority_scope,
+            result_redaction_root=(root if project_root is None else None),
             root_guard=(
                 project_root_guard
                 if project_root_guard is not None
@@ -6601,6 +6617,8 @@ class ConsoleChatController:
             self.clear_original_attempt(message_id)
         tasks = dict(self._active_stream_tasks)
         if not tasks:
+            if self._owns_scratch_spaces:
+                await asyncio.to_thread(self._scratch_spaces.dispose)
             return
         current = asyncio.current_task()
         for session_id in tasks:
@@ -6648,6 +6666,8 @@ class ConsoleChatController:
                 self._active_stream_tasks.pop(session_id, None)
                 self._active_assistant_message_ids.pop(session_id, None)
                 self._active_cancel_events.pop(session_id, None)
+        if self._owns_scratch_spaces:
+            await asyncio.to_thread(self._scratch_spaces.dispose)
 
     def begin_shutdown(self) -> None:
         """Tombstone future queue work before any teardown cancellation.
@@ -8106,6 +8126,17 @@ class ConsoleChatController:
             provider_selection or self._provider_selection_for_session(session_id)
         )
         try:
+            turn_context = self.resolve_turn_execution_context(session_id)
+        except Exception:  # noqa: BLE001 - preview failure stays content-free
+            return None
+        scratch_snapshot = turn_context.scratch_space
+        if scratch_snapshot is None:
+            return None
+        scratch_lease = functools.partial(
+            self._scratch_spaces.lease,
+            scratch_snapshot,
+        )
+        try:
             resolution = await self.provider_gateway.resolve_for_send(
                 owning_provider_selection
             )
@@ -8165,6 +8196,7 @@ class ConsoleChatController:
             session_id=session_id,
             project_selection=selection,
             project_authority_guard=None,
+            turn_context=turn_context,
             publish_mcp_counts=False,
         )
         try:
@@ -8183,6 +8215,8 @@ class ConsoleChatController:
                 mcp_provider=mcp_provider,
                 builtin_gate=builtin_gate,
                 local_provider=local_provider,
+                scratch_root=scratch_snapshot.root,
+                scratch_lease=scratch_lease,
                 turn_skill_bindings=turn_skill_bindings,
                 turn_bundle_block=turn_bundle_block,
                 request_skill_install_enabled=True,
@@ -8631,14 +8665,12 @@ class ConsoleChatController:
 
         selection = self._provider_selection_for_session(session_id)
         model = selection.explicit_model or selection.configured_model
-        workspace_root = str(
-            get_cli_setting("console", "workspace_root", "") or ""
-        ).strip()
         return ConsoleTurnExecutionContext.capture(
             session_id=session_id,
             provider_selection=selection,
+            scratch_space=self._scratch_spaces.snapshot(session_id),
             session_settings=self.store.session_settings(session_id),
-            workspace_roots=(workspace_root,) if workspace_root else (),
+            workspace_roots=(),
             capabilities={
                 "vision": bool(model)
                 and is_vision_capable(selection.provider, model or ""),
@@ -8659,7 +8691,6 @@ class ConsoleChatController:
                     get_cli_setting("console", "local_tools_enabled", False),
                     False,
                 ),
-                "workspace_root": workspace_root,
                 "direct_library_tools": coerce_bool_setting(
                     get_cli_setting("console", "direct_library_tools", True),
                     True,
@@ -11794,6 +11825,13 @@ class ConsoleChatController:
             turn_context = self.resolve_turn_execution_context(session_id)
         elif turn_context.session_id != session_id:
             raise ValueError("Console turn context does not own the assistant row.")
+        scratch_snapshot = turn_context.scratch_space
+        if scratch_snapshot is None:
+            return self._block(session_id, "Private scratch space is unavailable.")
+        scratch_lease = functools.partial(
+            self._scratch_spaces.lease,
+            scratch_snapshot,
+        )
         session = next((s for s in self.store.sessions() if s.id == session_id), None)
         startup_candidate: StartupInstructionCandidate | None = None
         project_selection: ProjectInstructionBindingSelection | None = None
@@ -11813,32 +11851,46 @@ class ConsoleChatController:
                     session, registry
                 )
             except ProjectInstructionBindingRecovery as exc:
-                callback = self._select_project_instruction_binding
-                if callback is None:
-                    return ConsoleSubmitResult(False, False, str(exc))
                 expected_setup_state = session.project_instruction_state
                 try:
                     options = list_project_instruction_bindings(session, registry)
                 except ProjectInstructionBindingRecovery:
                     options = ()
-                action, binding_id = await callback(session_id, options, str(exc))
-                action, project_selection = commit_project_instruction_setup_decision(
-                    store=self.store,
-                    session_id=session_id,
-                    registry=registry,
-                    expected_state=expected_setup_state,
-                    expected_options=options,
-                    action=action,
-                    binding_id=binding_id,
-                )
-                if action == "disable":
-                    self._clear_project_instruction_delivery(session_id)
-                    return ConsoleSubmitResult(
-                        False, False, "project_instructions_disabled"
+                # An unselected session with no usable folder is a valid
+                # scratch-only Chat/Workspace, not a project-instruction
+                # setup failure. Keep the optional feature armed so a folder
+                # added later can be selected, but do not block this send or
+                # ask for one now. A previously selected folder still fails
+                # closed and reaches recovery when it disappears or changes.
+                if (
+                    expected_setup_state.working_folder_binding_id is None
+                    and not options
+                ):
+                    project_selection = None
+                else:
+                    callback = self._select_project_instruction_binding
+                    if callback is None:
+                        return ConsoleSubmitResult(False, False, str(exc))
+                    action, binding_id = await callback(session_id, options, str(exc))
+                    action, project_selection = (
+                        commit_project_instruction_setup_decision(
+                            store=self.store,
+                            session_id=session_id,
+                            registry=registry,
+                            expected_state=expected_setup_state,
+                            expected_options=options,
+                            action=action,
+                            binding_id=binding_id,
+                        )
                     )
-                if action != "select" or project_selection is None:
-                    self._clear_project_instruction_delivery(session_id)
-                    return ConsoleSubmitResult(False, False, str(exc))
+                    if action == "disable":
+                        self._clear_project_instruction_delivery(session_id)
+                        return ConsoleSubmitResult(
+                            False, False, "project_instructions_disabled"
+                        )
+                    if action != "select" or project_selection is None:
+                        self._clear_project_instruction_delivery(session_id)
+                        return ConsoleSubmitResult(False, False, str(exc))
             if project_selection is not None:
                 state = session.project_instruction_state
                 if state.working_folder_binding_id is None:
@@ -12041,7 +12093,6 @@ class ConsoleChatController:
         # so it does not need to be the SAME `BuiltinToolProvider` object
         # the bridge's registry actually dispatches through (its `_tools`
         # dict is stateless data rebuilt identically by any instance).
-        builtin_review_provider = BuiltinToolProvider(gate=builtin_gate)
         # Round 1 review CRITICAL 1: resolve THIS run's OWN workspace id --
         # the SAME lookup `ConsoleAgentBridge.run_reply` makes
         # (`self._store.session_workspace_id(session_id)`) for the real
@@ -12055,6 +12106,12 @@ class ConsoleChatController:
             review_workspace_id = self.store.session_workspace_id(session_id)
         except KeyError:
             review_workspace_id = None
+        builtin_review_provider = BuiltinToolProvider(
+            gate=builtin_gate,
+            workspace_id=review_workspace_id,
+            sandbox_root=scratch_snapshot.root,
+            sandbox_lease=scratch_lease,
+        )
         # Task 9: bind THIS run's owning session id into the approval
         # bridge so `request_mcp_approvals` can (a) scope its cancellation
         # check to this run's own cancel event rather than falling back to
@@ -12129,6 +12186,8 @@ class ConsoleChatController:
                 supersede_previous=bool(prepare_retry or variant_mode),
                 mcp_provider=mcp_provider,
                 builtin_gate=builtin_gate,
+                scratch_root=scratch_snapshot.root,
+                scratch_lease=scratch_lease,
                 review_tool_calls=review_hook,
                 local_provider=local_provider,
                 library_provider=library_provider,

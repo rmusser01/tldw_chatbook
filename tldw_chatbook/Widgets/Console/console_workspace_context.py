@@ -410,6 +410,7 @@ class ConsoleWorkspaceStatusPair(Horizontal):
         *,
         label_id: str,
         value_id: str,
+        label_width_floor: int = 13,
         **kwargs: Any,
     ) -> None:
         """Initialize the label/value status row.
@@ -419,6 +420,7 @@ class ConsoleWorkspaceStatusPair(Horizontal):
             value: User-facing row value.
             label_id: Textual widget id for the label cell.
             value_id: Textual widget id for the value cell.
+            label_width_floor: Minimum label-column width in terminal cells.
             **kwargs: Additional keyword arguments passed to ``Horizontal``.
         """
         super().__init__(classes="console-workspace-status-pair", **kwargs)
@@ -426,6 +428,7 @@ class ConsoleWorkspaceStatusPair(Horizontal):
         self.value = value
         self.label_id = label_id
         self.value_id = value_id
+        self.label_width_floor = max(1, int(label_width_floor))
         self.styles.height = "auto"
         self.styles.min_height = 1
 
@@ -441,15 +444,15 @@ class ConsoleWorkspaceStatusPair(Horizontal):
             classes="console-workspace-status-label",
             markup=False,
         )
-        # I1 (final review): "Conversation" (RAG-45) is exactly 12 characters
-        # -- the label column's old fixed width -- so it filled the whole
-        # cell with zero gutter before the value column, and live captures
-        # showed the two fuse into one run-on token ("Conversation—",
-        # "ConversationThis conversation"). Widened to 13 so every label
-        # (this 12-char one included) always leaves at least one blank cell
-        # of separation.
-        label_widget.styles.width = 13
-        label_widget.styles.min_width = 13
+        # Keep one gutter cell after the label. Most status rows retain the
+        # original 13-cell floor; a caller may lower it for a deliberately
+        # concise label when the security-relevant value needs the extra cell.
+        label_width = max(
+            self.label_width_floor,
+            min(17, cell_len(self.label) + 1),
+        )
+        label_widget.styles.width = label_width
+        label_widget.styles.min_width = label_width
         yield label_widget
 
         value_widget = Static(
@@ -459,10 +462,10 @@ class ConsoleWorkspaceStatusPair(Horizontal):
             markup=False,
         )
         value_widget.styles.width = "1fr"
-        # Rail IA spec section 8: the value column enforces a 10-cell floor so
-        # it never collapses to a single character at the rail's minimum width
-        # (TASK-2154.3 -- it was 0, letting the value shrink to 3-6 cells).
-        value_widget.styles.min_width = 10
+        # Preserve the established 23-cell combined floor. Longer labels may
+        # shrink the value to 6 cells and use the existing ellipsis + tooltip
+        # behavior instead of widening the whole rail.
+        value_widget.styles.min_width = max(6, 23 - label_width)
         # TASK-384: at narrow rail widths the value column shrinks to a few cells
         # and a value like "Default" word-wrapped into a "Def / aul / t" letter
         # stack. Truncate the whole token with an ellipsis on one line instead,

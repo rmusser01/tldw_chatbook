@@ -9,6 +9,7 @@ import pytest
 from jsonschema import Draft202012Validator
 
 from tldw_chatbook.Agents.local_tool_provider import (
+    LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
     LOCAL_DENY_REFUSAL,
     LOCAL_GATE_ERROR_REFUSAL,
     LOCAL_KILL_SWITCH_REFUSAL,
@@ -767,6 +768,68 @@ def test_stamp_scope_isolates_nested_run(tmp_path):
 def test_execution_error_becomes_result_string(tmp_path):
     r = make_provider(root=tmp_path).invoke("local:fs_list", {"path": "../escape"})
     assert not r.ok and "outside the workspace root" in r.error
+
+
+def test_authority_scope_failure_uses_authority_refusal_not_root_drift(tmp_path):
+    class UnavailableAuthority:
+        def __enter__(self):
+            raise RuntimeError("scratch lease revoked")
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+    provider = make_provider(
+        root=tmp_path,
+        authority_scope=UnavailableAuthority,
+    )
+
+    result = provider.invoke("local:fs_list", {"path": "."})
+
+    assert not result.ok
+    assert result.error == LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL
+
+
+def test_private_root_locator_is_redacted_from_local_tool_errors(tmp_path):
+    scratch = tmp_path / "private-scratch"
+    scratch.mkdir()
+    provider = make_provider(
+        root=scratch,
+        result_redaction_root=scratch,
+    )
+
+    result = provider.invoke("local:fs_list", {"path": "../escape"})
+
+    assert not result.ok
+    assert str(scratch) not in result.error
+    assert "workspace root (.)" in result.error
+
+
+def test_private_root_locator_is_redacted_before_error_length_cap(tmp_path):
+    from tldw_chatbook.Agents.local_tool_provider import LocalToolSpec
+
+    private_root = tmp_path / ("PRIVATE_LOCATOR_" + ("x" * 350))
+
+    def fail(_args):
+        raise RuntimeError(f"{private_root}/marker.txt")
+
+    provider = make_provider(
+        root=tmp_path,
+        specs=[
+            LocalToolSpec(
+                name="fail",
+                description="fails with a long private locator",
+                parameters={},
+                handler=fail,
+            )
+        ],
+        result_redaction_root=private_root,
+    )
+
+    result = provider.invoke("local:fail", {})
+
+    assert not result.ok
+    assert "PRIVATE_LOCATOR" not in result.error
+    assert result.error == "marker.txt"
 
 
 # -- session approvals + persistence seams (Task 5) ---------------------------

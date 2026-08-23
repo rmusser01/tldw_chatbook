@@ -12,8 +12,9 @@ import subprocess
 import sys
 import tempfile
 import time
+from contextlib import nullcontext
 from pathlib import Path, PureWindowsPath
-from typing import Dict, Any, Iterator, Mapping
+from typing import Any, Callable, ContextManager, Dict, Iterator, Mapping
 
 from loguru import logger
 
@@ -26,7 +27,12 @@ from ..Utils.sensitive_paths import (
     refuses_new_directory_chain,
     resolve_sensitive_context,
 )
-from .workspace_file_roots import allowed_file_roots, run_workspace
+from .workspace_file_roots import (
+    allowed_file_roots,
+    current_run_sandbox_root,
+    run_file_sandbox,
+    run_workspace,
+)
 
 # Maximum size (bytes) of file content captured for diff rendering (TASK-1351).
 # Files or writes larger than this skip before/after capture entirely and
@@ -96,6 +102,9 @@ def _tool_sandbox_root() -> Path:
     Defaults to ``<user data dir>/tool_sandbox``; override with
     ``[tools] file_sandbox_root`` in config.toml.
     """
+    scoped_root = current_run_sandbox_root()
+    if scoped_root is not None:
+        return scoped_root
     root = Path(_resolve_sandbox_config()).expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True)
     return root
@@ -120,6 +129,8 @@ def path_precheck_failed(
     *,
     workspace_id: str | None = None,
     roots_cache: dict[bool, tuple[Path, ...]] | None = None,
+    sandbox_root: Path | None = None,
+    sandbox_lease: Callable[[], ContextManager[Path]] | None = None,
 ) -> bool:
     """Whether ``tool_name``'s path argument in ``args`` will fail the roots check.
 
@@ -172,6 +183,10 @@ def path_precheck_failed(
             `allowed_file_roots` every call, exactly as before this
             parameter existed -- correctness never depends on passing
             this, only the number of registry/filesystem round trips does.
+        sandbox_root: Explicit private sandbox for this run. When omitted,
+            an enclosing run sandbox is preserved.
+        sandbox_lease: Optional context manager factory that keeps the
+            sandbox generation live for the complete precheck.
 
     Returns:
         ``True`` only for a known file tool whose path argument is a
@@ -188,21 +203,26 @@ def path_precheck_failed(
     if not isinstance(path_value, str) or not path_value.strip():
         return False
     try:
-        if roots_cache is not None and write in roots_cache:
-            roots = roots_cache[write]
-        else:
-            # Bind THIS run's workspace for the duration of the check only
-            # -- mirrors BuiltinToolProvider.invoke's own `with run_
-            # workspace(...)` around the real dispatch call, so the
-            # pre-flight and the eventual enforcement resolve the
-            # IDENTICAL root set (round 1 CRITICAL 1).
-            with run_workspace(workspace_id):
+        lease_scope = sandbox_lease() if sandbox_lease is not None else nullcontext()
+        sandbox_scope = (
+            run_file_sandbox(sandbox_root)
+            if sandbox_root is not None
+            else nullcontext()
+        )
+        with (
+            lease_scope,
+            sandbox_scope,
+            run_workspace(workspace_id),
+        ):
+            if roots_cache is not None and write in roots_cache:
+                roots = roots_cache[write]
+            else:
                 roots = allowed_file_roots(
                     write=write, sandbox_root=_tool_sandbox_root()
                 )
-            if roots_cache is not None:
-                roots_cache[write] = roots
-        validate_path_multi(path_value, roots)
+                if roots_cache is not None:
+                    roots_cache[write] = roots
+            validate_path_multi(path_value, roots)
     except ValueError:
         return True
     except Exception:  # noqa: BLE001 -- a broken pre-flight must never break approval
@@ -422,7 +442,11 @@ class ListDirectoryTool(Tool):
             # the sandbox — otherwise a legitimately bound workspace folder
             # would silently refuse to recurse past its top level.
             containment_root = next(
-                (root for root in read_roots if is_within(path, root, context=sensitive_ctx)),
+                (
+                    root
+                    for root in read_roots
+                    if is_within(path, root, context=sensitive_ctx)
+                ),
                 sandbox_root,
             )
 
@@ -489,7 +513,9 @@ class ListDirectoryTool(Tool):
                                 and item.is_dir()
                                 and not item.is_symlink()
                                 and current_depth < max_depth
-                                and is_within(item, containment_root, context=sensitive_ctx)
+                                and is_within(
+                                    item, containment_root, context=sensitive_ctx
+                                )
                             ):
                                 list_dir_contents(item, current_depth + 1)
 
@@ -718,9 +744,7 @@ class WriteFileTool(Tool):
                 with open(path, "a", encoding=encoding) as f:
                     f.write(content)
                 action = "appended to"
-                new_content = (
-                    old_content + content if old_content is not None else None
-                )
+                new_content = old_content + content if old_content is not None else None
             else:
                 # Overwrite mode
                 with open(path, "w", encoding=encoding) as f:
@@ -1437,11 +1461,12 @@ def _run_grep_subprocess(
         try:
             proc.communicate(timeout=5.0)
         except subprocess.TimeoutExpired:
-            logger.error(f"grep worker (pid {proc.pid}) did not exit even after SIGKILL")
+            logger.error(
+                f"grep worker (pid {proc.pid}) did not exit even after SIGKILL"
+            )
         return {
             "error": (
-                f"grep search timed out after {timeout_seconds:g}s and was "
-                "terminated"
+                f"grep search timed out after {timeout_seconds:g}s and was terminated"
             )
         }
 

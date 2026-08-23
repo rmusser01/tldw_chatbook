@@ -31,13 +31,11 @@ from tldw_chatbook.Workspaces.registry_service import (
 )
 
 _WORKSPACE_EXPLAINER = (
-    "A workspace scopes the Console to one project. Conversations started "
-    "in it are grouped together, agents' project file access comes only "
-    "from the folders you bind here (read-only unless you grant write in "
-    "Settings), and retrieval can be narrowed to the workspace's items via "
-    "its RAG Scope. Binding your project's folder is what makes a "
-    "workspace more than a label — without one, agents have no file "
-    "access. You can add or change folders later in Settings ▸ Workspaces."
+    "A workspace groups related Console conversations and can narrow "
+    "retrieval through its RAG Scope. Every chat has private scratch space. "
+    "Bind project folders here to add explicit project-file access "
+    "(read-only unless you grant write in Settings). Folder access is "
+    "optional; add or change folders later in Settings ▸ Workspaces."
 )
 
 

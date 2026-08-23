@@ -2301,6 +2301,7 @@ class LocalSkillsService:
         args: Sequence[str],
         *,
         limits: ScriptRunLimits | None = None,
+        output_root: Path | None = None,
     ) -> ScriptRunResult:
         """Run a bundled script of a trusted skill under best-effort containment.
 
@@ -2322,6 +2323,9 @@ class LocalSkillsService:
                 caller's intended args would then display something
                 different from what actually runs).
             limits: Optional containment budget; defaults to ScriptRunLimits().
+            output_root: Optional explicit retained-output root supplied by a
+                run-scoped caller. When omitted, the configured legacy root is
+                resolved exactly as before.
 
         Returns:
             A ScriptRunResult; a non-zero exit or timeout is a normal result.
@@ -2358,6 +2362,11 @@ class LocalSkillsService:
             self._canonical_skill_name(skill_name), script_path, path
         )
         effective_limits = limits or resolve_script_run_limits()
+        explicit_output_root = (
+            Path(output_root).expanduser().resolve()
+            if output_root is not None
+            else None
+        )
         target_argv = (
             [str(path), *args]
             if plan.mechanism == "direct-exec"
@@ -2383,9 +2392,17 @@ class LocalSkillsService:
             # only place a script's artifacts can survive, and it stays owned by
             # this offloaded callable so a cancelled caller can never make
             # cleanup race a still-live child (see this function's docstring).
-            output_root = self._script_output_root()
+            retained_output_root = (
+                explicit_output_root
+                if explicit_output_root is not None
+                else self._script_output_root()
+            )
+            retained_output_root.mkdir(parents=True, exist_ok=True)
             run_dir = Path(
-                tempfile.mkdtemp(prefix="tldw-skill-script-", dir=output_root)
+                tempfile.mkdtemp(
+                    prefix="tldw-skill-script-",
+                    dir=retained_output_root,
+                )
             )
             result = run_script_subprocess(
                 target_argv, cwd=run_dir, limits=effective_limits
@@ -2397,7 +2414,9 @@ class LocalSkillsService:
                 _shutil.rmtree(run_dir, ignore_errors=True)
                 return replace(result, output_dir=None, output_files=())
             self._prune_output_runs(
-                output_root, SCRIPT_OUTPUT_KEEP_RUNS, protect=run_dir
+                retained_output_root,
+                SCRIPT_OUTPUT_KEEP_RUNS,
+                protect=run_dir,
             )
             return replace(
                 result, output_dir=str(run_dir), output_files=produced

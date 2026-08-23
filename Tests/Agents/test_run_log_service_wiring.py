@@ -1,6 +1,8 @@
 # Tests/Agents/test_run_log_service_wiring.py
 """The service owns the writer: one counter per run tree, every caller logged."""
 
+import contextlib
+import functools
 import json
 from pathlib import Path
 
@@ -10,6 +12,7 @@ from tldw_chatbook.Agents import agent_service as agent_service_module
 from tldw_chatbook.Agents import run_log as run_log_module
 from tldw_chatbook.Agents.agent_models import (
     RUN_DONE,
+    SEARCH_RUN_LOG_TOOL_NAME,
     SPAWN_TOOL_NAME,
     AgentConfig,
     RunBudget,
@@ -19,6 +22,7 @@ from tldw_chatbook.Agents.run_log import RunLogWriter
 from tldw_chatbook.Agents.run_log_format import iter_records
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolCatalogRegistry
 from tldw_chatbook.Chat.console_fleet_wake import compose_wake_notice
+from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
@@ -73,6 +77,166 @@ def read_all(root: Path):
     for segment in sorted(run_dirs[0].glob("logs.*.txt")):
         records.extend(iter_records(segment.read_bytes()))
     return records
+
+
+def test_writer_explicit_fallback_root_never_uses_global_sandbox(
+    tmp_path,
+    monkeypatch,
+):
+    chat_root = tmp_path / "chat"
+    chat_root.mkdir()
+    monkeypatch.setattr(
+        run_log_module,
+        "resolve_log_root",
+        lambda: (_ for _ in ()).throw(AssertionError("global root consulted")),
+    )
+    writer = RunLogWriter(
+        root=chat_root,
+        access_scope=lambda: contextlib.nullcontext(chat_root),
+    )
+
+    writer.bind("run-a")
+
+    assert writer.is_active
+    assert writer.log_dir is not None
+    assert writer.log_dir.is_relative_to(chat_root)
+
+
+def test_writer_lease_revocation_fails_closed_without_recreating_root(tmp_path):
+    manager = ConsoleScratchSpaceManager(temp_parent=tmp_path)
+    snapshot = manager.snapshot("chat-a")
+    writer = RunLogWriter(
+        root=snapshot.root,
+        access_scope=functools.partial(manager.lease, snapshot),
+    )
+    writer.bind("run-a")
+    assert writer.append(
+        run_id="run-a",
+        kind="primary",
+        type="model",
+        content="before close",
+    ) == 1
+
+    with manager.lease(snapshot):
+        manager.close("chat-a")
+        assert snapshot.root.exists()
+
+    assert writer.append(
+        run_id="run-a",
+        kind="primary",
+        type="model",
+        content="after close",
+    ) is None
+    assert manager.wait_for_cleanup(timeout_seconds=2.0)
+    assert not snapshot.root.exists()
+
+
+def test_writer_failure_logs_do_not_persist_private_scratch_locator(
+    tmp_path,
+    monkeypatch,
+):
+    scratch = tmp_path / "PRIVATE_SCRATCH_LOCATOR"
+    scratch.mkdir()
+    warnings: list[str] = []
+    sink_id = run_log_module.logger.add(
+        lambda message: warnings.append(str(message)),
+        format="{message}",
+        level="WARNING",
+    )
+
+    @contextlib.contextmanager
+    def unavailable_scope():
+        raise OSError(f"lease failed at {scratch}/secret-token")
+        yield scratch
+
+    try:
+        refused = RunLogWriter(root=scratch, access_scope=unavailable_scope)
+        refused.bind("run-refused")
+
+        writer = RunLogWriter(
+            root=scratch,
+            access_scope=lambda: contextlib.nullcontext(scratch),
+        )
+        writer.bind("run-write")
+
+        def fail_write(*_args, **_kwargs):
+            raise OSError(f"write failed at {scratch}/.agent-runs/private")
+
+        monkeypatch.setattr(writer, "_write_bytes", fail_write)
+        assert (
+            writer.append(
+                run_id="run-write",
+                kind="primary",
+                type="model",
+                content="content",
+            )
+            is None
+        )
+    finally:
+        run_log_module.logger.remove(sink_id)
+
+    warning_text = "".join(warnings)
+    assert "access scope unavailable" in warning_text
+    assert "append failed" in warning_text
+    assert str(scratch) not in warning_text
+    assert "secret-token" not in warning_text
+
+
+def test_builtin_tool_result_log_does_not_persist_private_scratch_locator(tmp_path):
+    scratch = tmp_path / "private-scratch"
+    scratch.mkdir()
+    db = AgentRunsDB(tmp_path / "runs.db")
+    registry = ToolCatalogRegistry()
+    provider = BuiltinToolProvider(
+        gate=type("AllowGate", (), {"check": lambda self, tool, run_id: None})(),
+        sandbox_root=scratch,
+        sandbox_lease=lambda: contextlib.nullcontext(scratch),
+    )
+
+    class ScratchPathTool:
+        name = "scratch_path"
+        description = "returns one scratch-owned path"
+        parameters = {"type": "object", "properties": {}}
+
+        async def execute(self, **kwargs):
+            return {"file_path": str(scratch / "marker.txt")}
+
+    provider._tools["scratch_path"] = ScratchPathTool()
+    registry.register_provider(provider)
+    writer = RunLogWriter(
+        root=scratch,
+        access_scope=lambda: contextlib.nullcontext(scratch),
+    )
+    service = AgentService(
+        db,
+        registry,
+        chat_call=scripted_chat([fence("scratch_path", {}), "done"]),
+        run_log_writer=writer,
+    )
+
+    service.run_turn(
+        conversation_id="conv1",
+        messages=[{"role": "user", "content": "show the scratch path"}],
+        config=AgentConfig(
+            model="m",
+            system_prompt="s",
+            allowed_tools=("scratch_path",),
+            budget=RunBudget(),
+        ),
+        api_endpoint="llama_cpp",
+    )
+
+    assert writer.log_dir is not None
+    tool_results = [
+        record
+        for record in all_records(writer.log_dir)
+        if record.type == "tool_result"
+    ]
+    assert len(tool_results) == 1
+    assert str(scratch) not in tool_results[0].content
+    assert json.loads(tool_results[0].content)["file_path"] == str(
+        Path(".") / "marker.txt"
+    )
 
 
 def test_a_plain_run_writes_records_without_the_caller_wiring_anything(wired):
@@ -531,8 +695,6 @@ def test_tool_is_offered_to_the_primary_agent_only(wired, monkeypatch):
     disclosed" case, which ``test_tool_is_not_offered_when_nothing_else_is_disclosed``
     below covers.
     """
-    from tldw_chatbook.Agents.agent_models import SEARCH_RUN_LOG_TOOL_NAME
-
     db, registry, root = wired
     offered = []
 

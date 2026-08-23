@@ -960,6 +960,59 @@ async def test_controller_notice_uses_owning_session_and_drift_cancels_bridge_se
     assert SENTINEL not in repr(notices[0])
 
 
+@pytest.mark.asyncio
+async def test_folderless_session_skips_optional_project_instructions_and_runs(
+    tmp_path,
+):
+    store = ConsoleChatStore()
+    session = store.create_session(workspace_id="workspace-default")
+    bridge_calls = []
+    setup_calls = []
+
+    class Bridge:
+        def run_reply(self, **kwargs):
+            bridge_calls.append(kwargs)
+            return "run-1", RunOutcome(status=RUN_DONE, steps=[], final_text="")
+
+    class Gateway:
+        async def resolve_for_send(self, _selection):
+            return ConsoleProviderResolution(
+                provider="DeepSeek",
+                base_url="https://api.deepseek.com",
+                model="deepseek-chat",
+                ready=True,
+                readiness_key="deepseek",
+                execution_key="deepseek",
+                max_tokens=128,
+            )
+
+    async def select_binding(*args):
+        setup_calls.append(args)
+        return "cancel", None
+
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=Gateway(),
+        provider="deepseek",
+        model="deepseek-chat",
+        agent_bridge=Bridge(),
+        agent_runtime_enabled=True,
+        select_project_instruction_binding=select_binding,
+    )
+    controller.app = SimpleNamespace(
+        workspace_registry_service=_BindingRegistry([]),
+    )
+
+    result = await controller.submit_draft("question")
+
+    assert result.accepted is True
+    assert result.should_clear_draft is True
+    assert setup_calls == []
+    assert len(bridge_calls) == 1
+    assert bridge_calls[0]["startup_instruction_candidate"] is None
+    assert controller.run_state_for(session.id).status.value == "completed"
+
+
 def test_removed_or_retargeted_binding_never_silently_retargets(tmp_path):
     original = tmp_path / "original"
     retarget = tmp_path / "retarget"

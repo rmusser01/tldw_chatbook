@@ -38,6 +38,8 @@ from tldw_chatbook.Chat.console_runtime import (
     CONSOLE_VIEW_HOOK_SLOTS,
     ConsoleRuntime,
 )
+from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
 from tldw_chatbook.Persona_Buddy.controller import PersonaBuddyController
 from tldw_chatbook.UI.Console_Modules.fleet import (
@@ -66,6 +68,90 @@ def test_console_runtime_owns_one_screen_free_persona_buddy_sink():
     assert isinstance(runtime.persona_buddy_sink, PersonaBuddyConsoleAdapter)
     assert runtime.persona_buddy_sink is runtime.persona_buddy_sink
     assert "view" not in vars(runtime.persona_buddy_sink)
+
+
+@pytest.mark.unit
+def test_console_runtime_reuses_one_scratch_manager_across_console_visits():
+    runtime = ConsoleRuntime(type("App", (), {})())
+    first = runtime.scratch_spaces
+
+    runtime.detach_view(None)
+
+    assert runtime.scratch_spaces is first
+
+
+@pytest.mark.asyncio
+async def test_runtime_injects_its_scratch_manager_into_chat_controller():
+    runtime = ConsoleRuntime(type("App", (), {})())
+
+    controller = runtime.ensure_chat_controller(
+        store=ConsoleChatStore(),
+        provider_gateway=object(),
+    )
+
+    assert controller._scratch_spaces is runtime.scratch_spaces
+    assert controller._owns_scratch_spaces is False
+    await runtime.dispose()
+
+
+@pytest.mark.asyncio
+async def test_leaving_console_preserves_live_session_scratch(tmp_path):
+    runtime = ConsoleRuntime(type("App", (), {})())
+    runtime._scratch_spaces = ConsoleScratchSpaceManager(temp_parent=tmp_path)
+    snapshot = runtime.scratch_spaces.snapshot("session-a")
+
+    assert await runtime.leave_console() is True
+
+    assert runtime.scratch_spaces.is_live(snapshot)
+    assert snapshot.root.is_dir()
+    await runtime.dispose()
+    assert not snapshot.root.exists()
+
+
+@pytest.mark.asyncio
+async def test_runtime_tombstones_before_shutdown_and_disposes_via_to_thread(
+    monkeypatch,
+):
+    events: list[str] = []
+
+    class ScratchSpaces:
+        def tombstone_all(self) -> None:
+            events.append("scratch-tombstone")
+
+        def dispose(self) -> bool:
+            events.append("scratch-dispose")
+            return True
+
+    class Controller:
+        async def shutdown(self) -> None:
+            events.append("controller-shutdown")
+
+    class Gateway:
+        async def aclose(self) -> None:
+            events.append("gateway-close")
+
+    async def fake_to_thread(function, *args, **kwargs):
+        events.append("to-thread")
+        return function(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.console_runtime.asyncio.to_thread",
+        fake_to_thread,
+    )
+    runtime = ConsoleRuntime(type("App", (), {})())
+    runtime._scratch_spaces = ScratchSpaces()
+    runtime._chat_controller = Controller()
+    runtime._provider_gateway = Gateway()
+
+    await runtime.dispose()
+
+    assert events == [
+        "scratch-tombstone",
+        "controller-shutdown",
+        "to-thread",
+        "scratch-dispose",
+        "gateway-close",
+    ]
 
 
 @pytest.mark.asyncio
@@ -658,6 +744,9 @@ async def test_app_fences_console_then_drains_buddy_before_profile_teardown(
     async def later_lifecycle() -> None:
         events.append("later-lifecycle")
 
+    async def no_op_lifecycle() -> None:
+        return None
+
     console_task: asyncio.Task[None] | None = None
 
     async def console_runner() -> None:
@@ -677,6 +766,7 @@ async def test_app_fences_console_then_drains_buddy_before_profile_teardown(
     app._persona_buddy_shutdown_task = None
     app._audio_cpp_artifact_lease_coordinator = None
     app.audio_cpp_model_install_owner = AsyncOwner()
+    app._shutdown_notes_sync_runtime = no_op_lifecycle
     app._shutdown_console_image_edits = later_lifecycle
     app._shutdown_console_runtime = shutdown_console_runtime
     app._shutdown_file_notes_session_owner = later_lifecycle

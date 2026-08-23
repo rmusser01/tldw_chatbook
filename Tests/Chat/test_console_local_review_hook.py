@@ -5,19 +5,26 @@ stamps, ONE approval round trip per batch, verdicts only ever "proceed".
 """
 
 import json
+import weakref
 from types import SimpleNamespace
 
 import pytest
 
 import tldw_chatbook.Chat.console_chat_controller as controller_mod
 from tldw_chatbook.Agents.agent_models import ToolCall
-from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+from tldw_chatbook.Agents.local_tool_provider import (
+    LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
+    LocalToolProvider,
+)
 from tldw_chatbook.Agents.run_context import use_run_id
 from tldw_chatbook.Chat.console_chat_controller import (
     ConsoleChatController,
     build_combined_review_hook,
     build_local_review_hook,
 )
+from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
+from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
+from tldw_chatbook.Chat.console_turn_context import ConsoleTurnExecutionContext
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.runtime_policy.bootstrap import default_runtime_policy_path
@@ -186,9 +193,36 @@ def _bare_controller(app):
     """A controller instance with only what _compose_local_provider touches."""
     controller = object.__new__(ConsoleChatController)
     controller.app = app
+    controller._agent_bridge = None
     controller._pending_approval_event = None
     controller._pending_approval_decisions = None
+    scratch_spaces = ConsoleScratchSpaceManager()
+    scratch_snapshot = scratch_spaces.snapshot("test-chat")
+    controller._scratch_spaces = scratch_spaces
+    controller._test_turn_context = ConsoleTurnExecutionContext.capture(
+        session_id="test-chat",
+        provider_selection=ConsoleProviderSelection(provider="deepseek"),
+        scratch_space=scratch_snapshot,
+        tool_configuration={
+            "local_tools_enabled": controller_mod.get_cli_setting(
+                "console",
+                "local_tools_enabled",
+                True,
+            )
+        },
+    )
+    weakref.finalize(controller, scratch_spaces.dispose)
     return controller
+
+
+def _compose_local_provider(controller, *args, **kwargs):
+    """Call the production composer with this harness's captured scratch."""
+    kwargs.setdefault("turn_context", controller._test_turn_context)
+    return ConsoleChatController._compose_local_provider(
+        controller,
+        *args,
+        **kwargs,
+    )
 
 
 def _console_settings(enabled=True, workspace_root=""):
@@ -208,7 +242,9 @@ def test_compose_local_provider_disabled_flag(monkeypatch, tmp_path):
         controller_mod, "get_cli_setting", _console_settings(enabled=False)
     )
     controller = _bare_controller(SimpleNamespace(unified_mcp_service=_FakeService()))
-    assert controller._compose_local_provider() == (None, None)
+    assert _compose_local_provider(
+        controller,
+    ) == (None, None)
 
 
 def test_compose_local_provider_missing_master_key_defaults_enabled(
@@ -222,7 +258,9 @@ def test_compose_local_provider_missing_master_key_defaults_enabled(
     monkeypatch.setattr(controller_mod, "get_cli_setting", missing_master_setting)
     controller = _bare_controller(SimpleNamespace(unified_mcp_service=_FakeService()))
 
-    local_provider, hook = controller._compose_local_provider()
+    local_provider, hook = _compose_local_provider(
+        controller,
+    )
 
     assert isinstance(local_provider, LocalToolProvider)
     assert callable(hook)
@@ -243,7 +281,9 @@ def test_compose_local_provider_coerces_quoted_false_to_disabled(monkeypatch, tm
         controller_mod, "get_cli_setting", _console_settings(enabled="false")
     )
     controller = _bare_controller(SimpleNamespace(unified_mcp_service=_FakeService()))
-    assert controller._compose_local_provider() == (None, None)
+    assert _compose_local_provider(
+        controller,
+    ) == (None, None)
 
 
 def test_compose_local_provider_coerces_quoted_true_to_enabled(monkeypatch, tmp_path):
@@ -254,7 +294,9 @@ def test_compose_local_provider_coerces_quoted_true_to_enabled(monkeypatch, tmp_
         _console_settings(enabled="true", workspace_root=str(tmp_path)),
     )
     controller = _bare_controller(SimpleNamespace(unified_mcp_service=_FakeService()))
-    local_provider, hook = controller._compose_local_provider()
+    local_provider, hook = _compose_local_provider(
+        controller,
+    )
     assert isinstance(local_provider, LocalToolProvider)
     assert callable(hook)
 
@@ -262,14 +304,18 @@ def test_compose_local_provider_coerces_quoted_true_to_enabled(monkeypatch, tmp_
 def test_compose_local_provider_no_service(monkeypatch, tmp_path):
     monkeypatch.setattr(controller_mod, "get_cli_setting", _console_settings())
     controller = _bare_controller(SimpleNamespace())  # no unified_mcp_service
-    assert controller._compose_local_provider() == (None, None)
+    assert _compose_local_provider(
+        controller,
+    ) == (None, None)
 
 
 def test_compose_local_provider_kill_switch_on(monkeypatch, tmp_path):
     monkeypatch.setattr(controller_mod, "get_cli_setting", _console_settings())
     app = SimpleNamespace(unified_mcp_service=_FakeService(kill_switch=True))
     controller = _bare_controller(app)
-    assert controller._compose_local_provider() == (None, None)
+    assert _compose_local_provider(
+        controller,
+    ) == (None, None)
 
 
 def test_compose_local_provider_kill_switch_read_failure_fails_closed(
@@ -284,7 +330,9 @@ def test_compose_local_provider_kill_switch_read_failure_fails_closed(
     controller = _bare_controller(
         SimpleNamespace(unified_mcp_service=_RaisingService())
     )
-    assert controller._compose_local_provider() == (None, None)
+    assert _compose_local_provider(
+        controller,
+    ) == (None, None)
 
 
 def test_compose_local_provider_eligible(monkeypatch, tmp_path):
@@ -296,10 +344,14 @@ def test_compose_local_provider_eligible(monkeypatch, tmp_path):
     service = _FakeService()
     controller = _bare_controller(SimpleNamespace(unified_mcp_service=service))
 
-    local_provider, hook = controller._compose_local_provider()
+    local_provider, hook = _compose_local_provider(
+        controller,
+    )
 
     assert isinstance(local_provider, LocalToolProvider)
-    assert local_provider._root == tmp_path.resolve()
+    assert local_provider.workspace_root == (
+        controller._test_turn_context.scratch_space.root
+    )
     assert callable(hook)
     catalog_ids = {entry.id for entry in local_provider.list_catalog()}
     assert {
@@ -312,6 +364,72 @@ def test_compose_local_provider_eligible(monkeypatch, tmp_path):
     # resolve_state is the same payload source the MCP gate uses.
     gate = local_provider.pending_gate_for("fs_list", {"path": "."})
     assert gate is not None and gate.server_key == "local:__local__"
+
+
+def test_default_chat_local_provider_uses_scratch_not_config_or_cwd(
+    monkeypatch,
+    tmp_path,
+):
+    configured = tmp_path / "configured"
+    cwd = tmp_path / "cwd"
+    configured.mkdir()
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
+    monkeypatch.setattr(
+        controller_mod,
+        "get_cli_setting",
+        _console_settings(enabled=True, workspace_root=str(configured)),
+    )
+    scratch_spaces = ConsoleScratchSpaceManager(temp_parent=tmp_path)
+    snapshot = scratch_spaces.snapshot("chat-a")
+    context = ConsoleTurnExecutionContext.capture(
+        session_id="chat-a",
+        provider_selection=ConsoleProviderSelection(provider="deepseek"),
+        scratch_space=snapshot,
+        tool_configuration={
+            "local_tools_enabled": True,
+            "workspace_root": str(configured),
+        },
+    )
+    controller = _bare_controller(SimpleNamespace(unified_mcp_service=_FakeService()))
+    controller._scratch_spaces = scratch_spaces
+
+    provider, review = _compose_local_provider(
+        controller,
+        session_id="chat-a",
+        turn_context=context,
+    )
+
+    assert provider.workspace_root == snapshot.root
+    assert callable(review)
+    assert scratch_spaces.dispose()
+
+
+def test_default_chat_local_provider_rejects_after_scratch_close(tmp_path):
+    scratch_spaces = ConsoleScratchSpaceManager(temp_parent=tmp_path)
+    snapshot = scratch_spaces.snapshot("chat-a")
+    context = ConsoleTurnExecutionContext.capture(
+        session_id="chat-a",
+        provider_selection=ConsoleProviderSelection(provider="deepseek"),
+        scratch_space=snapshot,
+        tool_configuration={"local_tools_enabled": True},
+    )
+    controller = _bare_controller(
+        SimpleNamespace(unified_mcp_service=_FakeService(state=ALLOW))
+    )
+    controller._scratch_spaces = scratch_spaces
+    provider, _review = _compose_local_provider(
+        controller,
+        session_id="chat-a",
+        turn_context=context,
+    )
+
+    scratch_spaces.close("chat-a")
+    result = provider.invoke("local:fs_list", {"path": "."})
+
+    assert result.ok is False
+    assert result.error == LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL
+    assert scratch_spaces.wait_for_cleanup(timeout_seconds=2.0)
 
 
 def test_compose_local_provider_reuses_app_database_and_loads_runtime_source_per_call(
@@ -347,7 +465,9 @@ def test_compose_local_provider_reuses_app_database_and_loads_runtime_source_per
         subscriptions_db=database,
     )
     controller = _bare_controller(app)
-    provider, hook = controller._compose_local_provider()
+    provider, hook = _compose_local_provider(
+        controller,
+    )
     watchlists_service = provider._specs["watchlists_search_items"].handler.__self__
     assert watchlists_service._db_resolver() is database
 
@@ -450,7 +570,9 @@ def test_console_watchlists_real_reads_leave_app_owned_state_unchanged(
                 subscriptions_db=database,
             )
         )
-        provider, _hook = controller._compose_local_provider()
+        provider, _hook = _compose_local_provider(
+            controller,
+        )
 
         search = provider.invoke("local:watchlists_search_items", {"query": "needle"})
         detail = provider.invoke(
@@ -466,14 +588,22 @@ def test_console_watchlists_real_reads_leave_app_owned_state_unchanged(
         database.close()
 
 
-def test_compose_local_provider_empty_workspace_root_uses_cwd(monkeypatch, tmp_path):
+def test_compose_local_provider_empty_workspace_root_uses_scratch(
+    monkeypatch,
+    tmp_path,
+):
     monkeypatch.setattr(controller_mod, "get_cli_setting", _console_settings())
     monkeypatch.chdir(tmp_path)
     controller = _bare_controller(SimpleNamespace(unified_mcp_service=_FakeService()))
 
-    local_provider, _hook = controller._compose_local_provider()
+    local_provider, _hook = _compose_local_provider(
+        controller,
+    )
 
-    assert local_provider._root == tmp_path.resolve()
+    assert local_provider.workspace_root == (
+        controller._test_turn_context.scratch_space.root
+    )
+    assert local_provider.workspace_root != tmp_path.resolve()
 
 
 def test_local_provider_read_only_filters_write_specs_without_global_mutation(tmp_path):
@@ -504,13 +634,18 @@ def test_compose_local_provider_selected_root_overrides_disabled_fallback(
     )
     controller = _bare_controller(SimpleNamespace(unified_mcp_service=_FakeService()))
 
-    legacy_provider, _ = controller._compose_local_provider()
-    selected_provider, _ = controller._compose_local_provider(
-        project_root=selected, allow_write=False
+    legacy_provider, _ = _compose_local_provider(
+        controller,
+    )
+    selected_provider, _ = _compose_local_provider(
+        controller, project_root=selected, allow_write=False
     )
 
-    assert legacy_provider._root == fallback.resolve()
-    assert selected_provider._root == selected.resolve()
+    assert legacy_provider.workspace_root == (
+        controller._test_turn_context.scratch_space.root
+    )
+    assert legacy_provider.workspace_root != fallback.resolve()
+    assert selected_provider.workspace_root == selected.resolve()
     selected_names = {entry.name for entry in selected_provider.list_catalog()}
     assert {"fs_write", "fs_edit", "fs_patch"}.isdisjoint(selected_names)
 
@@ -524,7 +659,8 @@ def test_selected_root_swap_fails_closed_before_local_invoke(monkeypatch, tmp_pa
     controller = _bare_controller(
         SimpleNamespace(unified_mcp_service=_FakeService(state=ALLOW))
     )
-    local_provider, review = controller._compose_local_provider(
+    local_provider, review = _compose_local_provider(
+        controller,
         project_root=selected,
         project_root_identity=identity,
     )
@@ -536,19 +672,23 @@ def test_selected_root_swap_fails_closed_before_local_invoke(monkeypatch, tmp_pa
     (outside / "secret.txt").write_text("outside")
     selected.symlink_to(outside, target_is_directory=True)
 
-    assert review([ToolCall(name="fs_read", args={"path": "secret.txt"})]) == {}
+    assert (
+        review(
+            [ToolCall(name="fs_read", args={"path": "secret.txt"})],
+            "run-root-swap",
+        )
+        == {}
+    )
     result = local_provider.invoke("fs_read", {"path": "secret.txt"})
     assert result.ok is False
     assert "root changed" in result.error.lower()
     assert "outside" not in result.error
 
 
-def test_compose_local_provider_tilde_workspace_root_expands_home(
+def test_compose_local_provider_tilde_workspace_root_does_not_grant_home_access(
     monkeypatch, tmp_path
 ):
-    """A configured ``~/repo`` must expand against HOME (PR #1352 review):
-    without expanduser() the root would resolve to a literal "~" directory
-    under the cwd."""
+    """The retired configured root cannot replace a chat's private scratch."""
     home = tmp_path / "home"
     (home / "repo").mkdir(parents=True)
     monkeypatch.setenv("HOME", str(home))
@@ -560,9 +700,14 @@ def test_compose_local_provider_tilde_workspace_root_expands_home(
     )
     controller = _bare_controller(SimpleNamespace(unified_mcp_service=_FakeService()))
 
-    local_provider, _hook = controller._compose_local_provider()
+    local_provider, _hook = _compose_local_provider(
+        controller,
+    )
 
-    assert local_provider._root == (home / "repo").resolve()
+    assert local_provider.workspace_root == (
+        controller._test_turn_context.scratch_space.root
+    )
+    assert local_provider.workspace_root != (home / "repo").resolve()
 
 
 def test_compose_local_provider_persists_session_and_always_allow(
@@ -575,7 +720,9 @@ def test_compose_local_provider_persists_session_and_always_allow(
     )
     service = _FakeService()
     controller = _bare_controller(SimpleNamespace(unified_mcp_service=service))
-    local_provider, _hook = controller._compose_local_provider()
+    local_provider, _hook = _compose_local_provider(
+        controller,
+    )
 
     (tmp_path / "a.txt").write_text("a")
 
@@ -597,7 +744,9 @@ def test_compose_local_provider_session_approval_skips_reprompt(monkeypatch, tmp
     service = _FakeService()
     service.approve_for_session("local:__local__", "fs_list")
     controller = _bare_controller(SimpleNamespace(unified_mcp_service=service))
-    local_provider, _hook = controller._compose_local_provider()
+    local_provider, _hook = _compose_local_provider(
+        controller,
+    )
 
     assert local_provider.pending_gate_for("fs_list", {"path": "."}) is None
     (tmp_path / "a.txt").write_text("a")
@@ -614,7 +763,9 @@ def _composed(monkeypatch, tmp_path, service):
         _console_settings(workspace_root=str(tmp_path)),
     )
     controller = _bare_controller(SimpleNamespace(unified_mcp_service=service))
-    local_provider, _hook = controller._compose_local_provider()
+    local_provider, _hook = _compose_local_provider(
+        controller,
+    )
     assert local_provider is not None
     return local_provider
 
@@ -703,7 +854,9 @@ def test_compose_local_provider_without_session_registers_no_todo_spec(
     )
     controller = _bare_controller(SimpleNamespace(unified_mcp_service=_FakeService()))
 
-    local_provider, _hook = controller._compose_local_provider()
+    local_provider, _hook = _compose_local_provider(
+        controller,
+    )
 
     assert _registered_task_tools(local_provider) == set()
     assert "todo_write" not in {entry.name for entry in local_provider.list_catalog()}
@@ -733,7 +886,7 @@ def test_compose_local_provider_wires_the_sessions_exact_todo_store(
         )
     )
 
-    local_provider, _hook = controller._compose_local_provider(session_id=target.id)
+    local_provider, _hook = _compose_local_provider(controller, session_id=target.id)
 
     created = local_provider.invoke("local:todo_create", {"content": "Ship it"})
 
@@ -758,7 +911,7 @@ def test_compose_local_provider_unknown_session_registers_no_todo_spec(
     controller.store = ConsoleChatStore()
     controller._agent_bridge = SimpleNamespace(append_todo_marker=lambda *a: None)
 
-    local_provider, _hook = controller._compose_local_provider(session_id="ghost")
+    local_provider, _hook = _compose_local_provider(controller, session_id="ghost")
 
     assert _registered_task_tools(local_provider) == set()
 
@@ -779,6 +932,6 @@ def test_compose_local_provider_without_bridge_registers_no_todo_spec(
     session = controller.store.create_session(workspace_id="ws")
     controller._agent_bridge = None
 
-    local_provider, _hook = controller._compose_local_provider(session_id=session.id)
+    local_provider, _hook = _compose_local_provider(controller, session_id=session.id)
 
     assert _registered_task_tools(local_provider) == set()

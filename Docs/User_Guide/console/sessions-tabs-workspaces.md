@@ -58,7 +58,7 @@ plus a secondary line of `<workspace> - <state> - <age>` (for example
 "Chats - active session - 1m"), and ends with a star toggle ("☆" / "★").
 
 **Details section** (left rail, collapsed by default). Status lines for
-"Storage", "Sync", "File tools", "Server", and "ACP", plus a "Handoff" list.
+"Storage", "Sync", "Local file tools", "Server", and "ACP", plus a "Handoff" list.
 On a local-only setup the server lines collapse into one line:
 "Server features (sync, handoff, ACP): not configured. Chats stay local."
 
@@ -141,18 +141,34 @@ Alt+W.
 
 ### Session project folders
 
+Every live Console Chat starts with its own private temporary scratch space.
+Creating or sending a Chat never asks for a folder. Relative local file-tool
+paths use that scratch space, and closing then reopening a saved conversation
+starts with a new empty scratch space. Scratch is removed with ordinary
+best-effort deletion; it is not secure erase, and a hard process or OS crash
+can leave unreferenced temporary residue that later Chatbook processes never
+discover or attach.
+
+A named Workspace may add explicit folder bindings to its Chat's private
+scratch authority. Folders are optional: a Workspace without one still works
+with scratch only. Built-in file tools can use private scratch plus the
+Workspace's live bound folders. Local `fs_*` and Git tools use private scratch
+unless project instructions explicitly select one binding; that selected
+binding then remains their single working root and keeps its read-only or
+read-write guard.
+
 Project instructions are local per-session state. A new session starts
 enabled and asks you to choose when more than one eligible local-filesystem
 binding exists; exactly one eligible binding may be selected. That binding is
-both the instruction authority root and the working directory for local and
-built-in file/git tools. Chatbook never searches global or personal
+both the instruction authority root and the working directory for local
+`fs_*` and Git tools. Chatbook never searches global or personal
 instruction files and never ascends above the selected root.
 
-Legacy sessions and sessions where project instructions are disabled keep the
-older local-tool behavior: `[console] workspace_root` is the confinement root,
-or the app's startup working directory when it is empty. A selected
-project-instruction binding takes precedence over that fallback only while the
-feature is enabled for that session. Bindings marked read-only expose only
+When project instructions are disabled or no project folder is selected, local
+`fs_*` and Git tools return to this Chat's private scratch space. The legacy
+`[console] workspace_root` setting remains available to non-Console callers;
+it never grants a Console Chat access, and Console does not fall back to the
+app's startup working directory. Bindings marked read-only expose only
 read-capable tools. Folder names and instruction contents are not synchronized;
 the local control fields stay with the local conversation record.
 
@@ -166,11 +182,15 @@ the file that records which tools you approved.
 ### Details
 
 Open the "Details" header in the left rail to see where your chats live:
-"Storage" (local database status), "Sync", "File tools", "Server", and "ACP"
+"Storage" (local database status), "Sync", "Local file tools", "Server", and "ACP"
 lines (for example "Sync: Off", "Server: Not configured"), and a "Handoff"
 list that reads "No handoff package is ready." until a handoff package
 exists. If none of the server features are configured, the section shows the
 single summary line quoted in the layout tour instead.
+
+For Chats, the file row reads **Private scratch**. A named Workspace with live
+folder bindings reads **Private scratch + N folders**. A missing binding is
+reported separately instead of making the scratch status look unavailable.
 
 ## Common tasks
 
@@ -181,6 +201,10 @@ single summary line quoted in the layout tour instead.
    reply runs independently of the other tab.
 3. Switch back with Alt+1 (or click the first tab). A ● marker on the other
    tab means its run is still going; ✓ means it finished while you were away.
+
+Each tab's private scratch is independent. A relative file created in one Chat
+is absent from the other, even when both tabs resume the same saved
+conversation.
 
 **Rename a tab**
 
@@ -267,6 +291,8 @@ nothing is created, no matter what you had typed or added.
 - A brand-new conversation can't be starred until it has been sent or saved —
   the star's tooltip says "Send or save this conversation before starring."
 - The Default workspace can't be renamed or archived.
+- Chats never require a folder. Use a named Workspace only when local file
+  tools need access outside private scratch.
 - Launching the app from inside a project with a `.SKILLS/` folder can pop
   its own import prompt on startup, separately from anything workspace- or
   tab-related — see [Project skills](../library/skills.md#project-skills-skills).

@@ -1,6 +1,6 @@
 # Model Catalog Consent Startup Order Design
 
-**Task:** TASK-21161
+**Task:** TASK-21163
 **ADR required:** no
 **ADR path:** `backlog/decisions/020-automatic-model-catalog-refresh.md`
 **Reason:** This fixes UI lifecycle ordering while preserving ADR-020's existing consent, persistence, and network boundary.

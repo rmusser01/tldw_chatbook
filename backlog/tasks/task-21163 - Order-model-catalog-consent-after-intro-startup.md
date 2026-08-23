@@ -1,5 +1,5 @@
 ---
-id: TASK-21161
+id: TASK-21163
 title: Order model catalog consent after intro startup
 status: Done
 assignee: []
@@ -50,3 +50,14 @@ ADR required: no. Existing ADR: backlog/decisions/020-automatic-model-catalog-re
 
 PR review follow-up: added the missing async contract-test docstring and replaced the splash regression's short manual Pilot loops/exact default-screen assertion with the repository's bounded `_wait_until` pattern and behavior-level splash/Home ordering assertions. Focused tests and Ruff pass.
 <!-- SECTION:NOTES:END -->
+
+## Renumbering provenance
+
+- Renumbered from `TASK-21161` to `TASK-21163` on 2026-08-23 after latest
+  `dev` exposed a duplicate task ID.
+- The Console private-scratch task's add commit
+  `47a417bd13f9fc179e30d3acbec7743edaa86e96` predates this task's add commit
+  `7969089c34b163159d21f4a35f7f7a716bc289eb`, so the later claimant moves
+  under the repository's older-arrival tie-break rule.
+- Every task-file, design-spec, and implementation-plan reference shipped with
+  this startup-order slice was updated to `TASK-21163`.

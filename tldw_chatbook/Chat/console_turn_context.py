@@ -19,6 +19,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleWorkspaceContext,
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSnapshot
 
 
 def _freeze(value: Any) -> Any:
@@ -87,6 +88,7 @@ class ConsoleTurnExecutionContext:
 
     session_id: str
     provider_selection: ConsoleProviderSelection
+    scratch_space: ConsoleScratchSnapshot | None = None
     session_settings: ConsoleSessionSettings | None = None
     workspace_roots: tuple[str, ...] = ()
     capabilities: Mapping[str, Any] = field(
@@ -134,6 +136,7 @@ class ConsoleTurnExecutionContext:
         *,
         session_id: str,
         provider_selection: ConsoleProviderSelection,
+        scratch_space: ConsoleScratchSnapshot | None = None,
         session_settings: ConsoleSessionSettings | None = None,
         workspace_roots: Sequence[object] = (),
         capabilities: Mapping[str, Any] | None = None,
@@ -145,6 +148,7 @@ class ConsoleTurnExecutionContext:
         return cls(
             session_id=str(session_id),
             provider_selection=provider_selection,
+            scratch_space=scratch_space,
             session_settings=session_settings,
             workspace_roots=tuple(workspace_roots),
             capabilities=capabilities or {},

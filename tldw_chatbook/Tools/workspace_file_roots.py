@@ -23,6 +23,9 @@ from loguru import logger
 _RUN_WORKSPACE_ID: ContextVar[str | None] = ContextVar(
     "tldw_run_workspace_id", default=None
 )
+_RUN_FILE_SANDBOX_ROOT: ContextVar[Path | None] = ContextVar(
+    "tldw_run_file_sandbox_root", default=None
+)
 
 #: The directory the app process was launched from, captured once at boot by
 #: ``set_launch_cwd``. The workspace-context note (``workspace_context_note``)
@@ -165,9 +168,7 @@ def workspace_context_note(
             suffix = f" ({', '.join(tags)})" if tags else ""
             root_lines.append(f"  - {display}{suffix}")
     except Exception:
-        logger.opt(exception=True).debug(
-            "workspace_context_note: registry unavailable"
-        )
+        logger.opt(exception=True).debug("workspace_context_note: registry unavailable")
         return _NOTE_UNAVAILABLE
     launch_label = f"{launch.name}/" if launch.name else (launch.anchor or "/")
     lines = [
@@ -187,6 +188,7 @@ def workspace_context_note(
     else:
         lines.append(_NOTE_NO_ROOTS)
     return "\n".join(lines)
+
 
 #: Process-wide cache for the default registry service (see
 #: ``_default_registry_factory``). Reset to ``None`` by tests that need a
@@ -253,7 +255,9 @@ def folder_binding_roots(workspace_id: str | None) -> tuple[Path, ...]:
         Existing, resolved root directories; empty when the workspace has
         no usable bindings or the registry is unavailable.
     """
-    if not workspace_id:
+    from tldw_chatbook.Workspaces.models import DEFAULT_WORKSPACE_ID
+
+    if not workspace_id or workspace_id == DEFAULT_WORKSPACE_ID:
         return ()
     # TASK-1979: this function exists solely as the change-review tracker's
     # root source, so the enable gates live HERE — one choke point, read
@@ -285,9 +289,7 @@ def folder_binding_roots(workspace_id: str | None) -> tuple[Path, ...]:
                 continue
             roots.append(folder)
     except Exception:
-        logger.opt(exception=True).debug(
-            "folder_binding_roots: registry unavailable"
-        )
+        logger.opt(exception=True).debug("folder_binding_roots: registry unavailable")
         return ()
     return tuple(roots)
 
@@ -327,6 +329,37 @@ def current_run_workspace_id() -> str | None:
     return _RUN_WORKSPACE_ID.get()
 
 
+@contextmanager
+def run_file_sandbox(root: Path | None) -> Iterator[None]:
+    """Bind one run's private file-tool sandbox without changing global config.
+
+    Args:
+        root: Private sandbox root for the current run, or ``None`` to clear
+            an inherited binding within the scope.
+
+    Yields:
+        None. The wrapped block executes with ``root`` as its sandbox binding.
+    """
+
+    resolved = Path(root).resolve() if root is not None else None
+    token = _RUN_FILE_SANDBOX_ROOT.set(resolved)
+    try:
+        yield
+    finally:
+        _RUN_FILE_SANDBOX_ROOT.reset(token)
+
+
+def current_run_sandbox_root() -> Path | None:
+    """Return the private sandbox root bound to the current run, if any.
+
+    Returns:
+        The resolved sandbox root for the current run, or ``None`` when no
+        sandbox is bound.
+    """
+
+    return _RUN_FILE_SANDBOX_ROOT.get()
+
+
 def allowed_file_roots(*, write: bool, sandbox_root: Path) -> tuple[Path, ...]:
     """Sandbox root plus the run's workspace folder roots, existing-only.
 
@@ -354,12 +387,16 @@ def allowed_file_roots(*, write: bool, sandbox_root: Path) -> tuple[Path, ...]:
     """
     roots: list[Path] = [sandbox_root]
     try:
-        registry = _registry_factory()
         workspace_id = current_run_workspace_id()
+        from tldw_chatbook.Workspaces.models import DEFAULT_WORKSPACE_ID
+
+        if workspace_id == DEFAULT_WORKSPACE_ID:
+            return tuple(roots)
+        registry = _registry_factory()
         if workspace_id is None:
             active = registry.get_active_workspace()
             workspace_id = active.workspace_id if active is not None else None
-        if workspace_id is None:
+        if workspace_id is None or workspace_id == DEFAULT_WORKSPACE_ID:
             return tuple(roots)
         for binding in registry.list_folder_bindings(workspace_id):
             if write and str(binding.metadata.get("access", "ro")) != "rw":

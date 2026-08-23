@@ -67,6 +67,15 @@ application. Assert containment and compositor text, not only a child widget's
 declared height. A shortened DOM or partial stylesheet can make both overflow
 and clipping tests pass for a product path that still hides its controls.
 
+**Recurred, TASK-21161 (2026-08-23).** The shared Workspace-create modal's bare
+`App` harness omitted `WorkspaceCreateModal.BUNDLED_CSS`. Ten click-path tests
+failed on both the task branch and untouched latest `dev`: at 80 columns the
+Browse/Add controls landed at x=80/96, outside the viewport. Simply widening the
+Pilot screen to 120 made the same controls move to x=120/136, proving this was
+not a small-screen product defect; without the modal stylesheet, each default
+`1fr` child claimed another full row width. Mounting the production bundled CSS
+in the harness made all 23 modal tests pass at the default viewport.
+
 **Recurred, TASK-16478, 2026-08-15.** A picker-comparison investigation
 rendered `EnhancedFileOpen` in a bare `App` (widget DEFAULT_CSS only) and
 concluded the dialog was fine; the user's live app showed no Select/Cancel

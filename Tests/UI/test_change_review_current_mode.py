@@ -434,6 +434,7 @@ async def test_pseudo_entry_absent_without_candidate_roots(
         # CAUSE rather than asserting nothing changed. This test's subject
         # (no pseudo-entry without candidate roots) is unchanged.
         assert "No folder is bound" in screen.diff_pane_text()
+        assert "Chats still work in private scratch" in screen.diff_pane_text()
 
 
 @pytest.mark.asyncio

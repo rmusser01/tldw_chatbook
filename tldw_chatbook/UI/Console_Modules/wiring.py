@@ -663,6 +663,11 @@ def build_console_controllers(
         build_provider_selection=(
             lambda session_id: screen._build_console_provider_selection(session_id)
         ),
+        scratch_snapshot_provider=(
+            lambda session_id: screen._console_runtime().scratch_spaces.snapshot(
+                session_id
+            )
+        ),
         rag_source_types_accessor=rag_source_types_accessor,
         rag_top_k_accessor=rag_top_k_accessor,
         sync_native_console_chat_ui=lambda: screen._sync_native_console_chat_ui(),

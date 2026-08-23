@@ -96,8 +96,9 @@ appears above the transcript:
 - Watch the badges on a row's header: **(definition changed)** means the
   tool's definition differs from what you previously approved; **(high risk)**
   flags reads that could exfiltrate file contents; and a path warning —
-  "path outside allowed folders; will fail even if approved" — means the file
-  path will be rejected regardless of your decision.
+  "path outside private scratch and bound Workspace folders; will fail even
+  if approved" — means the file path will be rejected regardless of your
+  decision.
 
 An armed approval card does not expire — the run waits for your decision
 however long you take. Stopping the run or closing the session withdraws a
@@ -995,6 +996,36 @@ in a conversation you were not watching, that session's tab shows the
 finished-and-unvisited `✓` instead. Both mean "there is something here
 you haven't seen"; viewing the conversation clears either.
 
+### Local file authority
+
+Every live Console Chat owns an independent private temporary scratch space.
+No folder setup is required. Relative paths used by Chatbook's built-in file
+tools and local `fs_*`/Git tools resolve in that Chat's scratch space unless a
+named Workspace explicitly adds authority:
+
+| Console context | Built-in file tools | Local `fs_*` / Git |
+|---|---|---|
+| Chat in Default | Private scratch only | Private scratch only |
+| Named Workspace, no selected project folder | Private scratch plus live explicit folder bindings | Private scratch only |
+| Named Workspace, selected project folder | Private scratch plus live explicit folder bindings | The selected binding only |
+
+Workspace folders are optional and start read-only. Approval still applies:
+path confinement cannot turn Ask into Allow, bypass a tool kill switch, expose
+a protected credential path, or make a read-only binding writable. A denial
+outside every allowed root says that Chats do not need a folder and points to a
+named Workspace only when access to that external folder is intended.
+
+Scratch belongs to the live tab, not the saved conversation. Two tabs for the
+same conversation have different scratch spaces; closing and reopening starts
+empty. Retained skill-script output and fallback agent run logs stay with the
+owning Chat's scratch instead of a shared container. Normal cleanup is
+best-effort deletion, not secure erase. A hard crash can leave unreferenced OS
+temporary residue, but a later process never discovers or attaches it.
+
+This boundary describes Chatbook-managed local tools only. Attachments,
+Library/RAG content, generated media, provider-hosted tools, and external MCP
+servers keep their own storage and authority contracts.
+
 ### Project instructions before tools run
 
 When project instructions are enabled for a session, Chatbook treats the
@@ -1044,7 +1075,9 @@ appears above the transcript:
 - **Skill script** — "An agent wants to run a script from a skill:" with the
   target and arguments, buttons **Allow once** / **Always allow this skill** /
   **Deny**, and the note: "It runs with a scrubbed environment in a temporary
-  folder (not the skill's own folder); only its output comes back."
+  folder (not the skill's own folder); only its output comes back." Files the
+  script intentionally produces are retained inside the owning Chat's private
+  scratch space for that live session.
 
 ### MCP tools
 
@@ -1052,18 +1085,21 @@ Servers you configure on the [MCP screen](../mcp.md) 🚧 surface in Console as
 extra tools the agent can call. The Inspector's **MCP** row (under Tools)
 shows their state: "N tools ready", or "N servers enabled, not connected" when
 servers are configured but unreachable. MCP tool calls go through the same
-"Approval required" card as everything else.
+"Approval required" card as everything else. An external MCP server is not
+confined by the Chatbook-local scratch boundary unless that server implements
+an equivalent boundary itself; review its arguments and permission policy.
 
 ### Web research tools
 
 Console's standard web tools are `web_search` (find links), `web_fetch`
 (extract one URL), and `web_crawl` (bounded same-host crawl). They are local
 agent tools, not tools supplied by an external MCP server. They are registered
-by default. Configure the master switch and confinement directory in **MCP →
-Tools → Local workspace, web, and Watchlists tools**, then choose Allow, Ask, or Off for each
-tool in MCP Permissions. Master/root changes apply to the next Console agent
-run. `[mcp] expose_local_tools` is only for external MCP clients and does not
-enable these tools in Console.
+by default. Configure their master switch in **MCP → Tools → Local workspace,
+web, and Watchlists tools**, then choose Allow, Ask, or Off for each tool in MCP
+Permissions. Console file authority comes from the Chat's private scratch plus
+explicit Workspace bindings, not a global confinement-directory field.
+`[mcp] expose_local_tools` is only for external MCP clients and does not enable
+these tools in Console.
 
 Web-tool results are ephemeral. To persist a page in Library, use **Library →
 Import…** and submit its URL; Console does not advertise the retired
@@ -1710,19 +1746,15 @@ without which `diff.external` rendered `TOTALLY FABRICATED DIFF OUTPUT`
 and a constant-output textconv driver rendered 0 bytes for a file the
 same read counted as `1 1`. One correction against this task's own brief: the
 brief described the live workspace root as driven by `[console]
-workspace_root`; on a real mounted Console session that config key is
-NOT what feeds `current` mode's live candidate root — the wired
-`_turn_context_provider`
-(`UI/Console_Modules/session.py`'s `_build_console_turn_execution_context`)
-derives it from the conversation's WORKSPACE folder bindings instead
-(`Tools/workspace_file_roots.py`'s `folder_binding_roots`), the same
-roots the change-tracker itself tracks a turn's writes against; the
-`[console] workspace_root`-only fallback in
-`Chat/console_chat_controller.py`'s `resolve_turn_execution_context`
-only runs for a controller built without that override, which a
-mounted `ChatScreen` never is. This page describes the folder-binding
-source; see [Sessions, tabs & workspaces](sessions-tabs-workspaces.md)
-for where those bindings are set. One thing this pass could NOT verify:
+workspace_root`; that config key is not Console authority. The mounted
+Console derives external roots from the conversation's explicit Workspace
+folder bindings (`Tools/workspace_file_roots.py`'s `folder_binding_roots`),
+and ADR-082 later removed the compatibility controller's config/cwd fallback
+as well: every Console Chat now starts from private scratch. This page
+describes that current authority source; see
+[Sessions, tabs & workspaces](sessions-tabs-workspaces.md) for where folders
+are optionally bound. One
+thing this pass could NOT verify:
 whether `current` mode is reachable at all from a conversation on the
 **Default** workspace, since `Workspaces/registry_service.py` refuses
 runtime bindings ("Default workspace does not allow runtime bindings")

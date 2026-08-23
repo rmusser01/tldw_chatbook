@@ -22,7 +22,7 @@ from concurrent.futures import TimeoutError as FuturesTimeoutError
 from collections.abc import Mapping
 from dataclasses import dataclass, replace as dataclass_replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Sequence
+from typing import TYPE_CHECKING, Any, Callable, ContextManager, Sequence
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -84,6 +84,7 @@ from tldw_chatbook.Agents.native_tools import provider_supports_native_tools
 from tldw_chatbook.Agents.agent_stream import StreamGate
 from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator, FleetHandle
 from tldw_chatbook.Agents.local_tool_provider import (
+    LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
     LOCAL_DENY_REFUSAL,
     LOCAL_GATE_ERROR_REFUSAL,
     LOCAL_KILL_SWITCH_REFUSAL,
@@ -441,6 +442,7 @@ def console_run_budget() -> RunBudget:
             MIN_CONSOLE_AGENT_MAX_TOOL_CALL_SECONDS,
         ),
     )
+
 
 _QUIET_STEP_TOOLS = {FIND_TOOLS_NAME, LOAD_TOOLS_NAME}
 
@@ -1008,9 +1010,7 @@ _TOOL_CALL_SHAPE_RE = re.compile(
     re.IGNORECASE | re.VERBOSE,
 )
 
-_THINKING_PROVING_STEP_KINDS = frozenset(
-    {STEP_TOOL_CALL, STEP_SPAWN, STEP_TOOL_RESULT}
-)
+_THINKING_PROVING_STEP_KINDS = frozenset({STEP_TOOL_CALL, STEP_SPAWN, STEP_TOOL_RESULT})
 
 
 def safe_intermediate_thinking_summary(summary: str | None) -> str | None:
@@ -1132,12 +1132,8 @@ class _PendingPrimaryThinkingDeriver:
 
 _BUILTIN_KILL_SWITCH_REFUSAL = "tool execution is disabled by the kill switch"
 _BUILTIN_DENY_REFUSAL_PREFIX = "tool is set to Off: "
-_BUILTIN_UNRESOLVED_REFUSAL_PREFIX = (
-    "tool requires approval and none was granted: "
-)
-_CONTROLLER_USER_DENIED_PREFIX = CONTROLLER_USER_DENIED_REFUSAL.partition(
-    "{name}"
-)[0]
+_BUILTIN_UNRESOLVED_REFUSAL_PREFIX = "tool requires approval and none was granted: "
+_CONTROLLER_USER_DENIED_PREFIX = CONTROLLER_USER_DENIED_REFUSAL.partition("{name}")[0]
 _BLOCKED_PROVIDER_REFUSALS = frozenset(
     {
         _BUILTIN_KILL_SWITCH_REFUSAL,
@@ -1146,6 +1142,7 @@ _BLOCKED_PROVIDER_REFUSALS = frozenset(
         LOCAL_KILL_SWITCH_REFUSAL,
         LOCAL_GATE_ERROR_REFUSAL,
         LOCAL_ROOT_CHANGED_REFUSAL,
+        LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
         MCP_DENY_REFUSAL,
         MCP_USER_DENY_REFUSAL,
         MCP_UNRESOLVED_REFUSAL,
@@ -1711,9 +1708,7 @@ class FleetDrainFanout:
         self._lock = threading.Lock()
         self._consumers: list[tuple[str, Callable[[FleetDrained], None]]] = []
 
-    def register(
-        self, name: str, consumer: Callable[[FleetDrained], None]
-    ) -> None:
+    def register(self, name: str, consumer: Callable[[FleetDrained], None]) -> None:
         """Register a consumer for the life of the owning bridge.
 
         Registration is BRIDGE-lifetime, not turn-scoped, because the
@@ -2831,6 +2826,8 @@ def _compose_run_registry_and_allowed(
     workspace_id: str | None = None,
     ephemeral: bool = False,
     diff_sink: Callable[[tuple[str, str, str, str]], None] | None = None,
+    scratch_root: Path | None = None,
+    scratch_lease: Callable[[], ContextManager[Path]] | None = None,
     local_provider: Any | None = None,
     library_provider: Any | None = None,
 ) -> tuple[ToolCatalogRegistry, tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
@@ -2892,6 +2889,10 @@ def _compose_run_registry_and_allowed(
         diff_sink: TASK-1366 -- this run's UI-side diff channel, threaded
             into the freshly-constructed ``BuiltinToolProvider`` (see its
             ``__init__``). ``None`` (the default) means no diff capture.
+        scratch_root: Canonical private file sandbox captured for this live
+            Console session. ``None`` preserves legacy non-Console callers.
+        scratch_lease: Context manager factory that keeps ``scratch_root``'s
+            generation live through each complete filesystem access.
         local_provider: This run's already-composed local tool provider
             (``LocalToolProvider``), or ``None`` when local tools are
             disabled this run.
@@ -2919,12 +2920,16 @@ def _compose_run_registry_and_allowed(
         skill-runner name set's collision filtering in agreement with the
         registry built here.
     """
+    if (scratch_root is None) != (scratch_lease is None):
+        raise ValueError("Console scratch root and lease must be supplied together")
     registry = ToolCatalogRegistry(ephemeral=ephemeral)
     builtin_provider = BuiltinToolProvider(
         gate=builtin_gate,
         workspace_id=workspace_id,
         ephemeral=ephemeral,
         diff_sink=diff_sink,
+        sandbox_root=scratch_root,
+        sandbox_lease=scratch_lease,
     )
     registry.register_provider(builtin_provider)
     builtin_names = tuple(entry.name for entry in builtin_provider.list_catalog())
@@ -2999,6 +3004,15 @@ class ConsoleFirstRequestPlan:
     api_endpoint: str
 
 
+@dataclass(frozen=True, slots=True)
+class _ConsoleRunLogAuthority:
+    """Live, process-local authority for one Console run-log tree."""
+
+    session_id: str
+    root: Path
+    access_scope: Callable[[], ContextManager[Path]]
+
+
 def build_console_first_request_plan(
     *,
     shared_registry: ToolCatalogRegistry,
@@ -3012,6 +3026,8 @@ def build_console_first_request_plan(
     workspace_id: str | None,
     ephemeral: bool,
     diff_sink: Callable[[tuple[str, str, str, str]], None] | None,
+    scratch_root: Path | None,
+    scratch_lease: Callable[[], ContextManager[Path]] | None,
     resolution: Any,
     fallback_model: str,
     session_system_prompt: str,
@@ -3029,6 +3045,8 @@ def build_console_first_request_plan(
         or builtin_gate is not None
         or local_provider is not None
         or library_provider is not None
+        or scratch_root is not None
+        or scratch_lease is not None
     )
     if fresh:
         registry, allowed_tools, builtin_names, local_names = (
@@ -3039,6 +3057,8 @@ def build_console_first_request_plan(
                 workspace_id=workspace_id,
                 ephemeral=ephemeral,
                 diff_sink=diff_sink,
+                scratch_root=scratch_root,
+                scratch_lease=scratch_lease,
                 local_provider=local_provider,
                 library_provider=library_provider,
             )
@@ -3087,8 +3107,7 @@ def build_console_first_request_plan(
         native_tools=native_tools,
         workspace_context_note=workspace_context_note(workspace_id),
         response_reserve_tokens=(
-            getattr(resolution, "max_tokens", None)
-            or DEFAULT_RESPONSE_RESERVATION
+            getattr(resolution, "max_tokens", None) or DEFAULT_RESPONSE_RESERVATION
         ),
     )
     messages = agent_messages
@@ -3253,6 +3272,8 @@ class ConsoleAgentBridge:
         #: the newest turn's primary run. Only `run_reply` writes it.
         self._live_primary_keys: dict[str, str] = {}
         self._historical_cache: dict[str, AgentLiveSnapshot] = {}
+        self._run_log_authorities: dict[str, _ConsoleRunLogAuthority] = {}
+        self._run_log_authority_lock = threading.Lock()
         # PR2b Task 1: published for the DURATION of one `run_reply` call
         # -- set right before `service.run_turn(...)` is invoked (below),
         # popped in the same `finally` that already tears that run down.
@@ -3467,6 +3488,8 @@ class ConsoleAgentBridge:
         mcp_provider: Any | None = None,
         builtin_gate: Any | None = None,
         local_provider: Any | None = None,
+        scratch_root: Path | None = None,
+        scratch_lease: Callable[[], ContextManager[Path]] | None = None,
         turn_skill_bindings: tuple[str, ...] = (),
         turn_bundle_block: str = "",
         request_skill_install_enabled: bool = False,
@@ -3511,6 +3534,8 @@ class ConsoleAgentBridge:
             workspace_id=workspace_id,
             ephemeral=ephemeral,
             diff_sink=None,
+            scratch_root=scratch_root,
+            scratch_lease=scratch_lease,
             resolution=resolution,
             fallback_model=fallback_model,
             session_system_prompt=session_system_prompt,
@@ -3518,8 +3543,7 @@ class ConsoleAgentBridge:
             turn_skill_bindings=turn_skill_bindings,
             turn_bundle_block=turn_bundle_block,
             install_skill_enabled=bool(
-                self._skills_service is not None
-                and request_skill_install_enabled
+                self._skills_service is not None and request_skill_install_enabled
             ),
             run_skill_script_enabled=script_tool_enabled,
             agent_messages=agent_messages,
@@ -3574,6 +3598,8 @@ class ConsoleAgentBridge:
         supersede_previous: bool = False,
         mcp_provider: Any | None = None,
         builtin_gate: Any | None = None,
+        scratch_root: Path | None = None,
+        scratch_lease: Callable[[], ContextManager[Path]] | None = None,
         # PR2a Task 5: `(calls, run_id)` -- forwarded straight to
         # `AgentService(review_tool_calls=...)`, which binds each run's own
         # id in before handing it to `LoopDeps`.
@@ -3604,9 +3630,7 @@ class ConsoleAgentBridge:
         continuation_target: ContinuationRestoreTarget | None = None,
         continuation_owner_key: str | None = None,
         startup_instruction_candidate: StartupInstructionCandidate | None = None,
-        confirm_project_instruction_dispatch: Callable[
-            [InstructionSnapshot], str
-        ]
+        confirm_project_instruction_dispatch: Callable[[InstructionSnapshot], str]
         | None = None,
         on_project_instruction_activation: Callable[
             [ProjectInstructionActivationEvent], None
@@ -3735,6 +3759,8 @@ class ConsoleAgentBridge:
             workspace_id=run_workspace_id,
             ephemeral=run_is_ephemeral,
             diff_sink=pending_diffs.append,
+            scratch_root=scratch_root,
+            scratch_lease=scratch_lease,
             resolution=resolution,
             fallback_model=model,
             session_system_prompt=session_system_prompt,
@@ -3795,13 +3821,12 @@ class ConsoleAgentBridge:
                 finally:
                     if decision != "proceed":
                         project_instruction_context.discard_primary_snapshot()
+
         if self._skills_service is not None:
             skill_file_bindings = SkillFileBindings(
                 authorized=set(),
                 reader=lambda skill_name, path: asyncio.run(
-                    self._skills_service.read_skill_file(
-                        skill_name, path, mode="local"
-                    )
+                    self._skills_service.read_skill_file(skill_name, path, mode="local")
                 ),
             )
             skill_runner = _BridgeSkillRunner(
@@ -3976,9 +4001,26 @@ class ConsoleAgentBridge:
                                 "Failed to persist skill script grant"
                             )
                 try:
-                    outcome = asyncio.run(
-                        scope.run_skill_script(skill_name, script_path, list(args))
-                    )
+                    if scratch_root is not None and scratch_lease is not None:
+                        with scratch_lease():
+                            outcome = asyncio.run(
+                                scope.run_skill_script(
+                                    skill_name,
+                                    script_path,
+                                    list(args),
+                                    output_root=(
+                                        scratch_root / "skill_script_output"
+                                    ),
+                                )
+                            )
+                    else:
+                        outcome = asyncio.run(
+                            scope.run_skill_script(
+                                skill_name,
+                                script_path,
+                                list(args),
+                            )
+                        )
                 except Exception as exc:  # noqa: BLE001
                     return ToolResult(ok=False, error=f"run_skill_script: {exc}")
 
@@ -4005,7 +4047,17 @@ class ConsoleAgentBridge:
                     lines.append(
                         f"produced {len(outcome.output_files)} file(s): {listed}"
                     )
-                    lines.append(f"output directory: {outcome.output_dir}")
+                    display_output_dir = str(outcome.output_dir)
+                    if scratch_root is not None and outcome.output_dir is not None:
+                        try:
+                            display_output_dir = str(
+                                Path(outcome.output_dir)
+                                .resolve()
+                                .relative_to(scratch_root.resolve())
+                            )
+                        except ValueError:
+                            display_output_dir = "private scratch output"
+                    lines.append(f"output directory: {display_output_dir}")
                 return ToolResult(ok=True, content="\n".join(lines))
 
         # One event loop for the whole run (PR #629 Fix 1(c)): every turn
@@ -4156,9 +4208,7 @@ class ConsoleAgentBridge:
                         session_id,
                         thinking_marker.content,
                         full_output=thinking_marker.tool_output_full,
-                        activity_presentation=(
-                            thinking_marker.activity_presentation
-                        ),
+                        activity_presentation=(thinking_marker.activity_presentation),
                     )
                 if step.kind == STEP_SPAWN:
                     # PR2b Task 2: this is this run's ONLY source of rows
@@ -4323,6 +4373,29 @@ class ConsoleAgentBridge:
                     return {}
                 return _inner_review(calls, run_id)
 
+        run_log_writer = None
+        if scratch_root is not None and scratch_lease is not None:
+            from tldw_chatbook.Agents.run_log import RunLogWriter, resolve_log_root
+
+            run_log_root: Path | None = None
+            try:
+                with scratch_lease():
+                    run_log_root = resolve_log_root(
+                        sandbox_root=scratch_root,
+                        workspace_id=run_workspace_id,
+                    )
+            except Exception:  # noqa: BLE001 -- writer will fail closed on lease
+                run_log_root = None
+            run_log_writer = RunLogWriter(
+                root=run_log_root or scratch_root,
+                access_scope=scratch_lease,
+                on_bound=functools.partial(
+                    self._remember_run_log_authority,
+                    session_id=session_id,
+                    access_scope=scratch_lease,
+                ),
+            )
+
         service = AgentService(
             self._db,
             registry,
@@ -4335,6 +4408,7 @@ class ConsoleAgentBridge:
             review_state_scope=review_state_scope,
             install_skill_tool=install_skill_tool,
             run_skill_script_tool=run_skill_script_tool,
+            run_log_writer=run_log_writer,
             run_log_request_plan=first_request_plan.run_log,
             revoke_approvals=revoke_approvals,
             persist_provider_continuation=(
@@ -4672,9 +4746,7 @@ class ConsoleAgentBridge:
                         self._store.append_message(
                             session_id,
                             role=ConsoleMessageRole.TOOL,
-                            content=format_diff_feedback_disclosure(
-                                disclosed_notes
-                            ),
+                            content=format_diff_feedback_disclosure(disclosed_notes),
                             activity_presentation=ConsoleActivityPresentation(
                                 "feedback", "Feedback delivered", "done"
                             ),
@@ -5221,12 +5293,10 @@ class ConsoleAgentBridge:
         # same way -- construction for a new coordinator, an in-place
         # re-size for an existing one. Replacing the coordinator would
         # drop the retained transcripts along with every live handle.
-        retained_transcripts = (
-            agent_service_module._coerce_retained_transcripts(
-                agent_service_module._setting(
-                    agent_service_module.RETAINED_TRANSCRIPTS_KEY,
-                    agent_service_module.DEFAULT_RETAINED_TRANSCRIPTS,
-                )
+        retained_transcripts = agent_service_module._coerce_retained_transcripts(
+            agent_service_module._setting(
+                agent_service_module.RETAINED_TRANSCRIPTS_KEY,
+                agent_service_module.DEFAULT_RETAINED_TRANSCRIPTS,
             )
         )
         retained_transcript_max_chars = (
@@ -5621,9 +5691,9 @@ class ConsoleAgentBridge:
             for handle in coordinator.snapshot()
             if handle.status not in TERMINAL_RUN_STATUSES
         ]
-        target = next(
-            (h for h in live if h.handle_id == row_id), None
-        ) or next((h for h in live if h.run_id == row_id), None)
+        target = next((h for h in live if h.handle_id == row_id), None) or next(
+            (h for h in live if h.run_id == row_id), None
+        )
         if target is None:
             return False
         return coordinator.post_steering(
@@ -5695,6 +5765,43 @@ class ConsoleAgentBridge:
         record = self._db.latest_primary_run_metadata(conversation_id)
         return record["id"] if record is not None else None
 
+    def _remember_run_log_authority(
+        self,
+        run_id: str,
+        root: Path,
+        *,
+        session_id: str,
+        access_scope: Callable[[], ContextManager[Path]],
+    ) -> None:
+        """Remember one live Console run-log root without persisting it."""
+        authority = _ConsoleRunLogAuthority(
+            session_id=str(session_id),
+            root=Path(root).resolve(),
+            access_scope=access_scope,
+        )
+        with self._run_log_authority_lock:
+            self._run_log_authorities[str(run_id)] = authority
+
+    def forget_session_file_authority(self, session_id: str) -> None:
+        """Forget every scratch-adjacent run-log locator for a closed Chat."""
+        target = str(session_id)
+        with self._run_log_authority_lock:
+            stale = [
+                run_id
+                for run_id, authority in self._run_log_authorities.items()
+                if authority.session_id == target
+            ]
+            for run_id in stale:
+                self._run_log_authorities.pop(run_id, None)
+
+    def _run_log_authority_for(
+        self,
+        owner_run_id: str,
+    ) -> _ConsoleRunLogAuthority | None:
+        """Return a process-local authority snapshot for one primary run."""
+        with self._run_log_authority_lock:
+            return self._run_log_authorities.get(str(owner_run_id))
+
     def _owning_run_id_for_log(self, run_id: str) -> str:
         """Return the run id whose ON-DISK log directory holds ``run_id``'s records.
 
@@ -5756,14 +5863,29 @@ class ConsoleAgentBridge:
         from tldw_chatbook.Agents.run_log import resolve_existing_log_dir
 
         owner_run_id = self._owning_run_id_for_log(run_id)
-        log_dir = resolve_existing_log_dir(owner_run_id)
-        if log_dir is None:
+        authority = self._run_log_authority_for(owner_run_id)
+        if self._store is not None and authority is None:
             return False
-        if owner_run_id == run_id:
-            return True
-        from tldw_chatbook.Agents.run_log_search import load_records
+        try:
+            access_scope = (
+                authority.access_scope if authority is not None else contextlib.nullcontext
+            )
+            with access_scope():
+                log_dir = resolve_existing_log_dir(
+                    owner_run_id,
+                    root=(authority.root if authority is not None else None),
+                )
+                if log_dir is None:
+                    return False
+                if owner_run_id == run_id:
+                    return True
+                from tldw_chatbook.Agents.run_log_search import load_records
 
-        return any(record.run_id == run_id for record in load_records(log_dir))
+                return any(
+                    record.run_id == run_id for record in load_records(log_dir)
+                )
+        except Exception:  # noqa: BLE001 -- stale authority fails closed
+            return False
 
     def load_run_log_text(self, run_id: str) -> str:
         """Render ``run_id``'s full, untruncated run log for display.
@@ -5810,10 +5932,23 @@ class ConsoleAgentBridge:
         from tldw_chatbook.Agents.run_log_search import format_results, load_records
 
         owner_run_id = self._owning_run_id_for_log(run_id)
-        log_dir = resolve_existing_log_dir(owner_run_id)
-        if log_dir is None:
+        authority = self._run_log_authority_for(owner_run_id)
+        if self._store is not None and authority is None:
             return ""
-        records = load_records(log_dir)
+        try:
+            access_scope = (
+                authority.access_scope if authority is not None else contextlib.nullcontext
+            )
+            with access_scope():
+                log_dir = resolve_existing_log_dir(
+                    owner_run_id,
+                    root=(authority.root if authority is not None else None),
+                )
+                if log_dir is None:
+                    return ""
+                records = load_records(log_dir)
+        except Exception:  # noqa: BLE001 -- stale authority fails closed
+            return ""
         if owner_run_id != run_id:
             records = [record for record in records if record.run_id == run_id]
         if not records:

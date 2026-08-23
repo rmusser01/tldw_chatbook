@@ -68,8 +68,8 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 16,
-      "diagnostic_digest": "10b283947607979eb8f4",
+      "call_count": 20,
+      "diagnostic_digest": "528c861ee923ba1a23bb",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Agents/run_log.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -243,8 +243,8 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 47,
-      "diagnostic_digest": "1ddb75a04e1f930c2768",
+      "call_count": 48,
+      "diagnostic_digest": "33db86ed851d32c29757",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Chat/console_chat_controller.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -348,10 +348,17 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 8,
-      "diagnostic_digest": "2825aaac9b91d4c3925d",
+      "call_count": 9,
+      "diagnostic_digest": "b392a3658ad70722e616",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Chat/console_runtime.py",
+      "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+    },
+    {
+      "call_count": 1,
+      "diagnostic_digest": "99d3f25bc746abb2733b",
+      "owner": "TASK-492",
+      "path": "tldw_chatbook/Chat/console_scratch_space.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
@@ -2134,7 +2141,7 @@
     },
     {
       "call_count": 9,
-      "diagnostic_digest": "6617ce6c76c5f836ff40",
+      "diagnostic_digest": "6d1577ee8cf698f7fbcd",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Tools/file_operation_tools.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -2176,7 +2183,7 @@
     },
     {
       "call_count": 5,
-      "diagnostic_digest": "6be2107e3d104205c795",
+      "diagnostic_digest": "da85c2e4d69203a1a4aa",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Tools/workspace_file_roots.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -3931,9 +3938,9 @@
   "schema_version": 2,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 532,
+    "owner_files": 533,
     "persistent_sink_files": 8,
-    "task_492_calls": 1233,
-    "task_494_calls": 7290
+    "task_492_calls": 1236,
+    "task_494_calls": 7294
   }
 }

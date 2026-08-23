@@ -18,6 +18,9 @@ Covers:
 
 from __future__ import annotations
 
+import contextlib
+import functools
+
 import pytest
 
 from tldw_chatbook.Agents import run_log as run_log_module
@@ -33,6 +36,8 @@ from tldw_chatbook.Chat.console_agent_bridge import (
     _console_tool_result_display_cap,
     format_agent_step_marker,
 )
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
@@ -256,6 +261,80 @@ def test_load_run_log_text_returns_the_full_untruncated_result(bridge, log_root)
 
     assert LONG_RESULT in text
     assert "grep_files" in text
+
+
+def test_console_bridge_does_not_find_another_sessions_scratch_log(
+    tmp_path,
+    monkeypatch,
+):
+    root_a = tmp_path / "chat-a"
+    root_b = tmp_path / "chat-b"
+    root_a.mkdir()
+    root_b.mkdir()
+    writer = RunLogWriter(
+        root=root_a,
+        access_scope=lambda: contextlib.nullcontext(root_a),
+    )
+    writer.bind("run-b")
+    writer.append(
+        run_id="run-b",
+        kind="primary",
+        type="model",
+        content="chat-a secret",
+    )
+    monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: root_a)
+    console_bridge = ConsoleAgentBridge(
+        agent_runs_db=AgentRunsDB(tmp_path / "runs-isolated.db", client_id="t"),
+        store=ConsoleChatStore(),
+        provider_gateway=None,
+    )
+    console_bridge._remember_run_log_authority(
+        run_id="run-b",
+        session_id="session-b",
+        root=root_b,
+        access_scope=lambda: contextlib.nullcontext(root_b),
+    )
+
+    assert console_bridge.run_log_available("run-b") is False
+    assert console_bridge.load_run_log_text("run-b") == ""
+
+
+def test_console_bridge_run_log_read_fails_closed_after_chat_revocation(tmp_path):
+    manager = ConsoleScratchSpaceManager(temp_parent=tmp_path)
+    snapshot = manager.snapshot("session-a")
+    console_bridge = ConsoleAgentBridge(
+        agent_runs_db=AgentRunsDB(tmp_path / "runs-revoked.db", client_id="t"),
+        store=ConsoleChatStore(),
+        provider_gateway=None,
+    )
+    access_scope = functools.partial(manager.lease, snapshot)
+    writer = RunLogWriter(
+        root=snapshot.root,
+        access_scope=access_scope,
+        on_bound=functools.partial(
+            console_bridge._remember_run_log_authority,
+            session_id="session-a",
+            access_scope=access_scope,
+        ),
+    )
+    writer.bind("run-a")
+    assert writer.append(
+        run_id="run-a",
+        kind="primary",
+        type="model",
+        content="private",
+    ) == 1
+    assert console_bridge.run_log_available("run-a") is True
+
+    with manager.lease(snapshot):
+        manager.close("session-a")
+        assert snapshot.root.exists()
+        assert console_bridge.run_log_available("run-a") is False
+        assert console_bridge.load_run_log_text("run-a") == ""
+
+    assert manager.wait_for_cleanup(timeout_seconds=2.0)
+    console_bridge.forget_session_file_authority("session-a")
+    assert console_bridge._run_log_authority_for("run-a") is None
 
 
 def test_latest_primary_run_id_resolves_the_newest_primary_run(bridge):

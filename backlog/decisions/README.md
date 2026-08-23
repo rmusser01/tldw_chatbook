@@ -73,6 +73,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-077](077-server-offloaded-scheduled-agent-tasks.md) | Accepted | tldw_server is the execution authority for server-scoped scheduled agent work (single-owner execution, notifications pass-back, phase-1 side-effect-free runs), amending ADR-018's execution-unavailable clause. |
 | [ADR-078](078-structured-agent-tool-outcome-provenance.md) | Accepted | Carry optional structured tool outcome provenance across the internal provider/runtime step boundary, with safe legacy fallback and no SQLite or external provider-wire migration. |
 | [ADR-081](081-mcp-prompt-reduction-recommendations.md) | Accepted | Keep MCP prompt-reduction recommendations local-only, MCP-only, telemetry-free, and routed through the existing permission-store APIs. |
+| [ADR-082](082-console-per-chat-private-scratch-space.md) | Accepted | Give each live Console chat private temporary scratch, remove implicit cwd/config authority, preserve explicit Workspace bindings, and defer cleanup safely around late tool threads. |
 
 ## Historical Decision Material
 
