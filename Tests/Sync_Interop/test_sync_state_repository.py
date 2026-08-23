@@ -835,7 +835,9 @@ def test_sync_v2_profile_column_migration_validates_column_identifiers(
         record_validated_column,
     )
 
-    SyncStateRepository(db_path)
+    # TASK-21105: the store opens (and migrates) on FIRST USE, not at
+    # construction; one operation is what runs the column migration now.
+    SyncStateRepository(db_path).list_identity_mappings()
 
     assert ("profile_mode", "sync_profile_state") in calls
     assert ("dry_run_metadata", "sync_profile_state") in calls

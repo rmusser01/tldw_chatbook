@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -93,12 +94,46 @@ class LocalResearchService:
         #: but confers no protection across process or instance boundaries.
         #: ``run_id -> {"lease_id", "worker_id", "leased_until", "attempts"}``.
         self._external_leases: dict[str, dict[str, Any]] = {}
-        if self.db_path is not None:
+        # TASK-21105: file-backed schema creation (tables + migrations) is
+        # deferred to first use. Construction resolves the path only; the
+        # first operation's _connect() creates the file and schema.
+        # ``:memory:`` stays eager: no disk cost, and its single cached
+        # connection must stay bound to the constructing thread, as before.
+        self._schema_ready = False
+        self._schema_lock = threading.Lock()
+        if self.db_path is not None and str(self.db_path) == ":memory:":
             self._init_schema()
+            self._schema_ready = True
+
+    def _ensure_schema(self) -> None:
+        """Create schema and apply migrations once, on first use (TASK-21105).
+
+        Single-flight under a lock so concurrent first operations cannot
+        race the executescript. A failed attempt leaves ``_schema_ready``
+        False so the next operation retries rather than latching a
+        half-built store as ready.
+        """
+        if self._schema_ready:
+            return
+        with self._schema_lock:
+            if self._schema_ready:
+                return
+            self._init_schema()
+            self._schema_ready = True
 
     def _connect(self) -> sqlite3.Connection:
         if self.db_path is None:
             raise RuntimeError("Path-backed research database is not configured.")
+        self._ensure_schema()
+        return self._open_connection()
+
+    def _open_connection(self) -> sqlite3.Connection:
+        """Open a raw connection without the first-use schema ensure.
+
+        ``_init_schema`` must use this directly: it runs inside
+        ``_ensure_schema``'s lock, and going through ``_connect`` there
+        would deadlock on the non-reentrant lock.
+        """
         if str(self.db_path) == ":memory:":
             if self._memory_conn is None:
                 self._memory_conn = connect_private_sqlite(
@@ -254,7 +289,8 @@ class LocalResearchService:
         return json.loads(value)
 
     def _init_schema(self) -> None:
-        with self._connect() as conn:
+        # Raw connection: runs under _ensure_schema's lock (TASK-21105).
+        with self._open_connection() as conn:
             conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS research_sessions (

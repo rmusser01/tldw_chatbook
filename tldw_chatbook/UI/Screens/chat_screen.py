@@ -16191,7 +16191,6 @@ class ChatScreen(BaseAppScreen):
             }
             if provider_overrides:
                 launch_kwargs["provider_overrides"] = provider_overrides
-            run = local_service.launch_run(**launch_kwargs)
             engine = LocalResearchEngine(
                 local_service,
                 search_params=search_params,
@@ -16203,6 +16202,15 @@ class ChatScreen(BaseAppScreen):
                 ),
             )
             try:
+                # TASK-21105 review fix: launch_run is the store's FIRST USE
+                # now that the research DB opens lazily, so a corrupt or
+                # unreadable database raises HERE rather than at app boot
+                # (where construction failure used to null the service and
+                # trip the unavailable-guard above). It must sit inside the
+                # worker's guard: this worker runs with Textual's default
+                # exit_on_error=True, so an unhandled raise tears down the
+                # whole app.
+                run = local_service.launch_run(**launch_kwargs)
                 await engine.execute_run(run["id"])
             except Exception as exc:  # noqa: BLE001 - worker must not crash the screen
                 logger.warning(f"Console research run failed: {exc}")
