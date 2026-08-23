@@ -8,8 +8,8 @@
 
 **Tech Stack:** Python 3.11+, Textual 8, pytest, pytest-asyncio, Backlog.md
 
-**ADR required:** no  
-**ADR path:** `backlog/decisions/020-automatic-model-catalog-refresh.md`  
+**ADR required:** no
+**ADR path:** `backlog/decisions/020-automatic-model-catalog-refresh.md`
 **Reason:** This is a lifecycle ordering bug fix that preserves ADR-020's storage, consent, and network boundaries.
 
 ---
