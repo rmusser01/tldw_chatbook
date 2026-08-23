@@ -32,7 +32,12 @@ Keep all existing gates unchanged:
 - `_refresh_model_catalogs()` continues to enforce recorded consent at the network boundary.
 - The consent modal and its persistence behavior remain unchanged.
 
-No new queue, startup coordinator, modal state, or timing delay is introduced.
+Two existing startup competitors receive explicit precedence:
+
+- When first-run setup completes with an exit route, route navigation finishes before the deferred catalog decision is scheduled. Navigation must never dismiss the consent modal with `None`, because only an explicit Yes or No may resolve this required decision.
+- When the catalog decision is still unrecorded, optional project-skills discovery is not started on that launch. Its prompt may be offered on the next launch after consent has been recorded; it may not cover consent or appear immediately after consent instead of the usable initial screen.
+
+Track only whether this launch required catalog consent so `_push_initial_screen()` can suppress the optional project-skills offer. No general modal queue, startup coordinator, or timing delay is introduced.
 
 ## Error handling
 
@@ -42,9 +47,7 @@ Existing error handling remains authoritative. A settings-load failure leaves st
 
 Add one splash-enabled full-app Textual Pilot regression. Override only the production headless suppression so the real consent modal can be exercised under `run_test()`; keep real scheduling and screen-stack behavior.
 
-Pin first-run setup as completed and suppress project-skills discovery in this regression so no unrelated startup overlay can compete with the consent screen-stack assertions.
-
-The test records screen-stack transitions and requires:
+The completed-setup launch test records screen-stack transitions and requires:
 
 - the initial splash/default screen is observed before consent;
 - the initial app screen is directly below the topmost consent modal;
@@ -52,3 +55,8 @@ The test records screen-stack transitions and requires:
 - pressing a consent action dismisses to the same usable initial screen.
 
 The test must fail against the pre-fix call site by observing the modal below the initial screen, then pass after the lifecycle move.
+
+Add focused regressions for the competing startup paths:
+
+- an eligible project-skills offer is not started on an unconsented launch, so consent dismisses directly to the initial screen;
+- completing first-run setup with a valid exit route settles on that destination before consent appears, and the callback receives no value until the user explicitly selects Yes or No.

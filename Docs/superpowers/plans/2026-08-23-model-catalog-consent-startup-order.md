@@ -44,6 +44,19 @@
 - [ ] Preserve the setup-ownership gate, one-shot guard, consent callback, persistence behavior, and refresh worker unchanged.
 - [ ] Run the new regression and confirm it passes.
 
+### Task 2A: Cover and fix competing startup overlays
+
+**Files:**
+- Modify: `Tests/UI/test_model_catalog_consent_modal.py`
+- Modify: `tldw_chatbook/app.py`
+
+- [ ] Extend the full-app consent regression to prove an eligible project-skills startup offer is deferred when catalog consent is unrecorded.
+- [ ] Add a first-run completion regression that navigates to its valid exit route before showing consent and proves no callback value is produced until Pilot clicks Yes or No.
+- [ ] Confirm both regressions fail against the current partial fix for the reviewed race conditions.
+- [ ] Record when startup scheduling selects the unrecorded-consent branch, schedule before optional project-skills discovery, and skip that optional offer for this launch.
+- [ ] Sequence completed first-run exit navigation before scheduling the deferred catalog decision; keep the same-tab Console shortcut and no-route completion behavior intact.
+- [ ] Preserve explicit consent persistence and refresh behavior unchanged, then run both regressions green.
+
 ### Task 3: Verify adjacent startup and consent behavior
 
 **Files:**
