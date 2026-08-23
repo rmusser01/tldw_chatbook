@@ -212,6 +212,8 @@ _CHILD_SPEC_KEYS = frozenset(
     }
 )
 _CHILD_SPEC_KEYS_WITH_MODE = _CHILD_SPEC_KEYS | {"mode"}
+_SCHEDULED_CHILD_SPEC_KEYS = _CHILD_SPEC_KEYS | {"schedule_position"}
+_SCHEDULED_CHILD_SPEC_KEYS_WITH_MODE = _SCHEDULED_CHILD_SPEC_KEYS | {"mode"}
 
 
 def _sha256_file(path: Path) -> str:
@@ -2524,7 +2526,12 @@ def assert_child_environment(
 
 def write_child_spec(path: Path, spec: Mapping[str, Any]) -> None:
     """Persist one parent-owned child specification with an exact schema."""
-    if set(spec) not in {_CHILD_SPEC_KEYS, _CHILD_SPEC_KEYS_WITH_MODE}:
+    if set(spec) not in {
+        _CHILD_SPEC_KEYS,
+        _CHILD_SPEC_KEYS_WITH_MODE,
+        _SCHEDULED_CHILD_SPEC_KEYS,
+        _SCHEDULED_CHILD_SPEC_KEYS_WITH_MODE,
+    }:
         raise RuntimeError("child_spec_invalid")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -2542,6 +2549,8 @@ def read_child_spec(path: Path) -> dict[str, Any]:
     if not isinstance(value, dict) or set(value) not in {
         _CHILD_SPEC_KEYS,
         _CHILD_SPEC_KEYS_WITH_MODE,
+        _SCHEDULED_CHILD_SPEC_KEYS,
+        _SCHEDULED_CHILD_SPEC_KEYS_WITH_MODE,
     }:
         raise RuntimeError("child_spec_invalid")
     mode = value.get("mode", "sample")
@@ -2555,6 +2564,13 @@ def read_child_spec(path: Path) -> dict[str, Any]:
         or value.get("arm") not in ARMS
         or value.get("phase") not in phases
         or not isinstance(value.get("iteration"), int)
+        or (
+            "schedule_position" in value
+            and (
+                not isinstance(value["schedule_position"], int)
+                or isinstance(value["schedule_position"], bool)
+            )
+        )
         or not isinstance(value.get("sample_id"), str)
         or any(
             not isinstance(value.get(key), str)
@@ -3128,16 +3144,49 @@ def resolve_benchmark_revisions(
 def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     """Parse the application-import-free parent/child benchmark CLI."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--endpoint", required=True)
-    parser.add_argument("--model", required=True)
+    parser.add_argument("--endpoint")
+    parser.add_argument("--model")
     parser.add_argument("--iterations", type=int, default=30)
-    parser.add_argument("--output-root", required=True, type=Path)
+    parser.add_argument("--output-root", type=Path)
+    parser.add_argument("--campaign-root", type=Path)
+    parser.add_argument("--burn-in-blocks", type=int, default=0)
+    parser.add_argument(
+        "--campaign-action",
+        choices=("acquire", "recover", "digest", "register-review", "promote"),
+        default="acquire",
+    )
+    parser.add_argument("--attempt-id")
+    parser.add_argument("--review-receipt", type=Path)
+    parser.add_argument("--destination", type=Path)
     parser.add_argument("--control-sha", default=CONTROL_SHA)
     parser.add_argument("--candidate-sha", default="HEAD")
     parser.add_argument("--sample-timeout", type=float, default=900.0)
     parser.add_argument("--preflight-only", action="store_true")
     parser.add_argument("--child-spec", type=Path)
-    return parser.parse_args(arguments)
+    parsed = parser.parse_args(arguments)
+    if parsed.burn_in_blocks < 0:
+        parser.error("--burn-in-blocks must be nonnegative")
+    if parsed.campaign_action == "acquire":
+        if not parsed.endpoint or not parsed.model:
+            parser.error("acquire requires --endpoint and --model")
+        if (parsed.output_root is None) == (parsed.campaign_root is None):
+            parser.error("acquire requires exactly one output root")
+        if parsed.burn_in_blocks and parsed.candidate_sha != CANDIDATE_SHA:
+            parser.error("burn-in requires the fixed candidate revision")
+    else:
+        if parsed.campaign_root is None:
+            parser.error("campaign action requires --campaign-root")
+        if parsed.output_root is not None or parsed.preflight_only or parsed.child_spec:
+            parser.error("campaign action does not accept acquisition options")
+        if parsed.campaign_action != "recover" and not parsed.attempt_id:
+            parser.error("campaign action requires --attempt-id")
+        if parsed.campaign_action in {"register-review", "promote"} and (
+            parsed.review_receipt is None
+        ):
+            parser.error("review action requires --review-receipt")
+        if parsed.campaign_action == "promote" and parsed.destination is None:
+            parser.error("promote requires --destination")
+    return parsed
 
 
 def _is_target_cleanup_namespace(name: str, entry_name: str) -> bool:
@@ -4668,6 +4717,7 @@ def run_child_mode(args: argparse.Namespace) -> int:
                 "phase": spec["phase"],
                 "iteration": spec["iteration"],
                 "arm": spec["arm"],
+                "schedule_position": spec.get("schedule_position", -1),
             },
         )
         try:
@@ -4694,6 +4744,7 @@ def run_child_mode(args: argparse.Namespace) -> int:
                         "phase": spec["phase"],
                         "iteration": spec["iteration"],
                         "arm": spec["arm"],
+                        "schedule_position": spec.get("schedule_position", -1),
                         "target_modules": target_modules,
                     }
                 )
@@ -4720,6 +4771,7 @@ def run_child_mode(args: argparse.Namespace) -> int:
                     "phase": spec["phase"],
                     "iteration": spec["iteration"],
                     "arm": spec["arm"],
+                    "schedule_position": spec.get("schedule_position", -1),
                     "target_revision_kind": adapter.revision_kind,
                     "target_modules": target_modules,
                 }
@@ -4742,6 +4794,7 @@ def run_child_mode(args: argparse.Namespace) -> int:
                     "phase": spec["phase"],
                     "iteration": spec["iteration"],
                     "arm": spec["arm"],
+                    "schedule_position": spec.get("schedule_position", -1),
                     "error_type": type(exc).__name__,
                     "error_code": safe_error_code(exc),
                     "error_origin": safe_error_origin(exc),
@@ -6099,8 +6152,86 @@ def remove_successful_sample_root(run_root: Path, sample_root: Path) -> None:
                 os.close(descriptor)
 
 
+def read_terminal_samples(raw_path: Path) -> list[dict[str, Any]]:
+    """Read only complete sample rows from one flushed raw JSONL stream."""
+    try:
+        rows = [json.loads(line) for line in raw_path.read_text().splitlines()]
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("confirmation_raw_invalid") from exc
+    if any(not isinstance(row, dict) for row in rows):
+        raise RuntimeError("confirmation_raw_invalid")
+    return [row for row in rows if row.get("event") == "sample"]
+
+
+def smoke_summary(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Return a non-statistical summary for a one-block plumbing smoke."""
+    return {
+        "overall_verdict": "smoke",
+        "validation_errors": [],
+        "sample_count": len(rows),
+        "arms": {},
+        "critical_path_improvement_claims": {},
+    }
+
+
+def _parent_child_command(
+    args: argparse.Namespace,
+    runner: Path,
+    run_root: Path,
+    revisions: Mapping[str, str],
+    spec_path: Path,
+) -> list[str]:
+    command = [
+        sys.executable,
+        str(runner),
+        "--endpoint",
+        args.endpoint,
+        "--model",
+        args.model,
+        "--iterations",
+        str(args.iterations),
+        "--output-root",
+        str(run_root),
+        "--control-sha",
+        revisions["control"],
+        "--candidate-sha",
+        revisions["candidate"],
+        "--sample-timeout",
+        str(args.sample_timeout),
+    ]
+    burn_in_blocks = getattr(args, "burn_in_blocks", 0)
+    if burn_in_blocks:
+        command.extend(("--burn-in-blocks", str(burn_in_blocks)))
+    command.extend(("--child-spec", str(spec_path)))
+    return command
+
+
+def _run_parent_child(
+    args: argparse.Namespace,
+    *,
+    runner: Path,
+    run_root: Path,
+    raw_path: Path,
+    revisions: Mapping[str, str],
+    target_root: Path,
+    sample_root: Path,
+    spec: Mapping[str, Any],
+) -> ChildResult:
+    environment = build_child_environment(os.environ, sample_root)
+    write_child_config(sample_root, endpoint=args.endpoint, model=args.model)
+    spec_path = sample_root / "child-spec.json"
+    write_child_spec(spec_path, spec)
+    return run_child_with_watchdog(
+        _parent_child_command(args, runner, run_root, revisions, spec_path),
+        evidence_path=raw_path,
+        timeout_seconds=args.sample_timeout,
+        environment=environment,
+        cwd=target_root,
+    )
+
+
 def run_parent_mode(args: argparse.Namespace) -> int:
-    """Own revisions, child lifecycles, validation, and retained smoke evidence."""
+    """Own revisions, child lifecycles, validation, and retained evidence."""
     repository_root = Path(__file__).resolve().parents[2]
     harness = current_harness_identity(repository_root)
     run_root = args.output_root.resolve()
@@ -6112,23 +6243,36 @@ def run_parent_mode(args: argparse.Namespace) -> int:
         control_ref=args.control_sha,
         candidate_ref=args.candidate_sha,
     )
-    preflight = preflight_provider(args.endpoint, args.model)
-    server_metadata = provider_server_metadata(args.endpoint, args.model)
-    runtime = runtime_metadata()
-    host_before = host_load_snapshot()
-    listener_before = listener_resource_snapshot(args.endpoint)
-    initial_listener = listener_identity(args.endpoint)
-    control_root = prepare_target_worktree(
-        repository_root,
-        run_root,
-        name="control",
-        revision=revisions["control"],
+    burn_in_blocks = getattr(args, "burn_in_blocks", 0)
+    confirmatory = burn_in_blocks > 0 or getattr(args, "campaign_root", None) is not None
+    original_evidence_hashes: Mapping[str, str] | None = (
+        verify_original_evidence(repository_root) if confirmatory else None
     )
+    schedule = (
+        sample_schedule(args.iterations, burn_in_blocks=burn_in_blocks)
+        if confirmatory
+        else sample_schedule(args.iterations)
+    )
+    runner = Path(__file__).resolve()
+    control_root: Path | None = None
     candidate_root: Path | None = None
     rows: list[dict[str, Any]] = []
-    runner = Path(__file__).resolve()
+    protocol_rows: list[dict[str, Any]] = []
     statistics_module: Any = sys.modules[__name__]
+    expected_protocol: Mapping[str, Any] | None = None
+    initial_listener: Mapping[str, Any] = {}
+    preflight: Mapping[str, Any] = {}
+    server_metadata: Mapping[str, Any] = {}
+    runtime: Mapping[str, Any] = {}
+    host_before: Mapping[str, Any] = {}
+    listener_before: Mapping[str, Any] = {}
     try:
+        control_root = prepare_target_worktree(
+            repository_root,
+            run_root,
+            name="control",
+            revision=revisions["control"],
+        )
         candidate_root = prepare_target_worktree(
             repository_root,
             run_root,
@@ -6136,62 +6280,134 @@ def run_parent_mode(args: argparse.Namespace) -> int:
             revision=revisions["candidate"],
         )
         if revisions["candidate"] == CANDIDATE_SHA:
-            load_original_protocol(candidate_root, repository_root)
+            expected_protocol = load_original_protocol(candidate_root, repository_root)
             statistics_module = load_original_runner(candidate_root)
-        for index, plan in enumerate(sample_schedule(args.iterations)):
-            verify_listener_identity(
-                args.endpoint,
-                initial_listener["fingerprint_sha256"],
-            )
-            sample_id = f"{plan.phase}-{plan.iteration}-{plan.arm}"
-            sample_root = run_root / "samples" / f"{index:03d}-{sample_id}"
-            target_root = control_root if plan.arm == "control" else candidate_root
-            environment = build_child_environment(os.environ, sample_root)
-            write_child_config(sample_root, endpoint=args.endpoint, model=args.model)
-            spec_path = sample_root / "child-spec.json"
-            write_child_spec(
-                spec_path,
-                {
+
+        if confirmatory:
+            if expected_protocol is None:
+                raise RuntimeError("confirmation_candidate_revision_mismatch")
+            for arm in ARMS:
+                target_root = control_root if arm == "control" else candidate_root
+                sample_id = f"protocol_preflight-{arm}"
+                sample_root = run_root / "samples" / sample_id
+                spec = {
+                    "mode": "protocol_preflight",
                     "sample_id": sample_id,
-                    "phase": plan.phase,
-                    "iteration": plan.iteration,
-                    "arm": plan.arm,
+                    "phase": "protocol_preflight",
+                    "iteration": -1,
+                    "arm": arm,
+                    "schedule_position": -1,
                     "target_root": str(target_root.resolve()),
                     "sample_root": str(sample_root.resolve()),
                     "run_root": str(run_root),
                     "evidence_path": str(raw_path),
-                },
+                }
+                child = _run_parent_child(
+                    args,
+                    runner=runner,
+                    run_root=run_root,
+                    raw_path=raw_path,
+                    revisions=revisions,
+                    target_root=target_root,
+                    sample_root=sample_root,
+                    spec=spec,
+                )
+                last = child.last_event
+                if (
+                    child.status != "complete"
+                    or child.returncode != 0
+                    or not isinstance(last, dict)
+                    or last.get("event") != "protocol_preflight"
+                    or last.get("arm") != arm
+                    or last.get("target_revision_kind")
+                    != ("control" if arm == "control" else "candidate")
+                    or last.get("final_ownership") != {"live_threads": 0}
+                    or not _SHA256.fullmatch(str(last.get("behavior_sha256", "")))
+                    or privacy_violations(last)
+                ):
+                    raise RuntimeError("protocol_preflight_child_failed")
+                protocol_rows.append(last)
+                remove_successful_sample_root(run_root, sample_root)
+
+            corpus_digests = {
+                str(row.get("workspace_content_tree_digest", ""))
+                for row in protocol_rows
+            }
+            permission_hashes_by_arm = {
+                arm: str(
+                    next(
+                        row.get("tool_definition_sha256", "")
+                        for row in protocol_rows
+                        if row.get("arm") == arm
+                    )
+                )
+                for arm in ARMS
+            }
+            if (
+                len(corpus_digests) != 1
+                or not _SHA256.fullmatch(next(iter(corpus_digests)))
+                or any(
+                    not _SHA256.fullmatch(value)
+                    for value in permission_hashes_by_arm.values()
+                )
+            ):
+                raise RuntimeError("protocol_preflight_contract_failed")
+            preflight = preflight_provider(args.endpoint, args.model)
+            server_metadata = provider_server_metadata(args.endpoint, args.model)
+            runtime = runtime_metadata()
+            observed_protocol = confirmation_protocol(
+                revisions=revisions,
+                provider_kind="llama_cpp",
+                provider_server=server_metadata,
+                runtime=runtime,
+                model_alias=args.model,
+                workspace_content_tree_digest=next(iter(corpus_digests)),
+                tool_definition_sha256_by_arm=permission_hashes_by_arm,
             )
-            command = [
-                sys.executable,
-                str(runner),
-                "--endpoint",
-                args.endpoint,
-                "--model",
-                args.model,
-                "--iterations",
-                str(args.iterations),
-                "--output-root",
-                str(run_root),
-                "--control-sha",
-                revisions["control"],
-                "--candidate-sha",
-                revisions["candidate"],
-                "--sample-timeout",
-                str(args.sample_timeout),
-                "--child-spec",
-                str(spec_path),
-            ]
-            child = run_child_with_watchdog(
-                command,
-                evidence_path=raw_path,
-                timeout_seconds=args.sample_timeout,
-                environment=environment,
-                cwd=target_root,
+            mismatches = protocol_mismatches(expected_protocol, observed_protocol)
+            if mismatches:
+                raise RuntimeError(mismatches[0])
+            host_before = host_load_snapshot()
+            listener_before = listener_resource_snapshot(args.endpoint)
+            initial_listener = listener_identity(args.endpoint)
+        else:
+            preflight = preflight_provider(args.endpoint, args.model)
+            server_metadata = provider_server_metadata(args.endpoint, args.model)
+            runtime = runtime_metadata()
+            host_before = host_load_snapshot()
+            listener_before = listener_resource_snapshot(args.endpoint)
+            initial_listener = listener_identity(args.endpoint)
+
+        for index, plan in enumerate(schedule):
+            verify_listener_identity(
+                args.endpoint, str(initial_listener["fingerprint_sha256"])
+            )
+            sample_id = f"{plan.phase}-{plan.iteration}-{plan.arm}"
+            sample_root = run_root / "samples" / f"{index:03d}-{sample_id}"
+            target_root = control_root if plan.arm == "control" else candidate_root
+            spec = {
+                "sample_id": sample_id,
+                "phase": plan.phase,
+                "iteration": plan.iteration,
+                "arm": plan.arm,
+                "schedule_position": index,
+                "target_root": str(target_root.resolve()),
+                "sample_root": str(sample_root.resolve()),
+                "run_root": str(run_root),
+                "evidence_path": str(raw_path),
+            }
+            child = _run_parent_child(
+                args,
+                runner=runner,
+                run_root=run_root,
+                raw_path=raw_path,
+                revisions=revisions,
+                target_root=target_root,
+                sample_root=sample_root,
+                spec=spec,
             )
             verify_listener_identity(
-                args.endpoint,
-                initial_listener["fingerprint_sha256"],
+                args.endpoint, str(initial_listener["fingerprint_sha256"])
             )
             last = child.last_event
             if (
@@ -6200,19 +6416,10 @@ def run_parent_mode(args: argparse.Namespace) -> int:
                 or not isinstance(last, dict)
                 or last.get("event") != "sample"
                 or last.get("sample_id") != sample_id
+                or last.get("schedule_position") != index
             ):
-                write_boundary_event(
-                    sys.stdout,
-                    {
-                        "event": "sample_failed",
-                        "sample_id": sample_id,
-                        "child_status": child.status,
-                        "returncode": child.returncode,
-                    },
-                )
-                return 1
-            errors = statistics_module.validate_sample(last)
-            if errors or privacy_violations(last):
+                raise RuntimeError("confirmation_sample_failed")
+            if statistics_module.validate_sample(last) or privacy_violations(last):
                 raise RuntimeError("parent_sample_validation_failed")
             rows.append(last)
             remove_successful_sample_root(run_root, sample_root)
@@ -6222,7 +6429,7 @@ def run_parent_mode(args: argparse.Namespace) -> int:
                     "event": "sample_complete",
                     "sample_id": sample_id,
                     "completed": len(rows),
-                    "scheduled": len(sample_schedule(args.iterations)),
+                    "scheduled": len(schedule),
                 },
             )
     finally:
@@ -6230,7 +6437,7 @@ def run_parent_mode(args: argparse.Namespace) -> int:
         cleanup_names = (
             ("candidate", "control")
             if candidate_root is not None
-            else ("control",)
+            else (("control",) if control_root is not None else ())
         )
         try:
             _remove_target_worktrees(
@@ -6246,11 +6453,21 @@ def run_parent_mode(args: argparse.Namespace) -> int:
                 ) from None
             raise
 
-    validation_errors = statistics_module.validate_run(
-        rows, expected_iterations=args.iterations
-    )
-    if validation_errors:
-        raise RuntimeError("parent_run_validation_failed")
+    if confirmatory:
+        terminal_rows = read_terminal_samples(raw_path)
+        errors, statistics_rows = validate_confirmation_rows(
+            terminal_rows,
+            schedule,
+            validate_sample=statistics_module.validate_sample,
+        )
+        if errors:
+            raise RuntimeError("confirmation_run_invalid")
+    else:
+        statistics_rows = rows
+    if statistics_module.validate_run(
+        statistics_rows, expected_iterations=args.iterations
+    ):
+        raise RuntimeError("original_run_validation_failed")
     corpus_digests = {
         str(row.get("workspace_content_tree_digest", "")) for row in rows
     }
@@ -6268,7 +6485,7 @@ def run_parent_mode(args: argparse.Namespace) -> int:
         permission_hashes_by_arm[arm] = next(iter(arm_hashes))
     host_after = host_load_snapshot()
     listener_after = listener_resource_snapshot(args.endpoint)
-    manifest = {
+    manifest: dict[str, Any] = {
         "schema": 1,
         "harness": harness,
         "revisions": revisions,
@@ -6277,9 +6494,7 @@ def run_parent_mode(args: argparse.Namespace) -> int:
         "temperature": REQUEST_SETTINGS["temperature"],
         "max_tokens": REQUEST_SETTINGS["max_tokens"],
         "reasoning_effort": REQUEST_SETTINGS["reasoning_effort"],
-        "stream_options": {
-            "include_usage": REQUEST_SETTINGS["include_usage"]
-        },
+        "stream_options": {"include_usage": REQUEST_SETTINGS["include_usage"]},
         "fixture_ids": {
             "turn_prompts": "task-19641-three-turn-prompts-v1",
             "tool_schema": "local:fs_write-target-definition-v1",
@@ -6299,33 +6514,39 @@ def run_parent_mode(args: argparse.Namespace) -> int:
                 "phase": item.phase,
                 "arm": item.arm,
                 "iteration": item.iteration,
+                "schedule_position": position,
             }
-            for item in sample_schedule(args.iterations)
+            for position, item in enumerate(schedule)
         ],
+        "burn_in_blocks": burn_in_blocks,
+        "burn_in_exclusion_rule": "phase == measured only",
         "preflight": preflight,
         "runtime": runtime,
         "provider_server": server_metadata,
-        "host_load": {
-            "before": host_before,
-            "after": host_after,
-        },
-        "listener_resources": {
-            "before": listener_before,
-            "after": listener_after,
-        },
+        "host_load": {"before": host_before, "after": host_after},
+        "listener_resources": {"before": listener_before, "after": listener_after},
         "listener_identity": initial_listener,
     }
-    summary = (
-        statistics_module.build_summary(rows)
+    if confirmatory:
+        manifest.update(
+            {
+                "protocol_equivalence": {"status": "passed", "mismatches": []},
+                "protocol_preflight": protocol_rows,
+                "original_harness": {
+                    "revision": ORIGINAL_HARNESS_SHA,
+                    "runner_sha256": ORIGINAL_RUNNER_SHA256,
+                },
+                "original_evidence_sha256": original_evidence_hashes,
+                "model_weight_identity": "not_retained_by_original_benchmark",
+            }
+        )
+    summary = dict(
+        statistics_module.build_summary(statistics_rows)
         if args.iterations >= 2
-        else {
-            "overall_verdict": "smoke",
-            "validation_errors": [],
-            "sample_count": len(rows),
-            "arms": {},
-            "critical_path_improvement_claims": {},
-        }
+        else smoke_summary(statistics_rows)
     )
+    summary["excluded_burn_in_sample_count"] = burn_in_blocks * len(ARMS)
+    summary["burn_in_contract_status"] = "passed"
     if privacy_violations(manifest) or privacy_violations(summary):
         raise RuntimeError("retained_evidence_privacy_violation")
     _write_json(run_root / "real-provider-three-turn.manifest.json", manifest)
@@ -6341,6 +6562,93 @@ def run_parent_mode(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_acquisition_action(args: argparse.Namespace) -> int:
+    """Hold one campaign attempt through acquisition and pending-review state."""
+    campaign_root = args.campaign_root.resolve()
+    attempt = acquire_campaign_attempt(campaign_root)
+    owned_args = argparse.Namespace(**vars(args))
+    owned_args.output_root = attempt.root
+    owned_args.attempt_id = attempt.attempt_id
+    terminal_recorded = False
+    try:
+        result = run_parent_mode(owned_args)
+        if result != 0:
+            raise RuntimeError("confirmation_acquisition_failed")
+        raw_path = attempt.root / "real-provider-three-turn.raw.jsonl"
+        summary_path = attempt.root / "real-provider-three-turn.summary.json"
+        manifest_path = attempt.root / "real-provider-three-turn.manifest.json"
+        try:
+            summary = json.loads(summary_path.read_bytes())
+            manifest = json.loads(manifest_path.read_bytes())
+            verdict = summary["overall_verdict"]
+        except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
+            raise RuntimeError("confirmation_derived_artifact_invalid") from exc
+        raw_sha256 = _sha256_file(raw_path)
+        pending = {
+            "attempt_id": attempt.attempt_id,
+            "state": "complete_pending_review",
+            "verdict": verdict,
+            "raw_sha256": raw_sha256,
+        }
+        manifest["attempt_id"] = attempt.attempt_id
+        manifest["attempt_lineage"] = [
+            *attempt_lineage(campaign_root / "attempts.jsonl"),
+            pending,
+        ]
+        _write_json(manifest_path, manifest)
+        complete_attempt_measurement(
+            campaign_root / "attempts.jsonl",
+            attempt.attempt_id,
+            verdict=verdict,
+            raw_sha256=raw_sha256,
+        )
+        terminal_recorded = True
+        return 0
+    except BaseException as primary:
+        try:
+            lineage = attempt_lineage(campaign_root / "attempts.jsonl")
+            if lineage and lineage[-1] == {
+                "attempt_id": attempt.attempt_id,
+                "state": "running",
+            }:
+                append_attempt_state(
+                    campaign_root / "attempts.jsonl",
+                    {
+                        "attempt_id": attempt.attempt_id,
+                        "state": "invalid",
+                        "reason_category": "product",
+                    },
+                )
+                terminal_recorded = True
+        except BaseException as terminal_failure:
+            raise BaseExceptionGroup(
+                "confirmation_acquisition_and_terminal_state_failed",
+                [primary, terminal_failure],
+            ) from None
+        raise
+    finally:
+        if terminal_recorded:
+            primary = sys.exception()
+            try:
+                release_campaign_attempt(campaign_root, attempt)
+            except BaseException as cleanup:
+                if primary is not None:
+                    raise BaseExceptionGroup(
+                        "confirmation_acquisition_and_release_failed",
+                        [primary, cleanup],
+                    ) from None
+                raise
+
+
+def run_campaign_maintenance_action(args: argparse.Namespace) -> int:
+    """Dispatch provider-free campaign maintenance operations."""
+    if args.campaign_action == "recover":
+        event = recover_interrupted_attempt(args.campaign_root.resolve())
+        write_boundary_event(sys.stdout, {"event": "campaign_recovered", **event})
+        return 0
+    raise RuntimeError(f"campaign_action_unavailable:{args.campaign_action}")
+
+
 def main(arguments: Sequence[str] | None = None) -> int:
     """Run the import-free preflight or dispatch parent/child benchmark mode."""
     args = parse_arguments(arguments)
@@ -6350,6 +6658,10 @@ def main(arguments: Sequence[str] | None = None) -> int:
         return 0
     if args.child_spec is not None:
         return run_child_mode(args)
+    if args.campaign_action != "acquire":
+        return run_campaign_maintenance_action(args)
+    if args.campaign_root is not None:
+        return run_acquisition_action(args)
     return run_parent_mode(args)
 
 

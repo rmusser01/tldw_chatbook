@@ -3656,6 +3656,114 @@ def test_parse_arguments_pins_safe_benchmark_defaults(tmp_path: Path) -> None:
     assert arguments.child_spec is None
 
 
+def test_parse_arguments_pins_confirmatory_campaign_defaults(tmp_path: Path) -> None:
+    arguments = profile.parse_arguments(
+        [
+            "--endpoint",
+            "http://127.0.0.1:9099",
+            "--model",
+            "fixture.gguf",
+            "--output-root",
+            str(tmp_path),
+        ]
+    )
+
+    assert arguments.campaign_action == "acquire"
+    assert arguments.campaign_root is None
+    assert arguments.burn_in_blocks == 0
+    assert arguments.attempt_id is None
+    assert arguments.review_receipt is None
+    assert arguments.destination is None
+
+
+def test_parse_arguments_accepts_confirmatory_acquisition_with_fixed_candidate(
+    tmp_path: Path,
+) -> None:
+    arguments = profile.parse_arguments(
+        [
+            "--endpoint",
+            "http://127.0.0.1:9099",
+            "--model",
+            "fixture.gguf",
+            "--campaign-root",
+            str(tmp_path),
+            "--burn-in-blocks",
+            "5",
+            "--candidate-sha",
+            profile.CANDIDATE_SHA,
+        ]
+    )
+
+    assert arguments.output_root is None
+    assert arguments.campaign_root == tmp_path
+    assert arguments.burn_in_blocks == 5
+
+
+@pytest.mark.parametrize(
+    ("action", "extra"),
+    [
+        ("recover", []),
+        ("digest", ["--attempt-id", "attempt-0001"]),
+        (
+            "register-review",
+            [
+                "--attempt-id",
+                "attempt-0001",
+                "--review-receipt",
+                "receipt.json",
+            ],
+        ),
+        (
+            "promote",
+            [
+                "--attempt-id",
+                "attempt-0001",
+                "--review-receipt",
+                "receipt.json",
+                "--destination",
+                "published",
+            ],
+        ),
+    ],
+)
+def test_campaign_actions_parse_without_provider_contact_arguments(
+    tmp_path: Path, action: str, extra: list[str]
+) -> None:
+    arguments = profile.parse_arguments(
+        [
+            "--campaign-action",
+            action,
+            "--campaign-root",
+            str(tmp_path),
+            *extra,
+        ]
+    )
+
+    assert arguments.campaign_action == action
+    assert arguments.endpoint is None
+    assert arguments.model is None
+
+
+def test_parse_arguments_rejects_incomplete_or_unpinned_acquisition(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(SystemExit):
+        profile.parse_arguments(["--output-root", str(tmp_path)])
+    with pytest.raises(SystemExit):
+        profile.parse_arguments(
+            [
+                "--endpoint",
+                "http://127.0.0.1:9099",
+                "--model",
+                "fixture.gguf",
+                "--campaign-root",
+                str(tmp_path),
+                "--burn-in-blocks",
+                "1",
+            ]
+        )
+
+
 def test_prepare_output_root_allows_only_retained_readme(tmp_path: Path) -> None:
     prepare_output_root = getattr(profile, "prepare_output_root", None)
     output = tmp_path / "evidence"
@@ -4057,7 +4165,13 @@ def test_parent_retains_harness_identity_and_splits_original_roots(
             {
                 "event": "sample",
                 "sample_id": spec["sample_id"],
+                "phase": spec["phase"],
+                "iteration": spec["iteration"],
                 "arm": spec["arm"],
+                "target_revision_kind": (
+                    "control" if spec["arm"] == "control" else "candidate"
+                ),
+                "schedule_position": spec["schedule_position"],
                 "workspace_content_tree_digest": "4" * 64,
                 "expected_permission_definition_hash": "5" * 64,
             },
@@ -4152,6 +4266,221 @@ def test_parent_preserves_primary_failure_with_cleanup_failure(
         "cleanup-failed",
     ]
     assert cleaned == [("control",)]
+
+
+def test_child_mode_retains_exact_schedule_position(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_root = tmp_path / "run"
+    sample_root = run_root / "sample"
+    target_root = tmp_path / "target"
+    evidence = run_root / "raw.jsonl"
+    sample_root.mkdir(parents=True)
+    target_root.mkdir()
+    config_path = sample_root / "config/tldw_cli/config.toml"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text("", encoding="utf-8")
+    spec_path = sample_root / "child-spec.json"
+    profile.write_child_spec(
+        spec_path,
+        {
+            "sample_id": "burn_in-0-enabled",
+            "phase": "burn_in",
+            "iteration": 0,
+            "arm": "enabled",
+            "schedule_position": 5,
+            "target_root": str(target_root),
+            "sample_root": str(sample_root),
+            "run_root": str(run_root),
+            "evidence_path": str(evidence),
+        },
+    )
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    monkeypatch.setattr(profile, "assert_child_environment", lambda *_args: None)
+    monkeypatch.setattr(profile, "install_target_root", lambda *_args: None)
+    monkeypatch.setattr(
+        profile,
+        "assert_target_modules",
+        lambda *_args: {
+            name: str(target_root / "fixture.py") for name in profile.TARGET_MODULES
+        },
+    )
+    monkeypatch.setattr(
+        profile.TargetAdapter,
+        "for_arm",
+        classmethod(
+            lambda _cls, _root, _arm: SimpleNamespace(revision_kind="candidate")
+        ),
+    )
+
+    async def mounted(*_args, **_kwargs):
+        return _valid_sample("enabled")
+
+    monkeypatch.setattr(profile, "run_mounted_sample", mounted)
+    monkeypatch.setattr(profile, "validate_sample", lambda _row: ())
+    args = SimpleNamespace(
+        child_spec=spec_path,
+        output_root=run_root,
+        endpoint="http://127.0.0.1:9099",
+        model="fixture.gguf",
+    )
+
+    assert profile.run_child_mode(args) == 0
+    rows = [json.loads(line) for line in evidence.read_text().splitlines()]
+    assert [row["schedule_position"] for row in rows] == [5, 5]
+
+
+def test_confirmatory_parent_preflights_before_samples_and_routes_exact_schedule(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "run"
+    harness = {"revision": "1" * 40, "runner_sha256": "2" * 64}
+    monkeypatch.setattr(profile, "current_harness_identity", lambda _root: harness)
+    monkeypatch.setattr(
+        profile,
+        "resolve_benchmark_revisions",
+        lambda *_args, **_kwargs: {
+            "control": profile.CONTROL_SHA,
+            "candidate": profile.CANDIDATE_SHA,
+        },
+    )
+    monkeypatch.setattr(profile, "preflight_provider", lambda *_args: {"status": "ready"})
+    monkeypatch.setattr(
+        profile,
+        "provider_server_metadata",
+        lambda *_args: {"model_alias": "fixture.gguf"},
+    )
+    monkeypatch.setattr(profile, "runtime_metadata", lambda: {"python": "fixture"})
+    monkeypatch.setattr(profile, "host_load_snapshot", lambda: {})
+    monkeypatch.setattr(profile, "listener_resource_snapshot", lambda *_args: {})
+    monkeypatch.setattr(
+        profile,
+        "listener_identity",
+        lambda *_args: {"listener_count": 1, "fingerprint_sha256": "3" * 64},
+    )
+    listener_checks: list[str] = []
+    monkeypatch.setattr(
+        profile,
+        "verify_listener_identity",
+        lambda _endpoint, fingerprint: listener_checks.append(fingerprint),
+    )
+    monkeypatch.setattr(profile, "_remove_target_worktrees", lambda *_a, **_k: None)
+
+    roots: dict[str, Path] = {}
+
+    def prepare(_repository, run_root, *, name, revision):
+        target = run_root / name
+        target.mkdir()
+        roots[name] = target
+        return target
+
+    monkeypatch.setattr(profile, "prepare_target_worktree", prepare)
+    expected_protocol = {key: key for key in profile._PROTOCOL_MISMATCH_CODES}
+    monkeypatch.setattr(
+        profile, "load_original_protocol", lambda *_args: expected_protocol
+    )
+    statistics = SimpleNamespace(
+        validate_sample=lambda _row: (),
+        validate_run=lambda _rows, **_kwargs: (),
+        build_summary=lambda rows: {
+            "overall_verdict": "pass",
+            "sample_count": len(rows),
+        },
+    )
+    monkeypatch.setattr(profile, "load_original_runner", lambda _root: statistics)
+    monkeypatch.setattr(
+        profile, "confirmation_protocol", lambda **_kwargs: expected_protocol
+    )
+    monkeypatch.setattr(profile, "protocol_mismatches", lambda *_args: ())
+
+    child_specs: list[tuple[dict[str, object], Path]] = []
+
+    def child(command, *, evidence_path, cwd, **_kwargs):
+        spec_path = Path(command[command.index("--child-spec") + 1])
+        spec = json.loads(spec_path.read_text(encoding="utf-8"))
+        child_specs.append((spec, cwd))
+        if spec.get("mode") == "protocol_preflight":
+            terminal = {
+                "event": "protocol_preflight",
+                "sample_id": spec["sample_id"],
+                "phase": spec["phase"],
+                "iteration": spec["iteration"],
+                "arm": spec["arm"],
+                "target_revision_kind": (
+                    "control" if spec["arm"] == "control" else "candidate"
+                ),
+                "workspace_content_tree_digest": "4" * 64,
+                "tool_definition_sha256": ("5" if spec["arm"] == "control" else "6") * 64,
+                "behavior_sha256": "7" * 64,
+                "final_ownership": {"live_threads": 0},
+            }
+        else:
+            terminal = _valid_sample(str(spec["arm"]), iteration=int(spec["iteration"]))
+            terminal.update(
+                {
+                    "event": "sample",
+                    "sample_id": spec["sample_id"],
+                    "phase": spec["phase"],
+                    "iteration": spec["iteration"],
+                    "arm": spec["arm"],
+                    "schedule_position": spec["schedule_position"],
+                    "workspace_content_tree_digest": "4" * 64,
+                    "expected_permission_definition_hash": (
+                        "5" if spec["arm"] == "control" else "6"
+                    )
+                    * 64,
+                }
+            )
+        with evidence_path.open("a", encoding="utf-8") as stream:
+            profile.write_boundary_event(stream, terminal)
+        return profile.ChildResult("complete", 0, terminal)
+
+    monkeypatch.setattr(profile, "run_child_with_watchdog", child)
+    args = SimpleNamespace(
+        output_root=output,
+        control_sha=profile.CONTROL_SHA,
+        candidate_sha=profile.CANDIDATE_SHA,
+        endpoint="http://127.0.0.1:9099",
+        model="fixture.gguf",
+        iterations=1,
+        burn_in_blocks=1,
+        sample_timeout=1.0,
+        attempt_id="attempt-0001",
+        campaign_root=tmp_path / "campaign",
+    )
+
+    assert profile.run_parent_mode(args) == 0
+    preflights = [spec for spec, _cwd in child_specs[:3]]
+    samples = child_specs[3:]
+    schedule = profile.sample_schedule(1, burn_in_blocks=1)
+    assert [spec["mode"] for spec in preflights] == ["protocol_preflight"] * 3
+    assert [spec["arm"] for spec in preflights] == list(profile.ARMS)
+    assert [spec["schedule_position"] for spec, _cwd in samples] == list(
+        range(len(schedule))
+    )
+    assert [cwd for spec, cwd in samples if spec["arm"] == "control"] == [
+        roots["control"]
+    ] * 3
+    assert all(
+        cwd == roots["candidate"]
+        for spec, cwd in samples
+        if spec["arm"] != "control"
+    )
+    assert len(listener_checks) == len(schedule) * 2
+    summary = json.loads(
+        (output / "real-provider-three-turn.summary.json").read_text()
+    )
+    assert summary["sample_count"] == 6
+    assert summary["excluded_burn_in_sample_count"] == 3
+    assert summary["burn_in_contract_status"] == "passed"
+    manifest = json.loads(
+        (output / "real-provider-three-turn.manifest.json").read_text()
+    )
+    assert manifest["burn_in_blocks"] == 1
+    assert manifest["protocol_equivalence"]["status"] == "passed"
+    assert [row["schedule_position"] for row in manifest["sample_schedule"]] == list(
+        range(len(schedule))
+    )
 
 
 def _listener_run(identity: str):
@@ -4698,6 +5027,91 @@ def test_main_dispatches_nonpreflight_modes(
 
     assert profile.main([*base, "--child-spec", str(child_spec)]) == 7
     assert profile.main(base) == 9
+
+
+def test_main_acquisition_owns_attempt_through_pending_review(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    campaign = tmp_path / "campaign"
+    attempt_root = campaign / "attempts/attempt-0001"
+    attempt_root.mkdir(parents=True)
+    owner = profile.CampaignLockOwner(123, "a" * 64, "b" * 64)
+    attempt = profile.CampaignAttempt("attempt-0001", attempt_root, owner)
+    calls: list[object] = []
+    monkeypatch.setattr(
+        profile,
+        "acquire_campaign_attempt",
+        lambda root: calls.append(("acquire", root)) or attempt,
+    )
+
+    def parent(args):
+        calls.append(("parent", args.output_root, args.attempt_id))
+        (args.output_root / "real-provider-three-turn.raw.jsonl").write_bytes(b"raw\n")
+        (args.output_root / "real-provider-three-turn.summary.json").write_text(
+            json.dumps({"overall_verdict": "inconclusive"}), encoding="utf-8"
+        )
+        (args.output_root / "real-provider-three-turn.manifest.json").write_text(
+            "{}", encoding="utf-8"
+        )
+        return 0
+
+    monkeypatch.setattr(profile, "run_parent_mode", parent)
+    monkeypatch.setattr(
+        profile,
+        "complete_attempt_measurement",
+        lambda ledger, attempt_id, **values: calls.append(
+            ("complete", ledger, attempt_id, values)
+        ),
+    )
+    monkeypatch.setattr(
+        profile,
+        "release_campaign_attempt",
+        lambda root, owned: calls.append(("release", root, owned)),
+    )
+
+    assert profile.main(
+        [
+            "--endpoint",
+            "http://127.0.0.1:9099",
+            "--model",
+            "fixture.gguf",
+            "--campaign-root",
+            str(campaign),
+            "--burn-in-blocks",
+            "1",
+            "--candidate-sha",
+            profile.CANDIDATE_SHA,
+        ]
+    ) == 0
+    assert [call[0] for call in calls] == ["acquire", "parent", "complete", "release"]
+    assert calls[2][3] == {
+        "verdict": "inconclusive",
+        "raw_sha256": hashlib.sha256(b"raw\n").hexdigest(),
+    }
+
+
+def test_recover_action_never_contacts_provider(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        profile,
+        "preflight_provider",
+        lambda *_args: pytest.fail("maintenance action contacted provider"),
+    )
+    monkeypatch.setattr(
+        profile,
+        "recover_interrupted_attempt",
+        lambda root: {"attempt_id": "attempt-0001", "state": "failed", "reason_category": "interrupted"},
+    )
+
+    assert profile.main(
+        [
+            "--campaign-action",
+            "recover",
+            "--campaign-root",
+            str(tmp_path),
+        ]
+    ) == 0
 
 
 def test_safe_error_code_retains_only_stable_body_free_tokens() -> None:
