@@ -4186,12 +4186,9 @@ ConsoleBoundedSection {
     height: 1fr;
     min-height: 0;
     padding: 0 1;
-    /* TASK-17651: the transcript's own frame is gone at every size (the
-       compact-mode drop from TASK-2154.1 generalized): the region frame
-       still surrounds it, and the workbench closes at the grid's bottom
-       border — the bottom stack's single separator. Keyboard focus is
-       carried by the region's column lines, recolored by the same
-       inline focus painter the rails use (TASK-359). */
+    /* TASK-20937.3: neither the transcript nor its region owns a frame
+       edge. The workbench grid closes the surface at top/bottom, while
+       Context and Inspect own the two interior dividers. */
     border: none;
     background: $ds-surface-panel;
     color: $ds-text-primary;
@@ -4218,6 +4215,12 @@ ConsoleBoundedSection {
     background: $ds-surface-panel;
     color: $ds-text-muted;
     text-style: none;
+}
+
+#console-transcript-region.console-transcript-region-focused #console-transcript-title {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 #console-native-tab-strip,
@@ -4281,7 +4284,8 @@ ConsoleBoundedSection {
 
 #console-native-transcript:focus {
     /* TASK-17651: no border in either state (stable geometry, zero rows).
-       The focused-pane indicator is the region's inline column recolor.
+       TASK-20937.3 puts the non-color pane cue on the stable title row;
+       the scrollbar recolor remains a secondary color cue.
        The global *:focus outline (core/_reset.tcss) would overpaint the
        outermost transcript CONTENT rows now that no border absorbs it —
        the reset's own documented DataTable pattern: opt out, recolor. */
@@ -5236,10 +5240,8 @@ ChatScreen.-focus #console-workbench-header {
     margin-bottom: 0;
 }
 
-/* TASK-2154.1 (LY-09): the transcript's own frame costs two rows; at 60x18
-   that leaves ZERO content rows, so the empty-state line can never paint.
-   Compact mode drops the inner frame (the region frame still surrounds the
-   transcript) and gives the rows to the content. */
+/* TASK-2154.1 (LY-09): keep the historical compact override explicit so
+   neither focus nor compact mode can resurrect the removed transcript frame. */
 #console-shell.-console-compact #console-native-transcript,
 #console-shell.-console-compact #console-native-transcript:focus {
     border: none;

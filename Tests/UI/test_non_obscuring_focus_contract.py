@@ -816,18 +816,26 @@ def test_console_composer_focus_uses_thin_input_treatment():
 
 def test_console_structural_separators_use_visible_column_line_token():
     text = AGENTIC.read_text(encoding="utf-8")
+    grid = css_block(text, "#console-workspace-grid")
     transcript_region_blocks = css_blocks(text, "#console-transcript-region")
     composer = css_block(text, "#console-native-composer")
     transcript_rule = css_block(text, ".console-transcript-rule")
 
     assert transcript_region_blocks
     assert all("$ds-grid-line" not in block for block in transcript_region_blocks)
-    assert any(
-        "border: solid $ds-column-line;" in block for block in transcript_region_blocks
+    assert all(
+        "border: solid $ds-column-line;" not in block
+        for block in transcript_region_blocks
     )
-    assert any(
-        "border: round $ds-column-line;" in block for block in transcript_region_blocks
+    assert all(
+        "border: round $ds-column-line;" not in block
+        for block in transcript_region_blocks
     )
+    assert any("border: none;" in block for block in transcript_region_blocks)
+    assert "border-top: solid $ds-grid-line;" in grid
+    assert "border-bottom: solid $ds-grid-line;" in grid
+    assert "border-left:" not in grid
+    assert "border-right:" not in grid
     # task-17651: the composer left the frame grammar — it is a dense-form
     # field with a one-column left edge, never a border box.
     assert "border: none;" in composer

@@ -527,6 +527,14 @@ def test_console_edge_ownership_rules_reach_generated_bundle() -> None:
         assert "border" not in left
         assert left["outline"] == "none"
 
+        transcript_focus = _declarations(
+            css,
+            "#console-transcript-region.console-transcript-region-focused #console-transcript-title",
+        )
+        assert transcript_focus["background"] == "$ds-focus-bg"
+        assert transcript_focus["color"] == "$ds-focus-fg"
+        assert transcript_focus["text-style"] == "bold underline"
+
 
 def test_settings_category_rules_have_source_and_bundle_integrity() -> None:
     source = _AGENTIC_SOURCE.read_text(encoding="utf-8")

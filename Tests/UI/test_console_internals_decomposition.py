@@ -3090,18 +3090,18 @@ async def test_console_empty_regions_do_not_stack_nested_terminal_frames():
 
         workbench_border = console.query_one("#console-workspace-grid").styles.border
         assert workbench_border.top[0] == "solid"
-        assert workbench_border.right[0] == "solid"
+        assert workbench_border.right[0] in {"", "none"}
         assert workbench_border.bottom[0] == "solid"
-        assert workbench_border.left[0] == "solid"
+        assert workbench_border.left[0] in {"", "none"}
 
         transcript_border = console.query_one(
             "#console-transcript-region"
         ).styles.border
         assert transcript_border.top[0] in {"", "none"}
-        assert transcript_border.right[0] == "solid"
-        # task-17651: the grid's bottom border is the single separator.
+        assert transcript_border.right[0] in {"", "none"}
+        # TASK-20937.3: transcript owns no frame edge.
         assert transcript_border.bottom[0] in {"", "none"}
-        assert transcript_border.left[0] == "solid"
+        assert transcript_border.left[0] in {"", "none"}
 
         staged_context_border = console.query_one(
             "#console-staged-context-tray"
@@ -3175,21 +3175,19 @@ async def test_console_workbench_panes_have_visible_terminal_frames():
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-grid")
 
-        # task-17651: the workbench frame closes at the grid — the grid
-        # keeps its full border, its children suppress their bottom edge,
-        # and the composer left the frame grammar entirely (dense-form
-        # left edge only).
+        # TASK-20937.3: the grid closes only the top/bottom. Each rail owns
+        # its one interior divider; transcript and composer own no shell box.
         grid_border = console.query_one("#console-workspace-grid").styles.border
         assert grid_border.top[0] == "solid"
-        assert grid_border.right[0] == "solid"
+        assert grid_border.right[0] in {"", "none"}
         assert grid_border.bottom[0] == "solid"
-        assert grid_border.left[0] == "solid"
+        assert grid_border.left[0] in {"", "none"}
 
         rail_border = console.query_one("#console-left-rail").styles.border
-        assert rail_border.top[0] == "solid"
+        assert rail_border.top[0] in {"", "none"}
         assert rail_border.right[0] == "solid"
         assert rail_border.bottom[0] in {"", "none"}
-        assert rail_border.left[0] == "solid"
+        assert rail_border.left[0] in {"", "none"}
 
         # This harness loads no app CSS, so only INLINE styles are visible
         # here: the meaningful pin is that frame.py no longer frames the
@@ -3206,10 +3204,10 @@ async def test_console_workbench_panes_have_visible_terminal_frames():
         right_handle = console.query_one("#console-inspector-rail-handle")
         assert right_handle.has_class("console-frame-solid")
         assert right_handle.region.width == 11
-        assert right_handle.content_region.width == 9
+        assert right_handle.content_region.width == 10
         handle_border = right_handle.styles.border
-        assert handle_border.top[0] == "solid"
-        assert handle_border.right[0] == "solid"
+        assert handle_border.top[0] in {"", "none"}
+        assert handle_border.right[0] in {"", "none"}
         assert handle_border.bottom[0] in {"", "none"}
         assert handle_border.left[0] == "solid"
 
@@ -3217,9 +3215,9 @@ async def test_console_workbench_panes_have_visible_terminal_frames():
             "#console-transcript-region"
         ).styles.border
         assert transcript_border.top[0] in {"", "none"}
-        assert transcript_border.right[0] == "solid"
+        assert transcript_border.right[0] in {"", "none"}
         assert transcript_border.bottom[0] in {"", "none"}
-        assert transcript_border.left[0] == "solid"
+        assert transcript_border.left[0] in {"", "none"}
 
         for selector in (
             "#console-staged-context-tray",
@@ -3240,10 +3238,8 @@ async def test_console_workbench_panes_have_visible_terminal_frames():
         right_rail = console.query_one("#console-right-rail")
         inspector_state = console.query_one("#console-run-inspector-state")
         border = right_rail.styles.border
-        assert border.top[0] == "solid", "#console-right-rail missing top frame"
-        assert border.right[0] == "solid", "#console-right-rail missing right frame"
-        # task-17651: grid children suppress their bottom edge — the grid's
-        # own bottom border closes the workbench frame.
+        assert border.top[0] in {"", "none"}, "#console-right-rail top edge"
+        assert border.right[0] in {"", "none"}, "#console-right-rail right edge"
         assert border.bottom[0] in {"", "none"}, "#console-right-rail bottom edge"
         assert border.left[0] == "solid", "#console-right-rail missing left frame"
         assert inspector_state.region.width > 0

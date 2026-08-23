@@ -174,10 +174,8 @@ async def test_switcher_arrow_keys_move_focus_through_results():
 
 
 @pytest.mark.asyncio
-async def test_f6_rail_stop_paints_accent_frame_and_restores_on_leave():
-    """TASK-359: the rail F6 stop must be as visible as the other two —
-    the inline region border swaps to the focus accent while focus is
-    inside the rail, and restores when it leaves."""
+async def test_f6_rail_stop_paints_owned_divider_and_restores_on_leave():
+    """F6 emphasizes one owned divider and a non-color control cue."""
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
@@ -195,18 +193,27 @@ async def test_f6_rail_stop_paints_accent_frame_and_restores_on_leave():
         )
         await pilot.pause()
         rail = console.query_one("#console-left-rail")
+        collapse = console.query_one("#console-context-rail-collapse")
+        before = (rail.region, rail.content_region)
 
         from textual.color import Color
 
         console._focus_console_workbench_target("console-left-rail")
         await pilot.pause()
-        assert rail.styles.border_top[1] == Color.parse(
-            CONSOLE_FOCUS_FRAME_BORDER[1]
-        )
+        assert rail.styles.border_right[1] == Color.parse(CONSOLE_FOCUS_FRAME_BORDER[1])
+        assert rail.styles.border_top[0] in {"", "none"}
+        assert rail.styles.border_bottom[0] in {"", "none"}
+        assert rail.styles.border_left[0] in {"", "none"}
+        assert collapse.styles.text_style.bold
+        assert collapse.styles.text_style.underline
+        assert (rail.region, rail.content_region) == before
 
         console._focus_console_workbench_target("console-native-composer")
         await pilot.pause()
-        assert rail.styles.border_top[1] == Color.parse(CONSOLE_FRAME_BORDER[1])
+        assert rail.styles.border_right[1] == Color.parse(CONSOLE_FRAME_BORDER[1])
+        assert not collapse.styles.text_style.bold
+        assert not collapse.styles.text_style.underline
+        assert (rail.region, rail.content_region) == before
 
 
 @pytest.mark.asyncio

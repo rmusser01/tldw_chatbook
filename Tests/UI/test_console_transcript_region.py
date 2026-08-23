@@ -200,7 +200,7 @@ async def test_transcript_region_composes_its_ids_in_the_documented_nesting():
 
 
 @pytest.mark.asyncio
-async def test_transcript_region_keeps_its_inline_sizing_and_topless_frame():
+async def test_transcript_region_keeps_inline_sizing_without_owning_frame_edges():
     host = _ready_console_host()
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
@@ -221,13 +221,13 @@ async def test_transcript_region_keeps_its_inline_sizing_and_topless_frame():
         # The main column really is the dominant pane at this width.
         assert main_column.region.width > left_rail.region.width
 
-        # TASK-17651 closes the frame at the workspace grid: the transcript
-        # keeps its side edges while suppressing both shared horizontal edges.
+        # TASK-20937.3: the transcript keeps its sizing role but owns no
+        # frame edge; the grid and rails own the surrounding separators.
         border = transcript_region.styles.border
         assert border.top[0] in {"", "none"}
-        assert border.right[0] == "solid"
+        assert border.right[0] in {"", "none"}
         assert border.bottom[0] in {"", "none"}
-        assert border.left[0] == "solid"
+        assert border.left[0] in {"", "none"}
         assert transcript_region.has_class("console-frame-solid")
 
 

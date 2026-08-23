@@ -17758,13 +17758,23 @@ class ChatScreen(BaseAppScreen):
 
     @on(DescendantFocus)
     def _paint_console_rail_focus_frame(self, event: DescendantFocus) -> None:
-        """Repaint only an edge region's owned divider while focused.
+        """Paint dimension-stable workbench focus cues.
 
         TASK-20937.3: expanded rails and collapsed handles keep the exact
         same border cells focused or unfocused. The focus class reinforces
         the owning control with bold/underline/background, so color is not
-        the only cue. The transcript owns neither divider and is not painted.
+        the only cue. The transcript owns neither divider; its class marks
+        only the stable title row.
         """
+        try:
+            transcript_region = self.query_one("#console-transcript-region")
+        except QueryError:
+            pass
+        else:
+            transcript_region.set_class(
+                self._is_descendant_or_self(event.widget, transcript_region),
+                "console-transcript-region-focused",
+            )
         for region_id, accent_edge, control_id in (
             ("console-left-rail", "right", "console-context-rail-collapse"),
             (

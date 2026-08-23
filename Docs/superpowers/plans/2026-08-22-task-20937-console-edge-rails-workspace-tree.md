@@ -332,6 +332,10 @@ Close TASK-20937.2 with exact counts and no speed claim.
 - Modify: `tldw_chatbook/UI/Screens/chat_screen.py` (existing Console frame/focus call sites and comments only)
 - Modify: `Tests/UI/test_console_shell_regions.py`
 - Modify: `Tests/UI/test_console_resize_reflow.py`
+- Modify: `Tests/UI/test_console_transcript_region.py`
+- Modify: `Tests/UI/test_console_keyboard_trust.py`
+- Modify: `Tests/UI/test_non_obscuring_focus_contract.py`
+- Modify: `Tests/UI/test_console_internals_decomposition.py`
 - Create: `Tests/UI/test_console_edge_rail_geometry.py`
 - Modify: `Tests/UI/test_css_build_integrity.py`
 - Modify: `backlog/tasks/task-20937.3 - Move-Console-rails-to-the-application-edges.md`
@@ -384,6 +388,15 @@ Restore any unrelated whitespace-only generated artifact. Never hand-edit `tldw_
 ```
 
 Assert regions are identical focused/unfocused and ADR-043 explicit-open/single-pane behavior remains unchanged.
+
+The correction pass also preserves the original transcript, keyboard-trust,
+non-obscuring-focus, and decomposition regression intents while replacing
+their obsolete full-frame expectations with ADR-081 single-divider ownership.
+These existing regression files are in the Task 3 map because the edge-rail
+implementation intentionally invalidates their old border contract; leaving
+them unchanged would make the approved behavior fail the broader focused gate.
+Add same-pilot resize compositor coverage across 150 → 120 → 100 and short
+height, plus focused collapsed-handle and transcript title-cue coverage.
 
 - [ ] **Step 5: Mutation-check and commit**
 
