@@ -389,6 +389,11 @@ from .Character_Chat.server_character_persona_service import (
 )
 from .Actor_Packs.persona_coordinator import PersonaActorPackCoordinator
 from .Actor_Packs.creation import ActorPackCreationService
+from .Actor_Packs.activation import ActorPackActivationService
+from .Actor_Packs.controller import ActorPackExportController
+from .Actor_Packs.export import ActorPackExportService
+from .Actor_Packs.import_controller import ActorPackImportController
+from .Actor_Packs.importer import ActorPackImportService
 from .Actor_Packs.repository import ActorPackRepository
 # Persona_Buddy is deliberately NOT imported at module scope (TASK-21103):
 # its controller drags Persona_Visual and PIL (1.28 s cold) onto the boot
@@ -1991,6 +1996,7 @@ def _stream_fileno(stream: Any) -> int:
 # heavy-lane cap limits how many of these parse concurrently.
 _INGEST_HEAVY_TYPES = frozenset({"audio", "video"})
 
+
 # (task 10, spec §9.1 AC 37/AC-24b) The named template errors the ingest
 # dispatch fails an item on: an unresolvable choice (deleted/renamed) and a
 # stored-invalid body refused by the validator.
@@ -2037,6 +2043,7 @@ def _template_resolution_errors() -> tuple[type[Exception], ...]:
         return ()
 
     return (TemplateResolutionError, InvalidTemplateError)
+
 
 _INGEST_LOCAL_STT_PHASE_MESSAGES: dict[WorkerPhase, str] = {
     WorkerPhase.PREPARING: "Preparing import",
@@ -2985,28 +2992,22 @@ class LibraryIngestQueueMixin:
         if chunk_enabled:
             from .Chunking.template_runtime import resolve_ingest_template
 
-            source_is_url = str(job.source_path or "").lower().startswith(
-                ("http://", "https://")
+            source_is_url = (
+                str(job.source_path or "").lower().startswith(("http://", "https://"))
             )
             resolved = resolve_ingest_template(
                 getattr(self, "media_db", None),
                 str(flat_opts.get("chunk_template") or "").strip() or None,
                 media_type=str(job.detected_type or "").strip() or None,
                 title=str(job.title or "").strip() or None,
-                filename=(
-                    None
-                    if source_is_url
-                    else PurePath(job.source_path).name
-                ),
+                filename=(None if source_is_url else PurePath(job.source_path).name),
                 url=str(job.source_path) if source_is_url else None,
             )
             from .Chunking.auto_selection import AutoDecision
 
             if isinstance(resolved, AutoDecision):
                 auto_decision = resolved
-                if resolved.tier == "template" and isinstance(
-                    resolved.template, dict
-                ):
+                if resolved.tier == "template" and isinstance(resolved.template, dict):
                     ingest_template = resolved.template
                 elif resolved.tier == "plan" and isinstance(
                     resolved.chunk_options, dict
@@ -3084,9 +3085,7 @@ class LibraryIngestQueueMixin:
             # no processor or the Chunker ever sees it.
             chunk_options["auto"] = {
                 "tier": str(auto_decision.tier),
-                "rationale": [
-                    str(line) for line in (auto_decision.rationale or [])
-                ],
+                "rationale": [str(line) for line in (auto_decision.rationale or [])],
             }
 
         options: dict[str, Any] = {
@@ -3123,9 +3122,7 @@ class LibraryIngestQueueMixin:
         # governs identically: its method is a derived default, not a user
         # choice, so the injection is skipped for it too; the auto PLAIN
         # tier keeps today's injections (it changes nothing).
-        template_active = (
-            ingest_template is not None or plan_options is not None
-        )
+        template_active = ingest_template is not None or plan_options is not None
 
         if perform_analysis:
             # Prompts remain in the persisted generic snapshot while analysis
@@ -5909,9 +5906,7 @@ class TldwCli(
 
         # --- Focus mode (task-18812) ---
         self.focus_mode = False
-        self._focus_mode_config = bool(
-            get_cli_setting("general", "focus_mode", False)
-        )
+        self._focus_mode_config = bool(get_cli_setting("general", "focus_mode", False))
         # Set by _resolve_initial_shell_route when onboarding outranks a
         # focus request at startup; restored when the wizard lands on Chat.
         self._deferred_focus_request: bool = False
@@ -6770,6 +6765,9 @@ class TldwCli(
         return result
 
     def _wire_character_persona_services(self) -> None:
+        from .DB.VisualIdentity_DB import VisualIdentityRepository
+        from .Persona_Visual.repository import PersonaVisualRepository
+
         self.server_character_persona_service = (
             ServerCharacterPersonaService.from_server_context_provider(
                 self.server_context_provider,
@@ -6799,6 +6797,42 @@ class TldwCli(
             self.actor_pack_repository,
             self.persona_actor_pack_coordinator,
         )
+        self.actor_pack_export_service = ActorPackExportService(
+            self.chachanotes_db,
+            self.local_character_persona_service,
+            self.actor_pack_repository,
+            persona_visual_repository=PersonaVisualRepository(self.chachanotes_db),
+            visual_identity_repository=VisualIdentityRepository(self.chachanotes_db),
+            profile_root=get_user_data_dir(),
+        )
+        self.actor_pack_export_controller = ActorPackExportController(
+            self.actor_pack_export_service
+        )
+        self._actor_pack_export_shutdown_task: asyncio.Task[None] | None = None
+        self.actor_pack_import_service = None
+        self.actor_pack_activation_service = None
+        self.actor_pack_import_controller = None
+        if self.chachanotes_db is not None:
+            actor_pack_profile_root = get_user_data_dir()
+            self.actor_pack_import_service = ActorPackImportService(
+                self.actor_pack_repository,
+                staging_root=actor_pack_profile_root / "actor_pack_imports",
+                profile_root=actor_pack_profile_root,
+                local_service=self.local_character_persona_service,
+            )
+            self.actor_pack_activation_service = ActorPackActivationService(
+                self.chachanotes_db,
+                self.local_character_persona_service,
+                self.actor_pack_repository,
+                self.persona_actor_pack_coordinator,
+                self.actor_pack_import_service,
+            )
+            self.actor_pack_import_controller = ActorPackImportController(
+                self.actor_pack_import_service,
+                self.actor_pack_activation_service,
+                refresh_callbacks=(self._refresh_after_actor_pack_import,),
+            )
+        self._actor_pack_import_shutdown_task: asyncio.Task[None] | None = None
         self.character_persona_scope_service = CharacterPersonaScopeService(
             local_service=self.local_character_persona_service,
             server_service=self.server_character_persona_service,
@@ -7330,11 +7364,11 @@ class TldwCli(
             # `self.scheduler_loop.request_reload` directly here would freeze
             # `None`/AttributeError in before the loop exists (same getter
             # discipline as `BriefingJobHandler`'s chachanotes_db_getter).
-            on_queue_changed=lambda: getattr(
-                self, "scheduler_loop", None
-            ).request_reload()
-            if getattr(self, "scheduler_loop", None) is not None
-            else None,
+            on_queue_changed=lambda: (
+                getattr(self, "scheduler_loop", None).request_reload()
+                if getattr(self, "scheduler_loop", None) is not None
+                else None
+            ),
         )
 
         watchlist_checks_enabled = get_cli_setting(
@@ -11908,8 +11942,7 @@ class TldwCli(
             return
         if any(reconciled.values()):
             self.loguru_logger.info(
-                f"Startup reconcile failed interrupted subscriptions work: "
-                f"{reconciled}"
+                f"Startup reconcile failed interrupted subscriptions work: {reconciled}"
             )
 
     async def _reconcile_citation_artifact_ownership(self) -> None:
@@ -12409,6 +12442,42 @@ class TldwCli(
             self._persona_buddy_shutdown_task = task
         await asyncio.shield(task)
 
+    async def _shutdown_actor_pack_export(self) -> None:
+        """Cancel and drain Actor Pack export before profile teardown."""
+
+        controller = getattr(self, "actor_pack_export_controller", None)
+        if controller is None:
+            return
+        task = getattr(self, "_actor_pack_export_shutdown_task", None)
+        if task is None:
+            task = asyncio.create_task(
+                controller.shutdown(),
+                name="shutdown_actor_pack_export",
+            )
+            self._actor_pack_export_shutdown_task = task
+        await asyncio.shield(task)
+
+    def _refresh_after_actor_pack_import(self, result: object) -> None:
+        """Fence mounted Persona Buddy state after a committed Persona import."""
+
+        if getattr(result, "actor_kind", None) == "persona":
+            self.persona_buddy_controller.invalidate_profile()
+
+    async def _shutdown_actor_pack_import(self) -> None:
+        """Cancel and drain Actor Pack import before profile teardown."""
+
+        controller = getattr(self, "actor_pack_import_controller", None)
+        if controller is None:
+            return
+        task = getattr(self, "_actor_pack_import_shutdown_task", None)
+        if task is None:
+            task = asyncio.create_task(
+                controller.shutdown(),
+                name="shutdown_actor_pack_import",
+            )
+            self._actor_pack_import_shutdown_task = task
+        await asyncio.shield(task)
+
     async def _shutdown_console_runtime(self) -> None:
         """Destroy the app-owned Console runtime exactly once, at exit.
 
@@ -12431,6 +12500,8 @@ class TldwCli(
     async def _shutdown_app_owned_lifecycles(self) -> None:
         """Drain durable app-owned work before Textual closes screen state."""
         await self._shutdown_notes_sync_runtime()
+        await self._shutdown_actor_pack_import()
+        await self._shutdown_actor_pack_export()
         # Console shutdown terminally fences every trusted Buddy producer
         # before Buddy itself closes admission and drains owned work.
         await self._shutdown_console_runtime()

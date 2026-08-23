@@ -169,6 +169,45 @@ def test_actor_payload_rejects_local_private_and_external_fields(
     _assert_category("actor_pack_actor_invalid", manifest, files)
 
 
+@pytest.mark.parametrize(
+    ("actor_kind", "actor_data"),
+    [
+        ("persona", {"name": "Guide", "mode": "invalid"}),
+        ("persona", {"name": "Guide", "is_active": {"yes": True}}),
+        ("persona", {"name": "Guide", "voice_defaults": "speaker"}),
+        ("character", {"name": "Guide", "tags": {"not": "a list"}}),
+        ("character", {"name": "Guide", "character_book": {"entries": []}}),
+        (
+            "character",
+            {
+                "name": "Guide",
+                "extensions": {"actor_pack_persona_portrait_owner": "spoofed"},
+            },
+        ),
+    ],
+)
+def test_actor_payload_rejects_values_outside_local_mutation_contracts(
+    actor_kind: str, actor_data: dict[str, object]
+) -> None:
+    payload = canonical_json(
+        {
+            "schema": "tldw.actor/v1",
+            "actor_kind": actor_kind,
+            "portable_uuid": PORTABLE_UUID,
+            "data": actor_data,
+        }
+    )
+
+    with pytest.raises(ActorPackValidationError) as caught:
+        actor_pack_contracts.validate_actor_payload(
+            payload,
+            actor_kind=actor_kind,
+            portable_uuid=PORTABLE_UUID,
+        )
+
+    assert caught.value.category == "actor_pack_actor_invalid"
+
+
 def test_character_cannot_declare_persona_runtime_section(
     minimal_character_manifest: Mapping[str, object],
     minimal_character_files: Mapping[str, bytes],

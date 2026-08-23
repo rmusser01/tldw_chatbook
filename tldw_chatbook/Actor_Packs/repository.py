@@ -112,6 +112,37 @@ class ActorPackRepository:
         except (TypeError, ValueError, UnicodeError, OverflowError):
             raise ActorPackRepositoryError("actor_pack_repository_corrupt") from None
 
+    def get_identity_by_portable_uuid(
+        self, portable_uuid: str
+    ) -> PortableActorIdentity | None:
+        """Return the one cross-kind identity owning a portable UUID."""
+
+        identity = _portable_uuid(portable_uuid)
+        try:
+            with self.db.transaction() as cursor:
+                rows = cursor.execute(
+                    """
+                    SELECT actor_kind, local_actor_id, portable_uuid,
+                           source_portable_uuid, version
+                      FROM actor_portable_identities
+                     WHERE portable_uuid = ?
+                    """,
+                    (identity,),
+                ).fetchall()
+            if not rows:
+                return None
+            if len(rows) != 1:
+                raise ActorPackRepositoryError("actor_pack_repository_corrupt")
+            return _decode_identity(rows[0])
+        except ActorPackRepositoryError:
+            raise
+        except (sqlite3.Error, CharactersRAGDBError):
+            raise ActorPackRepositoryError(
+                "actor_pack_repository_read_failed"
+            ) from None
+        except (TypeError, ValueError, UnicodeError, OverflowError):
+            raise ActorPackRepositoryError("actor_pack_repository_corrupt") from None
+
     def assign_identity(
         self,
         actor_kind: str,
@@ -208,6 +239,7 @@ class ActorPackRepository:
         intent_id: str,
         *,
         authority_guard: Callable[[], bool] | None = None,
+        sqlite_effect: Callable[[], None] | None = None,
     ) -> tuple[PortableActorIdentity, PersonaActorPackIntent]:
         """Atomically assign its Persona UUID and mark an intent committed."""
 
@@ -251,6 +283,12 @@ class ActorPackRepository:
                     identity = existing
                 else:
                     raise ActorPackRepositoryError("actor_pack_intent_state_changed")
+                if sqlite_effect is not None:
+                    if not callable(sqlite_effect):
+                        raise ActorPackRepositoryError(
+                            "actor_pack_intent_state_changed"
+                        )
+                    sqlite_effect()
                 changed = self.db.execute_query(
                     """
                     UPDATE actor_pack_persona_intents

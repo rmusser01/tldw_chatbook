@@ -79,7 +79,6 @@ _CHARACTER_FIELDS = frozenset(
         "creator",
         "character_version",
         "extensions",
-        "character_book",
     }
 )
 _PERSONA_FIELDS = frozenset(
@@ -94,6 +93,34 @@ _PERSONA_FIELDS = frozenset(
         "use_persona_state_context_default",
         "voice_defaults",
         "setup",
+    }
+)
+_PERSONA_VOICE_FIELDS = frozenset(
+    {
+        "stt_language",
+        "stt_model",
+        "tts_provider",
+        "tts_voice",
+        "confirmation_mode",
+        "voice_chat_trigger_phrases",
+        "auto_resume",
+        "barge_in",
+        "auto_commit_enabled",
+        "vad_threshold",
+        "min_silence_ms",
+        "turn_stop_secs",
+        "min_utterance_secs",
+    }
+)
+_PERSONA_SETUP_FIELDS = frozenset(
+    {
+        "status",
+        "version",
+        "run_id",
+        "current_step",
+        "completed_steps",
+        "completed_at",
+        "last_test_type",
     }
 )
 _LOCAL_ONLY_ACTOR_FIELDS = frozenset(
@@ -264,9 +291,55 @@ def validate_actor_pack_document(
         raise ActorPackValidationError("actor_pack_manifest_invalid") from None
 
 
+def validate_actor_pack_manifest(manifest: Mapping[str, Any]) -> ActorPackDocument:
+    """Validate the bounded root contract without materializing member bytes."""
+
+    try:
+        return _validate_actor_pack_manifest(manifest)
+    except ActorPackValidationError:
+        raise
+    except (
+        MemoryError,
+        OverflowError,
+        RecursionError,
+        TypeError,
+        UnicodeError,
+        ValueError,
+    ):
+        raise ActorPackValidationError("actor_pack_manifest_invalid") from None
+
+
 def _validate_actor_pack_document(
     manifest: Mapping[str, Any], files: Mapping[str, bytes]
 ) -> ActorPackDocument:
+    document = _validate_actor_pack_manifest(manifest)
+    supplied = _supplied_files(files)
+    if {item.path for item in document.files} != set(supplied):
+        raise ActorPackValidationError("actor_pack_inventory_invalid")
+    for item in document.files:
+        data = supplied[item.path]
+        if (
+            item.byte_count != len(data)
+            or item.sha256 != hashlib.sha256(data).hexdigest()
+        ):
+            raise ActorPackValidationError("actor_pack_inventory_mismatch")
+    _validate_actor_payload(
+        supplied[document.payload_path],
+        actor_kind=document.actor_kind,
+        portable_uuid=document.portable_uuid,
+    )
+    portrait = supplied[document.portrait_path]
+    if len(portrait) > MAX_PORTRAIT_BYTES or not _validate_portrait(
+        document.portrait_path, portrait
+    ):
+        raise ActorPackValidationError("actor_pack_portrait_invalid")
+    for section in document.sections:
+        if section.manifest_path not in supplied:
+            raise ActorPackValidationError("actor_pack_section_invalid")
+    return document
+
+
+def _validate_actor_pack_manifest(manifest: Mapping[str, Any]) -> ActorPackDocument:
     if not isinstance(manifest, Mapping) or set(manifest) != _MANIFEST_KEYS:
         raise ActorPackValidationError("actor_pack_manifest_invalid")
     if manifest.get("schema") != ACTOR_PACK_SCHEMA:
@@ -299,16 +372,6 @@ def _validate_actor_pack_document(
 
     sections = _sections(manifest.get("sections"), actor_kind)
     inventory = _inventory(manifest.get("files"))
-    supplied = _supplied_files(files)
-    if {item.path for item in inventory} != set(supplied):
-        raise ActorPackValidationError("actor_pack_inventory_invalid")
-    for item in inventory:
-        data = supplied[item.path]
-        if (
-            item.byte_count != len(data)
-            or item.sha256 != hashlib.sha256(data).hexdigest()
-        ):
-            raise ActorPackValidationError("actor_pack_inventory_mismatch")
     if sum(item.byte_count for item in inventory) > MAX_TOTAL_BYTES:
         raise ActorPackValidationError("actor_pack_inventory_invalid")
 
@@ -317,18 +380,6 @@ def _validate_actor_pack_document(
         raise ActorPackValidationError("actor_pack_manifest_invalid")
     if digest != actor_pack_content_digest(manifest):
         raise ActorPackValidationError("actor_pack_digest_mismatch")
-
-    _validate_actor_payload(
-        supplied[payload_path], actor_kind=actor_kind, portable_uuid=portable_uuid
-    )
-    portrait = supplied[portrait_path]
-    if len(portrait) > MAX_PORTRAIT_BYTES or not _validate_portrait(
-        portrait_path, portrait
-    ):
-        raise ActorPackValidationError("actor_pack_portrait_invalid")
-    for section in sections:
-        if section.manifest_path not in supplied:
-            raise ActorPackValidationError("actor_pack_section_invalid")
 
     return ActorPackDocument(
         schema=ACTOR_PACK_SCHEMA,
@@ -460,6 +511,145 @@ def _validate_actor_payload(
         raise ActorPackValidationError("actor_pack_actor_invalid")
     if not actor_data["name"].strip() or len(actor_data["name"]) > 200:
         raise ActorPackValidationError("actor_pack_actor_invalid")
+    _validate_actor_fields(actor_kind, actor_data)
+
+
+def _validate_actor_fields(actor_kind: str, actor_data: Mapping[str, Any]) -> None:
+    """Require values accepted by the local mutation boundary."""
+
+    try:
+        if actor_kind == "persona":
+            nullable_text = {
+                "description",
+                "archetype_key",
+                "system_prompt",
+            }
+            required_text = {"name", "personality_traits"}
+            if any(
+                actor_data[key] is not None and type(actor_data[key]) is not str
+                for key in actor_data.keys() & nullable_text
+            ) or any(
+                type(actor_data[key]) is not str
+                for key in actor_data.keys() & required_text
+            ):
+                raise ValueError
+            if "mode" in actor_data and actor_data["mode"] not in {
+                "session_scoped",
+                "persistent_scoped",
+            }:
+                raise ValueError
+            for key in actor_data.keys() & {
+                "is_active",
+                "use_persona_state_context_default",
+            }:
+                if type(actor_data[key]) is not bool:
+                    raise ValueError
+            for key in actor_data.keys() & {"voice_defaults", "setup"}:
+                if type(actor_data[key]) is not dict:
+                    raise ValueError
+            if "voice_defaults" in actor_data:
+                _validate_persona_voice_defaults(actor_data["voice_defaults"])
+            if "setup" in actor_data:
+                _validate_persona_setup(actor_data["setup"])
+            return
+        text_fields = _CHARACTER_FIELDS - {
+            "alternate_greetings",
+            "tags",
+            "extensions",
+        }
+        if any(
+            type(actor_data[key]) is not str for key in actor_data.keys() & text_fields
+        ):
+            raise ValueError
+        for key in actor_data.keys() & {"alternate_greetings", "tags"}:
+            value = actor_data[key]
+            if type(value) is not list or any(type(item) is not str for item in value):
+                raise ValueError
+        if "extensions" in actor_data:
+            extensions = actor_data["extensions"]
+            if (
+                type(extensions) is not dict
+                or "actor_pack_persona_portrait_owner" in extensions
+            ):
+                raise ValueError
+    except (ImportError, TypeError, ValueError):
+        raise ActorPackValidationError("actor_pack_actor_invalid") from None
+
+
+def _validate_persona_voice_defaults(value: Mapping[str, Any]) -> None:
+    if not set(value) <= _PERSONA_VOICE_FIELDS:
+        raise ValueError
+    for key in value.keys() & {
+        "stt_language",
+        "stt_model",
+        "tts_provider",
+        "tts_voice",
+    }:
+        if value[key] is not None and type(value[key]) is not str:
+            raise ValueError
+    if "confirmation_mode" in value and value["confirmation_mode"] not in {
+        None,
+        "always",
+        "destructive_only",
+        "never",
+    }:
+        raise ValueError
+    if "voice_chat_trigger_phrases" in value:
+        phrases = value["voice_chat_trigger_phrases"]
+        if type(phrases) is not list or any(type(item) is not str for item in phrases):
+            raise ValueError
+    for key in value.keys() & {
+        "auto_resume",
+        "barge_in",
+        "auto_commit_enabled",
+    }:
+        if value[key] is not None and type(value[key]) is not bool:
+            raise ValueError
+    bounds = {
+        "vad_threshold": (0.0, 1.0),
+        "turn_stop_secs": (0.05, 10.0),
+        "min_utterance_secs": (0.0, 10.0),
+    }
+    for key in value.keys() & bounds.keys():
+        number = value[key]
+        if number is not None and (
+            type(number) not in {int, float}
+            or not bounds[key][0] <= number <= bounds[key][1]
+        ):
+            raise ValueError
+    silence = value.get("min_silence_ms")
+    if silence is not None and (
+        type(silence) is not int or not 50 <= silence <= 10_000
+    ):
+        raise ValueError
+
+
+def _validate_persona_setup(value: Mapping[str, Any]) -> None:
+    if not set(value) <= _PERSONA_SETUP_FIELDS:
+        raise ValueError
+    if value.get("status", "not_started") not in {
+        "not_started",
+        "in_progress",
+        "completed",
+    }:
+        raise ValueError
+    version = value.get("version", 1)
+    if type(version) is not int or version < 1:
+        raise ValueError
+    run_id = value.get("run_id")
+    if run_id is not None and (type(run_id) is not str or not 1 <= len(run_id) <= 200):
+        raise ValueError
+    steps = {"archetype", "persona", "voice", "commands", "safety", "test"}
+    if value.get("current_step", "persona") not in steps:
+        raise ValueError
+    completed = value.get("completed_steps", [])
+    if type(completed) is not list or any(item not in steps for item in completed):
+        raise ValueError
+    completed_at = value.get("completed_at")
+    if completed_at is not None and type(completed_at) is not str:
+        raise ValueError
+    if value.get("last_test_type") not in {None, "dry_run", "live_session"}:
+        raise ValueError
 
 
 def _looks_like_raster(path: str, data: bytes) -> bool:
@@ -534,6 +724,16 @@ def validate_actor_portrait(path: str, data: bytes) -> None:
         raise ActorPackValidationError("actor_pack_portrait_invalid")
 
 
+def validate_actor_payload(data: bytes, *, actor_kind: str, portable_uuid: str) -> None:
+    """Validate one bounded canonical actor payload independently."""
+
+    _validate_actor_payload(
+        data,
+        actor_kind=actor_kind,
+        portable_uuid=_portable_uuid(portable_uuid),
+    )
+
+
 def _validate_json_tree(value: object) -> None:
     nodes = 0
     active: set[int] = set()
@@ -596,5 +796,7 @@ __all__ = [
     "canonical_member_order",
     "canonicalize_actor_payload",
     "validate_actor_portrait",
+    "validate_actor_payload",
     "validate_actor_pack_document",
+    "validate_actor_pack_manifest",
 ]

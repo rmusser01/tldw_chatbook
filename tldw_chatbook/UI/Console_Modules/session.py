@@ -968,6 +968,13 @@ class ConsoleSessionController:
             invalidate_actor=(str(actor_kind), str(actor_id))
         )
 
+    async def invalidate_persona_visual_identity(self, persona_id: str) -> None:
+        """Invalidate one Persona after its operational runtime changes."""
+
+        await self._refresh_character_avatar_fn(
+            invalidate_actor=("persona", str(persona_id))
+        )
+
     def _visual_identity_request_context(
         self,
     ) -> tuple[tuple[str, str, str] | None, str, str | None]:

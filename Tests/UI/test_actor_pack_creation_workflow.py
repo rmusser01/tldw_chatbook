@@ -83,6 +83,30 @@ async def test_new_actor_pack_is_distinct_and_reuses_character_editor(
         assert portrait.display is False
 
 
+async def test_import_actor_pack_is_distinct_from_legacy_character_import(
+    mock_app_instance, _stub_characters
+) -> None:
+    mock_app_instance.actor_pack_import_controller = None
+    mock_app_instance.actor_pack_import_service = None
+    app = PersonasTestApp(mock_app_instance)
+    notifications: list[tuple[str, str]] = []
+    app.notify = lambda message, severity="information", **_: notifications.append(
+        (str(message), severity)
+    )
+    async with app.run_test() as pilot:
+        screen = await _mounted(pilot)
+        legacy = screen.query_one("#personas-library-import", Button)
+        actor_pack = screen.query_one("#personas-library-import-actor-pack", Button)
+
+        assert str(legacy.label) == "Import"
+        assert str(actor_pack.label) == "Import Actor Pack"
+        assert actor_pack.region.width > 0 and actor_pack.region.height > 0
+        await pilot.click("#personas-library-import-actor-pack")
+        await pilot.pause()
+
+        assert notifications[-1] == ("Actor Pack import is unavailable.", "error")
+
+
 async def test_persona_actor_pack_uses_labelled_local_portrait_selector(
     mock_app_instance, _stub_characters, _stub_scope_service
 ) -> None:

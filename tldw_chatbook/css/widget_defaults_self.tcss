@@ -2107,6 +2107,58 @@
     }
 
 
+/* ===== WIDGET: ActorPackImportReviewDialog (Widgets/Persona_Widgets/actor_pack_import_review.py) ===== */
+
+    ActorPackImportReviewDialog {
+        align: center middle;
+    }
+
+    ActorPackImportReviewDialog #actor-pack-import-review {
+        width: 88%;
+        max-width: 92;
+        height: 90%;
+        max-height: 40;
+        background: $surface;
+        border: tall $accent;
+        padding: 1 2;
+    }
+
+    ActorPackImportReviewDialog #actor-pack-import-title {
+        height: 1;
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    ActorPackImportReviewDialog #actor-pack-import-scroll {
+        height: 1fr;
+        scrollbar-size: 1 1;
+    }
+
+    ActorPackImportReviewDialog .actor-pack-import-heading {
+        height: 1;
+        text-style: bold;
+        margin-top: 1;
+    }
+
+    ActorPackImportReviewDialog .actor-pack-import-copy {
+        height: auto;
+        text-wrap: wrap;
+    }
+
+    ActorPackImportReviewDialog #actor-pack-import-actions {
+        height: auto;
+        min-height: 3;
+        margin-top: 1;
+        align: right middle;
+    }
+
+    ActorPackImportReviewDialog #actor-pack-import-actions Button {
+        width: auto;
+        min-width: 11;
+        margin-left: 1;
+    }
+
+
 /* ===== WIDGET: PersonaBuddyWidget (Widgets/Persona_Widgets/persona_buddy_widget.py) ===== */
 
     PersonaBuddyWidget {
