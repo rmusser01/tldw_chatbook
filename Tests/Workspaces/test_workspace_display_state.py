@@ -86,7 +86,7 @@ def test_console_workspace_state_explains_no_active_workspace(tmp_path: Path) ->
     assert state.change_workspace_enabled is False
     assert state.new_conversation_enabled is True
     assert state.new_conversation_recovery == ""
-    assert state.runtime_label == "Runtime: none, file tools disabled"
+    assert state.runtime_label == "Local file tools: Private scratch"
     assert state.recovery_copy == ""
     assert state.server_readiness_label == "Server: local fallback"
     assert service.list_runtime_bindings(DEFAULT_WORKSPACE_ID) == ()
@@ -107,6 +107,7 @@ def test_console_workspace_state_allows_default_conversation_in_fallback_state(
     assert state.new_conversation_enabled is True
     assert state.new_conversation_recovery == ""
     assert state.recovery_copy == "Workspace switching: locked"
+    assert state.runtime_label == "Local file tools: Private scratch"
 
 
 def test_console_workspace_state_reports_active_workspace_and_runtime(
@@ -146,7 +147,7 @@ def test_console_workspace_state_reports_active_workspace_and_runtime(
     assert state.workspace_label == "Workspace: Research Sprint"
     assert state.authority_label == "Authority: local-only"
     assert state.sync_label == "Sync: dry-run only"
-    assert state.runtime_label == "Runtime: 1 binding, 0 ready"
+    assert state.runtime_label == "Local file tools: Private scratch"
     assert state.conversation_rows[0].title == "Planning thread"
     assert state.conversation_rows[0].selected is True
     assert state.change_workspace_enabled is False
@@ -177,7 +178,7 @@ def test_console_workspace_state_recomputes_stale_filesystem_binding_status(
         registry_service=service,
         current_conversation=None,
     )
-    assert state.runtime_label == "Runtime: 1 binding, 1 ready"
+    assert state.runtime_label == "Local file tools: Private scratch + 1 folder"
 
     folder.rmdir()
 
@@ -185,7 +186,8 @@ def test_console_workspace_state_recomputes_stale_filesystem_binding_status(
         registry_service=service,
         current_conversation=None,
     )
-    assert state.runtime_label == "Runtime: 1 binding, 0 ready, 1 missing"
+    assert state.runtime_label == "Local file tools: Private scratch"
+    assert "1 bound folder is missing" in state.recovery_copy
 
 
 def test_console_workspace_state_enables_switching_with_multiple_workspaces(

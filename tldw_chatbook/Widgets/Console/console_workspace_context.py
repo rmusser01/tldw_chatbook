@@ -441,15 +441,12 @@ class ConsoleWorkspaceStatusPair(Horizontal):
             classes="console-workspace-status-label",
             markup=False,
         )
-        # I1 (final review): "Conversation" (RAG-45) is exactly 12 characters
-        # -- the label column's old fixed width -- so it filled the whole
-        # cell with zero gutter before the value column, and live captures
-        # showed the two fuse into one run-on token ("Conversation—",
-        # "ConversationThis conversation"). Widened to 13 so every label
-        # (this 12-char one included) always leaves at least one blank cell
-        # of separation.
-        label_widget.styles.width = 13
-        label_widget.styles.min_width = 13
+        # Keep one gutter cell after the longest current label. Most status
+        # rows retain the original 13-cell column; "Local file tools" needs
+        # 17 so its authority wording remains readable instead of wrapping.
+        label_width = max(13, min(17, cell_len(self.label) + 1))
+        label_widget.styles.width = label_width
+        label_widget.styles.min_width = label_width
         yield label_widget
 
         value_widget = Static(
@@ -459,10 +456,11 @@ class ConsoleWorkspaceStatusPair(Horizontal):
             markup=False,
         )
         value_widget.styles.width = "1fr"
-        # Rail IA spec section 8: the value column enforces a 10-cell floor so
-        # it never collapses to a single character at the rail's minimum width
-        # (TASK-2154.3 -- it was 0, letting the value shrink to 3-6 cells).
-        value_widget.styles.min_width = 10
+        # Preserve the established 23-cell combined floor. Ordinary labels
+        # keep the original 10-cell value minimum; the one longer authority
+        # label may shrink its value to 6 cells and use the existing ellipsis
+        # + tooltip behavior instead of widening the whole rail.
+        value_widget.styles.min_width = max(6, 23 - label_width)
         # TASK-384: at narrow rail widths the value column shrinks to a few cells
         # and a value like "Default" word-wrapped into a "Def / aul / t" letter
         # stack. Truncate the whole token with an ellipsis on one line instead,

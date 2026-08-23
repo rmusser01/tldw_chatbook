@@ -125,7 +125,7 @@ def _workspace_state() -> ConsoleWorkspaceContextState:
         workspace_label="Workspace: Default",
         authority_label="Authority: local registry ready",
         sync_label="Sync: not configured",
-        runtime_label="Runtime: none, file tools disabled",
+        runtime_label="Local file tools: Private scratch",
         conversation_rows=(),
         conversation_empty_copy="No conversations yet.",
         conversation_browser=build_console_conversation_browser_state(

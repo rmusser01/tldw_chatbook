@@ -112,8 +112,8 @@ ownership, provider-boundary, and cross-thread teardown decision.
 
 ## Baseline Evidence
 
-- Branch base after refreshing all remote heads:
-  `origin/dev` at `7363592020076c9508fe4a0eee0c1a1679ec7851`.
+- Branch base after refreshing all remote heads, then refreshed again before
+  UAT: `origin/dev` at `ae817fefed519921d7da5047e22634756337fc34`.
 - Related targeted baseline: 55 passed, 1 failed. The single failure,
   `test_selected_root_swap_fails_closed_before_local_invoke`, is a stale test
   invocation that omits the review hook's required `run_id`; blame shows the
@@ -121,3 +121,8 @@ ownership, provider-boundary, and cross-thread teardown decision.
 - Conflicting in-flight work: open PR #1657 / TASK-16316 requires a folder in
   the Console New Workspace modal. This task does not reuse that policy and
   must not be merged as though the two designs were compatible.
+- The refreshed clean-dev adjacent rail sweep initially had 151 passes and
+  five failures because those tests still drove the retired outer/body scroll
+  owners after the bounded-section migration. Their rendered visibility and
+  coordinate-click contracts now drive the current local section viewports;
+  the same sweep passes all 156 tests.

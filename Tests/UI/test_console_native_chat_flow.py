@@ -4337,9 +4337,9 @@ async def test_console_workspace_authority_rows_are_structured_for_scanning():
             _static_plain_text(
                 console.query_one("#console-workspace-runtime-label", Static)
             )
-            == "File tools"
+            == "Local file tools"
         )
-        assert "Off in Default" in _static_plain_text(
+        assert "Private scratch" in _static_plain_text(
             console.query_one("#console-workspace-runtime-value", Static)
         )
         # TASK-715: factory-default sync/server/ACP rows collapse into one line.
@@ -7160,7 +7160,7 @@ async def test_console_browser_selecting_duplicate_membership_row_ignores_other_
 
 
 @pytest.mark.asyncio
-async def test_console_browser_selecting_default_native_session_switches_to_default_and_keeps_file_tools_disabled():
+async def test_console_browser_selecting_default_native_session_uses_private_scratch():
     app = _build_test_app()
     _configure_native_ready_console(app)
     app.conversation_local_marks_service = FakeConversationLocalMarksService()
@@ -7203,15 +7203,15 @@ async def test_console_browser_selecting_default_native_session_switches_to_defa
             _static_plain_text(
                 console.query_one("#console-workspace-runtime-label", Static)
             )
-            == "File tools"
+            == "Local file tools"
         )
-        assert "Off in Default" in _static_plain_text(
+        assert "Private scratch" in _static_plain_text(
             console.query_one("#console-workspace-runtime-value", Static)
         )
 
 
 @pytest.mark.asyncio
-async def test_console_browser_selecting_default_persisted_row_switches_to_default_and_keeps_file_tools_disabled():
+async def test_console_browser_selecting_default_persisted_row_uses_private_scratch():
     app = _build_test_app()
     _configure_native_ready_console(app)
     app.conversation_local_marks_service = FakeConversationLocalMarksService()
@@ -7271,9 +7271,9 @@ async def test_console_browser_selecting_default_persisted_row_switches_to_defau
             _static_plain_text(
                 console.query_one("#console-workspace-runtime-label", Static)
             )
-            == "File tools"
+            == "Local file tools"
         )
-        assert "Off in Default" in _static_plain_text(
+        assert "Private scratch" in _static_plain_text(
             console.query_one("#console-workspace-runtime-value", Static)
         )
 
@@ -8774,11 +8774,14 @@ async def test_console_workspace_rail_new_conversation_creates_default_workspace
         await pilot.click("#console-new-chat-tab")
         second = store.active_session_id
         assert second != first.id
+        assert host.screen_stack[-1] is console
 
         active_session = next(
             session for session in store.sessions() if session.id == second
         )
         assert active_session.workspace_id == DEFAULT_WORKSPACE_ID
+        scratch = console._console_runtime().scratch_spaces.snapshot(second)
+        assert scratch.root.is_dir()
         await _wait_for_workspace_conversation_text(
             console,
             pilot,
@@ -8792,9 +8795,9 @@ async def test_console_workspace_rail_new_conversation_creates_default_workspace
             _static_plain_text(
                 console.query_one("#console-workspace-runtime-label", Static)
             )
-            == "File tools"
+            == "Local file tools"
         )
-        assert "Off in Default" in _static_plain_text(
+        assert "Private scratch" in _static_plain_text(
             console.query_one("#console-workspace-runtime-value", Static)
         )
         # TASK-715: factory-default sync/server/ACP rows collapse into one line.

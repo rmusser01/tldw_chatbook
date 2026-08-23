@@ -386,6 +386,12 @@ annotated "— contains N project skill(s)" in the list, and creation is
 followed by a chained import prompt for it — see
 [Project skills](library/skills.md#project-skills-skills).
 
+Folders are optional. Every Console Chat already has an independent private
+temporary scratch space; a named Workspace with no folders remains fully usable
+in scratch-only mode. Bind a folder only to let local file tools reach that
+external directory. `[console] workspace_root` is retained for compatibility
+outside this Console authority path and never grants a Console Chat access.
+
 | Control | What it does |
 |---|---|
 | **Rename** | Renames the selected workspace (the box above it is pre-filled). |
@@ -395,9 +401,9 @@ followed by a chained import prompt for it — see
 | **Add folder** / **Remove** | Bind a folder for agent file tools (new bindings are read-only), or unbind it. |
 | **Allow write** / **Read-only** | Flips a bound folder's access; the button is labelled with the state you would move to. |
 
-The built-in **Default** workspace has no controls at all: "The built-in Default
-workspace keeps its identity and stays tool-less; create a workspace to bind
-folders."
+The built-in **Default** workspace has no controls at all: "Chats in the
+built-in Default workspace use private scratch. Create a named Workspace only
+to bind external folders."
 
 ### Data & Privacy — Privacy & Security
 
@@ -546,14 +552,14 @@ a note on what would have to exist before Settings could own a default.
    saved paths." Move the file yourself, then restart: until you do, the app
    keeps using the old one, which is what **Active files (resolved this
    session)** is showing you.
-5. **Create a workspace and give an agent a folder.** Open **Workspaces** and
+5. **Create a workspace and optionally give an agent a folder.** Open **Workspaces** and
    press **Create workspace…**. In the dialog, keep the prefilled name (or
-   type your own), enter a folder path and press **Add folder** — it is
-   validated and bound read-only — then leave "Switch to this workspace"
-   checked and press **Create**; the new workspace is created, bound, and
-   activated in one step. Click the new workspace's row to open its card,
-   then press **Allow write** on the folder's row if the agent needs to
-   write. Every step applies immediately; nothing to save.
+   type your own). Press **Create** immediately for a scratch-only Workspace,
+   or enter a folder path and press **Add folder** first — it is validated and
+   bound read-only. Leave "Switch to this workspace" checked to activate the
+   new Workspace in the same step. If you added a folder and the agent needs
+   to write there, open the Workspace card and press **Allow write** on that
+   folder's row. Every step applies immediately; nothing to save.
 6. **Repair a configuration you broke.** Open **Diagnostics** and press
    **Validate Config** — the error names the problem, with secrets redacted. Fix
    it in the guided pages if you can. If not, open **Advanced Config**, press

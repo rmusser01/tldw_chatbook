@@ -154,7 +154,7 @@ class ConsoleWorkspaceDetailsTray(RecomposeCaptureGuard, Vertical):
             self._friendly_status_label(self.state.runtime_label),
             label_id="console-workspace-runtime-label",
             value_id="console-workspace-runtime-value",
-            fallback_label="File tools",
+            fallback_label="Local file tools",
         )
         if collapse_server_features:
             yield self._static(
@@ -226,20 +226,20 @@ class ConsoleWorkspaceDetailsTray(RecomposeCaptureGuard, Vertical):
             return f"Storage: {readable or 'unavailable'}"
         if normalized == "sync: not configured":
             return "Sync: Off"
+        if normalized.startswith("local file tools:"):
+            return f"Local file tools: {raw.partition(':')[2].strip()}"
         if normalized.startswith("runtime: none, file tools disabled"):
-            # TASK-715: "Off in Default workspace" ellipsized in the rail's
-            # ~23-cell value column even in its own default state.
-            return "File tools: Off in Default"
+            return "Local file tools: Private scratch"
         if normalized.startswith("runtime: none"):
-            return "File tools: Off"
+            return "Local file tools: Private scratch"
         if normalized.startswith("runtime:"):
             readiness = re.search(r"(\d+) ready(?:,\s+(\d+) missing)?", normalized)
             if readiness:
-                label = f"File tools: {readiness.group(1)} ready"
+                label = f"Local file tools: {readiness.group(1)} ready"
                 if readiness.group(2):
                     label = f"{label}, {readiness.group(2)} missing"
                 return label
-            return raw.replace("Runtime:", "File tools:", 1)
+            return raw.replace("Runtime:", "Local file tools:", 1)
         # TASK-715: "Server handoff" (14 cells) wrapped in the 12-cell label
         # column, leaving an orphaned lowercase "handoff" line; and mapping
         # ACP rows to "ACP handoff:" made two different rows share a label

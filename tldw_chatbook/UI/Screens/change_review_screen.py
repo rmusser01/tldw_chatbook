@@ -3380,9 +3380,9 @@ class ChangeReviewScreen(Screen):
         return (
             "No folder is bound to this conversation's workspace, so file "
             "changes are not tracked here — this is not a report that "
-            "nothing changed. Bind a folder in Settings ▸ Workspaces; the "
-            "built-in Default workspace cannot bind folders, so use or "
-            "create another workspace."
+            "nothing changed. Chats still work in private scratch. To track "
+            "an external folder, bind it in Settings ▸ Workspaces and use a "
+            "chat in that named Workspace."
         )
 
     def _show_empty(self, copy: str) -> None:
