@@ -12,6 +12,8 @@ import copy
 import json
 from pathlib import Path
 
+import pytest
+
 from scripts import check_backlog_task_ids as backlog_ids
 from scripts import check_persistent_diagnostic_inventory as inventory
 
@@ -377,6 +379,104 @@ def test_duplicate_task_ids_are_caught_across_buckets(tmp_path):
     assert set(by_filename) == {"task-9"}
     assert set(by_frontmatter) == {"task-9"}
     assert backlog_ids.main(["--tasks-dir", str(tasks), "--tasks-dir", str(archive)]) == 1
+
+
+@pytest.mark.parametrize("character", '<>:"/\\|?*')
+def test_windows_task_name_rejects_every_reserved_character(character):
+    reason = backlog_ids.windows_incompatible_reason(f"task-1 - Bad{character}Name.md")
+    assert reason == f"contains Windows-reserved character {character!r}"
+
+
+@pytest.mark.parametrize("character", ["\x00", "\x01", "\x1f"])
+def test_windows_task_name_rejects_ascii_controls(character):
+    reason = backlog_ids.windows_incompatible_reason(f"task-1 - Bad{character}Name.md")
+    assert reason == f"contains ASCII control U+{ord(character):04X}"
+
+
+@pytest.mark.parametrize("name", ["task-1 - Bad.md.", "task-1 - Bad.md "])
+def test_windows_task_name_rejects_trailing_dot_or_space(name):
+    assert backlog_ids.windows_incompatible_reason(name) == "ends with a dot or space"
+
+
+@pytest.mark.parametrize(
+    "name, stem",
+    [
+        ("CON", "CON"),
+        ("prn.md", "PRN"),
+        ("Aux.notes.md", "AUX"),
+        ("NUL.tar.gz", "NUL"),
+        ("com1.md", "COM1"),
+        ("COM9.log", "COM9"),
+        ("com¹.log", "COM¹"),
+        ("COM².log", "COM²"),
+        ("Com³.tar.gz", "COM³"),
+        ("lpt1.md", "LPT1"),
+        ("LPT9.log", "LPT9"),
+        ("lpt¹.log", "LPT¹"),
+        ("LPT².log", "LPT²"),
+        ("Lpt³.tar.gz", "LPT³"),
+    ],
+)
+def test_windows_task_name_rejects_reserved_device_stems(name, stem):
+    assert backlog_ids.windows_incompatible_reason(name) == (
+        f"uses reserved Windows device name {stem!r}"
+    )
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "task-1 - Ordinary title.md",
+        "task-2 - Version v3-to-v4 (safe).md",
+        "task-3 - CON appears after the task prefix.md",
+        "COM0.md",
+        "COM10.md",
+        "COM⁴.md",
+        "LPT0.md",
+        "LPT10.md",
+        "LPT⁴.md",
+    ],
+)
+def test_windows_task_name_accepts_valid_names(name):
+    assert backlog_ids.windows_incompatible_reason(name) is None
+
+
+def test_windows_incompatible_paths_scan_files_in_each_existing_bucket(tmp_path):
+    tasks = tmp_path / "tasks"
+    completed = tmp_path / "completed"
+    archive = tmp_path / "archive" / "tasks"
+    tasks.mkdir()
+    completed.mkdir()
+    archive.mkdir(parents=True)
+    invalid = {
+        tasks / "task-1 - Bad>Name.md": "contains Windows-reserved character '>'",
+        completed / "task-2 - Control\x1f.md": "contains ASCII control U+001F",
+        archive / "NUL.tar.gz": "uses reserved Windows device name 'NUL'",
+        archive / "task-3 - Trailing.md ": "ends with a dot or space",
+    }
+    for path in invalid:
+        path.write_text("id: TASK-1\n", encoding="utf-8")
+    (tasks / "task-4 - Safe.md").write_text("id: TASK-4\n", encoding="utf-8")
+    (tasks / "task-5 - Directory?.md").mkdir()
+
+    assert backlog_ids.windows_incompatible_paths(
+        tasks, completed, archive, tmp_path / "absent"
+    ) == {path.resolve().as_posix(): reason for path, reason in invalid.items()}
+
+
+def test_main_reports_duplicate_ids_and_windows_paths_together(tmp_path, capsys):
+    first = tmp_path / "task-42 - First?.md"
+    second = tmp_path / "task-42 - Second.md"
+    first.write_text("id: TASK-42\n", encoding="utf-8")
+    second.write_text("id: TASK-42\n", encoding="utf-8")
+
+    assert backlog_ids.main(["--tasks-dir", str(tmp_path)]) == 1
+    captured = capsys.readouterr()
+    report = captured.out + captured.err
+    assert "Duplicate backlog task IDs" in report
+    assert "Windows-incompatible Backlog task paths" in report
+    assert first.resolve().as_posix() in report
+    assert "Keep punctuation in task content" in report
 
 
 def test_default_scope_is_every_bucket_the_cli_resolves():
