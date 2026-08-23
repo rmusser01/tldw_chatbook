@@ -584,6 +584,7 @@ def test_backfill_chunk_size_must_be_positive(db):
 HOT_MESSAGE_WRITERS = (
     "add_message",
     "create_assistant_with_continuation",
+    "update_provider_continuation",
     "append_message_attachment_with_metadata",
     "swap_message_attachment_with_scalar",
     "update_message",
@@ -659,6 +660,71 @@ def test_hot_writer_survives_a_backfill_commit_inside_its_transaction(
         assert _fts_rowids(writer, "hotneedle") != []
         assert backfill_chachanotes_messages_fts(backfiller) == 8
         assert _docsize_rowids(writer) == _live_rowids(writer)
+    finally:
+        writer.close_connection()
+        backfiller.close_connection()
+
+
+def test_nested_writer_composition_survives_a_backfill_commit(tmp_path: Path):
+    """The depth-0 interleave test cannot catch this class; this one does.
+
+    `transaction(immediate=...)` is honored only for the OUTERMOST
+    manager-owned transaction -- a nested call inherits whatever the outer
+    wrapper opened. So an outer DEFERRED read-then-write wrapper (the chat
+    persistence service's atomic message+attachments units, or
+    Chat_Functions' resave path) silently neutralizes the inner writers'
+    IMMEDIATE and re-opens the exact snapshot-upgrade window Major 1 closed:
+    outer deferred BEGIN -> nested add_message's read -> one backfill chunk
+    commit -> nested INSERT dies with an instant `database is locked`.
+    Reproduced through the REAL composition (`ChatPersistenceService
+    .create_message` with an authoritative attachments list, whose outer
+    transaction wraps the nested `add_message`); red before those outer
+    wrappers were converted to IMMEDIATE, green after.
+    """
+    from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+
+    db_path = tmp_path / "chachanotes.db"
+    _seed_v45(db_path, [f"nestedneedle{i:03d} body" for i in range(8)])
+
+    writer = CharactersRAGDB(db_path, client_id="v47-nested-writer")
+    backfiller = CharactersRAGDB(db_path, client_id="v47-nested-backfiller")
+    try:
+        assert _docsize_rowids(writer) == set()  # the window is open
+        service = ChatPersistenceService(writer)
+        conversation_id = writer.add_conversation(
+            {"title": "nested", "character_id": 1}
+        )
+
+        outcome: dict[str, str] = {}
+        original_execute_query = CharactersRAGDB.execute_query
+
+        def interleaved(self, query, params=None, **kwargs):
+            if (
+                self is writer
+                and "INSERT INTO messages" in query
+                and "chunk" not in outcome
+            ):
+                backfiller.get_connection().execute("PRAGMA busy_timeout = 200")
+                try:
+                    indexed, _ = backfiller.backfill_messages_fts(chunk_size=1)
+                    outcome["chunk"] = f"committed:{indexed}"
+                except (sqlite3.OperationalError, CharactersRAGDBError) as exc:
+                    outcome["chunk"] = f"blocked:{exc}"
+            return original_execute_query(self, query, params, **kwargs)
+
+        with patch.object(CharactersRAGDB, "execute_query", interleaved):
+            message_id = service.create_message(
+                conversation_id=conversation_id,
+                sender="user",
+                content="nestedhotneedle message with attachments",
+                attachments=[],
+            )
+
+        assert message_id, "the composed message+attachments unit must land"
+        assert "chunk" in outcome, "the interleave never fired -- test is vacuous"
+        assert outcome["chunk"].startswith("blocked"), outcome["chunk"]
+        assert _fts_rowids(writer, "nestedhotneedle") != []
+        assert backfill_chachanotes_messages_fts(backfiller) == 8
     finally:
         writer.close_connection()
         backfiller.close_connection()

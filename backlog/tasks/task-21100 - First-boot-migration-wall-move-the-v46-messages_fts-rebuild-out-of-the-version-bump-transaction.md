@@ -291,4 +291,39 @@ run as one selection on BOTH trees, produce an identical 46 failed / 591 passed 
 (`Tests/Chat/test_fleet_teardown_notice.py`) hangs >420 s under a 60 s per-test
 timeout on PRISTINE DEV as well as here (it is what killed the earlier whole-suite
 background runs); excluded on both sides and left for its owner.
+
+### Final round (2026-08-23, scoped re-review: two required fixes, merge pre-cleared on them)
+
+**The twelfth writer.** `update_provider_continuation` (ChaChaNotes_DB.py, transaction
+now at :10301) had slipped through my own enumeration -- a DEFERRED read-then-write
+`messages` writer on the live Console flow (console_chat_store's
+discard-interrupted-run and the continuation-checkpoint persist). Converted to
+`transaction(immediate=True)` with the standard comment and added to
+`HOT_MESSAGE_WRITERS` (it has exactly one transaction site, so the census assertions
+stay precise); the census was red-first on the addition.
+
+**Outer deferred wrappers neutralize inner IMMEDIATE.** `transaction(immediate=...)`
+is honored only at depth 0, so an outer DEFERRED read-then-write wrapper silently
+re-opens the exact snapshot-upgrade window Major 1 closed for the writers it nests.
+Reproduced red-first through the REAL composition
+(`test_nested_writer_composition_survives_a_backfill_commit`: `ChatPersistenceService
+.create_message` with an authoritative attachments list -> outer deferred transaction
+-> nested `add_message` read -> one backfill chunk commit -> instant
+`sqlite3.OperationalError: database is locked`; the depth-0 interleave test cannot
+catch this class). Converted the five outer read-then-write wrappers, each with a
+comment citing the nesting rule: `Chat/chat_persistence_service.py:799`
+(update_message_content, citations branch), `:834` (attachments branch), `:1148`
+(create_message, citations branch), `:1198` (create_message,
+attachments/generation-metadata branch), and `Chat/Chat_Functions.py:2469` (the
+resave path wrapping `save_history`). Green after conversion, with the nested test
+also asserting the injected chunk is BLOCKED (lock ordering) and the backfill then
+completes losslessly.
+
+Final-round evidence (test-logs/task21100-finalround-*): nested test + census red
+(2 failed, `database is locked`) -> six conversions -> v47 file 14 passed;
+direct-subject files (test_chat_persistence_service, test_console_provider_
+continuation, test_provider_continuation_crash_recovery,
+test_provider_continuation_privacy, test_console_terminal_citation_persistence)
+231 passed; test_chat_functions 98 passed; Tests/ChaChaNotesDB + retention +
+witness 338 passed. Zero new failures -- no dev A/B needed this round.
 <!-- SECTION:NOTES:END -->

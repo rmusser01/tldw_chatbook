@@ -10297,7 +10297,8 @@ UPDATE db_schema_version
             )
 
         try:
-            with self.transaction() as conn:
+            # IMMEDIATE: hot messages writer; see add_message's scoping comment.
+            with self.transaction(immediate=True) as conn:
                 current = conn.execute(
                     """
                     SELECT role, content, image_data, deleted, version,
