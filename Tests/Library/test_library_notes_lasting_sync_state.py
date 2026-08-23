@@ -478,3 +478,12 @@ def test_history_page_rejects_bool_and_offsets_outside_sqlite_integer_range() ->
     for invalid in (True, largest_page + 1, 10**100):
         with pytest.raises(ValueError, match="history page|SQLite"):
             history_type(page=invalid)
+
+
+def test_receipt_unavailable_projection_is_an_exact_boolean() -> None:
+    snapshot = initial_lasting_sync_snapshot()
+
+    assert snapshot.receipts_unavailable is False
+    assert replace(snapshot, receipts_unavailable=True).receipts_unavailable is True
+    with pytest.raises(TypeError, match="receipts_unavailable"):
+        replace(snapshot, receipts_unavailable=1)

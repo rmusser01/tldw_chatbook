@@ -222,6 +222,7 @@ _ROOT_PAGE_SIZE = 20
 # up yet, but first-time setup must be offered (review_setup live-starts the
 # machinery on demand), so it counts as available alongside "active".
 _SETUP_READY_STATUSES = frozenset({"active", "not_configured"})
+_LIFECYCLE_EPOCH_MAX = 2**63 - 1
 _CHOICES_BY_LABEL = {
     "Keep file": NotesSyncConflictChoice.KEEP_FILE,
     "Keep note": NotesSyncConflictChoice.KEEP_NOTE,
@@ -252,6 +253,7 @@ class LibraryNotesSyncController:
         self._receipt_generation = 0
         self._history_generation = 0
         self._history_request_page = 1
+        self._lifecycle_epoch = 0
         self._state = initial_lasting_sync_snapshot(
             lasting_available=runtime.snapshot().status in _SETUP_READY_STATUSES
         )
@@ -304,18 +306,28 @@ class LibraryNotesSyncController:
     def invalidate_for_remount(self) -> None:
         """Release review-only state when the presenting canvas is replaced."""
 
+        self._advance_lifecycle()
+        self._projection_root_id = None
         self._clear_ephemeral_review()
-        self._invalidate_receipt_history(clear_root=True)
+        self._invalidate_receipt_history()
 
-    def _invalidate_receipt_history(self, *, clear_root: bool = False) -> None:
+    def _advance_lifecycle(self) -> int:
+        if self._lifecycle_epoch >= _LIFECYCLE_EPOCH_MAX:
+            raise RuntimeError("controller lifecycle epoch exhausted")
+        self._lifecycle_epoch += 1
+        return self._lifecycle_epoch
+
+    def _lifecycle_is_current(self, root_id: str | None, epoch: int) -> bool:
+        return epoch == self._lifecycle_epoch and root_id == self._projection_root_id
+
+    def _invalidate_receipt_history(self) -> None:
         self._receipt_generation += 1
         self._history_generation += 1
         self._history_request_page = 1
-        if clear_root:
-            self._projection_root_id = None
         self._state = replace(
             self._state,
             receipts=(),
+            receipts_unavailable=False,
             history=LastingSyncHistory(),
         )
 
@@ -323,7 +335,24 @@ class LibraryNotesSyncController:
         if root_id == self._projection_root_id:
             return
         self._projection_root_id = root_id
+        self._advance_lifecycle()
+        self._clear_ephemeral_review()
         self._invalidate_receipt_history()
+
+    def _begin_check_lifecycle(self, root_id: str) -> int:
+        if root_id != self._projection_root_id:
+            self._switch_projection_root(root_id)
+        else:
+            self._advance_lifecycle()
+            self._clear_ephemeral_review()
+        return self._lifecycle_epoch
+
+    def _begin_unbound_lifecycle(self) -> int:
+        self._advance_lifecycle()
+        self._projection_root_id = None
+        self._clear_ephemeral_review()
+        self._invalidate_receipt_history()
+        return self._lifecycle_epoch
 
     def _start_receipt_request(self, root_id: str) -> int:
         self._switch_projection_root(root_id)
@@ -435,7 +464,7 @@ class LibraryNotesSyncController:
             )
             self._publish()
             return "choose"
-        self._invalidate_receipt_history(clear_root=True)
+        self._begin_unbound_lifecycle()
         self._state = replace(
             self._state,
             phase="configure",
@@ -449,9 +478,7 @@ class LibraryNotesSyncController:
         self._publish()
 
     async def check_root(self, root_id: str) -> None:
-        self._switch_projection_root(root_id)
-        self._selections.clear()
-        self._clear_comparison()
+        epoch = self._begin_check_lifecycle(root_id)
         self._state = replace(
             self._state, phase="checking", status_line="Checking changes…"
         )
@@ -459,6 +486,8 @@ class LibraryNotesSyncController:
         try:
             plan = await self._runtime.check_root(root_id)
         except Exception:
+            if not self._lifecycle_is_current(root_id, epoch):
+                return
             self._state = replace(
                 self._state,
                 phase="review",
@@ -467,7 +496,16 @@ class LibraryNotesSyncController:
             )
             self._publish()
             return
-        self._switch_projection_root(plan.root_id)
+        if not self._lifecycle_is_current(root_id, epoch):
+            return
+        if plan.root_id != root_id:
+            self._state = replace(
+                self._state,
+                phase="review",
+                status_line="Check returned an invalid review. Check again.",
+            )
+            self._publish()
+            return
         self._review_plan = plan
         self._state = replace(
             self._state,
@@ -481,8 +519,7 @@ class LibraryNotesSyncController:
         """Run the same mutation-free check and label it as activation review."""
         setup = self._state.setup
         direction = NotesSyncDirection(setup.direction)
-        self._selections.clear()
-        self._clear_comparison()
+        epoch = self._begin_unbound_lifecycle()
         self._state = replace(
             self._state, phase="checking", status_line="Checking folder…"
         )
@@ -497,6 +534,8 @@ class LibraryNotesSyncController:
                 )
             )
         except Exception:
+            if not self._lifecycle_is_current(None, epoch):
+                return
             self._state = replace(
                 self._state,
                 phase="configure",
@@ -504,7 +543,9 @@ class LibraryNotesSyncController:
             )
             self._publish()
             return
-        self._switch_projection_root(plan.root_id)
+        if not self._lifecycle_is_current(None, epoch):
+            return
+        self._projection_root_id = plan.root_id
         self._review_plan = plan
         self._state = replace(
             self._state,
@@ -517,8 +558,13 @@ class LibraryNotesSyncController:
     async def check_migration(self, root_id: str) -> None:
         """Build a current activation review for one paused migrated root."""
 
+        expected_epoch = self._lifecycle_epoch + 1
         await self.check_root(root_id)
-        if self._state.phase == "review" and self._state.review.root_id == root_id:
+        if (
+            self._lifecycle_is_current(root_id, expected_epoch)
+            and self._state.phase == "review"
+            and self._state.review.root_id == root_id
+        ):
             self._project_review(activation=True)
             self._state = replace(
                 self._state,
@@ -530,14 +576,14 @@ class LibraryNotesSyncController:
         """Release an unpersisted setup review when the user leaves it."""
 
         root_id = self._state.review.root_id
-        if self._state.review.activation and root_id:
+        activation = self._state.review.activation
+        self._begin_unbound_lifecycle()
+        self._review_plan = None
+        if activation and root_id:
             try:
                 await self._runtime.abandon_setup(root_id)
             except Exception:
                 pass
-        self._clear_ephemeral_review()
-        self._invalidate_receipt_history(clear_root=True)
-        self._review_plan = None
 
     def set_review_page(self, page: int) -> None:
         """Page the controller-private reviewed plan without copying its IDs."""
@@ -557,24 +603,50 @@ class LibraryNotesSyncController:
     async def apply_reviewed(self) -> None:
         review = self._state.review
         plan = self._review_plan
-        if plan is None or not review.root_id or not review.observation_token:
-            raise RuntimeError("a current review is required")
+        root_id = review.root_id
+        epoch = self._lifecycle_epoch
+        if (
+            self._state.phase != "review"
+            or plan is None
+            or not root_id
+            or not review.observation_token
+            or root_id != self._projection_root_id
+            or plan.root_id != root_id
+            or plan.observation_token != review.observation_token
+        ):
+            self._state = replace(
+                self._state,
+                status_line="The review is invalid. Check again before applying.",
+            )
+            self._publish()
+            return
         if not review.can_apply:
-            raise ValueError(f"review_not_applicable:{review.apply_blocker.value}")
+            self._state = replace(
+                self._state,
+                status_line="The current review cannot be applied. Check its blockers.",
+            )
+            self._publish()
+            return
         action_ids = tuple(action.action_id for action in plan.safe_actions)
         selections = self._current_selections()
-        receipt_generation = self._start_receipt_request(review.root_id)
         try:
             result = await self._runtime.apply_reviewed(
-                review.root_id,
+                root_id,
                 review.observation_token,
                 action_ids,
                 selections,
             )
         except ValueError as error:
             if str(error) != "stale_review":
-                raise
-            if not self._receipt_is_current(review.root_id, receipt_generation):
+                if not self._lifecycle_is_current(root_id, epoch):
+                    return
+                self._state = replace(
+                    self._state,
+                    status_line="Apply returned an invalid review. Check again.",
+                )
+                self._publish()
+                return
+            if not self._lifecycle_is_current(root_id, epoch):
                 return
             self._selections.clear()
             self._clear_comparison()
@@ -588,7 +660,7 @@ class LibraryNotesSyncController:
             self._publish()
             return
         except Exception:
-            if not self._receipt_is_current(review.root_id, receipt_generation):
+            if not self._lifecycle_is_current(root_id, epoch):
                 return
             self._selections.clear()
             self._clear_comparison()
@@ -602,16 +674,30 @@ class LibraryNotesSyncController:
             self._publish()
             return
         if type(result) is not ConflictApplyResult:
-            raise RuntimeError("invalid reviewed apply result")
-        if not self._receipt_is_current(review.root_id, receipt_generation):
+            if not self._lifecycle_is_current(root_id, epoch):
+                return
+            self._state = replace(
+                self._state,
+                status_line="Apply returned an invalid result. Check again.",
+            )
+            self._publish()
             return
+        if not self._lifecycle_is_current(root_id, epoch):
+            return
+        receipt_generation = self._start_receipt_request(root_id)
+        receipts_unavailable = False
         try:
-            receipts = await self._read_receipts(review.root_id)
+            receipts = await self._read_receipts(root_id)
         except Exception:
-            receipts = ()
-        if not self._receipt_is_current(review.root_id, receipt_generation):
+            receipts = self._state.receipts
+            receipts_unavailable = True
+        if not self._lifecycle_is_current(root_id, epoch):
             return
+        if not self._receipt_is_current(root_id, receipt_generation):
+            receipts = self._state.receipts
+            receipts_unavailable = self._state.receipts_unavailable
         applied = result.safe_completed + result.conflicts_resolved
+        receipt_suffix = " · receipts unavailable" if receipts_unavailable else ""
         if result.partial or result.needs_recovery or result.fresh_plan is None:
             self._selections.clear()
             self._clear_comparison()
@@ -620,7 +706,10 @@ class LibraryNotesSyncController:
                 self._state,
                 phase="roots",
                 receipts=receipts,
-                status_line=f"{applied} applied · recovery needs attention.",
+                receipts_unavailable=receipts_unavailable,
+                status_line=(
+                    f"{applied} applied · recovery needs attention{receipt_suffix}."
+                ),
                 receipt_line="",
             )
             self._publish()
@@ -633,6 +722,7 @@ class LibraryNotesSyncController:
             self._state,
             review=build_reconciliation_review(result.fresh_plan),
             receipts=receipts,
+            receipts_unavailable=receipts_unavailable,
         )
         if result.attention_remains:
             count = result.unresolved_conflicts
@@ -640,14 +730,16 @@ class LibraryNotesSyncController:
             self._state = replace(
                 self._state,
                 phase="review",
-                status_line=f"{applied} applied · {count} {noun}.",
+                status_line=f"{applied} applied · {count} {noun}{receipt_suffix}.",
                 receipt_line="",
             )
         else:
             self._state = replace(
                 self._state,
                 phase="receipt",
-                status_line=f"{applied} applied · no conflicts remain.",
+                status_line=(
+                    f"{applied} applied · no conflicts remain{receipt_suffix}."
+                ),
                 receipt_line=f"{applied} applied · durable receipt recorded",
             )
         self.refresh_roots(publish=False)
@@ -656,9 +748,7 @@ class LibraryNotesSyncController:
     async def sync_now(self, root_id: str) -> None:
         """Run the runtime's existing mutation-free manual reconciliation."""
 
-        self._switch_projection_root(root_id)
-        self._selections.clear()
-        self._clear_comparison()
+        epoch = self._begin_check_lifecycle(root_id)
         self._state = replace(
             self._state, phase="checking", status_line="Checking changes…"
         )
@@ -666,10 +756,22 @@ class LibraryNotesSyncController:
         try:
             plan = await self._runtime.request_sync_now(root_id)
         except Exception:
+            if not self._lifecycle_is_current(root_id, epoch):
+                return
             self._state = replace(
                 self._state,
                 phase="roots",
                 status_line="Manual check failed. Review root status, then try again.",
+            )
+            self._publish()
+            return
+        if not self._lifecycle_is_current(root_id, epoch):
+            return
+        if plan.root_id != root_id:
+            self._state = replace(
+                self._state,
+                phase="roots",
+                status_line="Manual check returned an invalid review. Check again.",
             )
             self._publish()
             return
@@ -686,15 +788,20 @@ class LibraryNotesSyncController:
         """Forward one operation-specific recovery already exposed by the runtime."""
 
         self._switch_projection_root(root_id)
+        epoch = self._lifecycle_epoch
         try:
             await self._runtime.resolve_cleanup(root_id, operation_id)
         except Exception:
+            if not self._lifecycle_is_current(root_id, epoch):
+                return
             self._state = replace(
                 self._state,
                 phase="roots",
                 status_line="Recovery needs attention. Review root status, then try again.",
             )
             self._publish()
+            return
+        if not self._lifecycle_is_current(root_id, epoch):
             return
         self._state = replace(
             self._state,
@@ -706,6 +813,8 @@ class LibraryNotesSyncController:
     def stage_attention_choice(self, item_id: str, choice: str) -> None:
         """Stage one eligible conflict choice without calling the runtime."""
 
+        review = self._state.review
+        plan = self._review_plan
         row = next(
             (
                 row
@@ -717,11 +826,23 @@ class LibraryNotesSyncController:
             None,
         )
         typed_choice = _CHOICES_BY_LABEL.get(choice)
-        if row is None or typed_choice is None:
-            raise ValueError("unknown attention choice")
-        token = self._state.review.observation_token
-        if not token:
-            raise RuntimeError("a current review is required")
+        if (
+            self._state.phase != "review"
+            or review.stale
+            or plan is None
+            or review.root_id != self._projection_root_id
+            or plan.root_id != review.root_id
+            or plan.observation_token != review.observation_token
+            or row is None
+            or typed_choice is None
+        ):
+            self._state = replace(
+                self._state,
+                status_line="Choice unavailable. Check the current review again.",
+            )
+            self._publish()
+            return
+        token = review.observation_token
         self._selections[(token, item_id)] = typed_choice
         self._project_review()
         self._state = replace(
@@ -734,13 +855,29 @@ class LibraryNotesSyncController:
         """Load one bounded comparison and publish only for current provenance."""
 
         review = self._state.review
-        if not any(
-            row.item_id == binding_id and row.conflict_eligible for row in review.rows
+        plan = self._review_plan
+        if (
+            self._state.phase != "review"
+            or review.stale
+            or plan is None
+            or review.root_id != self._projection_root_id
+            or plan.root_id != review.root_id
+            or plan.observation_token != review.observation_token
+            or not any(
+                row.item_id == binding_id and row.conflict_eligible
+                for row in review.rows
+            )
         ):
-            raise ValueError("comparison binding is not on the current review page")
+            self._state = replace(
+                self._state,
+                status_line="Comparison unavailable. Check the current review again.",
+            )
+            self._publish()
+            return
         self._clear_comparison()
         self._expanded_binding_id = binding_id
         generation = self._comparison_generation
+        epoch = self._lifecycle_epoch
         root_id = review.root_id
         token = review.observation_token
         try:
@@ -750,9 +887,17 @@ class LibraryNotesSyncController:
                 binding_id,
             )
         except ValueError as error:
-            if str(error) != "stale_review" or not self._comparison_is_current(
-                generation, root_id, token, binding_id
+            if not self._comparison_is_current(
+                epoch, generation, root_id, token, binding_id
             ):
+                return
+            if str(error) != "stale_review":
+                self._clear_comparison()
+                self._state = replace(
+                    self._state,
+                    status_line="Comparison unavailable. Check again, then try once more.",
+                )
+                self._publish()
                 return
             self._selections.clear()
             self._clear_comparison()
@@ -766,7 +911,9 @@ class LibraryNotesSyncController:
             self._publish()
             return
         except Exception:
-            if not self._comparison_is_current(generation, root_id, token, binding_id):
+            if not self._comparison_is_current(
+                epoch, generation, root_id, token, binding_id
+            ):
                 return
             self._clear_comparison()
             self._state = replace(
@@ -775,20 +922,33 @@ class LibraryNotesSyncController:
             )
             self._publish()
             return
-        if not self._comparison_is_current(generation, root_id, token, binding_id):
+        if not self._comparison_is_current(
+            epoch, generation, root_id, token, binding_id
+        ):
+            return
+        if comparison.binding_id != binding_id:
+            self._clear_comparison()
+            self._state = replace(
+                self._state,
+                status_line="Comparison unavailable. Check again, then try once more.",
+            )
+            self._publish()
             return
         self._state = replace(self._state, comparison=comparison)
         self._publish()
 
     def _comparison_is_current(
         self,
+        epoch: int,
         generation: int,
         root_id: str,
         token: str,
         binding_id: str,
     ) -> bool:
         return (
-            generation == self._comparison_generation
+            epoch == self._lifecycle_epoch
+            and root_id == self._projection_root_id
+            and generation == self._comparison_generation
             and self._expanded_binding_id == binding_id
             and self._state.phase == "review"
             and self._state.review.root_id == root_id
@@ -819,35 +979,71 @@ class LibraryNotesSyncController:
             for row in rows
         )
 
+    def _remove_local_receipt(
+        self, operation_id: str
+    ) -> tuple[LastingSyncReceiptRow, ...]:
+        return tuple(
+            row for row in self._state.receipts if row.operation_id != operation_id
+        )
+
+    def _disable_local_history_action(
+        self,
+        operation_id: str,
+        *,
+        undone: bool,
+        history: LastingSyncHistory | None = None,
+    ) -> LastingSyncHistory:
+        history = self._state.history if history is None else history
+        rows = tuple(
+            replace(
+                row,
+                state="undone" if undone else row.state,
+                undo_available=False,
+                undo_reason="Undone" if undone else "Unavailable",
+            )
+            if row.operation_id == operation_id
+            else row
+            for row in history.rows
+        )
+        return replace(history, rows=rows)
+
     async def refresh_conflict_receipts(self, root_id: str) -> None:
         """Refresh current-runtime receipts from fresh bounded projections."""
 
         generation = self._start_receipt_request(root_id)
+        epoch = self._lifecycle_epoch
         try:
             receipts = await self._read_receipts(root_id)
         except Exception:
-            if not self._receipt_is_current(root_id, generation):
+            if not self._lifecycle_is_current(
+                root_id, epoch
+            ) or not self._receipt_is_current(root_id, generation):
                 return
             self._state = replace(
                 self._state,
+                receipts_unavailable=True,
                 status_line="Resolution receipts are unavailable. Review history instead.",
             )
             self._publish()
             return
-        if not self._receipt_is_current(root_id, generation):
+        if not self._lifecycle_is_current(
+            root_id, epoch
+        ) or not self._receipt_is_current(root_id, generation):
             return
-        self._state = replace(self._state, receipts=receipts)
+        self._state = replace(
+            self._state, receipts=receipts, receipts_unavailable=False
+        )
         self._publish()
 
     async def dismiss_conflict_receipt(self, root_id: str, operation_id: str) -> None:
         """Dismiss one process-local receipt and refresh its bounded projection."""
 
-        generation = self._start_receipt_request(root_id)
+        self._switch_projection_root(root_id)
+        epoch = self._lifecycle_epoch
         try:
             self._runtime.dismiss_conflict_receipt(root_id, operation_id)
-            receipts = await self._read_receipts(root_id)
         except Exception:
-            if not self._receipt_is_current(root_id, generation):
+            if not self._lifecycle_is_current(root_id, epoch):
                 return
             self._state = replace(
                 self._state,
@@ -855,15 +1051,41 @@ class LibraryNotesSyncController:
             )
             self._publish()
             return
-        if not self._receipt_is_current(root_id, generation):
+        if not self._lifecycle_is_current(root_id, epoch):
             return
-        self._state = replace(self._state, receipts=receipts)
+        local_receipts = self._remove_local_receipt(operation_id)
+        generation = self._start_receipt_request(root_id)
+        unavailable = False
+        try:
+            receipts = await self._read_receipts(root_id)
+        except Exception:
+            receipts = local_receipts
+            unavailable = True
+        if not self._lifecycle_is_current(root_id, epoch):
+            return
+        if not self._receipt_is_current(root_id, generation):
+            receipts = tuple(
+                row for row in self._state.receipts if row.operation_id != operation_id
+            )
+            unavailable = self._state.receipts_unavailable
+        self._state = replace(
+            self._state,
+            receipts=receipts,
+            receipts_unavailable=unavailable,
+            history=self._disable_local_history_action(operation_id, undone=False),
+            status_line=(
+                "Receipt dismissed."
+                if not unavailable
+                else "Receipt dismissed; fresh receipts are unavailable."
+            ),
+        )
         self._publish()
 
     async def undo_conflict_resolution(self, root_id: str, operation_id: str) -> None:
         """Run one durable linked Undo and refresh the remaining receipts."""
 
-        receipt_generation = self._start_receipt_request(root_id)
+        self._switch_projection_root(root_id)
+        epoch = self._lifecycle_epoch
         history_page = (
             self._state.history.page
             if self._state.phase == "history" and self._state.history.root_id == root_id
@@ -879,7 +1101,7 @@ class LibraryNotesSyncController:
             if type(result) is not NotesSyncExecutionResult:
                 raise RuntimeError("invalid Undo result")
         except Exception:
-            if not self._receipt_is_current(root_id, receipt_generation):
+            if not self._lifecycle_is_current(root_id, epoch):
                 return
             self._state = replace(
                 self._state,
@@ -887,7 +1109,7 @@ class LibraryNotesSyncController:
             )
             self._publish()
             return
-        if not self._receipt_is_current(root_id, receipt_generation):
+        if not self._lifecycle_is_current(root_id, epoch):
             return
         if (
             result.state is not NotesSyncOperationState.COMPLETED
@@ -901,70 +1123,63 @@ class LibraryNotesSyncController:
             )
             self._publish()
             return
+        local_receipts = self._remove_local_receipt(operation_id)
+        generation = self._start_receipt_request(root_id)
+        unavailable = False
         try:
             receipts = await self._read_receipts(root_id)
         except Exception:
-            if not self._receipt_is_current(root_id, receipt_generation):
-                return
-            self._state = replace(
-                self._state,
-                status_line="Undo finished, but its fresh projection is unavailable.",
+            receipts = local_receipts
+            unavailable = True
+        if not self._lifecycle_is_current(root_id, epoch):
+            return
+        if not self._receipt_is_current(root_id, generation):
+            receipts = tuple(
+                row for row in self._state.receipts if row.operation_id != operation_id
             )
-            self._publish()
-            return
-        if not self._receipt_is_current(root_id, receipt_generation):
-            return
-        history_is_current = history_page is not None and (
+            unavailable = self._state.receipts_unavailable
+        captured_history_current = history_page is not None and (
             history_generation is not None
             and self._history_is_current(root_id, history_page, history_generation)
         )
-        if history_page is not None and not history_is_current:
-            self.refresh_roots(publish=False)
-            self._state = replace(self._state, receipts=receipts)
-            self._publish()
+        history: LastingSyncHistory | None = None
+        history_failed = False
+        if captured_history_current and history_page is not None:
+            try:
+                history = await self._read_history(root_id, history_page)
+            except Exception:
+                history_failed = True
+        if not self._lifecycle_is_current(root_id, epoch):
             return
-        try:
-            history = (
-                await self._read_history(root_id, history_page)
-                if history_page is not None
-                else None
+        if not self._receipt_is_current(root_id, generation):
+            receipts = tuple(
+                row for row in self._state.receipts if row.operation_id != operation_id
             )
-        except Exception:
-            if not self._receipt_is_current(root_id, receipt_generation):
-                return
-            if history_page is not None and (
-                history_generation is None
-                or not self._history_is_current(
-                    root_id, history_page, history_generation
-                )
-            ):
-                self.refresh_roots(publish=False)
-                self._state = replace(self._state, receipts=receipts)
-                self._publish()
-                return
-            self._state = replace(
-                self._state,
-                receipts=receipts,
-                status_line="Undo finished, but its fresh projection is unavailable.",
-            )
-            self._publish()
-            return
-        if not self._receipt_is_current(root_id, receipt_generation):
-            return
-        if history_page is not None and (
-            history_generation is None
-            or not self._history_is_current(root_id, history_page, history_generation)
-        ):
-            self.refresh_roots(publish=False)
-            self._state = replace(self._state, receipts=receipts)
-            self._publish()
-            return
+            unavailable = self._state.receipts_unavailable
+        captured_history_current = history_page is not None and (
+            history_generation is not None
+            and self._history_is_current(root_id, history_page, history_generation)
+        )
+        status = self._state.status_line
+        if history_page is None or (captured_history_current and not history_failed):
+            status = "Undo finished. Check changes before applying again."
+        elif captured_history_current:
+            status = "Undo finished, but its fresh projection is unavailable."
+        if unavailable:
+            status = "Undo finished; fresh receipts are unavailable."
         self.refresh_roots(publish=False)
         self._state = replace(
             self._state,
             receipts=receipts,
-            history=self._state.history if history is None else history,
-            status_line="Undo finished. Check changes before applying again.",
+            receipts_unavailable=unavailable,
+            history=(
+                self._disable_local_history_action(
+                    operation_id, undone=True, history=history
+                )
+                if captured_history_current and history is not None
+                else self._disable_local_history_action(operation_id, undone=True)
+            ),
+            status_line=status,
         )
         self._publish()
 
@@ -1004,16 +1219,21 @@ class LibraryNotesSyncController:
 
         validate_lasting_sync_history_page(page)
         generation = self._start_history_request(root_id, page)
+        epoch = self._lifecycle_epoch
         self._clear_comparison()
         try:
             history = await self._read_history(root_id, page)
             status = "Resolution history loaded."
         except Exception:
-            if not self._history_is_current(root_id, page, generation):
+            if not self._lifecycle_is_current(
+                root_id, epoch
+            ) or not self._history_is_current(root_id, page, generation):
                 return
             history = LastingSyncHistory(root_id, (), page, False, True)
             status = "Resolution history is unavailable. Try again."
-        if not self._history_is_current(root_id, page, generation):
+        if not self._lifecycle_is_current(
+            root_id, epoch
+        ) or not self._history_is_current(root_id, page, generation):
             return
         self._state = replace(
             self._state,
@@ -1047,6 +1267,7 @@ class LibraryNotesSyncController:
 
     async def activate_root(self, root_id: str) -> bool:
         self._switch_projection_root(root_id)
+        epoch = self._lifecycle_epoch
         if not self._state.lasting_available:
             self._state = replace(
                 self._state,
@@ -1065,12 +1286,16 @@ class LibraryNotesSyncController:
                 root_id, self._state.review.observation_token
             )
         except Exception:
+            if not self._lifecycle_is_current(root_id, epoch):
+                return False
             self._state = replace(
                 self._state,
                 phase="review",
                 status_line="Activation failed. Review settings, then check again.",
             )
             self._publish()
+            return False
+        if not self._lifecycle_is_current(root_id, epoch):
             return False
         accepted = bool(getattr(result, "accepted", False))
         applied_count = getattr(result, "applied_count", 0)
@@ -1100,17 +1325,29 @@ class LibraryNotesSyncController:
 
     async def pause_root(self, root_id: str) -> None:
         self._switch_projection_root(root_id)
-        await self._run_root_control(self._runtime.pause_root(root_id))
+        epoch = self._lifecycle_epoch
+        await self._run_root_control(
+            self._runtime.pause_root(root_id), root_id=root_id, epoch=epoch
+        )
 
     async def resume_root(self, root_id: str) -> None:
         self._switch_projection_root(root_id)
-        await self._run_root_control(self._runtime.resume_root(root_id))
+        epoch = self._lifecycle_epoch
+        await self._run_root_control(
+            self._runtime.resume_root(root_id), root_id=root_id, epoch=epoch
+        )
 
     async def retarget_root(self, root_id: str, target: str) -> None:
         self._switch_projection_root(root_id)
+        epoch = self._lifecycle_epoch
         if not await self._run_root_control(
-            self._runtime.retarget_root(root_id, target), refresh=False
+            self._runtime.retarget_root(root_id, target),
+            root_id=root_id,
+            epoch=epoch,
+            refresh=False,
         ):
+            if not self._lifecycle_is_current(root_id, epoch):
+                return
             self._state = replace(
                 self._state,
                 status_line=(
@@ -1129,10 +1366,15 @@ class LibraryNotesSyncController:
         self, root_id: str, *, keep_folder_organization: bool
     ) -> None:
         self._switch_projection_root(root_id)
+        epoch = self._lifecycle_epoch
         if not await self._run_root_control(
             self._runtime.disconnect_root(root_id, keep_folder_organization),
+            root_id=root_id,
+            epoch=epoch,
             refresh=False,
         ):
+            if not self._lifecycle_is_current(root_id, epoch):
+                return
             self._state = replace(
                 self._state,
                 status_line=(
@@ -1155,6 +1397,8 @@ class LibraryNotesSyncController:
         self,
         operation: Awaitable[NotesSyncControlResult],
         *,
+        root_id: str,
+        epoch: int,
         refresh: bool = True,
     ) -> bool:
         """Settle one control without exposing private exception text."""
@@ -1162,12 +1406,16 @@ class LibraryNotesSyncController:
         try:
             result = await operation
         except Exception:
+            if not self._lifecycle_is_current(root_id, epoch):
+                return False
             self._state = replace(
                 self._state,
                 phase="roots",
                 status_line="Control failed. Review root status, then try its next action.",
             )
             self._publish()
+            return False
+        if not self._lifecycle_is_current(root_id, epoch):
             return False
         if getattr(result, "accepted", True) is False:
             self._state = replace(

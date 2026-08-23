@@ -795,6 +795,7 @@ async def test_delayed_comparison_cannot_publish_after_controller_remount_invali
     pending = asyncio.create_task(controller.show_conflict_comparison("bind-1"))
     await first_started.wait()
     controller.invalidate_for_remount()
+    await controller.check_root("root-1")
     current = asyncio.create_task(controller.show_conflict_comparison("bind-1"))
     await second_started.wait()
     release_second.set()
@@ -1282,3 +1283,306 @@ async def test_history_page_bounds_reject_before_runtime_call() -> None:
         with pytest.raises(ValueError, match="history page|SQLite"):
             await controller.show_resolution_history("root-1", page=invalid)
     assert not any(call[0] == "resolution_history" for call in runtime.calls)
+
+
+async def test_out_of_order_root_checks_and_remounted_error_publish_nothing_stale() -> (
+    None
+):
+    runtime = _Runtime()
+    started = {root: asyncio.Event() for root in ("root-1", "root-2")}
+    release = {root: asyncio.Event() for root in ("root-1", "root-2")}
+
+    async def delayed_check(root_id: str) -> ReconciliationPlan:
+        started[root_id].set()
+        await release[root_id].wait()
+        return _conflict_plan(
+            root_id=root_id,
+            token=TOKEN if root_id == "root-1" else TOKEN_2,
+        )
+
+    runtime.check_root = delayed_check
+    published: list[object] = []
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+        publish_snapshot=published.append,
+    )
+    first = asyncio.create_task(controller.check_root("root-1"))
+    await started["root-1"].wait()
+    second = asyncio.create_task(controller.check_root("root-2"))
+    await started["root-2"].wait()
+    release["root-2"].set()
+    await second
+    count = len(published)
+    release["root-1"].set()
+    await first
+    assert len(published) == count
+    assert controller.snapshot.review.root_id == "root-2"
+    assert controller.snapshot.review.observation_token == TOKEN_2
+
+    error_started = asyncio.Event()
+    release_error = asyncio.Event()
+
+    async def delayed_error(root_id: str) -> ReconciliationPlan:
+        error_started.set()
+        await release_error.wait()
+        raise RuntimeError("old failure")
+
+    runtime.check_root = delayed_error
+    pending = asyncio.create_task(controller.check_root("root-2"))
+    await error_started.wait()
+    controller.invalidate_for_remount()
+    count = len(published)
+    release_error.set()
+    await pending
+    assert len(published) == count
+
+
+async def test_same_root_receipt_refresh_does_not_drop_apply_or_undo_result() -> None:
+    runtime = _Runtime()
+    runtime.check_plan = _conflict_plan()
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+    await controller.check_root("root-1")
+    controller.stage_attention_choice("bind-1", "Keep file")
+    apply_started = asyncio.Event()
+    release_apply = asyncio.Event()
+    original_apply = runtime.apply_reviewed
+
+    async def delayed_apply(*args, **kwargs) -> ConflictApplyResult:
+        apply_started.set()
+        await release_apply.wait()
+        return await original_apply(*args, **kwargs)
+
+    runtime.apply_reviewed = delayed_apply
+    pending_apply = asyncio.create_task(controller.apply_reviewed())
+    await apply_started.wait()
+    await controller.refresh_conflict_receipts("root-1")
+    release_apply.set()
+    await pending_apply
+    assert controller.snapshot.phase == "receipt"
+    assert "no conflicts remain" in controller.snapshot.status_line
+
+    receipt = _receipt("operation-1", "Note")
+    runtime.receipts = (receipt,)
+    await controller.refresh_conflict_receipts("root-1")
+    undo_started = asyncio.Event()
+    release_undo = asyncio.Event()
+
+    async def delayed_undo(root_id: str, operation_id: str) -> NotesSyncExecutionResult:
+        undo_started.set()
+        await release_undo.wait()
+        runtime.receipts = ()
+        return NotesSyncExecutionResult(
+            "undo-operation-1", NotesSyncOperationState.COMPLETED, False
+        )
+
+    runtime.undo_resolution = delayed_undo
+    pending_undo = asyncio.create_task(
+        controller.undo_conflict_resolution("root-1", "operation-1")
+    )
+    await undo_started.wait()
+    await controller.refresh_conflict_receipts("root-1")
+    release_undo.set()
+    await pending_undo
+    assert controller.snapshot.receipts == ()
+    assert controller.snapshot.status_line.startswith("Undo finished")
+
+
+async def test_new_same_root_check_supersedes_older_apply_view() -> None:
+    runtime = _Runtime()
+    runtime.check_plan = _conflict_plan()
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+    await controller.check_root("root-1")
+    controller.stage_attention_choice("bind-1", "Keep file")
+    started = asyncio.Event()
+    release = asyncio.Event()
+    original_apply = runtime.apply_reviewed
+
+    async def delayed_apply(*args, **kwargs) -> ConflictApplyResult:
+        started.set()
+        await release.wait()
+        return await original_apply(*args, **kwargs)
+
+    runtime.apply_reviewed = delayed_apply
+    pending = asyncio.create_task(controller.apply_reviewed())
+    await started.wait()
+    runtime.check_plan = _conflict_plan(token=TOKEN_2)
+    await controller.check_root("root-1")
+    release.set()
+    await pending
+
+    assert controller.snapshot.phase == "review"
+    assert controller.snapshot.review.observation_token == TOKEN_2
+
+
+async def test_successful_mutations_use_safe_local_fallback_when_receipts_fail() -> (
+    None
+):
+    runtime = _Runtime()
+    runtime.check_plan = _conflict_plan()
+    statuses: list[str] = []
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+        publish_snapshot=lambda snapshot: statuses.append(snapshot.status_line),
+    )
+    await controller.check_root("root-1")
+    controller.stage_attention_choice("bind-1", "Keep file")
+
+    async def receipt_failure(root_id: str) -> tuple[RuntimeConflictReceipt, ...]:
+        raise RuntimeError("projection unavailable")
+
+    runtime.active_conflict_receipts = receipt_failure
+    statuses.clear()
+    await controller.apply_reviewed()
+    assert controller.snapshot.receipts_unavailable is True
+    assert "receipt" in controller.snapshot.status_line.casefold()
+    assert statuses == [controller.snapshot.status_line]
+
+    runtime = _Runtime()
+    runtime.receipts = (_receipt("operation-1", "Note"),)
+    runtime.history[0] = (_history_row("operation-1", "Note"),)
+    statuses = []
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+        publish_snapshot=lambda snapshot: statuses.append(snapshot.status_line),
+    )
+    await controller.refresh_conflict_receipts("root-1")
+    await controller.show_resolution_history("root-1")
+    runtime.active_conflict_receipts = receipt_failure
+    statuses.clear()
+    await controller.dismiss_conflict_receipt("root-1", "operation-1")
+    assert controller.snapshot.receipts == ()
+    assert controller.snapshot.receipts_unavailable is True
+    assert controller.snapshot.history.rows[0].undo_available is False
+    assert statuses == [controller.snapshot.status_line]
+
+    runtime.receipts = (_receipt("operation-1", "Note"),)
+
+    async def receipt_success(root_id: str) -> tuple[RuntimeConflictReceipt, ...]:
+        return runtime.receipts
+
+    runtime.active_conflict_receipts = receipt_success
+    await controller.refresh_conflict_receipts("root-1")
+    runtime.active_conflict_receipts = receipt_failure
+    statuses.clear()
+    await controller.undo_conflict_resolution("root-1", "operation-1")
+    assert controller.snapshot.receipts == ()
+    assert controller.snapshot.receipts_unavailable is True
+    assert controller.snapshot.history.rows[0].state == "undone"
+    assert controller.snapshot.history.rows[0].undo_available is False
+    assert statuses == [controller.snapshot.status_line]
+
+
+async def test_root_activation_clears_choices_and_fences_comparison_on_receipt_switch() -> (
+    None
+):
+    runtime = _Runtime()
+    runtime.check_plan = _conflict_plan()
+    gate = asyncio.Event()
+    runtime.comparison_gate = gate
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+    await controller.check_root("root-1")
+    controller.stage_attention_choice("bind-1", "Keep file")
+    pending = asyncio.create_task(controller.show_conflict_comparison("bind-1"))
+    await runtime.comparison_started.wait()
+
+    await controller.refresh_conflict_receipts("root-2")
+    assert controller._selections == {}  # noqa: SLF001 - lifecycle contract
+    assert controller.snapshot.comparison is None
+    controller._expanded_binding_id = "bind-1"  # noqa: SLF001 - isolate root fence
+    assert not controller._comparison_is_current(  # noqa: SLF001
+        controller._lifecycle_epoch,  # noqa: SLF001
+        controller._comparison_generation,  # noqa: SLF001
+        "root-1",
+        TOKEN,
+        "bind-1",
+    )
+    gate.set()
+    await pending
+    assert controller.snapshot.comparison is None
+
+
+async def test_invalid_stage_and_comparison_publish_bounded_status_once() -> None:
+    runtime = _Runtime()
+    statuses: list[str] = []
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+        publish_snapshot=lambda snapshot: statuses.append(snapshot.status_line),
+    )
+    statuses.clear()
+    controller.stage_attention_choice("bind-1", "Keep file")
+    assert len(statuses) == 1
+    assert (
+        "unavailable" in statuses[0].casefold() or "invalid" in statuses[0].casefold()
+    )
+
+    runtime.check_plan = _conflict_plan()
+    await controller.check_root("root-1")
+
+    async def mismatch(root_id: str, token: str, binding_id: str) -> ConflictComparison:
+        raise ValueError("comparison_binding_mismatch")
+
+    runtime.compare_conflict = mismatch
+    statuses.clear()
+    await controller.show_conflict_comparison("bind-1")
+    assert len(statuses) == 1
+    assert "unavailable" in statuses[0].casefold()
+
+
+async def test_new_check_supersedes_pending_activate_and_control_publication() -> None:
+    runtime = _Runtime()
+    runtime.check_plan = _conflict_plan()
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+    await controller.check_root("root-1")
+    activate_started = asyncio.Event()
+    release_activate = asyncio.Event()
+
+    async def delayed_activate(
+        root_id: str, authorization: object
+    ) -> NotesSyncControlResult:
+        activate_started.set()
+        await release_activate.wait()
+        return NotesSyncControlResult(True, "up_to_date", "sync_now")
+
+    runtime.activate_root = delayed_activate
+    pending_activate = asyncio.create_task(controller.activate_root("root-1"))
+    await activate_started.wait()
+    runtime.check_plan = _conflict_plan(token=TOKEN_2)
+    await controller.check_root("root-1")
+    release_activate.set()
+    await pending_activate
+    assert controller.snapshot.phase == "review"
+    assert controller.snapshot.review.observation_token == TOKEN_2
+
+    control_started = asyncio.Event()
+    release_control = asyncio.Event()
+
+    async def delayed_pause(root_id: str) -> NotesSyncControlResult:
+        control_started.set()
+        await release_control.wait()
+        return NotesSyncControlResult(True, "paused", "resume_sync")
+
+    runtime.pause_root = delayed_pause
+    pending_control = asyncio.create_task(controller.pause_root("root-1"))
+    await control_started.wait()
+    runtime.check_plan = _conflict_plan(token=TOKEN)
+    await controller.check_root("root-1")
+    release_control.set()
+    await pending_control
+    assert controller.snapshot.phase == "review"
+    assert controller.snapshot.review.observation_token == TOKEN

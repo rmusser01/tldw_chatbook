@@ -427,6 +427,7 @@ class LibraryNotesLastingSyncSnapshot:
     receipt_line: str = ""
     comparison: ConflictComparison | None = None
     receipts: tuple[LastingSyncReceiptRow, ...] = ()
+    receipts_unavailable: bool = False
     history: LastingSyncHistory = LastingSyncHistory()
     root_page: int = 1
     root_page_count: int = 1
@@ -456,6 +457,8 @@ class LibraryNotesLastingSyncSnapshot:
             raise TypeError("receipts must be a tuple of receipt rows")
         if len(self.receipts) > 100:
             raise ValueError("receipts must be bounded to one page")
+        if type(self.receipts_unavailable) is not bool:
+            raise TypeError("receipts_unavailable must be a boolean")
         if type(self.history) is not LastingSyncHistory:
             raise TypeError("history must be a LastingSyncHistory")
         if len(self.roots) > 20:
