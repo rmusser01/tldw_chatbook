@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-22'
-updated_date: '2026-08-23 11:24'
+updated_date: '2026-08-23 11:42'
 labels:
   - performance
   - notes-sync
@@ -33,7 +33,7 @@ full scan every tick before bailing). Library already falls back to `InertLastin
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 `start()` is gated on actual configuration (non-empty root summaries, plus the legacy `notes.sync_directory` key for one-time migration); a zero-profile boot creates no notes-sync state DB and runs no legacy scans
+- [x] #1 `start()` is gated on side-effect-free configuration evidence: the legacy `notes.sync_directory` key (one-time migration path) OR the state DB's on-disk existence. (Reworded from "non-empty root summaries" in review: reading root summaries would itself CREATE the state DB, so the gate must never open the store it guards.) A zero-profile boot creates no notes-sync state DB and runs no legacy scans
 - [x] #2 The watcher backs off when consecutive polls see no change (1 s -> 5-15 s with jitter, or native FS events with polling fallback); the interval is configurable
 - [x] #3 The legacy first-boot SELECTs are bounded/paginated
 - [x] #4 Existing notes-sync tests stay green; a probe with an active 5k-file root shows the reduced steady-state stat traffic
@@ -65,4 +65,12 @@ Gated the lasting notes-sync runtime's boot start on actual configuration, added
 **Pre-existing reds A/B'd vs base 8e949873e (identical both sides, not this change):** 15 failures across Tests/UI/test_library_shell.py + Tests/ProductionApp (incl. the surrogate-pattern meta-guard - AST comparison proves my edits add zero new violations); 7 failures in Tests/UI/test_library_notes_files_sync_journey.py; test_app_fences_console_then_drains_buddy_before_profile_teardown (same AttributeError on the skeletal fixture; not fixed by this change); preflight's production-diagnostic-inventory drift (FTS-backfill rows). Three extra failures appeared only while running the base and branch 24-minute suites CONCURRENTLY (ChatScreen compose race under load, one victim being a file that runs before mine); all 16 tests in those three files pass sequentially, and the lifecycle file passed 3/3 repeat runs.
 
 **Files.** tldw_chatbook/Notes/notes_sync_runtime.py, notes_sync_watcher.py, notes_sync_legacy.py, tldw_chatbook/app.py, config.py, UI/Library_Modules/library_notes_sync_controller.py; tests in Tests/Notes/ (cutover/runtime/watcher/legacy), Tests/ProductionApp/test_notes_sync_runtime_lifecycle.py, Tests/UI/Library_Modules/test_library_notes_sync_controller.py, Tests/UI/test_library_notes_lasting_sync_flow.py. Lessons entry added to backlog/docs/lessons-testing-evidence.md (a configured-probe that reads the store creates the store; recurs for TASK-21105).
+
+**Review fix round (fix-first, same branch).**
+
+- MAJOR-1 (confirmed): the backed-off watcher sleep was a plain asyncio.sleep, and stop() only set flags, so app quit waited out the in-flight sleep - and notes-sync shutdown is the FIRST awaited step of _shutdown_app_owned_lifecycles, serializing ahead of all other teardown (probe: 0.358 s at a 1 s cap; 15 s at defaults, 5,400 s at the config ceiling). Fix: event-interruptible default sleep - the watcher owns an asyncio.Event; the default sleep is wait_for(stop_event.wait(), timeout=seconds) and stop() sets the event, keeping stop() semantics honest and the watcher self-contained; the injectable sleep seam is preserved (an injected sleep owns its own interruption semantics), so all fake-clock tests are untouched. Red-first evidence: new real-sleep test test_stop_does_not_wait_out_a_backed_off_real_sleep (watcher backed off into a capped 1 s sleep; stop()+join must finish <0.2 s) failed on the pre-fix code ("stop took ~1.0s") and passes after; watcher file 14/14.
+- MINOR-1: AC #1 reworded in the task file to the side-effect-free gate actually shipped (legacy key OR state-DB existence), with the reason (reading root summaries would create the DB). Known residual recorded below.
+- MINOR-2: comment added at the app.py probe noting that on Python 3.12 Path.exists() RAISES PermissionError (pathlib does not swallow EACCES), and that this deliberately rides the gate's fail-open path (one full start attempt; safe and memoized).
+
+**Known residual (recorded, deliberately NOT implemented):** an abandoned FIRST-TIME setup - review_setup force-starts and creates the state DB before any root activates; if the user cancels, the empty DB remains and re-arms the start on every subsequent boot. Verified cheap (marker read + empty inventories; no watcher without leases). Deleting the DB on abandon-of-a-never-activated-first-root is follow-up material.
 <!-- SECTION:NOTES:END -->

@@ -316,3 +316,42 @@ def test_watcher_interval_config_defaults_validation_and_overrides() -> None:
                 }
             }
         )
+
+
+@pytest.mark.asyncio
+async def test_stop_does_not_wait_out_a_backed_off_real_sleep() -> None:
+    """Review MAJOR-1 (TASK-21112): stop() latency must be bounded by
+    scheduling, not by the in-flight backoff sleep — notes-sync shutdown is
+    the first awaited step of app teardown, so a waited-out sleep serializes
+    ahead of everything else."""
+
+    import time as time_module
+
+    from tldw_chatbook.Notes.notes_sync_watcher import PollingNotesSyncWatcher
+
+    polls = 0
+
+    def changed_root_ids() -> tuple[str, ...]:
+        nonlocal polls
+        polls += 1
+        return ()
+
+    watcher = PollingNotesSyncWatcher(
+        changed_root_ids,
+        lambda _root_id: None,
+        interval_seconds=0.01,
+        max_interval_seconds=1.0,
+        jitter=lambda: 1.0,
+    )
+    task = asyncio.create_task(watcher.run())
+    # After the 7th no-change poll the doubled interval is capped at 1.0 s,
+    # so the watcher is inside (or about to enter) a full 1 s real sleep.
+    while polls < 7:
+        await asyncio.sleep(0.01)
+
+    started = time_module.perf_counter()
+    await watcher.stop()
+    await task
+    elapsed = time_module.perf_counter() - started
+
+    assert elapsed < 0.2, f"stop took {elapsed:.3f}s — waited out the backoff sleep"

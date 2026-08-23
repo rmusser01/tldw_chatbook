@@ -26,6 +26,14 @@ class PollingNotesSyncWatcher:
     not stat-walk their roots in lockstep; the base interval is never
     jittered. Hint *emission* eligibility still uses the base interval, so a
     change seen right after a long idle stretch is emitted immediately.
+
+    Stop latency (TASK-21112 review MAJOR-1): the default sleep waits on the
+    stop event with a timeout rather than ``asyncio.sleep``, so ``stop()``
+    interrupts an in-flight backed-off sleep immediately. Notes-sync
+    shutdown is the first awaited step of app teardown; a waited-out sleep
+    (up to max_interval x jitter — minutes at the config ceiling) would
+    serialize ahead of every other owner. An injected ``sleep`` callable
+    replaces this behaviour and owns its own interruption semantics.
     """
 
     def __init__(
@@ -37,7 +45,7 @@ class PollingNotesSyncWatcher:
         max_interval_seconds: float | None = None,
         jitter: Callable[[], float] | None = None,
         clock: Callable[[], float] = time.monotonic,
-        sleep: Callable[[float], object] = asyncio.sleep,
+        sleep: Callable[[float], object] | None = None,
     ) -> None:
         if not callable(changed_root_ids) or not callable(schedule_hint):
             raise TypeError("watcher callbacks must be callable.")
@@ -58,7 +66,8 @@ class PollingNotesSyncWatcher:
         self._current_interval = self._interval
         self._jitter = jitter if callable(jitter) else _default_jitter
         self._clock = clock
-        self._sleep = sleep
+        self._stop_event = asyncio.Event()
+        self._sleep = sleep if sleep is not None else self._interruptible_sleep
         self._pending: set[str] = set()
         self._last_emitted: dict[str, float] = {}
         self._running = False
@@ -107,6 +116,14 @@ class PollingNotesSyncWatcher:
             return self._interval
         return self._current_interval * self._jitter()
 
+    async def _interruptible_sleep(self, seconds: float) -> None:
+        """Sleep that a concurrent stop() cuts short immediately."""
+
+        try:
+            await asyncio.wait_for(self._stop_event.wait(), timeout=seconds)
+        except TimeoutError:
+            pass
+
     async def run(self) -> None:
         """Poll until stopped; the first poll occurs after one interval."""
 
@@ -119,10 +136,11 @@ class PollingNotesSyncWatcher:
                 await self.poll_once()
 
     async def stop(self) -> None:
-        """Close hint admission idempotently."""
+        """Close hint admission idempotently and interrupt any default sleep."""
 
         self._stop_requested = True
         self._running = False
+        self._stop_event.set()
 
 
 __all__ = ["PollingNotesSyncWatcher"]

@@ -6050,7 +6050,11 @@ class TldwCli(
             # a state DB already on disk. Path.exists() never opens or
             # creates the database; a zero-profile boot therefore creates no
             # notes-sync state at all. First-time setup (review_setup)
-            # force-starts the runtime on demand.
+            # force-starts the runtime on demand. On Python 3.12
+            # Path.exists() RAISES PermissionError (pathlib no longer
+            # swallows EACCES); on a sandboxed profile that deliberately
+            # rides the gate's fail-open path — one full start attempt,
+            # which is the safe direction and is memoized.
             start_evidence=(
                 lambda settings=self.app_config, state_path=notes_sync_state_path: (
                     legacy_sync_directory_configured(settings)
