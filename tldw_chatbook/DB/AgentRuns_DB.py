@@ -1240,6 +1240,7 @@ class AgentRunsDB(BaseDB):
         definition_fingerprint: str | None = None,
         resumed_from_run_id: str | None = None,
         spawn_event_id: str | None = None,
+        run_id: str | None = None,
     ) -> str:
         """Create a new run record in ``running`` status.
 
@@ -1266,11 +1267,12 @@ class AgentRunsDB(BaseDB):
                 seeded from. ``None`` for every ordinary run.
             spawn_event_id: Stable parent Trace event that caused this run.
                 ``None`` for primary and legacy runs.
+            run_id: Preallocated stable identity; generated when omitted.
 
         Returns:
             The newly created run's id (a hex UUID4).
         """
-        run_id = uuid.uuid4().hex
+        run_id = run_id or uuid.uuid4().hex
         now = _now_iso()
         with self.transaction() as conn:
             conn.execute(

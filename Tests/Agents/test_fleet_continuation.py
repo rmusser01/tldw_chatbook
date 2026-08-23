@@ -830,6 +830,24 @@ def test_send_to_agent_to_a_finished_child_starts_a_resumed_seeded_run(db):
     assert resumed_row["spawn_event_id"] == (
         f"agent-step:{run2}:{steering_step['index']}"
     )
+    resumed_lifecycle = [
+        step
+        for step in resumed_row["steps"]
+        if step["kind"].startswith("agent_run_")
+    ]
+    assert [step["kind"] for step in resumed_lifecycle] == [
+        "agent_run_reserved",
+        "agent_run_created",
+        "agent_run_resumed",
+        "agent_run_started",
+        "agent_run_completed",
+    ]
+    resumed_event = next(
+        step
+        for step in resumed_lifecycle
+        if step["kind"] == "agent_run_resumed"
+    )
+    assert resumed_event["source_event_id"] == f"agent-run:{old_run_id}"
     old_row = next(r for r in rows if r["id"] == old_run_id)
     assert old_row["resumed_from_run_id"] is None
     assert old_row["parent_run_id"] == run1
@@ -842,10 +860,13 @@ def test_send_to_agent_to_a_finished_child_starts_a_resumed_seeded_run(db):
     sends = _tool_results(db.get_run(run2), SEND_TO_AGENT_TOOL_NAME)
     assert sends and "ERROR" not in sends[0]
     assert "resumed" in sends[0] and "new run" in sends[0].lower()
+    assert holder["handle_id"] not in sends[0]
+    assert f"run:{old_run_id}" in sends[0]
     new_handle = next(
         h for h in coordinator.snapshot() if h.run_id == resumed_row["id"]
     )
-    assert new_handle.handle_id in sends[0]
+    assert new_handle.handle_id not in sends[0]
+    assert f"run:{resumed_row['id']}" in sends[0]
 
 
 def test_a_resumed_run_re_resolves_the_definition_to_its_current_form(db):
@@ -1228,7 +1249,10 @@ def test_a_cancelled_child_draws_the_honest_not_retained_refusal_not_unknown(db)
     assert outcome.status == RUN_DONE
     sends = _tool_results(db.get_run(run1), SEND_TO_AGENT_TOOL_NAME)
     assert sends and "ERROR" in sends[0]
-    assert holder["handle_id"] in sends[0]
+    cancelled = coordinator.get(holder["handle_id"])
+    assert cancelled.run_id
+    assert holder["handle_id"] not in sends[0]
+    assert f"run:{cancelled.run_id}" in sends[0]
     assert "no retained transcript" in sends[0]
     assert "fresh sub-agent" in sends[0]
     # NEVER the unknown-id copy for a child that was real.

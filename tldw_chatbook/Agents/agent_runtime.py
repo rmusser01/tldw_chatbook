@@ -521,6 +521,10 @@ class LoopDeps:
     send_to_agent_at_step: (
         Callable[[str, str, int], ToolResult] | None
     ) = None
+    drain_mailbox_with_causes: (
+        Callable[[], list[tuple[str, str, str | None]]] | None
+    ) = None
+    owner_seq_start: int = 0
 
 
 def _continuation_calls_match(
@@ -883,7 +887,7 @@ def run_agent_loop(
     total_tokens = 0
     budget_steps = 0
     trace_steps = 0
-    owner_sequence = 0
+    owner_sequence = deps.owner_seq_start
     continuation_checkpoint: ProviderContinuationCheckpoint | None = None
     restored_calls: list[ToolCall] | None = None
     restore_history_start: int | None = None
@@ -1122,14 +1126,30 @@ def run_agent_loop(
             # budget/cancel checks at the loop top ran first (a dead run
             # never consumes a mailbox). Wrapped never-raise like
             # `on_step`: a broken drain costs the delivery, never the run.
-            if deps.drain_mailbox is not None:
+            if (
+                deps.drain_mailbox is not None
+                or deps.drain_mailbox_with_causes is not None
+            ):
                 try:
-                    for steer_source, steer_text in deps.drain_mailbox():
+                    entries = (
+                        deps.drain_mailbox_with_causes()
+                        if deps.drain_mailbox_with_causes is not None
+                        else [
+                            (source, text, None)
+                            for source, text in deps.drain_mailbox()
+                        ]
+                    )
+                    for steer_source, steer_text, source_event_id in entries:
                         steer_message = format_steering_message(
                             steer_source, steer_text
                         )
                         messages.append({"role": "user", "content": steer_message})
-                        add(STEP_STEERING, summary=steer_message[:200])
+                        add(
+                            STEP_STEERING,
+                            summary=steer_message[:200],
+                            parent_event_id=source_event_id,
+                            source_event_id=source_event_id,
+                        )
                         _emit_record(
                             deps,
                             "steering",

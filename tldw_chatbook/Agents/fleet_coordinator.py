@@ -17,7 +17,6 @@ from tldw_chatbook.Agents.agent_models import (
     RUN_DONE,
     RUN_ERROR,
     RUN_STUCK,
-    TERMINAL_RUN_STATUSES,
 )
 
 FLEET_STARTED = "fleet_started"
@@ -183,7 +182,7 @@ class FleetCoordinator:
         # Guarded by the same lock as every other public method. A key
         # exists only while entries are queued (drain pops the whole
         # list), and dies with its handle in prune_terminal.
-        self._steering: dict[str, list[tuple[str, str]]] = {}
+        self._steering: dict[str, list[tuple[str, str, str | None]]] = {}
         # PR3b Task 4: retained transcripts of finished children, keyed by
         # handle id, insertion-ordered (Python dicts) so eviction is
         # oldest-first. DELIBERATELY SEPARATE from `_handles`:
@@ -288,7 +287,23 @@ class FleetCoordinator:
         with self._lock:
             if handle_id not in self._handles or handle_id not in self._live_ids:
                 return False
-            self._steering.setdefault(handle_id, []).append((source, text))
+            self._steering.setdefault(handle_id, []).append((source, text, None))
+            return True
+
+    def post_steering_with_cause(
+        self,
+        handle_id: str,
+        source: str,
+        text: str,
+        source_event_id: str,
+    ) -> bool:
+        """Queue steering with its durable causal event identity."""
+        with self._lock:
+            if handle_id not in self._handles or handle_id not in self._live_ids:
+                return False
+            self._steering.setdefault(handle_id, []).append(
+                (source, text, source_event_id)
+            )
             return True
 
     def drain_steering(self, handle_id: str) -> list[tuple[str, str]]:
@@ -305,6 +320,16 @@ class FleetCoordinator:
             The queued ``(source, text)`` entries in posting order; empty
             for an unknown handle or an empty mailbox.
         """
+        with self._lock:
+            return [
+                (source, text)
+                for source, text, _cause in self._steering.pop(handle_id, [])
+            ]
+
+    def drain_steering_with_causes(
+        self, handle_id: str
+    ) -> list[tuple[str, str, str | None]]:
+        """Return-and-clear causal steering entries for the runtime seam."""
         with self._lock:
             return self._steering.pop(handle_id, [])
 
@@ -573,7 +598,10 @@ class FleetCoordinator:
             return False  # cannot be size-bounded, so it is not kept
         if size > self._retained_transcript_max_chars:
             return False
-        steering = tuple(self._steering.pop(handle_id, []))
+        steering = tuple(
+            (source, text)
+            for source, text, _cause in self._steering.pop(handle_id, [])
+        )
         self._retained[handle_id] = RetainedTranscript(
             handle_id=handle_id,
             run_id=handle.run_id,

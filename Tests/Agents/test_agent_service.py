@@ -60,6 +60,7 @@ from tldw_chatbook.Agents.tool_catalog import (
     ToolCatalogRegistry,
 )
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
+from tldw_chatbook.Chat.trajectory import derive_trajectory
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 from Tests.Agents.conftest import join_fleet_children
@@ -1384,6 +1385,88 @@ def test_supersede_marks_old_tree_before_new_run(db):
     )
     assert db.get_run(old_id)["status"] == "superseded"
     assert db.get_run(new_id)["status"] == "done"
+    assert [
+        step["kind"]
+        for step in db.get_run(old_id)["steps"]
+        if step["kind"].startswith("agent_run_")
+    ] == [
+        "agent_run_created",
+        "agent_run_started",
+        "agent_run_completed",
+        "agent_run_superseded",
+    ]
+    path = db.db_path
+    db.close()
+    reopened = AgentRunsDB(path, client_id="supersede-reload")
+    runs = reopened.list_runs("c", include_superseded=True)
+    records = [
+        record
+        for turn in derive_trajectory(
+            messages=[],
+            usage_by_id={},
+            traj_rows=[],
+            variant_sets=[],
+            compaction_records=[],
+            agent_runs=runs,
+            agent_steps=[
+                {**step, "run_id": row["id"], "conversation_id": "c"}
+                for row in runs
+                for step in row["steps"]
+            ],
+        ).turns
+        for record in turn.records
+    ]
+    assert any(
+        record.run_id == old_id and record.kind == "agent_run_superseded"
+        for record in records
+    )
+    reopened.close()
+
+
+def test_agent_lifecycle_capture_failure_is_contained_and_diagnosed(db, monkeypatch):
+    original_insert = db.insert_steps_at_indices
+    failed = False
+
+    def fail_created_once(run_id, indexed_steps):
+        nonlocal failed
+        if not failed and any(index == 10_000_001 for index, _step in indexed_steps):
+            failed = True
+            raise RuntimeError("simulated lifecycle storage failure")
+        return original_insert(run_id, indexed_steps)
+
+    monkeypatch.setattr(db, "insert_steps_at_indices", fail_created_once)
+    service, _ = make_service(db, ["safe answer"])
+    run_id, outcome = service.run_turn(
+        conversation_id="capture-failure",
+        messages=[{"role": "user", "content": "q"}],
+        config=CFG,
+        api_endpoint="llama_cpp",
+    )
+
+    assert outcome.status == RUN_DONE
+    steps = db.get_run(run_id)["steps"]
+    assert any(step["kind"] == "capture_failed" for step in steps)
+    assert any(step["kind"] == "agent_run_started" for step in steps)
+    assert any(step["kind"] == "agent_run_completed" for step in steps)
+
+
+def test_terminal_recovery_does_not_duplicate_lifecycle_transition(db):
+    service, _ = make_service(db, ["safe answer"])
+    run_id, outcome = service.run_turn(
+        conversation_id="terminal-recovery",
+        messages=[{"role": "user", "content": "q"}],
+        config=CFG,
+        api_endpoint="llama_cpp",
+    )
+
+    service._persist(run_id, outcome)
+
+    completed = [
+        step
+        for step in db.get_run(run_id)["steps"]
+        if step["kind"] == "agent_run_completed"
+    ]
+    assert len(completed) == 1
 
 
 def test_stuck_run_persists_stuck_status(db):

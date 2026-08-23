@@ -56,6 +56,20 @@ STEP_TOOL_CANCELLED = "tool_cancelled"
 # log shows WHEN each entry actually reached the model.
 STEP_STEERING = "steering"
 
+# Append-only agent-run lifecycle observations use a dedicated storage-index
+# band. Runtime trace rows own 1_000_000+, capture diagnostics own 2_000_000+;
+# keeping lifecycle at 10_000_000+ prevents collisions while owner_seq carries
+# the real observation order independently of this storage identity.
+AGENT_LIFECYCLE_INDEX_BASE = 10_000_000
+STEP_AGENT_RUN_RESERVED = "agent_run_reserved"
+STEP_AGENT_RUN_CREATED = "agent_run_created"
+STEP_AGENT_RUN_RESUMED = "agent_run_resumed"
+STEP_AGENT_RUN_STARTED = "agent_run_started"
+STEP_AGENT_RUN_COMPLETED = "agent_run_completed"
+STEP_AGENT_RUN_FAILED = "agent_run_failed"
+STEP_AGENT_RUN_CANCELLED = "agent_run_cancelled"
+STEP_AGENT_RUN_SUPERSEDED = "agent_run_superseded"
+
 TOOL_OUTCOME_SUCCESS = "success"
 TOOL_OUTCOME_FAILED = "failed"
 TOOL_OUTCOME_BLOCKED = "blocked"

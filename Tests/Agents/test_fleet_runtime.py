@@ -70,6 +70,7 @@ from tldw_chatbook.Agents.tool_catalog import (
     ToolCatalogRegistry,
 )
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.Chat.trajectory import derive_trajectory
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 
 from Tests.Agents.conftest import (
@@ -614,9 +615,13 @@ def test_spawn_returns_handle_without_blocking(db):
     assert outcome.status == RUN_DONE
     spawn_results = _tool_results(db.get_run(run_id), SPAWN_TOOL_NAME)
     assert len(spawn_results) == 1
-    handle_id = coordinator.snapshot()[0].handle_id
+    handle = coordinator.snapshot()[0]
+    handle_id = handle.handle_id
+    assert handle.run_id
     assert spawn_results[0].startswith("started ")
-    assert handle_id in spawn_results[0]
+    assert handle_id not in spawn_results[0]
+    assert f"run:{handle.run_id}" in spawn_results[0]
+    assert any(handle_id in (step.result or "") for step in outcome.steps)
     assert "task one" in spawn_results[0]
     # The child's answer is NOT what spawn returned.
     assert "answer one" not in spawn_results[0]
@@ -657,13 +662,16 @@ def test_check_agents_reports_status_without_blocking(db):
     assert outcome.status == RUN_DONE
     checks = _tool_results(db.get_run(run_id), CHECK_AGENTS_TOOL_NAME)
     assert len(checks) == 2
-    handle_id = coordinator.snapshot()[0].handle_id
-    assert handle_id in checks[0] and "running" in checks[0]
+    handle = coordinator.snapshot()[0]
+    assert handle.run_id
+    assert handle.handle_id not in checks[0]
+    assert f"run:{handle.run_id}" in checks[0] and "running" in checks[0]
     assert "slow task" in checks[0]
     # check_agents never blocks: the first snapshot was taken while the
     # child was still gated, and it did NOT contain the child's answer.
     assert "child answer" not in checks[0]
-    assert handle_id in checks[1] and RUN_DONE in checks[1]
+    assert handle.handle_id not in checks[1]
+    assert f"run:{handle.run_id}" in checks[1] and RUN_DONE in checks[1]
 
 
 def test_live_cap_refuses_beyond_max_live_subagents(db):
@@ -2619,6 +2627,41 @@ def test_cancel_subagent_revokes_approval_cards_mid_run(db):
         never.set()
     runner.join(10)
     assert not runner.is_alive(), "run_turn never returned"
+    _wait_until(
+        lambda: db.get_run(handle.run_id)["status"] == RUN_CANCELLED,
+        "cancelled child never persisted its terminal status",
+    )
+    child = db.get_run(handle.run_id)
+    assert child["status"] == RUN_CANCELLED
+    assert any(
+        step["kind"] == "agent_run_cancelled" for step in child["steps"]
+    )
+    path = db.db_path
+    db.close()
+    reopened = AgentRunsDB(path, client_id="cancel-reload")
+    runs = reopened.list_runs("c", include_superseded=True)
+    records = [
+        record
+        for turn in derive_trajectory(
+            messages=[],
+            usage_by_id={},
+            traj_rows=[],
+            variant_sets=[],
+            compaction_records=[],
+            agent_runs=runs,
+            agent_steps=[
+                {**step, "run_id": row["id"], "conversation_id": "c"}
+                for row in runs
+                for step in row["steps"]
+            ],
+        ).turns
+        for record in turn.records
+    ]
+    assert any(
+        record.run_id == handle.run_id and record.kind == "agent_run_cancelled"
+        for record in records
+    )
+    reopened.close()
 
 
 def test_cancel_subagent_returns_false_with_no_fleet_yet(db):
@@ -2990,13 +3033,21 @@ def test_thread_start_failure_is_contained_and_the_turn_still_finalizes(
     doomed = next(h for h in coordinator.snapshot() if h.task == "doomed")
     assert doomed.status == RUN_ERROR
     assert "could not start" in doomed.error
-    # The model was told, and no child run row was ever created for it.
+    # The model was told, and the pre-dispatch durable owner records the
+    # failed launch even though the child thread never ran.
     spawn_results = _tool_results(db.get_run(run_id), SPAWN_TOOL_NAME)
     assert len(spawn_results) == 2
     assert "could not start sub-agent" in spawn_results[0]
     # The spawn slot was given back: the second spawn started for real.
     assert spawn_results[1].startswith("started ")
-    assert db.count_subagent_runs("c") == 1
+    assert db.count_subagent_runs("c") == 2
+    doomed_row = next(row for row in db.list_runs("c") if row["task"] == "doomed")
+    assert doomed_row["status"] == RUN_ERROR
+    assert [
+        step["kind"]
+        for step in doomed_row["steps"]
+        if step["kind"].startswith("agent_run_")
+    ] == ["agent_run_reserved", "agent_run_created", "agent_run_failed"]
     waits = _tool_results(db.get_run(run_id), WAIT_AGENTS_TOOL_NAME)
     assert waits and "answer two" in waits[0]
 

@@ -11,10 +11,12 @@ from Tests.Agents.test_fleet_runtime import FLEET_CFG, make_fleet_service
 from Tests.Agents.test_agent_service import fence
 from tldw_chatbook.Agents.agent_models import (
     RUN_DONE,
+    RUN_ERROR,
     SPAWN_TOOL_NAME,
     WAIT_AGENTS_TOOL_NAME,
 )
 from tldw_chatbook.Agents import run_log as run_log_module
+from tldw_chatbook.Agents.run_log_search import load_records
 from tldw_chatbook.Chat.trajectory import derive_trajectory
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
@@ -45,7 +47,7 @@ def test_parallel_children_reload_with_precise_spawn_causes_and_safe_tasks(
 
         return reply
 
-    service, _chat, _coordinator = make_fleet_service(
+    service, _chat, coordinator = make_fleet_service(
         db,
         [
             fence(SPAWN_TOOL_NAME, {"task": private_task}),
@@ -79,6 +81,22 @@ def test_parallel_children_reload_with_precise_spawn_causes_and_safe_tasks(
     assert {child["spawn_event_id"] for child in children} == spawn_events
     assert all(child["parent_run_id"] == parent_id for child in children)
     assert all(child["status"] == RUN_DONE for child in children)
+    assert [
+        step["kind"]
+        for step in parent["steps"]
+        if step["kind"].startswith("agent_run_")
+    ] == ["agent_run_created", "agent_run_started", "agent_run_completed"]
+    for child in children:
+        assert [
+            step["kind"]
+            for step in child["steps"]
+            if step["kind"].startswith("agent_run_")
+        ] == [
+            "agent_run_reserved",
+            "agent_run_created",
+            "agent_run_started",
+            "agent_run_completed",
+        ]
 
     durable_text = json.dumps(rows, sort_keys=True)
     for forbidden in (
@@ -87,9 +105,18 @@ def test_parallel_children_reload_with_precise_spawn_causes_and_safe_tasks(
         "sk-test-lineage-secret",
     ):
         assert forbidden not in durable_text
-        assert forbidden not in "".join(
-            path.read_text(encoding="utf-8") for path in tmp_path.rglob("*.jsonl")
-        )
+    records = load_records(service.run_log_writer.log_dir)
+    logged = "\n".join(record.content for record in records)
+    for forbidden in (
+        "reasoning_content",
+        "/Users/alice/private.txt",
+        "sk-test-lineage-secret",
+        *(handle.handle_id for handle in coordinator.snapshot()),
+    ):
+        assert forbidden not in logged
+        assert forbidden not in durable_text
+    assert "parent complete" in logged
+    assert "public child complete" in logged
 
     db_path = db.db_path
     db.close()
@@ -130,45 +157,41 @@ def test_parallel_children_reload_with_precise_spawn_causes_and_safe_tasks(
     reopened.close()
 
 
-def test_projected_run_statuses_cover_terminal_and_continuation_lineage():
-    runs = [
-        {
-            "id": "old",
-            "conversation_id": "c",
-            "agent_kind": "subagent",
-            "status": "error",
-            "created_at": 1,
-            "updated_at": 2,
-        },
-        {
-            "id": "resumed",
-            "conversation_id": "c",
-            "agent_kind": "subagent",
-            "parent_run_id": "primary",
-            "spawn_event_id": "agent-step:primary:8",
-            "resumed_from_run_id": "old",
-            "status": "cancelled",
-            "created_at": 3,
-            "updated_at": 4,
-        },
-        {
-            "id": "superseded",
-            "conversation_id": "c",
-            "agent_kind": "primary",
-            "status": "superseded",
-            "created_at": 5,
-            "updated_at": 6,
-        },
-    ]
+def test_failed_child_and_completed_primary_project_after_reload(db):
+    def explode():
+        raise RuntimeError("provider exploded with api_key=sk-private-error")
+
+    service, _chat, _coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "failing child"}),
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "parent recovered safely",
+        ],
+        {"failing child": [explode]},
+    )
+    parent_id, outcome = service.run_turn(
+        conversation_id="trace-failure",
+        messages=[{"role": "user", "content": "delegate"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+    child = next(
+        row
+        for row in db.list_runs("trace-failure")
+        if row["agent_kind"] == "subagent"
+    )
+    assert child["status"] == RUN_ERROR
+
+    path = db.db_path
+    db.close()
+    reopened = AgentRunsDB(path, client_id="failure-reload")
+    runs = reopened.list_runs("trace-failure", include_superseded=True)
     steps = [
-        {
-            "run_id": "primary",
-            "conversation_id": "c",
-            "index": 8,
-            "owner_seq": 8,
-            "kind": "spawn",
-            "created_at": 2.5,
-        }
+        {**step, "run_id": row["id"], "conversation_id": "trace-failure"}
+        for row in runs
+        for step in row["steps"]
     ]
     records = _records(
         derive_trajectory(
@@ -181,9 +204,21 @@ def test_projected_run_statuses_cover_terminal_and_continuation_lineage():
             agent_steps=steps,
         )
     )
-    by_id = {record.event_id: record for record in records}
-    assert by_id["agent-run:old"].status == "error"
-    assert by_id["agent-run:resumed"].status == "cancelled"
-    assert by_id["agent-run:resumed"].parent_event_id == "agent-step:primary:8"
-    assert by_id["agent-run:resumed"].source_event_id == "agent-run:old"
-    assert by_id["agent-run:superseded"].status == "superseded"
+    child_kinds = [record.kind for record in records if record.run_id == child["id"]]
+    assert "agent_run_created" in child_kinds
+    assert "agent_run_started" in child_kinds
+    assert "agent_run_failed" in child_kinds
+    parent_kinds = [record.kind for record in records if record.run_id == parent_id]
+    assert "agent_run_completed" in parent_kinds
+    event_ids = {record.event_id for record in records}
+    for record in records:
+        for link in (record.parent_event_id, record.source_event_id):
+            assert link is None or link in event_ids, (
+                record.event_id,
+                record.kind,
+                link,
+                sorted(event_ids),
+            )
+    serialized = json.dumps(runs, sort_keys=True)
+    assert "sk-private-error" not in serialized
+    reopened.close()

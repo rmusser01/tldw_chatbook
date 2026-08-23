@@ -89,6 +89,35 @@ def test_a_plain_run_writes_records_without_the_caller_wiring_anything(wired):
     assert records[0].kind == "primary"
 
 
+def test_real_model_output_is_private_at_log_and_terminal_db_boundaries(wired):
+    db, registry, root = wired
+    private = (
+        "reasoning_content: private plan; read /Users/alice/secret.txt; "
+        "api_key=sk-private-model-output"
+    )
+    service = AgentService(db, registry, chat_call=chat_call_returning(private))
+    run_id, outcome = service.run_turn(
+        conversation_id="conv-private-model",
+        messages=[{"role": "user", "content": "hi"}],
+        config=AgentConfig(model="m", system_prompt="s", budget=RunBudget()),
+        api_endpoint="openai",
+    )
+
+    assert outcome.final_text == private
+    assert db.get_run(run_id)["result"] is None
+    records = read_all(root)
+    assert len(records) == 1
+    assert records[0].type == "model"
+    assert records[0].content == ""
+    decoded = "\n".join(record.content for record in records)
+    for forbidden in (
+        "reasoning_content",
+        "/Users/alice/secret.txt",
+        "sk-private-model-output",
+    ):
+        assert forbidden not in decoded
+
+
 def test_record_numbers_are_unique_across_the_whole_run_tree(wired):
     db, registry, root = wired
     writer = RunLogWriter()

@@ -2602,8 +2602,17 @@ def test_spawn_renders_marker_and_persists_linked_subagent(tmp_path):
     assert sum(
         marker.activity_presentation.kind == "thinking" for marker in live_markers
     ) == 1
-    assert _activity_marker_signature(resumed_markers) == _activity_marker_signature(
-        live_markers
+    live_signature = _activity_marker_signature(live_markers)
+    resumed_signature = _activity_marker_signature(resumed_markers)
+    assert live_signature[:2] == resumed_signature[:2]
+    assert [item[1:] for item in live_signature] == [
+        item[1:] for item in resumed_signature
+    ]
+    child = next(row for row in db.list_runs("conv-1") if row["agent_kind"] == "subagent")
+    assert f"run:{child['id']}" not in live_signature[-1][0]
+    assert f"run:{child['id']}" in resumed_signature[-1][0]
+    assert live_signature[-1][0].split(": compute 1+1", 1)[1] == (
+        resumed_signature[-1][0].split(": compute 1+1", 1)[1]
     )
     snap = bridge.live_snapshot("conv-1")
     assert any(s.text for s in snap.subagents)
@@ -7993,10 +8002,8 @@ def test_a_survivors_own_steps_are_kept_under_its_own_run_id(tmp_path):
     """... and are not merely suppressed: dropping them would be the same
     silent loss, one turn later.
 
-    A live child's steps exist NOWHERE else while it runs -- `AgentService`
-    persists a run's steps to `AgentRunsDB` once, at the end
-    (`_persist`), so the drill-in has nothing to show for a child still
-    working. The per-run slot is that missing live source.
+    Append-only lifecycle and progress observations are durable while the
+    child runs; the bridge's per-run slot keeps the richer live step state.
     """
     gate = threading.Event()
     gateway = _FleetTwoChildGateway(
@@ -8014,8 +8021,18 @@ def test_a_survivors_own_steps_are_kept_under_its_own_run_id(tmp_path):
         assert gateway.entered_event.wait(5), "the child never started"
         child_run_id = bridge.fleet_snapshot("conv-rail-child")[0].run_id
         assert child_run_id, "the child's run never attached"
-        # The DB has the row but no steps yet -- this is the gap.
-        assert not db.get_run(child_run_id)["steps"]
+        durable = db.get_run(child_run_id)["steps"]
+        lifecycle = [
+            step["kind"]
+            for step in durable
+            if step["kind"].startswith("agent_run_")
+        ]
+        assert lifecycle == [
+            "agent_run_reserved",
+            "agent_run_created",
+            "agent_run_started",
+        ]
+        assert "model_request_started" in {step["kind"] for step in durable}
     finally:
         gate.set()
     _join_fleet_threads()

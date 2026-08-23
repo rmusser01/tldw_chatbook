@@ -490,6 +490,16 @@ def test_agent_service_actual_request_assembly_captures_safe_context_chain(tmp_p
 
         assert outcome.status == "done"
         durable = db.get_run(run_id)["steps"]
+        lifecycle = [
+            step for step in durable if step["kind"].startswith("agent_run_")
+        ]
+        assert [step["kind"] for step in lifecycle] == [
+            "agent_run_created",
+            "agent_run_started",
+            "agent_run_completed",
+        ]
+        assert len({step["index"] for step in durable}) == len(durable)
+        assert all(step["index"] >= 10_000_000 for step in lifecycle)
         attached = next(step for step in durable if step["kind"] == "context_attached")
         injected = next(step for step in durable if step["kind"] == "context_injected")
         assert attached["parent_event_id"] == f"agent-run:{run_id}"
@@ -515,6 +525,12 @@ def test_agent_service_actual_request_assembly_captures_safe_context_chain(tmp_p
         )
         records = [record for turn in snapshot.turns for record in turn.records]
         ordered = [record.kind for record in records]
+        assert ordered.index("agent_run_created") < ordered.index(
+            "agent_run_started"
+        )
+        assert ordered.index("agent_run_started") < ordered.index(
+            "context_attached"
+        )
         assert ordered.index("context_attached") < ordered.index("context_injected")
         assert ordered.index("context_injected") < ordered.index(
             "model_request_started"

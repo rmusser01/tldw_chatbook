@@ -17,6 +17,7 @@ import re
 import sys
 import threading
 import time
+import uuid
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Callable, Literal, Protocol, cast
@@ -45,15 +46,26 @@ from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Chat.console_history_budget import count_console_messages_tokens
 
 from .agent_models import (
+    AGENT_LIFECYCLE_INDEX_BASE,
     AGENT_KIND_PRIMARY,
     AGENT_KIND_SUBAGENT,
     MAX_STEERING_CHARS,
     RUN_CANCELLED,
     RUN_DONE,
     RUN_ERROR,
+    RUN_STUCK,
+    RUN_SUPERSEDED,
     SPAWN_TOOL_NAME,
     STEERING_SOURCE_SUPERVISOR,
     STEP_ERROR,
+    STEP_AGENT_RUN_CANCELLED,
+    STEP_AGENT_RUN_COMPLETED,
+    STEP_AGENT_RUN_CREATED,
+    STEP_AGENT_RUN_FAILED,
+    STEP_AGENT_RUN_RESERVED,
+    STEP_AGENT_RUN_RESUMED,
+    STEP_AGENT_RUN_STARTED,
+    STEP_AGENT_RUN_SUPERSEDED,
     TOOL_OUTCOME_CANCELLED,
     TOOL_OUTCOME_TIMEOUT,
     TERMINAL_RUN_STATUSES,
@@ -706,7 +718,20 @@ def _safe_exception_type(exc: Exception) -> str:
     return name if isinstance(name, str) and name else "Exception"
 
 
-def _safe_agent_step_record(run_id: str, step: AgentStep) -> dict[str, Any]:
+def _replace_process_handles(content: str, handles: Mapping[str, str]) -> str:
+    """Replace process-local fleet identities with durable run identities."""
+    for handle_id, child_run_id in sorted(
+        handles.items(), key=lambda item: len(item[0]), reverse=True
+    ):
+        content = content.replace(handle_id, f"run:{child_run_id}")
+    return content
+
+
+def _safe_agent_step_record(
+    run_id: str,
+    step: AgentStep,
+    durable_handles: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
     """Serialize one step without persisting tool payloads or local-only links."""
     record = dataclasses.asdict(step)
     states = dict(step.field_states)
@@ -749,10 +774,7 @@ def _safe_agent_step_record(run_id: str, step: AgentStep) -> dict[str, Any]:
         contains_private_key = (
             "-----BEGIN " in result.upper() and "PRIVATE KEY-----" in result.upper()
         )
-        hidden_reasoning = any(
-            marker in result.lower()
-            for marker in ("reasoning_content", "chain of thought")
-        )
+        hidden_reasoning = _contains_hidden_reasoning(result)
         path_result = contains_local_path(result)
         scrubbed = redact_log_line(result)
         if file_result or hidden_reasoning or path_result:
@@ -762,10 +784,16 @@ def _safe_agent_step_record(run_id: str, step: AgentStep) -> dict[str, Any]:
             record["result"] = REDACTION_MARKER
             states["result"] = "redacted"
         else:
-            record["result"] = scrubbed
-            if scrubbed != result:
+            durable_result = _replace_process_handles(
+                scrubbed, durable_handles or {}
+            )
+            record["result"] = durable_result
+            if durable_result != result:
                 states["result"] = (
-                    "redacted" if REDACTION_MARKER in scrubbed else "truncated"
+                    "redacted"
+                    if REDACTION_MARKER in durable_result
+                    or durable_result != scrubbed
+                    else "truncated"
                 )
             else:
                 states["result"] = "observed"
@@ -814,10 +842,8 @@ def _contains_hidden_reasoning(content: str) -> bool:
     return False
 
 
-def _safe_run_log_content(record_type: str, content: str) -> tuple[str, bool]:
+def _safe_run_log_content(_record_type: str, content: str) -> tuple[str, bool]:
     """Return sanitized durable content and whether fidelity was withheld."""
-    if record_type not in {"tool_call", "tool_result"}:
-        return content, False
     if contains_local_path(content):
         return "", True
     if _contains_hidden_reasoning(content):
@@ -840,6 +866,31 @@ def _safe_agent_task_summary(task: str | None) -> str | None:
         return "Sub-agent task withheld for privacy"
     sanitized = redact_log_line(task, max_length=200)
     return sanitized or "Sub-agent task withheld for privacy"
+
+
+def _safe_terminal_result(result: str | None) -> str | None:
+    """Keep safe output while withholding private terminal content."""
+    if not result:
+        return None
+    if contains_local_path(result) or _contains_hidden_reasoning(result):
+        return None
+    uppered = result.upper()
+    if "-----BEGIN " in uppered and "PRIVATE KEY-----" in uppered:
+        return REDACTION_MARKER
+    sanitized = redact_log_line(result, max_length=0)
+    return sanitized or None
+
+
+_LIFECYCLE_INDEX = {
+    STEP_AGENT_RUN_RESERVED: AGENT_LIFECYCLE_INDEX_BASE,
+    STEP_AGENT_RUN_CREATED: AGENT_LIFECYCLE_INDEX_BASE + 1,
+    STEP_AGENT_RUN_RESUMED: AGENT_LIFECYCLE_INDEX_BASE + 2,
+    STEP_AGENT_RUN_STARTED: AGENT_LIFECYCLE_INDEX_BASE + 3,
+    STEP_AGENT_RUN_COMPLETED: AGENT_LIFECYCLE_INDEX_BASE + 10,
+    STEP_AGENT_RUN_FAILED: AGENT_LIFECYCLE_INDEX_BASE + 11,
+    STEP_AGENT_RUN_CANCELLED: AGENT_LIFECYCLE_INDEX_BASE + 12,
+    STEP_AGENT_RUN_SUPERSEDED: AGENT_LIFECYCLE_INDEX_BASE + 13,
+}
 
 
 def _default_chat_call():
@@ -2299,18 +2350,132 @@ class AgentService:
             # at this child).
             self._revoke_run_approvals(handle.run_id)
             try:
-                self.db.set_status(handle.run_id, RUN_CANCELLED)
+                updated = self.db.set_status(handle.run_id, RUN_CANCELLED)
+                if updated:
+                    self._record_terminal_lifecycle(
+                        handle.run_id, RUN_CANCELLED
+                    )
             except Exception:  # noqa: BLE001 — a DB failure here must not
                 # take down a turn that has already produced its answer.
                 logger.warning("could not mark abandoned sub-agent run cancelled")
 
-    def _persist(self, run_id: str, outcome: RunOutcome) -> None:
+    def _next_owner_seq(self, run_id: str) -> int:
+        """Return the next observation order without using storage indices."""
+        try:
+            steps = self.db.get_run(run_id)["steps"]
+            observed = [
+                int(step["owner_seq"])
+                for step in steps
+                if step.get("owner_seq") is not None
+            ]
+            return max(observed, default=-1) + 1
+        except Exception:  # noqa: BLE001 — capture never gates execution
+            return 0
+
+    def _append_run_lifecycle(
+        self,
+        run_id: str,
+        kind: str,
+        status: str,
+        *,
+        owner_seq: int | None = None,
+        parent_event_id: str | None = None,
+        source_event_id: str | None = None,
+    ) -> int:
+        """Persist one idempotent, payload-free agent lifecycle observation."""
+        index = _LIFECYCLE_INDEX[kind]
+        try:
+            existing = self.db.get_run(run_id)["steps"]
+            found = next((step for step in existing if step["index"] == index), None)
+            if found is not None:
+                prior = found.get("owner_seq")
+                return (int(prior) + 1) if prior is not None else self._next_owner_seq(run_id)
+        except Exception:  # noqa: BLE001 — insertion below owns diagnostics
+            pass
+        sequence = self._next_owner_seq(run_id) if owner_seq is None else owner_seq
+        step = AgentStep(
+            index=index,
+            kind=kind,
+            summary=kind.replace("_", " ").capitalize(),
+            created_at=safe_utc_timestamp(self.wall_clock),
+            status=status,
+            owner_seq=sequence,
+            parent_event_id=parent_event_id or f"agent-run:{run_id}",
+            source_event_id=source_event_id,
+            field_states={"payload": "omitted"},
+            sensitivity="diagnostic",
+        )
+        try:
+            self.db.insert_steps_at_indices(
+                run_id, [(index, _safe_agent_step_record(run_id, step))]
+            )
+        except Exception as exc:  # noqa: BLE001 — capture is best effort
+            logger.warning(
+                "could not persist agent run lifecycle "
+                "run_id={} kind={} error_type={}",
+                run_id,
+                kind,
+                _safe_exception_type(exc),
+            )
+            diagnostic = AgentStep(
+                index=AGENT_LIFECYCLE_INDEX_BASE + 100 + (index % 100),
+                kind="capture_failed",
+                summary="Agent lifecycle capture failed",
+                created_at=step.created_at,
+                status="incomplete",
+                owner_seq=sequence,
+                source_event_id=f"agent-step:{run_id}:{index}",
+                field_states={"payload": "capture_failed"},
+                sensitivity="diagnostic",
+            )
+            try:
+                self.db.insert_steps_at_indices(
+                    run_id,
+                    [
+                        (
+                            diagnostic.index,
+                            _safe_agent_step_record(run_id, diagnostic),
+                        )
+                    ],
+                )
+            except Exception:  # noqa: BLE001 — non-recursive containment
+                logger.warning("could not persist agent lifecycle diagnostic")
+        return sequence + 1
+
+    def _record_terminal_lifecycle(
+        self, run_id: str, status: str, *, parent_event_id: str | None = None
+    ) -> None:
+        kind = {
+            RUN_DONE: STEP_AGENT_RUN_COMPLETED,
+            RUN_CANCELLED: STEP_AGENT_RUN_CANCELLED,
+            RUN_SUPERSEDED: STEP_AGENT_RUN_SUPERSEDED,
+            RUN_ERROR: STEP_AGENT_RUN_FAILED,
+            RUN_STUCK: STEP_AGENT_RUN_FAILED,
+        }.get(status, STEP_AGENT_RUN_FAILED)
+        self._append_run_lifecycle(
+            run_id,
+            kind,
+            status,
+            parent_event_id=parent_event_id,
+        )
+
+    def _persist(
+        self,
+        run_id: str,
+        outcome: RunOutcome,
+        durable_handles: Mapping[str, str] | None = None,
+    ) -> None:
         try:
             step_dicts = []
             for step in outcome.steps:
                 if not step.created_at:
                     step.created_at = safe_utc_timestamp(self.wall_clock)
-                step_dicts.append((step.index, _safe_agent_step_record(run_id, step)))
+                step_dicts.append(
+                    (
+                        step.index,
+                        _safe_agent_step_record(run_id, step, durable_handles),
+                    )
+                )
             self.db.insert_steps_at_indices(run_id, step_dicts)
         except Exception as exc:  # noqa: BLE001 — trace capture is best-effort
             logger.warning(
@@ -2318,7 +2483,24 @@ class AgentService:
                 run_id,
                 _safe_exception_type(exc),
             )
-        self.db.set_status(run_id, outcome.status, result=outcome.final_text or None)
+        updated = self.db.set_status(
+            run_id, outcome.status, result=_safe_terminal_result(outcome.final_text)
+        )
+        if updated:
+            last = max(
+                outcome.steps,
+                key=lambda step: (
+                    step.owner_seq if step.owner_seq is not None else -1
+                ),
+                default=None,
+            )
+            self._record_terminal_lifecycle(
+                run_id,
+                outcome.status,
+                parent_event_id=(
+                    f"agent-step:{run_id}:{last.index}" if last is not None else None
+                ),
+            )
 
     def _run_one(
         self,
@@ -2340,6 +2522,8 @@ class AgentService:
         # caller (an ordinary run).
         resumed_from_run_id: str | None = None,
         spawn_event_id: str | None = None,
+        precreated_run_id: str | None = None,
+        lifecycle_owner_seq_start: int | None = None,
         on_run_id: Callable[[str], None] | None = None,
         # PR3b Task 1 (fleet steering): the per-child mailbox drain, built
         # by spawn's fleet branch as a closure over THIS child's own
@@ -2349,6 +2533,9 @@ class AgentService:
         # and inline children: a primary is steered by the user talking to
         # it, and an inline child has no handle, so no mailbox exists.
         drain_mailbox: Callable[[], list[tuple[str, str]]] | None = None,
+        drain_mailbox_with_causes: (
+            Callable[[], list[tuple[str, str, str | None]]] | None
+        ) = None,
         run_log_writer: "RunLogWriter | None" = None,
         continuation_owner_message_id: str | None = None,
         continuation_durability: Literal["persistent", "ephemeral"] = "persistent",
@@ -2396,18 +2583,50 @@ class AgentService:
         # parent's writer, which is its own tree's writer, exactly as
         # before.
         writer = run_log_writer if run_log_writer is not None else self.run_log_writer
-        run_id = self.db.create_run(
-            conversation_id=conversation_id,
-            agent_kind=agent_kind,
-            task=_safe_agent_task_summary(task),
-            parent_run_id=parent_run_id,
-            budget=dataclasses.asdict(config.budget),
-            assistant_message_id=assistant_message_id,
-            agent_definition=agent_definition,
-            definition_fingerprint=definition_fingerprint,
-            resumed_from_run_id=resumed_from_run_id,
-            spawn_event_id=spawn_event_id,
-        )
+        if precreated_run_id is None:
+            run_id = self.db.create_run(
+                conversation_id=conversation_id,
+                agent_kind=agent_kind,
+                task=_safe_agent_task_summary(task),
+                parent_run_id=parent_run_id,
+                budget=dataclasses.asdict(config.budget),
+                assistant_message_id=assistant_message_id,
+                agent_definition=agent_definition,
+                definition_fingerprint=definition_fingerprint,
+                resumed_from_run_id=resumed_from_run_id,
+                spawn_event_id=spawn_event_id,
+            )
+            lifecycle_owner_seq = 0
+            if agent_kind == AGENT_KIND_SUBAGENT:
+                lifecycle_owner_seq = self._append_run_lifecycle(
+                    run_id,
+                    STEP_AGENT_RUN_RESERVED,
+                    "reserved",
+                    owner_seq=lifecycle_owner_seq,
+                    parent_event_id=spawn_event_id,
+                )
+            lifecycle_owner_seq = self._append_run_lifecycle(
+                run_id,
+                STEP_AGENT_RUN_CREATED,
+                "created",
+                owner_seq=lifecycle_owner_seq,
+                parent_event_id=spawn_event_id,
+            )
+            if resumed_from_run_id:
+                lifecycle_owner_seq = self._append_run_lifecycle(
+                    run_id,
+                    STEP_AGENT_RUN_RESUMED,
+                    "resumed",
+                    owner_seq=lifecycle_owner_seq,
+                    source_event_id=f"agent-run:{resumed_from_run_id}",
+                )
+        else:
+            run_id = precreated_run_id
+            lifecycle_owner_seq = (
+                lifecycle_owner_seq_start
+                if lifecycle_owner_seq_start is not None
+                else self._next_owner_seq(run_id)
+            )
         # PR2a Task 6: a threaded child's run id does not exist until this
         # line, and its spawning parent has long since returned a handle to
         # the model. This hook is how the id gets back to the coordinator
@@ -2684,6 +2903,15 @@ class AgentService:
         # injected coordinator would show, and make this run wait on,
         # another run's children.
         my_handle_ids: list[str] = []
+        durable_handle_ids: dict[str, str] = (
+            {
+                handle.handle_id: handle.run_id
+                for handle in fleet.snapshot()
+                if handle.run_id
+            }
+            if fleet is not None
+            else {}
+        )
 
         def _launch_fleet_child(
             spawn_task: str,
@@ -2723,6 +2951,70 @@ class AgentService:
                         "finished sub-agent before starting another"
                     ),
                 )
+            child_run_id = uuid.uuid4().hex
+            try:
+                self.db.create_run(
+                    run_id=child_run_id,
+                    conversation_id=child_kwargs["conversation_id"],
+                    agent_kind=child_kwargs["agent_kind"],
+                    task=_safe_agent_task_summary(child_kwargs.get("task")),
+                    parent_run_id=child_kwargs.get("parent_run_id"),
+                    budget=dataclasses.asdict(child_kwargs["config"].budget),
+                    agent_definition=child_kwargs.get("agent_definition"),
+                    definition_fingerprint=child_kwargs.get(
+                        "definition_fingerprint"
+                    ),
+                    resumed_from_run_id=child_kwargs.get("resumed_from_run_id"),
+                    spawn_event_id=child_kwargs.get("spawn_event_id"),
+                )
+            except Exception as exc:  # noqa: BLE001 — spawn refusal, never parent abort
+                fleet.finish(
+                    handle.handle_id,
+                    RUN_ERROR,
+                    error="could not create durable sub-agent run",
+                )
+                sub_agent_spawns -= 1
+                logger.warning(
+                    "could not precreate sub-agent run error_type={}",
+                    _safe_exception_type(exc),
+                )
+                return None, ToolResult(
+                    ok=False, error="could not create durable sub-agent run"
+                )
+            owner_seq = self._append_run_lifecycle(
+                child_run_id,
+                STEP_AGENT_RUN_RESERVED,
+                "reserved",
+                owner_seq=0,
+                parent_event_id=child_kwargs.get("spawn_event_id"),
+            )
+            owner_seq = self._append_run_lifecycle(
+                child_run_id,
+                STEP_AGENT_RUN_CREATED,
+                "created",
+                owner_seq=owner_seq,
+                parent_event_id=(
+                    f"agent-step:{child_run_id}:"
+                    f"{_LIFECYCLE_INDEX[STEP_AGENT_RUN_RESERVED]}"
+                ),
+            )
+            resumed_from = child_kwargs.get("resumed_from_run_id")
+            if resumed_from:
+                owner_seq = self._append_run_lifecycle(
+                    child_run_id,
+                    STEP_AGENT_RUN_RESUMED,
+                    "resumed",
+                    owner_seq=owner_seq,
+                    parent_event_id=(
+                        f"agent-step:{child_run_id}:"
+                        f"{_LIFECYCLE_INDEX[STEP_AGENT_RUN_CREATED]}"
+                    ),
+                    source_event_id=f"agent-run:{resumed_from}",
+                )
+            child_kwargs["precreated_run_id"] = child_run_id
+            child_kwargs["lifecycle_owner_seq_start"] = owner_seq
+            fleet.attach_run(handle.handle_id, child_run_id)
+            durable_handle_ids[handle.handle_id] = child_run_id
             # Cooperative cancellation for THIS child specifically, on top
             # of the run-wide `should_cancel` it also honours. wait_agents
             # and the end-of-turn settle both set it to unwind stragglers
@@ -2735,6 +3027,11 @@ class AgentService:
             # the child runs on its own thread. handle_id is default-bound
             # (the run_child style) so the closure can never pick up a
             # later spawn's handle.
+            child_kwargs["drain_mailbox_with_causes"] = (
+                lambda handle_id=handle.handle_id: (
+                    fleet.drain_steering_with_causes(handle_id)
+                )
+            )
             child_kwargs["drain_mailbox"] = lambda handle_id=handle.handle_id: (
                 fleet.drain_steering(handle_id)
             )
@@ -2885,7 +3182,9 @@ class AgentService:
                     child_run_id = current.run_id if current is not None else None
                     if child_run_id:
                         try:
-                            self.db.set_status(child_run_id, status)
+                            updated = self.db.set_status(child_run_id, status)
+                            if updated:
+                                self._record_terminal_lifecycle(child_run_id, status)
                         except Exception:  # noqa: BLE001
                             logger.warning(
                                 "could not persist terminal status for sub-agent run"
@@ -2934,6 +3233,9 @@ class AgentService:
                     RUN_ERROR,
                     error=f"could not start sub-agent thread: {exc}",
                 )
+                updated = self.db.set_status(child_run_id, RUN_ERROR)
+                if updated:
+                    self._record_terminal_lifecycle(child_run_id, RUN_ERROR)
                 self._fleet_cancels.pop(handle.handle_id, None)
                 if my_handle_ids and my_handle_ids[-1] == handle.handle_id:
                     my_handle_ids.pop()
@@ -3696,9 +3998,20 @@ class AgentService:
             target = next((h for h in live if h.handle_id == target_id), None) or next(
                 (h for h in live if h.run_id == target_id), None
             )
-            if target is not None and fleet.post_steering(
-                target.handle_id, STEERING_SOURCE_SUPERVISOR, text
-            ):
+            queued = False
+            if target is not None:
+                if spawn_step_index is not None:
+                    queued = fleet.post_steering_with_cause(
+                        target.handle_id,
+                        STEERING_SOURCE_SUPERVISOR,
+                        text,
+                        f"agent-step:{run_id}:{spawn_step_index}",
+                    )
+                else:
+                    queued = fleet.post_steering(
+                        target.handle_id, STEERING_SOURCE_SUPERVISOR, text
+                    )
+            if target is not None and queued:
                 return ToolResult(
                     ok=True,
                     content=(
@@ -3732,6 +4045,7 @@ class AgentService:
             # lookup.
             retained = fleet.get_retained(target_id)
             if retained is not None:
+                durable_handle_ids[retained.handle_id] = retained.run_id
                 return _resume_retained_child(retained, text, spawn_step_index)
             finished = next(
                 (
@@ -4349,11 +4663,15 @@ class AgentService:
             """
             content = str(payload.get("content", ""))
             safe_content, altered = _safe_run_log_content(record_type, content)
+            durable_content = _replace_process_handles(
+                safe_content, durable_handle_ids
+            )
+            altered = altered or durable_content != safe_content
             record_number = writer.append(
                 run_id=run_id,
                 kind=agent_kind,
                 type=record_type,
-                content=safe_content,
+                content=durable_content,
                 tool=str(payload.get("tool", "")),
                 status=str(payload.get("status", "")),
                 call_id=str(payload.get("call_id", "")),
@@ -4401,7 +4719,9 @@ class AgentService:
             try:
                 if not step.created_at:
                     step.created_at = safe_utc_timestamp(self.wall_clock)
-                record = _safe_agent_step_record(run_id, step)
+                record = _safe_agent_step_record(
+                    run_id, step, durable_handle_ids
+                )
                 self.db.insert_steps_at_indices(run_id, [(step.index, record)])
             except Exception as exc:  # noqa: BLE001 — trace capture is best-effort
                 logger.warning(
@@ -4504,14 +4824,10 @@ class AgentService:
             clock=self.clock,
             wall_clock=self.wall_clock,
             on_step=observe_step,
-            # Console approval wiring is the production owner for the full
-            # tool lifecycle. Keep pure/legacy AgentService callers on the
-            # historical control-step contract when that owner is absent.
-            on_trace_step=(
-                observe_trace_step
-                if self.review_tool_calls is not None
-                else (lambda _step: None)
-            ),
+            # Runtime progress observations are durable for every real service
+            # run. Otherwise control steps can retain links to model events
+            # that disappear after restart.
+            on_trace_step=observe_trace_step,
             reserve_context_trace=(
                 reserve_context_trace if self.review_tool_calls is not None else None
             ),
@@ -4581,6 +4897,7 @@ class AgentService:
             # the parameter's own comment above); the pure loop drains it
             # at its protocol-coherent pre-model-call point.
             drain_mailbox=drain_mailbox,
+            drain_mailbox_with_causes=drain_mailbox_with_causes,
             on_record=on_record,
             continuation_context=ContinuationEventContext(
                 owner_message_id=continuation_owner_message_id,
@@ -4599,6 +4916,18 @@ class AgentService:
         if self.persist_provider_continuation is not None:
             deps.persist_provider_continuation = self.persist_provider_continuation
         deps.expand_provider_continuation = self.expand_provider_continuation
+        lifecycle_owner_seq = self._append_run_lifecycle(
+            run_id,
+            STEP_AGENT_RUN_STARTED,
+            "started",
+            owner_seq=lifecycle_owner_seq,
+            parent_event_id=(
+                f"agent-step:{run_id}:{_LIFECYCLE_INDEX[STEP_AGENT_RUN_RESUMED]}"
+                if resumed_from_run_id
+                else f"agent-step:{run_id}:{_LIFECYCLE_INDEX[STEP_AGENT_RUN_CREATED]}"
+            ),
+        )
+        deps.owner_seq_start = lifecycle_owner_seq
         try:
             # PR2a Task 7: bind THIS run as the dispatching run for the
             # whole loop, on the loop's own thread.
@@ -4672,7 +5001,7 @@ class AgentService:
                     )
                 ],
             )
-        self._persist(run_id, outcome)
+        self._persist(run_id, outcome, durable_handle_ids)
         return run_id, outcome
 
     # -- public ----------------------------------------------------------
@@ -4790,7 +5119,21 @@ class AgentService:
             writer active, so a survivor's later appends still land.
         """
         if supersede_run_id:
+            candidates = [
+                row
+                for row in self.db.list_runs(
+                    conversation_id, include_superseded=True
+                )
+                if row["id"] == supersede_run_id
+                or row.get("parent_run_id") == supersede_run_id
+            ]
             self.db.supersede_run_tree(supersede_run_id)
+            for candidate in candidates:
+                current = self.db.get_run(candidate["id"])
+                if current is not None and current["status"] == RUN_SUPERSEDED:
+                    self._record_terminal_lifecycle(
+                        candidate["id"], RUN_SUPERSEDED
+                    )
         sidecar = tuple(continuation_sidecar)
         if sidecar and (continuation_target is None or not continuation_owner_key):
             raise ValueError(
