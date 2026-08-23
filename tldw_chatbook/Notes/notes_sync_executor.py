@@ -931,6 +931,7 @@ class NotesSyncExecutor:
         if linked is not None:
             try:
                 recovery = self._store.load_operation_recovery(linked_id)
+                self._require_recovery_envelope(linked, recovery)
                 metadata = self._recovery_metadata(recovery)
                 payload, source_metadata = self._undo_material(recovery, metadata)
                 request = NotesSyncUndoRequest(
@@ -1066,10 +1067,12 @@ class NotesSyncExecutor:
     async def _projection_labels(
         self, source_operation_id: str
     ) -> tuple[str | None, str | None]:
-        recovery = self._store.find_operation_recovery(source_operation_id)
-        if recovery is None:
-            return None, None
         try:
+            source = self._store.find_operation(source_operation_id)
+            recovery = self._store.find_operation_recovery(source_operation_id)
+            if source is None or recovery is None:
+                return None, None
+            self._require_recovery_envelope(source, recovery)
             return await self._projection_labels_from_metadata(
                 self._recovery_metadata(recovery)
             )

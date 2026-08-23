@@ -63,6 +63,7 @@ from tldw_chatbook.Notes.notes_sync_models import (
     NotesSyncOperationState,
     NotesSyncRootState,
 )
+from tldw_chatbook.Notes.notes_sync_runtime import NotesSyncRuntimeOwner
 
 
 pytestmark = pytest.mark.unit
@@ -2848,6 +2849,143 @@ async def test_linked_undo_rejects_colocated_embedded_source_metadata_corruption
     assert notes.replace_calls == note_effects
     assert files.replace_calls == file_effects
     assert "Evil!" not in notes.snapshot.title
+
+
+@pytest.mark.asyncio
+async def test_incomplete_linked_undo_projection_rejects_embedded_metadata_corruption(
+    tmp_path: Path,
+) -> None:
+    store, _database = _execution_store(tmp_path)
+    note = _note(content="note side", version=4)
+    notes = FakeNoteAuthority(note)
+    files = _PathPreservingFilesystem(_file(content="file side"))
+    request = replace(
+        _request(
+            action=NotesSyncActionKind.UPDATE_NOTE, note=note, file=files.snapshot
+        ),
+        journal_kind="resolve_keep_file",
+    )
+    executor = NotesSyncExecutor(store, notes, files, recovery_capacity_bytes=65_536)
+    assert (await executor.execute(request)).state is NotesSyncOperationState.COMPLETED
+
+    def fail_after_admission(state: NotesSyncOperationState) -> None:
+        if state is NotesSyncOperationState.RECOVERY_ADMITTED:
+            raise RuntimeError("transient_test_failure")
+
+    assert (
+        await NotesSyncExecutor(
+            store,
+            notes,
+            files,
+            recovery_capacity_bytes=65_536,
+            after_stage=fail_after_admission,
+        ).undo_resolution("root-1", request.operation_id)
+    ).state is NotesSyncOperationState.NEEDS_ATTENTION
+    linked = linked_undo_operation_id("root-1", request.operation_id)
+    recovery = store.load_operation_recovery(linked)
+    metadata = json.loads(recovery.metadata)
+    source_metadata = json.loads(
+        base64.b64decode(metadata["source_metadata"], validate=True)
+    )
+    source_metadata["recovery_title"] = "Evil!"
+    metadata["source_metadata"] = base64.b64encode(
+        json.dumps(source_metadata, separators=(",", ":"), sort_keys=True).encode()
+    ).decode()
+    replacement = json.dumps(metadata, separators=(",", ":"), sort_keys=True).encode()
+    assert len(replacement) == len(recovery.metadata)
+    with store.transaction(immediate=True) as connection:
+        connection.execute(
+            "UPDATE notes_sync_recovery SET metadata = ? WHERE operation_id = ?",
+            (replacement, linked),
+        )
+
+    projection = await executor.inspect_resolution_undo("root-1", request.operation_id)
+
+    assert projection.undo_available is False
+    assert projection.undo_reason == "Unavailable"
+    assert projection.state == "unavailable"
+    assert projection.note_title is None
+    assert projection.relative_path is None
+    assert "Evil!" not in repr(projection)
+
+
+@pytest.mark.parametrize(
+    ("control", "expected_reason"),
+    (
+        ("expired", "Undo expired"),
+        ("changed", "Changed since resolution"),
+        ("undone", "Undone"),
+    ),
+)
+@pytest.mark.asyncio
+async def test_source_projection_labels_require_valid_recovery_envelope(
+    tmp_path: Path,
+    control: str,
+    expected_reason: str,
+) -> None:
+    store, _database = _execution_store(tmp_path)
+    note = _note(content="note side", version=4)
+    notes = FakeNoteAuthority(note)
+    files = _PathPreservingFilesystem(_file(content="file side"))
+    request = replace(
+        _request(
+            action=NotesSyncActionKind.UPDATE_NOTE, note=note, file=files.snapshot
+        ),
+        journal_kind="resolve_keep_file",
+    )
+    executor = NotesSyncExecutor(store, notes, files, recovery_capacity_bytes=65_536)
+    assert (await executor.execute(request)).state is NotesSyncOperationState.COMPLETED
+    expiry = store.load_operation_recovery(request.operation_id).expires_at
+
+    if control == "changed":
+
+        def fail_after_admission(state: NotesSyncOperationState) -> None:
+            if state is NotesSyncOperationState.RECOVERY_ADMITTED:
+                raise RuntimeError("transient_test_failure")
+
+        assert (
+            await NotesSyncExecutor(
+                store,
+                notes,
+                files,
+                recovery_capacity_bytes=65_536,
+                after_stage=fail_after_admission,
+            ).undo_resolution("root-1", request.operation_id, now=expiry - 1)
+        ).state is NotesSyncOperationState.NEEDS_ATTENTION
+        notes.snapshot = replace(notes.snapshot, title="Edited after resolution")
+    elif control == "undone":
+        assert (
+            await executor.undo_resolution(
+                "root-1", request.operation_id, now=expiry - 1
+            )
+        ).state is NotesSyncOperationState.COMPLETED
+
+    recovery = store.load_operation_recovery(request.operation_id)
+    metadata = json.loads(recovery.metadata)
+    metadata["recovery_title"] = "Evil!"
+    replacement = json.dumps(metadata, separators=(",", ":"), sort_keys=True).encode()
+    assert len(replacement) == len(recovery.metadata)
+    with store.transaction(immediate=True) as connection:
+        connection.execute(
+            "UPDATE notes_sync_recovery SET metadata = ? WHERE operation_id = ?",
+            (replacement, request.operation_id),
+        )
+
+    projection = await executor.inspect_resolution_undo(
+        "root-1",
+        request.operation_id,
+        now=expiry if control == "expired" else expiry - 1,
+    )
+
+    assert projection.undo_available is False
+    assert projection.undo_reason == expected_reason
+    assert projection.note_title is None
+    assert projection.relative_path is None
+    assert (
+        NotesSyncRuntimeOwner._resolution_item_label(request.operation_id, projection)
+        == request.operation_id[:8]
+    )
+    assert "Evil!" not in repr(projection)
 
 
 @pytest.mark.parametrize(
