@@ -9,7 +9,8 @@ from types import MethodType
 import pytest
 from rich.cells import cell_len
 from textual.app import App, ComposeResult
-from textual.events import MouseDown, MouseScrollDown, MouseUp
+from textual.containers import VerticalScroll
+from textual.events import MouseDown, MouseScrollDown, MouseScrollUp, MouseUp
 from textual.widgets import Button, Static
 
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
@@ -26,6 +27,7 @@ from tldw_chatbook.Chat.console_rail_state import ConsoleRailState
 from tldw_chatbook.Chat.console_session_settings import ConsoleSettingsSummaryState
 from tldw_chatbook.UI.Console_Modules import left_rail as left_rail_module
 from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
+from tldw_chatbook.UI.Console_Modules.rail_section_layout import outer_hint_required
 from tldw_chatbook.UI.Console_Modules.right_rail import ConsoleInspectorRail
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Widgets.Console.console_bounded_section import (
@@ -2204,3 +2206,271 @@ async def test_active_section_falls_back_when_content_disappears_and_offsets_sur
         rail.request_allocation_reconcile()
         await _settle(pilot)
         assert rail._active_section_id == "model"
+
+
+# --- TASK-21117: the Inspector's pure-scroll path -----------------------------
+
+WHEEL_NOTCH_BOUND = 24
+
+
+def _post_wheel(body: VerticalScroll, *, down: bool) -> None:
+    """Post one real terminal wheel notch at the Inspector's outer body."""
+
+    event_type = MouseScrollDown if down else MouseScrollUp
+    body.post_message(event_type(body, 0, 0, 0, 1, 0, False, False, False))
+
+
+def _arm_rail_layout_probe(
+    monkeypatch: pytest.MonkeyPatch,
+    rail: ConsoleInspectorRail,
+    body: VerticalScroll,
+) -> list[str]:
+    """Record every whole-rail ``refresh(layout=True)`` with its scroll offset."""
+
+    observed: list[str] = []
+    original_refresh = rail.refresh
+
+    def counting_refresh(*regions, **kwargs):
+        if kwargs.get("layout"):
+            observed.append(f"layout refresh at scroll_y={body.scroll_y}")
+        return original_refresh(*regions, **kwargs)
+
+    monkeypatch.setattr(rail, "refresh", counting_refresh)
+    return observed
+
+
+async def _wheel_to_bottom(pilot, body: VerticalScroll) -> int:
+    """Wheel down until the body is parked at the bottom; return the notches."""
+
+    notches = 0
+    for _ in range(WHEEL_NOTCH_BOUND):
+        if body.scroll_y >= body.max_scroll_y:
+            return notches
+        _post_wheel(body, down=True)
+        await _settle(pilot, passes=3)
+        notches += 1
+    pytest.fail(
+        f"outer body never reached the bottom within {WHEEL_NOTCH_BOUND} notches "
+        f"(scroll_y={body.scroll_y}, max_scroll_y={body.max_scroll_y})"
+    )
+
+
+@pytest.mark.asyncio
+async def test_pure_inspector_scroll_never_relayouts_the_rail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A wheel gesture repaints only the outer hint copy, never the rail layout."""
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = _ProductionConsoleHarness(app)
+
+    async with host.run_test(size=(160, 45)) as pilot:
+        inspector = await _open_production_inspector(host, pilot)
+        outer = inspector.query_one("#console-inspector-rail-body", VerticalScroll)
+        hint = inspector.query_one("#console-inspector-outer-scroll-hint", Static)
+        await outer.remove_children()
+        content = Static("pure scroll content", id="pure-scroll-outer-demand")
+        content.styles.height = outer.content_region.height + 8
+        await outer.mount(content)
+        inspector.request_outer_reconcile()
+        await _settle(pilot, passes=8)
+
+        assert hint.display is True
+        assert str(hint.renderable) == OUTER_HINT
+        assert outer.scroll_y == 0
+        assert outer.max_scroll_y > 0
+        assert inspector._outer_reconcile_scheduled is False
+
+        observed = _arm_rail_layout_probe(monkeypatch, inspector, outer)
+        owner_passes = inspector._outer_owner_reconcile_count
+        # The copy is repainted without a layout pass, which is only sound
+        # while the slot's height is pinned: hold that geometry to account.
+        hint_region = hint.region
+        assert hint_region.height == 1
+
+        notches = await _wheel_to_bottom(pilot, outer)
+        assert notches >= 2, "the probe must cover several wheel frames"
+        assert outer.scroll_y == outer.max_scroll_y
+        # Reaching the bottom is the one thing a pure scroll DOES change.
+        assert str(hint.renderable) == ""
+
+        for _ in range(notches):
+            _post_wheel(outer, down=False)
+            await _settle(pilot, passes=3)
+        assert outer.scroll_y == 0
+        assert str(hint.renderable) == OUTER_HINT
+        assert hint.display is True
+        assert hint.region == hint_region
+        rendered = "\n".join(
+            "".join(segment.text for segment in strip)
+            for strip in host.screen_stack[-1]._compositor.render_strips()
+        )
+        assert OUTER_HINT in rendered, "the repainted copy must reach the compositor"
+
+        assert observed == [], (
+            f"{2 * notches} pure wheel frames forced {len(observed)} whole-rail "
+            f"layout refreshes: {observed}"
+        )
+
+        # The same gesture delivered as one coalesced burst -- the shape the
+        # audit measured (~2-3 layout passes survive the existing coalescing).
+        burst = list(observed)
+        for _ in range(notches):
+            _post_wheel(outer, down=True)
+        await _settle(pilot, passes=8)
+        assert outer.scroll_y == outer.max_scroll_y
+        assert str(hint.renderable) == ""
+        assert observed == burst, (
+            f"a coalesced {notches}-notch wheel burst forced "
+            f"{len(observed) - len(burst)} whole-rail layout refreshes: "
+            f"{observed[len(burst):]}"
+        )
+
+        assert inspector._outer_owner_reconcile_count == owner_passes
+        assert inspector._outer_reconcile_scheduled is False
+
+
+@pytest.mark.asyncio
+async def test_inspector_section_collapse_still_runs_the_full_reconcile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Real section demand keeps the layout + refold path the scroll path skips."""
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = _ProductionConsoleHarness(app)
+
+    async with host.run_test(size=(160, 45)) as pilot:
+        inspector = await _open_production_inspector(host, pilot)
+        outer = inspector.query_one("#console-inspector-rail-body", VerticalScroll)
+        hint = inspector.query_one("#console-inspector-outer-scroll-hint", Static)
+        tray = inspector.query_one(
+            "#console-staged-context-tray", ConsoleStagedContextTray
+        )
+        sources = tray.query_one(
+            "#console-bounded-section-sources", ConsoleBoundedSection
+        )
+        await sources.viewport.remove_children()
+        await sources.viewport.mount(
+            Static(
+                "\n".join(f"source content {row}" for row in range(21)),
+                id="collapse-probe-content",
+            )
+        )
+        sources.request_reconcile()
+        inspector.request_outer_reconcile()
+        await _settle(pilot, passes=10)
+        assert sources.display is True
+        assert hint.display is True
+        assert inspector._outer_reconcile_scheduled is False
+
+        observed = _arm_rail_layout_probe(monkeypatch, inspector, outer)
+
+        # Collapse the section: a real demand change, not a scroll. No explicit
+        # reconcile request -- the collapse must reach the outer fold through
+        # the body's own committed-geometry trigger, exactly as production does.
+        sources.display = False
+        await _settle(pilot, passes=10)
+        assert observed, "a section collapse must still take the full reconcile path"
+        _assert_outer_fold_contract(inspector, outer, hint)
+
+        collapsed_refreshes = len(observed)
+        sources.display = True
+        await _settle(pilot, passes=10)
+        assert len(observed) > collapsed_refreshes, (
+            "re-expanding the section must reconcile the outer fold too"
+        )
+        assert hint.display is True
+        assert str(hint.renderable) == OUTER_HINT
+        _assert_outer_fold_contract(inspector, outer, hint)
+
+
+def _assert_outer_fold_contract(
+    inspector: ConsoleInspectorRail,
+    outer: VerticalScroll,
+    hint: Static,
+) -> None:
+    """Assert the live geometry still satisfies the outer-hint predicate."""
+
+    assert inspector._outer_reconcile_scheduled is False
+    desired_rows = max(
+        (
+            child.virtual_region_with_margin.bottom
+            for child in outer.children
+            if child.display
+        ),
+        default=0,
+    )
+    hint_rows = hint.region.height if hint.display else 0
+    viewport_without_hint = outer.content_region.height + hint_rows
+    assert viewport_without_hint > 0
+    assert hint.display is outer_hint_required(desired_rows, viewport_without_hint)
+    assert outer.scroll_y <= max(0, outer.max_scroll_y)
+    expected_copy = (
+        OUTER_HINT
+        if hint.display and outer.max_scroll_y > 0 and outer.scroll_y < outer.max_scroll_y
+        else ""
+    )
+    assert str(hint.renderable) == expected_copy
+
+
+@pytest.mark.asyncio
+async def test_scroll_cost_probe_still_detects_pre_split_routing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutation arm: restore the old routing and the probe must go red.
+
+    Without this arm the zero-refresh assertion above could silently stop
+    measuring its subject (a probe that can no longer see the defect passes
+    forever). Restoring the pre-split ``watch_scroll_y`` -> geometry reconcile
+    routing must make the same gesture cost whole-rail layout passes again.
+    """
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = _ProductionConsoleHarness(app)
+
+    async with host.run_test(size=(160, 45)) as pilot:
+        inspector = await _open_production_inspector(host, pilot)
+        outer = inspector.query_one("#console-inspector-rail-body", VerticalScroll)
+        await outer.remove_children()
+        content = Static("pre-split routing", id="pre-split-outer-demand")
+        content.styles.height = outer.content_region.height + 8
+        await outer.mount(content)
+        inspector.request_outer_reconcile()
+        await _settle(pilot, passes=8)
+        assert outer.max_scroll_y > 0
+        assert inspector._outer_reconcile_scheduled is False
+
+        def legacy_watch_scroll_y(self, old_value: float, new_value: float) -> None:
+            VerticalScroll.watch_scroll_y(self, old_value, new_value)
+            if old_value != new_value:
+                self._on_geometry_changed()
+
+        monkeypatch.setattr(
+            type(outer), "watch_scroll_y", legacy_watch_scroll_y, raising=True
+        )
+        observed = _arm_rail_layout_probe(monkeypatch, inspector, outer)
+
+        notches = await _wheel_to_bottom(pilot, outer)
+        sequential = len(observed)
+        outer.scroll_to(y=0, animate=False, immediate=True)
+        await _settle(pilot, passes=8)
+        burst_baseline = len(observed)
+        for _ in range(notches):
+            _post_wheel(outer, down=True)
+        await _settle(pilot, passes=8)
+        burst = len(observed) - burst_baseline
+
+        print(
+            f"\n[TASK-21117 probe] pre-split routing over {notches} notches: "
+            f"sequential={sequential} coalesced_burst={burst} "
+            f"whole-rail refresh(layout=True) calls"
+        )
+        assert sequential > 0, (
+            "the probe no longer observes the pre-split per-frame layout cost"
+        )
+        assert burst > 0, (
+            "the probe no longer observes the pre-split coalesced layout cost"
+        )
