@@ -659,6 +659,45 @@ _FILE_AUTHORITY_BUILTIN_NAMES = frozenset(
 )
 
 
+def redact_root_locator(value: Any, root: Path | None) -> Any:
+    """Replace an opaque private-root locator with model-safe relative text.
+
+    Tool-provider results are copied into both model history and run logs.
+    Console scratch roots are process-local capabilities, so their absolute
+    locator must be removed at that shared boundary. Containers are rebuilt
+    recursively because built-in tools return nested JSON-shaped values.
+
+    Args:
+        value: Tool result value or error text to sanitize.
+        root: Opaque root whose locator must not leave the provider.
+
+    Returns:
+        A value of the same JSON-compatible shape with root-owned paths made
+        relative and exact root occurrences replaced by ``.``. Non-Console
+        callers pass ``None`` and retain their existing output byte-for-byte.
+    """
+    if root is None:
+        return value
+    if isinstance(value, str):
+        locators = {str(root), root.as_posix()}
+        for locator in sorted(locators, key=len, reverse=True):
+            if locator:
+                value = value.replace(f"{locator}/", "")
+                value = value.replace(f"{locator}\\", "")
+                value = value.replace(locator, ".")
+        return value
+    if isinstance(value, dict):
+        return {
+            key: redact_root_locator(item, root)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [redact_root_locator(item, root) for item in value]
+    if isinstance(value, tuple):
+        return tuple(redact_root_locator(item, root) for item in value)
+    return value
+
+
 class BuiltinToolProvider:
     """Wraps tool_executor's built-in tools behind the provider interface."""
 
@@ -940,9 +979,15 @@ class BuiltinToolProvider:
             with authority, run_workspace(self._workspace_id):
                 raw = asyncio.run(tool.execute(**args))
         except Exception as exc:  # noqa: BLE001 — captured, never escapes
-            return ToolResult(ok=False, error=str(exc))
+            return ToolResult(
+                ok=False,
+                error=redact_root_locator(str(exc), self._sandbox_root),
+            )
         if isinstance(raw, dict) and raw.get("error"):
-            return ToolResult(ok=False, error=str(raw["error"]))
+            return ToolResult(
+                ok=False,
+                error=redact_root_locator(str(raw["error"]), self._sandbox_root),
+            )
         if isinstance(raw, dict):
             # Raw before/after contents captured for UI diff rendering
             # (TASK-1351) are live-session display state only. This is the
@@ -964,7 +1009,10 @@ class BuiltinToolProvider:
                         self._diff_sink(
                             (
                                 name,
-                                str(raw.get("file_path") or "file"),
+                                redact_root_locator(
+                                    str(raw.get("file_path") or "file"),
+                                    self._sandbox_root,
+                                ),
                                 old_content,
                                 new_content,
                             )
@@ -977,6 +1025,7 @@ class BuiltinToolProvider:
             raw = {
                 key: value for key, value in raw.items() if key not in DIFF_CONTENT_KEYS
             }
+        raw = redact_root_locator(raw, self._sandbox_root)
         content = json.dumps(raw) if isinstance(raw, (dict, list)) else str(raw)
         return ToolResult(ok=True, content=content)
 

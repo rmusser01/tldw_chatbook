@@ -769,6 +769,21 @@ def test_execution_error_becomes_result_string(tmp_path):
     assert not r.ok and "outside the workspace root" in r.error
 
 
+def test_private_root_locator_is_redacted_from_local_tool_errors(tmp_path):
+    scratch = tmp_path / "private-scratch"
+    scratch.mkdir()
+    provider = make_provider(
+        root=scratch,
+        result_redaction_root=scratch,
+    )
+
+    result = provider.invoke("local:fs_list", {"path": "../escape"})
+
+    assert not result.ok
+    assert str(scratch) not in result.error
+    assert "workspace root (.)" in result.error
+
+
 # -- session approvals + persistence seams (Task 5) ---------------------------
 
 

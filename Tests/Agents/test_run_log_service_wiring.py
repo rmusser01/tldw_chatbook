@@ -131,6 +131,63 @@ def test_writer_lease_revocation_fails_closed_without_recreating_root(tmp_path):
     assert not snapshot.root.exists()
 
 
+def test_builtin_tool_result_log_does_not_persist_private_scratch_locator(tmp_path):
+    scratch = tmp_path / "private-scratch"
+    scratch.mkdir()
+    db = AgentRunsDB(tmp_path / "runs.db")
+    registry = ToolCatalogRegistry()
+    provider = BuiltinToolProvider(
+        gate=type("AllowGate", (), {"check": lambda self, tool, run_id: None})(),
+        sandbox_root=scratch,
+        sandbox_lease=lambda: contextlib.nullcontext(scratch),
+    )
+
+    class ScratchPathTool:
+        name = "scratch_path"
+        description = "returns one scratch-owned path"
+        parameters = {"type": "object", "properties": {}}
+
+        async def execute(self, **kwargs):
+            return {"file_path": str(scratch / "marker.txt")}
+
+    provider._tools["scratch_path"] = ScratchPathTool()
+    registry.register_provider(provider)
+    writer = RunLogWriter(
+        root=scratch,
+        access_scope=lambda: contextlib.nullcontext(scratch),
+    )
+    service = AgentService(
+        db,
+        registry,
+        chat_call=scripted_chat([fence("scratch_path", {}), "done"]),
+        run_log_writer=writer,
+    )
+
+    service.run_turn(
+        conversation_id="conv1",
+        messages=[{"role": "user", "content": "show the scratch path"}],
+        config=AgentConfig(
+            model="m",
+            system_prompt="s",
+            allowed_tools=("scratch_path",),
+            budget=RunBudget(),
+        ),
+        api_endpoint="llama_cpp",
+    )
+
+    assert writer.log_dir is not None
+    tool_results = [
+        record
+        for record in all_records(writer.log_dir)
+        if record.type == "tool_result"
+    ]
+    assert len(tool_results) == 1
+    assert str(scratch) not in tool_results[0].content
+    assert json.loads(tool_results[0].content)["file_path"] == str(
+        Path(".") / "marker.txt"
+    )
+
+
 def test_a_plain_run_writes_records_without_the_caller_wiring_anything(wired):
     db, registry, root = wired
     service = AgentService(db, registry, chat_call=chat_call_returning("hello"))

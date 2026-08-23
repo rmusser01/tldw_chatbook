@@ -5620,6 +5620,7 @@ class ConsoleChatController:
             workspace_root=root,
             allow_write=allow_write,
             authority_scope=authority_scope,
+            result_redaction_root=(root if project_root is None else None),
             root_guard=(
                 project_root_guard
                 if project_root_guard is not None

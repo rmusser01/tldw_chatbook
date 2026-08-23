@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from contextlib import nullcontext
+from pathlib import Path
 
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
 from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
@@ -17,6 +19,22 @@ class _ProbeTool:
 
     async def execute(self, **kwargs):
         return {"workspace": wfr.current_run_workspace_id()}
+
+
+class _ScratchLocatorTool:
+    name = "probe_scratch_locator"
+    description = "returns a scratch-owned path"
+    parameters = {"type": "object", "properties": {}}
+
+    def __init__(self, root, *, fail=False):
+        self._root = root
+        self._fail = fail
+
+    async def execute(self, **kwargs):
+        path = self._root / "nested" / "marker.txt"
+        if self._fail:
+            return {"error": f"could not access {path}"}
+        return {"file_path": str(path)}
 
 
 class _OpenGate:
@@ -43,6 +61,45 @@ def test_invoke_without_workspace_leaves_context_unset() -> None:
 
     assert result.ok, result.error
     assert '"workspace": null' in result.content
+
+
+def test_console_scratch_locator_is_redacted_from_builtin_results(tmp_path) -> None:
+    scratch = tmp_path / "private-scratch"
+    scratch.mkdir()
+    provider = BuiltinToolProvider(
+        gate=_OpenGate(),
+        sandbox_root=scratch,
+        sandbox_lease=lambda: nullcontext(scratch),
+    )
+    provider._tools["probe_scratch_locator"] = _ScratchLocatorTool(scratch)
+
+    result = provider.invoke("builtin:probe_scratch_locator", {})
+
+    assert result.ok, result.error
+    assert str(scratch) not in result.content
+    assert json.loads(result.content)["file_path"] == str(
+        Path(".") / "nested" / "marker.txt"
+    )
+
+
+def test_console_scratch_locator_is_redacted_from_builtin_errors(tmp_path) -> None:
+    scratch = tmp_path / "private-scratch"
+    scratch.mkdir()
+    provider = BuiltinToolProvider(
+        gate=_OpenGate(),
+        sandbox_root=scratch,
+        sandbox_lease=lambda: nullcontext(scratch),
+    )
+    provider._tools["probe_scratch_locator"] = _ScratchLocatorTool(
+        scratch,
+        fail=True,
+    )
+
+    result = provider.invoke("builtin:probe_scratch_locator", {})
+
+    assert not result.ok
+    assert str(scratch) not in result.error
+    assert str(Path(".") / "nested" / "marker.txt") in result.error
 
 
 def test_concurrent_providers_keep_distinct_workspace_bindings() -> None:

@@ -51,7 +51,7 @@ from .session_todo_store import (
 
 if TYPE_CHECKING:
     from tldw_chatbook.Tools.watchlists_tool_service import WatchlistsToolService
-from .tool_catalog import ToolPathTarget
+from .tool_catalog import ToolPathTarget, redact_root_locator
 
 # Module-level (not the function-local imports the other `_default_specs`
 # tool modules use) SPECIFICALLY so tests can patch this one name via
@@ -263,6 +263,10 @@ class LocalToolProvider:
             approve and the timeout copy is misleading
             (MCP/local_server_tools.EXTERNAL_NO_CALLBACK_REFUSAL). The
             "timeout" verdict ALWAYS keeps LOCAL_TIMEOUT_REFUSAL.
+        result_redaction_root: Optional process-local root whose absolute
+            locator must be replaced with relative text before results reach
+            model history or run logs. Console private scratch passes its
+            root; ordinary and explicitly bound Workspace providers omit it.
     """
 
     def __init__(
@@ -284,6 +288,7 @@ class LocalToolProvider:
         allow_write: bool = True,
         root_guard: Callable[[], bool] | None = None,
         authority_scope: Callable[[], ContextManager[Path]] | None = None,
+        result_redaction_root: Path | None = None,
     ) -> None:
         self._root = workspace_root
         selected_specs = (
@@ -314,6 +319,11 @@ class LocalToolProvider:
         self._no_callback_refusal = no_callback_refusal
         self._root_guard = root_guard
         self._authority_scope = authority_scope
+        self._result_redaction_root = (
+            Path(result_redaction_root).resolve()
+            if result_redaction_root is not None
+            else None
+        )
         # PR2a Task 5: keyed (run_id, tool_name), not tool_name -- one
         # provider instance is shared by a parent run and every sub-agent
         # it spawns, so a name-keyed dict let any run's turn clear or
@@ -742,12 +752,20 @@ class LocalToolProvider:
                 try:
                     return ToolResult(
                         ok=True,
-                        content=_fit_result(spec.handler(args)),
+                        content=_fit_result(
+                            redact_root_locator(
+                                spec.handler(args),
+                                self._result_redaction_root,
+                            )
+                        ),
                     )
                 except Exception as exc:  # noqa: BLE001 — protocol boundary
                     return ToolResult(
                         ok=False,
-                        error=(str(exc) or repr(exc))[:_MAX_ERROR_CHARS],
+                        error=redact_root_locator(
+                            (str(exc) or repr(exc))[:_MAX_ERROR_CHARS],
+                            self._result_redaction_root,
+                        ),
                     )
 
             if (
