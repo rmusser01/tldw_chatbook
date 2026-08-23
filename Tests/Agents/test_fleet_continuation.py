@@ -533,6 +533,17 @@ def test_retention_survives_prune_terminal_by_both_ids():
     assert c.get_retained(h.handle_id) is not None
     assert c.get_retained("run-xyz") is not None
     assert c.get_retained("run-xyz").run_id == "run-xyz"
+    assert c.durable_handle_map() == {h.handle_id: "run-xyz"}
+
+
+def test_pruned_handle_without_retention_has_no_false_durable_mapping():
+    c = _coord(retained_transcripts=0)
+    h = c.reserve(task="child", agent=None)
+    c.attach_run(h.handle_id, "run-not-retained")
+    c.finish(h.handle_id, RUN_DONE, result="r")
+    assert c.prune_terminal() == 1
+    assert c.get_retained(h.handle_id) is None
+    assert h.handle_id not in c.durable_handle_map()
 
 
 def test_get_retained_resolves_handle_id_before_a_colliding_run_id():

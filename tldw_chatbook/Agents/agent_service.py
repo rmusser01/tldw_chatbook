@@ -3396,13 +3396,7 @@ class AgentService:
         # another run's children.
         my_handle_ids: list[str] = []
         durable_handle_ids: dict[str, str] = (
-            {
-                handle.handle_id: handle.run_id
-                for handle in fleet.snapshot()
-                if handle.run_id
-            }
-            if fleet is not None
-            else {}
+            fleet.durable_handle_map() if fleet is not None else {}
         )
 
         def _launch_fleet_child(

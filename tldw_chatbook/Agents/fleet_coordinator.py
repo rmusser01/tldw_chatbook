@@ -450,6 +450,28 @@ class FleetCoordinator:
                 self._copy_with_queued(h) for h in self._handles.values()
             ]
 
+    def durable_handle_map(self) -> dict[str, str]:
+        """Snapshot process handles that still have a durable run identity.
+
+        Returns:
+            A new handle-id to run-id mapping. No transcript or task content
+            is exposed.
+        """
+        with self._lock:
+            mapping = {
+                handle_id: entry.run_id
+                for handle_id, entry in self._retained.items()
+                if entry.run_id
+            }
+            mapping.update(
+                {
+                    handle_id: handle.run_id
+                    for handle_id, handle in self._handles.items()
+                    if handle.run_id
+                }
+            )
+            return mapping
+
     def _copy_with_queued(self, handle: FleetHandle) -> FleetHandle:
         """A point-in-time copy carrying the CURRENT mailbox depth.
 

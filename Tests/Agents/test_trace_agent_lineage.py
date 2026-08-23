@@ -163,10 +163,13 @@ def test_parent_terminal_echo_replaces_process_handle_at_every_durable_boundary(
 ):
     monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
     coordinator_ref = {}
+    handle_id_ref = {}
 
     def echo_child_handle():
-        handle = coordinator_ref["coordinator"].snapshot()[0]
-        return f"Child {handle.handle_id} completed useful work"
+        handle_id = handle_id_ref.get("handle_id")
+        if handle_id is None:
+            handle_id = coordinator_ref["coordinator"].snapshot()[0].handle_id
+        return f"Child {handle_id} completed useful work"
 
     service, chat, coordinator = make_fleet_service(
         db,
@@ -186,13 +189,18 @@ def test_parent_terminal_echo_replaces_process_handle_at_every_durable_boundary(
         api_endpoint="llama_cpp",
     )
     handle = coordinator.snapshot()[0]
+    handle_id_ref["handle_id"] = handle.handle_id
     assert len(handle.handle_id) == 32
     assert handle.handle_id in outcome.final_text
     assert coordinator.get(handle.handle_id).run_id == handle.run_id
+    assert coordinator.get_retained(handle.handle_id) is not None
     first_log_dir = service.run_log_writer.log_dir
 
     # The same replacement applies when a later parent echoes a handle from
     # a retained/foreign child rather than one spawned by its own turn.
+    assert coordinator.prune_terminal() == 1
+    assert coordinator.snapshot() == []
+    assert coordinator.get_retained(handle.handle_id).run_id == handle.run_id
     chat.parent_replies.append(echo_child_handle)
     foreign_parent_id, foreign_outcome = service.run_turn(
         conversation_id="terminal-handle-echo",
