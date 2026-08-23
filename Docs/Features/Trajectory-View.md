@@ -33,8 +33,9 @@ The line under the title makes the current mode explicit:
 - Imported files show `READ-ONLY SHARED TRACE` and never write local data.
 - `LOADING`, `INCOMPLETE`, `NO TIMING`, `EMPTY`, and `NO MATCHES` explain why
   information is absent instead of leaving a blank ledger.
-- Search, structured filters, and time ranges show the visible/total event
-  count; `x` clears all of them.
+- Search, structured filters, and time ranges show `shown/matching` plus the
+  trace total, so pagination is never mistaken for the complete result set;
+  `x` clears all of them.
 - A failed ledger render or live refresh shows `FAILED · … · r retry` without
   exposing payload or exception text. While the single retry worker runs, the
   state changes to `RETRYING` and another retry cannot be started.
@@ -82,27 +83,29 @@ position when the same stable event remains selected.
 `/` focuses the search box. Queries match record content **and** tool
 payloads (so you can find a turn by a path a tool touched or text deep
 inside a result). Matching collapses the ledger to hits; turn headers
-survive while any child matches. Press `x` to clear both search and timeline
-filters. While the search box is focused, `x` remains ordinary query text;
-press `escape`, then `x`, to clear filters.
+survive while any child matches. Press `x` to clear search, structured, and
+timeline filters together. While the search box is focused, `x` remains
+ordinary query text; press `escape`, then `x`, to clear filters.
 
 ### Structured filters
 
-Filter by event kind, state, agent, and provider; all selected dimensions,
-search, and the timeline range combine with AND semantics. At 100 columns and
-wider, the four native selectors and the visible/total count stay above the
-ledger. On narrower terminals, press **`g`** to edit the same filter state in
-a compact dialog; the one-line summary still shows counts and the number of
-active filters. `x` is the single clear-all action for search, structured
-filters, and the timeline range.
+Filter by event kind, state, agent run, and provider; all selected dimensions,
+search, and the timeline range combine with AND semantics. The Agent options
+name actual primary/child run identities rather than model or user actors. At
+100 columns and wider, the four native selectors and the
+`shown/matching · total` count stay above the ledger. On narrower terminals,
+press **`g`** to edit the same filter state in a compact dialog; the one-line
+summary still shows counts and the number of active filters. `x` is the single
+clear-all action for search, structured filters, and the timeline range.
 
 ## The timeline
 
 The strip above the ledger projects each timed record at its real
 start/duration in named **Input**, **Model**, **Tools**, and **Agents** lanes.
-Distinct glyphs remain recognizable in monochrome; color is secondary. Turn
-and child-agent boundary marks show grouping without implying a fabricated
-serial dependency:
+Distinct glyphs remain recognizable in monochrome; color is secondary:
+`◆` input / `◇` feedback, `━` model / `!` error, `▶` tool call / `◀` result,
+and `●` agent run / `○` agent step. Turn and child-agent boundary marks show
+grouping without implying a fabricated serial dependency:
 
 - **Drag** horizontally to brush a time range — the ledger filters to
   records active in that range (composed with the search filter). The

@@ -24,6 +24,7 @@ from tldw_chatbook.UI.Widgets.trajectory_timeline import (
     LANE_LABEL_WIDTH,
     TrajectoryTimeline,
 )
+from tldw_chatbook.UI.Widgets.trace_filter_bar import TraceFilterState
 
 # Same duck-typed projection stand-ins as the screen tests (Tests is a
 # package, so the sibling module is importable).
@@ -314,25 +315,65 @@ async def test_bar_select_moves_ledger_cursor_and_highlights() -> None:
 
 
 @pytest.mark.asyncio
-async def test_bar_select_clears_brush_but_not_search() -> None:
-    """A record hidden by the search: clear only the brush, keep the query."""
+async def test_bar_message_hidden_by_search_restores_shared_ledger_selection(
+    monkeypatch,
+) -> None:
     async with _mounted(base_snapshot()) as (app, pilot, screen):
         table = screen.query_one("#trajectory-table", DataTable)
         timeline = screen.query_one("#trajectory-timeline", TrajectoryTimeline)
         search = screen.query_one("#trajectory-search", Input)
         search.value = "zebras"
         await pilot.pause()
-        await _brush(pilot, timeline, _T0 - 1.0, _T0 + 6.0)
-        assert table.row_count == 0
-        timeline.post_message(
-            TrajectoryTimeline.TrajectoryBarSelected(_record_key_for_seq(screen, 2))
-        )
+        visible_key = _record_key_for_seq(screen, 6)
+        hidden_key = _record_key_for_seq(screen, 2)
+        table.move_cursor(row=table.get_row_index(visible_key), animate=False)
         await pilot.pause()
-        # Brush filter dropped; search filter intact.
-        assert screen._filter_bar.state.time_range is None
-        assert table.row_count == 3
-        with pytest.raises(Exception):
-            table.get_row_index(_record_key_for_seq(screen, 2))
+        notices: list[str] = []
+        monkeypatch.setattr(
+            app,
+            "notify",
+            lambda message, **_kwargs: notices.append(str(message)),
+        )
+
+        timeline.set_selected(hidden_key)
+        timeline.post_message(TrajectoryTimeline.TrajectoryBarSelected(hidden_key))
+        await pilot.pause()
+
+        assert search.value == "zebras"
+        assert screen._cursor_key() == visible_key
+        assert timeline.selected == visible_key
+        assert notices and "hidden" in notices[-1].lower()
+
+
+@pytest.mark.asyncio
+async def test_timeline_enter_hidden_by_provider_restores_shared_selection(
+    monkeypatch,
+) -> None:
+    async with _mounted(base_snapshot()) as (app, pilot, screen):
+        table = screen.query_one("#trajectory-table", DataTable)
+        timeline = screen.query_one("#trajectory-timeline", TrajectoryTimeline)
+        screen._filter_bar.set_state(TraceFilterState(provider="test-provider"))
+        await pilot.pause()
+        visible_key = _record_key_for_seq(screen, 2)
+        hidden_key = _record_key_for_seq(screen, 3)
+        table.move_cursor(row=table.get_row_index(visible_key), animate=False)
+        await pilot.pause()
+        notices: list[str] = []
+        monkeypatch.setattr(
+            app,
+            "notify",
+            lambda message, **_kwargs: notices.append(str(message)),
+        )
+        timeline.focus()
+        timeline.set_selected(hidden_key)
+
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert screen._filter_bar.state.provider == "test-provider"
+        assert screen._cursor_key() == visible_key
+        assert timeline.selected == visible_key
+        assert notices and "hidden" in notices[-1].lower()
 
 
 @pytest.mark.asyncio

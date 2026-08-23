@@ -1109,7 +1109,9 @@ class TrajectoryScreen(ModalScreen[None]):
         self._refresh_hints()
         self._sync_timeline_selection()
         self._filter_bar.update_counts(
-            len(self._matching_records()), self._total_records
+            self._visible_record_count,
+            len(self._matching_records()),
+            self._total_records,
         )
         if generation is not None:
             self._loading = False
@@ -1490,8 +1492,6 @@ class TrajectoryScreen(ModalScreen[None]):
         only paginated out, grow the mounted window to cover it; if the
         search still hides it, that is a no-op on the cursor.
         """
-        if self._filter_bar.state.time_range is not None:
-            self._filter_bar.set_state(replace(self._filter_bar.state, time_range=None))
         flat = list(self._all_records())
         try:
             selected_record = next(
@@ -1502,6 +1502,22 @@ class TrajectoryScreen(ModalScreen[None]):
         except StopIteration:
             return  # unknown record (stale bar from a live snapshot): no-op
         key = self._record_key(selected_record)
+        if not self._record_matches(selected_record, self._query.lower()) or not (
+            self._filter_bar.state.matches(selected_record)
+        ):
+            self._sync_timeline_selection()
+            self.app.notify(
+                "Event is hidden by active Trace filters; selection unchanged.",
+                severity="information",
+            )
+            return
+        if self._filter_bar.state.time_range is not None:
+            self._filter_bar.set_state(replace(self._filter_bar.state, time_range=None))
+        must_reveal = selected_record.turn_id in self._collapsed
+        if must_reveal:
+            self._collapsed.discard(selected_record.turn_id)
+            self._pending_restore_key = key
+            self._render_ledger()
         if key in self._visible_keys:
             self._move_cursor_to_key(key)
             return
@@ -1636,13 +1652,16 @@ class TrajectoryScreen(ModalScreen[None]):
             target_index = (keys.index(current) + direction) % len(keys)
         target = candidates[target_index]
         key = self._record_key(target)
-        if key not in self._visible_keys:
+        must_reveal = target.turn_id in self._collapsed
+        if must_reveal:
+            self._collapsed.discard(target.turn_id)
+        if key not in self._visible_keys or must_reveal:
             flat = list(self._all_records())
             flat_index = flat.index(target)
             if flat_index < len(flat) - self._visible_count:
                 self._visible_count = len(flat) - flat_index
-                self._pending_restore_key = key
-                self._render_ledger()
+            self._pending_restore_key = key
+            self._render_ledger()
         self._move_cursor_to_key(key)
 
     def action_next_match(self) -> None:
@@ -1673,11 +1692,27 @@ class TrajectoryScreen(ModalScreen[None]):
     def _is_feedback(record: TrajectoryRecord) -> bool:
         return record.kind == KIND_USER_FEEDBACK or "feedback" in record.kind
 
+    def _child_run_ids(self) -> frozenset[str]:
+        child_runs = set()
+        for record in self._all_records():
+            actor = (record.actor_kind or "").lower()
+            if record.kind != "agent_run" or not record.run_id:
+                continue
+            if actor in {"subagent", "child_agent"} or (
+                actor == "agent"
+                and bool(record.parent_event_id)
+                and record.parent_event_id.startswith("agent-")
+            ):
+                child_runs.add(record.run_id)
+        return frozenset(child_runs)
+
     @staticmethod
-    def _is_child_agent(record: TrajectoryRecord) -> bool:
+    def _is_child_agent(
+        record: TrajectoryRecord, child_run_ids: frozenset[str]
+    ) -> bool:
         actor = (record.actor_kind or "").lower()
-        return actor in {"agent", "subagent", "child_agent"} and bool(
-            record.parent_event_id
+        return actor in {"subagent", "child_agent"} or bool(
+            record.run_id and record.run_id in child_run_ids
         )
 
     def action_next_error(self) -> None:
@@ -1699,10 +1734,16 @@ class TrajectoryScreen(ModalScreen[None]):
         self._navigate_records(self._is_feedback, -1)
 
     def action_next_child_agent(self) -> None:
-        self._navigate_records(self._is_child_agent, 1)
+        child_run_ids = self._child_run_ids()
+        self._navigate_records(
+            lambda record: self._is_child_agent(record, child_run_ids), 1
+        )
 
     def action_previous_child_agent(self) -> None:
-        self._navigate_records(self._is_child_agent, -1)
+        child_run_ids = self._child_run_ids()
+        self._navigate_records(
+            lambda record: self._is_child_agent(record, child_run_ids), -1
+        )
 
     def action_clear_filters(self) -> None:
         """`x`: clear search, structured filters and timeline range."""

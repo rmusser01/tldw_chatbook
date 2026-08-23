@@ -20,7 +20,9 @@ from textual.app import App, ComposeResult
 from tldw_chatbook.Chat.trajectory import (
     KIND_ASSISTANT,
     KIND_TOOL_CALL,
+    KIND_TOOL_RESULT,
     KIND_USER,
+    KIND_USER_FEEDBACK,
     TrajectoryRecord,
     TrajectorySnapshot,
     TrajectoryTurn,
@@ -122,6 +124,47 @@ class TestTimelineModel:
         model = TimelineModel(records)
 
         assert len({model.glyph_for(record) for record in records}) == 4
+
+    def test_non_color_glyphs_distinguish_event_families_within_each_lane(
+        self,
+    ) -> None:
+        user = rec(1, KIND_USER, start=0.0, end=1.0)
+        feedback = rec(2, KIND_USER_FEEDBACK, start=2.0, end=3.0)
+        model = rec(3, KIND_ASSISTANT, start=4.0, end=5.0)
+        model_error = replace(
+            rec(4, "provider_error", start=6.0, end=7.0), status="failed"
+        )
+        tool_call = rec(5, KIND_TOOL_CALL, start=8.0, end=9.0)
+        tool_result = rec(6, KIND_TOOL_RESULT, start=10.0, end=11.0)
+        agent_run = replace(
+            rec(7, "agent_run", start=12.0, end=13.0),
+            actor_kind="primary",
+            run_id="primary",
+        )
+        agent_step = replace(
+            rec(8, "agent_step", start=14.0, end=15.0),
+            actor_kind="agent",
+            run_id="primary",
+        )
+        records = (
+            user,
+            feedback,
+            model,
+            model_error,
+            tool_call,
+            tool_result,
+            agent_run,
+            agent_step,
+        )
+        timeline = TimelineModel(records)
+
+        for left, right in (
+            (user, feedback),
+            (model, model_error),
+            (tool_call, tool_result),
+            (agent_run, agent_step),
+        ):
+            assert timeline.glyph_for(left) != timeline.glyph_for(right)
 
     def test_turn_and_child_agent_boundaries_are_explicit_not_order_edges(self) -> None:
         child = replace(
@@ -399,9 +442,9 @@ class TestTrajectoryTimelineWidget:
             replace(rec(2, KIND_ASSISTANT, start=2.0, end=3.0), turn_id="t2"),
             replace(rec(3, KIND_TOOL_CALL, start=4.0, end=5.0), turn_id="t2"),
             replace(
-                rec(4, "agent_step", start=6.0, end=7.0),
+                rec(4, "agent_run", start=6.0, end=7.0),
                 turn_id="t2",
-                actor_kind="agent",
+                actor_kind="subagent",
                 run_id="child",
                 parent_event_id="agent-run:parent",
             ),
@@ -416,10 +459,89 @@ class TestTrajectoryTimelineWidget:
             painted = str(tl.render())
             for label in ("Input", "Model", "Tools", "Agents"):
                 assert label in painted
-            for glyph in ("◆", "━", "■", "●"):
+            for glyph in ("◆", "━", "▶", "●"):
                 assert glyph in painted
             assert "│" in painted  # turn boundary, not a serial-causality arrow
             assert "┆" in painted  # parent/child agent boundary
+
+    async def test_instantaneous_agent_boundary_preserves_combined_event_marker(
+        self,
+    ) -> None:
+        record = replace(
+            rec(1, "agent_run", start=4.0, end=4.0),
+            actor_kind="subagent",
+            run_id="child",
+            parent_event_id="agent-step:primary:1",
+        )
+        snapshot = TrajectorySnapshot((TrajectoryTurn("turn-1", (record,)),))
+        app = TimelineApp()
+        async with app.run_test(size=(80, 24)) as pilot:
+            timeline = app.query_one(TrajectoryTimeline)
+            timeline.set_snapshot(snapshot)
+            await pilot.pause()
+
+            assert timeline.model.glyph_for(record) == "●"
+            assert "◉" in str(timeline.render())
+
+    async def test_same_lane_overlap_hit_testing_selects_last_painted_event(
+        self,
+    ) -> None:
+        first = rec(1, KIND_ASSISTANT, start=0.0, end=10.0)
+        painted_top = rec(2, KIND_ASSISTANT, start=0.0, end=10.0)
+        snapshot = TrajectorySnapshot((TrajectoryTurn("turn-1", (first, painted_top)),))
+        app = TimelineApp()
+        async with app.run_test(size=(80, 24)) as pilot:
+            timeline = app.query_one(TrajectoryTimeline)
+            timeline.set_snapshot(snapshot)
+            await pilot.pause()
+            column = LANE_LABEL_WIDTH + timeline._plot_width() // 2
+
+            selected = timeline.record_at(column, 1)
+
+            assert selected is painted_top
+
+    async def test_timeline_caption_explains_non_color_family_markers(self) -> None:
+        records = (
+            rec(1, KIND_USER_FEEDBACK, start=0.0, end=1.0),
+            replace(rec(2, "provider_error", start=2.0, end=3.0), status="failed"),
+            rec(3, KIND_TOOL_CALL, start=4.0, end=5.0),
+            rec(4, KIND_TOOL_RESULT, start=6.0, end=7.0),
+            replace(
+                rec(5, "agent_step", start=8.0, end=9.0),
+                actor_kind="agent",
+                run_id="primary",
+            ),
+        )
+        app = TimelineApp()
+        async with app.run_test(size=(80, 24)) as pilot:
+            timeline = app.query_one(TrajectoryTimeline)
+            timeline.set_snapshot(
+                TrajectorySnapshot((TrajectoryTurn("turn-1", records),))
+            )
+            await pilot.pause()
+
+            caption = str(timeline.render()).splitlines()[-1].lower()
+            for label in ("feedback", "error", "call", "result", "step"):
+                assert label in caption
+
+    async def test_brush_uses_theme_component_style_not_fixed_color(self) -> None:
+        assert "timeline--brush" in TrajectoryTimeline.COMPONENT_CLASSES
+        app = TimelineApp()
+        async with app.run_test(size=(80, 24)) as pilot:
+            timeline = app.query_one(TrajectoryTimeline)
+            timeline.set_snapshot(timed_snapshot())
+            timeline.apply_brush(timeline.model.domain)
+            await pilot.pause()
+
+            component = timeline.get_component_rich_style(
+                "timeline--brush", partial=True
+            )
+            assert component.bgcolor is not None
+            assert any(
+                span.style.bgcolor == component.bgcolor
+                for span in timeline.render().spans
+                if hasattr(span.style, "bgcolor")
+            )
 
     async def test_timeline_bindings_cover_keyboard_selection_range_zoom_and_pan(
         self,

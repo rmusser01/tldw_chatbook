@@ -29,11 +29,10 @@ def _humanize(value: str) -> str:
 
 
 def _agent_value(record: TrajectoryRecord) -> str | None:
-    kind = (record.actor_kind or "").strip()
-    if not kind:
+    kind = (record.actor_kind or "").strip().lower()
+    if kind not in {"agent", "primary", "subagent", "child_agent"}:
         return None
-    actor_id = (record.actor_id or "").strip()
-    return f"{kind}:{actor_id}" if actor_id else kind
+    return (record.run_id or "").strip() or None
 
 
 @dataclass(frozen=True)
@@ -141,10 +140,10 @@ class TraceFiltersDialog(ModalScreen[TraceFilterState | None]):
 
     DEFAULT_CSS = """
     TraceFiltersDialog { align: center middle; background: $background 70%; }
-    #trace-filter-dialog { width: 58; max-width: 94%; height: auto; padding: 1 2; background: $panel; }
+    #trace-filter-dialog { width: 58; max-width: 94%; height: 17; padding: 0 2; background: $panel; }
     #trace-filter-dialog-title { height: 1; text-style: bold; }
     #trace-filter-dialog-time { height: 1; color: $text-muted; }
-    #trace-filter-dialog Select { width: 1fr; height: 3; }
+    TraceFiltersDialog #trace-filter-dialog Select { width: 1fr; min-width: 0; height: 3; margin: 0; }
     #trace-filter-dialog-actions { height: 3; align-horizontal: right; }
     #trace-filter-dialog-actions Button { min-width: 9; }
     """
@@ -158,7 +157,7 @@ class TraceFiltersDialog(ModalScreen[TraceFilterState | None]):
     def _select(
         prompt: str, values: Sequence[str], value: str | None, widget_id: str
     ) -> Select[str]:
-        return Select(
+        select = Select(
             [(_humanize(item), item) for item in values],
             prompt=prompt,
             allow_blank=True,
@@ -166,6 +165,12 @@ class TraceFiltersDialog(ModalScreen[TraceFilterState | None]):
             id=widget_id,
             compact=True,
         )
+        # Inline geometry wins over the later app stylesheet's global
+        # ``Select { width: 100%; margin-bottom: 1; }`` rule.
+        select.styles.width = "1fr"
+        select.styles.min_width = 0
+        select.styles.margin = 0
+        return select
 
     def compose(self) -> ComposeResult:
         with Vertical(id="trace-filter-dialog"):
@@ -236,7 +241,7 @@ class TraceFilterBar(Widget):
     TraceFilterBar { width: 1fr; height: 3; }
     #trace-filter-wide { width: 1fr; height: 3; }
     #trace-filter-counts { width: 20; height: 3; content-align: left middle; color: $text-muted; }
-    #trace-filter-wide Select { width: 1fr; height: 3; }
+    TraceFilterBar #trace-filter-wide > Select { width: 1fr; min-width: 0; height: 3; margin: 0; }
     #trace-filter-compact { width: 1fr; height: 1; color: $text-muted; }
     TraceFilterBar:focus #trace-filter-compact { text-style: reverse; color: $text; }
     """
@@ -250,7 +255,8 @@ class TraceFilterBar(Widget):
         super().__init__(id=id)
         self.state = TraceFilterState()
         self.options = TraceFilterOptions()
-        self.visible_count = 0
+        self.shown_count = 0
+        self.matching_count = 0
         self.total_count = 0
         self._compact = False
         self._syncing = False
@@ -262,14 +268,28 @@ class TraceFilterBar(Widget):
     @property
     def summary_text(self) -> str:
         active = f"{self.state.active_count} active" if self.state.is_active else "none"
-        return f"Filters {self.visible_count}/{self.total_count} · {active} · {self.state.summary}"
+        return f"Filters {self.count_text} · {active} · {self.state.summary}"
+
+    @property
+    def count_text(self) -> str:
+        return f"{self.shown_count}/{self.matching_count} match · T{self.total_count}"
+
+    @property
+    def visible_count(self) -> int:
+        """Compatibility alias for the total number of filter matches."""
+
+        return self.matching_count
 
     def render(self) -> str:
         return self.summary_text
 
     @staticmethod
     def _select(prompt: str, widget_id: str) -> Select[str]:
-        return Select([], prompt=prompt, allow_blank=True, id=widget_id, compact=True)
+        select = Select([], prompt=prompt, allow_blank=True, id=widget_id, compact=True)
+        select.styles.width = "1fr"
+        select.styles.min_width = 0
+        select.styles.margin = 0
+        return select
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="trace-filter-wide"):
@@ -291,12 +311,23 @@ class TraceFilterBar(Widget):
         self._refresh_presentation()
 
     def set_records(self, records: Iterable[TrajectoryRecord]) -> None:
-        self.options = TraceFilterState.options_from(records)
+        derived = TraceFilterState.options_from(records)
+
+        def retain(values: tuple[str, ...], selected: str | None) -> tuple[str, ...]:
+            return tuple(sorted(set(values) | ({selected} if selected else set())))
+
+        self.options = TraceFilterOptions(
+            kinds=retain(derived.kinds, self.state.kind),
+            statuses=retain(derived.statuses, self.state.status),
+            agents=retain(derived.agents, self.state.agent),
+            providers=retain(derived.providers, self.state.provider),
+        )
         self._refresh_options()
         self._sync_controls()
 
-    def update_counts(self, visible: int, total: int) -> None:
-        self.visible_count = visible
+    def update_counts(self, shown: int, matching: int, total: int) -> None:
+        self.shown_count = shown
+        self.matching_count = matching
         self.total_count = total
         self._refresh_presentation()
         self.refresh()
@@ -351,13 +382,11 @@ class TraceFilterBar(Widget):
         if not self.is_mounted:
             return
         self.query_one("#trace-filter-wide").display = not self._compact
-        self.query_one("#trace-filter-counts", Static).update(
-            f"Filters {self.visible_count}/{self.total_count} · "
-            f"{self.state.active_count} active"
-        )
+        self.query_one("#trace-filter-counts", Static).update(self.count_text)
         compact = self.query_one("#trace-filter-compact", Static)
         compact.display = self._compact
-        compact.update(self.summary_text + (" · g edit" if self._compact else ""))
+        active = f"{self.state.active_count} active" if self.state.is_active else "none"
+        compact.update(f"Filters {self.count_text} · {active} · g edit")
 
     @on(Select.Changed)
     def _on_select_changed(self, event: Select.Changed) -> None:
@@ -365,6 +394,7 @@ class TraceFilterBar(Widget):
             self._syncing
             or not event.select.id
             or not event.select.id.startswith("trace-filter-")
+            or event.value != event.select.value
         ):
             return
         field = event.select.id.removeprefix("trace-filter-")

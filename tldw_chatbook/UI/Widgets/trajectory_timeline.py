@@ -64,7 +64,7 @@ ZOOM_FACTOR = 1.25
 PAN_FRACTION = 0.25
 
 #: Lane glyphs are the primary monochrome event encoding; color is secondary.
-LANE_GLYPHS = ("◆", "━", "■", "●")
+LANE_GLYPHS = ("◆", "━", "▶", "●")
 TURN_BOUNDARY_CHAR = "│"
 AGENT_BOUNDARY_CHAR = "┆"
 
@@ -82,11 +82,12 @@ KIND_STYLES: dict[str, Style] = {
 }
 _FALLBACK_STYLE = Style(color="white")
 
-#: Background applied to every cell inside the brushed region.
-BRUSH_STYLE = Style(bgcolor="#264f78")
-
 #: Overlay for the selected record's bar (host-screen ledger cursor).
 _SELECTED_STYLE = Style(reverse=True)
+
+# Geometry-free focus cue used because the app-wide outline paints over the
+# widget's perimeter cells (the Input row and first lane-label column).
+_FOCUS_LABEL_STYLE = Style(reverse=True, bold=True)
 
 _CAPTION_STYLE = Style(color="grey62")
 
@@ -204,7 +205,33 @@ class TimelineModel:
         return 1
 
     def glyph_for(self, record: TrajectoryRecord) -> str:
-        return LANE_GLYPHS[self.lane_for(record)]
+        """Return a monochrome marker for the record's event family."""
+
+        kind = record.kind.lower()
+        status = (record.status or "").lower()
+        lane = self.lane_for(record)
+        if lane == 0:
+            return (
+                "◇"
+                if kind == KIND_USER_FEEDBACK or "feedback" in kind
+                else LANE_GLYPHS[lane]
+            )
+        if lane == 1:
+            if "error" in kind or status in {
+                "error",
+                "failed",
+                "rejected",
+                "timed_out",
+            }:
+                return "!"
+            return LANE_GLYPHS[lane]
+        if lane == 2:
+            return (
+                "◀"
+                if kind == KIND_TOOL_RESULT or kind.endswith("_result")
+                else LANE_GLYPHS[lane]
+            )
+        return LANE_GLYPHS[lane] if kind in {"agent_run", "subagent_run"} else "○"
 
     @staticmethod
     def interval(record: TrajectoryRecord) -> tuple[float, float]:
@@ -321,7 +348,7 @@ class TrajectoryTimeline(Widget):
       :class:`TrajectoryBrushChanged` with the time range (or ``None``
       when cleared).
     - click on a bar: posts :class:`TrajectoryBarSelected` with the
-      record's ledger ``seq`` and clears any brush.
+      record's stable row key and clears any brush.
     - click on empty space: clears the brush.
     - wheel / ``[`` ``]``: zoom out/in (wheel centers on the mouse x,
       keys on the strip center); ```,`' ``/`` .`` pan left/right. Every
@@ -336,10 +363,17 @@ class TrajectoryTimeline(Widget):
 
     can_focus = True
 
+    COMPONENT_CLASSES = {"timeline--brush"}
+
     BUNDLED_CSS = """
     TrajectoryTimeline {
         height: 6;
         width: 1fr;
+
+        &>.timeline--brush {
+            background: $primary 35%;
+            text-style: bold;
+        }
     }
     """
 
@@ -366,6 +400,9 @@ class TrajectoryTimeline(Widget):
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         super().__init__(*args, **kwargs)  # type: ignore[arg-type]
+        # The global focus outline is painted over content in Textual. This
+        # widget uses reversed lane labels as its non-obscuring focus cue.
+        self.styles.outline = ("", "transparent")
         self._model = TimelineModel()
         self._window: tuple[float, float] | None = None
         self._brush: tuple[float, float] | None = None
@@ -498,15 +535,36 @@ class TrajectoryTimeline(Widget):
                 continue
             col = int(TimelineModel.fraction(boundary.time, window) * width)
             col = min(max(col, 0), width - 1)
-            cells[col] = (AGENT_BOUNDARY_CHAR, _CAPTION_STYLE)
+            record = next(
+                (
+                    item
+                    for item in model.timed_records
+                    if model.record_key(item) == boundary.record_key
+                ),
+                None,
+            )
+            if (
+                record is not None
+                and model.interval(record)[0] == model.interval(record)[1]
+            ):
+                # A boundary and instantaneous event share one cell. Preserve
+                # both meanings instead of overwriting the event marker.
+                _, style = cells[col]
+                cells[col] = ("◉", style or _CAPTION_STYLE)
+            else:
+                cells[col] = (AGENT_BOUNDARY_CHAR, _CAPTION_STYLE)
         if self._brush is not None:
+            brush_style = self.get_component_rich_style("timeline--brush", partial=True)
             b0, b1 = self._brush_columns(width, window)
             for col in range(b0, b1 + 1):
                 char, style = cells[col]
-                cells[col] = (char, (style or Style()) + BRUSH_STYLE)
+                cells[col] = (char, (style or Style()) + brush_style)
         label = f"{LANE_NAMES[lane]:<{LANE_LABEL_WIDTH}}"
+        label_style = (
+            _CAPTION_STYLE + _FOCUS_LABEL_STYLE if self.has_focus else _CAPTION_STYLE
+        )
         return Text.assemble(
-            (label, _CAPTION_STYLE),
+            (label, label_style),
             *self._runs(cells),
             no_wrap=True,
             overflow="ignore",
@@ -552,7 +610,7 @@ class TrajectoryTimeline(Widget):
             active = len(self._model.records_in_range(lo, hi))
             caption = f"{_fmt_clock(lo)}–{_fmt_clock(hi)} · {active} active"
         else:
-            caption = "no brush"
+            caption = "no brush · ◇ feedback ! error ▶ call ◀ result ○ step"
         pad = " " * max(width - len(caption), 0)
         return Text(pad + caption, style=_CAPTION_STYLE)
 
@@ -615,7 +673,9 @@ class TrajectoryTimeline(Widget):
             return None
         width = self._plot_width()
         x = self._plot_column(x)
-        for record, lane in zip(self._model.timed_records, self._model.lanes):
+        for record, lane in reversed(
+            tuple(zip(self._model.timed_records, self._model.lanes))
+        ):
             if lane != y:
                 continue
             cols = self._record_columns(record, width, self._window)
