@@ -9,10 +9,11 @@ import pytest
 
 # --- Ported (chunking-engine-parity Task 4) ---------------------------------
 # Upstream file: tldw_Server_API/tests/Chunking/test_auto_boundary_assistant.py
-# Skipped: auto_boundary_assistant + server Chat/AuthNZ deps deferred to #6. Remove this block when the module is vendored in
-# its own sub-project and re-sync the test from upstream.
+# Skipped: auto_boundary_assistant is NOT VENDORED — descope ruling (2026-08-23 spec §4.1): server-stack shims (AuthNZ llm_provider_overrides + providerCredentialRuntime, Chat bounded_daemon + chat_helpers, LLM_Calls adapter_registry, api.v1.schemas at function level) with no chatbook consumer; the capability is covered by #3's auto-selection and #4's agent surface; revisit only if a consumer appears. Terminal disposition (2026-08-23 program close):
+# pinned by Tests/Chunking/test_descope_ledger.py; a re-sync regenerates
+# this block verbatim.
 pytest.importorskip("tldw_chatbook.NoSuchDeferredModule",
-                    reason="skipped: auto_boundary_assistant + server Chat/AuthNZ deps deferred to #6")
+                    reason="skipped: auto_boundary_assistant is NOT VENDORED — descope ruling (2026-08-23 spec §4.1): server-stack shims (AuthNZ llm_provider_overrides + providerCredentialRuntime, Chat bounded_daemon + chat_helpers, LLM_Calls adapter_registry, api.v1.schemas at function level) with no chatbook consumer; the capability is covered by #3's auto-selection and #4's agent surface; revisit only if a consumer appears")
 
 from tldw_chatbook.Chunking._shims.AuthNZ.provider_credential_runtime import (
     PROVIDER_CALL_CREDENTIALS_CONTEXT_KEY,

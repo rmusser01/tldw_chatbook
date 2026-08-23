@@ -38,7 +38,8 @@ CORPUS = {
     "cjk": "这是一段中文文本。" * 10,
 }
 METHODS = ["words", "sentences", "paragraphs", "tokens", "json", "xml",
-           "ebook_chapters", "structure_aware", "code", "fixed_size"]
+           "ebook_chapters", "structure_aware", "code", "fixed_size",
+           "propositions"]
 
 
 @pytest.fixture(params=METHODS)

@@ -1386,11 +1386,14 @@ class TestAsyncChunkerConcurrency:
     @pytest.mark.asyncio
     async def test_async_chunker_preserves_language_per_task(self):
         # --- Ported (chunking-engine-parity Task 4) -------------------------
-        # async_chunker depends on server-only http_client/exceptions modules
-        # and is deferred to sub-project #6 (spec §5.1 deferrals).
+        # async_chunker is NOT VENDORED — descope ruling (2026-08-23 spec
+        # §4.2): server-only http_client/exceptions deps and no chatbook
+        # consumer (chatbook chunks in-process).
         pytest.importorskip(
             "tldw_chatbook.Chunking.engine.async_chunker",
-            reason="async_chunker deferred to #6 (server http_client/exceptions deps)",
+            reason="async_chunker is NOT VENDORED (descope 2026-08-23 spec "
+                    "§4.2: server http_client/exceptions deps; chatbook "
+                    "chunks in-process — no consumer)",
         )
         from tldw_chatbook.Chunking.engine.async_chunker import AsyncChunker
 

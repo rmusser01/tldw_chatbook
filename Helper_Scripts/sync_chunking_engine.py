@@ -12,9 +12,11 @@ BRANCH = "dev"
 PIN = "385afa951922c8a9dc2002c675bb6cad65e4ac23"
 
 # Phase-1 file set (spec §5.1) plus templates.py (template-parity task 4,
-# spec §6.1) and auto_planner.py (auto-selection task 1, spec §4.1); excludes
-# the still-deferred #2/#6 modules and upstream's own __init__.py
-# (chatbook-authored instead, §5.1).
+# spec §6.1), auto_planner.py (auto-selection task 1, spec §4.1), and
+# strategies/propositions.py (2026-08-23 propositions vendoring, spec §5 —
+# the 39th file). The excluded remainder is the descope ledger: see the
+# manifest's excluded comments and TESTS_MODULE_SKIPPED below; upstream's
+# own __init__.py stays out (chatbook-authored instead, §5.1).
 VENDORED = [
     "base.py", "chunker.py", "constants.py", "exceptions.py", "error_policy.py",
     "option_utils.py", "regex_safety.py", "security_logger.py",
@@ -28,7 +30,7 @@ VENDORED = [
     "strategies/ebook_chapters.py", "strategies/ebook_chapters_patch.py",
     "strategies/structure_aware.py", "strategies/code.py", "strategies/code_ast.py",
     "strategies/fixed_size.py", "strategies/semantic.py",
-    "strategies/rolling_summarize.py",
+    "strategies/rolling_summarize.py", "strategies/propositions.py",
     "utils/metrics.py",
 ]
 UPSTREAM_ROOT = "tldw_Server_API/app/core/Chunking"
@@ -53,7 +55,13 @@ TESTS_EXCLUDED = {
     "test_chunking_templates_endpoint_sanitization.py",
     "test_async_batch_processor.py",
     "test_async_template_return_type.py",
-    # #6-deferred runtime snapshot (spec §10.1: "the propositions one lands with #6")
+    # Terminal disposition (2026-08-23 program close): the proposition
+    # runtime-snapshot suite pins the server's credential-snapshot kwargs
+    # (app_config/credentials_resolved/provider_credentials — the spec §5.1
+    # guarded keys chatbook's llm_config never passes), so it cannot pass
+    # without the server AuthNZ runtime it rotates credentials against.
+    # test_propositions_strategy.py and test_hierarchical_rewrite_offsets.py
+    # ARE revived by the propositions vendoring (un-skipped below).
     "test_propositions_runtime_snapshot.py",
 }
 UPSTREAM_TESTS_ROOT = "tldw_Server_API/tests/Chunking"
@@ -65,58 +73,77 @@ TEST_RENAMES = {"test_chunking_templates.py": "test_upstream_chunking_templates.
 # Chatbook-side test patches (spec §10.1/§10.2).
 #
 # The ported tests need skips/guards for surfaces that are NOT vendored:
-# still-deferred modules (auto_boundary_assistant, propositions,
-# async_chunker), server-only fixtures (FastAPI endpoints, AuthNZ, Metrics
-# registry), and the HF-hub tokenizer download that chatbook's network
-# guard blocks. (templates.py and auto_planner.py were vendored by later
-# sub-projects; their suites' skip entries are gone — see the revival note
-# on TESTS_MODULE_SKIPPED.) Applying these patches here —
+# descope-ruled modules (auto_boundary_assistant, async_chunker — the
+# 2026-08-23 program-close ledger), server-only fixtures (FastAPI endpoints,
+# AuthNZ, Metrics registry), and the HF-hub tokenizer download that
+# chatbook's network guard blocks. templates.py, auto_planner.py, and
+# strategies/propositions.py were vendored by later sub-projects; their
+# suites' skip entries are gone — the propositions vendoring (2026-08-23)
+# likewise revived test_propositions_strategy.py and
+# test_hierarchical_rewrite_offsets.py. Applying these patches here —
 # rather than as one-time manual edits — keeps `sync_chunking_engine.py`
 # idempotent: a re-sync reproduces the exact ported tree, and an upstream
 # drift that breaks an anchor fails loudly instead of silently dropping a
 # skip (which would surface as a collection error or a network-guard failure).
+# Every reason below is a TERMINAL disposition: the rulings are recorded in
+# the manifest's excluded comments and pinned by test_descope_ledger.py.
 # ---------------------------------------------------------------------------
 
 # whole-module skips: file -> reason
-# (task-14: the four template-class suites below were REVIVED when PR A
-# vendored engine/templates.py — test_template_classifier, test_template_
-# hierarchical_options, test_template_learner, test_auto_apply_selection
-# import only the vendored classes and pass un-skipped, so their entries
-# are gone from this table. The auto-selection task (sub-project #3,
-# Task 1) likewise revived test_auto_chunking_planner.py when it vendored
-# engine/auto_planner.py — that suite imports only the vendored planner
-# symbols and passes 9/9 un-skipped. The §11-item-8 files below stay
-# skipped: their reasons are corrected to what actually blocks them — the
-# server repo's HTTP surface and the initialization half, NOT the vendored
-# processor.)
 TESTS_MODULE_SKIPPED = {
-    "test_auto_boundary_assistant.py": "auto_boundary_assistant + server Chat/AuthNZ deps deferred to #6",
-    "test_auto_chunking_resolver.py": "Ingestion_Media_Processing.chunking_options is server-side; deferred to #3",
-    "test_chunker_process_metrics.py": "server Metrics registry not vendored; engine degrades gracefully to no-op metrics",
+    "test_auto_boundary_assistant.py": (
+        "auto_boundary_assistant is NOT VENDORED — descope ruling (2026-08-23 "
+        "spec §4.1): server-stack shims (AuthNZ llm_provider_overrides + "
+        "providerCredentialRuntime, Chat bounded_daemon + chat_helpers, "
+        "LLM_Calls adapter_registry, api.v1.schemas at function level) with no "
+        "chatbook consumer; the capability is covered by #3's auto-selection "
+        "and #4's agent surface; revisit only if a consumer appears"
+    ),
+    "test_auto_chunking_resolver.py": (
+        "Ingestion_Media_Processing.chunking_options — the resolver that "
+        "consumes the auto-planner — remains server-side by the descope "
+        "rulings (#3 is merged); the resolver behavior is covered by the "
+        "ported planner suite (test_auto_chunking_planner.py)"
+    ),
+    "test_chunker_process_metrics.py": (
+        "server Metrics registry not vendored; engine degrades gracefully to "
+        "no-op metrics — descope 2026-08-23 spec §4.3 REAFFIRMS the no-op "
+        "ruling: no Metrics shim is ever built without a consumer"
+    ),
     "test_chunking_runtime_lifecycle.py": "exercises FastAPI endpoint + AuthNZ/DB fixtures (spec §10.1 endpoint class); only its rolling_summarize module constants are vendored",
-    "test_chunking_templates.py": "engine/templates.py is vendored (PR A) but this suite also imports the server repo's FastAPI router/schemas (tldw_Server_API), the deliberately-not-vendored template_initialization (spec §13 decision 5), and _shims/DB_Management + _shims/AuthNZ fixtures chatbook does not carry — the §11 item-8 residue; chatbook-side parity is pinned by test_template_runtime/test_chunking_interop_v7",
+    "test_chunking_templates.py": (
+        "TERMINAL disposition (2026-08-23 program close): templates and the "
+        "template endpoints remain server-side by #2's ruling — this suite "
+        "imports the server repo's FastAPI router/schemas (tldw_Server_API), "
+        "the not-vendored template_initialization (spec §13 decision 5), and "
+        "_shims/DB_Management + _shims/AuthNZ fixtures chatbook does not "
+        "carry; the propositions vendoring does not change it; chatbook-side "
+        "parity is pinned by test_template_runtime/test_chunking_interop_v7"
+    ),
     "test_chunking_templates_validate_schema.py": "the /validate HTTP endpoint stays server-side; chatbook ships local validation parity (Chunking/template_validation.py) pinned by its own fixture-table suite — no router to mount a TestClient against",
     "test_phase3_3_sanitizers.py": "FastAPI endpoint module tldw_Server_API.app.api.v1.endpoints.chunking is server-side (spec §10.1 endpoint class)",
-    "test_propositions_strategy.py": "strategies/propositions.py is deferred to sub-project #6; not in the Phase-A vendored set",
-    "test_hierarchical_rewrite_offsets.py": "strategies/propositions.py deferred to #6; not in the Phase-A vendored set",
 }
 
 MODULE_SKIP_FMT = (
     "# --- Ported (chunking-engine-parity Task 4) ---------------------------------\n"
     "# Upstream file: tldw_Server_API/tests/Chunking/{upstream}\n"
-    "# Skipped: {reason}. Remove this block when the module is vendored in\n"
-    "# its own sub-project and re-sync the test from upstream.\n"
+    "# Skipped: {reason}. Terminal disposition (2026-08-23 program close):\n"
+    "# pinned by Tests/Chunking/test_descope_ledger.py; a re-sync regenerates\n"
+    "# this block verbatim.\n"
     'pytest.importorskip("tldw_chatbook.NoSuchDeferredModule",\n'
     '                    reason="skipped: {reason}")\n'
 )
 
 ASYNC_GUARD = (
     "{i}# --- Ported (chunking-engine-parity Task 4) -------------------------\n"
-    "{i}# async_chunker depends on server-only http_client/exceptions modules\n"
-    "{i}# and is deferred to sub-project #6 (spec §5.1 deferrals).\n"
+    "{i}# async_chunker is NOT VENDORED — descope ruling (2026-08-23 spec\n"
+    "{i}# §4.2): server-only http_client/exceptions deps and no chatbook\n"
+    "{i}# consumer (chatbook chunks in-process).\n"
     "{i}pytest.importorskip(\n"
     "{i}    \"tldw_chatbook.Chunking.engine.async_chunker\",\n"
-    "{i}    reason=\"async_chunker deferred to #6 (server http_client/exceptions deps)\",\n"
+    "{i}    reason=\"async_chunker is NOT VENDORED (descope 2026-08-23 spec \"\n"
+    "{i}            \"§4.2: server http_client/exceptions deps; chatbook \"\n"
+    "{i}            \"chunks in-process — no consumer)\",\n"
     "{i})\n"
 )
 

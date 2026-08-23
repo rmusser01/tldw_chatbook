@@ -10,10 +10,11 @@ import pytest
 
 # --- Ported (chunking-engine-parity Task 4) ---------------------------------
 # Upstream file: tldw_Server_API/tests/Chunking/test_chunking_templates.py
-# Skipped: engine/templates.py is vendored (PR A) but this suite also imports the server repo's FastAPI router/schemas (tldw_Server_API), the deliberately-not-vendored template_initialization (spec §13 decision 5), and _shims/DB_Management + _shims/AuthNZ fixtures chatbook does not carry — the §11 item-8 residue; chatbook-side parity is pinned by test_template_runtime/test_chunking_interop_v7. Remove this block when the module is vendored in
-# its own sub-project and re-sync the test from upstream.
+# Skipped: TERMINAL disposition (2026-08-23 program close): templates and the template endpoints remain server-side by #2's ruling — this suite imports the server repo's FastAPI router/schemas (tldw_Server_API), the not-vendored template_initialization (spec §13 decision 5), and _shims/DB_Management + _shims/AuthNZ fixtures chatbook does not carry; the propositions vendoring does not change it; chatbook-side parity is pinned by test_template_runtime/test_chunking_interop_v7. Terminal disposition (2026-08-23 program close):
+# pinned by Tests/Chunking/test_descope_ledger.py; a re-sync regenerates
+# this block verbatim.
 pytest.importorskip("tldw_chatbook.NoSuchDeferredModule",
-                    reason="skipped: engine/templates.py is vendored (PR A) but this suite also imports the server repo's FastAPI router/schemas (tldw_Server_API), the deliberately-not-vendored template_initialization (spec §13 decision 5), and _shims/DB_Management + _shims/AuthNZ fixtures chatbook does not carry — the §11 item-8 residue; chatbook-side parity is pinned by test_template_runtime/test_chunking_interop_v7")
+                    reason="skipped: TERMINAL disposition (2026-08-23 program close): templates and the template endpoints remain server-side by #2's ruling — this suite imports the server repo's FastAPI router/schemas (tldw_Server_API), the not-vendored template_initialization (spec §13 decision 5), and _shims/DB_Management + _shims/AuthNZ fixtures chatbook does not carry; the propositions vendoring does not change it; chatbook-side parity is pinned by test_template_runtime/test_chunking_interop_v7")
 from pathlib import Path
 from typing import Dict, Any, List
 from unittest.mock import patch, MagicMock

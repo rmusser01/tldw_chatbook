@@ -11,8 +11,9 @@ import pytest
 
 # --- Ported (chunking-engine-parity Task 4) ---------------------------------
 # Upstream file: tldw_Server_API/tests/Chunking/test_chunking_runtime_lifecycle.py
-# Skipped: exercises FastAPI endpoint + AuthNZ/DB fixtures (spec §10.1 endpoint class); only its rolling_summarize module constants are vendored. Remove this block when the module is vendored in
-# its own sub-project and re-sync the test from upstream.
+# Skipped: exercises FastAPI endpoint + AuthNZ/DB fixtures (spec §10.1 endpoint class); only its rolling_summarize module constants are vendored. Terminal disposition (2026-08-23 program close):
+# pinned by Tests/Chunking/test_descope_ledger.py; a re-sync regenerates
+# this block verbatim.
 pytest.importorskip("tldw_chatbook.NoSuchDeferredModule",
                     reason="skipped: exercises FastAPI endpoint + AuthNZ/DB fixtures (spec §10.1 endpoint class); only its rolling_summarize module constants are vendored")
 from fastapi import UploadFile

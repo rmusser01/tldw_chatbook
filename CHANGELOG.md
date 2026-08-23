@@ -71,6 +71,28 @@ and this project adheres to Some kind of Versioning
   provenance-headered save, re-read, search-based re-run update without
   duplicates, Q/A flashcard note — end to end against real databases
   (`Tests/Library/test_agent_chunk_student_story.py`).
+- Propositions chunking method live; program descope recorded
+  (propositions-vendoring, sub-project 6 of 6 — closes the chunking-parity
+  program): the `propositions` method works for the first time. The routing
+  has existed since the engine-parity rework, but the strategy module was
+  never vendored, so every call raised
+  `InvalidChunkingMethodError: No module named …strategies.propositions`;
+  `strategies/propositions.py` is now vendored from the pinned server tree
+  (the 39th engine file, byte-faithful modulo the import rewrite, zero new
+  shims). Default is the heuristic engine — no new dependencies; the spacy
+  engine stays optional (auto-degrades to heuristics when spacy is absent);
+  the llm engine runs when a caller passes
+  `llm_call_function_for_chunker`, with the shim translating chatbook's
+  payload-dict callback to the engine's positional contract (the
+  rolling_summarize precedent — callers keep their signature), and an LLM
+  failure falling back to heuristics (upstream design, pinned as parity).
+  Heuristic output joins the byte-pinned golden corpus (70 → 77 fixtures).
+  The program's remaining candidates are descoped with recorded rulings
+  instead of built: `auto_boundary_assistant.py` and `async_chunker.py` are
+  permanently NOT vendored (server-stack seams with no chatbook consumer —
+  the capability is covered by auto-selection and the agent chunk tools),
+  and the engine telemetry no-op ruling is reaffirmed; all three live in the
+  vendor manifest's excluded list with their reasons.
 - UX efficiency cycle (critique follow-up, ADR-016): the Console composer is now a real
   editable text field with a movable caret (arrows, Home/End, Ctrl+W, mid-draft
   insertion, Shift+Enter newline); destination hotkeys ctrl+1..9,0 jump to the first ten
