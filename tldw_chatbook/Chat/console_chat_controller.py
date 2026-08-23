@@ -11850,32 +11850,46 @@ class ConsoleChatController:
                     session, registry
                 )
             except ProjectInstructionBindingRecovery as exc:
-                callback = self._select_project_instruction_binding
-                if callback is None:
-                    return ConsoleSubmitResult(False, False, str(exc))
                 expected_setup_state = session.project_instruction_state
                 try:
                     options = list_project_instruction_bindings(session, registry)
                 except ProjectInstructionBindingRecovery:
                     options = ()
-                action, binding_id = await callback(session_id, options, str(exc))
-                action, project_selection = commit_project_instruction_setup_decision(
-                    store=self.store,
-                    session_id=session_id,
-                    registry=registry,
-                    expected_state=expected_setup_state,
-                    expected_options=options,
-                    action=action,
-                    binding_id=binding_id,
-                )
-                if action == "disable":
-                    self._clear_project_instruction_delivery(session_id)
-                    return ConsoleSubmitResult(
-                        False, False, "project_instructions_disabled"
+                # An unselected session with no usable folder is a valid
+                # scratch-only Chat/Workspace, not a project-instruction
+                # setup failure. Keep the optional feature armed so a folder
+                # added later can be selected, but do not block this send or
+                # ask for one now. A previously selected folder still fails
+                # closed and reaches recovery when it disappears or changes.
+                if (
+                    expected_setup_state.working_folder_binding_id is None
+                    and not options
+                ):
+                    project_selection = None
+                else:
+                    callback = self._select_project_instruction_binding
+                    if callback is None:
+                        return ConsoleSubmitResult(False, False, str(exc))
+                    action, binding_id = await callback(session_id, options, str(exc))
+                    action, project_selection = (
+                        commit_project_instruction_setup_decision(
+                            store=self.store,
+                            session_id=session_id,
+                            registry=registry,
+                            expected_state=expected_setup_state,
+                            expected_options=options,
+                            action=action,
+                            binding_id=binding_id,
+                        )
                     )
-                if action != "select" or project_selection is None:
-                    self._clear_project_instruction_delivery(session_id)
-                    return ConsoleSubmitResult(False, False, str(exc))
+                    if action == "disable":
+                        self._clear_project_instruction_delivery(session_id)
+                        return ConsoleSubmitResult(
+                            False, False, "project_instructions_disabled"
+                        )
+                    if action != "select" or project_selection is None:
+                        self._clear_project_instruction_delivery(session_id)
+                        return ConsoleSubmitResult(False, False, str(exc))
             if project_selection is not None:
                 state = session.project_instruction_state
                 if state.working_folder_binding_id is None:
