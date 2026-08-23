@@ -1347,6 +1347,97 @@ async def test_animation_cells_change_then_freeze_hidden_collapsed():
 
 
 @pytest.mark.asyncio
+async def test_actionable_alert_freezes_animation_until_current_pet_resumes():
+    controller = _FakeController(
+        animate=True,
+        frames=("ALERT-A", "ALERT-B"),
+        durations=(1_000, 1_000),
+    )
+    app = _BuddyApp(controller)
+    async with app.run_test(size=(80, 24)):
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        await _wait_until(lambda: "ALERT-A" in _compositor_text(app.screen))
+        await _wait_until(lambda: buddy._frame_timer is not None)
+
+        controller.state = "offline"
+        controller.generation += 1
+        buddy.refresh_from_controller()
+        await _wait_until(lambda: "Offline" in _compositor_text(app.screen))
+        frozen = buddy.frame_index
+
+        assert buddy._frame_timer is None
+        buddy._next_frame_at = 0
+        buddy.advance_frame()
+        assert buddy.frame_index == frozen
+        assert buddy._frame_timer is None
+        assert "Offline" in _compositor_text(app.screen)
+        assert "ALERT-B" not in _compositor_text(app.screen)
+
+        resumed = _FakeController(
+            animate=True,
+            frames=("RESUME-A", "RESUME-B"),
+            durations=(1_000, 1_000),
+        )
+        controller.state = "idle"
+        controller.visual = resumed.visual
+        controller.generation += 1
+        buddy.refresh_from_controller()
+        await _wait_until(lambda: "RESUME-A" in _compositor_text(app.screen))
+        await _wait_until(lambda: buddy._frame_timer is not None)
+
+        remaining = buddy._next_frame_at - asyncio.get_running_loop().time()
+        assert 0.5 <= remaining <= 1.0
+        buddy._next_frame_at = 0
+        buddy.advance_frame()
+        await _wait_until(lambda: "RESUME-B" in _compositor_text(app.screen))
+
+
+@pytest.mark.asyncio
+async def test_reopen_waits_for_mode_matching_render_before_animation_resumes():
+    controller = _BlockAfterAcceptedController(
+        collapsed=True,
+        animate=True,
+        frames=("FOLDED-A", "FOLDED-B"),
+        durations=(1_000, 1_000),
+    )
+    app = _BuddyApp(controller)
+    async with app.run_test(size=(80, 24)):
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        await _wait_until(lambda: "FOLDED-A" in _compositor_text(app.screen))
+        assert buddy._frame_timer is None
+
+        full = _FakeController(
+            animate=True,
+            frames=("FULL-A", "FULL-B"),
+            durations=(1_000, 1_000),
+        ).visual
+        controller.block = True
+        controller.direct_visual = full
+        controller.visual = full
+        controller.preferences = replace(controller.preferences, collapsed=False)
+        controller.generation += 1
+        buddy.refresh_from_controller()
+        await asyncio.wait_for(controller.resolve_started.wait(), timeout=1)
+        frozen = buddy.frame_index
+
+        assert "FOLDED-A" not in _compositor_text(app.screen)
+        assert "FOLDED-B" not in _compositor_text(app.screen)
+        assert buddy._frame_timer is None
+        buddy._next_frame_at = 0
+        buddy.advance_frame()
+        assert buddy.frame_index == frozen
+        assert buddy._frame_timer is None
+        assert "FOLDED-A" not in _compositor_text(app.screen)
+        assert "FOLDED-B" not in _compositor_text(app.screen)
+
+        controller.resolve_release.set()
+        await _wait_until(lambda: "FULL-A" in _compositor_text(app.screen))
+        await _wait_until(lambda: buddy._frame_timer is not None)
+        remaining = buddy._next_frame_at - asyncio.get_running_loop().time()
+        assert 0.5 <= remaining <= 1.0
+
+
+@pytest.mark.asyncio
 async def test_reduced_motion_paints_static_frame():
     controller = _FakeController(animate=False, frames=("STATIC-A", "STATIC-B"))
     app = _BuddyApp(controller)

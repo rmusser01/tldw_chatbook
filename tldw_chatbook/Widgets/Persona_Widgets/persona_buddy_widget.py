@@ -98,6 +98,7 @@ class _AcceptedRender:
     authority: tuple[object, ...]
     visual_identity: tuple[object, ...]
     visual: PersonaBuddyVisualSnapshot = field(repr=False, compare=False)
+    collapsed: bool
     content_width: int
     content_height: int
 
@@ -332,6 +333,7 @@ class PersonaBuddyWidget(Widget, can_focus=True):
                         authority=authority,
                         visual_identity=_visual_identity(visual),
                         visual=visual,
+                        collapsed=bool(current_snapshot.collapsed),
                         content_width=content_box[0],
                         content_height=content_box[1],
                     )
@@ -504,17 +506,12 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         self._stop_frame_timer()
 
         snapshot = self._snapshot
-        if (
-            snapshot is None
-            or not self.display
-            or snapshot.collapsed
-            or self.has_class("persona-buddy-compact")
-        ):
+        accepted = self._accepted_render_for_paint()
+        if accepted is None or snapshot is None or snapshot.collapsed:
             self._frame_was_frozen = True
             return
-        accepted = self._accepted_render
-        visual = accepted.visual if accepted is not None else None
-        frames = getattr(visual, "frames", ()) if visual is not None else ()
+        visual = accepted.visual
+        frames = getattr(visual, "frames", ())
         if not getattr(visual, "animate", False) or len(frames) < 2:
             return
         now = time.monotonic()
@@ -536,14 +533,13 @@ class PersonaBuddyWidget(Widget, can_focus=True):
 
     def _sync_frame_timer(self) -> None:
         snapshot = self._snapshot
-        accepted = self._accepted_render
+        accepted = self._accepted_render_for_paint()
         visual = accepted.visual if accepted is not None else None
         frames = getattr(visual, "frames", ()) if visual is not None else ()
         active = bool(
-            self._is_current_view()
-            and self.display
+            accepted is not None
+            and snapshot is not None
             and not snapshot.collapsed
-            and not self.has_class("persona-buddy-compact")
             and getattr(visual, "animate", False)
             and len(frames) > 1
             and (self.frame_index < len(frames) - 1 or getattr(visual, "loop", False))
@@ -574,6 +570,23 @@ class PersonaBuddyWidget(Widget, can_focus=True):
             return 1.0 / float(frame_rate)
         return 0.1
 
+    def _accepted_render_for_paint(self) -> _AcceptedRender | None:
+        """Return the accepted pet render only when it may supply visible pixels."""
+
+        snapshot = self._snapshot
+        accepted = self._accepted_render
+        if (
+            not self._is_current_view()
+            or not self.display
+            or self.has_class("persona-buddy-compact")
+            or snapshot is None
+            or accepted is None
+            or snapshot.state in _ACTIONABLE_ALERTS
+            or accepted.collapsed != bool(snapshot.collapsed)
+        ):
+            return None
+        return accepted
+
     def _paint_frame(self) -> None:
         if not self.is_attached:
             return
@@ -587,13 +600,7 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         if alert is not None:
             target.update(alert)
             return
-        accepted = self._accepted_render
-        if (
-            accepted is not None
-            and self._snapshot is not None
-            and accepted.authority[-2] != self._snapshot.collapsed
-        ):
-            accepted = None
+        accepted = self._accepted_render_for_paint()
         visual = accepted.visual if accepted is not None else None
         frames = getattr(visual, "frames", ()) if visual is not None else ()
         if frames:
