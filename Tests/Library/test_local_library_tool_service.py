@@ -1190,6 +1190,38 @@ def test_save_note_rejects_wrong_type_and_malformed_note_ids():
     assert _error_code(malformed) == "invalid_argument"
 
 
+def test_save_note_over_long_fields_name_the_limit_at_invoke_time():
+    # Invoke-time mirrors of the schema maxLength literals (final-review
+    # follow-up): a schema-bypassing caller still fails closed, and the
+    # refusal names the bound so the agent can self-correct.
+    service = _save_service()
+
+    long_title = service.invoke(
+        "library_save_note", {"title": "t" * 513, "content": "c"}
+    )
+    assert _error_code(long_title) == "invalid_argument"
+    assert "512" in long_title["error"]["message"]
+
+    long_content = service.invoke(
+        "library_save_note", {"title": "t", "content": "c" * 100_001}
+    )
+    assert _error_code(long_content) == "invalid_argument"
+    assert "100000" in long_content["error"]["message"]
+
+    long_folder = service.invoke(
+        "library_save_note", {"title": "t", "content": "c", "folder": "f" * 257}
+    )
+    assert _error_code(long_folder) == "invalid_argument"
+    assert "256" in long_folder["error"]["message"]
+
+    # Exactly-at-limit is NOT over-long: the checks are strict '>' and the
+    # boundary value still reaches the row-writer.
+    at_limit = service.invoke(
+        "library_save_note", {"title": "t" * 512, "content": "c" * 100_000}
+    )
+    assert at_limit.get("error", {}).get("code") != "invalid_argument"
+
+
 def test_save_note_folder_ensure_is_idempotent_across_saves():
     scope = FakeNotesScopeService()
     service = _save_service(notes_scope_service=scope)

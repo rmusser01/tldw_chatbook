@@ -44,6 +44,9 @@ from tldw_chatbook.Library.library_tool_contract import (
     MAX_MESSAGE_LIMIT,
     MAX_RESULT_BYTES,
     PREVIEW_MAX_CHARS,
+    SAVE_NOTE_CONTENT_MAX_CHARS,
+    SAVE_NOTE_FOLDER_MAX_CHARS,
+    SAVE_NOTE_TITLE_MAX_CHARS,
     check_cursor_revision,
     fit_page_payload,
     make_cursor,
@@ -771,12 +774,27 @@ class LocalLibraryToolService:
         title = arguments.get("title")
         if not isinstance(title, str) or not title.strip():
             raise _invalid("title must be a non-empty string")
+        if len(title) > SAVE_NOTE_TITLE_MAX_CHARS:
+            raise _invalid(
+                f"title must be at most {SAVE_NOTE_TITLE_MAX_CHARS} characters"
+                f" (got {len(title)})"
+            )
         content = arguments.get("content")
         if not isinstance(content, str) or not content:
             raise _invalid("content must be a non-empty string")
+        if len(content) > SAVE_NOTE_CONTENT_MAX_CHARS:
+            raise _invalid(
+                f"content must be at most {SAVE_NOTE_CONTENT_MAX_CHARS}"
+                f" characters (got {len(content)})"
+            )
         folder = arguments.get("folder")
         if folder is not None and (not isinstance(folder, str) or not folder.strip()):
             raise _invalid("folder must be a non-empty string when supplied")
+        if folder is not None and len(folder) > SAVE_NOTE_FOLDER_MAX_CHARS:
+            raise _invalid(
+                f"folder must be at most {SAVE_NOTE_FOLDER_MAX_CHARS} characters"
+                f" (got {len(folder)})"
+            )
         note_id = arguments.get("note_id")
         expected_version = arguments.get("expected_version")
         if (note_id is None) != (expected_version is None):

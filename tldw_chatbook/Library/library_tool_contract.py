@@ -62,6 +62,17 @@ MAX_CHUNK_CONTEXT = 10
 #: schema already bounds; work must stay bounded for hostile callers).
 MAX_SEARCH_QUERY_CHARS = 1_000
 
+#: Input-side length bounds for the two write tools (chunking-agent-tools
+#: spec §4.3 spec-save; student-workflow spec §4.1 save-note). One source
+#: for the descriptor ``maxLength`` literals AND the invoke-time guards in
+#: the services' ``_validate_*_arguments`` helpers, so a schema-bypassing
+#: caller still fails closed with the same named limit.
+SPEC_SAVE_NAME_MAX_CHARS = 120
+SPEC_SAVE_DESCRIPTION_MAX_CHARS = 2_000
+SAVE_NOTE_TITLE_MAX_CHARS = 512
+SAVE_NOTE_CONTENT_MAX_CHARS = 100_000
+SAVE_NOTE_FOLDER_MAX_CHARS = 256
+
 # -- Structured errors (spec §9) -------------------------------------------------
 
 ERROR_INVALID_ARGUMENT = "invalid_argument"
@@ -318,7 +329,7 @@ def _spec_save_schema() -> dict:
             "name": {
                 "type": "string",
                 "minLength": 1,
-                "maxLength": 120,
+                "maxLength": SPEC_SAVE_NAME_MAX_CHARS,
                 "description": "Spec (custom chunking template) name.",
             },
             "spec": {
@@ -327,7 +338,7 @@ def _spec_save_schema() -> dict:
             },
             "description": {
                 "type": "string",
-                "maxLength": 2_000,
+                "maxLength": SPEC_SAVE_DESCRIPTION_MAX_CHARS,
                 "description": "Optional human-readable description.",
             },
             "tags": {
@@ -355,13 +366,13 @@ def _save_note_schema() -> dict:
             "title": {
                 "type": "string",
                 "minLength": 1,
-                "maxLength": 512,
+                "maxLength": SAVE_NOTE_TITLE_MAX_CHARS,
                 "description": "Note title.",
             },
             "content": {
                 "type": "string",
                 "minLength": 1,
-                "maxLength": 100_000,
+                "maxLength": SAVE_NOTE_CONTENT_MAX_CHARS,
                 "description": (
                     "Full note content in Markdown. For notes derived from"
                     " Library media, start the body with the provenance"
@@ -371,7 +382,7 @@ def _save_note_schema() -> dict:
             "folder": {
                 "type": "string",
                 "minLength": 1,
-                "maxLength": 256,
+                "maxLength": SAVE_NOTE_FOLDER_MAX_CHARS,
                 "description": (
                     "Optional ONE-LEVEL folder name (no slashes); the folder"
                     " is created when missing and the note is filed into it."
