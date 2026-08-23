@@ -1692,3 +1692,126 @@ async def test_failed_fresh_review_paths_clear_prior_authority(operation: str) -
     calls_before_apply = tuple(runtime.calls)
     await controller.apply_reviewed()
     assert tuple(runtime.calls) == calls_before_apply
+
+
+async def _invoke_root_control(
+    controller: LibraryNotesSyncController, operation: str
+) -> None:
+    if operation == "activate":
+        await controller.activate_root("root-1")
+    elif operation == "pause":
+        await controller.pause_root("root-1")
+    elif operation == "resume":
+        await controller.resume_root("root-1")
+    elif operation == "retarget":
+        await controller.retarget_root("root-1", "/private/new-root")
+    elif operation == "disconnect":
+        await controller.disconnect_root("root-1", keep_folder_organization=True)
+    elif operation == "cleanup":
+        await controller.resolve_cleanup("root-1", "operation-1")
+    else:
+        controller.stage_root_action("root-1", "recover")
+
+
+@pytest.mark.parametrize(
+    "operation",
+    ["activate", "pause", "resume", "retarget", "disconnect", "cleanup", "stage"],
+)
+@pytest.mark.parametrize("pending_kind", ["apply", "check"])
+async def test_same_root_control_supersedes_pending_review_work(
+    operation: str, pending_kind: str
+) -> None:
+    runtime = _Runtime()
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+    await controller.check_root("root-1")
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    if pending_kind == "apply":
+        original_apply = runtime.apply_reviewed
+
+        async def delayed_apply(*args: object, **kwargs: object) -> ConflictApplyResult:
+            started.set()
+            await release.wait()
+            return await original_apply(*args, **kwargs)
+
+        runtime.apply_reviewed = delayed_apply
+        pending = asyncio.create_task(controller.apply_reviewed())
+    else:
+
+        async def delayed_check(root_id: str) -> ReconciliationPlan:
+            started.set()
+            await release.wait()
+            return _conflict_plan(root_id=root_id, token=TOKEN_2)
+
+        runtime.check_root = delayed_check
+        pending = asyncio.create_task(controller.check_root("root-1"))
+
+    await started.wait()
+    await _invoke_root_control(controller, operation)
+    control_snapshot = controller.snapshot
+    release.set()
+    await pending
+
+    assert controller.snapshot == control_snapshot
+
+
+async def test_unavailable_activation_supersedes_pending_same_root_check() -> None:
+    runtime = _Runtime()
+    runtime.snapshot = lambda: NotesSyncRuntimeSnapshot(
+        "awaiting_cutover", "finish_upgrade"
+    )
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+    await controller.check_root("root-1")
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def delayed_check(root_id: str) -> ReconciliationPlan:
+        started.set()
+        await release.wait()
+        return _conflict_plan(root_id=root_id, token=TOKEN_2)
+
+    runtime.check_root = delayed_check
+    pending = asyncio.create_task(controller.check_root("root-1"))
+    await started.wait()
+    assert await controller.activate_root("root-1") is False
+    unavailable_snapshot = controller.snapshot
+    release.set()
+    await pending
+
+    assert controller.snapshot == unavailable_snapshot
+    assert controller._review_plan is None  # noqa: SLF001 - authority contract
+
+
+async def test_same_root_controls_publish_only_the_newest_completion() -> None:
+    runtime = _Runtime()
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+    await controller.check_root("root-1")
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def delayed_retarget(root_id: str, target: str) -> NotesSyncControlResult:
+        started.set()
+        await release.wait()
+        return NotesSyncControlResult(True, "up_to_date", "sync_now")
+
+    runtime.retarget_root = delayed_retarget
+    pending = asyncio.create_task(
+        controller.retarget_root("root-1", "/private/new-root")
+    )
+    await started.wait()
+    await controller.resume_root("root-1")
+    newest_snapshot = controller.snapshot
+    release.set()
+    await pending
+
+    assert controller.snapshot == newest_snapshot

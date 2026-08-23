@@ -372,6 +372,15 @@ class LibraryNotesSyncController:
         self._invalidate_receipt_history()
         return self._lifecycle_epoch
 
+    def _begin_bound_control_lifecycle(self, root_id: str) -> int:
+        if root_id != self._projection_root_id:
+            self._switch_projection_root(root_id)
+        else:
+            self._advance_lifecycle()
+            self._invalidate_receipt_history()
+        self._invalidate_review_authority()
+        return self._lifecycle_epoch
+
     def _start_receipt_request(self, root_id: str) -> int:
         self._switch_projection_root(root_id)
         self._receipt_generation += 1
@@ -814,9 +823,7 @@ class LibraryNotesSyncController:
     async def resolve_cleanup(self, root_id: str, operation_id: str) -> None:
         """Forward one operation-specific recovery already exposed by the runtime."""
 
-        self._switch_projection_root(root_id)
-        self._invalidate_review_authority()
-        epoch = self._lifecycle_epoch
+        epoch = self._begin_bound_control_lifecycle(root_id)
         try:
             await self._runtime.resolve_cleanup(root_id, operation_id)
         except Exception:
@@ -1284,8 +1291,7 @@ class LibraryNotesSyncController:
             "disconnect",
         }:
             raise ValueError("unknown root action")
-        self._switch_projection_root(root_id)
-        self._invalidate_review_authority()
+        self._begin_bound_control_lifecycle(root_id)
         self._state = replace(
             self._state,
             phase="roots",
@@ -1297,17 +1303,16 @@ class LibraryNotesSyncController:
         self._publish()
 
     async def activate_root(self, root_id: str) -> bool:
-        self._switch_projection_root(root_id)
-        epoch = self._lifecycle_epoch
-        if not self._state.lasting_available:
+        available = self._state.lasting_available
+        authorization = self._state.review.observation_token
+        epoch = self._begin_bound_control_lifecycle(root_id)
+        if not available:
             self._state = replace(
                 self._state,
                 status_line="Lasting folder sync is unavailable until the reviewed cutover.",
             )
             self._publish()
             return False
-        authorization = self._state.review.observation_token
-        self._invalidate_review_authority()
         self._state = replace(
             self._state,
             phase="activating",
@@ -1355,25 +1360,19 @@ class LibraryNotesSyncController:
         return accepted
 
     async def pause_root(self, root_id: str) -> None:
-        self._switch_projection_root(root_id)
-        self._invalidate_review_authority()
-        epoch = self._lifecycle_epoch
+        epoch = self._begin_bound_control_lifecycle(root_id)
         await self._run_root_control(
             self._runtime.pause_root(root_id), root_id=root_id, epoch=epoch
         )
 
     async def resume_root(self, root_id: str) -> None:
-        self._switch_projection_root(root_id)
-        self._invalidate_review_authority()
-        epoch = self._lifecycle_epoch
+        epoch = self._begin_bound_control_lifecycle(root_id)
         await self._run_root_control(
             self._runtime.resume_root(root_id), root_id=root_id, epoch=epoch
         )
 
     async def retarget_root(self, root_id: str, target: str) -> None:
-        self._switch_projection_root(root_id)
-        self._invalidate_review_authority()
-        epoch = self._lifecycle_epoch
+        epoch = self._begin_bound_control_lifecycle(root_id)
         if not await self._run_root_control(
             self._runtime.retarget_root(root_id, target),
             root_id=root_id,
@@ -1399,9 +1398,7 @@ class LibraryNotesSyncController:
     async def disconnect_root(
         self, root_id: str, *, keep_folder_organization: bool
     ) -> None:
-        self._switch_projection_root(root_id)
-        self._invalidate_review_authority()
-        epoch = self._lifecycle_epoch
+        epoch = self._begin_bound_control_lifecycle(root_id)
         if not await self._run_root_control(
             self._runtime.disconnect_root(root_id, keep_folder_organization),
             root_id=root_id,
