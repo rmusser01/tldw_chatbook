@@ -1009,6 +1009,45 @@ async def test_terminal_subset_projects_receipts_fresh_review_and_one_status_upd
     assert controller.snapshot.conflict_focus_binding_id == "bind-1"
 
 
+async def test_fresh_fact_failure_clears_applied_selection_and_comparison() -> None:
+    runtime = _Runtime()
+    runtime.check_plan = _conflict_plan()
+    result = NotesSyncExecutionResult(
+        "operation-1", NotesSyncOperationState.COMPLETED, False
+    )
+    runtime.apply_result = ConflictApplyResult(
+        (result,),
+        0,
+        1,
+        1,
+        True,
+        False,
+        False,
+        _conflict_plan(token=TOKEN_2),
+    )
+
+    async def labels(root_id: str, token: str) -> tuple[RuntimeConflictLabel, ...]:
+        if token == TOKEN_2:
+            raise RuntimeError("fresh labels unavailable")
+        return (RuntimeConflictLabel("bind-1", "Note", "note.md"),)
+
+    runtime.conflict_labels = labels
+    controller = LibraryNotesSyncController(
+        runtime=runtime, import_controller=_ImportController()
+    )
+    await controller.check_root("root-1")
+    controller.stage_attention_choice("bind-1", "Keep file")
+    await controller.show_conflict_comparison("bind-1")
+    assert controller.snapshot.comparison is not None
+
+    await controller.apply_reviewed()
+
+    assert controller._selections == {}
+    assert controller.snapshot.comparison is None
+    assert controller.snapshot.review.stale is True
+    assert controller.snapshot.review.can_apply is False
+
+
 async def test_nonterminal_apply_routes_to_recovery_without_fresh_review() -> None:
     runtime = _Runtime()
     runtime.check_plan = _conflict_plan()

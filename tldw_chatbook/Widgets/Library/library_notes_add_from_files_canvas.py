@@ -139,7 +139,7 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
         self.add_class("library-notes-lasting-sync-canvas")
 
     def on_mount(self) -> None:
-        self._schedule_conflict_focus_request()
+        self.call_after_refresh(self._schedule_conflict_focus_request)
 
     def compose(self) -> ComposeResult:
         yield Static(
@@ -970,11 +970,6 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
         }:
             return
         self._scheduled_conflict_focus_request = request
-        self.call_after_refresh(self._capture_conflict_focus_provenance, request)
-
-    def _capture_conflict_focus_provenance(self, request: tuple[str, str, str]) -> None:
-        if self._requested_conflict_view(request) is None:
-            return
         focused = self.screen.focused
         self.call_after_refresh(self._focus_requested_conflict, request, focused)
 
@@ -986,7 +981,18 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
         """Honor one fresh focus request without stealing newer user focus."""
 
         view = self._requested_conflict_view(request)
-        if view is None or self.screen.focused is not focused:
+        current_focus = self.screen.focused
+        replaced_target_lost_focus = (
+            focused is not None
+            and not focused.is_mounted
+            and isinstance(focused, Button)
+            and focused.has_class("notes-sync-conflict-view")
+            and focused.name == request[2]
+            and current_focus is None
+        )
+        if view is None or (
+            current_focus is not focused and not replaced_target_lost_focus
+        ):
             return
         view.focus()
         self._handled_conflict_focus_request = request

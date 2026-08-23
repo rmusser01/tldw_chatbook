@@ -402,6 +402,9 @@ class LibraryNotesSyncController:
         except Exception:
             if not self._lifecycle_is_current(expected_root_id, epoch):
                 return None
+            if reset_ephemeral:
+                self._selections.clear()
+                self._clear_comparison()
             self._review_labels.clear()
             self._state = replace(
                 self._state,

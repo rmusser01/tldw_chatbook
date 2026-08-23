@@ -535,6 +535,7 @@ async def test_post_apply_focus_request_targets_first_remaining_conflict_once() 
         canvas = app.query_one(LibraryNotesAddFromFilesCanvas)
         back = app.query_one("#notes-sync-back", Button)
         back.focus()
+        await pilot.pause()
         canvas.sync_state(replace(snapshot, conflict_focus_binding_id="bind-1"))
         await _wait_for(
             pilot,
@@ -575,16 +576,16 @@ async def test_conflict_focus_request_does_not_steal_newer_focus(
         )
         back = app.query_one("#notes-sync-back", Button)
         back.focus()
+        await pilot.pause()
         canvas.sync_state(replace(snapshot, conflict_focus_binding_id="bind-1"))
 
-        capture, capture_args = pending.pop(0)
-        capture(*capture_args)
         keep_file = app.query_one("#notes-sync-conflict-0-keep-file", Button)
         keep_file.focus()
         await pilot.pause()
         assert app.focused is keep_file
-        focus, focus_args = pending.pop(0)
-        focus(*focus_args)
+        while pending:
+            callback, args = pending.pop(0)
+            callback(*args)
         await pilot.pause()
 
         assert app.focused is keep_file
@@ -618,7 +619,8 @@ async def test_new_token_focus_request_survives_full_review_recompose() -> None:
     async with app.run_test(size=(60, 20)) as pilot:
         await pilot.pause()
         canvas = app.query_one(LibraryNotesAddFromFilesCanvas)
-        app.query_one("#notes-sync-back", Button).focus()
+        app.query_one("#notes-sync-conflict-view-0", Button).focus()
+        await pilot.pause()
         next_snapshot = replace(
             snapshot,
             review=replace(snapshot.review, observation_token="d" * 64),
