@@ -4848,6 +4848,134 @@ def _worktree_admin_marker_name(target: str) -> str:
     return f".campaign-worktree-cleanup-{digest}"
 
 
+def _admin_tombstone_payload(target: str, admin_descriptor: int) -> bytes:
+    metadata = os.fstat(admin_descriptor)
+    return (
+        json.dumps(
+            {
+                "admin_dev": metadata.st_dev,
+                "admin_ino": metadata.st_ino,
+                "target_sha256": hashlib.sha256(target.encode()).hexdigest(),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+        + b"\n"
+    )
+
+
+def _admin_tombstone_identity(
+    marker_descriptor: int, target: str, receipt_name: str
+) -> tuple[int, int]:
+    payload = _read_regular_file_fd(
+        marker_descriptor,
+        receipt_name,
+        error_code="target_worktree_admin_marker_conflict",
+    )
+    try:
+        record = json.loads(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("target_worktree_admin_marker_conflict") from exc
+    if (
+        not isinstance(record, dict)
+        or set(record) != {"admin_dev", "admin_ino", "target_sha256"}
+        or not isinstance(record["admin_dev"], int)
+        or isinstance(record["admin_dev"], bool)
+        or not isinstance(record["admin_ino"], int)
+        or isinstance(record["admin_ino"], bool)
+        or record["target_sha256"]
+        != hashlib.sha256(target.encode()).hexdigest()
+        or payload
+        != json.dumps(
+            record, sort_keys=True, separators=(",", ":")
+        ).encode()
+        + b"\n"
+    ):
+        raise RuntimeError("target_worktree_admin_marker_conflict")
+    return record["admin_dev"], record["admin_ino"]
+
+
+def _publish_admin_tombstone(
+    common_descriptor: int,
+    marker_descriptor: int,
+    target: str,
+    admin_descriptor: int,
+) -> None:
+    payload = _admin_tombstone_payload(target, admin_descriptor)
+    try:
+        stage_name = (
+            f".{_worktree_admin_marker_name(target)}-receipt-"
+            f"{secrets.token_hex(16)}"
+        )
+    except BaseException as exc:
+        raise RuntimeError("target_worktree_unregister_failed") from exc
+    try:
+        receipt_descriptor = os.open(
+            stage_name,
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_CLOEXEC", 0),
+            0o600,
+            dir_fd=common_descriptor,
+        )
+    except FileExistsError as exc:
+        raise RuntimeError("target_worktree_unregister_failed") from exc
+    try:
+        os.fsync(common_descriptor)
+        remaining = memoryview(payload)
+        while remaining:
+            written = os.write(receipt_descriptor, remaining)
+            if written <= 0:
+                raise RuntimeError("target_worktree_unregister_failed")
+            remaining = remaining[written:]
+        os.fsync(receipt_descriptor)
+    finally:
+        os.close(receipt_descriptor)
+    try:
+        os.link(
+            stage_name,
+            "pending.json",
+            src_dir_fd=common_descriptor,
+            dst_dir_fd=marker_descriptor,
+            follow_symlinks=False,
+        )
+        os.fsync(marker_descriptor)
+    except FileExistsError:
+        if _read_regular_file_fd(
+            marker_descriptor,
+            "pending.json",
+            error_code="target_worktree_admin_marker_conflict",
+        ) != payload:
+            raise RuntimeError("target_worktree_admin_marker_conflict")
+    finally:
+        try:
+            os.unlink(stage_name, dir_fd=common_descriptor)
+        except FileNotFoundError:
+            pass
+        os.fsync(common_descriptor)
+
+
+def _publish_admin_identity_conflict(marker_descriptor: int) -> None:
+    try:
+        conflict_descriptor = os.open(
+            "identity-conflict",
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_CLOEXEC", 0),
+            0o600,
+            dir_fd=marker_descriptor,
+        )
+    except FileExistsError:
+        return
+    try:
+        os.fsync(conflict_descriptor)
+    finally:
+        os.close(conflict_descriptor)
+    os.fsync(marker_descriptor)
+
+
 def _worktree_backlink_admin_name(
     owned_descriptor: int, common: Path
 ) -> str:
@@ -4936,30 +5064,43 @@ def _admin_marker_state(common: Path, target: str) -> str:
                 return "empty"
             if "identity-conflict" in entries:
                 raise RuntimeError("target_worktree_admin_marker_conflict")
-            if entries in ({"retired"}, {"admin", "retired"}):
-                receipt = _read_regular_file_fd(
-                    marker_descriptor,
-                    "retired",
-                    error_code="target_worktree_admin_marker_conflict",
+            if entries in (
+                {"admin", "pending.json"},
+                {"admin", "pending.json", "terminal.json"},
+            ):
+                admin_descriptor = os.open(
+                    "admin",
+                    _directory_open_flags(),
+                    dir_fd=marker_descriptor,
                 )
-                if receipt != f"{os.path.abspath(f'{target}/.git')}\n".encode():
-                    raise RuntimeError(
-                        "target_worktree_admin_marker_conflict"
-                    )
-                if "admin" in entries:
-                    admin_descriptor = os.open(
-                        "admin",
-                        _directory_open_flags(),
-                        dir_fd=marker_descriptor,
-                    )
-                    try:
-                        if any(os.scandir(admin_descriptor)):
-                            raise RuntimeError(
-                                "target_worktree_admin_marker_conflict"
-                            )
-                    finally:
-                        os.close(admin_descriptor)
-                return "retiring"
+                try:
+                    admin_metadata = os.fstat(admin_descriptor)
+                    if _admin_tombstone_identity(
+                        marker_descriptor, target, "pending.json"
+                    ) != (
+                        admin_metadata.st_dev,
+                        admin_metadata.st_ino,
+                    ):
+                        raise RuntimeError(
+                            "target_worktree_admin_marker_conflict"
+                        )
+                finally:
+                    os.close(admin_descriptor)
+                if "terminal.json" in entries:
+                    if _read_regular_file_fd(
+                        marker_descriptor,
+                        "terminal.json",
+                        error_code="target_worktree_admin_marker_conflict",
+                    ) != _read_regular_file_fd(
+                        marker_descriptor,
+                        "pending.json",
+                        error_code="target_worktree_admin_marker_conflict",
+                    ):
+                        raise RuntimeError(
+                            "target_worktree_admin_marker_conflict"
+                        )
+                    return "tombstone"
+                return "pending"
             if entries != {"admin"}:
                 raise RuntimeError("target_worktree_admin_marker_conflict")
             admin_descriptor = os.open(
@@ -5014,6 +5155,28 @@ def _move_worktree_admin_to_marker(
                         "target_worktree_admin_marker_conflict"
                     )
                 if not entries:
+                    current_descriptor = os.open(
+                        admin_name,
+                        _directory_open_flags(),
+                        dir_fd=worktrees_descriptor,
+                    )
+                    try:
+                        expected = os.fstat(expected_admin_descriptor)
+                        current = os.fstat(current_descriptor)
+                        if (
+                            (expected.st_dev, expected.st_ino)
+                            != (current.st_dev, current.st_ino)
+                            or _admin_gitdir_target(current_descriptor)
+                            != os.path.abspath(f"{target}/.git")
+                        ):
+                            _publish_admin_identity_conflict(
+                                marker_descriptor
+                            )
+                            raise RuntimeError(
+                                "target_worktree_admin_identity_changed"
+                            )
+                    finally:
+                        os.close(current_descriptor)
                     try:
                         os.rename(
                             admin_name,
@@ -5048,38 +5211,7 @@ def _move_worktree_admin_to_marker(
                         != os.path.abspath(f"{target}/.git")
                     )
                     if identity_changed or metadata_changed:
-                        os.rename(
-                            "admin",
-                            "conflict",
-                            src_dir_fd=marker_descriptor,
-                            dst_dir_fd=marker_descriptor,
-                        )
-                        conflict_descriptor = os.open(
-                            "identity-conflict",
-                            os.O_WRONLY
-                            | os.O_CREAT
-                            | os.O_EXCL
-                            | getattr(os, "O_CLOEXEC", 0),
-                            0o600,
-                            dir_fd=marker_descriptor,
-                        )
-                        try:
-                            os.fsync(conflict_descriptor)
-                        finally:
-                            os.close(conflict_descriptor)
-                        os.fsync(marker_descriptor)
-                        try:
-                            os.rename(
-                                "conflict",
-                                admin_name,
-                                src_dir_fd=marker_descriptor,
-                                dst_dir_fd=worktrees_descriptor,
-                            )
-                        except OSError:
-                            pass
-                        else:
-                            os.fsync(worktrees_descriptor)
-                            os.fsync(marker_descriptor)
+                        _publish_admin_identity_conflict(marker_descriptor)
                         raise RuntimeError(
                             "target_worktree_admin_identity_changed"
                         )
@@ -5111,6 +5243,7 @@ def _delete_worktree_admin_marker(
     target: str,
     *,
     claimed_admin_descriptor: int | None = None,
+    complete: bool = False,
 ) -> None:
     marker_name = _worktree_admin_marker_name(target)
     common_descriptor = _open_strict_directory(common)
@@ -5121,89 +5254,160 @@ def _delete_worktree_admin_marker(
             dir_fd=common_descriptor,
         )
         try:
+            marker_metadata = os.fstat(marker_descriptor)
             entries = {entry.name for entry in os.scandir(marker_descriptor)}
-            if not entries:
-                pass
-            elif entries in ({"retired"}, {"admin", "retired"}):
-                receipt = _read_regular_file_fd(
-                    marker_descriptor,
-                    "retired",
-                    error_code="target_worktree_admin_marker_conflict",
-                )
-                if receipt != f"{os.path.abspath(f'{target}/.git')}\n".encode():
-                    raise RuntimeError(
-                        "target_worktree_admin_marker_conflict"
-                    )
-                if "admin" in entries:
-                    admin_descriptor = os.open(
-                        "admin",
-                        _directory_open_flags(),
-                        dir_fd=marker_descriptor,
-                    )
-                    try:
-                        if any(os.scandir(admin_descriptor)):
-                            raise RuntimeError(
-                                "target_worktree_admin_marker_conflict"
-                            )
-                    finally:
-                        os.close(admin_descriptor)
-                    os.rmdir("admin", dir_fd=marker_descriptor)
-                    os.fsync(marker_descriptor)
-                os.unlink("retired", dir_fd=marker_descriptor)
-                os.fsync(marker_descriptor)
-            elif entries != {"admin"}:
+            if entries not in (
+                {"admin"},
+                {"admin", "pending.json"},
+                {"admin", "pending.json", "terminal.json"},
+            ):
                 raise RuntimeError("target_worktree_admin_marker_conflict")
-            else:
-                admin_descriptor = os.open(
-                    "admin", _directory_open_flags(), dir_fd=marker_descriptor
-                )
-                try:
-                    if claimed_admin_descriptor is not None:
-                        claimed = os.fstat(claimed_admin_descriptor)
-                        observed = os.fstat(admin_descriptor)
-                        if (claimed.st_dev, claimed.st_ino) != (
-                            observed.st_dev,
-                            observed.st_ino,
-                        ):
-                            raise RuntimeError(
+            admin_descriptor = os.open(
+                "admin", _directory_open_flags(), dir_fd=marker_descriptor
+            )
+            try:
+                observed = os.fstat(admin_descriptor)
+                observed_identity = (observed.st_dev, observed.st_ino)
+                if claimed_admin_descriptor is not None:
+                    claimed = os.fstat(claimed_admin_descriptor)
+                    if (claimed.st_dev, claimed.st_ino) != observed_identity:
+                        raise RuntimeError(
+                            "target_worktree_admin_marker_conflict"
+                        )
+                if "pending.json" in entries:
+                    if _admin_tombstone_identity(
+                        marker_descriptor, target, "pending.json"
+                    ) != observed_identity:
+                        raise RuntimeError(
+                            "target_worktree_admin_marker_conflict"
+                        )
+                    if "terminal.json" in entries and (
+                        _read_regular_file_fd(
+                            marker_descriptor,
+                            "terminal.json",
+                            error_code=(
                                 "target_worktree_admin_marker_conflict"
-                            )
+                            ),
+                        )
+                        != _read_regular_file_fd(
+                            marker_descriptor,
+                            "pending.json",
+                            error_code=(
+                                "target_worktree_admin_marker_conflict"
+                            ),
+                        )
+                    ):
+                        raise RuntimeError(
+                            "target_worktree_admin_marker_conflict"
+                        )
+                else:
                     if _admin_gitdir_target(
                         admin_descriptor
                     ) != os.path.abspath(f"{target}/.git"):
                         raise RuntimeError(
                             "target_worktree_admin_marker_conflict"
                         )
-                    _remove_directory_contents_fd(
-                        admin_descriptor, preserve=frozenset({"gitdir"})
+                    _publish_admin_tombstone(
+                        common_descriptor,
+                        marker_descriptor,
+                        target,
+                        admin_descriptor,
                     )
-                    os.rename(
-                        "gitdir",
-                        "retired",
-                        src_dir_fd=admin_descriptor,
-                        dst_dir_fd=marker_descriptor,
-                    )
-                    os.fsync(admin_descriptor)
-                    os.fsync(marker_descriptor)
-                finally:
-                    os.close(admin_descriptor)
-                os.rmdir("admin", dir_fd=marker_descriptor)
-                os.fsync(marker_descriptor)
-                receipt = _read_regular_file_fd(
-                    marker_descriptor,
-                    "retired",
-                    error_code="target_worktree_admin_marker_conflict",
-                )
-                if receipt != f"{os.path.abspath(f'{target}/.git')}\n".encode():
+                _remove_directory_contents_fd(admin_descriptor)
+                if complete:
+                    try:
+                        os.link(
+                            "pending.json",
+                            "terminal.json",
+                            src_dir_fd=marker_descriptor,
+                            dst_dir_fd=marker_descriptor,
+                            follow_symlinks=False,
+                        )
+                        os.fsync(marker_descriptor)
+                    except FileExistsError:
+                        if _read_regular_file_fd(
+                            marker_descriptor,
+                            "terminal.json",
+                            error_code=(
+                                "target_worktree_admin_marker_conflict"
+                            ),
+                        ) != _read_regular_file_fd(
+                            marker_descriptor,
+                            "pending.json",
+                            error_code=(
+                                "target_worktree_admin_marker_conflict"
+                            ),
+                        ):
+                            raise RuntimeError(
+                                "target_worktree_admin_marker_conflict"
+                            )
+            finally:
+                os.close(admin_descriptor)
+            current_marker_descriptor = os.open(
+                marker_name,
+                _directory_open_flags(),
+                dir_fd=common_descriptor,
+            )
+            try:
+                current_marker = os.fstat(current_marker_descriptor)
+                if (current_marker.st_dev, current_marker.st_ino) != (
+                    marker_metadata.st_dev,
+                    marker_metadata.st_ino,
+                ):
                     raise RuntimeError(
                         "target_worktree_admin_marker_conflict"
                     )
-                os.unlink("retired", dir_fd=marker_descriptor)
-                os.fsync(marker_descriptor)
+                current_admin_descriptor = os.open(
+                    "admin",
+                    _directory_open_flags(),
+                    dir_fd=current_marker_descriptor,
+                )
+                try:
+                    current_admin = os.fstat(current_admin_descriptor)
+                    if _admin_tombstone_identity(
+                        current_marker_descriptor, target, "pending.json"
+                    ) != (current_admin.st_dev, current_admin.st_ino):
+                        raise RuntimeError(
+                            "target_worktree_admin_marker_conflict"
+                        )
+                    current_entries = {
+                        entry.name
+                        for entry in os.scandir(current_marker_descriptor)
+                    }
+                    expected_entries = {"admin", "pending.json"}
+                    if complete:
+                        expected_entries.add("terminal.json")
+                    elif "terminal.json" in current_entries:
+                        expected_entries.add("terminal.json")
+                    if current_entries != expected_entries:
+                        raise RuntimeError(
+                            "target_worktree_admin_marker_conflict"
+                        )
+                    if "terminal.json" in current_entries and (
+                        _read_regular_file_fd(
+                            current_marker_descriptor,
+                            "terminal.json",
+                            error_code=(
+                                "target_worktree_admin_marker_conflict"
+                            ),
+                        )
+                        != _read_regular_file_fd(
+                            current_marker_descriptor,
+                            "pending.json",
+                            error_code=(
+                                "target_worktree_admin_marker_conflict"
+                            ),
+                        )
+                    ):
+                        raise RuntimeError(
+                            "target_worktree_admin_marker_conflict"
+                        )
+                finally:
+                    os.close(current_admin_descriptor)
+            finally:
+                os.close(current_marker_descriptor)
         finally:
             os.close(marker_descriptor)
-        os.rmdir(marker_name, dir_fd=common_descriptor)
-        os.fsync(common_descriptor)
     except OSError as exc:
         raise RuntimeError("target_worktree_unregister_failed") from exc
     finally:
@@ -5289,11 +5493,9 @@ def _remove_target_worktree(
             ],
         ) from None
     registered = target_text in registrations
-    if not registered and owned_name is None:
+    if allow_unregistered_owned and not registered and owned_name is None:
         return
-    if not registered and owned_name == name:
-        if not allow_unregistered_owned:
-            raise RuntimeError(f"target_worktree_remove_failed:{name}")
+    if not registered and owned_name == name and allow_unregistered_owned:
         root_descriptor: int | None = None
         try:
             root_descriptor = os.open(root, _directory_open_flags())
@@ -5338,15 +5540,33 @@ def _remove_target_worktree(
                 f"target_worktree_admin_marker_conflict:{name}"
             ) from exc
         raise RuntimeError(f"target_worktree_unregister_failed:{name}") from exc
+    if registered and marker_state not in {"absent", "empty"}:
+        raise RuntimeError(f"target_worktree_admin_marker_conflict:{name}")
     if not registered:
-        if marker_state == "empty" and owned_name != quarantine_name:
+        if marker_state in {"pending", "tombstone"}:
+            if owned_name == name:
+                raise RuntimeError(
+                    f"target_worktree_admin_marker_conflict:{name}"
+                )
+            if owned_name is None:
+                try:
+                    _delete_worktree_admin_marker(
+                        common, target_text, complete=True
+                    )
+                except RuntimeError as exc:
+                    raise RuntimeError(
+                        f"target_worktree_admin_marker_conflict:{name}"
+                    ) from exc
+                return
+        if marker_state == "empty":
             raise RuntimeError(
                 f"target_worktree_admin_marker_conflict:{name}"
             )
-        if marker_state == "absent" and owned_name is None:
-            return
-    elif marker_state == "owned":
-        raise RuntimeError(f"target_worktree_admin_marker_conflict:{name}")
+        if marker_state == "absent":
+            if owned_name is None:
+                return
+            if owned_name == name:
+                raise RuntimeError(f"target_worktree_remove_failed:{name}")
     admin_name: str | None = None
     admin_descriptor: int | None = None
     if registered:
@@ -5405,7 +5625,7 @@ def _remove_target_worktree(
             observed_owned = os.fstat(owned_descriptor)
             if (observed_owned.st_dev, observed_owned.st_ino) != owned_identity:
                 raise RuntimeError(confinement_error)
-            if registered or marker_state in {"owned", "retiring"}:
+            if registered or marker_state == "owned":
                 backlink_name = _worktree_backlink_admin_name(
                     owned_descriptor, common
                 )
@@ -5440,7 +5660,11 @@ def _remove_target_worktree(
             expected = registrations - ({target_text} if registered else set())
             if after != expected:
                 raise RuntimeError("target_worktree_unregister_failed")
-            if registered or marker_state in {"owned", "retiring", "empty"}:
+            if registered or marker_state in {
+                "owned",
+                "pending",
+                "tombstone",
+            }:
                 _delete_worktree_admin_marker(
                     common,
                     target_text,
@@ -5467,6 +5691,32 @@ def _remove_target_worktree(
             except FileNotFoundError:
                 pass
             os.fsync(root_descriptor)
+        try:
+            _delete_worktree_admin_marker(
+                common, target_text, complete=True
+            )
+            final_registrations = _worktree_registrations(
+                repository_root, run_command=run_command
+            )
+            try:
+                os.stat(name, dir_fd=root_descriptor, follow_symlinks=False)
+            except FileNotFoundError:
+                target_reappeared = False
+            else:
+                target_reappeared = True
+            if (
+                target_text in final_registrations
+                or target_reappeared
+            ):
+                raise RuntimeError("target_worktree_admin_marker_conflict")
+        except RuntimeError as exc:
+            if str(exc) == "target_worktree_admin_marker_conflict":
+                raise RuntimeError(
+                    f"target_worktree_admin_marker_conflict:{name}"
+                ) from exc
+            raise RuntimeError(
+                f"target_worktree_unregister_failed:{name}"
+            ) from exc
     finally:
         if owned_descriptor is not None:
             os.close(owned_descriptor)

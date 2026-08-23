@@ -5077,6 +5077,104 @@ def test_remove_target_worktree_real_git_rejects_claim_replacement_before_delete
     assert (run_root / ".candidate-cleanup").is_dir()
 
 
+def test_remove_target_worktree_identity_conflict_preserves_empty_canonical(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository = _init_real_worktree_repository(tmp_path)
+    run_root = tmp_path / "run"
+    target = run_root / "candidate"
+    _add_real_worktree(repository, target, branch="candidate")
+    canonical_admin = _linked_worktree_admin(target)
+    marker = repository / ".git" / profile._worktree_admin_marker_name(
+        str(target)
+    )
+    detached_claim = repository / ".git" / "detached-original-claim"
+    original_rename = profile.os.rename
+    empty_identity: tuple[int, int] | None = None
+    injected = False
+
+    def replace_claim_and_create_empty(source, destination, *args, **kwargs):
+        nonlocal empty_identity, injected
+        result = original_rename(source, destination, *args, **kwargs)
+        if (
+            not injected
+            and source == canonical_admin.name
+            and destination == "admin"
+        ):
+            injected = True
+            original_rename(marker / "admin", detached_claim)
+            shutil.copytree(detached_claim, marker / "admin")
+            (marker / "admin/replacement-sentinel").write_bytes(b"preserve")
+            canonical_admin.mkdir()
+            metadata = canonical_admin.stat()
+            empty_identity = (metadata.st_dev, metadata.st_ino)
+        return result
+
+    monkeypatch.setattr(profile.os, "rename", replace_claim_and_create_empty)
+
+    with pytest.raises(
+        RuntimeError,
+        match="^target_worktree_admin_identity_changed:candidate$",
+    ):
+        profile._remove_target_worktree(
+            repository, run_root, name="candidate"
+        )
+
+    assert empty_identity is not None
+    canonical = canonical_admin.stat()
+    assert (canonical.st_dev, canonical.st_ino) == empty_identity
+    assert (marker / "admin/replacement-sentinel").read_bytes() == b"preserve"
+
+
+@pytest.mark.parametrize("boundary", ("admin", "marker"))
+def test_remove_target_worktree_terminal_paths_are_never_unlinked_by_name(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    boundary: str,
+) -> None:
+    repository = _init_real_worktree_repository(tmp_path)
+    run_root = tmp_path / "run"
+    target = run_root / "candidate"
+    _add_real_worktree(repository, target, branch="candidate")
+    marker = repository / ".git" / profile._worktree_admin_marker_name(
+        str(target)
+    )
+    detached = repository / ".git" / f"detached-{boundary}"
+    original_remove_contents = profile._remove_directory_contents_fd
+    replacement_identity: tuple[int, int] | None = None
+    injected = False
+
+    def replace_empty_admin(descriptor: int, **kwargs) -> None:
+        nonlocal replacement_identity, injected
+        original_remove_contents(descriptor, **kwargs)
+        if boundary == "admin" and not injected and (marker / "admin").is_dir():
+            injected = True
+            (marker / "admin").rename(detached)
+            (marker / "admin").mkdir()
+            metadata = (marker / "admin").stat()
+            replacement_identity = (metadata.st_dev, metadata.st_ino)
+        if boundary == "marker" and not injected and marker.is_dir():
+            injected = True
+            marker.rename(detached)
+            marker.mkdir()
+            metadata = marker.stat()
+            replacement_identity = (metadata.st_dev, metadata.st_ino)
+
+    monkeypatch.setattr(
+        profile, "_remove_directory_contents_fd", replace_empty_admin
+    )
+
+    with pytest.raises(RuntimeError):
+        profile._remove_target_worktree(
+            repository, run_root, name="candidate"
+        )
+
+    assert replacement_identity is not None
+    replacement = marker / "admin" if boundary == "admin" else marker
+    metadata = replacement.stat()
+    assert (metadata.st_dev, metadata.st_ino) == replacement_identity
+
+
 def test_remove_target_worktree_real_git_unregisters_absent_exact_target(
     tmp_path: Path,
 ) -> None:
@@ -5095,6 +5193,62 @@ def test_remove_target_worktree_real_git_unregisters_absent_exact_target(
     assert profile._worktree_registrations(repository) == frozenset(
         {str(repository.resolve())}
     )
+    marker = repository / ".git" / profile._worktree_admin_marker_name(
+        str(target)
+    )
+    assert {entry.name for entry in marker.iterdir()} == {
+        "admin",
+        "pending.json",
+        "terminal.json",
+    }
+    assert list((marker / "admin").iterdir()) == []
+    receipt = (marker / "terminal.json").read_bytes()
+    assert (marker / "pending.json").read_bytes() == receipt
+    assert str(target).encode() not in receipt
+    assert set(json.loads(receipt)) == {
+        "admin_dev",
+        "admin_ino",
+        "target_sha256",
+    }
+
+    profile._remove_target_worktree(
+        repository, run_root, name="candidate"
+    )
+
+
+@pytest.mark.parametrize("replacement", ("path", "registration"))
+def test_remove_target_worktree_terminal_tombstone_rejects_new_generation(
+    tmp_path: Path, replacement: str
+) -> None:
+    repository = _init_real_worktree_repository(tmp_path)
+    run_root = tmp_path / "run"
+    target = run_root / "candidate"
+    _add_real_worktree(repository, target, branch="candidate")
+
+    profile._remove_target_worktree(
+        repository, run_root, name="candidate"
+    )
+    if replacement == "path":
+        target.mkdir()
+        (target / "sentinel").write_bytes(b"preserve")
+    else:
+        subprocess.run(
+            ["git", "worktree", "add", "-q", "--detach", str(target), "HEAD"],
+            cwd=repository,
+            check=True,
+        )
+
+    with pytest.raises(
+        RuntimeError,
+        match="^target_worktree_admin_marker_conflict:candidate$",
+    ):
+        profile._remove_target_worktree(
+            repository, run_root, name="candidate"
+        )
+
+    assert target.is_dir()
+    if replacement == "path":
+        assert (target / "sentinel").read_bytes() == b"preserve"
 
 
 @pytest.mark.parametrize(
@@ -5105,8 +5259,8 @@ def test_remove_target_worktree_real_git_unregisters_absent_exact_target(
         "owned_admin_marker",
         "admin_content_removed",
         "receipt_published",
-        "admin_removed",
-        "receipt_removed",
+        "admin_cleared",
+        "target_cleared",
     ),
 )
 def test_remove_target_worktree_real_git_resumes_namespace_checkpoints(
@@ -5122,9 +5276,14 @@ def test_remove_target_worktree_real_git_resumes_namespace_checkpoints(
     removable_admin_entry = next(
         entry.name for entry in admin.iterdir() if entry.name != "gitdir"
     )
+    admin_metadata = admin.stat()
+    admin_identity = (admin_metadata.st_dev, admin_metadata.st_ino)
+    target_metadata = target.stat()
+    target_identity = (target_metadata.st_dev, target_metadata.st_ino)
     original_rename = profile.os.rename
-    original_rmdir = profile.os.rmdir
     original_unlink = profile.os.unlink
+    original_publish = profile._publish_admin_tombstone
+    original_remove_contents = profile._remove_directory_contents_fd
 
     def interrupt_rename(source, destination, *args, **kwargs):
         if checkpoint == "empty_admin_marker" and destination == "admin":
@@ -5134,27 +5293,36 @@ def test_remove_target_worktree_real_git_resumes_namespace_checkpoints(
             raise KeyboardInterrupt("target quarantine checkpoint")
         if checkpoint == "owned_admin_marker" and destination == "admin":
             raise KeyboardInterrupt("owned admin marker checkpoint")
-        if checkpoint == "receipt_published" and destination == "retired":
-            raise KeyboardInterrupt("receipt published checkpoint")
-        return result
-
-    def interrupt_rmdir(path, *args, **kwargs):
-        result = original_rmdir(path, *args, **kwargs)
-        if checkpoint == "admin_removed" and path == "admin":
-            raise KeyboardInterrupt("admin removed checkpoint")
         return result
 
     def interrupt_unlink(path, *args, **kwargs):
         result = original_unlink(path, *args, **kwargs)
         if checkpoint == "admin_content_removed" and path == removable_admin_entry:
             raise KeyboardInterrupt("admin content removed checkpoint")
-        if checkpoint == "receipt_removed" and path == "retired":
-            raise KeyboardInterrupt("receipt removed checkpoint")
         return result
 
+    def interrupt_publish(*args, **kwargs):
+        original_publish(*args, **kwargs)
+        if checkpoint == "receipt_published":
+            raise KeyboardInterrupt("receipt published checkpoint")
+
+    def interrupt_remove_contents(descriptor: int, **kwargs) -> None:
+        original_remove_contents(descriptor, **kwargs)
+        metadata = os.fstat(descriptor)
+        identity = (metadata.st_dev, metadata.st_ino)
+        if checkpoint == "admin_cleared" and identity == admin_identity:
+            raise KeyboardInterrupt("admin cleared checkpoint")
+        if checkpoint == "target_cleared" and identity == target_identity:
+            raise KeyboardInterrupt("target cleared checkpoint")
+
     monkeypatch.setattr(profile.os, "rename", interrupt_rename)
-    monkeypatch.setattr(profile.os, "rmdir", interrupt_rmdir)
     monkeypatch.setattr(profile.os, "unlink", interrupt_unlink)
+    monkeypatch.setattr(
+        profile, "_publish_admin_tombstone", interrupt_publish
+    )
+    monkeypatch.setattr(
+        profile, "_remove_directory_contents_fd", interrupt_remove_contents
+    )
     with pytest.raises(KeyboardInterrupt):
         profile._remove_target_worktree(
             repository, run_root, name="candidate"
@@ -5162,8 +5330,13 @@ def test_remove_target_worktree_real_git_resumes_namespace_checkpoints(
 
     assert (run_root / ".candidate-cleanup").is_dir()
     monkeypatch.setattr(profile.os, "rename", original_rename)
-    monkeypatch.setattr(profile.os, "rmdir", original_rmdir)
     monkeypatch.setattr(profile.os, "unlink", original_unlink)
+    monkeypatch.setattr(
+        profile, "_publish_admin_tombstone", original_publish
+    )
+    monkeypatch.setattr(
+        profile, "_remove_directory_contents_fd", original_remove_contents
+    )
     profile._remove_target_worktree(
         repository, run_root, name="candidate"
     )
@@ -5175,7 +5348,7 @@ def test_remove_target_worktree_real_git_resumes_namespace_checkpoints(
 
 
 @pytest.mark.parametrize("name", ("control", "candidate"))
-def test_remove_target_worktree_real_git_resumes_after_admin_marker_deleted(
+def test_remove_target_worktree_real_git_resumes_after_admin_tombstone_published(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
 ) -> None:
     repository = _init_real_worktree_repository(tmp_path)
