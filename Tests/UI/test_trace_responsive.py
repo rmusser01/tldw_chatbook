@@ -866,7 +866,7 @@ async def test_x_clears_search_and_timeline_brush_together() -> None:
         await pilot.pause()
         assert search.value == ""
         assert screen._query == ""
-        assert screen._brush_range is None
+        assert screen._filter_bar.state.time_range is None
         assert screen._timeline._brush is None
         assert "x clear filters" not in str(
             screen.query_one("#trajectory-hints", Static).render()
@@ -895,7 +895,7 @@ async def test_search_focus_keeps_x_as_text_until_escape_enables_recovery() -> N
         await pilot.press("x")
         await pilot.pause()
         assert search.value == "nopex"
-        assert screen._brush_range is not None
+        assert screen._filter_bar.state.time_range is not None
 
         await pilot.press("escape")
         await pilot.pause()
@@ -907,7 +907,7 @@ async def test_search_focus_keeps_x_as_text_until_escape_enables_recovery() -> N
         await pilot.pause()
         assert search.value == ""
         assert screen._query == ""
-        assert screen._brush_range is None
+        assert screen._filter_bar.state.time_range is None
 
 
 @pytest.mark.asyncio

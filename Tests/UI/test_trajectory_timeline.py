@@ -11,7 +11,7 @@ delegate to (the pilot has no drag primitive).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import pytest
 from textual import events
@@ -22,10 +22,13 @@ from tldw_chatbook.Chat.trajectory import (
     KIND_TOOL_CALL,
     KIND_USER,
     TrajectoryRecord,
+    TrajectorySnapshot,
+    TrajectoryTurn,
     derive_trajectory,
 )
 from tldw_chatbook.UI.Widgets.trajectory_timeline import (
     LANE_COUNT,
+    LANE_LABEL_WIDTH,
     ZOOM_FACTOR,
     TimelineModel,
     TrajectoryTimeline,
@@ -60,6 +63,7 @@ def rec(
         payload=None,
         variants=(),
         depth=0,
+        event_id=f"event:{seq}",
     )
 
 
@@ -69,6 +73,77 @@ def rec(
 
 
 class TestTimelineModel:
+    def test_semantic_lanes_replace_anonymous_greedy_packing(self) -> None:
+        records = [
+            rec(1, KIND_USER, start=0.0, end=10.0),
+            rec(2, KIND_ASSISTANT, start=1.0, end=9.0),
+            rec(3, KIND_TOOL_CALL, start=2.0, end=8.0),
+            replace(
+                rec(4, "agent_step", start=3.0, end=7.0),
+                actor_kind="agent",
+                run_id="child-1",
+                parent_event_id="agent-run:parent",
+            ),
+        ]
+        model = TimelineModel(records)
+
+        assert model.lane_names == ("Input", "Model", "Tools", "Agents")
+        assert model.lanes == (0, 1, 2, 3)
+
+    def test_semantic_lane_assignment_never_depends_on_overlap(self) -> None:
+        records = [
+            rec(1, KIND_USER, start=0.0, end=100.0),
+            rec(2, KIND_USER, start=1.0, end=99.0),
+            rec(3, KIND_ASSISTANT, start=2.0, end=98.0),
+            rec(4, KIND_TOOL_CALL, start=3.0, end=97.0),
+        ]
+        assert TimelineModel(records).lanes == (0, 0, 1, 2)
+
+    def test_record_identity_is_stable_event_id_not_display_seq(self) -> None:
+        original = replace(rec(1, start=0.0, end=1.0), event_id="message:stable")
+        renumbered = replace(original, seq=999)
+
+        assert TimelineModel([original]).record_key(original) == "message:stable"
+        assert TimelineModel([renumbered]).record_key(renumbered) == "message:stable"
+
+    def test_legacy_record_identity_accepts_screen_row_key_contract(self) -> None:
+        legacy = replace(rec(1, start=0.0, end=1.0), event_id="")
+        model = TimelineModel([legacy], record_keys={id(legacy): "legacy:screen-key"})
+
+        assert model.record_key(legacy) == "legacy:screen-key"
+
+    def test_non_color_glyphs_distinguish_each_semantic_lane(self) -> None:
+        records = [
+            rec(1, KIND_USER, start=0.0, end=1.0),
+            rec(2, KIND_ASSISTANT, start=2.0, end=3.0),
+            rec(3, KIND_TOOL_CALL, start=4.0, end=5.0),
+            replace(rec(4, "agent_step", start=6.0, end=7.0), actor_kind="agent"),
+        ]
+        model = TimelineModel(records)
+
+        assert len({model.glyph_for(record) for record in records}) == 4
+
+    def test_turn_and_child_agent_boundaries_are_explicit_not_order_edges(self) -> None:
+        child = replace(
+            rec(3, "agent_step", start=4.0, end=5.0),
+            turn_id="t2",
+            actor_kind="agent",
+            run_id="child",
+            parent_event_id="agent-run:parent",
+        )
+        records = [
+            replace(rec(1, start=0.0, end=1.0), turn_id="t1"),
+            replace(rec(2, KIND_ASSISTANT, start=2.0, end=3.0), turn_id="t2"),
+            child,
+        ]
+
+        boundaries = TimelineModel(records).boundaries
+        assert [(item.kind, item.record_key) for item in boundaries] == [
+            ("turn", "event:1"),
+            ("turn", "event:2"),
+            ("agent", "event:3"),
+        ]
+
     def test_domain_padding(self) -> None:
         model = TimelineModel(
             [rec(1, start=10.0, end=20.0), rec(2, start=15.0, end=30.0)]
@@ -108,11 +183,10 @@ class TestTimelineModel:
         )
         assert model.lanes == (0, 1, 2, 0)
 
-    def test_lane_overflow_caps_at_last_lane(self) -> None:
+    def test_same_semantic_family_stays_in_one_lane_under_heavy_overlap(self) -> None:
         records = [rec(i + 1, start=float(i), end=100.0) for i in range(LANE_COUNT + 2)]
         model = TimelineModel(records)
-        assert model.lanes == (0, 1, 2, 3, 3, 3)
-        assert max(model.lanes) == LANE_COUNT - 1  # strip never grows
+        assert model.lanes == (0, 0, 0, 0, 0, 0)
 
     def test_records_in_range(self) -> None:
         model = TimelineModel(
@@ -319,6 +393,121 @@ def _viewport_events(app: TimelineApp):
 
 
 class TestTrajectoryTimelineWidget:
+    async def test_render_paints_semantic_labels_glyphs_and_boundaries(self) -> None:
+        records = (
+            replace(rec(1, KIND_USER, start=0.0, end=1.0), turn_id="t1"),
+            replace(rec(2, KIND_ASSISTANT, start=2.0, end=3.0), turn_id="t2"),
+            replace(rec(3, KIND_TOOL_CALL, start=4.0, end=5.0), turn_id="t2"),
+            replace(
+                rec(4, "agent_step", start=6.0, end=7.0),
+                turn_id="t2",
+                actor_kind="agent",
+                run_id="child",
+                parent_event_id="agent-run:parent",
+            ),
+        )
+        snapshot = TrajectorySnapshot((TrajectoryTurn("all", records),))
+        app = TimelineApp()
+        async with app.run_test(size=(80, 24)) as pilot:
+            tl = app.query_one(TrajectoryTimeline)
+            tl.set_snapshot(snapshot)
+            await pilot.pause()
+
+            painted = str(tl.render())
+            for label in ("Input", "Model", "Tools", "Agents"):
+                assert label in painted
+            for glyph in ("◆", "━", "■", "●"):
+                assert glyph in painted
+            assert "│" in painted  # turn boundary, not a serial-causality arrow
+            assert "┆" in painted  # parent/child agent boundary
+
+    async def test_timeline_bindings_cover_keyboard_selection_range_zoom_and_pan(
+        self,
+    ) -> None:
+        actions = {binding.action for binding in TrajectoryTimeline.BINDINGS}
+        assert {
+            "previous_event",
+            "next_event",
+            "select_event",
+            "toggle_range",
+            "zoom_out",
+            "zoom_in",
+            "pan_left",
+            "pan_right",
+        } <= actions
+
+    async def test_no_timing_snapshot_collapses_the_actual_widget_to_one_row(
+        self,
+    ) -> None:
+        app = TimelineApp()
+        async with app.run_test(size=(80, 24)) as pilot:
+            tl = app.query_one(TrajectoryTimeline)
+            tl.set_snapshot(untimed_snapshot())
+            await pilot.pause()
+
+            assert tl.size.height == 1
+            assert (
+                str(tl.render()).strip()
+                == "No timing data — events remain in the ledger"
+            )
+
+    async def test_keyboard_selection_and_range_use_stable_record_keys(self) -> None:
+        app = TimelineApp()
+        async with app.run_test(size=(80, 24)) as pilot:
+            tl = app.query_one(TrajectoryTimeline)
+            tl.set_snapshot(timed_snapshot())
+            await pilot.pause()
+            tl.focus()
+
+            await pilot.press("j")
+            assert tl.selected == "message:u1"
+            await pilot.press("b")
+            assert tl.range_anchor == "message:u1"
+            await pilot.press("j")
+            await pilot.press("b")
+            assert tl.brush is not None
+            assert tl.range_anchor is None
+
+            app.captured.clear()
+            await pilot.press("enter")
+            bars = _bar_events(app)
+            assert bars[-1].record_key == tl.selected
+
+    async def test_keyboard_range_includes_both_intervals_when_selected_backward(
+        self,
+    ) -> None:
+        app = TimelineApp()
+        async with app.run_test(size=(80, 24)) as pilot:
+            tl = app.query_one(TrajectoryTimeline)
+            tl.set_snapshot(timed_snapshot())
+            await pilot.pause()
+            tl.focus()
+            tl.set_selected("message:a1")
+
+            await pilot.press("b")
+            await pilot.press("k")
+            await pilot.press("b")
+
+            assert tl.brush == (_T0, _T0 + 18.0)
+
+    async def test_clicking_semantic_label_column_is_inert(self) -> None:
+        app = TimelineApp()
+        async with app.run_test(size=(80, 24)) as pilot:
+            tl = app.query_one(TrajectoryTimeline)
+            tl.set_snapshot(timed_snapshot())
+            await pilot.pause()
+            tl.brush_columns(LANE_LABEL_WIDTH + 1, LANE_LABEL_WIDTH + 4)
+            await pilot.pause()
+            brush = tl.brush
+            app.captured.clear()
+
+            clicked = await pilot.click(tl, offset=(1, 0))
+            assert clicked
+            await pilot.pause()
+            assert _bar_events(app) == []
+            assert _brush_events(app) == []
+            assert tl.brush == brush
+
     async def test_set_snapshot_initializes_viewport_to_domain(self) -> None:
         app = TimelineApp()
         async with app.run_test(size=(80, 24)) as pilot:
@@ -336,7 +525,7 @@ class TestTrajectoryTimelineWidget:
             tl.set_snapshot(untimed_snapshot())
             await pilot.pause()
             assert not tl.model.has_data
-            assert "no timing data" in str(tl.render())
+            assert "no timing data" in str(tl.render()).lower()
 
     async def test_render_draws_bars_and_caption(self) -> None:
         app = TimelineApp()
@@ -346,7 +535,7 @@ class TestTrajectoryTimelineWidget:
             await pilot.pause()
             lines = str(tl.render()).splitlines()
             assert len(lines) == 6  # 4 lanes + axis + caption
-            assert "█" in lines[0]  # u1 lives on lane 0
+            assert "Input" in lines[0] and "◆" in lines[0]
             assert "no brush" in lines[-1]
 
     async def test_click_on_bar_selects_and_clears_brush(self) -> None:
@@ -366,7 +555,7 @@ class TestTrajectoryTimelineWidget:
             await pilot.pause()
             bars = _bar_events(app)
             assert len(bars) == 1
-            assert bars[0].record_key == 1  # u1's ledger seq
+            assert bars[0].record_key == "message:u1"
             cleared = _brush_events(app)
             assert cleared[-1].brush_range is None
             assert tl.brush is None
@@ -589,7 +778,7 @@ class TestTimelineMouseGlue:
             tl.post_message(_mouse(tl, events.MouseUp, 10, 0, button=1))
             await pilot.pause()
             bars = _bar_events(app)
-            assert len(bars) == 1 and bars[0].record_key == 1
+            assert len(bars) == 1 and bars[0].record_key == "message:u1"
             assert tl.brush is None
 
             # Down + move + up: a drag, never a bar selection.

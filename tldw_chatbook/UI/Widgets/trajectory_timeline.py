@@ -1,28 +1,24 @@
-"""Brushable time-domain strip over a ``TrajectorySnapshot`` (task-16315).
+"""Semantic, brushable time-domain strip over a ``TrajectorySnapshot``.
 
-A compact 6-line widget that renders every *timed* trajectory record as a
-horizontal bar (``█``) positioned by its ``[step_started_at,
-completed_at]`` interval, on one of 4 greedily-packed lanes. The strip
-supports zoom (wheel / ``[`` ``]``), pan (```,`' ``/`` .``), drag-brush
-range selection, and click-to-select on a bar. Geometry lives in
-:class:`TimelineModel`, a pure class that never touches Textual so the
-math (domain padding, mapping, lanes, zoom/pan clamping) is unit-testable
-in isolation; the widget is a thin event/render shell.
+The compact widget renders every timed trajectory record at its observed
+interval in one of four named lanes: Input, Model, Tools, and Agents.
+Distinct monochrome glyphs identify the lanes; turn and child-agent marks
+show grouping without claiming serial causality. Mouse and keyboard both
+support event selection, range selection, zoom, and pan. Geometry lives in
+:class:`TimelineModel`, a pure class that never touches Textual, while the
+widget is a thin event/render shell.
 
 Records with NULL timing are skipped (blank, never fabricated -- dsh
 precedent); a snapshot with no usable timing renders a centered
-``no timing data`` placeholder.
-
-Part 1 of the trajectory timeline follow-up: standalone widget only, no
-integration with ``TrajectoryScreen`` yet.
+``no timing data`` placeholder row.
 """
 
 from __future__ import annotations
 
-import math
+from dataclasses import dataclass
 from datetime import datetime
 from itertools import groupby
-from typing import Sequence
+from typing import Mapping, Sequence
 
 from rich.style import Style
 from rich.text import Text
@@ -34,6 +30,7 @@ from textual.widget import Widget
 from tldw_chatbook.Chat.trajectory import (
     KIND_ASSISTANT,
     KIND_COMPACTION,
+    KIND_SYSTEM,
     KIND_TOOL_CALL,
     KIND_TOOL_RESULT,
     KIND_USER_FEEDBACK,
@@ -51,6 +48,8 @@ __all__ = [
 
 #: Lanes stacked top (0) to bottom in the strip.
 LANE_COUNT = 4
+LANE_NAMES = ("Input", "Model", "Tools", "Agents")
+LANE_LABEL_WIDTH = max(map(len, LANE_NAMES)) + 1
 
 #: Total rendered lines: LANE_COUNT lane rows + an axis row + the caption.
 STRIP_HEIGHT = LANE_COUNT + 2
@@ -64,13 +63,15 @@ ZOOM_FACTOR = 1.25
 #: Keyboard pan step, as a fraction of the current window span.
 PAN_FRACTION = 0.25
 
-#: Bar glyph; instantaneous records render as a single cell.
-BAR_CHAR = "█"
+#: Lane glyphs are the primary monochrome event encoding; color is secondary.
+LANE_GLYPHS = ("◆", "━", "■", "●")
+TURN_BOUNDARY_CHAR = "│"
+AGENT_BOUNDARY_CHAR = "┆"
 
-_PLACEHOLDER = "no timing data"
+_PLACEHOLDER = "No timing data — events remain in the ledger"
 
-#: Distinct bar styles per ledger kind. The trajectory ledger screen has
-#: no kind->color scheme (plain per-cell Text), so the strip defines one.
+#: Secondary semantic styles per ledger kind; lane glyphs remain the primary
+#: differentiation and work without color.
 KIND_STYLES: dict[str, Style] = {
     KIND_USER: Style(color="cyan"),
     KIND_ASSISTANT: Style(color="green"),
@@ -88,6 +89,15 @@ BRUSH_STYLE = Style(bgcolor="#264f78")
 _SELECTED_STYLE = Style(reverse=True)
 
 _CAPTION_STYLE = Style(color="grey62")
+
+
+@dataclass(frozen=True)
+class TimelineBoundary:
+    """A visual grouping marker, never a causal ordering edge."""
+
+    kind: str
+    record_key: str
+    time: float
 
 
 def _fmt_clock(t: float) -> str:
@@ -110,10 +120,22 @@ class TimelineModel:
     timestamp -- NULL timing simply drops the record from the strip.
     """
 
-    def __init__(self, records: Sequence[TrajectoryRecord] = ()) -> None:
+    def __init__(
+        self,
+        records: Sequence[TrajectoryRecord] = (),
+        *,
+        record_keys: Mapping[int, str] | None = None,
+    ) -> None:
         self._timed: tuple[TrajectoryRecord, ...] = tuple(
             r for r in records if r.step_started_at is not None
         )
+        provided_keys = record_keys or {}
+        self._record_keys = {
+            id(record): provided_keys.get(id(record))
+            or record.event_id
+            or f"legacy-object:{id(record)}"
+            for record in self._timed
+        }
         if self._timed:
             lo = min(r.step_started_at for r in self._timed)
             hi = max(self.interval(r)[1] for r in self._timed)
@@ -123,6 +145,7 @@ class TimelineModel:
         else:
             self._domain = None
         self._lanes = self._assign_lanes()
+        self._boundaries = self._build_boundaries()
 
     # -- data ---------------------------------------------------------------
 
@@ -146,6 +169,43 @@ class TimelineModel:
         """Lane index per timed record, parallel to ``timed_records``."""
         return self._lanes
 
+    @property
+    def lane_names(self) -> tuple[str, ...]:
+        return LANE_NAMES
+
+    @property
+    def boundaries(self) -> tuple[TimelineBoundary, ...]:
+        return self._boundaries
+
+    def record_key(self, record: TrajectoryRecord) -> str:
+        """Stable selection identity supplied by projection/screen ownership."""
+
+        return self._record_keys[id(record)]
+
+    @staticmethod
+    def lane_for(record: TrajectoryRecord) -> int:
+        """Assign every timed event to one named semantic lane."""
+
+        kind = record.kind.lower()
+        actor = (record.actor_kind or "").lower()
+        if kind.startswith(("tool_", "approval_")) or kind in {
+            KIND_TOOL_CALL,
+            KIND_TOOL_RESULT,
+        }:
+            return 2
+        if actor in {"agent", "subagent", "child_agent"} or kind.startswith(
+            ("agent_", "subagent_")
+        ):
+            return 3
+        if kind in {KIND_USER, KIND_SYSTEM, KIND_USER_FEEDBACK} or kind.startswith(
+            ("user_", "feedback", "branch_", "edit_", "regenerate")
+        ):
+            return 0
+        return 1
+
+    def glyph_for(self, record: TrajectoryRecord) -> str:
+        return LANE_GLYPHS[self.lane_for(record)]
+
     @staticmethod
     def interval(record: TrajectoryRecord) -> tuple[float, float]:
         """Render interval ``[start, end]``; end falls back to start.
@@ -161,22 +221,20 @@ class TimelineModel:
         return start, float(end)
 
     def _assign_lanes(self) -> tuple[int, ...]:
-        """Greedy lane packing: lowest lane free at each record's start.
+        return tuple(self.lane_for(record) for record in self._timed)
 
-        Stable in ledger order; a record overlapping all ``LANE_COUNT``
-        lanes piles onto the last lane (capped, never grows the strip).
-        """
-        last_end = [-math.inf] * LANE_COUNT
-        lanes: list[int] = []
+    def _build_boundaries(self) -> tuple[TimelineBoundary, ...]:
+        boundaries: list[TimelineBoundary] = []
+        previous_turn: str | None = None
         for record in self._timed:
-            start, end = self.interval(record)
-            lane = next(
-                (i for i in range(LANE_COUNT) if last_end[i] <= start),
-                LANE_COUNT - 1,
-            )
-            last_end[lane] = max(last_end[lane], end)
-            lanes.append(lane)
-        return tuple(lanes)
+            start, _ = self.interval(record)
+            key = self.record_key(record)
+            if record.turn_id != previous_turn:
+                boundaries.append(TimelineBoundary("turn", key, start))
+                previous_turn = record.turn_id
+            if self.lane_for(record) == 3 and record.parent_event_id:
+                boundaries.append(TimelineBoundary("agent", key, start))
+        return tuple(boundaries)
 
     # -- mapping ------------------------------------------------------------
 
@@ -293,9 +351,9 @@ class TrajectoryTimeline(Widget):
             self.brush_range = brush_range
 
     class TrajectoryBarSelected(Message):
-        """A record bar was clicked; ``record_key`` is its ledger seq."""
+        """A record bar was selected by its stable screen row key."""
 
-        def __init__(self, record_key: int) -> None:
+        def __init__(self, record_key: str) -> None:
             super().__init__()
             self.record_key = record_key
 
@@ -311,7 +369,8 @@ class TrajectoryTimeline(Widget):
         self._model = TimelineModel()
         self._window: tuple[float, float] | None = None
         self._brush: tuple[float, float] | None = None
-        self._selected: int | None = None
+        self._selected: str | None = None
+        self._range_anchor: str | None = None
         self._drag_x: int | None = None
         self._drag_moved = False
 
@@ -333,11 +392,15 @@ class TrajectoryTimeline(Widget):
         return self._brush
 
     @property
-    def selected(self) -> int | None:
-        """Ledger seq of the highlighted bar, or ``None``."""
+    def selected(self) -> str | None:
+        """Stable key of the highlighted bar, or ``None``."""
         return self._selected
 
-    def set_selected(self, record_key: int | None) -> None:
+    @property
+    def range_anchor(self) -> str | None:
+        return self._range_anchor
+
+    def set_selected(self, record_key: str | None) -> None:
         """Highlight the bar for ``record_key`` (``None`` clears it).
 
         Dumb, pull-only selection driven by the host screen's ledger
@@ -349,14 +412,44 @@ class TrajectoryTimeline(Widget):
         self._selected = record_key
         self.refresh()
 
-    def set_snapshot(self, snapshot: TrajectorySnapshot) -> None:
-        """Load a snapshot: flatten turns, reset viewport to the domain."""
+    def set_snapshot(
+        self,
+        snapshot: TrajectorySnapshot,
+        *,
+        record_keys: Mapping[int, str] | None = None,
+    ) -> None:
+        """Load a snapshot while retaining valid viewport/selection/range state."""
+
+        old_window = self._window
+        old_brush = self._brush
+        old_selected = self._selected
+        old_anchor = self._range_anchor
         records = [record for turn in snapshot.turns for record in turn.records]
-        self._model = TimelineModel(records)
-        self._window = self._model.domain
-        self._brush = None
-        self._selected = None
+        self._model = TimelineModel(records, record_keys=record_keys)
+        domain = self._model.domain
+        keys = {self._model.record_key(record) for record in self._model.timed_records}
+        if domain is None:
+            self._window = None
+        elif (
+            old_window is None or old_window[1] < domain[0] or old_window[0] > domain[1]
+        ):
+            self._window = domain
+        else:
+            span = min(old_window[1] - old_window[0], domain[1] - domain[0])
+            start = min(max(old_window[0], domain[0]), domain[1] - span)
+            self._window = (start, start + span)
+        self._brush = (
+            old_brush
+            if old_brush is not None
+            and domain is not None
+            and old_brush[0] <= domain[1]
+            and old_brush[1] >= domain[0]
+            else None
+        )
+        self._selected = old_selected if old_selected in keys else None
+        self._range_anchor = old_anchor if old_anchor in keys else None
         self._drag_x = None
+        self.styles.height = STRIP_HEIGHT if self._model.has_data else 1
         self.refresh()
 
     # -- rendering ----------------------------------------------------------
@@ -365,15 +458,18 @@ class TrajectoryTimeline(Widget):
         model = self._model
         width = max(self.size.width, 1)
         if not model.has_data or self._window is None:
-            placeholder = Text(_PLACEHOLDER, style="dim")
-            lines = [Text("")] * (STRIP_HEIGHT - 1) + [placeholder]
-            return Text("\n").join(lines)
+            return Text(_PLACEHOLDER, style="dim", no_wrap=True, overflow="ellipsis")
         window = self._window
-        lines = [self._lane_line(lane, width, window) for lane in range(LANE_COUNT)]
+        plot_width = max(width - LANE_LABEL_WIDTH, 1)
+        lines = [
+            self._lane_line(lane, plot_width, window) for lane in range(LANE_COUNT)
+        ]
         left = _fmt_clock(window[0])
         right = _fmt_clock(window[1])
-        middle = " " * max(width - len(left) - len(right), 0)
-        lines.append(Text(left + middle + right, style=_CAPTION_STYLE))
+        middle = " " * max(plot_width - len(left) - len(right), 0)
+        lines.append(
+            Text(" " * LANE_LABEL_WIDTH + left + middle + right, style=_CAPTION_STYLE)
+        )
         lines.append(self._caption_line(width))
         return Text("\n").join(lines)
 
@@ -381,6 +477,11 @@ class TrajectoryTimeline(Widget):
         """One lane row: bars for its records, brush background overlaid."""
         model = self._model
         cells: list[tuple[str, Style | None]] = [(" ", None)] * width
+        for boundary in model.boundaries:
+            if boundary.kind != "turn":
+                continue
+            col = int(TimelineModel.fraction(boundary.time, window) * width)
+            cells[min(max(col, 0), width - 1)] = (TURN_BOUNDARY_CHAR, _CAPTION_STYLE)
         for record, record_lane in zip(model.timed_records, model.lanes):
             if record_lane != lane:
                 continue
@@ -388,16 +489,28 @@ class TrajectoryTimeline(Widget):
             if cols is None:
                 continue
             style = KIND_STYLES.get(record.kind, _FALLBACK_STYLE)
-            if record.seq == self._selected:
+            if model.record_key(record) == self._selected:
                 style = style + _SELECTED_STYLE
             for col in range(cols[0], cols[1] + 1):
-                cells[col] = (BAR_CHAR, style)
+                cells[col] = (model.glyph_for(record), style)
+        for boundary in model.boundaries:
+            if boundary.kind != "agent" or lane != 3:
+                continue
+            col = int(TimelineModel.fraction(boundary.time, window) * width)
+            col = min(max(col, 0), width - 1)
+            cells[col] = (AGENT_BOUNDARY_CHAR, _CAPTION_STYLE)
         if self._brush is not None:
             b0, b1 = self._brush_columns(width, window)
             for col in range(b0, b1 + 1):
                 char, style = cells[col]
                 cells[col] = (char, (style or Style()) + BRUSH_STYLE)
-        return Text.assemble(*self._runs(cells), no_wrap=True, overflow="ignore")
+        label = f"{LANE_NAMES[lane]:<{LANE_LABEL_WIDTH}}"
+        return Text.assemble(
+            (label, _CAPTION_STYLE),
+            *self._runs(cells),
+            no_wrap=True,
+            overflow="ignore",
+        )
 
     @staticmethod
     def _runs(cells: list[tuple[str, Style | None]]) -> list[tuple[str, Style | None]]:
@@ -448,13 +561,24 @@ class TrajectoryTimeline(Widget):
     def _fraction_from_column(self, column: int, width: int) -> float:
         return min(1.0, max(0.0, (column + 0.5) / width))
 
+    def _plot_width(self) -> int:
+        return max(self.size.width - LANE_LABEL_WIDTH, 1)
+
+    @staticmethod
+    def _plot_column(column: int) -> int:
+        return max(column - LANE_LABEL_WIDTH, 0)
+
     def brush_columns(self, x1: int, x2: int) -> None:
         """Set the brush from two strip columns (the mouse-drag seam)."""
         if self._model.domain is None or self._window is None:
             return
-        width = max(self.size.width, 1)
-        t1 = TimelineModel.time_at(self._fraction_from_column(x1, width), self._window)
-        t2 = TimelineModel.time_at(self._fraction_from_column(x2, width), self._window)
+        width = self._plot_width()
+        t1 = TimelineModel.time_at(
+            self._fraction_from_column(self._plot_column(x1), width), self._window
+        )
+        t2 = TimelineModel.time_at(
+            self._fraction_from_column(self._plot_column(x2), width), self._window
+        )
         self._set_brush((min(t1, t2), max(t1, t2)))
 
     def _set_brush(self, brush: tuple[float, float] | None) -> None:
@@ -463,6 +587,16 @@ class TrajectoryTimeline(Widget):
         self._brush = brush
         self.refresh()
         self.post_message(self.TrajectoryBrushChanged(brush))
+
+    def clear_range(self) -> bool:
+        """Clear an active brush/keyboard anchor; return whether state changed."""
+
+        changed = self._brush is not None or self._range_anchor is not None
+        self._range_anchor = None
+        self._set_brush(None)
+        if changed:
+            self.refresh()
+        return changed
 
     def apply_brush(self, brush_range: tuple[float, float] | None) -> None:
         """Public re-brush seam for hosts (``None`` clears).
@@ -477,9 +611,10 @@ class TrajectoryTimeline(Widget):
 
     def record_at(self, x: int, y: int) -> TrajectoryRecord | None:
         """The record whose rendered bar covers column ``x`` on row ``y``."""
-        if y < 0 or y >= LANE_COUNT or self._window is None:
+        if x < LANE_LABEL_WIDTH or y < 0 or y >= LANE_COUNT or self._window is None:
             return None
-        width = max(self.size.width, 1)
+        width = self._plot_width()
+        x = self._plot_column(x)
         for record, lane in zip(self._model.timed_records, self._model.lanes):
             if lane != y:
                 continue
@@ -513,7 +648,7 @@ class TrajectoryTimeline(Widget):
     # -- mouse ----------------------------------------------------------------
 
     def on_mouse_down(self, event: MouseEvent) -> None:
-        if event.button == 1:
+        if event.button == 1 and event.x >= LANE_LABEL_WIDTH:
             # Capture for the gesture: a drag that leaves the 6-line
             # strip must keep feeding us moves, not strand the brush.
             self.capture_mouse()
@@ -535,24 +670,36 @@ class TrajectoryTimeline(Widget):
             # Plain click: bar select (and clear brush) or clear brush.
             record = self.record_at(event.x, event.y)
             if record is not None:
-                self._set_brush(None)
-                self.post_message(self.TrajectoryBarSelected(record.seq))
+                self.clear_range()
+                self._selected = self._model.record_key(record)
+                self.refresh()
+                self.post_message(self.TrajectoryBarSelected(self._selected))
             else:
-                self._set_brush(None)
+                self.clear_range()
         else:
             self.brush_columns(start_x, event.x)
 
     def on_mouse_scroll_up(self, event: MouseEvent) -> None:
-        width = max(self.size.width, 1)
-        self.zoom_at(ZOOM_FACTOR, self._fraction_from_column(event.x, width))
+        width = self._plot_width()
+        self.zoom_at(
+            ZOOM_FACTOR,
+            self._fraction_from_column(self._plot_column(event.x), width),
+        )
 
     def on_mouse_scroll_down(self, event: MouseEvent) -> None:
-        width = max(self.size.width, 1)
-        self.zoom_at(1 / ZOOM_FACTOR, self._fraction_from_column(event.x, width))
+        width = self._plot_width()
+        self.zoom_at(
+            1 / ZOOM_FACTOR,
+            self._fraction_from_column(self._plot_column(event.x), width),
+        )
 
     # -- keys -----------------------------------------------------------------
 
     BINDINGS = [
+        Binding("k", "previous_event", "Previous event"),
+        Binding("j", "next_event", "Next event"),
+        Binding("enter", "select_event", "Select event"),
+        Binding("b", "toggle_range", "Range"),
         Binding("left_square_bracket", "zoom_out", "Zoom out"),
         Binding("right_square_bracket", "zoom_in", "Zoom in"),
         Binding("comma", "pan_left", "Pan left"),
@@ -570,3 +717,53 @@ class TrajectoryTimeline(Widget):
 
     def action_pan_right(self) -> None:
         self.pan_by(PAN_FRACTION)
+
+    def _select_relative(self, direction: int) -> None:
+        records = self._model.timed_records
+        if not records:
+            return
+        keys = [self._model.record_key(record) for record in records]
+        if self._selected not in keys:
+            index = 0 if direction > 0 else len(keys) - 1
+        else:
+            index = (keys.index(self._selected) + direction) % len(keys)
+        self._selected = keys[index]
+        self.refresh()
+
+    def action_previous_event(self) -> None:
+        self._select_relative(-1)
+
+    def action_next_event(self) -> None:
+        self._select_relative(1)
+
+    def action_select_event(self) -> None:
+        if self._selected is not None:
+            self.post_message(self.TrajectoryBarSelected(self._selected))
+
+    def action_toggle_range(self) -> None:
+        if self._selected is None:
+            self._select_relative(1)
+        if self._selected is None:
+            return
+        if self._range_anchor is None:
+            self._range_anchor = self._selected
+            self.refresh()
+            return
+        by_key = {
+            self._model.record_key(record): record
+            for record in self._model.timed_records
+        }
+        anchor = by_key.get(self._range_anchor)
+        selected = by_key.get(self._selected)
+        self._range_anchor = None
+        if anchor is None or selected is None:
+            self.refresh()
+            return
+        anchor_start, anchor_end = self._model.interval(anchor)
+        selected_start, selected_end = self._model.interval(selected)
+        self._set_brush(
+            (
+                min(anchor_start, selected_start),
+                max(anchor_end, selected_end),
+            )
+        )

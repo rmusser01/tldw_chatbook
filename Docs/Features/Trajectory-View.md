@@ -33,7 +33,8 @@ The line under the title makes the current mode explicit:
 - Imported files show `READ-ONLY SHARED TRACE` and never write local data.
 - `LOADING`, `INCOMPLETE`, `NO TIMING`, `EMPTY`, and `NO MATCHES` explain why
   information is absent instead of leaving a blank ledger.
-- Search and time filters show the visible/total event count; `x` clears both.
+- Search, structured filters, and time ranges show the visible/total event
+  count; `x` clears all of them.
 - A failed ledger render or live refresh shows `FAILED · … · r retry` without
   exposing payload or exception text. While the single retry worker runs, the
   state changes to `RETRYING` and another retry cannot be started.
@@ -85,10 +86,23 @@ survive while any child matches. Press `x` to clear both search and timeline
 filters. While the search box is focused, `x` remains ordinary query text;
 press `escape`, then `x`, to clear filters.
 
+### Structured filters
+
+Filter by event kind, state, agent, and provider; all selected dimensions,
+search, and the timeline range combine with AND semantics. At 100 columns and
+wider, the four native selectors and the visible/total count stay above the
+ledger. On narrower terminals, press **`g`** to edit the same filter state in
+a compact dialog; the one-line summary still shows counts and the number of
+active filters. `x` is the single clear-all action for search, structured
+filters, and the timeline range.
+
 ## The timeline
 
-The strip above the ledger projects each timed record as a bar at its real
-start/duration, colored by kind:
+The strip above the ledger projects each timed record at its real
+start/duration in named **Input**, **Model**, **Tools**, and **Agents** lanes.
+Distinct glyphs remain recognizable in monochrome; color is secondary. Turn
+and child-agent boundary marks show grouping without implying a fabricated
+serial dependency:
 
 - **Drag** horizontally to brush a time range — the ledger filters to
   records active in that range (composed with the search filter). The
@@ -97,6 +111,9 @@ start/duration, colored by kind:
   space clears the brush).
 - **Wheel** zooms in/out centered on the mouse; when the timeline is
   focused, `[` / `]` zoom and `,` / `.` pan.
+- With timeline focus, **`j` / `k`** select the next/previous timed event,
+  **`enter`** jumps the ledger to it, and **`b`** starts or ends a range.
+  `escape` clears an active range/anchor before it can close Trace.
 - The brush survives live refreshes while it still intersects the
   conversation's time span.
 
@@ -156,8 +173,16 @@ shows its `no timing data` placeholder. New turns get the full treatment.
 | `e` | Load earlier records |
 | `f` | Resume tail-follow |
 | `r` | Retry a failed render or live refresh |
-| `x` | Clear search and timeline filters |
+| `g` | Open structured filters on compact terminals |
+| `x` | Clear search, structured filters, and timeline range |
 | `o` | Open an imported trace file (read-only) |
+| `n` / `p` | Next / previous visible match |
+| `j` / `k` | Next / previous error (or timed event with timeline focus) |
+| `u` / `y` | Next / previous tool event |
+| `v` / `b` | Next / previous feedback event |
+| `a` / `s` | Next / previous child-agent event |
+| `[` / `]` | Zoom out / in with timeline focus |
+| `,` / `.` | Pan left / right with timeline focus |
 | `escape` | Close the view |
 
 All bindings follow the repo-wide TUI keybinding conventions

@@ -6,7 +6,8 @@ Modal over the Console (task-4 of the trajectory view; spec:
 from the pure projection (``Chat/trajectory.py``) and never queries the
 DB itself.
 
-Layout (vertical): title line, search ``Input``, brushable timeline strip
+Layout (vertical): title line, search ``Input``, responsive structured
+filters, brushable timeline strip
 (:class:`TrajectoryTimeline`, task-16315 -- always mounted so its zoom
 state survives; the widget itself collapses to a ``no timing data``
 placeholder when the snapshot has no timing), ``DataTable`` ledger
@@ -18,8 +19,8 @@ Timeline <-> ledger integration:
 - The strip is fed the same snapshot as the ledger, live refreshes
   included (``_apply_live_snapshot``).
 - A brush range filters the ledger to records ACTIVE in the range (the
-  widget model's ``records_in_range`` semantics), composed with the
-  search query (AND); brush=None clears only the time filter. The
+  widget model's ``records_in_range`` semantics), composed with search
+  and every structured filter (AND); brush=None clears only the time filter. The
   strip's caption is the brush status note (range + active count) --
   deliberately not duplicated elsewhere.
 - Bar click moves the ledger cursor to that record (growing the mounted
@@ -46,9 +47,9 @@ moves off the UI thread (``run_worker``) once the conversation exceeds
 ``WORKER_THRESHOLD`` records.
 
 Keybindings follow ADR-031: single-letter htop-style actions, no
-terminal-convention chords, safe ``escape`` (blur the search box first,
-dismiss second), and the footer hints line stays 1:1 with ``BINDINGS``
-(enforced by ``Tests/UI/test_trajectory_screen.py``).
+terminal-convention chords, and contextual ``escape`` (clear a timeline
+range/anchor, blur search, then dismiss). Footer hints advertise only the
+actions that work in the focused context.
 """
 
 from __future__ import annotations
@@ -57,7 +58,7 @@ import hashlib
 import json
 import time
 from collections.abc import Callable
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime
 from pathlib import Path
 
@@ -84,6 +85,7 @@ from tldw_chatbook.Chat.trajectory_import import (
     load_trajectory_snapshot,
 )
 from tldw_chatbook.UI.Widgets.trajectory_timeline import TrajectoryTimeline
+from tldw_chatbook.UI.Widgets.trace_filter_bar import TraceFilterBar, TraceFilterState
 
 __all__ = [
     "LOAD_EARLIER_ROW_KEY",
@@ -186,11 +188,22 @@ class TrajectoryScreen(ModalScreen[None]):
         Binding("i", "toggle_inspector", "Inspector"),
         Binding("e", "load_earlier", "Earlier"),
         Binding("/", "focus_search", "Search"),
+        Binding("g", "open_filters", "Filters"),
         Binding("f", "resume_follow", "Follow"),
         Binding("d", "toggle_detail_full", "Full detail"),
         Binding("r", "retry", "Retry"),
         Binding("x", "clear_filters", "Clear filters"),
         Binding("o", "open_trace", "Open trace"),
+        Binding("n", "next_match", "Next match"),
+        Binding("p", "previous_match", "Previous match"),
+        Binding("j", "next_error", "Next error"),
+        Binding("k", "previous_error", "Previous error"),
+        Binding("u", "next_tool", "Next tool"),
+        Binding("y", "previous_tool", "Previous tool"),
+        Binding("v", "next_feedback", "Next feedback"),
+        Binding("b", "previous_feedback", "Previous feedback"),
+        Binding("a", "next_child_agent", "Next child agent"),
+        Binding("s", "previous_child_agent", "Previous child agent"),
     ]
 
     #: Footer hints, 1:1 with the non-escape BINDINGS (ADR-031; tested).
@@ -200,12 +213,23 @@ class TrajectoryScreen(ModalScreen[None]):
         ("t", "collapse"),
         ("i", "inspector"),
         ("/", "search"),
+        ("g", "filters"),
         ("e", "earlier"),
         ("f", "follow"),
         ("d", "full detail"),
         ("r", "retry"),
         ("x", "clear filters"),
         ("o", "open trace"),
+        ("n", "next match"),
+        ("p", "previous match"),
+        ("j", "next error"),
+        ("k", "previous error"),
+        ("u", "next tool"),
+        ("y", "previous tool"),
+        ("v", "next feedback"),
+        ("b", "previous feedback"),
+        ("a", "next child"),
+        ("s", "previous child"),
     )
 
     BUNDLED_CSS = """
@@ -317,9 +341,6 @@ class TrajectoryScreen(ModalScreen[None]):
         }
         self._collapsed: set[str] = set()
         self._query = ""
-        #: Active brush time range from the timeline strip (None = no
-        #: time filter); mirrors the widget's brush state.
-        self._brush_range: tuple[float, float] | None = None
         self._width_tier: str | None = None
         self._detail_full = False
         self._inspector_target_key: str | None = None
@@ -330,6 +351,7 @@ class TrajectoryScreen(ModalScreen[None]):
         #: The always-mounted timeline strip (created here so filters,
         #: pagination growth and selection sync can reach it pre-mount).
         self._timeline = TrajectoryTimeline(id="trajectory-timeline")
+        self._filter_bar = TraceFilterBar(id="trace-filter-bar")
         #: Number of newest records mounted (grows one page per `e` press).
         self._visible_count = min(self._total_records, PAGE_SIZE)
         #: Row key -> record (None for header/control rows), in row order.
@@ -358,6 +380,7 @@ class TrajectoryScreen(ModalScreen[None]):
             yield Static(self._title_text(), id="trajectory-title", markup=False)
             yield Static("", id="trajectory-state", markup=False)
             yield Input(placeholder="Search trace events…", id="trajectory-search")
+            yield self._filter_bar
             yield self._timeline  # always mounted: zoom state survives
             table = DataTable(id="trajectory-table", cursor_type="row")
             table.cell_padding = 0
@@ -373,7 +396,14 @@ class TrajectoryScreen(ModalScreen[None]):
     def on_mount(self) -> None:
         table = self.query_one("#trajectory-table", DataTable)
         self._configure_columns(force=True)
-        self._timeline.set_snapshot(self._snapshot)
+        self._filter_bar.set_compact(self.size.width < 100)
+        self._filter_bar.set_records(self._all_records())
+        self._timeline.set_snapshot(
+            self._snapshot,
+            record_keys={
+                id(record): self._record_key(record) for record in self._all_records()
+            },
+        )
         self._refresh_state()
         self._refresh_hints()
         if self._total_records > WORKER_THRESHOLD:
@@ -398,6 +428,7 @@ class TrajectoryScreen(ModalScreen[None]):
         """Rebuild columns only when the screen crosses a responsive tier."""
 
         self._configure_columns()
+        self._filter_bar.set_compact(self.size.width < 100)
         try:
             self.query_one("#trajectory-inspector", VerticalScroll)
             self._schedule_inspector_cue()
@@ -561,7 +592,7 @@ class TrajectoryScreen(ModalScreen[None]):
         """Expose orthogonal mode, completeness, filter, timing, and recovery."""
 
         total = self._total_records
-        filtering = bool(self._query) or self._brush_range is not None
+        filtering = bool(self._query) or self._filter_bar.state.is_active
         visible = self._visible_record_count if self._ledger_rendered else total
         try:
             search_focused = self.query_one("#trajectory-search", Input).has_focus
@@ -696,14 +727,21 @@ class TrajectoryScreen(ModalScreen[None]):
         # not destroy it): re-apply it iff it still intersects the new
         # domain (appends only grow it), else clear both sides so the
         # ledger's time filter can never outlive the visual brush.
-        self._timeline.set_snapshot(snapshot)
-        if self._brush_range is not None:
-            lo, hi = self._brush_range
+        records = self._all_records()
+        self._filter_bar.set_records(records)
+        self._timeline.set_snapshot(
+            snapshot,
+            record_keys={id(record): self._record_key(record) for record in records},
+        )
+        if self._filter_bar.state.time_range is not None:
+            lo, hi = self._filter_bar.state.time_range
             domain = self._timeline.model.domain
-            if domain is not None and lo <= domain[1] and hi >= domain[0]:
-                self._timeline.apply_brush(self._brush_range)
+            if domain is None or lo > domain[1] or hi < domain[0]:
+                self._filter_bar.set_state(
+                    replace(self._filter_bar.state, time_range=None), emit=False
+                )
             else:
-                self._brush_range = None
+                self._timeline.apply_brush(self._filter_bar.state.time_range)
         # Keep collapsed turns and the search query; never shrink the window.
         self._visible_count = max(
             self._visible_count, min(self._total_records, PAGE_SIZE)
@@ -775,6 +813,9 @@ class TrajectoryScreen(ModalScreen[None]):
     def _total_records(self) -> int:
         return sum(len(turn.records) for turn in self._turns)
 
+    def _all_records(self) -> tuple[TrajectoryRecord, ...]:
+        return tuple(record for turn in self._turns for record in turn.records)
+
     @property
     def _hidden_earlier(self) -> int:
         return max(0, self._total_records - self._visible_count)
@@ -839,44 +880,23 @@ class TrajectoryScreen(ModalScreen[None]):
             )
 
         query = self._query.lower()
-        brush_seqs = self._brush_active_seqs()
         open_turn: TrajectoryTurn | None = None
         turn_records: list[TrajectoryRecord] = []
         for turn, record in self._flat_slice():
             if open_turn is not None and turn.turn_id != open_turn.turn_id:
-                specs.extend(
-                    self._turn_row_specs(open_turn, turn_records, query, brush_seqs)
-                )
+                specs.extend(self._turn_row_specs(open_turn, turn_records, query))
                 turn_records = []
             open_turn = turn
             turn_records.append(record)
         if open_turn is not None:
-            specs.extend(
-                self._turn_row_specs(open_turn, turn_records, query, brush_seqs)
-            )
+            specs.extend(self._turn_row_specs(open_turn, turn_records, query))
         return specs
-
-    def _brush_active_seqs(self) -> frozenset[int] | None:
-        """Seqs of records ACTIVE in the brush; ``None`` when no brush.
-
-        Reuses the timeline model's ``records_in_range`` semantics (a
-        record is active when its interval intersects the range; untimed
-        records are never in the model, so a brush hides them) instead
-        of reimplementing the interval math here.
-        """
-        if self._brush_range is None:
-            return None
-        lo, hi = self._brush_range
-        return frozenset(
-            record.seq for record in self._timeline.model.records_in_range(lo, hi)
-        )
 
     def _turn_row_specs(
         self,
         turn: TrajectoryTurn,
         records: list[TrajectoryRecord],
         query: str,
-        brush_seqs: frozenset[int] | None = None,
     ) -> list[tuple[str, tuple[Text, ...]]]:
         """Header row + child rows for one turn under the current filter.
 
@@ -889,10 +909,9 @@ class TrajectoryScreen(ModalScreen[None]):
         matching = [
             rec
             for rec in records
-            if self._record_matches(rec, query)
-            and (brush_seqs is None or rec.seq in brush_seqs)
+            if self._record_matches(rec, query) and self._filter_bar.state.matches(rec)
         ]
-        filtering = bool(query) or brush_seqs is not None
+        filtering = bool(query) or self._filter_bar.state.is_active
         if filtering and not matching:
             return []  # nothing in this turn is visible: header included, hidden
         header_key = f"turn:{turn.turn_id}"
@@ -1017,6 +1036,15 @@ class TrajectoryScreen(ModalScreen[None]):
                 return True
         return False
 
+    def _matching_records(self) -> tuple[TrajectoryRecord, ...]:
+        query = self._query.lower()
+        state = self._filter_bar.state
+        return tuple(
+            record
+            for record in self._all_records()
+            if self._record_matches(record, query) and state.matches(record)
+        )
+
     def _apply_row_specs(
         self,
         specs: list[tuple[str, tuple[Text, ...]]],
@@ -1080,6 +1108,9 @@ class TrajectoryScreen(ModalScreen[None]):
                 )
         self._refresh_hints()
         self._sync_timeline_selection()
+        self._filter_bar.update_counts(
+            len(self._matching_records()), self._total_records
+        )
         if generation is not None:
             self._loading = False
             if self._retry_target == "render":
@@ -1104,36 +1135,67 @@ class TrajectoryScreen(ModalScreen[None]):
                 "#trajectory-inspector", VerticalScroll
             ).display
             search_focused = self.query_one("#trajectory-search", Input).has_focus
+            timeline_focused = self._timeline.has_focus
         except Exception:  # noqa: BLE001 - pre-mount refresh
             inspector_open = False
             search_focused = False
+            timeline_focused = False
         has_cursor_target = bool(self._visible_keys)
-        has_turn_target = any(key != LOAD_EARLIER_ROW_KEY for key in self._visible_keys)
-        filtering = bool(self._query) or self._brush_range is not None
-        if self._detail_full:
+        filtering = bool(self._query) or self._filter_bar.state.is_active
+        if timeline_focused and not self._detail_full:
+            lines = [
+                "j/k event · enter select · b range",
+                "[/] zoom · ,/. pan",
+            ]
+            if (
+                self._timeline.brush is not None
+                or self._timeline.range_anchor is not None
+            ):
+                lines[1] += " · esc clear"
+        elif self._detail_full:
             pairs = [("i", "close"), ("d", "split view")]
             if self._failure is not None and not self._retry_in_flight:
                 pairs.append(("r", "retry"))
             if filtering:
                 pairs.append(("x", "clear filters"))
+            lines = [" · ".join(f"{key} {label}" for key, label in pairs)]
+        elif search_focused:
+            lines = ["enter results · esc ledger"]
+        elif not has_cursor_target:
+            recovery = []
+            if self._failure is not None and not self._retry_in_flight:
+                recovery.append("r retry")
+            if filtering:
+                recovery.append("x clear filters")
+            lines = [" · ".join(recovery) if recovery else "o open trace"]
         else:
-            pairs = [
-                (key, "close" if key == "i" and inspector_open else label)
-                for key, label in self.TRAJECTORY_SHORTCUTS
-                if (key not in {"enter", "i"} or has_cursor_target)
-                and (key != "t" or has_turn_target)
-                and (key != "e" or self._hidden_earlier > 0)
-                and (key != "f" or self._snapshot_builder is not None)
-                and (key != "d" or inspector_open)
-                and (
-                    key != "r"
-                    or (self._failure is not None and not self._retry_in_flight)
-                )
-                and (key != "x" or (filtering and not search_focused))
+            lines = ["n/p match · j/k err · u/y tool · v/b feedback · a/s child"]
+            core = [
+                "enter inspect",
+                "i close" if inspector_open else "i detail",
+                "g filters",
             ]
-        text = " · ".join(f"{key} {label}" for key, label in pairs)
+            contextual = False
+            if self._hidden_earlier > 0:
+                core.append("e earlier")
+                contextual = True
+            if self._snapshot_builder is not None:
+                core.append("f follow")
+                contextual = True
+            if self._failure is not None and not self._retry_in_flight:
+                core.append("r retry")
+                contextual = True
+            if filtering:
+                core.append("x clear filters")
+                contextual = True
+            if not contextual:
+                core.append("o open trace")
+            lines.append(" · ".join(core))
+        text = "\n".join(lines)
         try:
-            self.query_one("#trajectory-hints", Static).update(text)
+            hints = self.query_one("#trajectory-hints", Static)
+            hints.styles.height = len(lines)
+            hints.update(text)
         except Exception:  # noqa: BLE001 - pre-mount refresh
             pass
 
@@ -1401,15 +1463,23 @@ class TrajectoryScreen(ModalScreen[None]):
         """
         key = self._cursor_key()
         record = self._row_records.get(key) if key is not None else None
-        self._timeline.set_selected(record.seq if record is not None else None)
+        self._timeline.set_selected(
+            self._record_key(record) if record is not None else None
+        )
+
+    @on(TraceFilterBar.Changed)
+    def _on_trace_filters_changed(self, event: TraceFilterBar.Changed) -> None:
+        event.stop()
+        if event.state.time_range != self._timeline.brush:
+            self._timeline.apply_brush(event.state.time_range)
+        self._render_ledger()
 
     @on(TrajectoryTimeline.TrajectoryBrushChanged)
     def _on_brush_changed(
         self, event: TrajectoryTimeline.TrajectoryBrushChanged
     ) -> None:
         """Brush range filters the ledger (AND with the search query)."""
-        self._brush_range = event.brush_range
-        self._render_ledger()
+        self._filter_bar.set_time_range(event.brush_range)
 
     @on(TrajectoryTimeline.TrajectoryBarSelected)
     def _on_bar_selected(self, event: TrajectoryTimeline.TrajectoryBarSelected) -> None:
@@ -1420,13 +1490,14 @@ class TrajectoryScreen(ModalScreen[None]):
         only paginated out, grow the mounted window to cover it; if the
         search still hides it, that is a no-op on the cursor.
         """
-        if self._brush_range is not None:
-            self._brush_range = None
-            self._render_ledger()
-        flat = [record for turn in self._turns for record in turn.records]
+        if self._filter_bar.state.time_range is not None:
+            self._filter_bar.set_state(replace(self._filter_bar.state, time_range=None))
+        flat = list(self._all_records())
         try:
             selected_record = next(
-                record for record in flat if record.seq == event.record_key
+                record
+                for record in flat
+                if self._record_key(record) == event.record_key
             )
         except StopIteration:
             return  # unknown record (stale bar from a live snapshot): no-op
@@ -1436,7 +1507,9 @@ class TrajectoryScreen(ModalScreen[None]):
             return
         try:
             flat_index = next(
-                i for i, record in enumerate(flat) if record.seq == event.record_key
+                i
+                for i, record in enumerate(flat)
+                if self._record_key(record) == event.record_key
             )
         except StopIteration:
             return  # unknown record (stale bar from a live snapshot): no-op
@@ -1461,10 +1534,13 @@ class TrajectoryScreen(ModalScreen[None]):
     # -- actions (ADR-031: single-letter htop-style) ----------------------------
 
     def action_dismiss(self) -> None:
-        """Safe escape: blur the search box first, dismiss the modal second."""
+        """Blur search or clear a range before dismissing the modal."""
         search = self.query_one("#trajectory-search", Input)
         if search.has_focus:
             self.query_one("#trajectory-table", DataTable).focus()
+            return
+        if self._timeline.clear_range():
+            self._refresh_hints()
             return
         self.dismiss(None)
 
@@ -1536,17 +1612,109 @@ class TrajectoryScreen(ModalScreen[None]):
         if search.display:
             search.focus()
 
-    def action_clear_filters(self) -> None:
-        """`x`: clear search and timeline brush as one recovery action."""
+    async def action_open_filters(self) -> None:
+        """`g`: edit structured filters without changing Trace data."""
 
-        if not self._query and self._brush_range is None:
+        await self._filter_bar.open_dialog()
+
+    def _navigate_records(
+        self, predicate: Callable[[TrajectoryRecord], bool], direction: int
+    ) -> None:
+        """Move by stable identity within filtered records, wrapping consistently."""
+
+        candidates = [
+            record for record in self._matching_records() if predicate(record)
+        ]
+        if not candidates:
+            self.app.notify("No matching Trace event.", severity="information")
+            return
+        current = self._cursor_key()
+        keys = [self._record_key(record) for record in candidates]
+        if current not in keys:
+            target_index = 0 if direction > 0 else len(keys) - 1
+        else:
+            target_index = (keys.index(current) + direction) % len(keys)
+        target = candidates[target_index]
+        key = self._record_key(target)
+        if key not in self._visible_keys:
+            flat = list(self._all_records())
+            flat_index = flat.index(target)
+            if flat_index < len(flat) - self._visible_count:
+                self._visible_count = len(flat) - flat_index
+                self._pending_restore_key = key
+                self._render_ledger()
+        self._move_cursor_to_key(key)
+
+    def action_next_match(self) -> None:
+        self._navigate_records(lambda _record: True, 1)
+
+    def action_previous_match(self) -> None:
+        self._navigate_records(lambda _record: True, -1)
+
+    @staticmethod
+    def _is_error(record: TrajectoryRecord) -> bool:
+        return (
+            (record.status or "").lower()
+            in {
+                "error",
+                "failed",
+                "rejected",
+                "timed_out",
+            }
+            or "error" in record.kind
+            or "failed" in record.kind
+        )
+
+    @staticmethod
+    def _is_tool(record: TrajectoryRecord) -> bool:
+        return record.kind.startswith(("tool_", "approval_"))
+
+    @staticmethod
+    def _is_feedback(record: TrajectoryRecord) -> bool:
+        return record.kind == KIND_USER_FEEDBACK or "feedback" in record.kind
+
+    @staticmethod
+    def _is_child_agent(record: TrajectoryRecord) -> bool:
+        actor = (record.actor_kind or "").lower()
+        return actor in {"agent", "subagent", "child_agent"} and bool(
+            record.parent_event_id
+        )
+
+    def action_next_error(self) -> None:
+        self._navigate_records(self._is_error, 1)
+
+    def action_previous_error(self) -> None:
+        self._navigate_records(self._is_error, -1)
+
+    def action_next_tool(self) -> None:
+        self._navigate_records(self._is_tool, 1)
+
+    def action_previous_tool(self) -> None:
+        self._navigate_records(self._is_tool, -1)
+
+    def action_next_feedback(self) -> None:
+        self._navigate_records(self._is_feedback, 1)
+
+    def action_previous_feedback(self) -> None:
+        self._navigate_records(self._is_feedback, -1)
+
+    def action_next_child_agent(self) -> None:
+        self._navigate_records(self._is_child_agent, 1)
+
+    def action_previous_child_agent(self) -> None:
+        self._navigate_records(self._is_child_agent, -1)
+
+    def action_clear_filters(self) -> None:
+        """`x`: clear search, structured filters and timeline range."""
+
+        if not self._query and not self._filter_bar.state.is_active:
             return
         if self.query_one("#trajectory-search", Input).has_focus:
             return
         self._query = ""
         self.query_one("#trajectory-search", Input).value = ""
-        self._brush_range = None
-        self._timeline.apply_brush(None)
+        self._timeline.clear_range()
+        self._filter_bar.set_state(TraceFilterState(), emit=False)
         self._render_ledger()
 
     def action_retry(self) -> None:
