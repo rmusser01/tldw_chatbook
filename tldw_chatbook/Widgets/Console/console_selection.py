@@ -78,10 +78,22 @@ class SelectionManager:
         self._active = True
         self._finished = None
 
-    def extend_drag(self, row_key: str, offset: int) -> None:
+    def extend_drag(self, row_key: str, offset: int) -> bool:
+        """Extend the active drag; report whether the offset actually moved.
+
+        TASK-21114: MouseMove arrives at 50-100 Hz and neighboring cells
+        routinely map to the SAME character offset; the return value lets
+        the caller skip re-rendering entirely for those events. ``False``
+        also covers the pre-existing no-op arms (inactive manager,
+        cross-row drags clamping to the origin row).
+        """
         if not self._active or row_key != self._origin_row:
-            return  # cross-row drags clamp to the origin row
-        self._current_offset = max(0, offset)
+            return False  # cross-row drags clamp to the origin row
+        offset = max(0, offset)
+        if offset == self._current_offset:
+            return False
+        self._current_offset = offset
+        return True
 
     def finish_drag(self) -> TextSelection | None:
         if not self._active:
