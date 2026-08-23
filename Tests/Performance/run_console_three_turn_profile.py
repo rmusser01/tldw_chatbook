@@ -925,7 +925,10 @@ def _promote_reviewed_artifacts_locked(
                     raise RuntimeError("publication_durability_uncertain")
         except OSError as exc:
             raise RuntimeError("publication_durability_uncertain") from exc
-        restore_owned_stage()
+        try:
+            restore_owned_stage()
+        except OSError as exc:
+            raise RuntimeError("publication_durability_uncertain") from exc
         ownership_restored = True
         try:
             _fsync_directory(destination.parent)

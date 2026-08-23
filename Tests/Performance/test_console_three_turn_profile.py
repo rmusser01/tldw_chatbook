@@ -5665,6 +5665,74 @@ def test_promotion_parent_fsync_failure_retains_destination_as_uncertain(
     assert not (campaign / ".campaign-lock").exists()
 
 
+@pytest.mark.skipif(sys.platform != "darwin", reason="Darwin immutable flags only")
+@pytest.mark.parametrize("failure", ("mode", "flags"))
+def test_post_rename_restore_failure_is_stable_and_closes_owned_descriptors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    campaign, attempt, digest, _raw_sha256 = _prepare_review_attempt(tmp_path)
+    receipt = _write_review_receipt(attempt, digest)
+    destination = tmp_path / "published"
+    stage = destination.parent / f".{destination.name}.task-20010-stage"
+    real_atomic = profile._atomic_rename_directory_noreplace
+    real_fchmod = profile.os.fchmod
+    real_fchflags = profile._fchflags
+    real_open = profile.os.open
+    real_close = profile.os.close
+    native_completed = False
+    owned_descriptors: set[int] = set()
+    closed_descriptors: set[int] = set()
+
+    def track_open(path, flags, *args, **kwargs):
+        descriptor = real_open(path, flags, *args, **kwargs)
+        candidate = Path(path)
+        if (
+            candidate in {stage, destination}
+            or candidate.parent in {stage, destination}
+        ):
+            owned_descriptors.add(descriptor)
+        return descriptor
+
+    def track_close(descriptor: int) -> None:
+        if descriptor in owned_descriptors:
+            closed_descriptors.add(descriptor)
+        real_close(descriptor)
+
+    def mark_native_complete(*args, **kwargs) -> None:
+        nonlocal native_completed
+        real_atomic(*args, **kwargs)
+        native_completed = True
+
+    def fail_mode(descriptor: int, mode: int) -> None:
+        if failure == "mode" and native_completed and mode == 0o555:
+            raise OSError("injected published mode restore failure")
+        real_fchmod(descriptor, mode)
+
+    def fail_flags(descriptor: int, flags: int) -> None:
+        if failure == "flags" and native_completed:
+            raise OSError("injected published flag restore failure")
+        real_fchflags(descriptor, flags)
+
+    monkeypatch.setattr(profile.os, "open", track_open)
+    monkeypatch.setattr(profile.os, "close", track_close)
+    monkeypatch.setattr(
+        profile, "_atomic_rename_directory_noreplace", mark_native_complete
+    )
+    monkeypatch.setattr(profile.os, "fchmod", fail_mode)
+    monkeypatch.setattr(profile, "_fchflags", fail_flags)
+
+    with pytest.raises(RuntimeError, match="^publication_durability_uncertain$"):
+        profile.promote_reviewed_artifacts(
+            campaign, "attempt-0001", receipt, destination
+        )
+
+    assert destination.is_dir()
+    assert attempt.is_dir()
+    assert owned_descriptors
+    assert owned_descriptors <= closed_descriptors
+    assert not (campaign / ".campaign-lock").exists()
+
+
 def test_windows_promotion_fails_closed_without_directory_durability(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
