@@ -54,6 +54,8 @@ class _FlakyBindRegistry:
 
 
 class _HarnessApp(App[None]):
+    CSS = WorkspaceCreateModal.BUNDLED_CSS
+
     def __init__(self, registry, *, description: str | None = None):
         super().__init__()
         # NOTE: `App.__init__` already defines `self._registry` (a WeakSet of
