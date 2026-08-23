@@ -2461,7 +2461,12 @@ def save_chat_history_to_db_wrapper(
 
         # --- Save Messages (Handles new OpenAI format) ---
         try:
-            with db.transaction():
+            # IMMEDIATE (task-21100): outer wrappers decide the begin mode for
+            # the nested hot messages writers save_history drives
+            # (transaction(immediate=) is depth-0 only); DEFERRED here re-opens
+            # the snapshot-upgrade "database is locked" window (see
+            # CharactersRAGDB.add_message's scoping comment).
+            with db.transaction(immediate=True):
                 message_save_count = persistence_service.save_history(
                     conversation_id=current_conversation_id,
                     chatbot_history=chatbot_history,

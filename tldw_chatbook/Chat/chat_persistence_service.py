@@ -791,7 +791,12 @@ class ChatPersistenceService:
             extra_rows = []
 
         if citation_repository is not None:
-            with self.db.transaction() as cursor:
+            # IMMEDIATE (task-21100): `transaction(immediate=...)` is honored
+            # only at depth 0, so this OUTER wrapper decides the begin mode for
+            # the nested hot messages writers -- left DEFERRED it re-opens the
+            # snapshot-upgrade "database is locked" window their own IMMEDIATE
+            # closes (see add_message's scoping comment).
+            with self.db.transaction(immediate=True) as cursor:
                 result = bool(
                     self.db.update_message(
                         message_id,
@@ -823,7 +828,10 @@ class ChatPersistenceService:
             # attachments table write must be skipped -- otherwise
             # attachments would be rewritten while content/version were not,
             # leaving the two out of sync.
-            with self.db.transaction():
+            # IMMEDIATE (task-21100): outer wrappers decide the begin mode for
+            # nested writers (immediate= is depth-0 only); DEFERRED here
+            # re-opens the snapshot-upgrade window (see add_message).
+            with self.db.transaction(immediate=True):
                 result = bool(
                     self.db.update_message(
                         message_id,
@@ -1134,7 +1142,10 @@ class ChatPersistenceService:
             "metadata_json": metadata_json,
         }
         if prepared_citation is not None:
-            with self.db.transaction() as cursor:
+            # IMMEDIATE (task-21100): outer wrappers decide the begin mode for
+            # nested writers (immediate= is depth-0 only); DEFERRED here
+            # re-opens the snapshot-upgrade window (see add_message).
+            with self.db.transaction(immediate=True) as cursor:
                 existing_message = (
                     self.db.get_message_by_id(message_id)
                     if message_id is not None
@@ -1181,7 +1192,10 @@ class ChatPersistenceService:
             # attachments write always runs when this branch is taken -- an
             # empty list still clears any stale rows a prior attempt at this
             # same message_id may have left behind.
-            with self.db.transaction():
+            # IMMEDIATE (task-21100): outer wrappers decide the begin mode for
+            # nested writers (immediate= is depth-0 only); DEFERRED here
+            # re-opens the snapshot-upgrade window (see add_message).
+            with self.db.transaction(immediate=True):
                 created_message_id = self.db.add_message(message_payload)
                 self.db.set_message_attachments(created_message_id, extra_rows)
                 if generation_metadata is not None:

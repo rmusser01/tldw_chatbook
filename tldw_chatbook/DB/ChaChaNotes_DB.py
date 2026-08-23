@@ -451,7 +451,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 46  # `sync_log` bounded to its reachable frontier (task-19564).
+    _CURRENT_SCHEMA_VERSION = 47  # `messages` FTS delete halves guarded on index membership (task-21100).
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -5952,6 +5952,15 @@ UPDATE db_schema_version
         Pack identity) merged to dev claiming v45 first; this step now runs
         after it.
 
+        task-21100: as first shipped (PR #1974) this step also reinserted
+        every non-deleted message into ``messages_fts`` inside this same
+        transaction -- an O(total chat text) index rewrite that froze first
+        paint on large profiles, since the whole pending chain replays inside
+        one transaction on the boot path. The step now only issues the cheap
+        ``'delete-all'``; the reinsert runs as a chunked, resumable
+        background backfill (:meth:`backfill_messages_fts`, driven from app
+        mount), made write-safe by the v46->v47 trigger guards.
+
         Args:
             conn: The active connection, inside ``_initialize_schema``'s
                 transaction.
@@ -6018,6 +6027,82 @@ UPDATE db_schema_version
             )
             raise SchemaError(
                 f"Migration from V45 to V46 failed for '{self._SCHEMA_NAME}': {exc}"
+            ) from exc
+
+    def _migrate_from_v46_to_v47(self, conn: sqlite3.Connection) -> None:
+        """Guard the ``messages`` FTS 'delete' halves on index membership.
+
+        task-21100 defers the v45->v46 ``messages_fts`` reinsert to a chunked
+        background backfill, which opens a window in which a live message row
+        is legitimately absent from the index. For an external-content FTS5
+        table, issuing the 'delete' command for an unindexed rowid corrupts
+        the index: it silently poisons the doclists (and can raise
+        ``database disk image is malformed`` depending on index state -- an
+        empty index raises on the statement itself, a partly-filled one
+        absorbs dangling delete-markers with no error and a green
+        integrity-check). This step recreates ``messages_au`` and
+        ``messages_ad`` with an ``EXISTS (... messages_fts_docsize ...)``
+        membership test on their delete halves (see the migration file header
+        for the full analysis, including why this is a separate step rather
+        than part of the edited v46: databases already stamped 46 by the
+        original full-rebuild v46 never replay that step, and every database
+        must converge on one trigger shape). DDL only -- no index content is
+        touched, so an already-complete index is left alone.
+
+        Args:
+            conn: The active connection, inside ``_initialize_schema``'s
+                transaction.
+
+        Raises:
+            SchemaError: If the database is not at v46, the file cannot be
+                read/split, or the version bump does not land.
+        """
+        self._require_migration_entry_version(conn, 46, "V46→V47")
+        logger.info(
+            f"Migrating schema from V46 to V47 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
+        )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v46_to_v47_messages_fts_backfill_guards.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V46→V47",
+                )
+                version_cursor = cursor.execute(
+                    """
+                    UPDATE db_schema_version
+                       SET version = 47
+                     WHERE schema_name = ?
+                       AND version = 46
+                    """,
+                    (self._SCHEMA_NAME,),
+                )
+                if version_cursor.rowcount != 1:
+                    raise SchemaError(
+                        f"[{self._SCHEMA_NAME} V46→V47] Migration version update was not applied"
+                    )
+
+            final_version = self._get_db_version(conn)
+            if final_version != 47:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V46→V47] Migration version check failed. "
+                    f"Expected 47, got: {final_version}"
+                )
+            logger.info(
+                f"[{self._SCHEMA_NAME} V46→V47] Migration completed successfully for DB: "
+                f"{self.db_path_str}."
+            )
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V46→V47] Migration failed: {exc}"
+            )
+            raise SchemaError(
+                f"Migration from V46 to V47 failed for '{self._SCHEMA_NAME}': {exc}"
             ) from exc
 
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
@@ -6204,6 +6289,7 @@ UPDATE db_schema_version
                     43: self._migrate_from_v43_to_v44,
                     44: self._migrate_from_v44_to_v45,
                     45: self._migrate_from_v45_to_v46,
+                    46: self._migrate_from_v46_to_v47,
                 }
 
                 if current_db_version == 0:
@@ -10037,7 +10123,20 @@ UPDATE db_schema_version
             provider_continuation_json,
         )
         try:
-            with self.transaction():
+            # IMMEDIATE (task-21100 review): every hot `messages` writer reserves the
+            # write lock up front. These methods read (conversation/version checks)
+            # before writing inside one transaction; on a DEFERRED begin, any commit
+            # landing between the read snapshot and the first write -- e.g. a chunk of
+            # the first-boot messages_fts backfill -- kills the writer with a
+            # non-retryable `database is locked` that BYPASSES the busy timeout
+            # (snapshot-upgrade SQLITE_BUSY; see TransactionContextManager's comment).
+            # Scoping rule: exactly the read-then-write `messages`-table writers on
+            # user-facing chat paths, enumerated in Tests/DB/
+            # test_chachanotes_v47_messages_fts_backfill.py's HOT_MESSAGE_WRITERS
+            # (whose comment also names the writers deliberately left DEFERRED:
+            # blind single-statement writers have no snapshot to upgrade, and
+            # plain SQLITE_BUSY honors the timeout).
+            with self.transaction(immediate=True):
                 conv_cursor = self.execute_query(
                     "SELECT 1 FROM conversations WHERE id = ? AND deleted = 0",
                     (msg_data["conversation_id"],),
@@ -10104,7 +10203,8 @@ UPDATE db_schema_version
         now = self._get_current_utc_timestamp_iso()
 
         try:
-            with self.transaction() as conn:
+            # IMMEDIATE: hot messages writer; see add_message's scoping comment.
+            with self.transaction(immediate=True) as conn:
                 conversation = conn.execute(
                     "SELECT version, deleted FROM conversations WHERE id = ?",
                     (conversation_id,),
@@ -10197,7 +10297,8 @@ UPDATE db_schema_version
             )
 
         try:
-            with self.transaction() as conn:
+            # IMMEDIATE: hot messages writer; see add_message's scoping comment.
+            with self.transaction(immediate=True) as conn:
                 current = conn.execute(
                     """
                     SELECT role, content, image_data, deleted, version,
@@ -10515,7 +10616,8 @@ UPDATE db_schema_version
             CharactersRAGDBError: On database errors.
         """
         now = self._get_current_utc_timestamp_iso()
-        with self.transaction() as cursor:
+        # IMMEDIATE: hot messages writer; see add_message's scoping comment.
+        with self.transaction(immediate=True) as cursor:
             msg_row = cursor.execute(
                 "SELECT image_data FROM messages WHERE id = ? AND deleted = 0",
                 (message_id,),
@@ -10601,7 +10703,8 @@ UPDATE db_schema_version
         temp_position = 1_000_000
 
         now = self._get_current_utc_timestamp_iso()
-        with self.transaction() as cursor:
+        # IMMEDIATE: hot messages writer; see add_message's scoping comment.
+        with self.transaction(immediate=True) as cursor:
             msg_row = cursor.execute(
                 "SELECT image_data, image_mime_type FROM messages WHERE id = ? AND deleted = 0",
                 (message_id,),
@@ -10910,7 +11013,8 @@ UPDATE db_schema_version
         final_params_for_execute = tuple(current_params_for_set_clause + where_values)
 
         try:
-            with self.transaction() as conn:
+            # IMMEDIATE: hot messages writer; see add_message's scoping comment.
+            with self.transaction(immediate=True) as conn:
                 current = conn.execute(
                     "SELECT conversation_id, version, deleted, content, "
                     "provider_continuation_json "
@@ -11551,7 +11655,8 @@ UPDATE db_schema_version
         params = (now, next_version_val, self.client_id, message_id, expected_version)
 
         try:
-            with self.transaction() as conn:
+            # IMMEDIATE: hot messages writer; see add_message's scoping comment.
+            with self.transaction(immediate=True) as conn:
                 try:
                     current_db_version = self._get_current_db_version(
                         conn, "messages", "id", message_id
@@ -11622,7 +11727,8 @@ UPDATE db_schema_version
         no longer expose them.
         """
         now = self._get_current_utc_timestamp_iso()
-        with self.transaction() as conn:
+        # IMMEDIATE: hot messages writer; see add_message's scoping comment.
+        with self.transaction(immediate=True) as conn:
             current = conn.execute(
                 "SELECT conversation_id, version, deleted FROM messages WHERE id = ?",
                 (message_id,),
@@ -11788,7 +11894,8 @@ UPDATE db_schema_version
             CharactersRAGDBError: For database errors.
         """
         try:
-            with self.transaction() as conn:
+            # IMMEDIATE: hot messages writer; see add_message's scoping comment.
+            with self.transaction(immediate=True) as conn:
                 # Get the original message details
                 cursor = conn.execute(
                     """
@@ -11962,7 +12069,8 @@ UPDATE db_schema_version
             CharactersRAGDBError: For database errors.
         """
         try:
-            with self.transaction() as conn:
+            # IMMEDIATE: hot messages writer; see add_message's scoping comment.
+            with self.transaction(immediate=True) as conn:
                 # Get the variant info
                 cursor = conn.execute(
                     """
@@ -15196,6 +15304,78 @@ UPDATE db_schema_version
         except (CharactersRAGDBError, sqlite3.Error) as e:
             logger.error(f"Error pruning sync_log: {e}")
             raise CharactersRAGDBError("Failed to prune sync log") from e
+
+    def backfill_messages_fts(
+        self, chunk_size: int = 500, *, after_rowid: int = 0
+    ) -> Tuple[int, int]:
+        """Index one chunk of live messages missing from ``messages_fts``.
+
+        The delivery half of task-21100: the v45->v46 migration clears the
+        index (``'delete-all'``) inside the version-bump transaction but no
+        longer reinserts every message there -- this method performs that
+        reinsert in bounded chunks, outside any migration transaction, so a
+        large profile's first boot after the upgrade never blocks first paint
+        on an O(total chat text) index rewrite. Modeled on
+        ``SubscriptionsDB.backfill_items_fts``.
+
+        Resumability is a property of the DATABASE, not of any caller-held
+        counter: "not yet indexed" is membership in ``messages_fts_docsize``,
+        the FTS5 shadow table populated only by real writes into the index
+        (an unfiltered query against an external-content fts5 table is
+        answered from the content table's rowids and cannot answer this).
+        Each chunk commits in its own IMMEDIATE transaction, so a kill at any
+        point leaves a consistent index plus a resumable frontier, and a call
+        after completion performs no writes. Rows indexed early by the
+        guarded triggers (a message edited during the window) are simply
+        skipped. Tombstoned rows (``deleted = 1``) are never selected, which
+        preserves the v46 privacy guarantee that the index holds no deleted
+        content.
+
+        ``after_rowid`` lets a driver loop avoid re-scanning already-indexed
+        rows within one run (rowids are handed out ascending; a row inserted
+        below the cursor mid-run was indexed by ``messages_ai`` at insert and
+        needs no backfill). It is an optimisation only -- restarting from 0
+        is always correct.
+
+        Args:
+            chunk_size: Maximum rows to index in this call. Must be >= 1 --
+                a non-positive ``LIMIT`` would return zero rows and report
+                completion while unindexed rows remain.
+            after_rowid: Only consider ``messages.rowid`` strictly greater
+                than this.
+
+        Returns:
+            ``(rows_indexed, resume_rowid)``: the number of rows indexed
+            (``0`` means nothing remains at or beyond ``after_rowid``) and
+            the cursor to pass as ``after_rowid`` next call.
+
+        Raises:
+            ValueError: If ``chunk_size`` is less than 1.
+            CharactersRAGDBError / sqlite3.Error: Propagated from the
+                underlying transaction.
+        """
+        if chunk_size < 1:
+            raise ValueError(f"chunk_size must be >= 1, got {chunk_size!r}")
+        with self.transaction(immediate=True) as conn:
+            rows = conn.execute(
+                """
+                SELECT rowid, content
+                  FROM messages
+                 WHERE deleted = 0
+                   AND rowid > ?
+                   AND rowid NOT IN (SELECT rowid FROM messages_fts_docsize)
+                 ORDER BY rowid
+                 LIMIT ?
+                """,
+                (after_rowid, chunk_size),
+            ).fetchall()
+            if not rows:
+                return 0, after_rowid
+            conn.executemany(
+                "INSERT INTO messages_fts(rowid, content) VALUES (?, ?)",
+                [(row["rowid"], row["content"]) for row in rows],
+            )
+            return len(rows), rows[-1]["rowid"]
 
     def close(self) -> None:
         """Alias for close_connection() to maintain consistency with BaseDB."""

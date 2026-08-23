@@ -7863,6 +7863,52 @@ class TldwCli(
                         db_path,
                     )
 
+    def _backfill_chachanotes_messages_fts(self) -> None:
+        """Worker body: reinsert messages the v45->v46 migration no longer
+        indexes inline (task-21100). Started from ``on_mount`` via
+        ``run_worker(thread=True)`` so an upgraded profile's index rebuild
+        never blocks boot or first paint; each chunk commits in its own
+        transaction, so a kill at any point leaves a consistent, resumable
+        index (state = ``messages_fts_docsize`` membership, in the DB
+        itself).
+
+        Uses the app's shared ``CharactersRAGDB`` singleton -- thread-local
+        connections are exactly what makes that safe from a worker thread
+        (see ``_backfill_subscription_items_fts`` for the incident that
+        taught this). Unlike that worker, no ``close()`` here: pooled threads
+        serve ChaChaNotes work constantly, and the thread-local connection
+        this run opens is the same one later hops on this thread reuse.
+
+        On an up-to-date database the loop's first chunk finds nothing and
+        the whole call is one indexed scan -- cheap, and it doubles as
+        self-healing for any run interrupted before completion.
+        """
+        from tldw_chatbook.DB.chachanotes_fts_backfill import (
+            ChaChaNotesFTSBackfillError,
+            backfill_chachanotes_messages_fts,
+        )
+
+        try:
+            db = get_chachanotes_db_lazy()
+            if db is None:
+                logger.debug(
+                    "ChaChaNotes messages FTS backfill skipped: no database instance."
+                )
+                return
+            backfill_chachanotes_messages_fts(db)
+        except ChaChaNotesFTSBackfillError as exc:
+            logger.opt(exception=True).error(
+                "ChaChaNotes messages FTS backfill failed after indexing {} "
+                "row(s) this run; older messages may be missing from search "
+                "until the next app start resumes it.",
+                exc.rows_indexed,
+            )
+        except Exception:
+            logger.opt(exception=True).error(
+                "ChaChaNotes messages FTS backfill failed; older messages may "
+                "be missing from search until the next app start resumes it."
+            )
+
     def _wire_server_parity_state_repositories(self) -> None:
         try:
             self.server_parity_state = build_server_parity_state_repositories(
@@ -10611,6 +10657,17 @@ class TldwCli(
             thread=True,
             exclusive=True,
             group="subscriptions-fts-backfill",
+        )
+
+        # task-21100: reinsert the messages the v45->v46 FTS reset no longer
+        # indexes inline, so an upgraded profile's chat history becomes fully
+        # searchable again without ever blocking boot on the index rewrite.
+        # thread=True for the same reason as the subscriptions backfill above.
+        self.run_worker(
+            self._backfill_chachanotes_messages_fts,
+            thread=True,
+            exclusive=True,
+            group="chachanotes-fts-backfill",
         )
 
     def _init_model_catalog_disk_store(self) -> "ModelCatalogDiskStore | None":
@@ -13641,6 +13698,15 @@ if __name__ == "__main__":
     # now share one bounded, graceful mechanism.
     install_termination_handlers()
 
+    # task-21100: pending ChaChaNotes migrations replay inside TldwCli's
+    # constructor, before anything can paint -- the terminal is the only
+    # surface that exists at this phase, so say what the pause is there.
+    from tldw_chatbook.Utils.db_upgrade_notice import (
+        print_db_upgrade_notice_if_pending,
+    )
+
+    print_db_upgrade_notice_if_pending()
+
     # Create instance with early logging flag
     app_instance = TldwCli()
     app_instance._cli_focus_override = bool(_main_args.focus)
@@ -13848,6 +13914,13 @@ def main_cli_runner():
     from .Utils.terminal_utils import warm_up_image_protocol
 
     warm_up_image_protocol()
+
+    # task-21100: pending ChaChaNotes migrations replay inside TldwCli's
+    # constructor, before anything can paint -- the terminal is the only
+    # surface that exists at this phase, so say what the pause is there.
+    from .Utils.db_upgrade_notice import print_db_upgrade_notice_if_pending
+
+    print_db_upgrade_notice_if_pending()
 
     # Create instance with early logging flag
     app_instance = TldwCli()

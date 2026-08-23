@@ -594,11 +594,12 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # proof retained through shared live-store use. C49 is the external
         # Watchlists agent's non-mutating view of existing subscription data.
         # C50 is the device-private Notes import receipt and future lasting-sync
-        # state owner. (task-15481 retired
+        # state owner. C51 is the pre-boot "upgrading database..." notice's
+        # read-only schema-version probe (task-21100). (task-15481 retired
         # the dead db.search_history owner, formerly C16; every id from C16
         # on is one lower than it would otherwise be.)
         f"C{number:02d}"
-        for number in range(1, 51)
+        for number in range(1, 52)
     ]
     assert [row["id"] for row in backup_rows] == [
         f"B{number:02d}" for number in range(1, 18)
@@ -928,7 +929,10 @@ def test_every_connection_and_backup_row_links_to_a_matching_policy() -> None:
 
 
 def test_notes_sync_state_inventory_row_is_exact_and_backup_excluded() -> None:
-    row = _inventory_rows("C")[-1]
+    # Selected by id, not by position: this row was the newest when the test
+    # was written, but the inventory keeps growing (C51, task-21100) and the
+    # subject here is C50's exact content, not its place in the table.
+    row = next(r for r in _inventory_rows("C") if r["id"] == "C50")
 
     assert row == {
         "id": "C50",

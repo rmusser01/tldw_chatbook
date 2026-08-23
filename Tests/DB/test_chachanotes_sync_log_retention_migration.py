@@ -14,13 +14,18 @@ It also repairs the three FTS `*_au` triggers whose DELETE half was unguarded
 behavioural coverage for that lives in
 `Tests/DB/test_fts_soft_delete_index_witness.py`.
 
-This module carries the repo's EXACT current-schema-version pin. It reached
-here by two hops -- from `test_chachanotes_sync_conflict_preservation_migration
-.py` (v44) to `Tests/ChaChaNotesDB/test_actor_pack_migration.py` (v45) to here
-(v46) -- because the pin belongs to the NEWEST migration's own file, so a
-schema bump touches the file that caused it rather than an unrelated older one
-(older files assert `>= their own version` instead). Updating the number here
-is a deliberate schema-review act.
+This module CARRIED the repo's EXACT current-schema-version pin while v46 was
+the newest step; the pin moved on to
+`Tests/DB/test_chachanotes_v47_messages_fts_backfill.py` when task-21100 added
+v47, because the pin belongs to the NEWEST migration's own file, so a schema
+bump touches the file that caused it rather than an unrelated older one. This
+file now asserts `>= 46`, like every older migration file.
+
+task-21100 also changed this step's FTS DELIVERY: the `messages_fts`
+`'delete-all'` still happens here (with the tombstone-exclusion guarantee
+`test_upgrading_reindexes_only_live_rows_into_messages_fts` pins), but the
+reinsert now runs as a chunked background backfill after the version bump
+commits, not inside it. The sync_log retention semantics are untouched.
 
 This step was authored as v44->v45 and renumbered to v45->v46 when TASK-19057
 (portable Actor Pack identity) merged to dev claiming v45 first. The seeds
@@ -38,6 +43,9 @@ from pathlib import Path
 import pytest
 
 from Tests.ChaChaNotesDB.historical_bootstrap import chachanotes_db_at_version
+from tldw_chatbook.DB.chachanotes_fts_backfill import (
+    backfill_chachanotes_messages_fts,
+)
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, SchemaError
 
 SCHEMA_NAME = CharactersRAGDB._SCHEMA_NAME
@@ -90,10 +98,10 @@ def db(tmp_path: Path):
     instance.close_connection()
 
 
-def test_schema_version_is_46(db):
-    """The one exact current-version pin (see this module's docstring)."""
-    assert _version(db.get_connection()) == 46
-    assert CharactersRAGDB._CURRENT_SCHEMA_VERSION == 46
+def test_schema_version_is_at_least_46(db):
+    """The exact pin moved with the newest step (see this module's docstring)."""
+    assert _version(db.get_connection()) >= 46
+    assert CharactersRAGDB._CURRENT_SCHEMA_VERSION >= 46
 
 
 def test_fresh_schema_has_every_retention_trigger(db):
@@ -370,6 +378,13 @@ def test_upgrading_reindexes_only_live_rows_into_messages_fts(tmp_path: Path):
     every soft-deleted message back into the index and reintroduce exactly the
     leak the guard exists to prevent. The migration uses `'delete-all'` plus an
     explicit filtered reinsert instead; this is the assertion that says so.
+
+    task-21100 changed WHEN the reinsert happens, not WHAT it reinserts: the
+    migration transaction now only clears the index (asserted below -- an
+    empty index right after construction is the deliberate window semantics,
+    not a defect), and the chunked background backfill performs the filtered
+    reinsert. The guarantee under test -- tombstoned content never returns to
+    the index -- must hold at the END state the app actually reaches.
     """
     db_path = tmp_path / "chachanotes.db"
     needle = "zqxupgradeneedle"
@@ -395,16 +410,24 @@ def test_upgrading_reindexes_only_live_rows_into_messages_fts(tmp_path: Path):
 
     migrated = CharactersRAGDB(db_path, client_id="v46-upgrade")
     try:
-        rowids = [
-            row[0]
-            for row in migrated.execute_query(
-                "SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?",
-                (needle,),
-            ).fetchall()
-        ]
+        def fts_rowids() -> list[int]:
+            return [
+                row[0]
+                for row in migrated.execute_query(
+                    "SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?",
+                    (needle,),
+                ).fetchall()
+            ]
+
+        # The version-bump transaction cleared the index and deferred the
+        # reinsert (task-21100): consistent, empty, no error.
+        assert fts_rowids() == []
+
+        backfill_chachanotes_messages_fts(migrated)
+
         live_rowid = migrated.execute_query(
             "SELECT rowid FROM messages WHERE id = ?", (live_id,)
         ).fetchone()[0]
-        assert rowids == [live_rowid]
+        assert fts_rowids() == [live_rowid]
     finally:
         migrated.close_connection()
