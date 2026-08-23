@@ -1456,13 +1456,18 @@ async def test_successful_mutations_use_safe_local_fallback_when_receipts_fail()
     )
     await controller.refresh_conflict_receipts("root-1")
     await controller.show_resolution_history("root-1")
+    history_before_dismiss = controller.snapshot.history
     runtime.active_conflict_receipts = receipt_failure
     statuses.clear()
     await controller.dismiss_conflict_receipt("root-1", "operation-1")
     assert controller.snapshot.receipts == ()
     assert controller.snapshot.receipts_unavailable is True
-    assert controller.snapshot.history.rows[0].undo_available is False
+    assert controller.snapshot.history == history_before_dismiss
+    assert controller.snapshot.history.rows[0].undo_available is True
     assert statuses == [controller.snapshot.status_line]
+
+    await controller.show_resolution_history("root-1")
+    assert controller.snapshot.history.rows[0].undo_available is True
 
     runtime.receipts = (_receipt("operation-1", "Note"),)
 
@@ -1539,6 +1544,32 @@ async def test_invalid_stage_and_comparison_publish_bounded_status_once() -> Non
     await controller.show_conflict_comparison("bind-1")
     assert len(statuses) == 1
     assert "unavailable" in statuses[0].casefold()
+
+
+@pytest.mark.parametrize("malformed", [object(), {"binding_id": "bind-1"}])
+async def test_malformed_comparison_result_publishes_bounded_status_once(
+    malformed: object,
+) -> None:
+    runtime = _Runtime()
+    runtime.check_plan = _conflict_plan()
+    statuses: list[str] = []
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+        publish_snapshot=lambda snapshot: statuses.append(snapshot.status_line),
+    )
+    await controller.check_root("root-1")
+
+    async def malformed_comparison(root_id: str, token: str, binding_id: str) -> object:
+        return malformed
+
+    runtime.compare_conflict = malformed_comparison
+    statuses.clear()
+    await controller.show_conflict_comparison("bind-1")
+
+    assert statuses == [controller.snapshot.status_line]
+    assert "comparison unavailable" in controller.snapshot.status_line.casefold()
+    assert controller.snapshot.comparison is None
 
 
 async def test_new_check_supersedes_pending_activate_and_control_publication() -> None:

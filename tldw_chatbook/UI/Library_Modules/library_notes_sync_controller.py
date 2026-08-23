@@ -926,7 +926,10 @@ class LibraryNotesSyncController:
             epoch, generation, root_id, token, binding_id
         ):
             return
-        if comparison.binding_id != binding_id:
+        if (
+            type(comparison) is not ConflictComparison
+            or comparison.binding_id != binding_id
+        ):
             self._clear_comparison()
             self._state = replace(
                 self._state,
@@ -1072,7 +1075,6 @@ class LibraryNotesSyncController:
             self._state,
             receipts=receipts,
             receipts_unavailable=unavailable,
-            history=self._disable_local_history_action(operation_id, undone=False),
             status_line=(
                 "Receipt dismissed."
                 if not unavailable
