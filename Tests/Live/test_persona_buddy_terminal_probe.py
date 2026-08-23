@@ -157,6 +157,35 @@ def test_probe_persists_four_exact_visual_state_captures(tmp_path: Path) -> None
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX PTY capability required")
+def test_probe_waits_for_clamped_sample_when_icons_arrive_first(tmp_path: Path) -> None:
+    probe = Path(__file__).with_name("persona_buddy_terminal_probe.py")
+    report = tmp_path / "report.json"
+    captures = tmp_path / "captures"
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(probe),
+            "--inject-delayed-viewport-clamp",
+            "--report",
+            str(report),
+            "--capture-dir",
+            str(captures),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    payload = json.loads(report.read_text(encoding="utf-8"))
+    assert payload["checks"]["viewport_clamp"] is True
+    assert payload["checks"]["constrained_two_icons"] is True
+    assert payload["first"]["observed"]["viewport_clamp"] is True
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX PTY capability required")
 def test_success_requires_a_caller_owned_capture_directory(tmp_path: Path) -> None:
     probe = Path(__file__).with_name("persona_buddy_terminal_probe.py")
 
@@ -378,6 +407,88 @@ def test_output_preflight_never_removes_an_unrelated_collision(tmp_path: Path) -
     assert capture_collision.read_bytes() == b"caller-owned capture collision"
 
 
+def test_constrained_wait_rejects_transient_unclamped_report() -> None:
+    probe_path = Path(__file__).with_name("persona_buddy_terminal_probe.py")
+    tree = ast.parse(probe_path.read_text(encoding="utf-8"))
+    constrained_wait = next(
+        node.value.args[0]
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "compact_minimal"
+            for target in node.targets
+        )
+        and isinstance(node.value, ast.Call)
+        and node.value.args
+        and isinstance(node.value.args[0], ast.Lambda)
+    )
+    predicate = eval(
+        compile(
+            ast.fix_missing_locations(ast.Expression(constrained_wait)),
+            str(probe_path),
+            "eval",
+        )
+    )
+    delayed_reports = (
+        {
+            "viewport": {"width": 10, "height": 2},
+            "constrained_two_icons": True,
+            "viewport_clamped": False,
+            "sample": "transient",
+        },
+        {
+            "viewport": {"width": 10, "height": 2},
+            "constrained_two_icons": True,
+            "viewport_clamped": True,
+            "sample": "settled",
+        },
+    )
+
+    accepted = next(payload for payload in delayed_reports if predicate(payload))
+
+    assert accepted is delayed_reports[1]
+    assert accepted["viewport_clamped"] is True
+
+
+def test_structured_failure_never_replaces_predictable_sibling_collisions(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    probe = _load_probe_module()
+    monkeypatch.setattr(probe.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(probe.time, "monotonic_ns", lambda: 123456789)
+    report_output = tmp_path / "reportdir"
+    report_output.mkdir()
+    report_collision = tmp_path / (f".reportdir.{os.getpid()}.123456789.failure.json")
+    diagnostic_collision = report_collision.with_name(
+        f"{report_collision.stem}.diagnostic.log"
+    )
+    report_collision.write_bytes(b"caller-owned report sentinel")
+    diagnostic_collision.write_bytes(b"caller-owned diagnostic sentinel")
+    failure = probe._ProbeChildFailure(
+        category="persona_buddy_terminal_output_admission",
+        phase="parent:admission",
+        child_return_code=0,
+        diagnostic_tail="persona_buddy_terminal_output_admission",
+    )
+
+    result, diagnostic_path, actual_report = probe._persist_structured_failure(
+        failure,
+        report_output=report_output,
+        root=tmp_path / "repo",
+        temporary=None,
+    )
+
+    assert report_collision.read_bytes() == b"caller-owned report sentinel"
+    assert diagnostic_collision.read_bytes() == b"caller-owned diagnostic sentinel"
+    assert actual_report not in {report_collision, diagnostic_collision}
+    assert diagnostic_path not in {report_collision, diagnostic_collision}
+    assert actual_report.parent == tmp_path
+    assert diagnostic_path.parent == tmp_path
+    assert json.loads(actual_report.read_text(encoding="utf-8")) == result
+    assert diagnostic_path.read_text(encoding="utf-8") == result["diagnostic_tail"]
+
+
 def test_last_resort_diagnostic_reserves_random_owned_destination(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -453,7 +564,7 @@ def test_last_resort_report_reserves_random_owned_destination_and_cleans_failure
         temporary=None,
     )
 
-    assert len(report_attempts) == 2
+    assert report_attempts == [tmp_path / "failure.json"]
     assert old_fallback.read_bytes() == b"caller-owned report sentinel"
     assert actual_report != old_fallback
     assert actual_report.parent == tmp_path
@@ -609,7 +720,7 @@ def test_capture_directory_regular_file_fails_structured_before_child(
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX PTY capability required")
-def test_report_directory_fails_to_safe_sibling_before_child_and_rolls_back(
+def test_report_directory_fails_to_exclusive_fallback_before_child_and_rolls_back(
     tmp_path: Path,
 ) -> None:
     probe = Path(__file__).with_name("persona_buddy_terminal_probe.py")
@@ -639,9 +750,14 @@ def test_report_directory_fails_to_safe_sibling_before_child_and_rolls_back(
     )
 
     assert completed.returncode == 1
-    failure_reports = list(tmp_path.glob(".reportdir.*.failure.json"))
-    assert len(failure_reports) == 1
-    failure_report = failure_reports[0]
+    surfaced = next(
+        line
+        for line in completed.stderr.splitlines()
+        if " report=" in line and " artifact=" in line
+    )
+    report_and_artifact = surfaced.partition(" report=")[2]
+    failure_report = Path(report_and_artifact.partition(" artifact=")[0])
+    diagnostic_path = Path(report_and_artifact.partition(" artifact=")[2])
     payload = json.loads(failure_report.read_text(encoding="utf-8"))
     assert payload["status"] == "FAIL"
     assert payload["category"] == "persona_buddy_terminal_output_admission"
@@ -653,6 +769,8 @@ def test_report_directory_fails_to_safe_sibling_before_child_and_rolls_back(
     assert "Traceback" not in completed.stderr
     assert str(failure_report) in completed.stderr
     assert not list(tmp_path.glob(".reportdir.*.tmp"))
+    failure_report.unlink()
+    diagnostic_path.unlink()
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX PTY capability required")

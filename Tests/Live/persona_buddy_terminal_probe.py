@@ -905,6 +905,7 @@ def _run_child(
     capture_dir: Path | None = None,
     inject_child_failure: bool = False,
     inject_startup_noise: bool = False,
+    inject_delayed_viewport_clamp: bool = False,
 ) -> dict[str, Any]:
     if pty is None:  # pragma: no cover - parent skips this path on Windows
         raise RuntimeError("persona_buddy_terminal_posix_pty_unavailable")
@@ -944,6 +945,7 @@ def _run_child(
     os.close(slave)
     current_phase = f"{phase}:startup"
     terminal_output = bytearray()
+    delayed_viewport_clamp_pending = inject_delayed_viewport_clamp
 
     def drain(duration: float = 0.02) -> bytes:
         chunk = _drain_for(master, duration)
@@ -981,11 +983,20 @@ def _run_child(
             raise RuntimeError(f"persona_buddy_terminal_initial_report_missing\n{tail}")
 
         def wait_for_report(predicate: Any, *, timeout: float = 2.0) -> dict[str, Any]:
+            nonlocal delayed_viewport_clamp_pending
             deadline = time.monotonic() + timeout
             captured = bytearray()
             payload = json.loads(report.read_text(encoding="utf-8"))
             while time.monotonic() < deadline and process.poll() is None:
                 payload = json.loads(report.read_text(encoding="utf-8"))
+                if (
+                    delayed_viewport_clamp_pending
+                    and payload.get("viewport") == {"width": 10, "height": 2}
+                    and payload.get("constrained_two_icons")
+                    and payload.get("viewport_clamped")
+                ):
+                    payload = {**payload, "viewport_clamped": False}
+                    delayed_viewport_clamp_pending = False
                 if predicate(payload):
                     return payload
                 chunk = drain()
@@ -1245,6 +1256,7 @@ def _run_child(
                 lambda payload: (
                     payload["viewport"] == {"width": 10, "height": 2}
                     and payload["constrained_two_icons"]
+                    and payload["viewport_clamped"]
                 )
             )
             observed["viewport_clamp"] = compact_minimal["viewport_clamped"]
@@ -1395,16 +1407,6 @@ def _admit_outputs(report_output: Path | None, capture_output: Path | None) -> N
         _preflight_atomic_directory(report_output.parent, report_output.name)
 
 
-def _failure_sibling(report_output: Path | None) -> Path:
-    if report_output is not None:
-        return report_output.with_name(
-            f".{report_output.name}.{os.getpid()}.{time.monotonic_ns()}.failure.json"
-        )
-    return Path(tempfile.gettempdir()) / (
-        f"persona-buddy-terminal-{os.getpid()}.{time.monotonic_ns()}.failure.json"
-    )
-
-
 def _persist_structured_failure(
     failure: _ProbeChildFailure,
     *,
@@ -1418,19 +1420,27 @@ def _persist_structured_failure(
     if temporary is not None:
         diagnostic = diagnostic.replace(temporary, "<TEMP_ROOT>")
     diagnostic = _bounded_utf8_tail(diagnostic)
-    preferred_report = report_output
-    if preferred_report is None or preferred_report.is_dir():
-        preferred_report = _failure_sibling(report_output)
-    diagnostic_path = preferred_report.with_name(
-        f"{preferred_report.stem}.diagnostic.log"
-    ).resolve()
-    try:
-        _atomic_write_text(diagnostic_path, diagnostic)
-    except OSError:
+    preferred_report = (
+        report_output
+        if report_output is not None and not report_output.is_dir()
+        else None
+    )
+    if preferred_report is None:
         diagnostic_path = _write_exclusive_fallback_text(
             diagnostic,
             suffix=".diagnostic.log",
         )
+    else:
+        diagnostic_path = preferred_report.with_name(
+            f"{preferred_report.stem}.diagnostic.log"
+        ).resolve()
+        try:
+            _atomic_write_text(diagnostic_path, diagnostic)
+        except OSError:
+            diagnostic_path = _write_exclusive_fallback_text(
+                diagnostic,
+                suffix=".diagnostic.log",
+            )
     supplied_checks = failure.checks or {}
     checks = {name: bool(supplied_checks.get(name, False)) for name in _CHECK_NAMES}
     result = {
@@ -1453,19 +1463,20 @@ def _persist_structured_failure(
             for name in _CHECK_NAMES
         },
     }
-    actual_report = preferred_report
-    try:
-        _atomic_write_json(preferred_report, result)
-    except OSError:
-        fallback_report = _failure_sibling(report_output)
+    if preferred_report is None:
+        actual_report = _write_exclusive_fallback_text(
+            json.dumps(result, sort_keys=True),
+            suffix=".failure.json",
+        )
+    else:
         try:
-            _atomic_write_json(fallback_report, result)
+            _atomic_write_json(preferred_report, result)
+            actual_report = preferred_report
         except OSError:
-            fallback_report = _write_exclusive_fallback_text(
+            actual_report = _write_exclusive_fallback_text(
                 json.dumps(result, sort_keys=True),
                 suffix=".failure.json",
             )
-        actual_report = fallback_report
     return result, diagnostic_path, actual_report
 
 
@@ -1478,6 +1489,7 @@ def _parent(
     inject_report_publication_failure: bool = False,
     inject_startup_noise: bool = False,
     inject_check_failure: bool = False,
+    inject_delayed_viewport_clamp: bool = False,
 ) -> int:
     if os.name == "nt":
         print("SKIP persona_buddy_terminal windows_no_posix_pty")
@@ -1506,6 +1518,7 @@ def _parent(
                 capture_dir=staged_captures,
                 inject_child_failure=inject_child_failure,
                 inject_startup_noise=inject_startup_noise,
+                inject_delayed_viewport_clamp=inject_delayed_viewport_clamp,
             )
             restored = json.loads(preferences.read_text(encoding="utf-8"))
             restored["open"] = True
@@ -1654,6 +1667,11 @@ def main() -> int:
     parser.add_argument(
         "--inject-check-failure", action="store_true", help=argparse.SUPPRESS
     )
+    parser.add_argument(
+        "--inject-delayed-viewport-clamp",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
     arguments = parser.parse_args()
     if arguments.child:
         if arguments.preferences is None or arguments.report is None:
@@ -1684,6 +1702,7 @@ def main() -> int:
             ),
             inject_startup_noise=arguments.inject_startup_noise,
             inject_check_failure=arguments.inject_check_failure,
+            inject_delayed_viewport_clamp=(arguments.inject_delayed_viewport_clamp),
         )
     except RuntimeError as error:
         print(str(error), file=sys.stderr)
