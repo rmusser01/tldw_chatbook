@@ -10835,10 +10835,6 @@ class TldwCli(
             group="scheduling",
         )
 
-        # ADR-020: setup owns startup networking until it completes, so a
-        # stale configured cloud provider cannot be contacted behind it.
-        self._schedule_startup_model_catalog_refresh()
-
         # task-688: index subscription_items rows scraped before the FTS5
         # index existed, so search covers a user's whole back catalogue
         # without any action on their part. thread=True because this does
@@ -11549,6 +11545,10 @@ class TldwCli(
                 "Config load failure warning failed (error_type=%s)",
                 type(e).__name__,
             )
+
+        # Schedule after splash, initial screen, and startup offers; ADR-020
+        # still keeps setup as the owner of startup networking until completion.
+        self._schedule_startup_model_catalog_refresh()
 
     async def _run_no_splash_post_mount_setup(self) -> None:
         """Run screen startup and post-mount setup when the splash screen is disabled."""
