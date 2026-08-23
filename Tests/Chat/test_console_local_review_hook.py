@@ -12,7 +12,10 @@ import pytest
 
 import tldw_chatbook.Chat.console_chat_controller as controller_mod
 from tldw_chatbook.Agents.agent_models import ToolCall
-from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+from tldw_chatbook.Agents.local_tool_provider import (
+    LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
+    LocalToolProvider,
+)
 from tldw_chatbook.Agents.run_context import use_run_id
 from tldw_chatbook.Chat.console_chat_controller import (
     ConsoleChatController,
@@ -425,7 +428,7 @@ def test_default_chat_local_provider_rejects_after_scratch_close(tmp_path):
     result = provider.invoke("local:fs_list", {"path": "."})
 
     assert result.ok is False
-    assert "root changed" in result.error.lower()
+    assert result.error == LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL
     assert scratch_spaces.wait_for_cleanup(timeout_seconds=2.0)
 
 

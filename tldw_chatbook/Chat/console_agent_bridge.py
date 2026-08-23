@@ -84,6 +84,7 @@ from tldw_chatbook.Agents.native_tools import provider_supports_native_tools
 from tldw_chatbook.Agents.agent_stream import StreamGate
 from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator, FleetHandle
 from tldw_chatbook.Agents.local_tool_provider import (
+    LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
     LOCAL_DENY_REFUSAL,
     LOCAL_GATE_ERROR_REFUSAL,
     LOCAL_KILL_SWITCH_REFUSAL,
@@ -1141,6 +1142,7 @@ _BLOCKED_PROVIDER_REFUSALS = frozenset(
         LOCAL_KILL_SWITCH_REFUSAL,
         LOCAL_GATE_ERROR_REFUSAL,
         LOCAL_ROOT_CHANGED_REFUSAL,
+        LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
         MCP_DENY_REFUSAL,
         MCP_USER_DENY_REFUSAL,
         MCP_UNRESOLVED_REFUSAL,

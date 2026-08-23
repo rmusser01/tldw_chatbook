@@ -15,6 +15,7 @@ from tldw_chatbook.Agents.agent_models import (
     ToolResult,
 )
 from tldw_chatbook.Agents.local_tool_provider import (
+    LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
     LOCAL_DENY_REFUSAL,
     LOCAL_GATE_ERROR_REFUSAL,
     LOCAL_KILL_SWITCH_REFUSAL,
@@ -258,6 +259,7 @@ def test_direct_controller_review_results_are_blocked(verdict: str) -> None:
         LOCAL_KILL_SWITCH_REFUSAL,
         LOCAL_GATE_ERROR_REFUSAL,
         LOCAL_ROOT_CHANGED_REFUSAL,
+        LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
         MCP_DENY_REFUSAL,
         MCP_USER_DENY_REFUSAL,
         MCP_UNRESOLVED_REFUSAL,
