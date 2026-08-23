@@ -12,7 +12,9 @@ from loguru import logger
 from .config import RAGConfig
 from .enhanced_rag_service_v2 import EnhancedRAGServiceV2
 from .collection_indexes import maybe_adopt_legacy_collection
-from ..config_profiles import get_profile_manager
+# task-21160: config_profiles imported at use-site -- the module-level import
+# was one edge of the config_profiles<->simplified circular-import cycle
+# (see enhanced_rag_service_v2.py for the full account).
 
 
 def create_rag_service(
@@ -32,6 +34,8 @@ def create_rag_service(
     logger.info(f"Creating RAG service with profile: {profile_name}")
 
     # Get profile manager
+    from ..config_profiles import get_profile_manager
+
     profile_manager = get_profile_manager()
     profile = profile_manager.get_profile(profile_name)
 
@@ -150,4 +154,6 @@ def create_rag_service_from_config(
 # Compatibility aliases
 create_auto_rag_service = create_rag_service_from_config
 def get_available_profiles():
+    from ..config_profiles import get_profile_manager
+
     return get_profile_manager().list_profiles()

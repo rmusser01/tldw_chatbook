@@ -17,7 +17,14 @@ from loguru import logger
 
 from tldw_chatbook.config import get_cli_setting, save_setting_to_cli_config
 from .config import RAGConfig, _normalized_type_setting, validate_chroma_persist_directory
-from ..config_profiles import get_profile_manager, ProfileConfig, _slugify
+# task-21160: config_profiles imported at use-sites (and TYPE_CHECKING for the
+# annotation) -- the module-level import was one edge of the
+# config_profiles<->simplified circular-import cycle (see
+# enhanced_rag_service_v2.py for the full account).
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..config_profiles import ProfileConfig
 from ..ingestion_indexing import reset_shared_rag_service
 from ..reranker import RerankingConfig
 
@@ -38,6 +45,8 @@ _LEGACY_PROCESSOR_KEYS = ("enable_reranking", "reranker_model", "reranker_top_k"
 
 
 def _manager():
+    from ..config_profiles import get_profile_manager
+
     return get_profile_manager()
 
 
@@ -321,6 +330,8 @@ def set_active_profile(profile_id: str) -> None:
             safe slug (e.g. empty, ``None``, or containing path-traversal /
             non-slug characters like ``"../x"``).
     """
+    from ..config_profiles import _slugify
+
     if not isinstance(profile_id, str) or not profile_id or profile_id != _slugify(profile_id):
         raise ValueError(
             f"set_active_profile: invalid profile_id {profile_id!r}; must be a "
@@ -585,6 +596,8 @@ def ensure_imported_profile() -> Optional[str]:
         # query-time legacy keys instead of silently discarding them --
         # never affects the fingerprint (see _LEGACY_SEARCH_KEYS docstring).
         legacy = _merge_legacy_query_time_keys(snapshot)
+        from ..config_profiles import ProfileConfig
+
         profile = ProfileConfig(id=_IMPORTED_ID, name="Imported settings",
                                 description="Snapshot of your active RAG profile (plus any RAG_* env "
                                             "overrides) captured on first run; edit freely.",
