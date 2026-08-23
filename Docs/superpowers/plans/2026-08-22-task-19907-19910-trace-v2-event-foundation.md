@@ -186,15 +186,15 @@ Run: `.venv/bin/pytest -q Tests/Chat/test_trace_capture_matrix.py Tests/Agents/t
 - Test: `Tests/Agents/test_trace_agent_lineage.py`
 - Test: `Tests/Chat/test_trace_event_projection.py`
 
-- [ ] **Step 1: Write failing parallel-lineage tests**
+- [x] **Step 1: Write failing parallel-lineage tests**
 
 Cover reserve/spawn/start, precise spawn-event correlation, attach durable run ID,
 steering/handoff, finish, error,
 cancel, supersede, resume, and primary completion with two parallel children.
 
-- [ ] **Step 2: Confirm failure.**
+- [x] **Step 2: Confirm failure.**
 
-- [ ] **Step 3: Project existing durable lineage first**
+- [x] **Step 3: Project existing durable lineage first**
 
 Add nullable `spawn_event_id` to AgentRunsDB v14 and `create_run`. Allocate the parent
 spawn step/event ID before dispatch and store it on every inline/fleet child run.
@@ -202,16 +202,16 @@ Continue using `parent_run_id`, `resumed_from_run_id`, status, and append-only s
 Emit new fleet events only for transitions not recoverable from those owners; handles
 remain process-local implementation identities.
 
-- [ ] **Step 4: Add parent/source event links and safe task summaries**
+- [x] **Step 4: Add parent/source event links and safe task summaries**
 
 Child `parent_event_id` points to the spawning step; continuation `source_event_id`
 points to the prior terminal run. Parallel children retain per-run sequence and visible
 concurrency.
 
-- [ ] **Step 5: Verify**
+- [x] **Step 5: Verify**
 
 Run: `.venv/bin/pytest -q Tests/Agents/test_trace_agent_lineage.py Tests/Agents/test_fleet_runtime.py Tests/Agents/test_fleet_continuation.py Tests/Chat/test_trace_event_projection.py`
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 `git commit -m "feat(trace): expose durable agent lineage"`
