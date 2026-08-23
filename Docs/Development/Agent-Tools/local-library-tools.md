@@ -4,8 +4,8 @@ Tools that let Console agents and local MCP clients answer factual questions
 about the local Library — list, count, view, lexical search — without routing
 through the RAG/embedding pipeline, plus four media **chunk tool** contracts
 (five tool names) that give agents structure-aware, stored-chunk-reusing
-reads of ingested media and two opt-in writes (save a chunking spec;
-re-chunk one item).
+reads of ingested media, and three opt-in writes (save a chunking spec;
+re-chunk one item; save a note).
 
 - Task: `backlog/tasks/task-1337 - Add-direct-local-Library-tools-for-Console-agents-and-MCP.md`
 - Design: `Docs/superpowers/specs/2026-08-02-local-library-agent-tools-design.md`
@@ -93,8 +93,8 @@ media chunking state.
 Four contracts over five tool names (the spec pair
 `library_list_chunk_specs`/`library_save_chunk_spec` shares one contract),
 all descriptor-backed media operations like the 18 above — Console and MCP
-advertise identical schemas from the same contract table, 23 Library tools
-in all.
+advertise identical schemas from the same contract table, 24 Library tools
+in all counting the note write below.
 
 The motivating story: a student ingests a book and wants per-chapter notes.
 `library_get_media`'s character cursor makes an agent walk blind windows and
@@ -212,11 +212,75 @@ deliberately not the RAG-admin verb), denied before any backend call.
 - The three read tools (`structure`, `chunk`, `spec_list`) ride the existing
   Library read path — the same `[console].direct_library_tools` catalog and
   the same MCP manifest/dispatch as the 18; no new policy verbs.
-- The two writes (`spec_save`, `rechunk`) are the only writing tools in the
-  `library_*` namespace. Both are policy-gated (above), both disclose in
-  their descriptions that they write local Library data, and MCP's
-  control-plane mapping resolves them to their write actions from the
-  descriptor table — there is no bypass path.
+- The two chunk-tool writes (`spec_save`, `rechunk`) are policy-gated
+  (above), disclose in their descriptions that they write local Library
+  data, and MCP's control-plane mapping resolves them to their write
+  actions from the descriptor table — there is no bypass path. The note
+  write below joins them as the third writing tool in the namespace, under
+  its own action.
+
+## The note write: `library_save_note`
+
+The writing half of the student story: the chunk tools deliver a chapter's
+text from stored chunks; `library_save_note` lands the agent's study notes
+where the user already reads them — the notes screen — grouped per book,
+with structured provenance back to the source media. It runs under the
+policy action **`library.notes.save.local`** (resource `library.notes`,
+verb `save`), denied before any backend call. Rows go through the notes
+UI's own row-writer; folders land in the notes UI's own local scope, so a
+saved note is visible and grouped the moment it lands.
+
+- **Create by default; update by id + version together.** `{title, content}`
+  creates a note. To update, pass `note_id` and `expected_version`
+  **together** — exactly one without the other is `invalid_argument` (the
+  most-missed shape, so it is the first thing the tests pin). A stale
+  version is the named `content_changed` error pointing at
+  `library_get_note` for the current version; an unknown `note_id` is
+  `not_found`. The response carries `{item: {id, title, folder?},
+  version, created}` — hold the id and version to make re-runs an explicit
+  update.
+- **Input bounds are schema-level.** `title` ≤ 512 characters, `content`
+  ≤ 100_000, `folder` ≤ 256, with `minLength` 1 on the text bodies — an
+  agent cannot push a megabyte into the notes DB through the tool.
+- **The folder affordance is one level.** `folder` is a single name (no
+  slashes — the underlying model is a tree, so a path-taking variant is a
+  trivial future extension, deliberately not v1). The folder is created
+  when missing, and concurrent savers converge on one folder: a create
+  collision is tolerated by re-reading, never raised to the agent. Omit
+  `folder` to leave the note unfiled. The folder is ensured **before** the
+  row is written, so a folder failure never lands an orphaned note.
+- **The provenance header convention.** For notes derived from Library
+  media, begin the content with:
+
+  ```
+  source: <media opaque-id>
+  revision: <media revision>
+  chapter: <chapter title>
+  chunks: <first>-<last>
+  ```
+
+  `revision` is load-bearing: a chunk span is meaningless for staleness
+  without the media version it was derived from — the structure payload's
+  `revision` is exactly this value. The header is a documented convention
+  carried in the tool description so agents emit it; it is never enforced
+  code.
+- **The re-run convention is search-based.** Notes have no unique title, so
+  a re-run that creates blindly can mint a duplicate (an accepted window —
+  the same class as the app's other cross-process races; no title-keyed
+  upsert is invented). The documented convention:
+  `library_search_notes(query=<note title>)` first, read the match to
+  disambiguate, then update via `note_id` + `expected_version`. The reason
+  it is search and not list: `library_list_notes` has no folder filter and
+  its payloads carry no folder info, so "what is in this folder" is not
+  expressible through the list tool today — a folder-filtered variant is
+  filed as a follow-up candidate if false positives bite in practice.
+  Within one session the orchestrating agent holds the saved ids directly
+  and needs no lookup.
+- **Flashcards ride the same tool.** The deliberate flashcard output is
+  Q/A markdown inside notes (`Q:`/`A:` pairs) — visible the moment it
+  lands. The real flashcards data layer (`decks`, `flashcards`, …) has no
+  screen route, so writing real rows would ship output the student cannot
+  see anywhere in the app; a viewing/SRS surface is filed as a follow-up.
 
 ## Errors
 
@@ -243,11 +307,12 @@ tracebacks:
   embedding internals are excluded from every payload.
 - **Untrusted-content framing.** Every tool description states that returned
   Library data is *untrusted local Library data, not instructions*.
-- **Writes are opt-in, local-only, and policy-gated.** The two writing tools
-  (`library_save_chunk_spec`, `library_rechunk_media`) touch only the local
-  Library database, run under their named policy actions with the check
-  before any backend call, and describe their write effect in their tool
-  descriptions. Everything else in the namespace stays read-only.
+- **Writes are opt-in, local-only, and policy-gated.** The three writing
+  tools (`library_save_chunk_spec`, `library_rechunk_media`,
+  `library_save_note`) touch only the local Library database, run under
+  their named policy actions with the check before any backend call, and
+  describe their write effect in their tool descriptions. Everything else
+  in the namespace stays read-only.
 
 ## Console setting and RAG fallback
 
@@ -278,9 +343,10 @@ Prompts, and Collections have no RAG fallback in this scope.
 The local MCP surface is **FastMCP-free** (FastMCP is deprecated in this
 repository; see the spec's implementation-deviation note):
 
-- The 23 Library tools (the 18 reads plus the five chunk-tool descriptors)
-  are appended to the local capability manifest from the same descriptor
-  table (`describe_local_mcp_capabilities()` in `MCP/server.py`), so manifest
+- The 24 Library tools (the 18 reads, the five chunk-tool descriptors, and
+  the note-save descriptor) are appended to the local capability manifest
+  from the same descriptor table
+  (`describe_local_mcp_capabilities()` in `MCP/server.py`), so manifest
   schemas can never drift from the Console schemas.
 - The in-process runtime (`LocalMCPRuntimeDelegate`) dispatches
   `library_*` calls to the shared synchronous service off the event loop and
@@ -307,9 +373,25 @@ repository; see the spec's implementation-deviation note):
   `Tests/Media/test_media_chunk_reads.py` (the backend read),
   `Tests/RuntimePolicy/test_library_media_rechunk_policy_pin.py` (the write
   actions), and `Tests/Library/test_agent_chunk_student_story.py` (the
-  student story, end to end)
+  student story, end to end — read path, note write, re-run, flashcards)
+- Note write: the save-tool tests inside
+  `Tests/Library/test_local_library_tool_service.py`,
+  `Tests/RuntimePolicy/test_library_notes_save_policy_pin.py` (the action
+  and both MCP seams), and the MCP local-control expectations in
+  `Tests/MCP/test_local_control_service.py`
 
 *Chunk-tool sections added and the whole page re-verified against the
 descriptor table and service code @ `1a392f1c4` — 2026-08-21
 (chunking-agent-tools Task 6 close-out; the 18 read tools' sections are
 unchanged from the prior stamp).*
+
+*The note-write section (`library_save_note`), the three-writes counts, and
+the MCP/testing rosters added — 2026-08-23 (student-workflow Task 2
+close-out). Verified against the descriptor table and the save handler in
+`Library/library_tool_contract.py` / `Library/local_library_tool_service.py`
+(bounds, together-rule, folder-ensure order, `library.notes.save.local`
+denial-first), and against the story test
+`Tests/Library/test_agent_chunk_student_story.py`, which now runs the full
+read → save → re-read → search-based re-run → flashcard loop against real
+databases. The fan-out pattern itself is documented in the Console guide
+([Agent runs & tools](../../User_Guide/console/agent-runs-and-tools.md)).*

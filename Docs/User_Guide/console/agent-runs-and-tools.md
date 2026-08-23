@@ -1094,6 +1094,40 @@ contracts: [Local Library Tools](../../Development/Agent-Tools/local-library-too
 The tools ride the same `[console].direct_library_tools` setting as the
 other Library tools.
 
+### The study-notes fan-out pattern
+
+A sixth writing tool, `library_save_note`, closes the student story the
+chunk tools set up: *"make me per-chapter notes of this book"* (or
+flashcards per section) runs as a fan-out over the ordinary sub-agent
+machinery — no special orchestration:
+
+1. **Structure.** `library_get_media_structure(id)` returns the chapter map
+   with each chapter's chunk addresses.
+2. **Spawn per chapter.** For each chapter the agent spawns a sub-agent
+   (`spawn_subagent`, under the usual `[agents]` caps) with a narrow brief:
+   fetch the chapter's units by address (`library_get_media_chunk`), derive
+   the notes — or Q/A flashcard pairs — and save them with
+   `library_save_note`: one note titled per chapter, content starting with
+   the provenance header (`source`, `revision`, `chapter`, `chunks`), every
+   save naming the same one-level folder for the book (the folder is
+   created on first save; concurrent savers converge on one folder).
+3. **Fetch and save.** Each sub-agent reuses the chunks stored at
+   ingestion — nothing re-chunks behind anyone's back — and its note lands
+   in the notes screen, grouped in the book's folder, the moment it is
+   saved.
+4. **Re-run.** Asked again later (new chapters, a re-chunk), the convention
+   is search-first: `library_search_notes(query=<note title>)` finds the
+   existing note — the list tool has no folder filter — and the agent
+   updates it via `note_id` + `expected_version` instead of creating a
+   duplicate.
+
+Flashcards are Q/A markdown inside notes (`Q:`/`A:` pairs) — a deliberate
+ruling: the real flashcards data layer has no screen route yet, so notes
+are the one output a student can actually see. `library_save_note` is the
+third policy-gated writing tool in the `library_*` namespace
+(`library.notes.save`); full contract:
+[Local Library Tools](../../Development/Agent-Tools/local-library-tools.md).
+
 ### Watchlists evidence tools
 
 The same local-tools group provides `watchlists_search_items` and
@@ -1709,3 +1743,15 @@ test (`Tests/Library/test_agent_chunk_student_story.py`, which ingests a
 real fixture book through the real parse → persist → chunk-rows pipeline
 and reads Chapter 7 back from the stored chunks). The rest of this page
 is unchanged from the prior stamp.*
+
+*"The study-notes fan-out pattern" section added — 2026-08-23
+(student-workflow Task 2). Not driven live in tmux: the pattern rides
+machinery this page already documents (`spawn_subagent` and the `[agents]`
+caps, verified above in the sub-agent sections) plus the
+`library_save_note` contract, verified against the descriptor table, the
+save handler (`Library/local_library_tool_service.py`), the policy
+registration (`library.notes.save.local` in
+`runtime_policy/registry.py`), and the story test — which now runs the
+whole loop (structure → chunk fetches → provenance-headered save →
+re-read → search-based re-run update → Q/A flashcard note) against real
+databases. The rest of this page is unchanged from the prior stamp.*
