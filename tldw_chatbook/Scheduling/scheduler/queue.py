@@ -23,7 +23,16 @@ _SERVER_OWNER_PREFIX = "server:"
 
 
 def is_server_scoped_owner(owner_id: Any) -> bool:
-    """Return True when a row's owner marks it server-executed (ADR-077)."""
+    """Return True when a row's owner marks it server-executed (ADR-077).
+
+    Args:
+        owner_id: A reminder row's ``owner_id`` value (any type tolerated;
+            non-strings simply are not server-scoped).
+
+    Returns:
+        True when ``owner_id`` is a string prefixed with the server-owner
+        prefix, marking the row as executed by the server.
+    """
     return isinstance(owner_id, str) and owner_id.startswith(_SERVER_OWNER_PREFIX)
 
 
