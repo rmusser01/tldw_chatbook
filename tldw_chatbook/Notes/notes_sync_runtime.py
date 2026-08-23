@@ -1504,13 +1504,23 @@ class NotesSyncRuntimeOwner:
                     self._reviews[root_id] = fresh_plan
                     unresolved = len(self._eligible_conflicts(fresh_plan))
                     blocked = self._blocked_plan_status(fresh_plan)
-                    attention_remains = blocked is not None
-                    if blocked is None:
-                        self._blocked_roots.discard(root_id)
-                        await self._publish(root_id, "up_to_date", "sync_now")
-                    else:
+                    fresh_safe_actions = tuple(
+                        action
+                        for action in fresh_plan.safe_actions
+                        if action.kind in _EXECUTABLE_ACTIONS
+                    )
+                    attention_remains = blocked is not None or bool(fresh_safe_actions)
+                    if blocked is not None:
                         self._blocked_roots.add(root_id)
                         await self._publish(root_id, *blocked)
+                    elif fresh_safe_actions:
+                        self._blocked_roots.discard(root_id)
+                        await self._publish(
+                            root_id, "changes_available", "review_changes"
+                        )
+                    else:
+                        self._blocked_roots.discard(root_id)
+                        await self._publish(root_id, "up_to_date", "sync_now")
                 return ConflictApplyResult(
                     results=results,
                     safe_completed=safe_completed,

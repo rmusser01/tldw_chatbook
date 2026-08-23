@@ -2215,6 +2215,11 @@ class NotesSyncExecutor:
                 expires_at=request.recovery_expires_at,
             ),
             capacity_bytes=self._capacity,
+            retention_ns=(
+                CONFLICT_RECOVERY_RETENTION_NS
+                if request.journal_kind is not None
+                else None
+            ),
         )
         return decision.admitted
 

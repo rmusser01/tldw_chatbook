@@ -1114,6 +1114,7 @@ class NotesDeviceStateStore:
         *,
         capacity_bytes: int,
         now: int | None = None,
+        retention_ns: int | None = None,
     ) -> NotesSyncRecoveryAdmission:
         """Atomically reserve recovery capacity and persist mutation intent."""
 
@@ -1135,9 +1136,12 @@ class NotesDeviceStateStore:
             now = _now()
         elif type(now) is not int or now <= 0:
             raise ValueError("now must be positive.")
+        if retention_ns is not None and (
+            type(retention_ns) is not int or retention_ns <= 0
+        ):
+            raise ValueError("retention_ns must be positive.")
 
         required = len(recovery.payload) + len(recovery.metadata)
-        timestamp = _now()
         with self.transaction(immediate=True) as connection:
             existing_operation = connection.execute(
                 """
@@ -1150,7 +1154,8 @@ class NotesDeviceStateStore:
             ).fetchone()
             existing_recovery = connection.execute(
                 """
-                SELECT recovery_id, operation_id, payload, metadata, expires_at
+                SELECT recovery_id, operation_id, payload, metadata,
+                       expires_at, created_at
                 FROM notes_sync_recovery WHERE operation_id = ?
                 """,
                 (operation.operation_id,),
@@ -1166,12 +1171,21 @@ class NotesDeviceStateStore:
                     operation.expected_note_version,
                     operation.expected_file_digest,
                 )
-                exact_recovery = existing_recovery == (
+                exact_recovery = existing_recovery[:4] == (
                     recovery.recovery_id,
                     recovery.operation_id,
                     recovery.payload,
                     recovery.metadata,
-                    recovery.expires_at,
+                ) and (
+                    (
+                        retention_ns is None
+                        and existing_recovery[4] == recovery.expires_at
+                    )
+                    or (
+                        retention_ns is not None
+                        and type(existing_recovery[5]) is int
+                        and existing_recovery[4] == existing_recovery[5] + retention_ns
+                    )
                 )
                 if not exact_operation or not exact_recovery:
                     raise NotesDeviceStateError(
@@ -1226,6 +1240,7 @@ class NotesDeviceStateStore:
                     raise NotesDeviceStateError(
                         "A journal operation and its binding must use the same root."
                     )
+            timestamp = _now()
             connection.execute(
                 """
                 INSERT INTO notes_sync_operations (
@@ -1260,7 +1275,11 @@ class NotesDeviceStateStore:
                     recovery.operation_id,
                     recovery.payload,
                     recovery.metadata,
-                    recovery.expires_at,
+                    (
+                        recovery.expires_at
+                        if retention_ns is None
+                        else timestamp + retention_ns
+                    ),
                     timestamp,
                 ),
             )

@@ -1129,10 +1129,97 @@ async def test_selected_keep_file_executes_while_skip_remains_attention() -> Non
     assert result.partial is False
     assert result.needs_recovery is False
     assert result.fresh_plan is not None
+    assert (
+        owner.snapshot().roots[0].status,
+        owner.snapshot().roots[0].next_action,
+    ) == (
+        "needs_attention",
+        "review_changes",
+    )
     assert [request.binding_id for request in adapter.executor.requests] == [
         "binding-safe",
         "binding-1",
     ]
+
+
+@pytest.mark.asyncio
+async def test_terminal_refresh_with_fresh_safe_actions_remains_reviewable() -> None:
+    initial = _reviewed_subset_input(conflict_count=1)
+    resolved = _reviewed_subset_input(
+        resolved=frozenset({"binding-1"}),
+        conflict_count=1,
+    )
+    safe = replace(
+        resolved.bindings[0],
+        baseline_file_digest=_A,
+        baseline_note_digest=_A,
+        note_digest=_A,
+    )
+    final = replace(resolved, bindings=(safe, *resolved.bindings[1:]))
+    assert any(
+        action.kind
+        in {NotesSyncActionKind.UPDATE_NOTE, NotesSyncActionKind.UPDATE_FILE}
+        for action in plan_reconciliation(final).safe_actions
+    )
+    adapter = _SubsetAdapter(initial, final)
+    owner = _owner(adapter, _root())
+    token = _install_review(owner, initial)
+
+    result = await owner.apply_reviewed(
+        "root-1",
+        token,
+        (),
+        (ConflictSelection("binding-1", NotesSyncConflictChoice.KEEP_FILE),),
+    )
+
+    assert result.conflicts_resolved == 1
+    assert result.unresolved_conflicts == 0
+    assert result.attention_remains is True
+    assert result.partial is False
+    assert result.needs_recovery is False
+    assert result.fresh_plan is not None and any(
+        action.kind
+        in {NotesSyncActionKind.UPDATE_NOTE, NotesSyncActionKind.UPDATE_FILE}
+        for action in result.fresh_plan.safe_actions
+    )
+    root_status = owner.snapshot().roots[0]
+    assert (root_status.status, root_status.next_action) == (
+        "changes_available",
+        "review_changes",
+    )
+
+
+@pytest.mark.asyncio
+async def test_terminal_refresh_with_no_remaining_work_is_up_to_date() -> None:
+    initial = _reviewed_subset_input(conflict_count=1)
+    final = _reviewed_subset_input(
+        resolved=frozenset({"binding-1"}),
+        conflict_count=1,
+    )
+    assert not any(
+        action.kind
+        in {NotesSyncActionKind.UPDATE_NOTE, NotesSyncActionKind.UPDATE_FILE}
+        for action in plan_reconciliation(final).safe_actions
+    )
+    assert plan_reconciliation(final).attention == ()
+    adapter = _SubsetAdapter(initial, final)
+    owner = _owner(adapter, _root())
+    token = _install_review(owner, initial)
+
+    result = await owner.apply_reviewed(
+        "root-1",
+        token,
+        (),
+        (ConflictSelection("binding-1", NotesSyncConflictChoice.KEEP_FILE),),
+    )
+
+    assert result.attention_remains is False
+    assert result.fresh_plan == plan_reconciliation(final)
+    root_status = owner.snapshot().roots[0]
+    assert (root_status.status, root_status.next_action) == (
+        "up_to_date",
+        "sync_now",
+    )
 
 
 @pytest.mark.asyncio
