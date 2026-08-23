@@ -146,7 +146,10 @@ class EventStateRepository(BaseDB):
 
     def _initialize_schema(self) -> None:
         # Raw connection: runs under _ensure_schema's lock (TASK-21105).
-        with self._open_connection() as conn:
+        # File-backed: one short-lived connection, closed below. :memory::
+        # the shared cached connection, never closed.
+        conn = self._open_connection()
+        try:
             conn.executescript(
                 """
                 PRAGMA foreign_keys = ON;
@@ -299,6 +302,9 @@ class EventStateRepository(BaseDB):
                 );
                 """
             )
+        finally:
+            if not getattr(self, "is_memory_db", False):
+                conn.close()
 
     def record_event_and_advance_processed_cursor(
         self,

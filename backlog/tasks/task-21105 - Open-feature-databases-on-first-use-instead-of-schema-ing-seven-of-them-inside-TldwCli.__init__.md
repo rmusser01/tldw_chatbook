@@ -123,16 +123,20 @@ intact: `test_private_sqlite_interop_owners.py` writing/research factories
 open-counter; subject stays reuse-across-inserts), the four research
 migration tests, and the sync_state column-migration validation test.
 
-**Semantics shift (deliberate, documented)**: a corrupt/unreadable store
-now surfaces at first feature use instead of at boot. Previously
-notifications/parity fell back to `:memory:` and writing/research to
-`None` when construction failed; construction can no longer fail for
-schema-level reasons, so those app-level catches now cover only
-path-resolution/trusted-directory errors. Runtime DB errors already
-propagate through these same operation paths today (e.g. disk-full during
-an insert), so no new error class reaches callers -- only the timing of
-first contact moves. Kanban previously had NO catch (a corrupt kanban DB
-crashed `__init__`); it can no longer crash boot.
+**Semantics shift (deliberate, documented; corrected in review)**: a
+corrupt/unreadable store now surfaces at first feature use instead of at
+boot. For the stores that had app-level fallbacks this IS a new error
+surface, not just a timing move: on base, construction failure fell back
+to `:memory:` (notifications, event_state/sync_state) or `None`
+(writing/research), so corrupt-DB errors could NEVER reach those
+operation paths -- the fallback (or the None-guard in the consumer)
+absorbed them at boot. On this branch the first operation on a corrupt
+store raises to its caller. The `/research` worker was the one consumer
+this actually broke (app teardown -- fixed in the review round below);
+hardening the notifications dispatch helpers + watchlists inbox workers
+for the same class is filed separately as the MAJOR-2 follow-up. Kanban
+previously had NO catch (a corrupt kanban DB crashed `__init__`); it can
+no longer crash boot and still has zero consumers.
 
 Test evidence: per-store suites Writing_Interop/Kanban/Research/
 Research_Interop 298 passed; Notifications/Sync_Interop/RuntimePolicy/
@@ -146,4 +150,31 @@ test_retired_destination_root_state); phase39 library-collections file is
 13F+3E identically on base. Full `--collect-only`: 56545 collected, same 5
 pre-existing collection errors as base (TTS chatterbox, library file
 notes, 3x Confluence).
+
+**Review fix round** (verdict: mechanism passed, FIX-FIRST on one
+regression + two smalls):
+- MAJOR-1 (confirmed regression): `/research` with a corrupt research DB
+  exited the app. The handler's `local_service is None` guard
+  (chat_screen.py) is dead code under lazy open -- construction succeeds
+  now -- and `launch_run` (the store's first use, where the corrupt file
+  raises) sat OUTSIDE the worker's try, in a worker with Textual's
+  default `exit_on_error=True`. Fix: moved `launch_run` inside the
+  worker's guard (keeps the logged-warning degrade; the None-guard stays
+  for skeletal/test apps). Regression test
+  `test_research_worker_survives_a_corrupt_research_store`
+  (Tests/UI/test_console_research_command.py) drives the real handler
+  with a real `LocalResearchService` over a genuinely corrupt file;
+  mutation-verified: reverting the guard makes it fail on the escaping
+  `sqlite3.DatabaseError`.
+- MINOR-2: `_initialize_schema` in event_state_repository.py and
+  sync_state_repository.py leaked its raw file connection (`with conn`
+  commits but never closes); both now close in `finally` like
+  client_notifications_db.py. sync_state keeps the inner `with conn`
+  transaction block -- `_record_schema_version` runs bare DML whose
+  implicit transaction it commits; probe-verified the version stamp (4)
+  survives close+reopen.
+- Honesty: the "no new error class reaches callers" claim corrected
+  above (wrong for the three stores whose app-level fallbacks used to
+  absorb corrupt-DB errors at boot). MAJOR-2 (notifications dispatch +
+  watchlists inbox hardening) filed separately, not implemented here.
 <!-- SECTION:NOTES:END -->

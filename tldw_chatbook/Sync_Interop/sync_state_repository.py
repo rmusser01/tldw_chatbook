@@ -166,9 +166,16 @@ class SyncStateRepository(BaseDB):
 
     def _initialize_schema(self) -> None:
         # Raw connection: runs under _ensure_schema's lock (TASK-21105).
-        with self._open_connection() as conn:
-            conn.executescript(
-                """
+        # File-backed: one short-lived connection, closed below (:memory:
+        # keeps its shared cached connection open). The inner ``with conn``
+        # transaction block is load-bearing: _record_schema_version runs
+        # bare DML whose implicit transaction it commits -- closing without
+        # it would roll the version stamp back.
+        conn = self._open_connection()
+        try:
+            with conn:
+                conn.executescript(
+                    """
                 PRAGMA foreign_keys = ON;
 
                 CREATE TABLE IF NOT EXISTS schema_version (
@@ -354,9 +361,12 @@ class SyncStateRepository(BaseDB):
                 CREATE INDEX IF NOT EXISTS idx_sync_v2_conflict_reviews_scope
                     ON sync_v2_conflict_reviews(source_scope_key, dataset_id, resolution_status, conflict_review_id);
                 """
-            )
-            self._ensure_sync_v2_profile_columns(conn)
-            self._record_schema_version(conn)
+                )
+                self._ensure_sync_v2_profile_columns(conn)
+                self._record_schema_version(conn)
+        finally:
+            if not getattr(self, "is_memory_db", False):
+                conn.close()
 
     def record_identity_mapping(
         self,
