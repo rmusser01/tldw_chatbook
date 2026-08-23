@@ -247,6 +247,57 @@ async def test_plain_and_shift_navigation_never_reaches_hidden_root_or_none(
 
 
 @pytest.mark.asyncio
+async def test_right_on_expanded_workspace_moves_to_first_selectable_child() -> None:
+    tree = _tree()
+    app = _TreeHarness(tree)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        workspace = tree.workspace_nodes["w1"]
+        tree.move_cursor(workspace)
+        tree.focus()
+
+        await pilot.press("right")
+
+        assert tree.cursor_node is tree.conversation_nodes["c1"]
+
+
+@pytest.mark.asyncio
+async def test_removal_cursor_fallback_uses_logical_neighbors_before_hidden_root() -> (
+    None
+):
+    tree = _tree()
+    app = _TreeHarness(tree)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        tree.move_cursor(tree.conversation_nodes["c1"])
+
+        tree.sync_projection(
+            (
+                _workspace("w1", "One", ("c2", "Second")),
+                _workspace("w2", "Two", ("c3", "Third")),
+            ),
+            expanded_workspace_ids={"w1"},
+        )
+        assert tree.cursor_node is tree.conversation_nodes["c2"]
+
+        tree.sync_projection(
+            (
+                _workspace("w1", "One"),
+                _workspace("w2", "Two", ("c3", "Third")),
+            ),
+            expanded_workspace_ids={"w1"},
+        )
+        assert tree.cursor_node is tree.workspace_nodes["w1"]
+
+        tree.sync_projection(
+            (_workspace("w2", "Two", ("c3", "Third")),),
+            expanded_workspace_ids=set(),
+        )
+        assert tree.cursor_node is tree.workspace_nodes["w2"]
+        assert tree.cursor_node is not tree.root
+
+
+@pytest.mark.asyncio
 async def test_collapsing_workspace_moves_descendant_cursor_to_workspace() -> None:
     tree = _tree()
     app = _TreeHarness(tree)
@@ -319,6 +370,43 @@ def test_private_move_fails_closed_when_textual_shape_is_not_exact(monkeypatch) 
             tree.workspace_nodes["w2"],
             0,
         )
+
+
+def test_private_move_fails_closed_on_textual_version_mismatch_without_mutation(
+    monkeypatch,
+) -> None:
+    tree = _tree()
+    node = tree.conversation_nodes["c1"]
+    original_parent = node.parent
+    original_children = tuple(original_parent.children)
+    invalidations: list[None] = []
+    monkeypatch.setattr(tree_module.textual, "__version__", "8.2.9")
+    monkeypatch.setattr(tree, "_invalidate", lambda: invalidations.append(None))
+
+    with pytest.raises(RuntimeError, match="Textual 8.2.8"):
+        tree._move_node_preserving_identity(node, tree.workspace_nodes["w2"], 0)
+
+    assert node.parent is original_parent
+    assert tuple(original_parent.children) == original_children
+    assert tree.get_node_by_id(node.id) is node
+    assert invalidations == []
+
+
+def test_private_cross_parent_move_preserves_identity_with_one_invalidation(
+    monkeypatch,
+) -> None:
+    tree = _tree()
+    node = tree.conversation_nodes["c1"]
+    node_id = node.id
+    invalidations: list[None] = []
+    monkeypatch.setattr(tree, "_invalidate", lambda: invalidations.append(None))
+
+    tree._move_node_preserving_identity(node, tree.workspace_nodes["w2"], 0)
+
+    assert node is tree.conversation_nodes["c1"]
+    assert node.parent is tree.workspace_nodes["w2"]
+    assert tree.get_node_by_id(node_id) is node
+    assert invalidations == [None]
 
 
 def test_search_expansion_snapshot_restores_exactly_without_persistence_messages() -> (

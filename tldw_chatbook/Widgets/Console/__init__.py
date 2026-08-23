@@ -61,6 +61,7 @@ from .console_workspace_context import ConsoleWorkspaceContextTray
 from .console_workspace_tree import (
     ConsoleWorkspaceTree,
     WorkspaceTreeConversationSelected,
+    WorkspaceTreeContextChanged,
     WorkspaceTreeExpansionChanged,
     WorkspaceTreeLoadMoreRequested,
     WorkspaceTreeNodeData,
@@ -123,6 +124,7 @@ __all__ = [
     "ProjectInstructionSetupResult",
     "UnownedInspectorContentError",
     "WorkspaceTreeConversationSelected",
+    "WorkspaceTreeContextChanged",
     "WorkspaceTreeExpansionChanged",
     "WorkspaceTreeLoadMoreRequested",
     "WorkspaceTreeNodeData",

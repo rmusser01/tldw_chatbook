@@ -445,6 +445,41 @@ async def test_console_workspace_context_mounts_native_tree_without_legacy_group
         assert len(console.query("#console-conversation-browser-starred-title")) == 0
 
 
+@pytest.mark.asyncio
+async def test_zero_result_workspace_search_stays_editable_and_initializes_without_echo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-search")
+        transitions: list[tuple[str, bool]] = []
+        monkeypatch.setattr(
+            console._workspace,
+            "transition_workspace_tree_search",
+            lambda query, disabled: transitions.append((query, disabled)),
+        )
+        state = replace(
+            _base_grouped_workspace_state(),
+            workspace_tree=(),
+            workspace_query="older",
+        )
+
+        console.query_one("#console-left-rail").sync_workspace_context(state)
+        await pilot.pause()
+
+        search = console.query_one("#console-workspace-search", Input)
+        assert search.disabled is False
+        assert search.value == "older"
+        assert transitions == []
+
+        search.value = "newer"
+        await pilot.pause()
+        assert transitions == [("newer", False)]
+
+
 def _workspace_rows_with_marker_at(index: int, marker: str, *, count: int):
     """``count`` rows in the active workspace ``ws-a``, newest-first by
     construction (descending ``updated_sort``) so display order matches
@@ -1963,6 +1998,7 @@ async def test_console_workspace_context_exposes_new_conversation_for_default_wo
     async with host.run_test(size=(160, 44)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-context")
+        await _wait_for_selector(console, pilot, "#console-new-workspace-conversation")
 
         new_conversation = console.query_one(
             "#console-new-workspace-conversation", Button

@@ -640,6 +640,27 @@ class ConsoleWorkspaceController:
             browser_config["collapsed_groups"] = collapsed_groups
         collapsed_groups[normalized_group_id] = bool(collapsed)
 
+    def workspace_tree_expansion_preferences(self) -> frozenset[str] | None:
+        """Return the persisted disclosure set, preserving explicit emptiness."""
+
+        raw = self._console_conversation_browser_config().get("expanded_workspace_ids")
+        if not isinstance(raw, (list, tuple, set, frozenset)):
+            return None
+        return frozenset(
+            workspace_id for value in raw if (workspace_id := str(value or "").strip())
+        )
+
+    def set_workspace_tree_expansion_preferences(
+        self, workspace_ids: frozenset[str]
+    ) -> None:
+        """Persist the exact non-search disclosure preference set."""
+
+        self._console_conversation_browser_config()["expanded_workspace_ids"] = sorted(
+            str(workspace_id).strip()
+            for workspace_id in workspace_ids
+            if str(workspace_id).strip()
+        )
+
     @property
     def _focus_console_workspace_conversation_search(self) -> Any:
         """Stays on `ChatScreen` (DOM: `query_one`). See module docstring."""
@@ -720,9 +741,16 @@ class ConsoleWorkspaceController:
             if self._workspace_search_attempt_is_current(request_key):
                 lane.error = "Workspace search is unavailable."
                 lane.retry_query = lane.query
-                self._sync_console_workspace_context()
+            if lane.request_key == request_key:
+                lane.request_key = None
+                if self._screen_running_accessor():
+                    self._sync_console_workspace_context()
             return
         if not self._workspace_search_attempt_is_current(request_key):
+            if lane.request_key == request_key:
+                lane.request_key = None
+                if self._screen_running_accessor():
+                    self._sync_console_workspace_context()
             return
         lane.rows = self._merge_console_browser_rows(rows)
         self._record_canonical_owner_rows(lane.rows)
@@ -733,6 +761,7 @@ class ConsoleWorkspaceController:
         lane.settled_query = lane.query
         lane.error = ""
         lane.retry_query = None
+        lane.request_key = None
         self._sync_console_workspace_context()
 
     async def refresh_flat_conversation_search(self, query: str) -> None:
@@ -760,9 +789,16 @@ class ConsoleWorkspaceController:
             if self._flat_search_attempt_is_current(request_key):
                 lane.error = "Conversation search is unavailable."
                 lane.retry_query = lane.query
-                self._sync_console_workspace_context()
+            if lane.request_key == request_key:
+                lane.request_key = None
+                if self._screen_running_accessor():
+                    self._sync_console_workspace_context()
             return
         if not self._flat_search_attempt_is_current(request_key):
+            if lane.request_key == request_key:
+                lane.request_key = None
+                if self._screen_running_accessor():
+                    self._sync_console_workspace_context()
             return
         lane.rows = self._merge_console_browser_rows(
             row for row in rows if self._row_belongs_to_flat_projection(row)
@@ -775,6 +811,7 @@ class ConsoleWorkspaceController:
         lane.settled_query = lane.query
         lane.error = ""
         lane.retry_query = None
+        lane.request_key = None
         self._sync_console_workspace_context()
 
     async def retry_workspace_tree_search(self) -> None:
@@ -884,7 +921,7 @@ class ConsoleWorkspaceController:
         attempt = self._workspace_page_attempts.setdefault(
             workspace_id, _PageAttemptState()
         )
-        if attempt.loading:
+        if attempt.loading and attempt.request_key is not None:
             return
         attempt.generation += 1
         generation = attempt.generation
@@ -942,12 +979,17 @@ class ConsoleWorkspaceController:
 
     def request_workspace_tree_page(self, workspace_id: str, cursor: int) -> None:
         """Schedule one page worker without canceling another workspace lane."""
-        attempt = self._workspace_page_attempts.setdefault(
-            str(workspace_id or "").strip(), _PageAttemptState()
-        )
+        target = str(workspace_id or "").strip()
+        attempt = self._workspace_page_attempts.setdefault(target, _PageAttemptState())
+        if attempt.loading:
+            return
+        attempt.loading = True
+        attempt.error = ""
+        attempt.retry_cursor = None
+        self._sync_console_workspace_context()
         attempt.worker = self.run_worker(
-            self.load_workspace_tree_page(workspace_id, cursor),
-            group=f"console-workspace-page-{workspace_id}",
+            self.load_workspace_tree_page(target, cursor),
+            group=f"console-workspace-page-{target}",
             exclusive=False,
         )
 
@@ -990,6 +1032,14 @@ class ConsoleWorkspaceController:
             return
         if expanded:
             self._collapsed_workspace_ids.discard(target)
+            active_workspace_id = (
+                self._current_console_workspace_context().active_workspace_id
+            )
+            if (
+                target != active_workspace_id
+                and target not in self._workspace_page_attempts
+            ):
+                self.request_workspace_tree_page(target, 0)
             return
         self._collapsed_workspace_ids.add(target)
         attempt = self._workspace_page_attempts.get(target)

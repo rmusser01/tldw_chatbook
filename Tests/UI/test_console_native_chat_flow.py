@@ -8684,6 +8684,35 @@ async def test_console_workspace_conversation_search_uses_current_workspace_cont
 
 
 @pytest.mark.asyncio
+async def test_console_workspace_tree_restores_and_persists_disclosure_preferences():
+    app = _build_test_app()
+    app.workspace_registry_service.create_workspace(
+        workspace_id="ws-disclosure", name="Disclosure"
+    )
+    console_config = app.app_config.setdefault("console", {})
+    browser_config = console_config.setdefault("conversation_browser", {})
+    browser_config["expanded_workspace_ids"] = []
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-tree")
+        tree = console.query_one("#console-workspace-tree", ConsoleWorkspaceTree)
+        for _ in range(40):
+            if "ws-disclosure" in tree.workspace_nodes:
+                break
+            await pilot.pause(0.05)
+
+        node = tree.workspace_nodes["ws-disclosure"]
+        assert node.is_collapsed
+
+        node.expand()
+        await pilot.pause()
+
+        assert browser_config["expanded_workspace_ids"] == ["ws-disclosure"]
+
+
+@pytest.mark.asyncio
 async def test_console_workspace_conversation_list_reserves_two_line_rows_with_margin():
     """Verify conversation list height accounts for two-line rows plus margin."""
     app = _build_test_app()

@@ -62,6 +62,8 @@ from ...Widgets.Console import (
     ConsoleBoundedSection,
     ConsoleWorkspaceContextTray,
     ConsoleWorkspaceTree,
+    WorkspaceTreeContextChanged,
+    WorkspaceTreeStarRequested,
 )
 from ...Widgets.Console.console_agent_steering_bar import (
     STEERING_BAR_ID,
@@ -223,6 +225,10 @@ class ConsoleLeftRail(Vertical):
         show_character_section: bool,
         character_avatar_widget_builder: Callable[[], Widget] | None,
         character_avatar_name: str,
+        workspace_tree_expanded_ids: frozenset[str] | None = None,
+        workspace_tree_expansion_preferences_changed: (
+            Callable[[frozenset[str]], None] | None
+        ) = None,
         manual_reaction_label: str | None = None,
         **kwargs,
     ) -> None:
@@ -319,6 +325,10 @@ class ConsoleLeftRail(Vertical):
         self._show_character_section = show_character_section
         self._character_avatar_widget_builder = character_avatar_widget_builder
         self._character_avatar_name = character_avatar_name
+        self._workspace_tree_expanded_ids = workspace_tree_expanded_ids
+        self._workspace_tree_expansion_preferences_changed = (
+            workspace_tree_expansion_preferences_changed
+        )
         self._manual_reaction_label = str(manual_reaction_label or "").strip()
         self._active_section_id: str | None = None
         self._active_reveal_generation = 0
@@ -1174,7 +1184,7 @@ class ConsoleLeftRail(Vertical):
         else:
             tree.star_enabled = state.workspace_marks_available
             preferred = tree.preferred_expanded_workspace_ids
-            if not preferred and not tree.workspace_nodes:
+            if not tree.workspace_nodes and self._workspace_tree_expanded_ids is None:
                 preferred = frozenset(
                     workspace.workspace_id for workspace in state.workspace_tree
                 )
@@ -1194,6 +1204,19 @@ class ConsoleLeftRail(Vertical):
                 )
             elif tree.search_active:
                 tree.set_search_active(False)
+            try:
+                workspace_tray = self.query_one(
+                    "#console-workspaces-context", ConsoleWorkspaceContextTray
+                )
+            except (NoMatches, QueryError):
+                pass
+            else:
+                cursor = tree.cursor_node
+                workspace_tray.sync_workspace_tree_context(
+                    cursor.data
+                    if cursor is not None and cursor is not tree.root
+                    else None
+                )
             try:
                 bounded = self.query_one(
                     "#console-bounded-section-workspace", ConsoleBoundedSection
@@ -1305,12 +1328,18 @@ class ConsoleLeftRail(Vertical):
             workspace_tree.star_enabled = (
                 workspace_context_state.workspace_marks_available
             )
-            workspace_tree.sync_projection(
-                workspace_context_state.workspace_tree,
-                expanded_workspace_ids={
+            workspace_tree.expansion_preferences_changed = (
+                self._workspace_tree_expansion_preferences_changed
+            )
+            initial_expanded = self._workspace_tree_expanded_ids
+            if initial_expanded is None:
+                initial_expanded = frozenset(
                     workspace.workspace_id
                     for workspace in workspace_context_state.workspace_tree
-                },
+                )
+            workspace_tree.sync_projection(
+                workspace_context_state.workspace_tree,
+                expanded_workspace_ids=initial_expanded,
             )
             if workspace_context_state.workspace_query.strip():
                 workspace_tree.set_search_active(
@@ -1687,6 +1716,19 @@ class ConsoleLeftRail(Vertical):
             event.stop()
             self.post_message(self.ReactionPickerRequested())
             return
+        if button_id == "console-workspace-tree-star":
+            event.stop()
+            workspace_id = getattr(event.button, "workspace_id", None)
+            conversation_id = getattr(event.button, "conversation_id", None)
+            if workspace_id and conversation_id:
+                self.post_message(
+                    WorkspaceTreeStarRequested(
+                        workspace_id,
+                        conversation_id,
+                        starred=bool(getattr(event.button, "starred", False)),
+                    )
+                )
+            return
         if not button_id.startswith(RAIL_SECTION_TOGGLE_PREFIX):
             return
         event.stop()
@@ -1701,6 +1743,20 @@ class ConsoleLeftRail(Vertical):
         else:
             opened = not header.open
         self.post_message(self.SectionToggled(section_id=section_id, opened=opened))
+
+    def on_workspace_tree_context_changed(
+        self, event: WorkspaceTreeContextChanged
+    ) -> None:
+        """Project the native cursor into the visible contextual action."""
+
+        event.stop()
+        try:
+            tray = self.query_one(
+                "#console-workspaces-context", ConsoleWorkspaceContextTray
+            )
+        except (NoMatches, QueryError):
+            return
+        tray.sync_workspace_tree_context(event.data)
 
     def sync_sections(self, rail_state: ConsoleRailState) -> None:
         """Apply section open flags to section bodies and headers.

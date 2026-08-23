@@ -148,6 +148,14 @@ class WorkspaceTreeExpansionChanged(Message):
         super().__init__()
 
 
+class WorkspaceTreeContextChanged(Message):
+    """The Tree cursor changed the visible contextual action target."""
+
+    def __init__(self, data: WorkspaceTreeNodeData | None) -> None:
+        self.data = data
+        super().__init__()
+
+
 class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
     """Incrementally synchronize the Console Workspace projection into a Tree.
 
@@ -312,7 +320,7 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
             for conversation_id in tuple(self.conversation_nodes):
                 if conversation_id not in wanted_conversations:
                     node = self.conversation_nodes.pop(conversation_id)
-                    node.remove()
+                    self._remove_node_with_cursor_fallback(node)
 
             wanted_auxiliary: set[str] = set()
             for workspace_index, workspace in enumerate(projection):
@@ -387,7 +395,9 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
 
             for key in tuple(self.auxiliary_nodes):
                 if key not in wanted_auxiliary:
-                    self.auxiliary_nodes.pop(key).remove()
+                    self._remove_node_with_cursor_fallback(
+                        self.auxiliary_nodes.pop(key)
+                    )
         finally:
             self._syncing = False
         self.can_focus = any(
@@ -449,6 +459,57 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
         for key, auxiliary_node in tuple(self.auxiliary_nodes.items()):
             if auxiliary_node.parent is node:
                 self.auxiliary_nodes.pop(key)
+        self._remove_node_with_cursor_fallback(node)
+
+    @staticmethod
+    def _contains_node(
+        ancestor: TreeNode[WorkspaceTreeNodeData],
+        node: TreeNode[WorkspaceTreeNodeData] | None,
+    ) -> bool:
+        while node is not None:
+            if node is ancestor:
+                return True
+            node = node.parent
+        return False
+
+    @staticmethod
+    def _first_selectable(
+        nodes: Iterable[TreeNode[WorkspaceTreeNodeData]],
+    ) -> TreeNode[WorkspaceTreeNodeData] | None:
+        return next(
+            (node for node in nodes if node.data is not None and node.data.selectable),
+            None,
+        )
+
+    def _remove_node_with_cursor_fallback(
+        self, node: TreeNode[WorkspaceTreeNodeData]
+    ) -> None:
+        """Remove a true deletion after choosing its logical cursor neighbor."""
+
+        if self._contains_node(node, self.cursor_node):
+            parent = node.parent
+            siblings = tuple(parent.children) if parent is not None else ()
+            index = siblings.index(node)
+            target = self._first_selectable(siblings[index + 1 :])
+            if target is None:
+                target = self._first_selectable(reversed(siblings[:index]))
+            if target is None and parent is not None and parent is not self.root:
+                parent_data = parent.data
+                if parent_data is not None and parent_data.selectable:
+                    target = parent
+            if target is None:
+                owner = (
+                    parent if parent is not None and parent is not self.root else node
+                )
+                top_level = tuple(self.root.children)
+                if owner in top_level:
+                    owner_index = top_level.index(owner)
+                    target = self._first_selectable(top_level[owner_index + 1 :])
+                    if target is None:
+                        target = self._first_selectable(
+                            reversed(top_level[:owner_index])
+                        )
+            self.move_cursor(target or self.root)
         node.remove()
 
     def _move_node_preserving_identity(
@@ -626,6 +687,10 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
             return
         if node.is_collapsed:
             node.expand()
+            return
+        target = self._first_selectable(node.children)
+        if target is not None:
+            self.move_cursor(target)
 
     def action_workspace_star(self) -> None:
         node = self.cursor_node
@@ -685,6 +750,7 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
     def watch_cursor_line(self, old_value: int, new_value: int) -> None:
         super().watch_cursor_line(old_value, new_value)
         self._update_tooltip()
+        self._post_context_changed()
 
     def watch_hover_line(self, old_value: int, new_value: int) -> None:
         super().watch_hover_line(old_value, new_value)
@@ -695,10 +761,18 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
         node = self.get_node_at_line(line)
         self.tooltip = node.data.raw_label if node is not None and node.data else None
 
+    def _post_context_changed(self) -> None:
+        if not self.is_mounted:
+            return
+        node = self.cursor_node
+        data = node.data if node is not None and node is not self.root else None
+        self.post_message(WorkspaceTreeContextChanged(data))
+
 
 __all__ = [
     "ConsoleWorkspaceTree",
     "WorkspaceTreeConversationSelected",
+    "WorkspaceTreeContextChanged",
     "WorkspaceTreeExpansionChanged",
     "WorkspaceTreeLoadMoreRequested",
     "WorkspaceTreeNodeData",

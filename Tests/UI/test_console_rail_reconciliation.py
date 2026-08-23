@@ -32,6 +32,10 @@ from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Widgets.Console.console_bounded_section import (
     ConsoleBoundedSection,
 )
+from tldw_chatbook.Widgets.Console.console_workspace_tree import (
+    ConsoleWorkspaceTree,
+    WorkspaceTreeStarRequested,
+)
 from tldw_chatbook.Widgets.Console.console_changed_files_section import (
     ConsoleChangedFilesSection,
     ConsoleChangedFilesState,
@@ -50,6 +54,10 @@ from tldw_chatbook.Workspaces.conversation_browser_state import (
     build_console_conversation_browser_state,
 )
 from tldw_chatbook.Workspaces.display_state import ConsoleWorkspaceContextState
+from tldw_chatbook.Workspaces.workspace_tree_state import (
+    WorkspaceTreeConversation,
+    WorkspaceTreeWorkspace,
+)
 
 
 SECTION_IDS = (
@@ -181,15 +189,30 @@ class _RailHarness(App[None]):
     }
     """
 
-    def __init__(self, *, show_character: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        show_character: bool = True,
+        workspace_state: ConsoleWorkspaceContextState | None = None,
+        workspace_tree_expanded_ids: frozenset[str] | None = None,
+        expansion_preferences_changed: Callable[[frozenset[str]], None] | None = None,
+    ) -> None:
         super().__init__()
         self.show_character = show_character
+        self.workspace_state = workspace_state or _workspace_state()
+        self.workspace_tree_expanded_ids = workspace_tree_expanded_ids
+        self.expansion_preferences_changed = expansion_preferences_changed
         self.section_toggles: list[str] = []
+        self.star_requests: list[WorkspaceTreeStarRequested] = []
 
     def build_rail(self) -> ConsoleLeftRail:
         return ConsoleLeftRail(
             rail_state=_all_open_rail_state(),
-            workspace_context_state=_workspace_state(),
+            workspace_context_state=self.workspace_state,
+            workspace_tree_expanded_ids=self.workspace_tree_expanded_ids,
+            workspace_tree_expansion_preferences_changed=(
+                self.expansion_preferences_changed
+            ),
             settings_summary_state=ConsoleSettingsSummaryState(
                 model_row="Model: test",
                 context_row="Context: 0",
@@ -221,11 +244,84 @@ class _RailHarness(App[None]):
             event.opened,
         )
 
+    def on_workspace_tree_star_requested(
+        self, event: WorkspaceTreeStarRequested
+    ) -> None:
+        self.star_requests.append(event)
+
 
 class _ProductionConsoleHarness(ConsoleHarness):
     """Real ChatScreen host with the complete production CSS cascade."""
 
     CSS_PATH = TldwCli.CSS_PATH
+
+
+def _native_workspace_tree_state() -> ConsoleWorkspaceContextState:
+    conversation = WorkspaceTreeConversation(
+        conversation_id="conversation-1",
+        title="Planning",
+        starred=False,
+        updated_sort="2026-08-22T00:00:00",
+        selected=False,
+        run_marker="",
+    )
+    workspace = WorkspaceTreeWorkspace(
+        workspace_id="workspace-1",
+        label="Workspace One",
+        conversations=(conversation,),
+        next_cursor=None,
+    )
+    return replace(
+        _workspace_state(),
+        workspace_tree=(workspace,),
+        workspace_marks_available=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_native_tree_restores_persisted_disclosure_and_exposes_pointer_star() -> (
+    None
+):
+    writes: list[frozenset[str]] = []
+    app = _RailHarness(
+        workspace_state=_native_workspace_tree_state(),
+        workspace_tree_expanded_ids=frozenset(),
+        expansion_preferences_changed=writes.append,
+    )
+
+    async with app.run_test(size=(60, 30)) as pilot:
+        await _settle(pilot)
+        tree = app.query_one(ConsoleWorkspaceTree)
+        workspace = tree.workspace_nodes["workspace-1"]
+        assert workspace.is_collapsed
+
+        workspace.expand()
+        await pilot.pause()
+        assert writes == [frozenset({"workspace-1"})]
+
+        tree.move_cursor(tree.conversation_nodes["conversation-1"])
+        await pilot.pause()
+        star = app.query_one("#console-workspace-tree-star", Button)
+        assert star.disabled is False
+        assert str(star.label) == "Star"
+
+        app.query_one(ConsoleLeftRail).activate_section("workspace")
+        star.scroll_visible(animate=False, force=True)
+        await _settle(pilot)
+        assert await pilot.click(star)
+        await pilot.pause()
+        assert len(app.star_requests) == 1
+        assert app.star_requests[0].conversation_id == "conversation-1"
+        assert app.star_requests[0].starred is False
+
+        tree.set_search_active(True, forced_workspace_ids={"workspace-1"})
+        workspace.collapse()
+        await pilot.pause()
+        assert writes == [frozenset({"workspace-1"})]
+
+        tree.set_search_active(False)
+        assert workspace.is_expanded
+        assert writes == [frozenset({"workspace-1"})]
 
 
 async def _settle(pilot, passes: int = 5) -> None:

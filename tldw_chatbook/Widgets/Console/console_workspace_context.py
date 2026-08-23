@@ -9,6 +9,7 @@ from rich.markup import escape as _escape_markup
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.message import Message
 from textual.widgets import Button, Input, Static
 
@@ -1240,16 +1241,26 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             )
             scope_button.tooltip = "Narrow RAG retrieval to items in this workspace"
             yield self._record_composed_node(scope_button)
+            star_button = Button(
+                "Star",
+                id="console-workspace-tree-star",
+                classes="console-workspace-action console-workspace-tree-star",
+                compact=True,
+                disabled=True,
+            )
+            star_button.workspace_id = None
+            star_button.conversation_id = None
+            star_button.starred = False
+            yield self._record_composed_node(star_button)
 
-        search = ConsoleBrowserSearchInput(
-            value=self.state.workspace_query,
-            placeholder="Search workspaces",
-            id="console-workspace-search",
-            classes="console-workspace-search",
-            disabled=not bool(self.state.workspace_tree),
+        yield self._record_composed_node(
+            ConsoleBrowserSearchInput(
+                initial_value=self.state.workspace_query,
+                placeholder="Search workspaces",
+                id="console-workspace-search",
+                classes="console-workspace-search",
+            )
         )
-        yield self._record_composed_node(search)
-
         if self.state.workspace_loading:
             yield self._record_composed_node(
                 self._static(
@@ -1284,6 +1295,31 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                     classes="console-workspace-recovery",
                 )
             )
+
+    def sync_workspace_tree_context(self, data: Any | None) -> None:
+        """Update the compact pointer action for the native Tree cursor."""
+
+        try:
+            button = self.query_one("#console-workspace-tree-star", Button)
+        except NoMatches:
+            return
+        is_conversation = bool(
+            data is not None
+            and getattr(data, "kind", None) == "conversation"
+            and getattr(data, "workspace_id", None)
+            and getattr(data, "conversation_id", None)
+            and self.state.workspace_marks_available
+        )
+        starred = bool(getattr(data, "starred", False)) if is_conversation else False
+        button.label = "Unstar" if starred else "Star"
+        button.disabled = not is_conversation
+        button.workspace_id = (
+            getattr(data, "workspace_id", None) if is_conversation else None
+        )
+        button.conversation_id = (
+            getattr(data, "conversation_id", None) if is_conversation else None
+        )
+        button.starred = starred
 
     def _compose_session_context(
         self,

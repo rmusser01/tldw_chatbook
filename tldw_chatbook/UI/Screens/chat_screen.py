@@ -13262,6 +13262,12 @@ class ChatScreen(BaseAppScreen):
                     show_character_section=show_character_section,
                     character_avatar_widget_builder=character_avatar_widget_builder,
                     character_avatar_name=character_avatar_name,
+                    workspace_tree_expanded_ids=(
+                        self._workspace.workspace_tree_expansion_preferences()
+                    ),
+                    workspace_tree_expansion_preferences_changed=(
+                        self._workspace.set_workspace_tree_expansion_preferences
+                    ),
                     manual_reaction_label=(
                         self._session._manual_reaction_label_for_current_actor()
                     ),

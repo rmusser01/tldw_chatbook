@@ -214,6 +214,111 @@ def test_workspace_controller_initializes_independent_projection_attempt_state()
     assert controller._workspace_page_attempts == {}
 
 
+def test_workspace_tree_expansion_preferences_round_trip_exact_empty_state() -> None:
+    config: dict[str, object] = {}
+    controller = _workspace_controller(
+        conversation_browser_config=lambda: config,
+    )
+
+    assert controller.workspace_tree_expansion_preferences() is None
+
+    controller.set_workspace_tree_expansion_preferences(frozenset({"w2", "w1"}))
+    assert config["expanded_workspace_ids"] == ["w1", "w2"]
+    assert controller.workspace_tree_expansion_preferences() == frozenset({"w1", "w2"})
+
+    controller.set_workspace_tree_expansion_preferences(frozenset())
+    assert config["expanded_workspace_ids"] == []
+    assert controller.workspace_tree_expansion_preferences() == frozenset()
+
+
+def test_expanding_unloaded_non_active_workspace_schedules_one_loading_page() -> None:
+    screen = _NoMountScreen()
+    registry = SimpleNamespace(
+        ensure_default_workspace=lambda: SimpleNamespace(workspace_id="active"),
+        list_workspaces=lambda: (
+            SimpleNamespace(workspace_id="active", name="Active", archived=False),
+            SimpleNamespace(workspace_id="other", name="Other", archived=False),
+        ),
+        list_workspace_conversations=lambda _workspace_id: (),
+    )
+    controller = _workspace_controller(
+        screen=screen,
+        app_instance=SimpleNamespace(workspace_registry_service=registry),
+    )
+
+    controller.transition_workspace_tree_expansion("other", expanded=True)
+    controller.transition_workspace_tree_expansion("other", expanded=True)
+    controller.transition_workspace_tree_expansion("active", expanded=True)
+
+    assert len(screen.workers) == 1
+    attempt = controller._workspace_page_attempts["other"]
+    assert attempt.loading is True
+    projected = {
+        workspace.workspace_id: workspace
+        for workspace in controller.workspace_tree_projection()
+    }
+    assert projected["other"].loading is True
+    assert projected["other"].conversations == ()
+
+
+@pytest.mark.asyncio
+async def test_workspace_search_settles_current_key_without_clearing_newer_attempt() -> (
+    None
+):
+    controller = _workspace_controller()
+    old_started = asyncio.Event()
+    release_old = asyncio.Event()
+    new_started = asyncio.Event()
+    release_new = asyncio.Event()
+
+    async def load(query):
+        if query == "old":
+            old_started.set()
+            await release_old.wait()
+            return (_browser_row("old", "Old"),), 1
+        new_started.set()
+        await release_new.wait()
+        return (_browser_row("new", "New"),), 1
+
+    controller._load_workspace_tree_search_rows = load
+    old_task = asyncio.create_task(controller.refresh_workspace_tree_search("old"))
+    await old_started.wait()
+    new_task = asyncio.create_task(controller.refresh_workspace_tree_search("new"))
+    await new_started.wait()
+    newer_key = controller._workspace_tree_search.request_key
+
+    release_old.set()
+    await old_task
+    assert controller._workspace_tree_search.request_key == newer_key
+    assert controller._workspace_tree_search.rows == ()
+
+    release_new.set()
+    await new_task
+    assert controller._workspace_tree_search.request_key is None
+    assert [row.conversation_id for row in controller._workspace_tree_search.rows] == [
+        "new"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_workspace_search_failure_settles_loading_and_exposes_retry_state() -> (
+    None
+):
+    controller = _workspace_controller()
+
+    async def fail(_query):
+        raise RuntimeError("private")
+
+    controller._load_workspace_tree_search_rows = fail
+    await controller.refresh_workspace_tree_search("needle")
+
+    assert controller._workspace_tree_search.request_key is None
+    state = controller._with_console_conversation_browser_state(_workspace_state())
+    assert state.workspace_loading is False
+    assert state.workspace_error == "Workspace search is unavailable."
+    assert state.workspace_retry_available is True
+
+
 @pytest.mark.asyncio
 async def test_workspace_and_flat_search_completions_are_independent() -> None:
     controller = _workspace_controller()
