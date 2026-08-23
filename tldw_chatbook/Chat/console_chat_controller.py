@@ -4116,6 +4116,16 @@ class ConsoleChatController:
         # Revoke file authority before any close action can wake a worker or
         # remove the owning session from the store.
         self._scratch_spaces.close(session_id)
+        forget_file_authority = getattr(
+            self._agent_bridge,
+            "forget_session_file_authority",
+            None,
+        )
+        if callable(forget_file_authority):
+            try:
+                forget_file_authority(session_id)
+            except Exception:  # noqa: BLE001 -- teardown remains best-effort
+                logger.warning("close_session could not forget run-log authority")
         # Queue tombstone MUST precede stop/cancel: cancellation can wake a
         # terminal callback, which must observe that no next claim is legal.
         self.prompt_queue_coordinator.mark_closing(session_id)

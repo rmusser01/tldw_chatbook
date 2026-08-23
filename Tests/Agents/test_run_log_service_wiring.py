@@ -1,6 +1,8 @@
 # Tests/Agents/test_run_log_service_wiring.py
 """The service owns the writer: one counter per run tree, every caller logged."""
 
+import contextlib
+import functools
 import json
 from pathlib import Path
 
@@ -10,6 +12,7 @@ from tldw_chatbook.Agents import agent_service as agent_service_module
 from tldw_chatbook.Agents import run_log as run_log_module
 from tldw_chatbook.Agents.agent_models import (
     RUN_DONE,
+    SEARCH_RUN_LOG_TOOL_NAME,
     SPAWN_TOOL_NAME,
     AgentConfig,
     RunBudget,
@@ -19,6 +22,7 @@ from tldw_chatbook.Agents.run_log import RunLogWriter
 from tldw_chatbook.Agents.run_log_format import iter_records
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolCatalogRegistry
 from tldw_chatbook.Chat.console_fleet_wake import compose_wake_notice
+from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
@@ -73,6 +77,58 @@ def read_all(root: Path):
     for segment in sorted(run_dirs[0].glob("logs.*.txt")):
         records.extend(iter_records(segment.read_bytes()))
     return records
+
+
+def test_writer_explicit_fallback_root_never_uses_global_sandbox(
+    tmp_path,
+    monkeypatch,
+):
+    chat_root = tmp_path / "chat"
+    chat_root.mkdir()
+    monkeypatch.setattr(
+        run_log_module,
+        "resolve_log_root",
+        lambda: (_ for _ in ()).throw(AssertionError("global root consulted")),
+    )
+    writer = RunLogWriter(
+        root=chat_root,
+        access_scope=lambda: contextlib.nullcontext(chat_root),
+    )
+
+    writer.bind("run-a")
+
+    assert writer.is_active
+    assert writer.log_dir is not None
+    assert writer.log_dir.is_relative_to(chat_root)
+
+
+def test_writer_lease_revocation_fails_closed_without_recreating_root(tmp_path):
+    manager = ConsoleScratchSpaceManager(temp_parent=tmp_path)
+    snapshot = manager.snapshot("chat-a")
+    writer = RunLogWriter(
+        root=snapshot.root,
+        access_scope=functools.partial(manager.lease, snapshot),
+    )
+    writer.bind("run-a")
+    assert writer.append(
+        run_id="run-a",
+        kind="primary",
+        type="model",
+        content="before close",
+    ) == 1
+
+    with manager.lease(snapshot):
+        manager.close("chat-a")
+        assert snapshot.root.exists()
+
+    assert writer.append(
+        run_id="run-a",
+        kind="primary",
+        type="model",
+        content="after close",
+    ) is None
+    assert manager.wait_for_cleanup(timeout_seconds=2.0)
+    assert not snapshot.root.exists()
 
 
 def test_a_plain_run_writes_records_without_the_caller_wiring_anything(wired):
@@ -531,8 +587,6 @@ def test_tool_is_offered_to_the_primary_agent_only(wired, monkeypatch):
     disclosed" case, which ``test_tool_is_not_offered_when_nothing_else_is_disclosed``
     below covers.
     """
-    from tldw_chatbook.Agents.agent_models import SEARCH_RUN_LOG_TOOL_NAME
-
     db, registry, root = wired
     offered = []
 

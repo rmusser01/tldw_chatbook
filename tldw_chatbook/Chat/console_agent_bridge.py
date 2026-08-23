@@ -3002,6 +3002,15 @@ class ConsoleFirstRequestPlan:
     api_endpoint: str
 
 
+@dataclass(frozen=True, slots=True)
+class _ConsoleRunLogAuthority:
+    """Live, process-local authority for one Console run-log tree."""
+
+    session_id: str
+    root: Path
+    access_scope: Callable[[], ContextManager[Path]]
+
+
 def build_console_first_request_plan(
     *,
     shared_registry: ToolCatalogRegistry,
@@ -3261,6 +3270,8 @@ class ConsoleAgentBridge:
         #: the newest turn's primary run. Only `run_reply` writes it.
         self._live_primary_keys: dict[str, str] = {}
         self._historical_cache: dict[str, AgentLiveSnapshot] = {}
+        self._run_log_authorities: dict[str, _ConsoleRunLogAuthority] = {}
+        self._run_log_authority_lock = threading.Lock()
         # PR2b Task 1: published for the DURATION of one `run_reply` call
         # -- set right before `service.run_turn(...)` is invoked (below),
         # popped in the same `finally` that already tears that run down.
@@ -3988,9 +3999,26 @@ class ConsoleAgentBridge:
                                 "Failed to persist skill script grant"
                             )
                 try:
-                    outcome = asyncio.run(
-                        scope.run_skill_script(skill_name, script_path, list(args))
-                    )
+                    if scratch_root is not None and scratch_lease is not None:
+                        with scratch_lease():
+                            outcome = asyncio.run(
+                                scope.run_skill_script(
+                                    skill_name,
+                                    script_path,
+                                    list(args),
+                                    output_root=(
+                                        scratch_root / "skill_script_output"
+                                    ),
+                                )
+                            )
+                    else:
+                        outcome = asyncio.run(
+                            scope.run_skill_script(
+                                skill_name,
+                                script_path,
+                                list(args),
+                            )
+                        )
                 except Exception as exc:  # noqa: BLE001
                     return ToolResult(ok=False, error=f"run_skill_script: {exc}")
 
@@ -4017,7 +4045,17 @@ class ConsoleAgentBridge:
                     lines.append(
                         f"produced {len(outcome.output_files)} file(s): {listed}"
                     )
-                    lines.append(f"output directory: {outcome.output_dir}")
+                    display_output_dir = str(outcome.output_dir)
+                    if scratch_root is not None and outcome.output_dir is not None:
+                        try:
+                            display_output_dir = str(
+                                Path(outcome.output_dir)
+                                .resolve()
+                                .relative_to(scratch_root.resolve())
+                            )
+                        except ValueError:
+                            display_output_dir = "private scratch output"
+                    lines.append(f"output directory: {display_output_dir}")
                 return ToolResult(ok=True, content="\n".join(lines))
 
         # One event loop for the whole run (PR #629 Fix 1(c)): every turn
@@ -4333,6 +4371,29 @@ class ConsoleAgentBridge:
                     return {}
                 return _inner_review(calls, run_id)
 
+        run_log_writer = None
+        if scratch_root is not None and scratch_lease is not None:
+            from tldw_chatbook.Agents.run_log import RunLogWriter, resolve_log_root
+
+            run_log_root: Path | None = None
+            try:
+                with scratch_lease():
+                    run_log_root = resolve_log_root(
+                        sandbox_root=scratch_root,
+                        workspace_id=run_workspace_id,
+                    )
+            except Exception:  # noqa: BLE001 -- writer will fail closed on lease
+                run_log_root = None
+            run_log_writer = RunLogWriter(
+                root=run_log_root or scratch_root,
+                access_scope=scratch_lease,
+                on_bound=functools.partial(
+                    self._remember_run_log_authority,
+                    session_id=session_id,
+                    access_scope=scratch_lease,
+                ),
+            )
+
         service = AgentService(
             self._db,
             registry,
@@ -4345,6 +4406,7 @@ class ConsoleAgentBridge:
             review_state_scope=review_state_scope,
             install_skill_tool=install_skill_tool,
             run_skill_script_tool=run_skill_script_tool,
+            run_log_writer=run_log_writer,
             run_log_request_plan=first_request_plan.run_log,
             revoke_approvals=revoke_approvals,
             persist_provider_continuation=(
@@ -5701,6 +5763,43 @@ class ConsoleAgentBridge:
         record = self._db.latest_primary_run_metadata(conversation_id)
         return record["id"] if record is not None else None
 
+    def _remember_run_log_authority(
+        self,
+        run_id: str,
+        root: Path,
+        *,
+        session_id: str,
+        access_scope: Callable[[], ContextManager[Path]],
+    ) -> None:
+        """Remember one live Console run-log root without persisting it."""
+        authority = _ConsoleRunLogAuthority(
+            session_id=str(session_id),
+            root=Path(root).resolve(),
+            access_scope=access_scope,
+        )
+        with self._run_log_authority_lock:
+            self._run_log_authorities[str(run_id)] = authority
+
+    def forget_session_file_authority(self, session_id: str) -> None:
+        """Forget every scratch-adjacent run-log locator for a closed Chat."""
+        target = str(session_id)
+        with self._run_log_authority_lock:
+            stale = [
+                run_id
+                for run_id, authority in self._run_log_authorities.items()
+                if authority.session_id == target
+            ]
+            for run_id in stale:
+                self._run_log_authorities.pop(run_id, None)
+
+    def _run_log_authority_for(
+        self,
+        owner_run_id: str,
+    ) -> _ConsoleRunLogAuthority | None:
+        """Return a process-local authority snapshot for one primary run."""
+        with self._run_log_authority_lock:
+            return self._run_log_authorities.get(str(owner_run_id))
+
     def _owning_run_id_for_log(self, run_id: str) -> str:
         """Return the run id whose ON-DISK log directory holds ``run_id``'s records.
 
@@ -5762,14 +5861,29 @@ class ConsoleAgentBridge:
         from tldw_chatbook.Agents.run_log import resolve_existing_log_dir
 
         owner_run_id = self._owning_run_id_for_log(run_id)
-        log_dir = resolve_existing_log_dir(owner_run_id)
-        if log_dir is None:
+        authority = self._run_log_authority_for(owner_run_id)
+        if self._store is not None and authority is None:
             return False
-        if owner_run_id == run_id:
-            return True
-        from tldw_chatbook.Agents.run_log_search import load_records
+        try:
+            access_scope = (
+                authority.access_scope if authority is not None else contextlib.nullcontext
+            )
+            with access_scope():
+                log_dir = resolve_existing_log_dir(
+                    owner_run_id,
+                    root=(authority.root if authority is not None else None),
+                )
+                if log_dir is None:
+                    return False
+                if owner_run_id == run_id:
+                    return True
+                from tldw_chatbook.Agents.run_log_search import load_records
 
-        return any(record.run_id == run_id for record in load_records(log_dir))
+                return any(
+                    record.run_id == run_id for record in load_records(log_dir)
+                )
+        except Exception:  # noqa: BLE001 -- stale authority fails closed
+            return False
 
     def load_run_log_text(self, run_id: str) -> str:
         """Render ``run_id``'s full, untruncated run log for display.
@@ -5816,10 +5930,23 @@ class ConsoleAgentBridge:
         from tldw_chatbook.Agents.run_log_search import format_results, load_records
 
         owner_run_id = self._owning_run_id_for_log(run_id)
-        log_dir = resolve_existing_log_dir(owner_run_id)
-        if log_dir is None:
+        authority = self._run_log_authority_for(owner_run_id)
+        if self._store is not None and authority is None:
             return ""
-        records = load_records(log_dir)
+        try:
+            access_scope = (
+                authority.access_scope if authority is not None else contextlib.nullcontext
+            )
+            with access_scope():
+                log_dir = resolve_existing_log_dir(
+                    owner_run_id,
+                    root=(authority.root if authority is not None else None),
+                )
+                if log_dir is None:
+                    return ""
+                records = load_records(log_dir)
+        except Exception:  # noqa: BLE001 -- stale authority fails closed
+            return ""
         if owner_run_id != run_id:
             records = [record for record in records if record.run_id == run_id]
         if not records:

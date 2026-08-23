@@ -60,6 +60,10 @@ def test_close_session_tombstones_scratch_before_store_removal(tmp_path):
             events.append("scratch-close")
             return super().close(session_id)
 
+    class RecordingBridge:
+        def forget_session_file_authority(self, _session_id):
+            events.append("authority-forget")
+
     store = RecordingStore()
     session = store.create_session()
     scratch_spaces = RecordingScratchSpaces(temp_parent=tmp_path)
@@ -68,11 +72,12 @@ def test_close_session_tombstones_scratch_before_store_removal(tmp_path):
         store=store,
         provider_gateway=_Gateway([]),
         scratch_spaces=scratch_spaces,
+        agent_bridge=RecordingBridge(),
     )
 
     controller.close_session(session.id)
 
-    assert events[:2] == ["scratch-close", "store-close"]
+    assert events[:3] == ["scratch-close", "authority-forget", "store-close"]
     assert scratch_spaces.wait_for_cleanup(timeout_seconds=2.0)
 
 
