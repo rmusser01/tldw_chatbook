@@ -8898,11 +8898,17 @@ class ConsoleChatController:
         )
         if not getattr(resolution, "ready", False):
             return resolution, None
-        return resolution, self._finalize_turn_execution_context(
+        turn_context = self._finalize_turn_execution_context(
             captured_configuration,
             library_authority,
             resolution,
         )
+        self.store.update_session_library_destination(
+            session_id,
+            turn_context.library_authority,
+            turn_context.resolved_destination,
+        )
+        return resolution, turn_context
 
     @staticmethod
     def _require_complete_turn_execution_context(

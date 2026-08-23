@@ -19,6 +19,14 @@ from tldw_chatbook.Chat.console_library_policy import (
     ConsoleLibraryPolicySnapshot,
 )
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
+from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+    ConsoleEgressClass,
+    ConsoleResolvedDestination,
+)
+from tldw_chatbook.Chat.console_library_destination import (
+    ConsoleLibraryDestinationRuntimeState,
+    update_console_library_destination_runtime,
+)
 from tldw_chatbook.Chat.console_roleplay_identity import (
     resolve_console_message_presentation,
 )
@@ -189,6 +197,164 @@ def test_message_completed_subscription_emits_each_successful_regeneration() -> 
         (session.id, message.id),
         (session.id, message.id),
     ]
+
+
+@pytest.mark.parametrize(
+    "terminal",
+    ["complete", "failed", "stopped", "variant_complete"],
+)
+def test_assistant_terminal_settlement_clears_runtime_library_disclosure(
+    terminal: str,
+) -> None:
+    store = ConsoleChatStore()
+    session = store.create_session()
+    local = ConsoleResolvedDestination(
+        provider="llama_cpp",
+        model="model-a",
+        endpoint_identity="http://127.0.0.1:9099",
+        egress_class=ConsoleEgressClass.ON_DEVICE,
+    )
+    external = ConsoleResolvedDestination(
+        provider="openai",
+        model="model-a",
+        endpoint_identity="https://api.openai.com",
+        egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
+    )
+    runtime = update_console_library_destination_runtime(
+        ConsoleLibraryDestinationRuntimeState(),
+        local,
+        library_data_possible=True,
+    )
+    session.library_destination_runtime = update_console_library_destination_runtime(
+        runtime,
+        external,
+        library_data_possible=True,
+    )
+    assert session.library_destination_runtime.disclosure is not None
+
+    if terminal == "variant_complete":
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="original",
+        )
+        store.begin_variant_stream(message.id)
+        store.append_stream_chunk(message.id, "replacement")
+        store.finalize_variant_stream(message.id)
+    else:
+        message = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="",
+        )
+        store.append_stream_chunk(message.id, "response")
+        getattr(store, f"mark_message_{terminal}")(message.id)
+
+    assert session.library_destination_runtime.disclosure is None
+    assert session.library_destination_runtime.resolved_destination == external
+    assert session.library_destination_runtime.last_resolved_identity == (
+        external.identity_key
+    )
+
+
+def test_completion_subscribers_observe_disclosure_already_settled() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session()
+    local = ConsoleResolvedDestination(
+        provider="llama_cpp",
+        model="model-a",
+        endpoint_identity="http://127.0.0.1:9099",
+        egress_class=ConsoleEgressClass.ON_DEVICE,
+    )
+    external = ConsoleResolvedDestination(
+        provider="openai",
+        model="model-a",
+        endpoint_identity="https://api.openai.com",
+        egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
+    )
+    state = update_console_library_destination_runtime(
+        ConsoleLibraryDestinationRuntimeState(),
+        local,
+        library_data_possible=True,
+    )
+    session.library_destination_runtime = update_console_library_destination_runtime(
+        state,
+        external,
+        library_data_possible=True,
+    )
+    observed = []
+    store.subscribe_message_completed(
+        lambda _token: observed.append(
+            session.library_destination_runtime.disclosure
+        )
+    )
+    message = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+    )
+    store.append_stream_chunk(message.id, "response")
+
+    store.mark_message_complete(message.id)
+
+    assert observed == [None]
+
+
+def test_runtime_library_disclosure_is_isolated_across_session_navigation() -> None:
+    store = ConsoleChatStore()
+    session_a = store.create_session(title="Session A")
+    session_b = store.create_session(title="Session B")
+    local = ConsoleResolvedDestination(
+        provider="llama_cpp",
+        model="model-a",
+        endpoint_identity="http://127.0.0.1:9099",
+        egress_class=ConsoleEgressClass.ON_DEVICE,
+    )
+    external_a = ConsoleResolvedDestination(
+        provider="openai",
+        model="model-a",
+        endpoint_identity="https://api.openai.com",
+        egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
+    )
+    external_b = ConsoleResolvedDestination(
+        provider="anthropic",
+        model="model-b",
+        endpoint_identity="https://api.anthropic.com",
+        egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
+    )
+    for session, external in (
+        (session_a, external_a),
+        (session_b, external_b),
+    ):
+        state = update_console_library_destination_runtime(
+            ConsoleLibraryDestinationRuntimeState(),
+            local,
+            library_data_possible=True,
+        )
+        session.library_destination_runtime = (
+            update_console_library_destination_runtime(
+                state,
+                external,
+                library_data_possible=True,
+            )
+        )
+
+    store.switch_session(session_b.id)
+    store.switch_session(session_a.id)
+    assert session_a.library_destination_runtime.disclosure is not None
+    assert session_b.library_destination_runtime.disclosure is not None
+
+    message_b = store.append_message(
+        session_b.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+    )
+    store.append_stream_chunk(message_b.id, "response")
+    store.mark_message_complete(message_b.id)
+
+    assert store.active_session_id == session_a.id
+    assert session_a.library_destination_runtime.disclosure is not None
+    assert session_b.library_destination_runtime.disclosure is None
 
 
 def test_completion_generation_remains_monotonic_across_same_id_restore() -> None:

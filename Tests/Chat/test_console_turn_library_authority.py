@@ -344,6 +344,96 @@ async def test_running_turn_freezes_selector_scope_provider_and_destination():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("auto_retrieve", "assistant_access", "expects_disclosure"),
+    [
+        (
+            ConsoleAutoRetrieve.AUTOMATIC,
+            ConsoleAssistantLibraryAccess.BLOCKED,
+            True,
+        ),
+        (
+            ConsoleAutoRetrieve.NEVER,
+            ConsoleAssistantLibraryAccess.ALLOWED,
+            True,
+        ),
+        (
+            ConsoleAutoRetrieve.AUTOMATIC,
+            ConsoleAssistantLibraryAccess.ALLOWED,
+            True,
+        ),
+        (
+            ConsoleAutoRetrieve.NEVER,
+            ConsoleAssistantLibraryAccess.BLOCKED,
+            False,
+        ),
+    ],
+)
+async def test_context_resolution_records_policy_independent_runtime_disclosure(
+    auto_retrieve: ConsoleAutoRetrieve,
+    assistant_access: ConsoleAssistantLibraryAccess,
+    expects_disclosure: bool,
+) -> None:
+    events: list[str] = []
+    policy = _policy(
+        auto_retrieve=auto_retrieve,
+        assistant_access=assistant_access,
+    )
+    store = ConsoleChatStore()
+    session = store.create_session()
+    holder_before = session.library_policy_holder.snapshot
+    store.library_policy_coordinator = _RecordingCoordinator(events, policy)
+    destinations = [
+        ConsoleResolvedDestination(
+            provider="llama_cpp",
+            model="model-a",
+            endpoint_identity="http://127.0.0.1:9099",
+            egress_class=ConsoleEgressClass.ON_DEVICE,
+        ),
+        ConsoleResolvedDestination(
+            provider="openai",
+            model="model-a",
+            endpoint_identity="https://api.openai.com",
+            egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
+        ),
+    ]
+
+    class SequenceGateway:
+        async def resolve_for_send(self, _selection):
+            destination = destinations.pop(0)
+            return SimpleNamespace(
+                ready=True,
+                provider=destination.provider,
+                model=destination.model,
+                base_url=destination.endpoint_identity,
+                visible_copy="",
+                resolved_destination=destination,
+            )
+
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=SequenceGateway(),
+        agent_runtime_enabled=False,
+    )
+    configuration = controller.resolve_turn_configuration_snapshot(session.id)
+
+    await controller._capture_and_resolve_turn_execution_context(
+        session.id,
+        configuration,
+    )
+    await controller._capture_and_resolve_turn_execution_context(
+        session.id,
+        configuration,
+    )
+
+    runtime = session.library_destination_runtime
+    assert runtime.resolved_destination is not None
+    assert runtime.resolved_destination.egress_class is ConsoleEgressClass.PUBLIC_NETWORK
+    assert (runtime.disclosure is not None) is expects_disclosure
+    assert session.library_policy_holder.snapshot == holder_before
+
+
+@pytest.mark.asyncio
 async def test_queued_configuration_and_policy_capture_only_after_dequeue():
     events: list[str] = []
     store = ConsoleChatStore()
