@@ -1610,6 +1610,27 @@ def test_campaign_recovery_releases_dead_lock_before_running_ledger(
     assert _acquire_attempt(tmp_path).attempt_id == "attempt-0001"
 
 
+def test_campaign_recovery_marks_running_ledger_without_attempt_root_interrupted(
+    tmp_path: Path,
+) -> None:
+    _acquire_lock(tmp_path)
+    ledger = tmp_path / "attempts.jsonl"
+    running = _attempt_event("attempt-0001", "running")
+    profile.append_attempt_state(ledger, running)
+    assert not (tmp_path / "attempts").exists()
+
+    event = profile.recover_interrupted_attempt(
+        tmp_path, process_start_probe=lambda _pid: None
+    )
+
+    assert event == _attempt_event(
+        "attempt-0001", "failed", reason_category="interrupted"
+    )
+    assert profile.attempt_lineage(ledger) == (running, event)
+    assert not (tmp_path / ".campaign-lock").exists()
+    assert not (tmp_path / ".campaign-recovery").exists()
+
+
 def test_campaign_recovery_finishes_owned_marker_after_interrupted_append(
     tmp_path: Path,
 ) -> None:
@@ -5234,6 +5255,116 @@ def _completed_parent_artifacts(args: SimpleNamespace) -> None:
     }
 
 
+def test_acquisition_pin_is_campaign_state_not_attempt_artifact(tmp_path: Path) -> None:
+    campaign = tmp_path / "campaign"
+    attempt_root = profile.create_attempt_root(campaign, "attempt-0001")
+
+    event = profile.write_acquisition_pin(
+        campaign,
+        "attempt-0001",
+        verdict="pass",
+        raw_sha256="a" * 64,
+    )
+
+    pin_path = campaign / "acquisition-pins/attempt-0001.json"
+    assert pin_path.read_bytes() == (
+        json.dumps(event, sort_keys=True) + "\n"
+    ).encode("utf-8")
+    assert profile.read_acquisition_pin(campaign, "attempt-0001") == event
+    assert list(attempt_root.iterdir()) == []
+
+
+@pytest.mark.parametrize("create_namespace", (False, True))
+def test_acquisition_pin_read_treats_only_absent_state_as_unpinned(
+    tmp_path: Path, create_namespace: bool
+) -> None:
+    campaign = tmp_path / "campaign"
+    campaign.mkdir()
+    if create_namespace:
+        (campaign / "acquisition-pins").mkdir()
+
+    assert profile.read_acquisition_pin(campaign, "attempt-0001") is None
+
+
+@pytest.mark.parametrize("namespace_kind", ("file", "symlink"))
+def test_acquisition_pin_rejects_unowned_state_namespace(
+    tmp_path: Path, namespace_kind: str
+) -> None:
+    campaign = tmp_path / "campaign"
+    campaign.mkdir()
+    namespace = campaign / "acquisition-pins"
+    if namespace_kind == "file":
+        namespace.write_bytes(b"")
+    else:
+        target = tmp_path / "elsewhere"
+        target.mkdir()
+        namespace.symlink_to(target, target_is_directory=True)
+
+    with pytest.raises(RuntimeError, match="^campaign_acquisition_pin_invalid$"):
+        profile.read_acquisition_pin(campaign, "attempt-0001")
+    with pytest.raises(RuntimeError, match="^campaign_acquisition_pin_invalid$"):
+        profile.write_acquisition_pin(
+            campaign,
+            "attempt-0001",
+            verdict="pass",
+            raw_sha256="a" * 64,
+        )
+
+
+def test_acquisition_pin_rejects_partial_namespace_write(tmp_path: Path) -> None:
+    campaign = tmp_path / "campaign"
+    pins = campaign / "acquisition-pins"
+    pins.mkdir(parents=True)
+    (pins / ".acquisition-pin-partial").write_bytes(b'{"attempt_id":')
+
+    with pytest.raises(RuntimeError, match="^campaign_acquisition_pin_invalid$"):
+        profile.read_acquisition_pin(campaign, "attempt-0001")
+
+
+@pytest.mark.parametrize(
+    ("payload", "error"),
+    (
+        (b'{"attempt_id":', "campaign_acquisition_pin_invalid"),
+        (
+            json.dumps(
+                {
+                    "attempt_id": "attempt-0001",
+                    "state": "complete_pending_review",
+                    "verdict": "pass",
+                    "raw_sha256": "a" * 64,
+                    "pid": 123,
+                },
+                sort_keys=True,
+            ).encode("utf-8")
+            + b"\n",
+            "campaign_event_privacy_violation",
+        ),
+        (
+            json.dumps(
+                {
+                    "attempt_id": "attempt-0001",
+                    "state": "complete_pending_review",
+                    "verdict": "pass",
+                    "raw_sha256": "a" * 64,
+                },
+                sort_keys=True,
+            ).encode("utf-8"),
+            "campaign_acquisition_pin_invalid",
+        ),
+    ),
+)
+def test_acquisition_pin_rejects_partial_private_or_noncanonical_state(
+    tmp_path: Path, payload: bytes, error: str
+) -> None:
+    campaign = tmp_path / "campaign"
+    pins = campaign / "acquisition-pins"
+    pins.mkdir(parents=True)
+    (pins / "attempt-0001.json").write_bytes(payload)
+
+    with pytest.raises(RuntimeError, match=f"^{error}$"):
+        profile.read_acquisition_pin(campaign, "attempt-0001")
+
+
 def test_pending_ledger_failure_keeps_raw_verdict_pin_blocking_and_resumable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -5269,6 +5400,11 @@ def test_pending_ledger_failure_keeps_raw_verdict_pin_blocking_and_resumable(
         "state": "complete_pending_review",
         "verdict": "pass",
         "raw_sha256": hashlib.sha256(b"protocol-valid-raw\n").hexdigest(),
+    }
+    assert {path.name for path in attempt.root.iterdir()} == {
+        "real-provider-three-turn.raw.jsonl",
+        "real-provider-three-turn.summary.json",
+        "real-provider-three-turn.manifest.json",
     }
     assert profile.attempt_lineage(campaign / "attempts.jsonl")[-1]["state"] == "running"
     assert (campaign / ".campaign-lock").is_dir()

@@ -2254,31 +2254,52 @@ def release_campaign_attempt(campaign_root: Path, attempt: CampaignAttempt) -> N
     release_campaign_lock(campaign_root, attempt.owner)
 
 
-def _acquisition_pin_path(campaign_root: Path, attempt_id: str) -> Path:
+def _acquisition_pin_path(
+    campaign_root: Path, attempt_id: str, *, create_namespace: bool
+) -> Path | None:
     if not _ATTEMPT_ID.fullmatch(attempt_id):
         raise RuntimeError("campaign_acquisition_pin_invalid")
     campaign, _ = _strict_owned_directory(
         campaign_root, parent=None, error_code="campaign_acquisition_pin_invalid"
     )
-    attempts, _ = _strict_owned_directory(
-        campaign / "attempts",
+    pins_root = campaign / "acquisition-pins"
+    if pins_root.is_symlink():
+        raise RuntimeError("campaign_acquisition_pin_invalid")
+    if not pins_root.exists():
+        if not create_namespace:
+            return None
+        _mkdir_namespace(pins_root)
+    pins, _ = _strict_owned_directory(
+        pins_root,
         parent=campaign,
         error_code="campaign_acquisition_pin_invalid",
     )
-    attempt, _ = _strict_owned_directory(
-        attempts / attempt_id,
-        parent=attempts,
-        error_code="campaign_acquisition_pin_invalid",
-    )
-    return attempt / "acquisition-pin.json"
+    try:
+        if any(
+            entry.is_symlink()
+            or not entry.is_file()
+            or not entry.name.endswith(".json")
+            or not _ATTEMPT_ID.fullmatch(entry.name.removesuffix(".json"))
+            for entry in pins.iterdir()
+        ):
+            raise RuntimeError("campaign_acquisition_pin_invalid")
+    except OSError as exc:
+        raise RuntimeError("campaign_acquisition_pin_invalid") from exc
+    return pins / f"{attempt_id}.json"
 
 
 def read_acquisition_pin(
     campaign_root: Path, attempt_id: str
 ) -> dict[str, Any] | None:
     """Read one canonical raw/verdict pin, or return ``None`` when absent."""
-    path = _acquisition_pin_path(campaign_root, attempt_id)
+    path = _acquisition_pin_path(
+        campaign_root, attempt_id, create_namespace=False
+    )
+    if path is None:
+        return None
     if not path.exists():
+        if path.is_symlink():
+            raise RuntimeError("campaign_acquisition_pin_invalid")
         return None
     if not path.is_file() or path.is_symlink():
         raise RuntimeError("campaign_acquisition_pin_invalid")
@@ -2315,7 +2336,10 @@ def write_acquisition_pin(
             "raw_sha256": raw_sha256,
         }
     )
-    path = _acquisition_pin_path(campaign_root, attempt_id)
+    path = _acquisition_pin_path(
+        campaign_root, attempt_id, create_namespace=True
+    )
+    assert path is not None
     existing = read_acquisition_pin(campaign_root, attempt_id)
     if existing is not None:
         if existing != event:
