@@ -422,6 +422,12 @@ _SQLITE_OWNER_POLICIES = {
         _PRIVATE_OR_MEMORY,
         "All SQLiteStorage methods share private file and Path(':memory:') support.",
     ),
+    "utils.db_upgrade_notice": SQLiteOwnerPolicy(
+        "tldw_chatbook/Utils/db_upgrade_notice",
+        _READ_ONLY_URI,
+        "The pre-boot upgrade notice reads only the schema-version row, "
+        "read-only, before the app constructs (task-21100).",
+    ),
     "utils.legacy_user_database_path": SQLiteOwnerPolicy(
         "tldw_chatbook/Utils/paths",
         _PRIVATE_FILE,

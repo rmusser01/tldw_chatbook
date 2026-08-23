@@ -430,15 +430,34 @@ AFTER UPDATE ON world_books BEGIN
   WHERE NEW.deleted = 0;
 END;
 
-/* Repair whatever the unguarded halves already did, and bring both indexes
+/* Repair whatever the unguarded halves already did, and bring the indexes
    into line with the guarantee for rows that predate it. NOT the FTS5
    `'rebuild'` command: that re-derives from the base table with no `deleted`
    filter and would index every tombstoned row, reintroducing exactly the leak
-   these triggers exist to prevent. */
-INSERT INTO messages_fts(messages_fts) VALUES('delete-all');
+   these triggers exist to prevent.
 
-INSERT INTO messages_fts(rowid,content)
-SELECT rowid, content FROM messages WHERE deleted = 0;
+   For `messages_fts` -- the only one of the three whose size is O(total chat
+   text) -- the reinsert is NOT performed here (task-21100). This whole step
+   runs inside the boot path's single version-bump transaction, and as
+   shipped in PR #1974 the unconditional reinsert of every non-deleted
+   message froze first paint for the duration of a full index rewrite on
+   large profiles. The `'delete-all'` stays: it truncates the index's shadow
+   tables (cheap, no tokenization), which also erases any corruption the
+   unguarded delete halves caused and removes every tombstoned row
+   immediately. The reinsert is delivered instead as a chunked, resumable
+   background backfill keyed on `messages_fts_docsize` membership
+   (`CharactersRAGDB.backfill_messages_fts`, driven from app mount by
+   `DB/chachanotes_fts_backfill.py`). Until it completes, message-content
+   search sees a consistent, progressively-filling index; the triggers keep
+   new and edited rows indexed regardless of backfill progress, and the
+   v46->v47 step re-guards the FTS 'delete' halves on index membership so a
+   write to a not-yet-backfilled row cannot corrupt the index (without that
+   guard the write itself raises "database disk image is malformed";
+   reproduced in Tests/DB/test_chachanotes_v47_messages_fts_backfill.py).
+
+   `keyword_collections_fts` and `world_books_fts` are tiny (user-curated
+   lists, not chat history), so their repair stays inline and complete. */
+INSERT INTO messages_fts(messages_fts) VALUES('delete-all');
 
 INSERT INTO keyword_collections_fts(keyword_collections_fts) VALUES('delete-all');
 
