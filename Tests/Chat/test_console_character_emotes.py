@@ -117,7 +117,9 @@ def test_success_without_explicit_event_uses_pinned_heuristic() -> None:
     assert emote.asset_id == 17
 
 
-@pytest.mark.parametrize(("terminal", "reason"), [("stopped", "stopped"), ("failed", "failed")])
+@pytest.mark.parametrize(
+    ("terminal", "reason"), [("stopped", "stopped"), ("failed", "failed")]
+)
 def test_unsuccessful_terminal_discards_candidate_and_never_uses_heuristic(
     terminal: str,
     reason: str,
@@ -166,13 +168,17 @@ def test_citation_body_replacement_is_sanitized_and_replaces_durable_events() ->
         ("smug", 9)
     ]
     assert emote.mood_label == "smug"
-    assert [event.state for event in store.character_emote_events_after(session.id, 0)] == [
+    assert [
+        event.state for event in store.character_emote_events_after(session.id, 0)
+    ] == [
         "happy",
         "smug",
     ]
 
 
-def test_parser_fault_reprocesses_whole_chunk_with_eventless_fail_closed_sanitizer() -> None:
+def test_parser_fault_reprocesses_whole_chunk_with_eventless_fail_closed_sanitizer() -> (
+    None
+):
     store = ConsoleChatStore()
     _session, assistant = _armed_message(store)
 
@@ -239,5 +245,13 @@ def test_real_sqlite_persists_only_sanitized_text_and_bounded_metadata() -> None
         assert row["metadata_json"] is not None
         assert "Safe answer" not in row["metadata_json"]
         assert "smug" in row["metadata_json"]
+        assert db.search_conversations_by_content("Safe answer")
+        assert db.search_conversations_by_content("smug") == []
+        export_source = db.get_messages_for_conversation(row["conversation_id"])
+        assert [message["content"] for message in export_source] == [
+            "Question",
+            "Safe answer\n",
+        ]
+        assert all("Emote:" not in message["content"] for message in export_source)
     finally:
         db.close_connection()
