@@ -19,6 +19,8 @@ from tldw_chatbook.Chat.console_chat_controller import (
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
     ConsoleProviderSelection,
+    ConsoleRunStatus,
+    ConsoleSubmissionOrigin,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
@@ -189,6 +191,56 @@ class _CancellationResistantBoundary:
         except asyncio.CancelledError:
             self.cancelled.set()
             await self.release.wait()
+
+
+class _CancellationBoundary:
+    """Hold an awaited production seam until ordinary task cancellation."""
+
+    def __init__(self) -> None:
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def wait(self) -> None:
+        self.entered.set()
+        await self.release.wait()
+
+
+class _OwnerThreadTask(asyncio.Task):
+    """Test task that rejects cancellation from outside its owner thread."""
+
+    def __init__(self, coroutine, *, loop: asyncio.AbstractEventLoop) -> None:
+        self._owner_thread_id = threading.get_ident()
+        super().__init__(coroutine, loop=loop)
+
+    def cancel(self, msg=None) -> bool:
+        if threading.get_ident() != self._owner_thread_id:
+            raise RuntimeError("Task.cancel called outside the owner thread")
+        return super().cancel(msg)
+
+
+class _HeldResolveFence(_StreamingFence):
+    def __init__(self, boundary) -> None:
+        super().__init__()
+        self.boundary = boundary
+
+    async def resolve_for_send(self, selection):
+        await self.boundary.wait()
+        return await super().resolve_for_send(selection)
+
+
+class _TwoResolveFence(_StreamingFence):
+    def __init__(self) -> None:
+        super().__init__()
+        self.entered_count = 0
+        self.both_entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def resolve_for_send(self, selection):
+        self.entered_count += 1
+        if self.entered_count == 2:
+            self.both_entered.set()
+        await self.release.wait()
+        return await super().resolve_for_send(selection)
 
 
 class _PolicyCoordinator:
@@ -2224,3 +2276,367 @@ async def test_explicit_evidence_lease_cancel_keeps_original_staged(monkeypatch)
 
     assert state["launch"] is original
     assert state["released"] == []
+
+
+@pytest.mark.asyncio
+async def test_same_session_refusal_cannot_overwrite_first_submit_owner():
+    store = ConsoleChatStore()
+    store.library_policy_coordinator = _PolicyCoordinator(ConsoleAutoRetrieve.NEVER)
+    session = store.create_session(session_id="session-1")
+    boundary = _CancellationResistantBoundary()
+    gateway = _HeldResolveFence(boundary)
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+
+    first = asyncio.create_task(
+        controller.submit_draft("first draft", session_id=session.id)
+    )
+    await boundary.entered.wait()
+    refused = await controller.submit_draft("second draft", session_id=session.id)
+
+    registry_preserved_first = controller._active_submit_tasks == {first: session.id}
+
+    shutdown = asyncio.create_task(controller.shutdown())
+    for _ in range(10):
+        await asyncio.sleep(0)
+        if boundary.cancelled.is_set() or shutdown.done():
+            break
+    shutdown_waited = not shutdown.done()
+    cancellation_reached_first = boundary.cancelled.is_set()
+    if not cancellation_reached_first:
+        first.cancel()
+    boundary.release.set()
+    await asyncio.gather(shutdown, return_exceptions=True)
+    (result,) = await asyncio.gather(first, return_exceptions=True)
+
+    assert not refused.accepted
+    assert registry_preserved_first
+    assert shutdown_waited
+    assert cancellation_reached_first
+    assert isinstance(result, ConsoleSubmitResult)
+    assert not result.accepted
+    assert gateway.provider_calls == 0
+    assert controller._active_submit_tasks == {}
+
+
+@pytest.mark.asyncio
+async def test_submit_registry_tracks_multiple_sessions_and_cleans_exact_done_tasks():
+    store = ConsoleChatStore()
+    store.library_policy_coordinator = _PolicyCoordinator(ConsoleAutoRetrieve.NEVER)
+    first_session = store.create_session(session_id="session-1")
+    second_session = store.create_session(session_id="session-2")
+    gateway = _TwoResolveFence()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+
+    first = asyncio.create_task(
+        controller.submit_draft("first draft", session_id=first_session.id)
+    )
+    second = asyncio.create_task(
+        controller.submit_draft("second draft", session_id=second_session.id)
+    )
+    await gateway.both_entered.wait()
+
+    registry_owned_both = controller._active_submit_tasks == {
+        first: first_session.id,
+        second: second_session.id,
+    }
+
+    gateway.release.set()
+    results = await asyncio.gather(first, second)
+
+    assert registry_owned_both
+    assert all(result.accepted for result in results)
+    assert gateway.provider_calls == 2
+    assert controller._active_submit_tasks == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["direct", "agent"])
+async def test_postaccept_cancellation_returns_exact_accepted_result(monkeypatch, path):
+    store = ConsoleChatStore()
+    store.library_policy_coordinator = _PolicyCoordinator(ConsoleAutoRetrieve.NEVER)
+    gateway = _StreamingFence()
+    bridge = _StateCapturingAgentBridge(store)
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_bridge=bridge if path == "agent" else None,
+        agent_runtime_enabled=path == "agent",
+    )
+    session = store.create_session(session_id="session-1")
+    store.set_session_project_instruction_state(
+        session.id, ProjectInstructionControlState.legacy_disabled()
+    )
+    controller.app = SimpleNamespace(call_from_thread=lambda fn, *args: fn(*args))
+    held = _CancellationBoundary()
+    if path == "direct":
+
+        async def hold_preflight(*, provider_messages, **_kwargs):
+            await held.wait()
+            return provider_messages, None
+
+        monkeypatch.setattr(
+            controller, "_apply_conversation_memory_preflight", hold_preflight
+        )
+    else:
+
+        async def hold_agent_setup(**_kwargs):
+            await held.wait()
+            return None, None, None, None
+
+        monkeypatch.setattr(
+            controller, "_compose_agent_request_providers", hold_agent_setup
+        )
+
+    submit = asyncio.create_task(
+        controller.submit_draft("frozen draft", session_id=session.id)
+    )
+    await held.entered.wait()
+    preparation = store.preparation_for_session(session.id)
+    assert preparation is not None
+    assert preparation.state is ConsoleTurnPreparationState.ACCEPTED
+    accepted_rows = store.messages_for_session(session.id)
+    assert [row.role for row in accepted_rows] == [
+        ConsoleMessageRole.USER,
+        ConsoleMessageRole.ASSISTANT,
+    ]
+
+    submit.cancel()
+    (result,) = await asyncio.gather(submit, return_exceptions=True)
+
+    final_rows = store.messages_for_session(session.id)
+    assert isinstance(result, ConsoleSubmitResult)
+    assert result == ConsoleSubmitResult(
+        accepted=True,
+        should_clear_draft=True,
+        visible_copy="Accepted turn failed before provider dispatch.",
+        session_id=session.id,
+        user_message_id=accepted_rows[0].id,
+        assistant_message_id=accepted_rows[1].id,
+        terminal_status=ConsoleRunStatus.FAILED,
+        origin=ConsoleSubmissionOrigin.MANUAL,
+        queue_entry_id=None,
+        committed_context_epoch=result.committed_context_epoch,
+    )
+    assert result.committed_context_epoch is not None
+    assert [row.id for row in final_rows] == [row.id for row in accepted_rows]
+    assert final_rows[1].status == "failed"
+    assert gateway.provider_calls == 0
+    assert bridge.calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["direct", "agent"])
+async def test_off_thread_begin_shutdown_schedules_owner_loop_cancellation(
+    monkeypatch, path
+):
+    loop = asyncio.get_running_loop()
+    old_debug = loop.get_debug()
+    loop.set_debug(True)
+    try:
+        store = ConsoleChatStore()
+        store.library_policy_coordinator = _PolicyCoordinator(ConsoleAutoRetrieve.NEVER)
+        gateway = _StreamingFence()
+        bridge = _StateCapturingAgentBridge(store)
+        controller = ConsoleChatController(
+            store=store,
+            provider_gateway=gateway,
+            agent_bridge=bridge if path == "agent" else None,
+            agent_runtime_enabled=path == "agent",
+        )
+        session = store.create_session(session_id="session-1")
+        store.set_session_project_instruction_state(
+            session.id, ProjectInstructionControlState.legacy_disabled()
+        )
+        controller.app = SimpleNamespace(call_from_thread=lambda fn, *args: fn(*args))
+        held = _CancellationBoundary()
+        if path == "direct":
+
+            async def hold_preflight(*, provider_messages, **_kwargs):
+                await held.wait()
+                return provider_messages, None
+
+            monkeypatch.setattr(
+                controller, "_apply_conversation_memory_preflight", hold_preflight
+            )
+        else:
+
+            async def hold_agent_setup(**_kwargs):
+                await held.wait()
+                return None, None, None, None
+
+            monkeypatch.setattr(
+                controller, "_compose_agent_request_providers", hold_agent_setup
+            )
+
+        submit = _OwnerThreadTask(
+            controller.submit_draft("frozen draft", session_id=session.id), loop=loop
+        )
+        await held.entered.wait()
+        shutdown_error = None
+        try:
+            await asyncio.to_thread(controller.begin_shutdown)
+        except BaseException as exc:  # recorded for the RED assertion below
+            shutdown_error = exc
+        held.release.set()
+        (result,) = await asyncio.gather(submit, return_exceptions=True)
+        await controller.shutdown()
+
+        assert shutdown_error is None
+        assert isinstance(result, ConsoleSubmitResult)
+        assert result.accepted
+        assert result.user_message_id is not None
+        assert result.assistant_message_id is not None
+        assert gateway.provider_calls == 0
+        assert bridge.calls == 0
+        assert controller._active_submit_tasks == {}
+    finally:
+        loop.set_debug(old_debug)
+
+
+@pytest.mark.asyncio
+async def test_ready_close_removes_echo_idempotently_and_preserves_evidence_launch(
+    monkeypatch,
+):
+    state: dict[str, object] = {
+        "launch": _staged_evidence_launch("original"),
+        "released": [],
+    }
+    original = state["launch"]
+    retrieval = _real_retrieval_controller_for_launch(state)
+    store = ConsoleChatStore()
+    store.library_policy_coordinator = _PolicyCoordinator(ConsoleAutoRetrieve.NEVER)
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=_StreamingFence(),
+        rag_capture_provider=retrieval._capture_console_staged_rag,
+    )
+    held = _CancellationBoundary()
+
+    async def hold_capture(_app, launch, *, user_message):
+        assert launch is original
+        await held.wait()
+        return SimpleNamespace(
+            context=f"[S1] held evidence: {user_message}",
+            citation_builder=None,
+            prompt_evidence_set_id=None,
+            citation_repair_contract=None,
+        )
+
+    monkeypatch.setattr(
+        retrieval_module, "capture_console_staged_evidence_for_chat", hold_capture
+    )
+    session = store.create_session(session_id="session-1")
+    submit = asyncio.create_task(
+        controller.submit_draft("frozen draft", session_id=session.id)
+    )
+    await held.entered.wait()
+    preparation = store.preparation_for_session(session.id)
+    assert preparation is not None
+    assert preparation.state is ConsoleTurnPreparationState.READY
+
+    controller.close_session(session.id)
+    (result,) = await asyncio.gather(submit, return_exceptions=True)
+
+    assert isinstance(result, ConsoleSubmitResult)
+    assert not result.accepted
+    assert state["launch"] is original
+    assert state["released"] == []
+    assert store.preparation_by_id(preparation.preparation_id) is None
+    assert controller._preparation_outcomes == {}
+    assert controller._prepared_send_continuations == {}
+    assert controller._active_submit_tasks == {}
+
+
+def test_one_shot_prefill_revision_rejects_bool_non_int_and_negative():
+    store = ConsoleChatStore()
+    session = store.create_session(session_id="session-1")
+    store.set_session_one_shot_prefill(session.id, "exact prefill")
+    value, revision = store.session_one_shot_prefill_snapshot(session.id)
+    assert value == "exact prefill"
+    assert revision == 1
+
+    for malformed in (True, 1.0, "1", -1):
+        with pytest.raises(ValueError, match="non-negative integer"):
+            store.consume_session_one_shot_prefill(session.id, malformed)  # type: ignore[arg-type]
+        assert store.session_one_shot_prefill_snapshot(session.id) == (
+            "exact prefill",
+            revision,
+        )
+
+    assert store.consume_session_one_shot_prefill(session.id, revision)
+    assert store.session_one_shot_prefill_snapshot(session.id) == (None, revision + 1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["direct", "agent"])
+async def test_recovered_queue_acknowledges_postaccept_cancellation_once(
+    monkeypatch, path
+):
+    from Tests.Chat.test_console_chat_store import FakePersistence
+
+    persistence = FakePersistence()
+    (
+        controller,
+        store,
+        gateway,
+        service,
+        paused,
+        first,
+        second,
+    ) = await _paused_queued_send(persistence=persistence)
+    service.error = None
+    held = _CancellationBoundary()
+    if path == "direct":
+
+        async def hold_preflight(*, provider_messages, **_kwargs):
+            await held.wait()
+            return provider_messages, None
+
+        monkeypatch.setattr(
+            controller, "_apply_conversation_memory_preflight", hold_preflight
+        )
+    else:
+        bridge = _StateCapturingAgentBridge(store)
+        controller._agent_bridge = bridge
+        controller._agent_runtime_enabled = True
+        store.set_session_project_instruction_state(
+            paused.session_id, ProjectInstructionControlState.legacy_disabled()
+        )
+
+        async def hold_agent_setup(**_kwargs):
+            await held.wait()
+            return None, None, None, None
+
+        monkeypatch.setattr(
+            controller, "_compose_agent_request_providers", hold_agent_setup
+        )
+
+    recovery = asyncio.create_task(
+        controller.retry_library_preparation(paused.preparation_id)
+    )
+    await held.entered.wait()
+    accepted_rows = store.messages_for_session(paused.session_id)
+    recovery.cancel()
+    result = await recovery
+
+    snapshot = controller.prompt_queue_registry.snapshot(paused.session_id)
+    assert result.accepted
+    assert result.queue_entry_id == first.entry_id
+    assert result.user_message_id == paused.transient_user_message_id
+    assert result.assistant_message_id == accepted_rows[-1].id
+    assert result.terminal_status is ConsoleRunStatus.FAILED
+    assert snapshot.claimed_count == 0
+    assert snapshot.waiting_count == 1
+    assert snapshot.entries[0].entry_id == second.entry_id
+    assert snapshot.mode is PromptQueueMode.PAUSED
+    assert gateway.provider_calls == 1
+    assert (
+        len(
+            [
+                row
+                for row in persistence.created_messages
+                if row["sender"] == "user" and row["content"] == "frozen queued"
+            ]
+        )
+        == 1
+    )

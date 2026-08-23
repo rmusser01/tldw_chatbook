@@ -2513,6 +2513,8 @@ class ConsoleChatStore:
     ) -> bool:
         """Clear only the exact revision captured by an accepted turn."""
 
+        if type(expected_revision) is not int or expected_revision < 0:
+            raise ValueError("expected_revision must be a non-negative integer")
         session = self._session_or_raise(session_id)
         if session.one_shot_prefill_revision != expected_revision:
             return False

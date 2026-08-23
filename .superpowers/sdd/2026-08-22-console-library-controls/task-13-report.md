@@ -185,3 +185,60 @@ unawaited submit shutdown, missing direct and agent shutdown rechecks, early
 COMMITTING close removal, equality/unconditional prefill clearing, and early
 evidence release. Scoped Ruff lint/format, source/privacy scans, and diff checks
 passed.
+
+## Fix round 4
+
+The submit registry now owns each exact `asyncio.Task` under a thread-safe lock,
+with its resolved session as metadata. A second same-session refusal cannot
+replace the first pending owner; provisional binding, exact-task finalization,
+per-session close, and global shutdown all preserve every live task. Synchronous
+`begin_shutdown()` marshals queue/preparation teardown and cancellation to the
+asyncio owner loop, while same-loop cancellation remains direct and closed or
+completed task loops are bounded no-ops.
+
+Cancellation after USER/assistant ownership now returns the exact accepted
+`ConsoleSubmitResult` at the inner boundary where the committed IDs and context
+epoch are still known. Direct and agent preflight cancellation retain those
+identities, mark the assistant failed without claiming provider dispatch, and
+let recovered queue ownership acknowledge once. Preaccept cancellation remains
+an unaccepted result. Close-time READY cleanup tolerates only the exact transient
+echo already removed with its session; an unrelated store failure still
+propagates, and the staged evidence launch is neither consumed nor released.
+One-shot prefill consumption now accepts only an exact non-negative `int`, so
+`bool` cannot alias revision 1.
+
+The round-3 report had two governance defects. It retained the original
+11-file affected command instead of the reviewer-expanded gate, so its printed
+command did not reproduce the claimed 613 count. It also stated that whole-file
+Ruff format checking passed. At `c3bc719b1`, formatter checks from HEAD content
+were clean for the test and controller files but failed for
+`console_chat_store.py`; therefore the blanket round-3 format claim is withdrawn.
+Round 4 leaves that pre-existing store drift untouched, proves the changed store
+range independently, and prints the exact reviewer-verified gates below.
+
+Affected gate (613 passed/1 inherited warning at the clean `c3bc719b1`
+baseline; 623 passed/1 inherited warning after the 10 new collected probes):
+
+```bash
+../../.venv/bin/python -m pytest Tests/Architecture/test_console_wave6_inventory.py Tests/Chat/test_console_automatic_library_preparation.py Tests/Chat/test_console_chat_controller.py Tests/Chat/test_console_chat_store_library_policy.py Tests/Chat/test_console_prompt_queue_coordinator.py Tests/Chat/test_console_turn_library_authority.py Tests/Chat/test_console_turn_execution_context.py Tests/Chat/test_console_turn_preparation.py Tests/Chat/test_library_preparation.py Tests/UI/test_console_auto_rag_on_send.py Tests/UI/test_console_harness_config_honesty.py Tests/UI/test_console_rag_settings_modal.py Tests/UI/test_console_retrieval_controller.py Tests/UI/test_console_controller_wiring.py Tests/test_config_console_defaults.py -q
+```
+
+Companion gate (100 passed/1 inherited warning before and after round 4):
+
+```bash
+../../.venv/bin/python -m pytest Tests/Chat/test_console_runtime_lifetime.py Tests/Chat/test_console_prompt_queue.py Tests/Chat/test_console_prompt_queue_coordinator.py Tests/UI/test_console_prompt_queue.py Tests/UI/test_console_prompt_queue_modal.py -q
+```
+
+The focused production-path file passed 79 tests. Five restored counterfactual
+families were killed: session-key replacement lost the first owner; direct
+foreign-thread teardown failed both debug-mode direct/agent probes; blanket
+postaccept cancellation produced `CancelledError` instead of accepted truth;
+unguarded READY echo cleanup raised `KeyError`; and `isinstance` admitted a bool
+token. Scoped Ruff lint passes. Exact formatter checks pass for the changed test
+and controller files and for store lines 2455–2485; the whole store still fails
+exactly as its HEAD baseline does. Source/privacy scans and `git diff --check`
+pass. ADR required: no. ADR path:
+`backlog/decisions/079-console-library-conversation-authority.md`; ADR-079 already
+owns these volatile admission and teardown boundaries. TASK-19900.3 remains In
+Progress with all 22 acceptance criteria unchecked because Task14+ durable
+checkpoint/reconstruction and recovery UI remain out of scope.

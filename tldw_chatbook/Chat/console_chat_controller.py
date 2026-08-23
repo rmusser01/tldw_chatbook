@@ -2024,7 +2024,14 @@ class ConsoleChatController:
         # Volatile-only Task-13 owner fence. It starts before submit's first
         # await and ends only after the submit finalizer; Task 14 will add
         # durable recovery/checkpoint semantics.
-        self._active_submit_tasks: dict[str, asyncio.Task] = {}
+        self._active_submit_tasks: dict[asyncio.Task, str] = {}
+        self._active_submit_tasks_lock = threading.RLock()
+        try:
+            self._owner_loop: asyncio.AbstractEventLoop | None = (
+                asyncio.get_running_loop()
+            )
+        except RuntimeError:
+            self._owner_loop = None
         self._provider_continuation_recovery_sessions: set[str] = set()
         self._stop_requested = False
         #: F5 fix (Qodo wave): set ONLY by ``shutdown()`` and NEVER reset
@@ -4102,6 +4109,83 @@ class ConsoleChatController:
             is not None
         )
 
+    def _register_submit_task(self, task: asyncio.Task, session_id: str | None) -> None:
+        """Register one exact submit owner without replacing a peer task."""
+
+        with self._active_submit_tasks_lock:
+            self._active_submit_tasks[task] = session_id or ""
+            self._owner_loop = task.get_loop()
+
+    def _rebind_submit_task(self, task: asyncio.Task, session_id: str) -> None:
+        """Bind a provisional submit owner to its resolved session."""
+
+        with self._active_submit_tasks_lock:
+            if task in self._active_submit_tasks:
+                self._active_submit_tasks[task] = session_id
+
+    def _unregister_submit_task(self, task: asyncio.Task) -> None:
+        """Remove only the completing submit task's own registry entry."""
+
+        with self._active_submit_tasks_lock:
+            self._active_submit_tasks.pop(task, None)
+
+    def _submit_task_session(self, task: asyncio.Task) -> str:
+        """Return the task's latest resolved session binding, if any."""
+
+        with self._active_submit_tasks_lock:
+            return self._active_submit_tasks.get(task, "")
+
+    def _submit_tasks_snapshot(self) -> dict[asyncio.Task, str]:
+        """Return a stable task-to-session snapshot for teardown."""
+
+        with self._active_submit_tasks_lock:
+            return dict(self._active_submit_tasks)
+
+    def _submit_tasks_for_session(self, session_id: str) -> tuple[asyncio.Task, ...]:
+        """Return every exact live submit owned by one session."""
+
+        with self._active_submit_tasks_lock:
+            return tuple(
+                task
+                for task, owner_session_id in self._active_submit_tasks.items()
+                if owner_session_id == session_id
+            )
+
+    @staticmethod
+    def _cancel_task_on_owner_loop(task: asyncio.Task) -> None:
+        """Cancel an asyncio task only from its owning event-loop thread."""
+
+        if task.done():
+            return
+        loop = task.get_loop()
+        if loop.is_closed():
+            return
+        try:
+            running_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            running_loop = None
+        if running_loop is loop:
+            task.cancel()
+            return
+        try:
+            loop.call_soon_threadsafe(lambda: None if task.done() else task.cancel())
+        except RuntimeError:
+            # The loop closed after the bounded check above. Its task cannot
+            # be awaited or safely mutated from this foreign thread.
+            return
+
+    def _mark_transient_echo_blocked(self, message_id: str) -> None:
+        """Fail a live echo, tolerating only an exact close-time removal."""
+
+        try:
+            self.store.mark_message_send_blocked(message_id)
+        except KeyError:
+            try:
+                self.store.get_message(message_id)
+            except KeyError:
+                return
+            raise
+
     async def submit_draft(
         self,
         draft: str,
@@ -4131,8 +4215,7 @@ class ConsoleChatController:
                 _resume_preparation_id=_resume_preparation_id,
                 _resume_resolution=_resume_resolution,
             )
-        task_key = owner_key or f"pending-submit:{id(active_task)}"
-        self._active_submit_tasks[task_key] = active_task
+        self._register_submit_task(active_task, owner_key)
         try:
             return await self._submit_draft_inner(
                 draft,
@@ -4145,20 +4228,31 @@ class ConsoleChatController:
                 _resume_resolution=_resume_resolution,
             )
         except asyncio.CancelledError:
+            bound_owner_key = self._submit_task_session(active_task) or owner_key
             if not self._shutdown_requested.is_set():
+                if bound_owner_key and all(
+                    session.id != bound_owner_key for session in self.store.sessions()
+                ):
+                    return ConsoleSubmitResult(
+                        False,
+                        False,
+                        "Session closed before turn acceptance.",
+                        session_closed=True,
+                        session_id=bound_owner_key,
+                        origin=origin,
+                        queue_entry_id=queue_entry_id,
+                    )
                 raise
             return ConsoleSubmitResult(
                 False,
                 False,
                 "Console shut down before turn acceptance.",
-                session_id=owner_key or None,
+                session_id=bound_owner_key or None,
                 origin=origin,
                 queue_entry_id=queue_entry_id,
             )
         finally:
-            for key, task in tuple(self._active_submit_tasks.items()):
-                if task is active_task:
-                    self._active_submit_tasks.pop(key, None)
+            self._unregister_submit_task(active_task)
 
     async def _submit_draft_inner(
         self,
@@ -4327,10 +4421,7 @@ class ConsoleChatController:
             )
         active_task = asyncio.current_task()
         if active_task is not None:
-            for key, task in tuple(self._active_submit_tasks.items()):
-                if task is active_task and key != session.id:
-                    self._active_submit_tasks.pop(key, None)
-            self._active_submit_tasks[session.id] = active_task
+            self._rebind_submit_task(active_task, session.id)
         # PR3a-2 Task 5: a wake never touches the user's staged state --
         # pending attachments belong to the USER's next send and must be
         # neither embedded nor cleared by a machine turn.
@@ -4499,7 +4590,7 @@ class ConsoleChatController:
                     session.title = pre_send_title
                     session.persisted_conversation_id = pre_send_conversation_id
                 else:
-                    self.store.mark_message_send_blocked(echoed_user.id)
+                    self._mark_transient_echo_blocked(echoed_user.id)
             raise
         if not getattr(resolution, "ready", False):
             visible_copy = self._blocked_visible_copy(
@@ -4510,7 +4601,7 @@ class ConsoleChatController:
             # (`skip_failed`) and reads honestly as unsent rather than polluting
             # the history. (A wake echoed nothing: None guard.)
             if echoed_user is not None:
-                self.store.mark_message_send_blocked(echoed_user.id)
+                self._mark_transient_echo_blocked(echoed_user.id)
             return self._block(session.id, visible_copy)
 
         if resumed_preparation is not None:
@@ -4524,7 +4615,7 @@ class ConsoleChatController:
                 )
             except (TypeError, ValueError):
                 if echoed_user is not None:
-                    self.store.mark_message_send_blocked(echoed_user.id)
+                    self._mark_transient_echo_blocked(echoed_user.id)
                     self.store.delete_message(echoed_user.id)
                 return self._block(session.id, "Provider destination is incomplete.")
 
@@ -4593,7 +4684,7 @@ class ConsoleChatController:
             )
             if self.store.begin_preparation(preparation) is None:
                 if echoed_user is not None:
-                    self.store.mark_message_send_blocked(echoed_user.id)
+                    self._mark_transient_echo_blocked(echoed_user.id)
                 return ConsoleSubmitResult(
                     False,
                     False,
@@ -4663,7 +4754,7 @@ class ConsoleChatController:
                 # refused command never enters the next send's provider context.
                 # (A wake echoed nothing: None guard.)
                 if echoed_user is not None:
-                    self.store.mark_message_send_blocked(echoed_user.id)
+                    self._mark_transient_echo_blocked(echoed_user.id)
                 if preparation is not None:
                     self._abandon_preparation(preparation.preparation_id)
                 return self._block(session.id, refuse)
@@ -4791,7 +4882,7 @@ class ConsoleChatController:
             # send's provider context (`skip_failed` only drops "failed" rows).
             # (A wake echoed nothing: None guard.)
             if echoed_user is not None:
-                self.store.mark_message_send_blocked(echoed_user.id)
+                self._mark_transient_echo_blocked(echoed_user.id)
             if preparation is not None:
                 self._abandon_preparation(preparation.preparation_id)
             raise
@@ -4814,7 +4905,7 @@ class ConsoleChatController:
             # durable user message or provider dispatch. (A wake echoed
             # nothing: None guard.)
             if echoed_user is not None:
-                self.store.mark_message_send_blocked(echoed_user.id)
+                self._mark_transient_echo_blocked(echoed_user.id)
             if preparation is not None:
                 self._abandon_preparation(preparation.preparation_id)
             return ConsoleSubmitResult(
@@ -4876,7 +4967,7 @@ class ConsoleChatController:
         if self._disposed or self._shutdown_requested.is_set():
             if echoed_user is not None:
                 try:
-                    self.store.mark_message_send_blocked(echoed_user.id)
+                    self._mark_transient_echo_blocked(echoed_user.id)
                 except KeyError:
                     pass
             if preparation is not None:
@@ -4983,7 +5074,10 @@ class ConsoleChatController:
             if preparation is not None:
                 self._settle_accepted_preparation(preparation.preparation_id)
             return result
-        except BaseException:
+        except BaseException as exc:
+            accepted_cancellation = isinstance(exc, asyncio.CancelledError) and (
+                assistant is not None and echoed_user is not None
+            )
             if assistant is not None:
                 try:
                     self.store.mark_message_failed(assistant.id)
@@ -5009,6 +5103,21 @@ class ConsoleChatController:
                     ConsoleTurnPreparationState.DISPATCHED,
                 }:
                     self._settle_accepted_preparation(preparation.preparation_id)
+            if accepted_cancellation:
+                terminal_state = self.run_state_for(session.id)
+                return ConsoleSubmitResult(
+                    True,
+                    True,
+                    terminal_state.visible_copy
+                    or "Accepted turn failed before provider dispatch.",
+                    session_id=session.id,
+                    user_message_id=echoed_user.id,
+                    assistant_message_id=assistant.id,
+                    terminal_status=terminal_state.status,
+                    origin=origin,
+                    queue_entry_id=queue_entry_id,
+                    committed_context_epoch=committed_context_epoch,
+                )
             raise
         finally:
             if origin is ConsoleSubmissionOrigin.AGENT_WAKE:
@@ -5312,7 +5421,7 @@ class ConsoleChatController:
         repair_session = self._active_citation_repair_sessions.get(session_id)
         self.clear_original_attempts_for_session(session_id)
         owns_active_stream = self._active_stream_belongs_to_session(session_id)
-        submit_task = self._active_submit_tasks.get(session_id)
+        submit_tasks = self._submit_tasks_for_session(session_id)
         if repair_session is not None and owns_active_stream:
             repair_session.cancel_reason = "session_close"
         if owns_active_stream:
@@ -5330,9 +5439,15 @@ class ConsoleChatController:
                 # than falling back to the active-session default.
                 session_id=session_id,
             )
-        if submit_task is not None and submit_task is not asyncio.current_task():
+        try:
+            current_task = asyncio.current_task()
+        except RuntimeError:
+            current_task = None
+        for submit_task in submit_tasks:
+            if submit_task is current_task:
+                continue
             self._signal_stop(session_id=session_id)
-            submit_task.cancel()
+            self._cancel_task_on_owner_loop(submit_task)
         previous_active_id = self.store.active_session_id
         closed = self.store.close_session(session_id)
         self.prompt_queue_coordinator.remove_session(session_id)
@@ -7781,13 +7896,17 @@ class ConsoleChatController:
         self.begin_shutdown()
         for message_id in tuple(self._original_attempts):
             self.clear_original_attempt(message_id)
-        tasks = {**self._active_submit_tasks, **self._active_stream_tasks}
+        submit_tasks = self._submit_tasks_snapshot()
+        stream_tasks = dict(self._active_stream_tasks)
+        tasks = set(submit_tasks) | set(stream_tasks.values())
         if not tasks:
             if self._owns_scratch_spaces:
                 await asyncio.to_thread(self._scratch_spaces.dispose)
             return
         current = asyncio.current_task()
-        for session_id in tasks:
+        session_ids = set(submit_tasks.values()) | set(stream_tasks)
+        session_ids.discard("")
+        for session_id in session_ids:
             # Dev's citation-repair feature threads a `cancel_reason`
             # ("user" vs "shutdown") through `ConsoleCitationRepairSession`
             # so `commit_canceled()` knows whether to append a "canceled by
@@ -7804,10 +7923,10 @@ class ConsoleChatController:
             ):
                 repair_session.cancel_reason = "shutdown"
             self._signal_stop(session_id=session_id)
-        for session_id, task in tasks.items():
+        for task in tasks:
             if task is not current:
-                task.cancel()
-        for session_id, task in tasks.items():
+                self._cancel_task_on_owner_loop(task)
+        for task in tasks:
             if task is current:
                 # Shutdown was invoked from within its own run's task --
                 # cannot cancel/await itself; that run's own finally will
@@ -7827,18 +7946,18 @@ class ConsoleChatController:
         # somehow never reached that finally (e.g. a test double, or a
         # task that failed before it), so teardown never leaves a stale
         # entry behind for any session.
-        for session_id, task in tasks.items():
+        for session_id, task in stream_tasks.items():
             if self._active_stream_tasks.get(session_id) is task:
                 self._active_stream_tasks.pop(session_id, None)
                 self._active_assistant_message_ids.pop(session_id, None)
                 self._active_cancel_events.pop(session_id, None)
-            if self._active_submit_tasks.get(session_id) is task:
-                self._active_submit_tasks.pop(session_id, None)
+        for task in submit_tasks:
+            self._unregister_submit_task(task)
         if self._owns_scratch_spaces:
             await asyncio.to_thread(self._scratch_spaces.dispose)
 
     def begin_shutdown(self) -> None:
-        """Tombstone future queue work before any teardown cancellation.
+        """Synchronously fence work and marshal teardown to the owner loop.
 
         The PERMANENT form (app exit / `prepare_for_quit`). `_disposed`
         is what stops a later `begin_visit()` from handing this instance a
@@ -7848,36 +7967,51 @@ class ConsoleChatController:
         self._disposed = True
         self._visit_open = False
         self._fleet_wake.dispose()
-        # The queue tombstone keeps its contract of running BEFORE any
-        # teardown cancellation -- but it must never be able to SKIP that
-        # cancellation. Its shutdown asserts queue-owner-thread affinity
-        # (QueueThreadViolation from any other thread), and an exit path
-        # whose safety signals sit after a raise-capable call would leave
-        # every armed approval round waiting for a deadline instead of
-        # denying. Found via a test that drove begin_shutdown off-thread:
-        # the round timed out at 30s because the signals were never set.
+        self._shutdown_requested.set()
         try:
-            self.prompt_queue_coordinator.shutdown()
-        finally:
-            for session in tuple(self.store.sessions()):
-                preparation = self.store.preparation_for_session(session.id)
-                if preparation is None or preparation.state not in {
-                    ConsoleTurnPreparationState.PREPARING,
-                    ConsoleTurnPreparationState.READY,
-                    ConsoleTurnPreparationState.PAUSED,
-                }:
-                    continue
-                self._abandon_preparation(preparation.preparation_id)
-            self._shutdown_requested.set()
+            running_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            running_loop = None
+        with self._active_submit_tasks_lock:
+            owner_loop = self._owner_loop
+        if (
+            owner_loop is not None
+            and running_loop is not owner_loop
+            and not owner_loop.is_closed()
+        ):
             try:
-                current = asyncio.current_task()
+                owner_loop.call_soon_threadsafe(self._finish_begin_shutdown)
             except RuntimeError:
-                current = None
-            for session_id, task in tuple(self._active_submit_tasks.items()):
-                self._signal_stop(session_id=session_id)
-                if task is not current:
-                    task.cancel()
+                self._cancel_headless_rounds()
+            return
+        if owner_loop is not None and owner_loop.is_closed():
             self._cancel_headless_rounds()
+            return
+        self._finish_begin_shutdown()
+
+    def _finish_begin_shutdown(self) -> None:
+        """Run queue/preparation/task teardown on the asyncio owner loop."""
+
+        self.prompt_queue_coordinator.shutdown()
+        for session in tuple(self.store.sessions()):
+            preparation = self.store.preparation_for_session(session.id)
+            if preparation is None or preparation.state not in {
+                ConsoleTurnPreparationState.PREPARING,
+                ConsoleTurnPreparationState.READY,
+                ConsoleTurnPreparationState.PAUSED,
+            }:
+                continue
+            self._abandon_preparation(preparation.preparation_id)
+        try:
+            current = asyncio.current_task()
+        except RuntimeError:
+            current = None
+        for task, session_id in self._submit_tasks_snapshot().items():
+            if session_id:
+                self._signal_stop(session_id=session_id)
+            if task is not current:
+                self._cancel_task_on_owner_loop(task)
+        self._cancel_headless_rounds()
 
     def _cancel_headless_rounds(self) -> None:
         """Deny every round armed while no Console visit was open.
