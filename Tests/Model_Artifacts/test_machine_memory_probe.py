@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import stat
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -828,6 +829,68 @@ class _CloseIgnoringBlockingStream:
         os.close(self._read_fd)
 
 
+class _FakeWindowsWriter:
+    def __init__(self) -> None:
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _FakeWindowsOutput:
+    def __init__(self) -> None:
+        self.closed = False
+
+    def read_nowait(self, _maximum_bytes: int) -> tuple[bytes, bool]:
+        return b"", False
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _FakeWindowsPipeApi:
+    """Cross-platform model of Microsoft's nonblocking named-pipe contract."""
+
+    def __init__(self) -> None:
+        self.created: tuple[str, int, int, int] | None = None
+        self.connect_results = [536, 535]
+        self.closed_handles: list[int] = []
+        self.writer = _FakeWindowsWriter()
+
+    def create_named_pipe(
+        self,
+        name: str,
+        open_mode: int,
+        pipe_mode: int,
+        input_buffer_size: int,
+    ) -> int:
+        self.created = (name, open_mode, pipe_mode, input_buffer_size)
+        return 101
+
+    def connect_named_pipe(self, _handle: int) -> int | None:
+        return self.connect_results.pop(0)
+
+    def open_writer(self, _name: str) -> int:
+        return 202
+
+    def wrap_writer(self, _handle: int) -> _FakeWindowsWriter:
+        return self.writer
+
+    def read_file(self, _handle: int, _maximum_bytes: int) -> tuple[bytes, int | None]:
+        if self.created is None or not self.created[2] & 0x00000001:
+            raise AssertionError("a blocking named-pipe read can outlive the deadline")
+        return b"", 232
+
+    def close_handle(self, handle: int) -> None:
+        self.closed_handles.append(handle)
+
+
+class _FailingWrapWindowsPipeApi(_FakeWindowsPipeApi):
+    def wrap_writer(self, handle: int) -> _FakeWindowsWriter:
+        self.close_handle(handle)
+        raise RuntimeError("the CRT wrapper consumed and closed the handle")
+
+
 class _UnreapableProcess(_FakeProcess):
     """Fake a platform wait that ignores both terminate and kill until released."""
 
@@ -886,6 +949,132 @@ def test_bounded_runner_has_no_reader_thread_when_close_cannot_release_pipe(
     assert elapsed < 0.5
     assert surviving_readers == []
     assert result_box == [CommandResult(None, b"", ProbeReason.COMMAND_TIMEOUT)]
+
+
+def test_windows_runner_never_calls_blocking_synchronous_pipe_readiness(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Restoring PeekNamedPipe on a synchronous handle defeats the deadline."""
+    readiness_entered = threading.Event()
+    release_readiness = threading.Event()
+    stream = _BlockingStream(threading.Event())
+    process = _FakeProcess(stream, survive_terminate=False)
+    output = _FakeWindowsOutput()
+    writer = _FakeWindowsWriter()
+    result_box: list[CommandResult] = []
+
+    def blocking_readiness(_descriptor: int) -> tuple[int, bool]:
+        readiness_entered.set()
+        release_readiness.wait()
+        return 0, False
+
+    monkeypatch.setattr(probe.os, "name", "nt")
+    monkeypatch.setattr(probe.subprocess, "Popen", Mock(return_value=process))
+    monkeypatch.setattr(
+        probe,
+        "_windows_pipe_status",
+        blocking_readiness,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        probe,
+        "_open_windows_output_pipe",
+        lambda: (output, writer),
+        raising=False,
+    )
+
+    caller = threading.Thread(
+        target=lambda: result_box.append(
+            probe._run_bounded_command(
+                WINDOWS_NVIDIA_SMI[0],
+                NVIDIA_ARGV,
+                0.01,
+                MAX_COMMAND_OUTPUT_BYTES,
+            )
+        ),
+        name="windows-bounded-runner-test",
+        daemon=True,
+    )
+    started = time.monotonic()
+    caller.start()
+    caller.join(timeout=0.5)
+    elapsed = time.monotonic() - started
+    returned_by_bound = not caller.is_alive()
+    release_readiness.set()
+    caller.join(timeout=1.0)
+    if not stream.closed:
+        stream.close()
+
+    assert returned_by_bound, "synchronous pipe readiness outlived the deadline"
+    assert elapsed < 0.5
+    assert readiness_entered.is_set() is False
+    assert result_box == [CommandResult(None, b"", ProbeReason.COMMAND_TIMEOUT)]
+    assert output.closed is True
+    assert writer.closed is True
+    assert not any(
+        thread.name == "machine-memory-probe-reader" and thread.is_alive()
+        for thread in threading.enumerate()
+    )
+
+
+def test_windows_output_pipe_is_nonblocking_and_local_only() -> None:
+    """A blocking or remotely reachable server pipe breaks the probe contract."""
+    assert hasattr(probe, "_open_windows_output_pipe"), (
+        "the Windows runner has no deadline-safe output pipe"
+    )
+    api = _FakeWindowsPipeApi()
+
+    output, writer = probe._open_windows_output_pipe(
+        api=api,
+        pipe_name=r"\\.\pipe\tldw-test-machine-memory",
+    )
+
+    assert api.created is not None
+    _, open_mode, pipe_mode, input_buffer_size = api.created
+    assert open_mode & 0x00080000  # FILE_FLAG_FIRST_PIPE_INSTANCE
+    assert pipe_mode & 0x00000001  # PIPE_NOWAIT
+    assert pipe_mode & 0x00000008  # PIPE_REJECT_REMOTE_CLIENTS
+    assert input_buffer_size == 8192
+    assert output.read_nowait(8192) == (b"", False)
+
+    writer.close()
+    output.close()
+    assert api.writer.closed is True
+    assert api.closed_handles == [101]
+
+
+def test_windows_pipe_does_not_double_close_a_consumed_writer_handle() -> None:
+    """A wrapper failure must not close a potentially recycled Win32 handle."""
+    api = _FailingWrapWindowsPipeApi()
+
+    with pytest.raises(RuntimeError, match="consumed and closed"):
+        probe._open_windows_output_pipe(
+            api=api,
+            pipe_name=r"\\.\pipe\tldw-test-machine-memory-wrap-failure",
+        )
+
+    assert api.closed_handles == [202, 101]
+
+
+def test_ctypes_windows_writer_wrapper_closes_handle_if_crt_rejects_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The consuming wrapper must release a handle before descriptor ownership."""
+    api = object.__new__(probe._CtypesWindowsPipeApi)
+    close_handle = Mock()
+    api.close_handle = close_handle
+    monkeypatch.setitem(
+        sys.modules,
+        "msvcrt",
+        SimpleNamespace(
+            open_osfhandle=Mock(side_effect=OSError("descriptor allocation failed"))
+        ),
+    )
+
+    with pytest.raises(OSError, match="descriptor allocation failed"):
+        api.wrap_writer(303)
+
+    close_handle.assert_called_once_with(303)
 
 
 def test_bounded_runner_does_not_construct_a_blocking_reader_thread(

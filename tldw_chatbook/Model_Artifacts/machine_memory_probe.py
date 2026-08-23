@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import platform
+import secrets
 import stat
 import subprocess
 import time
@@ -11,6 +12,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from itertools import islice
 from pathlib import Path
+from typing import Protocol
 
 import psutil
 
@@ -42,7 +44,16 @@ TERMINATE_GRACE_SECONDS = 0.25
 MAX_COMMAND_OUTPUT_BYTES = 64 * 1024
 MAX_SYSFS_READ_BYTES = 64
 _PIPE_POLL_INTERVAL_SECONDS = 0.005
-_WINDOWS_BROKEN_PIPE_ERRORS = frozenset({109, 232})
+_WINDOWS_PIPE_ACCESS_INBOUND = 0x00000001
+_WINDOWS_FILE_FLAG_FIRST_PIPE_INSTANCE = 0x00080000
+_WINDOWS_PIPE_NOWAIT = 0x00000001
+_WINDOWS_PIPE_REJECT_REMOTE_CLIENTS = 0x00000008
+_WINDOWS_ERROR_BROKEN_PIPE = 109
+_WINDOWS_ERROR_NO_DATA = 232
+_WINDOWS_ERROR_PIPE_NOT_CONNECTED = 233
+_WINDOWS_ERROR_PIPE_CONNECTED = 535
+_WINDOWS_ERROR_PIPE_LISTENING = 536
+_WINDOWS_PIPE_BUFFER_BYTES = 8192
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +63,81 @@ class CommandResult:
     return_code: int | None
     output: bytes
     reason: ProbeReason | None
+
+
+class _CommandOutput(Protocol):
+    """Owned command-output channel with deadline-safe reads."""
+
+    def read_nowait(self, maximum_bytes: int) -> tuple[bytes, bool]: ...
+
+    def close(self) -> None: ...
+
+
+class _WindowsPipeApi(Protocol):
+    """Small injectable boundary around the required Win32 pipe calls."""
+
+    def create_named_pipe(
+        self,
+        name: str,
+        open_mode: int,
+        pipe_mode: int,
+        input_buffer_size: int,
+    ) -> int: ...
+
+    def connect_named_pipe(self, handle: int) -> int | None: ...
+
+    def open_writer(self, name: str) -> int: ...
+
+    def wrap_writer(self, handle: int) -> object: ...
+
+    def read_file(
+        self, handle: int, maximum_bytes: int
+    ) -> tuple[bytes, int | None]: ...
+
+    def close_handle(self, handle: int) -> None: ...
+
+
+@dataclass(slots=True)
+class _PosixCommandOutput:
+    stream: object
+    descriptor: int
+
+    def read_nowait(self, maximum_bytes: int) -> tuple[bytes, bool]:
+        return _read_command_stdout_nowait(self.descriptor, maximum_bytes)
+
+    def close(self) -> None:
+        _close_command_stdout(self.stream)
+
+
+@dataclass(slots=True)
+class _WindowsNamedPipeOutput:
+    handle: int
+    api: _WindowsPipeApi
+    closed: bool = False
+
+    def read_nowait(self, maximum_bytes: int) -> tuple[bytes, bool]:
+        if maximum_bytes <= 0:
+            return b"", False
+        chunk, error_code = self.api.read_file(self.handle, maximum_bytes)
+        if error_code is None:
+            return chunk, False
+        if error_code == _WINDOWS_ERROR_NO_DATA:
+            return b"", False
+        if error_code in {
+            _WINDOWS_ERROR_BROKEN_PIPE,
+            _WINDOWS_ERROR_PIPE_NOT_CONNECTED,
+        }:
+            return b"", True
+        raise OSError(error_code, "ReadFile failed")
+
+    def close(self) -> None:
+        if self.closed:
+            return
+        self.closed = True
+        try:
+            self.api.close_handle(self.handle)
+        except Exception:
+            pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -542,6 +628,226 @@ def observe_machine_memory(
     )
 
 
+class _CtypesWindowsPipeApi:
+    """ctypes-backed Win32 calls, loaded only on the Windows command path."""
+
+    def __init__(self) -> None:
+        import ctypes
+        from ctypes import wintypes
+
+        self._ctypes = ctypes
+        self._wintypes = wintypes
+        self._kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        self._invalid_handle = ctypes.c_void_p(-1).value
+
+        self._create_named_pipe = self._kernel32.CreateNamedPipeW
+        self._create_named_pipe.argtypes = (
+            wintypes.LPCWSTR,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.LPVOID,
+        )
+        self._create_named_pipe.restype = wintypes.HANDLE
+
+        self._connect_named_pipe = self._kernel32.ConnectNamedPipe
+        self._connect_named_pipe.argtypes = (wintypes.HANDLE, wintypes.LPVOID)
+        self._connect_named_pipe.restype = wintypes.BOOL
+
+        self._create_file = self._kernel32.CreateFileW
+        self._create_file.argtypes = (
+            wintypes.LPCWSTR,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.LPVOID,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.HANDLE,
+        )
+        self._create_file.restype = wintypes.HANDLE
+
+        self._read_file = self._kernel32.ReadFile
+        self._read_file.argtypes = (
+            wintypes.HANDLE,
+            wintypes.LPVOID,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD),
+            wintypes.LPVOID,
+        )
+        self._read_file.restype = wintypes.BOOL
+
+        self._close_handle = self._kernel32.CloseHandle
+        self._close_handle.argtypes = (wintypes.HANDLE,)
+        self._close_handle.restype = wintypes.BOOL
+
+    def create_named_pipe(
+        self,
+        name: str,
+        open_mode: int,
+        pipe_mode: int,
+        input_buffer_size: int,
+    ) -> int:
+        handle = self._create_named_pipe(
+            name,
+            open_mode,
+            pipe_mode,
+            1,
+            0,
+            input_buffer_size,
+            0,
+            None,
+        )
+        if handle == self._invalid_handle:
+            raise self._ctypes.WinError(self._ctypes.get_last_error())
+        return int(handle)
+
+    def connect_named_pipe(self, handle: int) -> int | None:
+        if self._connect_named_pipe(handle, None):
+            return None
+        return self._ctypes.get_last_error()
+
+    def open_writer(self, name: str) -> int:
+        generic_write = 0x40000000
+        open_existing = 3
+        file_attribute_normal = 0x00000080
+        handle = self._create_file(
+            name,
+            generic_write,
+            0,
+            None,
+            open_existing,
+            file_attribute_normal,
+            None,
+        )
+        if handle == self._invalid_handle:
+            raise self._ctypes.WinError(self._ctypes.get_last_error())
+        return int(handle)
+
+    def wrap_writer(self, handle: int) -> object:
+        import msvcrt
+
+        try:
+            descriptor = msvcrt.open_osfhandle(
+                handle,
+                os.O_WRONLY | getattr(os, "O_BINARY", 0),
+            )
+        except Exception:
+            self.close_handle(handle)
+            raise
+        try:
+            return os.fdopen(descriptor, "wb", buffering=0)
+        except Exception:
+            os.close(descriptor)
+            raise
+
+    def read_file(self, handle: int, maximum_bytes: int) -> tuple[bytes, int | None]:
+        buffer = self._ctypes.create_string_buffer(maximum_bytes)
+        bytes_read = self._wintypes.DWORD()
+        if self._read_file(
+            handle,
+            buffer,
+            maximum_bytes,
+            self._ctypes.byref(bytes_read),
+            None,
+        ):
+            return buffer.raw[: bytes_read.value], None
+        return b"", self._ctypes.get_last_error()
+
+    def close_handle(self, handle: int) -> None:
+        self._close_handle(handle)
+
+
+def _open_windows_output_pipe(
+    *,
+    api: _WindowsPipeApi | None = None,
+    pipe_name: str | None = None,
+) -> tuple[_WindowsNamedPipeOutput, object]:
+    """Open a local nonblocking byte pipe for one child command's output."""
+
+    active_api = api or _CtypesWindowsPipeApi()
+    name = pipe_name or (
+        rf"\\.\pipe\tldw-chatbook-machine-memory-{os.getpid()}-"
+        f"{secrets.token_hex(16)}"
+    )
+    server_handle = active_api.create_named_pipe(
+        name,
+        _WINDOWS_PIPE_ACCESS_INBOUND | _WINDOWS_FILE_FLAG_FIRST_PIPE_INSTANCE,
+        _WINDOWS_PIPE_NOWAIT | _WINDOWS_PIPE_REJECT_REMOTE_CLIENTS,
+        _WINDOWS_PIPE_BUFFER_BYTES,
+    )
+    output = _WindowsNamedPipeOutput(server_handle, active_api)
+    writer_handle: int | None = None
+    try:
+        listening_result = active_api.connect_named_pipe(server_handle)
+        if listening_result not in {None, _WINDOWS_ERROR_PIPE_LISTENING}:
+            raise OSError(listening_result, "ConnectNamedPipe failed")
+        writer_handle = active_api.open_writer(name)
+        connected_result = active_api.connect_named_pipe(server_handle)
+        if connected_result not in {None, _WINDOWS_ERROR_PIPE_CONNECTED}:
+            raise OSError(connected_result, "ConnectNamedPipe failed")
+        owned_writer_handle = writer_handle
+        writer_handle = None
+        writer = active_api.wrap_writer(owned_writer_handle)
+        return output, writer
+    except Exception:
+        if writer_handle is not None:
+            try:
+                active_api.close_handle(writer_handle)
+            except Exception:
+                pass
+        output.close()
+        raise
+
+
+def _start_bounded_command(
+    executable: Path,
+    argv: tuple[str, ...],
+) -> tuple[subprocess.Popen[bytes], _CommandOutput]:
+    """Start a command with a platform-safe owned output channel."""
+
+    if os.name == "nt":
+        output, writer = _open_windows_output_pipe()
+        try:
+            process = subprocess.Popen(
+                [str(executable), *argv],
+                stdout=writer,
+                stderr=subprocess.STDOUT,
+                shell=False,
+            )
+        except Exception:
+            output.close()
+            _close_command_stdout(writer)
+            raise
+        try:
+            writer.close()  # type: ignore[attr-defined]
+        except Exception:
+            _terminate_and_reap(process)
+            output.close()
+            raise
+        return process, output
+
+    process = subprocess.Popen(
+        [str(executable), *argv],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        shell=False,
+    )
+    if process.stdout is None:
+        _terminate_and_reap(process)
+        raise RuntimeError("stdout pipe unavailable")
+    stdout = process.stdout
+    try:
+        descriptor = _prepare_nonblocking_stdout(stdout)
+    except Exception:
+        _terminate_and_reap(process)
+        _close_command_stdout(stdout)
+        raise
+    return process, _PosixCommandOutput(stdout, descriptor)
+
+
 def _run_bounded_command(
     executable: Path,
     argv: tuple[str, ...],
@@ -551,33 +857,17 @@ def _run_bounded_command(
     """Run one trusted executable with a bounded combined-output buffer."""
 
     try:
-        process = subprocess.Popen(
-            [str(executable), *argv],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            shell=False,
-        )
+        process, command_output = _start_bounded_command(executable, argv)
     except FileNotFoundError:
         return CommandResult(None, b"", ProbeReason.EXECUTABLE_NOT_FOUND)
     except PermissionError:
         return CommandResult(None, b"", ProbeReason.PERMISSION_DENIED)
     except Exception:
         return CommandResult(None, b"", ProbeReason.COMMAND_FAILED)
-    if process.stdout is None:
-        _terminate_and_reap(process)
-        return CommandResult(None, b"", ProbeReason.COMMAND_FAILED)
-
-    stdout = process.stdout
-    try:
-        stdout_fd = _prepare_nonblocking_stdout(stdout)
-    except Exception:
-        _terminate_and_reap(process)
-        _close_command_stdout(stdout)
-        return CommandResult(None, b"", ProbeReason.COMMAND_FAILED)
 
     def abort(reason: ProbeReason) -> CommandResult:
         _terminate_and_reap(process)
-        _close_command_stdout(stdout)
+        command_output.close()
         return CommandResult(None, b"", reason)
 
     output = bytearray()
@@ -588,7 +878,7 @@ def _run_bounded_command(
             return abort(ProbeReason.COMMAND_TIMEOUT)
         try:
             read_limit = min(8192, output_limit - len(output) + 1)
-            chunk, reached_eof = _read_command_stdout_nowait(stdout_fd, read_limit)
+            chunk, reached_eof = command_output.read_nowait(read_limit)
         except Exception:
             return abort(ProbeReason.COMMAND_FAILED)
         if chunk:
@@ -612,7 +902,7 @@ def _run_bounded_command(
             break
         time.sleep(min(_PIPE_POLL_INTERVAL_SECONDS, remaining))
 
-    _close_command_stdout(stdout)
+    command_output.close()
     return CommandResult(return_code, bytes(output), None)
 
 
@@ -630,15 +920,10 @@ def _prepare_nonblocking_stdout(stdout: object) -> int:
 def _read_command_stdout_nowait(
     descriptor: int, maximum_bytes: int
 ) -> tuple[bytes, bool]:
-    """Read only bytes known to be ready, returning whether the pipe reached EOF."""
+    """Read a prepared POSIX descriptor without blocking."""
 
     if maximum_bytes <= 0:
         return b"", False
-    if os.name == "nt":
-        available, reached_eof = _windows_pipe_status(descriptor)
-        if reached_eof or available == 0:
-            return b"", reached_eof
-        maximum_bytes = min(maximum_bytes, available)
     try:
         chunk = os.read(descriptor, maximum_bytes)
     except BlockingIOError:
@@ -646,34 +931,6 @@ def _read_command_stdout_nowait(
     except InterruptedError:
         return b"", False
     return chunk, chunk == b""
-
-
-def _windows_pipe_status(descriptor: int) -> tuple[int, bool]:
-    """Return available Windows pipe bytes without issuing a blocking read."""
-
-    import ctypes
-    import msvcrt
-    from ctypes import wintypes
-
-    available = wintypes.DWORD()
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    peek_named_pipe = kernel32.PeekNamedPipe
-    peek_named_pipe.argtypes = (
-        wintypes.HANDLE,
-        wintypes.LPVOID,
-        wintypes.DWORD,
-        wintypes.LPVOID,
-        ctypes.POINTER(wintypes.DWORD),
-        wintypes.LPVOID,
-    )
-    peek_named_pipe.restype = wintypes.BOOL
-    handle = msvcrt.get_osfhandle(descriptor)
-    if peek_named_pipe(handle, None, 0, None, ctypes.byref(available), None):
-        return int(available.value), False
-    error_code = ctypes.get_last_error()
-    if error_code in _WINDOWS_BROKEN_PIPE_ERRORS:
-        return 0, True
-    raise OSError(error_code, "PeekNamedPipe failed")
 
 
 def _close_command_stdout(stdout: object) -> None:

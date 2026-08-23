@@ -1119,31 +1119,46 @@ async def test_remote_memory_scenarios_survive_recompose_at_80_columns():
         """Read the current filename from painted compositor cells, not widget state."""
         from textual.strip import Strip
 
-        filename_widget = remote.query_one(".remote-variant-filename", Static)
         viewport = remote.query_one("#remote-model-details")
-        filename_widget.scroll_visible(
-            animate=False,
-            immediate=True,
-            force=True,
-            top=True,
-        )
+        filename_widget: Static | None = None
+        last_geometry: tuple[object, ...] = ()
 
-        def painted_region():
-            clipped = filename_widget.content_region.intersection(
-                viewport.content_region
-            )
+        def painted_region(widget: Static):
+            clipped = widget.content_region.intersection(viewport.content_region)
             return clipped.intersection(parent.content_region)
 
+        def filename_is_painted() -> bool:
+            nonlocal filename_widget, last_geometry
+            current = remote.query_one(".remote-variant-filename", Static)
+            if current is not filename_widget:
+                filename_widget = current
+            clipped = painted_region(current)
+            visible = current in app.screen._compositor.visible_widgets
+            last_geometry = (
+                current.region,
+                current.content_region,
+                viewport.content_region,
+                viewport.scroll_offset,
+                clipped,
+                visible,
+            )
+            if not visible or clipped.width <= 0 or clipped.height <= 0:
+                current.scroll_visible(
+                    animate=False,
+                    immediate=True,
+                    force=True,
+                    top=True,
+                )
+                return False
+            return True
+
         assert await _wait_for(
-            lambda: (
-                remote.query_one(".remote-variant-filename", Static) is filename_widget
-                and filename_widget in app.screen._compositor.visible_widgets
-                and painted_region().width > 0
-                and painted_region().height > 0
-            ),
+            filename_is_painted,
             pilot,
-        )
-        clipped = painted_region()
+        ), last_geometry
+        assert filename_widget is not None
+        assert remote.query_one(".remote-variant-filename", Static) is filename_widget
+        clipped = painted_region(filename_widget)
         assert clipped == filename_widget.content_region
         assert clipped.height > 1
         assert clipped.x >= viewport.content_region.x

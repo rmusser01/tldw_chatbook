@@ -83,6 +83,22 @@ recomposition; and replaced the long-filename hidden-text oracle with exact
 painted compositor evidence in both rail states. Full RED/GREEN details are in
 `.superpowers/sdd/2026-08-22-remote-model-machine-fit-implementation/final-review-fix-report.md`.
 
+The user-authorized second final-review fix wave closes the two remaining
+review blockers. On Windows, command output now uses a unique, local-only,
+single-instance named pipe whose server read handle is created with
+`PIPE_NOWAIT`; direct `ReadFile` polling therefore has the documented immediate
+empty-read behavior and no longer calls `PeekNamedPipe` on a synchronous
+`subprocess.PIPE`. The parent owns and closes both pipe ends, the shared
+collector retains the exact output/deadline limits, and injected cross-platform
+tests cover blocked legacy readiness and Win32/CRT handle cleanup, including a
+failed descriptor conversion. This macOS host did not claim a real Windows run.
+The production 80×24 filename oracle now
+reacquires and scrolls the currently mounted filename after finite machine-state
+refreshes replace candidate children, then retains its exact compositor-cell,
+multi-row, no-ellipsis, no-overflow, current-identity checks in both rail states.
+This routine boundedness/test-harness correction implements ADR-080 without a
+new architecture decision.
+
 Authoritative targeted evidence (run from the feature worktree):
 
 ```text
@@ -90,13 +106,13 @@ Authoritative targeted evidence (run from the feature worktree):
 1 passed, 1 dependency warning; imports resolved from this worktree
 
 ../../.venv/bin/pytest -q Tests/Model_Artifacts/test_machine_memory.py Tests/Model_Artifacts/test_machine_memory_probe.py Tests/UI/test_model_memory_presenter.py Tests/UI/test_model_remote_view.py
-205 passed, 1 dependency warning
+209 passed, 1 dependency warning
 
 ../../.venv/bin/pytest -q Tests/UI/test_llm_screen_lab_adoption.py -k "machine_memory or memory_clocks or remote_drill_down_install_action or remote_memory_scenarios_survive_recompose or remote_completion"
 14 passed, 126 deselected, 1 dependency warning
 
-../../.venv/bin/pytest -q Tests/UI/test_llm_screen_lab_adoption.py::test_remote_memory_scenarios_survive_recompose_at_80_columns
-1 passed, 1 dependency warning
+for run_index in 1 2 3 4 5; do ../../.venv/bin/pytest -q Tests/UI/test_llm_screen_lab_adoption.py::test_remote_memory_scenarios_survive_recompose_at_80_columns --tb=short || break; done
+5/5 serial repetitions passed, each with 1 existing dependency warning
 
 ../../.venv/bin/pytest -q Tests/UI/test_widget_css_consolidation.py
 31 passed, 1 existing dependency warning
