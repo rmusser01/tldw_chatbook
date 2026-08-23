@@ -1,7 +1,7 @@
 ---
 id: TASK-21130
 title: >-
-  TTS profile v3-to-v4 migration snapshots the entire reference-BLOB table into memory twice
+  TTS profile v3->v4 migration snapshots the entire reference-BLOB table into memory twice
 status: To Do
 assignee: []
 created_date: '2026-08-22'

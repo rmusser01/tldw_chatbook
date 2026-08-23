@@ -602,6 +602,18 @@ renumbering, grep the repo for `NNN-<slug>` AND both header forms — `ADR-NNN`
 references the ADR by number and path, and stale references in either form
 mislead the next session.
 
+## Backlog filenames must survive every supported checkout platform (TASK-21139)
+
+**What happened.** On 2026-08-22, commit `46cb7bc1f` added TASK-21130 with `>`
+in its tracked filename. Git for Windows fetched the repository, but
+`actions/checkout` exited 128 before project tests ran in runs `32617893248` and
+`32617893237`.
+
+**What to do.** Content may stay expressive, but direct files in the live,
+completed, and archived Backlog buckets must use Win32-compatible basenames.
+The shared stdlib guard is the authoring-time source of truth because Windows
+cannot run repository code before checkout succeeds.
+
 ---
 
 ## Related
