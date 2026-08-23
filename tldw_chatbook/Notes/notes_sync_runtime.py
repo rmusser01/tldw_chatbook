@@ -97,6 +97,7 @@ _RUNTIME_STATUSES = frozenset(
         "changes_available",
         "failed",
         "needs_attention",
+        "not_configured",
         "offline",
         "partial",
         "passive",
@@ -627,6 +628,7 @@ class NotesSyncRuntimeOwner:
         file_notes_binding: Callable[[], object | None] = lambda: None,
         cutover_admitted: bool,
         profile_process_is_sole: bool,
+        start_evidence: Callable[[], bool] | None = None,
     ) -> None:
         if type(cutover_admitted) is not bool:
             raise TypeError("cutover_admitted must be a private boolean.")
@@ -634,6 +636,8 @@ class NotesSyncRuntimeOwner:
             raise TypeError("profile_process_is_sole must be a private boolean.")
         if not callable(migrate_legacy) or not callable(watcher_factory):
             raise TypeError("runtime factories must be callable.")
+        if start_evidence is not None and not callable(start_evidence):
+            raise TypeError("start_evidence must be callable when provided.")
         self._store = store
         self._migrate_legacy = migrate_legacy
         self._coordinator_source = coordinator
@@ -642,6 +646,8 @@ class NotesSyncRuntimeOwner:
         self._file_notes_binding = file_notes_binding
         self._cutover_admitted = cutover_admitted
         self._profile_process_is_sole = profile_process_is_sole
+        self._start_evidence = start_evidence
+        self._start_deferred = False
         self._coordinator: object | None = None
         self._watcher: object | None = None
         self._watcher_task: asyncio.Task[None] | None = None
@@ -673,16 +679,50 @@ class NotesSyncRuntimeOwner:
             tuple(self._root_status[key] for key in sorted(self._root_status)),
         )
 
-    async def start(self) -> None:
-        """Initialize once and remain inert unless both cutover gates match."""
+    async def start(self, *, force: bool = False) -> None:
+        """Initialize once and remain inert unless both cutover gates match.
 
-        if self._start_task is None:
-            self._start_task = asyncio.create_task(
-                self._start_once(), name="notes_sync_runtime_start"
-            )
-        await asyncio.shield(self._start_task)
+        TASK-21112: when a ``start_evidence`` probe was supplied and reports
+        no configured lasting sync, the start defers inert (status
+        ``not_configured``) without opening — or creating — the state
+        database. ``force=True`` re-arms exactly one full start after such a
+        deferral; it is how first-time setup brings the machinery up at
+        runtime. A completed non-deferred start is never re-run.
+        """
 
-    async def _start_once(self) -> None:
+        while True:
+            if self._start_task is None:
+                self._start_task = asyncio.create_task(
+                    self._start_once(force=force), name="notes_sync_runtime_start"
+                )
+            task = self._start_task
+            await asyncio.shield(task)
+            if not force or self._closing:
+                return
+            if self._start_deferred:
+                # Deferred boot start: re-arm one full start.
+                if self._start_task is task:
+                    self._start_task = None
+                continue
+            if self._start_task is not task:
+                # A concurrent forced caller re-armed; await its start too.
+                continue
+            return
+
+    async def _start_once(self, *, force: bool = False) -> None:
+        self._start_deferred = False
+        if not force and self._start_evidence is not None:
+            try:
+                configured = bool(await asyncio.to_thread(self._start_evidence))
+            except Exception:
+                # Fail open: a broken probe must never silently disable a
+                # configured user's sync. Starting is the safe direction.
+                configured = True
+            if not configured:
+                self._start_deferred = True
+                self._status = "not_configured"
+                self._next_action = "none"
+                return
         try:
             await asyncio.to_thread(self._store.initialize)
             marker = await asyncio.to_thread(self._store.get_setting, "cutover_marker")
@@ -962,6 +1002,11 @@ class NotesSyncRuntimeOwner:
             raise TypeError("setup must be a NotesSyncRootSetup")
         if setup.note_scope_id != ScopeType.LOCAL_NOTE.value:
             raise ValueError("setup note scope must be local_note")
+        # TASK-21112: setting up the first root is explicit feature use, so a
+        # boot-deferred (unconfigured) runtime is brought up here on demand.
+        # For an already-started runtime this awaits the memoized start task
+        # and has no side effects.
+        await self.start(force=True)
         self._require_cutover("setup-review")
         matching_root_id = next(
             (
@@ -1866,8 +1911,18 @@ def build_notes_sync_runtime_owner(
     file_notes_binding: Callable[[], object | None] | None = None,
     local_user_id: str | None = None,
     recovery_capacity_bytes: int | None = None,
+    start_evidence: Callable[[], bool] | None = None,
+    watcher_interval_seconds: float | None = None,
+    watcher_max_interval_seconds: float | None = None,
 ) -> NotesSyncRuntimeOwner:
-    """Build the application-owned lasting-sync runtime."""
+    """Build the application-owned lasting-sync runtime.
+
+    ``start_evidence`` (TASK-21112) gates the boot-time start: when it
+    reports False, :meth:`NotesSyncRuntimeOwner.start` defers inert without
+    creating the state database; first-time setup forces the start later.
+    ``watcher_interval_seconds`` / ``watcher_max_interval_seconds`` shape the
+    default polling watcher's idle backoff; ``None`` keeps its defaults.
+    """
 
     if notes_scope_service is None:
         raise ValueError("notes_scope_service is required.")
@@ -1892,9 +1947,18 @@ def build_notes_sync_runtime_owner(
         lambda: NotesSyncRootCoordinator(path.parent / "notes_sync_locks")
     )
     owner_holder: dict[str, NotesSyncRuntimeOwner] = {}
+    watcher_intervals: dict[str, float] = {}
+    if watcher_interval_seconds is not None:
+        watcher_intervals["interval_seconds"] = float(watcher_interval_seconds)
+    if watcher_max_interval_seconds is not None:
+        watcher_intervals["max_interval_seconds"] = float(
+            watcher_max_interval_seconds
+        )
     selected_watcher_factory = watcher_factory or (
         lambda schedule: PollingNotesSyncWatcher(
-            lambda: owner_holder["owner"]._changed_root_ids(), schedule
+            lambda: owner_holder["owner"]._changed_root_ids(),
+            schedule,
+            **watcher_intervals,
         )
     )
     owner = NotesSyncRuntimeOwner(
@@ -1906,6 +1970,7 @@ def build_notes_sync_runtime_owner(
         file_notes_binding=file_notes_binding or (lambda: None),
         cutover_admitted=cutover_admitted,
         profile_process_is_sole=profile_process_is_sole,
+        start_evidence=start_evidence,
     )
     owner_holder["owner"] = owner
     return owner

@@ -2872,3 +2872,47 @@ async def test_repeated_shutdown_cancellation_waits_for_admitted_stage_and_lease
 
     assert cancellation.value.args == ("first cancellation",)
     assert coordinator.events[-1] == "lease-released"
+
+
+def test_builder_forwards_watcher_intervals_to_the_default_polling_watcher(
+    tmp_path: Path,
+) -> None:
+    """TASK-21112: [notes] watcher intervals must reach the built watcher."""
+
+    from tldw_chatbook.Notes.notes_sync_runtime import build_notes_sync_runtime_owner
+    from tldw_chatbook.Notes.notes_sync_watcher import PollingNotesSyncWatcher
+
+    owner = build_notes_sync_runtime_owner(
+        notes_scope_service=object(),
+        cutover_admitted=True,
+        profile_process_is_sole=True,
+        database_path=tmp_path / "sync.sqlite3",
+        migrate_legacy=lambda: None,
+        adapter=_Adapter([_input()]),
+        watcher_interval_seconds=2.5,
+        watcher_max_interval_seconds=30.0,
+    )
+
+    watcher = owner._watcher_factory(lambda _root_id: None)
+
+    assert type(watcher) is PollingNotesSyncWatcher
+    assert watcher._interval == 2.5
+    assert watcher._max_interval == 30.0
+
+
+def test_builder_defaults_keep_the_watcher_base_and_cap(tmp_path: Path) -> None:
+    from tldw_chatbook.Notes.notes_sync_runtime import build_notes_sync_runtime_owner
+
+    owner = build_notes_sync_runtime_owner(
+        notes_scope_service=object(),
+        cutover_admitted=True,
+        profile_process_is_sole=True,
+        database_path=tmp_path / "sync.sqlite3",
+        migrate_legacy=lambda: None,
+        adapter=_Adapter([_input()]),
+    )
+
+    watcher = owner._watcher_factory(lambda _root_id: None)
+
+    assert watcher._interval == 1.0
+    assert watcher._max_interval == 10.0

@@ -44,6 +44,11 @@ from tldw_chatbook.Utils.sensitive_paths import (
 
 
 LEGACY_MIGRATION_REPORT_LIMIT = 200
+# TASK-21112: the one-time first-boot evidence reads over chachanotes.db must
+# be bounded. The limit is far beyond any observed legacy sync inventory; a
+# store that exceeds it fails the snapshot with an explicit reason instead of
+# silently migrating a truncated (and therefore wrong) subset.
+LEGACY_SNAPSHOT_EVIDENCE_LIMIT = 10_000
 _LEGACY_POLICY_KEYS = (
     "auto_sync_enabled",
     "sync_on_close",
@@ -566,6 +571,27 @@ def _policy_snapshot(
     return values, tuple(dict.fromkeys(issues))
 
 
+def legacy_sync_directory_configured(settings: object) -> bool:
+    """Return True when the legacy ``notes.sync_directory`` key is present.
+
+    Key *presence* — not validity — mirrors this module's own config-root
+    evidence test in :func:`snapshot_legacy_notes_sync`. The TASK-21112
+    start gate uses this so the one-time migration path still runs for any
+    profile that carries the key, without opening any database.
+
+    Args:
+        settings: The loaded application settings mapping.
+
+    Returns:
+        True when a ``notes`` mapping exists and contains ``sync_directory``.
+    """
+
+    if not isinstance(settings, Mapping):
+        return False
+    notes = settings.get("notes")
+    return isinstance(notes, Mapping) and "sync_directory" in notes
+
+
 def snapshot_legacy_notes_sync(
     legacy_connection: sqlite3.Connection,
     settings: Mapping[str, object],
@@ -599,6 +625,7 @@ def snapshot_legacy_notes_sync(
                 private_paths=private_paths,
             )
         )
+    evidence_limit = LEGACY_SNAPSHOT_EVIDENCE_LIMIT
     try:
         note_rows = legacy_connection.execute(
             """
@@ -614,7 +641,9 @@ def snapshot_legacy_notes_sync(
                 OR sync_root_folder IS NOT NULL
             )
             ORDER BY CAST(id AS TEXT), rowid
-            """
+            LIMIT ?
+            """,
+            (evidence_limit + 1,),
         ).fetchall()
         session_rows = legacy_connection.execute(
             """
@@ -624,10 +653,16 @@ def snapshot_legacy_notes_sync(
                    client_id, summary
             FROM sync_sessions
             ORDER BY started_at, CAST(session_id AS TEXT), rowid
-            """
+            LIMIT ?
+            """,
+            (evidence_limit + 1,),
         ).fetchall()
     except sqlite3.Error:
         raise LegacyNotesSyncSnapshotError("legacy_snapshot_failed") from None
+    if len(note_rows) > evidence_limit or len(session_rows) > evidence_limit:
+        # Migrating a truncated evidence set would drop bindings and turn the
+        # remainder into apparent new files; refuse loudly instead.
+        raise LegacyNotesSyncSnapshotError("legacy_snapshot_overflow")
 
     notes: list[_LegacyNoteEvidence] = []
     for row in note_rows:
@@ -1136,6 +1171,7 @@ def authorize_legacy_candidate_activation(
 
 __all__ = [
     "LEGACY_MIGRATION_REPORT_LIMIT",
+    "LEGACY_SNAPSHOT_EVIDENCE_LIMIT",
     "LegacyCandidateActivationAuthorization",
     "LegacyMigrationReportEntry",
     "LegacyNotesSyncMigrationError",
@@ -1144,6 +1180,7 @@ __all__ = [
     "LegacyNotesSyncSnapshot",
     "LegacyNotesSyncSnapshotError",
     "authorize_legacy_candidate_activation",
+    "legacy_sync_directory_configured",
     "persist_legacy_notes_sync_migration",
     "plan_legacy_notes_sync_migration",
     "snapshot_legacy_notes_sync",

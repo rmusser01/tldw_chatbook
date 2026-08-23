@@ -490,3 +490,34 @@ async def test_manual_sync_now_and_operation_recovery_use_existing_runtime_metho
     assert ("request_sync_now", "root-1") in runtime.calls
     assert ("resolve_cleanup", "root-1", "operation-1") in runtime.calls
     assert "Recovery reviewed" in controller.snapshot.status_line
+
+
+async def test_not_configured_runtime_offers_lasting_setup() -> None:
+    """TASK-21112: a boot-deferred runtime must still offer first-time setup."""
+
+    runtime = _Runtime()
+    runtime.snapshot = lambda: NotesSyncRuntimeSnapshot("not_configured", "none")
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+
+    assert controller.snapshot.lasting_available is True
+    assert controller.snapshot.roots == ()
+    assert controller.choose_relationship("keep_synced") == "configure"
+
+
+async def test_not_configured_refresh_keeps_setup_available() -> None:
+    runtime = _Runtime()
+    current = NotesSyncRuntimeSnapshot("starting", "wait")
+    runtime.snapshot = lambda: current
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+    assert controller.snapshot.lasting_available is False
+
+    current = NotesSyncRuntimeSnapshot("not_configured", "none")
+    controller.refresh_roots()
+
+    assert controller.snapshot.lasting_available is True

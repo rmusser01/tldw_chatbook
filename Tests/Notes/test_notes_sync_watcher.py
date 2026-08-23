@@ -125,6 +125,124 @@ async def test_stop_before_run_cannot_reopen_the_watcher() -> None:
 
 
 @pytest.mark.asyncio
+async def test_consecutive_no_change_polls_stretch_the_sleep_up_to_the_cap() -> None:
+    """TASK-21112: quiet roots must not pay a full scan every base interval."""
+
+    from tldw_chatbook.Notes.notes_sync_watcher import PollingNotesSyncWatcher
+
+    sleeps: list[float] = []
+    stop_after = 6
+
+    watcher = PollingNotesSyncWatcher(
+        lambda: (),
+        lambda _root_id: None,
+        interval_seconds=1.0,
+        max_interval_seconds=10.0,
+        jitter=lambda: 1.0,
+    )
+
+    async def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        if len(sleeps) >= stop_after:
+            await watcher.stop()
+
+    watcher._sleep = sleep
+    await watcher.run()
+
+    assert sleeps == [1.0, 2.0, 4.0, 8.0, 10.0, 10.0]
+
+
+@pytest.mark.asyncio
+async def test_any_detected_change_resets_the_backoff_to_the_base_interval() -> None:
+    from tldw_chatbook.Notes.notes_sync_watcher import PollingNotesSyncWatcher
+
+    sleeps: list[float] = []
+    batches = iter(((), (), ("root-a",), (), ()))
+
+    watcher = PollingNotesSyncWatcher(
+        lambda: next(batches),
+        lambda _root_id: None,
+        interval_seconds=1.0,
+        max_interval_seconds=10.0,
+        jitter=lambda: 1.0,
+    )
+
+    async def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        if len(sleeps) >= 6:
+            await watcher.stop()
+
+    watcher._sleep = sleep
+    await watcher.run()
+
+    # sleep, poll(no change), sleep 2, poll(no change), sleep 4,
+    # poll(change -> reset), sleep 1, poll(no change), sleep 2, ...
+    assert sleeps == [1.0, 2.0, 4.0, 1.0, 2.0, 4.0]
+
+
+@pytest.mark.asyncio
+async def test_backed_off_sleeps_are_jittered_but_the_base_interval_is_not() -> None:
+    from tldw_chatbook.Notes.notes_sync_watcher import PollingNotesSyncWatcher
+
+    sleeps: list[float] = []
+    jitters: list[float] = []
+
+    def jitter() -> float:
+        jitters.append(1.5)
+        return 1.5
+
+    watcher = PollingNotesSyncWatcher(
+        lambda: (),
+        lambda _root_id: None,
+        interval_seconds=1.0,
+        max_interval_seconds=10.0,
+        jitter=jitter,
+    )
+
+    async def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        if len(sleeps) >= 3:
+            await watcher.stop()
+
+    watcher._sleep = sleep
+    await watcher.run()
+
+    # First sleep is exactly the base interval (no jitter call); the
+    # backed-off sleeps multiply the stretched interval by the jitter.
+    assert sleeps == [1.0, 3.0, 6.0]
+    assert len(jitters) == 2
+
+
+def test_default_backoff_cap_lands_in_the_five_to_fifteen_second_band() -> None:
+    from tldw_chatbook.Notes.notes_sync_watcher import PollingNotesSyncWatcher
+
+    watcher = PollingNotesSyncWatcher(lambda: (), lambda _root_id: None)
+
+    assert watcher._interval == 1.0
+    assert watcher._max_interval == 10.0
+    for _ in range(200):
+        factor = watcher._jitter()
+        assert 0.5 <= factor <= 1.5
+
+
+def test_backoff_configuration_is_validated() -> None:
+    from tldw_chatbook.Notes.notes_sync_watcher import PollingNotesSyncWatcher
+
+    with pytest.raises(ValueError, match="max_interval_seconds"):
+        PollingNotesSyncWatcher(
+            lambda: (),
+            lambda _root_id: None,
+            interval_seconds=5.0,
+            max_interval_seconds=2.0,
+        )
+    # An unset cap follows a larger base interval instead of shrinking it.
+    watcher = PollingNotesSyncWatcher(
+        lambda: (), lambda _root_id: None, interval_seconds=30.0
+    )
+    assert watcher._max_interval == 30.0
+
+
+@pytest.mark.asyncio
 async def test_blocking_hint_source_never_blocks_the_event_loop() -> None:
     from tldw_chatbook.Notes.notes_sync_watcher import PollingNotesSyncWatcher
 
@@ -160,3 +278,41 @@ def test_watcher_module_has_no_planner_executor_or_filesystem_dependency() -> No
     assert "notes_sync_reconciler" not in source
     assert "notes_sync_executor" not in source
     assert "notes_sync_filesystem" not in source
+
+
+def test_watcher_interval_config_defaults_validation_and_overrides() -> None:
+    import tldw_chatbook.config as config_module
+
+    assert config_module.get_notes_sync_watcher_intervals({}) == (1.0, 10.0)
+    assert config_module.get_notes_sync_watcher_intervals({"notes": {}}) == (
+        1.0,
+        10.0,
+    )
+    assert config_module.get_notes_sync_watcher_intervals(
+        {"notes": "invalid"}
+    ) == (1.0, 10.0)
+    assert config_module.get_notes_sync_watcher_intervals(
+        {
+            "notes": {
+                "sync_watcher_interval_seconds": 2,
+                "sync_watcher_max_interval_seconds": 30.0,
+            }
+        }
+    ) == (2.0, 30.0)
+    with pytest.raises(ValueError, match="sync_watcher_interval_seconds"):
+        config_module.get_notes_sync_watcher_intervals(
+            {"notes": {"sync_watcher_interval_seconds": 0}}
+        )
+    with pytest.raises(ValueError, match="sync_watcher_max_interval_seconds"):
+        config_module.get_notes_sync_watcher_intervals(
+            {"notes": {"sync_watcher_max_interval_seconds": "fast"}}
+        )
+    with pytest.raises(ValueError, match="at least"):
+        config_module.get_notes_sync_watcher_intervals(
+            {
+                "notes": {
+                    "sync_watcher_interval_seconds": 5.0,
+                    "sync_watcher_max_interval_seconds": 2.0,
+                }
+            }
+        )

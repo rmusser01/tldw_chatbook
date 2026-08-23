@@ -116,6 +116,7 @@ from .config import (
     get_notifications_db_path,
     get_notes_sync_state_db_path,
     get_notes_sync_recovery_capacity_bytes,
+    get_notes_sync_watcher_intervals,
     get_research_db_path,
     get_scheduled_tasks_db_path,
     get_subscriptions_db_path,
@@ -372,6 +373,7 @@ from .Notes.Notes_Library import NotesInteropService
 from .Notes.file_notes_git_service import build_file_notes_session_owner
 from .Notes.note_folder_repository import LocalNoteFolderRepository
 from .Notes.notes_scope_service import NotesScopeService, ScopeType
+from .Notes.notes_sync_legacy import legacy_sync_directory_configured
 from .Notes.notes_sync_runtime import (
     build_notes_sync_legacy_migrator,
     build_notes_sync_runtime_owner,
@@ -6029,6 +6031,9 @@ class TldwCli(
             file_notes_binding=self.file_notes_session_owner.current_binding,
             private_paths=(notes_sync_state_path, get_chachanotes_db_path()),
         )
+        notes_sync_watcher_interval, notes_sync_watcher_max_interval = (
+            get_notes_sync_watcher_intervals(self.app_config)
+        )
         self.notes_sync_runtime_owner = build_notes_sync_runtime_owner(
             notes_scope_service=self.notes_scope_service,
             cutover_admitted=True,
@@ -6040,6 +6045,20 @@ class TldwCli(
             recovery_capacity_bytes=get_notes_sync_recovery_capacity_bytes(
                 self.app_config
             ),
+            # TASK-21112 boot gate: start only on actual configuration — the
+            # legacy [notes] sync-directory key (one-time migration path) or
+            # a state DB already on disk. Path.exists() never opens or
+            # creates the database; a zero-profile boot therefore creates no
+            # notes-sync state at all. First-time setup (review_setup)
+            # force-starts the runtime on demand.
+            start_evidence=(
+                lambda settings=self.app_config, state_path=notes_sync_state_path: (
+                    legacy_sync_directory_configured(settings)
+                    or state_path.exists()
+                )
+            ),
+            watcher_interval_seconds=notes_sync_watcher_interval,
+            watcher_max_interval_seconds=notes_sync_watcher_max_interval,
         )
         self._notes_sync_runtime_start_task: asyncio.Task[None] | None = None
         self._notes_sync_runtime_shutdown_task: asyncio.Task[None] | None = None
