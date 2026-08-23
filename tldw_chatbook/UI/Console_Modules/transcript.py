@@ -7,6 +7,7 @@ decomposition, task 2): the subtree that used to be built inline as
     with main_column:
         transcript_region = self._frame_console_region(
             Vertical(id="console-transcript-region", classes="console-region"),
+            edges=(),
             top=False,
         )
         with transcript_region:
@@ -165,6 +166,7 @@ class ConsoleTranscriptRegion(Vertical):
         """
         transcript_region = frame_console_region(
             Vertical(id="console-transcript-region", classes="console-region"),
+            edges=(),
             top=False,
             # TASK-17651: the workspace grid's own bottom border is the
             # bottom stack's single separator; the region ends flush.

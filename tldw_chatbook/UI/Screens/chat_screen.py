@@ -28,6 +28,7 @@ from textual.css.query import NoMatches, QueryError
 from textual.color import Color
 from textual.events import (
     Click,
+    DescendantBlur,
     DescendantFocus,
     Key,
     MouseDown,
@@ -17766,13 +17767,26 @@ class ChatScreen(BaseAppScreen):
         the only cue. The transcript owns neither divider; its class marks
         only the stable title row.
         """
+        self._sync_console_focus_paint(event.widget)
+
+    @on(DescendantBlur)
+    def _clear_console_rail_focus_frame(self, _event: DescendantBlur) -> None:
+        """Recompute paint after Textual commits replacement focus."""
+        self._sync_console_focus_paint_from_current()
+
+    def _sync_console_focus_paint_from_current(self) -> None:
+        """Use current focus identity so a stale blur cannot clear a new cue."""
+        self._sync_console_focus_paint(self.app.focused)
+
+    def _sync_console_focus_paint(self, focused: Widget | None) -> None:
+        """Make Console workbench focus paint match ``focused`` exactly."""
         try:
             transcript_region = self.query_one("#console-transcript-region")
         except QueryError:
             pass
         else:
             transcript_region.set_class(
-                self._is_descendant_or_self(event.widget, transcript_region),
+                self._is_descendant_or_self(focused, transcript_region),
                 "console-transcript-region-focused",
             )
         for region_id, accent_edge, control_id in (
@@ -17793,13 +17807,7 @@ class ChatScreen(BaseAppScreen):
                 framed = self.query_one(f"#{region_id}")
             except QueryError:
                 continue
-            focused_within = False
-            node = event.widget
-            while node is not None:
-                if node is framed:
-                    focused_within = True
-                    break
-                node = node.parent
+            focused_within = self._is_descendant_or_self(focused, framed)
             framed.set_class(focused_within, "console-edge-region-focused")
             try:
                 focus_control = framed.query_one(f"#{control_id}", Button)

@@ -338,7 +338,8 @@ Close TASK-20937.2 with exact counts and no speed claim.
 - Modify: `Tests/UI/test_console_internals_decomposition.py`
 - Modify: `Tests/UI/test_console_composer_collapse.py`
 - Modify: `tldw_chatbook/Chat/console_rail_state.py` (comment only)
-- Modify: `tldw_chatbook/UI/Console_Modules/transcript.py` (comment only)
+- Modify: `tldw_chatbook/UI/Console_Modules/transcript.py`
+- Modify: `tldw_chatbook/UI/Console_Modules/provider_continuation_recovery.py` (single transcript framing call only)
 - Create: `Tests/UI/test_console_edge_rail_geometry.py`
 - Modify: `Tests/UI/test_css_build_integrity.py`
 - Modify: `backlog/tasks/task-20937.3 - Move-Console-rails-to-the-application-edges.md`
@@ -408,6 +409,14 @@ composer-collapse intent remains valid while its transcript side-frame focus
 expectation directly contradicts ADR-081. The two production modules are
 comment-only corrections: ADR-043 thresholds and transcript runtime behavior do
 not change.
+
+Quality review then found two ownership seams the focused path had not exercised:
+blur-to-none left focus paint stale because only `DescendantFocus` recomputed it,
+and Task 3 had changed the shared helper's omitted-`edges` legacy behavior to make
+the transcript implicitly borderless. Preserve compatibility by restoring the
+helper default and making borderlessness explicit with `edges=()` in both the
+ordinary transcript and provider-continuation compose paths. Share one truthful
+focus-paint recompute path between descendant focus and blur; no timers or loops.
 
 - [ ] **Step 5: Mutation-check and commit**
 

@@ -41,8 +41,7 @@ def frame_console_region(
             workspace grid, whose own bottom border is the bottom stack's
             single separator — TASK-17651).
         edges: Explicit frame edges. When omitted, the legacy top/bottom
-            switches apply; passing both legacy switches as False now yields
-            the transcript's intentional borderless region.
+            switches apply and left/right remain present.
         variant: ``"solid"`` for the standard visible frame, ``"quiet"`` for
             a borderless frame that still carries the frame color.
 
@@ -56,19 +55,15 @@ def frame_console_region(
     widget.add_class("console-frame-solid")
     widget.styles.border = CONSOLE_QUIET_FRAME_BORDER
     if edges is None:
-        edges = (
-            ()
-            if not top and not bottom
-            else tuple(
-                edge
-                for edge, enabled in (
-                    ("top", top),
-                    ("right", True),
-                    ("bottom", bottom),
-                    ("left", True),
-                )
-                if enabled
+        edges = tuple(
+            edge
+            for edge, enabled in (
+                ("top", top),
+                ("right", True),
+                ("bottom", bottom),
+                ("left", True),
             )
+            if enabled
         )
     for edge in edges:
         setattr(widget.styles, f"border_{edge}", CONSOLE_FRAME_BORDER)

@@ -56,6 +56,21 @@ def _geometry_snapshot(screen) -> dict[str, object]:
     }
 
 
+def _hit_snapshot(screen) -> tuple[Widget, ...]:
+    grid = screen.query_one("#console-workspace-grid")
+    transcript = screen.query_one("#console-transcript-region")
+    sample_y = grid.content_region.y + (grid.content_region.height - 1) // 2
+    return tuple(
+        screen.get_widget_at(x, sample_y)[0]
+        for x in (
+            screen.region.x,
+            transcript.region.x,
+            transcript.region.right - 1,
+            screen.region.right - 1,
+        )
+    )
+
+
 def _assert_edge_owned_workbench(screen) -> tuple[int, int]:
     grid = screen.query_one("#console-workspace-grid")
     left = _visible(screen, _LEFT_OWNERS)
@@ -298,4 +313,137 @@ async def test_collapsed_handle_focus_is_non_color_and_dimension_stable(
         assert not control.styles.text_style.bold
         assert not control.styles.text_style.underline
         assert _geometry_snapshot(screen) == before
+        _assert_edge_owned_workbench(screen)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("focus_selector", "owner_selector", "cue_selector", "focus_class", "edge"),
+    [
+        (
+            "#console-native-transcript",
+            "#console-transcript-region",
+            "#console-transcript-title",
+            "console-transcript-region-focused",
+            None,
+        ),
+        (
+            "#console-context-rail-collapse",
+            "#console-left-rail",
+            "#console-context-rail-collapse",
+            "console-edge-region-focused",
+            "right",
+        ),
+        (
+            "#console-inspector-rail-open",
+            "#console-inspector-rail-handle",
+            "#console-inspector-rail-open",
+            "console-edge-region-focused",
+            "left",
+        ),
+    ],
+)
+async def test_focus_paint_clears_when_focus_becomes_none(
+    focus_selector: str,
+    owner_selector: str,
+    cue_selector: str,
+    focus_class: str,
+    edge: str | None,
+) -> None:
+    async with make_console_pilot(size=(160, 45)) as pilot:
+        screen = pilot.app.screen
+        target = screen.query_one(focus_selector)
+        owner = screen.query_one(owner_selector)
+        cue = screen.query_one(cue_selector)
+        geometry = _geometry_snapshot(screen)
+        hits = _hit_snapshot(screen)
+        rest_background = cue.styles.background
+        rest_color = cue.styles.color
+        rest_divider = (
+            getattr(owner.styles, f"border_{edge}") if edge is not None else None
+        )
+
+        target.focus()
+        await pilot.pause()
+
+        assert pilot.app.focused is target
+        assert owner.has_class(focus_class)
+        assert cue.styles.text_style.bold
+        assert cue.styles.text_style.underline
+
+        screen.set_focus(None)
+        await pilot.pause()
+
+        assert pilot.app.focused is None
+        assert not list(screen.query(".console-edge-region-focused"))
+        assert not list(screen.query(".console-transcript-region-focused"))
+        assert not cue.styles.text_style.bold
+        assert not cue.styles.text_style.underline
+        assert cue.styles.background == rest_background
+        assert cue.styles.color == rest_color
+        if edge is not None:
+            assert getattr(owner.styles, f"border_{edge}") == rest_divider
+        assert _geometry_snapshot(screen) == geometry
+        assert _hit_snapshot(screen) == hits
+        _assert_edge_owned_workbench(screen)
+
+
+@pytest.mark.asyncio
+async def test_native_widget_blur_repaints_the_actual_focus_successor() -> None:
+    """Widget.blur advances focus; paint must follow rather than clear blindly."""
+    async with make_console_pilot(size=(160, 45)) as pilot:
+        screen = pilot.app.screen
+        reveal = screen.query_one("#console-inspector-rail-open")
+        handle = screen.query_one("#console-inspector-rail-handle")
+        transcript = screen.query_one("#console-native-transcript")
+        transcript_region = screen.query_one("#console-transcript-region")
+        title = screen.query_one("#console-transcript-title")
+        geometry = _geometry_snapshot(screen)
+        hits = _hit_snapshot(screen)
+
+        reveal.focus()
+        await pilot.pause()
+        reveal.blur()
+        await pilot.pause()
+
+        assert pilot.app.focused is transcript
+        assert not handle.has_class("console-edge-region-focused")
+        assert not reveal.styles.text_style.bold
+        assert not reveal.styles.text_style.underline
+        assert transcript_region.has_class("console-transcript-region-focused")
+        assert title.styles.text_style.bold
+        assert title.styles.text_style.underline
+        assert _geometry_snapshot(screen) == geometry
+        assert _hit_snapshot(screen) == hits
+        _assert_edge_owned_workbench(screen)
+
+
+@pytest.mark.asyncio
+async def test_rapid_focus_transfer_keeps_only_the_current_edge_painted() -> None:
+    async with make_console_pilot(size=(160, 45)) as pilot:
+        screen = pilot.app.screen
+        context = screen.query_one("#console-context-rail-collapse")
+        inspector = screen.query_one("#console-inspector-rail-open")
+        left = screen.query_one("#console-left-rail")
+        right_handle = screen.query_one("#console-inspector-rail-handle")
+        left_rest = left.styles.border_right
+        right_rest = right_handle.styles.border_left
+        geometry = _geometry_snapshot(screen)
+        hits = _hit_snapshot(screen)
+
+        context.focus()
+        inspector.focus()
+        await pilot.pause()
+
+        assert pilot.app.focused is inspector
+        assert not left.has_class("console-edge-region-focused")
+        assert right_handle.has_class("console-edge-region-focused")
+        assert not context.styles.text_style.bold
+        assert not context.styles.text_style.underline
+        assert inspector.styles.text_style.bold
+        assert inspector.styles.text_style.underline
+        assert left.styles.border_right == left_rest
+        assert right_handle.styles.border_left != right_rest
+        assert _geometry_snapshot(screen) == geometry
+        assert _hit_snapshot(screen) == hits
         _assert_edge_owned_workbench(screen)
