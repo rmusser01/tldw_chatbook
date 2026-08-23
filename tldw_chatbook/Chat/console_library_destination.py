@@ -227,13 +227,20 @@ def _local_transport_target_is_valid(parsed: SplitResult, scheme: str) -> bool:
     if scheme != "http+unix":
         return False
     encoded_target = parsed.netloc
-    decoded_target = unquote(encoded_target)
+    try:
+        decoded_target = unquote(encoded_target, errors="strict")
+    except UnicodeDecodeError:
+        return False
     return (
         bool(encoded_target)
         and "@" not in encoded_target
         and _percent_encoding_is_well_formed(encoded_target)
         and decoded_target.startswith("/")
         and decoded_target != "/"
+        and not any(
+            character.isspace() or category(character) in {"Cc", "Cf"}
+            for character in decoded_target
+        )
         and not parsed.fragment
     )
 

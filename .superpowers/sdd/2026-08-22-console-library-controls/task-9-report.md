@@ -168,3 +168,23 @@ The file list did not expand beyond the original Task 9 implementation report.
 There is no contract deviation, durable policy mutation, persistence/sync change,
 or Task 10 provider gating. `TASK-19900.2` remains In Progress with acceptance
 criteria unchecked.
+
+## Fix round 2
+
+Re-review found one bounded local-transport parsing gap: percent-encoded bytes
+were checked syntactically, but the decoded `http+unix` socket target was only
+required to start with `/`, and `unquote` silently replaced malformed UTF-8.
+Named RED coverage was **6 failed, 1 passed, 54 deselected** for decoded NUL,
+newline, DEL, whitespace, U+200B, malformed UTF-8, and a valid encoded absolute
+socket control. The parser now decodes strictly and rejects decoded whitespace
+or Unicode `Cc`/`Cf` characters before classifying the transport on-device.
+
+Focused GREEN was **7 passed, 54 deselected**. Full destination plus gateway
+compatibility was **325 passed, 2 documented sandbox socket tests deselected**;
+authority plus store compatibility was **311 passed**. Each run emitted only the
+inherited Requests dependency warning. Removing the strict decoded-target guard
+failed all **6/6** named invalid cases, and the restored implementation passed
+the final destination run. Scoped Ruff and `git diff --check` passed. Only the
+destination parser, its tests, this report, and the ignored shared progress
+ledger changed; there is no contract deviation or Task 10 work, and
+`TASK-19900.2` remains In Progress with acceptance criteria unchecked.

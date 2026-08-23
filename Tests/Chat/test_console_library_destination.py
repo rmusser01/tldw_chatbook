@@ -202,6 +202,53 @@ def test_resolved_destination_classifies_only_provable_endpoint_evidence(
     assert len(destination.endpoint_identity) <= 253
 
 
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        pytest.param(
+            "http+unix://%2Ftmp%2Fsock%00/v1",
+            id="percent-decoded-nul",
+        ),
+        pytest.param(
+            "http+unix://%2Ftmp%2Fsock%0A/v1",
+            id="percent-decoded-newline",
+        ),
+        pytest.param(
+            "http+unix://%2Ftmp%2Fsock%7F/v1",
+            id="percent-decoded-del",
+        ),
+        pytest.param(
+            "http+unix://%2Ftmp%2Fsock%20name/v1",
+            id="percent-decoded-whitespace",
+        ),
+        pytest.param(
+            "http+unix://%2Ftmp%2Fsock%E2%80%8B/v1",
+            id="percent-decoded-format-control",
+        ),
+        pytest.param(
+            "http+unix://%2Ftmp%2Fsock%FF/v1",
+            id="malformed-utf8",
+        ),
+    ],
+)
+def test_http_unix_decoded_socket_target_rejects_controls_and_malformed_encoding(
+    endpoint: str,
+) -> None:
+    destination = resolve_console_destination(_resolution(endpoint))
+
+    assert destination.egress_class is ConsoleEgressClass.UNKNOWN
+    assert destination.endpoint_identity == "external/unknown"
+
+
+def test_http_unix_valid_encoded_absolute_socket_target_remains_on_device() -> None:
+    destination = resolve_console_destination(
+        _resolution("http+unix://%2Fvar%2Frun%2Ftldw.sock/v1")
+    )
+
+    assert destination.egress_class is ConsoleEgressClass.ON_DEVICE
+    assert destination.endpoint_identity == "http+unix://local"
+
+
 def test_destination_identity_strips_credentials_paths_queries_and_fragments() -> None:
     first = resolve_console_destination(
         _resolution(
