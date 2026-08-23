@@ -82,8 +82,13 @@ def _stable_content_box(visual: Any) -> tuple[int, int] | None:
     ):
         return None
     return (
-        max(_OPERABLE_WIDTH, *(width for width, _height in dimensions)),
-        max(_OPERABLE_HEIGHT, *((height + 1) // 2 for _width, height in dimensions)),
+        max((_OPERABLE_WIDTH, *(width for width, _height in dimensions))),
+        max(
+            (
+                _OPERABLE_HEIGHT,
+                *((height + 1) // 2 for _width, height in dimensions),
+            )
+        ),
     )
 
 
@@ -282,7 +287,7 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         self.snapshot_polling_active = True
         self.border_title = "Persona Buddy"
         self._apply_geometry(self._working_preferences.geometry)
-        self.refresh_from_controller()
+        self.refresh_from_controller(schedule_resolution=False)
         self._poll_timer = self.set_interval(
             _POLL_SECONDS, self.refresh_from_controller
         )

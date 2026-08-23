@@ -314,7 +314,7 @@ async def test_overlay_paints_without_flow_or_fr_budget():
         assert flow.region.height == 24
         assert app.screen.query_one("#flow-end").region.bottom == 24
         assert "Persona Buddy" in _compositor_text(app.screen)
-        assert "BUDDY-A" in _compositor_text(app.screen)
+        await _wait_until(lambda: "BUDDY-A" in _compositor_text(app.screen))
 
 
 @pytest.mark.asyncio
