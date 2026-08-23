@@ -47,6 +47,7 @@ class _FakeController:
         collapsed: bool = False,
         animate: bool = False,
         frames: tuple[str, ...] = ("BUDDY-A",),
+        frame_sizes: tuple[tuple[int, int], ...] | None = None,
         durations: tuple[int, ...] | None = None,
         loop: bool = True,
     ) -> None:
@@ -62,12 +63,30 @@ class _FakeController:
             ),
         )
         self.generation = 1
+        self.viewport_generation = 0
         self.persisted: list[PersonaBuddyPreferences] = []
+        self.preference_writes: list[dict[str, object]] = []
         self.resolve_sizes: list[tuple[int, int]] = []
         durations = durations or tuple(20 for _ in frames)
+        frame_sizes = frame_sizes or tuple((26, 20) for _ in frames)
         prepared = tuple(
-            SimpleNamespace(renderable=Text(label), duration_ms=duration)
-            for label, duration in zip(frames, durations, strict=True)
+            SimpleNamespace(
+                cache_identity=f"cache-{index}",
+                graph_identity=None,
+                asset_id=index + 1,
+                asset_key=f"asset-{index}",
+                asset_sha256=f"sha-{index}",
+                manifest_frame_index=index,
+                selected_frame=0,
+                duration_ms=duration,
+                width=width,
+                height=height,
+                paint_digest=f"paint-{index}-{label}",
+                renderable=Text(label),
+            )
+            for index, (label, duration, (width, height)) in enumerate(
+                zip(frames, durations, frame_sizes, strict=True)
+            )
         )
         self.visual = PersonaBuddyVisualSnapshot(
             available=True,
@@ -98,6 +117,7 @@ class _FakeController:
             open=self.preferences.open,
             collapsed=self.preferences.collapsed,
             preferences_generation=self.generation,
+            viewport_generation=self.viewport_generation,
             visual=self.visual,
         )
 
@@ -110,6 +130,7 @@ class _FakeController:
         return self.snapshot()
 
     def apply_preferences_patch(self, **changes: object) -> int:
+        self.preference_writes.append(changes)
         self.preferences = replace(self.preferences, **changes)
         self.generation += 1
         return self.generation
@@ -161,6 +182,26 @@ class _BlockingResolutionController(_FakeController):
             self.active_resolves -= 1
 
 
+class _BlockAfterAcceptedController(_FakeController):
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        self.block = False
+        self.direct_visual = self.visual
+        self.resolve_started = asyncio.Event()
+        self.resolve_release = asyncio.Event()
+
+    async def resolve_current_visual(self, *, cols: int, lines: int):
+        self.resolve_sizes.append((cols, lines))
+        if not self.block:
+            return self.visual
+        visual = self.direct_visual
+        self.resolve_started.set()
+        await self.resolve_release.wait()
+        self.resolve_release.clear()
+        self.resolve_started.clear()
+        return visual
+
+
 class _FreshEquivalentVisualController(_FakeController):
     async def resolve_current_visual(self, *, cols: int, lines: int):
         self.visual = replace(self.visual)
@@ -184,6 +225,16 @@ class _SlotSizedFrameController(_FakeController):
         labels = ["TOP"] + [f"ROW-{index}" for index in range(1, lines - 1)]
         labels.append("BOTTOM")
         frame = SimpleNamespace(
+            cache_identity="slot-cache",
+            graph_identity=None,
+            asset_id=1,
+            asset_key="slot-asset",
+            asset_sha256="slot-sha",
+            manifest_frame_index=0,
+            selected_frame=0,
+            width=cols,
+            height=lines * 2,
+            paint_digest=f"slot-{cols}-{lines}",
             renderable=Text("\n".join(labels), style="bold white on rgb(20,80,140)"),
             duration_ms=20,
         )
@@ -224,6 +275,30 @@ def _mouse(event_type, *, x: int, y: int, button: int = 1, widget=None):
         screen_x=x,
         screen_y=y,
     )
+
+
+def _visual_with_frame(
+    controller: _FakeController,
+    *,
+    label: str,
+    width: int,
+    height: int,
+) -> PersonaBuddyVisualSnapshot:
+    frame = SimpleNamespace(
+        cache_identity=f"cache-{label}",
+        graph_identity=None,
+        asset_id=101,
+        asset_key=f"asset-{label}",
+        asset_sha256=f"sha-{label}",
+        manifest_frame_index=0,
+        selected_frame=0,
+        duration_ms=20,
+        width=width,
+        height=height,
+        paint_digest=f"paint-{label}",
+        renderable=Text(label),
+    )
+    return replace(controller.visual, frames=(frame,))  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio
@@ -523,6 +598,137 @@ async def test_reduced_motion_paints_static_frame():
 
 
 @pytest.mark.asyncio
+async def test_accepted_visual_uses_one_maximum_frame_box_without_jitter():
+    controller = _FakeController(
+        animate=True,
+        frames=("SMALL", "LARGE"),
+        frame_sizes=((8, 6), (12, 10)),
+        durations=(300, 300),
+        loop=False,
+    )
+    app = _BuddyApp(controller)
+    async with app.run_test(size=(80, 24)):
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        await _wait_until(lambda: "SMALL" in _compositor_text(app.screen))
+        await _wait_until(lambda: buddy.region.size == (14, 7))
+
+        accepted = buddy._accepted_render
+        assert accepted is not None
+        assert (accepted.content_width, accepted.content_height) == (12, 5)
+        stable_region = buddy.region
+
+        buddy._next_frame_at = 0
+        buddy.advance_frame()
+        await _wait_until(lambda: "LARGE" in _compositor_text(app.screen))
+
+        assert buddy.region == stable_region
+        assert (accepted.content_width, accepted.content_height) == (12, 5)
+
+
+@pytest.mark.asyncio
+async def test_single_frame_fits_to_content_without_persisting_dimensions():
+    controller = _FakeController(
+        frames=("FITTED",),
+        frame_sizes=((12, 10),),
+    )
+    app = _BuddyApp(controller)
+    async with app.run_test(size=(80, 24)):
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        await _wait_until(lambda: buddy.region.size == (14, 7))
+
+        assert controller.preferences.geometry.width == 28
+        assert controller.preferences.geometry.height == 12
+        assert controller.preference_writes == []
+        assert controller.persisted == []
+        assert controller.resolve_sizes == [(26, 10)]
+
+        controller.generation += 1
+        buddy.refresh_from_controller()
+        await _wait_until(lambda: len(controller.resolve_sizes) == 2)
+
+        assert controller.resolve_sizes[-1] == (26, 10)
+        assert controller.preference_writes == []
+        assert controller.persisted == []
+
+
+@pytest.mark.asyncio
+async def test_prior_budget_snapshot_visual_cannot_refit_current_view():
+    controller = _BlockAfterAcceptedController(
+        frames=("CURRENT",),
+        frame_sizes=((8, 6),),
+    )
+    app = _BuddyApp(controller)
+    async with app.run_test(size=(80, 24)):
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        await _wait_until(lambda: buddy.region.size == (12, 6))
+        assert "CURRENT" in _compositor_text(app.screen)
+        accepted_region = buddy.region
+
+        stale = _visual_with_frame(
+            controller,
+            label="PRIOR-BUDGET",
+            width=20,
+            height=12,
+        )
+        controller.block = True
+        controller.direct_visual = stale
+        controller.generation += 1
+        buddy.refresh_from_controller()
+        await asyncio.wait_for(controller.resolve_started.wait(), timeout=1)
+
+        controller.preferences = replace(
+            controller.preferences,
+            geometry=replace(controller.preferences.geometry, width=40, height=18),
+        )
+        controller.visual = stale
+        buddy.refresh_from_controller(schedule_resolution=False)
+        controller.resolve_release.set()
+        await _wait_until(lambda: controller.resolve_started.is_set())
+        await asyncio.sleep(0)
+
+        assert "CURRENT" in _compositor_text(app.screen)
+        assert "PRIOR-BUDGET" not in _compositor_text(app.screen)
+        assert buddy.region == accepted_region
+
+
+@pytest.mark.asyncio
+async def test_prior_viewport_direct_result_cannot_replace_accepted_render():
+    controller = _BlockAfterAcceptedController(
+        frames=("CURRENT",),
+        frame_sizes=((8, 6),),
+    )
+    app = _BuddyApp(controller)
+    async with app.run_test(size=(80, 24)):
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        await _wait_until(lambda: buddy.region.size == (12, 6))
+        assert "CURRENT" in _compositor_text(app.screen)
+        accepted_region = buddy.region
+
+        stale = _visual_with_frame(
+            controller,
+            label="PRIOR-VIEWPORT",
+            width=20,
+            height=12,
+        )
+        controller.block = True
+        controller.direct_visual = stale
+        controller.generation += 1
+        buddy.refresh_from_controller()
+        await asyncio.wait_for(controller.resolve_started.wait(), timeout=1)
+
+        controller.viewport_generation += 1
+        controller.visual = stale
+        buddy.refresh_from_controller(schedule_resolution=False)
+        controller.resolve_release.set()
+        await _wait_until(lambda: controller.resolve_started.is_set())
+        await asyncio.sleep(0)
+
+        assert "CURRENT" in _compositor_text(app.screen)
+        assert "PRIOR-VIEWPORT" not in _compositor_text(app.screen)
+        assert buddy.region == accepted_region
+
+
+@pytest.mark.asyncio
 async def test_resolution_is_single_owned_and_stale_completion_cannot_repaint():
     controller = _BlockingResolutionController()
     app = _BuddyApp(controller)
@@ -570,37 +776,21 @@ async def test_resolution_runs_once_until_semantic_authority_changes():
 
 
 @pytest.mark.asyncio
-async def test_resolution_uses_visible_frame_content_region_not_window_region():
+async def test_resolution_uses_preferred_boundary_budget_not_fitted_window_region():
     controller = _SlotSizedFrameController()
     app = _BuddyApp(controller)
     async with app.run_test(size=(80, 24)):
         buddy = app.screen.query_one(PersonaBuddyWidget)
         frame = buddy.query_one("#persona-buddy-frame", Static)
         await _wait_until(lambda: bool(controller.resolve_sizes))
-        expected = (frame.content_region.width, frame.content_region.height)
 
-        assert controller.resolve_sizes[-1] == expected
-        assert controller.resolve_sizes[-1] != (
-            buddy.content_region.width,
-            buddy.content_region.height,
-        )
-        await _wait_until(
-            lambda: (
-                "TOP" in _compositor_text(app.screen)
-                and "BOTTOM" in _compositor_text(app.screen)
-            )
-        )
-        strips = app.screen._compositor.render_strips()
-        painted_frame = "\n".join(
-            strips[y].text[frame.region.x : frame.region.right]
-            for y in range(frame.region.y, frame.region.bottom)
-        )
-        assert "TOP" in painted_frame
-        assert "BOTTOM" in painted_frame
+        assert controller.resolve_sizes[-1] == (26, 10)
+        assert controller.resolve_sizes[-1] != frame.content_region.size
+        assert buddy.region.size == (28, 12)
 
 
 @pytest.mark.asyncio
-async def test_frame_slot_resize_changes_resolution_authority_once():
+async def test_frame_slot_resize_does_not_feed_resolution_authority():
     controller = _FakeController()
     app = _BuddyApp(controller)
     async with app.run_test(size=(80, 24)) as pilot:
@@ -613,22 +803,18 @@ async def test_frame_slot_resize_changes_resolution_authority_once():
         await _wait_until(lambda: frame.content_region.size != original)
 
         buddy.refresh_from_controller()
+        await asyncio.sleep(0.2)
 
-        await _wait_until(lambda: len(controller.resolve_sizes) == 2)
-        assert controller.resolve_sizes[-1] == (
-            frame.content_region.width,
-            frame.content_region.height,
-        )
+        assert controller.resolve_sizes == [(26, 10)]
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mode", ("hidden", "collapsed", "zero-frame"))
-async def test_hidden_collapsed_or_zero_frame_slot_does_not_resolve(mode: str):
+@pytest.mark.parametrize("mode", ("hidden", "collapsed"))
+async def test_hidden_or_collapsed_buddy_does_not_resolve(mode: str):
     controller = _FakeController()
     app = _BuddyApp(controller)
-    async with app.run_test(size=(80, 24)) as pilot:
+    async with app.run_test(size=(80, 24)):
         buddy = app.screen.query_one(PersonaBuddyWidget)
-        frame = buddy.query_one("#persona-buddy-frame", Static)
         await _wait_until(lambda: len(controller.resolve_sizes) == 1)
 
         if mode == "hidden":
@@ -638,10 +824,6 @@ async def test_hidden_collapsed_or_zero_frame_slot_does_not_resolve(mode: str):
                 controller.preferences,
                 collapsed=True,
             )
-        else:
-            frame.styles.height = 0
-            await pilot.pause()
-            await _wait_until(lambda: frame.content_region.height == 0)
         controller.generation += 1
         buddy.refresh_from_controller()
         await asyncio.sleep(0.2)

@@ -6,7 +6,7 @@ import asyncio
 import inspect
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from functools import partial
 from typing import Any
 
@@ -20,6 +20,7 @@ from textual.worker import Worker
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
+from tldw_chatbook.Persona_Buddy.controller import PersonaBuddyVisualSnapshot
 from tldw_chatbook.Persona_Buddy.preferences import (
     PERSONA_BUDDY_UNPOSITIONED_COORDINATE,
     PersonaBuddyGeometry,
@@ -32,10 +33,67 @@ _MIN_WIDTH = 18
 _MIN_HEIGHT = 6
 _FULL_CONTENT_HEIGHT = 8
 _OPERABLE_WIDTH = 10
+_OPERABLE_HEIGHT = 4
+_BOUNDARY_SIZE = 2
 _DUAL_CONTROL_WIDTH = 14
 _COLLAPSED_HEIGHT = 3
 _COMPACT_HEIGHT = 1
 _POLL_SECONDS = 0.10
+
+
+def _visual_identity(visual: Any) -> tuple[object, ...]:
+    frames = getattr(visual, "frames", ())
+    return (
+        getattr(visual, "source", None),
+        getattr(visual, "persona_id", None),
+        getattr(visual, "persona_revision", None),
+        getattr(visual, "requested_state", None),
+        getattr(visual, "resolved_state", None),
+        getattr(visual, "animation_id", None),
+        getattr(visual, "graph_identity", None),
+        getattr(visual, "cache_identity", None),
+        getattr(visual, "frame_rate", None),
+        getattr(visual, "loop", None),
+        getattr(visual, "animate", None),
+        tuple(
+            (
+                getattr(frame, "cache_identity", None),
+                getattr(frame, "asset_id", None),
+                getattr(frame, "asset_sha256", None),
+                getattr(frame, "manifest_frame_index", None),
+                getattr(frame, "selected_frame", None),
+                getattr(frame, "duration_ms", None),
+                getattr(frame, "paint_digest", None),
+            )
+            for frame in frames
+        ),
+    )
+
+
+def _stable_content_box(visual: Any) -> tuple[int, int] | None:
+    frames = getattr(visual, "frames", ())
+    dimensions = tuple(
+        (getattr(frame, "width", None), getattr(frame, "height", None))
+        for frame in frames
+    )
+    if any(
+        type(width) is not int or width < 1 or type(height) is not int or height < 1
+        for width, height in dimensions
+    ):
+        return None
+    return (
+        max(_OPERABLE_WIDTH, *(width for width, _height in dimensions)),
+        max(_OPERABLE_HEIGHT, *((height + 1) // 2 for _width, height in dimensions)),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _AcceptedRender:
+    authority: tuple[object, ...]
+    visual_identity: tuple[object, ...]
+    visual: PersonaBuddyVisualSnapshot = field(repr=False, compare=False)
+    content_width: int
+    content_height: int
 
 
 class PersonaBuddyWidget(Widget, can_focus=True):
@@ -189,7 +247,8 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         self._reconcile = reconcile
         self._current_view = is_current
         self._snapshot: Any = None
-        self._visual_identity: object | None = None
+        self._painted_visual_identity: object | None = None
+        self._accepted_render: _AcceptedRender | None = None
         self._working_preferences: PersonaBuddyPreferences = (
             controller.current_preferences()
         )
@@ -254,46 +313,58 @@ class PersonaBuddyWidget(Widget, can_focus=True):
             return False
         return self._current_view(self) if self._current_view is not None else True
 
-    def _resolution_size(self) -> tuple[int, int] | None:
-        """Return the exact visible portrait slot size, if it can be painted."""
+    def _requested_render_budget(self, snapshot: Any) -> tuple[int, int] | None:
+        """Return a deterministic preferred content budget for one resolve."""
 
         if (
             not self.is_attached
             or not self.display
-            or self.has_class("persona-buddy-collapsed")
-            or self.has_class("persona-buddy-compact")
+            or snapshot.collapsed
+            or self._compact_for_geometry(self._working_preferences.geometry)
         ):
             return None
-        frame = self.query_one("#persona-buddy-frame", Static)
-        if not frame.display:
+        viewport = self.screen.size
+        geometry = self._working_preferences.geometry
+        cols = min(geometry.width, viewport.width) - _BOUNDARY_SIZE
+        lines = min(geometry.height, viewport.height) - _BOUNDARY_SIZE
+        if cols < 1 or lines < 1:
             return None
-        region = frame.content_region
-        if region.width < 1 or region.height < 1:
-            return None
-        return region.width, region.height
+        return cols, lines
 
     async def _resolution_loop(self) -> None:
         """Resolve only changed semantic authority while this view is current."""
 
         while self._is_current_view():
             snapshot = self._controller.snapshot()
+            budget = self._requested_render_budget(snapshot)
             authority = self._resolution_authority(snapshot)
-            if authority is None or authority == self._resolved_authority:
-                return
-            size = self._resolution_size()
-            if size is None:
+            if (
+                authority is None
+                or budget is None
+                or authority == self._resolved_authority
+            ):
                 return
             visual = await self._controller.resolve_current_visual(
-                cols=size[0],
-                lines=size[1],
+                cols=budget[0],
+                lines=budget[1],
             )
             if not self._is_current_view():
                 return
             current_snapshot = self._controller.snapshot()
             if self._resolution_authority(current_snapshot) != authority:
                 continue
-            self.refresh_from_controller(schedule_resolution=False)
+            if visual is not None:
+                content_box = _stable_content_box(visual)
+                if content_box is not None:
+                    self._accepted_render = _AcceptedRender(
+                        authority=authority,
+                        visual_identity=_visual_identity(visual),
+                        visual=visual,
+                        content_width=content_box[0],
+                        content_height=content_box[1],
+                    )
             self._resolved_authority = authority
+            self.refresh_from_controller(schedule_resolution=False)
             current_visual = current_snapshot.visual
             if visual is not None and not visual.available and current_visual is visual:
                 confirm = getattr(
@@ -336,16 +407,17 @@ class PersonaBuddyWidget(Widget, can_focus=True):
     def _resolution_authority(self, snapshot: Any) -> tuple[object, ...] | None:
         """Return the full semantic/cache/viewport key for one costly resolve."""
 
-        size = self._resolution_size()
+        budget = self._requested_render_budget(snapshot)
         if (
             not snapshot.enabled
             or not snapshot.open
             or snapshot.selection is None
-            or size is None
+            or budget is None
         ):
             return None
         return (
             id(self._controller),
+            self.view_generation,
             snapshot.generation,
             snapshot.selection,
             snapshot.state,
@@ -354,7 +426,8 @@ class PersonaBuddyWidget(Widget, can_focus=True):
             snapshot.preferences_generation,
             snapshot.profile_generation,
             snapshot.viewport_generation,
-            *size,
+            snapshot.collapsed,
+            budget,
         )
 
     def _ensure_resolution(self, snapshot: Any) -> None:
@@ -402,36 +475,11 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         self._working_preferences = preferences
         self._sync_compact_state(snapshot.collapsed)
 
-        visual = snapshot.visual
-        frames = getattr(visual, "frames", ()) if visual is not None else ()
-        visual_identity = (
-            getattr(visual, "source", None),
-            getattr(visual, "persona_id", None),
-            getattr(visual, "persona_revision", None),
-            getattr(visual, "requested_state", None),
-            getattr(visual, "resolved_state", None),
-            getattr(visual, "animation_id", None),
-            getattr(visual, "graph_identity", None),
-            getattr(visual, "cache_identity", None),
-            getattr(visual, "frame_rate", None),
-            getattr(visual, "loop", None),
-            getattr(visual, "animate", None),
-            tuple(
-                (
-                    getattr(frame, "cache_identity", None),
-                    getattr(frame, "asset_id", None),
-                    getattr(frame, "asset_sha256", None),
-                    getattr(frame, "manifest_frame_index", None),
-                    getattr(frame, "selected_frame", None),
-                    getattr(frame, "duration_ms", None),
-                    getattr(frame, "paint_digest", None),
-                )
-                for frame in frames
-            ),
-        )
-        if visual_identity != self._visual_identity:
+        accepted = self._accepted_render
+        visual_identity = accepted.visual_identity if accepted is not None else None
+        if visual_identity != self._painted_visual_identity:
             self._stop_frame_timer()
-            self._visual_identity = visual_identity
+            self._painted_visual_identity = visual_identity
             self.frame_index = 0
             self._next_frame_at = time.monotonic() + self._frame_duration_seconds()
             self._frame_was_frozen = False
@@ -459,7 +507,8 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         ):
             self._frame_was_frozen = True
             return
-        visual = snapshot.visual
+        accepted = self._accepted_render
+        visual = accepted.visual if accepted is not None else None
         frames = getattr(visual, "frames", ()) if visual is not None else ()
         if not getattr(visual, "animate", False) or len(frames) < 2:
             return
@@ -482,7 +531,8 @@ class PersonaBuddyWidget(Widget, can_focus=True):
 
     def _sync_frame_timer(self) -> None:
         snapshot = self._snapshot
-        visual = getattr(snapshot, "visual", None) if snapshot is not None else None
+        accepted = self._accepted_render
+        visual = accepted.visual if accepted is not None else None
         frames = getattr(visual, "frames", ()) if visual is not None else ()
         active = bool(
             self._is_current_view()
@@ -507,7 +557,8 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         self._frame_timer = self.set_timer(delay, self.advance_frame)
 
     def _frame_duration_seconds(self) -> float:
-        visual = getattr(self._snapshot, "visual", None)
+        accepted = self._accepted_render
+        visual = accepted.visual if accepted is not None else None
         frames = getattr(visual, "frames", ()) if visual is not None else ()
         if frames:
             duration_ms = getattr(frames[self.frame_index], "duration_ms", None)
@@ -522,7 +573,8 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         if not self.is_attached:
             return
         target = self.query_one("#persona-buddy-frame", Static)
-        visual = getattr(self._snapshot, "visual", None)
+        accepted = self._accepted_render
+        visual = accepted.visual if accepted is not None else None
         frames = getattr(visual, "frames", ()) if visual is not None else ()
         if frames:
             self.frame_index = min(self.frame_index, len(frames) - 1)
@@ -555,7 +607,9 @@ class PersonaBuddyWidget(Widget, can_focus=True):
             available_width < _DEFAULT_WIDTH or available_height < _FULL_CONTENT_HEIGHT
         )
 
-    def _clamped_geometry(self, geometry: PersonaBuddyGeometry) -> PersonaBuddyGeometry:
+    def _display_geometry(self, geometry: PersonaBuddyGeometry) -> PersonaBuddyGeometry:
+        """Fit accepted content without changing the saved render budget."""
+
         viewport = self.screen.size
         compact = self._compact_for_geometry(geometry)
         if compact:
@@ -569,6 +623,15 @@ class PersonaBuddyWidget(Widget, can_focus=True):
             width = min(max(_MIN_WIDTH, geometry.width), viewport.width)
             if self._snapshot and self._snapshot.collapsed:
                 height = min(_COLLAPSED_HEIGHT, viewport.height)
+            elif self._accepted_render is not None:
+                width = min(
+                    self._accepted_render.content_width + _BOUNDARY_SIZE,
+                    viewport.width,
+                )
+                height = min(
+                    self._accepted_render.content_height + _BOUNDARY_SIZE,
+                    viewport.height,
+                )
             else:
                 height = min(max(_MIN_HEIGHT, geometry.height), viewport.height)
         max_x = max(0, viewport.width - width)
@@ -585,10 +648,13 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         )
         return PersonaBuddyGeometry(x=x, y=y, width=width, height=height)
 
+    def _clamped_geometry(self, geometry: PersonaBuddyGeometry) -> PersonaBuddyGeometry:
+        return self._display_geometry(geometry)
+
     def _apply_geometry(self, geometry: PersonaBuddyGeometry) -> None:
         if not self.is_attached:
             return
-        clamped = self._clamped_geometry(geometry)
+        clamped = self._display_geometry(geometry)
         self.styles.width = clamped.width
         self.styles.height = clamped.height
         self.absolute_offset = Offset(clamped.x, clamped.y)
