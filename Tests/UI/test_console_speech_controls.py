@@ -14,7 +14,7 @@ from tldw_chatbook.Widgets.Console.console_speech_controls import (
 )
 
 
-class _SpeechControlsHarness(App[None]):
+class SpeechControlsHarness(App[None]):
     """Mount speech controls while recording only their public messages."""
 
     def __init__(self, *, sync_before_mount: bool = False) -> None:
@@ -43,7 +43,7 @@ class _SpeechControlsHarness(App[None]):
 
 @pytest.mark.asyncio
 async def test_programmatic_sync_before_and_after_mount_is_silent() -> None:
-    app = _SpeechControlsHarness(sync_before_mount=True)
+    app = SpeechControlsHarness(sync_before_mount=True)
 
     async with app.run_test(size=(50, 5)) as pilot:
         await pilot.pause()
@@ -68,7 +68,7 @@ async def test_programmatic_sync_before_and_after_mount_is_silent() -> None:
 
 @pytest.mark.asyncio
 async def test_each_user_gesture_posts_one_request() -> None:
-    app = _SpeechControlsHarness()
+    app = SpeechControlsHarness()
 
     async with app.run_test(size=(50, 5)) as pilot:
         auto_speak = app.query_one("#console-auto-speak", Switch)
