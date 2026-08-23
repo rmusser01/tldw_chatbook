@@ -1041,6 +1041,144 @@ def test_first_chat_replacement_and_session_switch_during_create_roll_back_old_t
     assert _first_chat_owner(console)._first_chat_handoff_notified_revision is None
 
 
+def test_first_chat_guarded_ack_replacement_rolls_back_original_claim(
+    monkeypatch,
+) -> None:
+    app = _build_test_app()
+    console = ChatScreen(app)
+    store = ConsoleChatStore()
+    console._console_chat_store = store
+    prior = store.create_session(
+        title="Guarded-ack prior work",
+        settings=ConsoleSessionSettings(
+            provider="openai",
+            model="guarded-ack-prior-model",
+            source="user",
+        ),
+    )
+    store.set_session_draft(prior.id, "preserve guarded-ack draft")
+    prior_before = _first_chat_session_snapshot(prior)
+    snapshot = RuntimeConfigSnapshot(50, _first_chat_config())
+    monkeypatch.setattr(
+        session_module,
+        "get_runtime_config_snapshot",
+        lambda: snapshot,
+        raising=False,
+    )
+    original = ConsoleFirstChatIntent(
+        "guarded-ack-original-target",
+        "openai",
+        "model-a",
+        snapshot.generation,
+    )
+    replacement = replace(
+        original,
+        session_id="guarded-ack-replacement-target",
+    )
+    app.pending_handoffs.stage_reserved_console_first_chat(original)
+
+    def stage_replacement_before_acknowledgement(
+        _expected_generation,
+        acknowledge,
+    ) -> bool:
+        app.pending_handoffs.stage_reserved_console_first_chat(replacement)
+        return acknowledge()
+
+    monkeypatch.setattr(
+        session_module,
+        "run_if_runtime_config_generation_current",
+        stage_replacement_before_acknowledgement,
+        raising=False,
+    )
+
+    assert (
+        _first_chat_owner(console).consume_pending_console_first_chat_intent() is False
+    )
+    assert all(item.id != original.session_id for item in store.sessions())
+    assert all(item.id != replacement.session_id for item in store.sessions())
+    assert store.active_session_id == prior.id
+    assert _first_chat_session_snapshot(prior) == prior_before
+    assert store.session_draft(prior.id) == "preserve guarded-ack draft"
+    assert _pending_first_chat(app) == replacement
+
+
+def test_first_chat_current_claim_fence_blocks_replacement_target_projection(
+    monkeypatch,
+) -> None:
+    app = _build_test_app()
+    notifications: list[str] = []
+    monkeypatch.setattr(
+        app,
+        "notify",
+        lambda message, **_kwargs: notifications.append(str(message)),
+    )
+    console = ChatScreen(app)
+    console._console_control_provider = "prior-control-provider"
+    console._console_control_model = "prior-control-model"
+    store = ConsoleChatStore()
+    console._console_chat_store = store
+    prior = store.create_session(
+        title="Current-claim prior work",
+        settings=ConsoleSessionSettings(
+            provider="openai",
+            model="current-claim-prior-model",
+            source="user",
+        ),
+    )
+    store.set_session_draft(prior.id, "preserve current-claim draft")
+    prior_before = _first_chat_session_snapshot(prior)
+    snapshot = RuntimeConfigSnapshot(52, _first_chat_config())
+    monkeypatch.setattr(
+        session_module,
+        "get_runtime_config_snapshot",
+        lambda: snapshot,
+        raising=False,
+    )
+    original = ConsoleFirstChatIntent(
+        "current-claim-original-target",
+        "openai",
+        "model-a",
+        snapshot.generation,
+    )
+    replacement = replace(
+        original,
+        session_id="current-claim-replacement-target",
+    )
+    app.pending_handoffs.stage_reserved_console_first_chat(original)
+    original_create = store.create_session
+
+    def create_then_stage_replacement(**kwargs):
+        created = original_create(**kwargs)
+        if kwargs.get("session_id") == original.session_id:
+            app.pending_handoffs.stage_reserved_console_first_chat(replacement)
+        return created
+
+    monkeypatch.setattr(
+        store,
+        "create_session",
+        create_then_stage_replacement,
+    )
+    owner = _first_chat_owner(console)
+    real_apply = owner._apply_first_chat_control_selection_fn
+    projections: list[tuple[object, object]] = []
+
+    def apply_and_record(provider, model) -> None:
+        projections.append((provider, model))
+        real_apply(provider, model)
+
+    owner._apply_first_chat_control_selection_fn = apply_and_record
+
+    assert owner.consume_pending_console_first_chat_intent() is False
+    assert projections == [("prior-control-provider", "prior-control-model")]
+    assert all(item.id != original.session_id for item in store.sessions())
+    assert all(item.id != replacement.session_id for item in store.sessions())
+    assert store.active_session_id == prior.id
+    assert _first_chat_session_snapshot(prior) == prior_before
+    assert store.session_draft(prior.id) == "preserve current-claim draft"
+    assert _pending_first_chat(app) == replacement
+    assert notifications == []
+
+
 def test_first_chat_failed_acknowledgement_rolls_back_and_requeues(
     monkeypatch,
 ) -> None:
