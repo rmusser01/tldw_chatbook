@@ -534,6 +534,18 @@ def test_root_and_child_lifecycle_propagation_rolls_back_together(
     with pytest.raises(sqlite3.DatabaseError):
         store.transition_root("root-1", NotesSyncRootState.PAUSED)
 
+    # Prove through an independent connection -- before close() below could
+    # implicitly roll back -- that the denied transaction neither committed
+    # its first UPDATE (bindings stay active) nor still holds the write slot
+    # open un-rolled-back (BEGIN IMMEDIATE at zero busy timeout must win).
+    with closing(sqlite3.connect(database)) as independent:
+        independent.execute("PRAGMA busy_timeout = 0")
+        assert independent.execute(
+            "SELECT state FROM notes_sync_bindings WHERE binding_id = 'binding-1'"
+        ).fetchone() == ("active",)
+        independent.execute("BEGIN IMMEDIATE")
+        independent.rollback()
+
     monkeypatch.setattr(store, "_connect", original_connect)
     store.close()
     assert store.get_root("root-1").state is NotesSyncRootState.ACTIVE
@@ -1159,6 +1171,18 @@ def test_close_releases_held_connections_of_every_thread_and_the_store_reopens(
         worker_connections[0].execute("SELECT 1")
     assert store.get_root("root-1").state is NotesSyncRootState.PENDING
     store.close()
+
+
+def test_transaction_error_is_not_masked_by_rollback_on_a_closed_connection(
+    tmp_path: Path,
+) -> None:
+    store = NotesDeviceStateStore(tmp_path / "notes-sync.sqlite3")
+    store.initialize()
+
+    with pytest.raises(ValueError, match="original private failure"):
+        with store.transaction():
+            store.close()  # a racing shutdown closed the held connection
+            raise ValueError("original private failure")
 
 
 def test_refused_foreign_database_is_never_switched_to_wal(tmp_path: Path) -> None:

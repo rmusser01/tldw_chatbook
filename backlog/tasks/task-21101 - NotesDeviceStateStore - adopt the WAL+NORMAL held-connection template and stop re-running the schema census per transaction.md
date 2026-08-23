@@ -141,3 +141,40 @@ Evidence (logs in `test-logs/task-21101-*.log`):
 
 Deliberately NOT touched (task-21129): `notes_sync_executor.py` loop-side call
 patterns and missing indexes.
+
+### Review fix round (adversarial review, pre-merge)
+
+The reviewer confirmed one introduced defect and one rig weakness; both fixed:
+
+- **MAJOR-1 (shutdown close() race)**: `pause_root`, `resume_root`, and
+  `review_setup` touch the store but were invisible to `settle()` (only four
+  entrypoints registered via `_admit_task`), so `_shutdown_once` could close the
+  store while their pool thread held a checked-out connection
+  (`ProgrammingError: Cannot operate on a closed database`, with the
+  `transaction()` rollback re-raising the same error and masking the original).
+  Fixed both halves: (a) split `_admit_task` into gate + `_register_task`
+  (registration must not gate on `_closed_roots` — resume runs on a closed
+  root, pause closes its own) and registered all three entrypoints
+  (`resume_root` now delegates to `_resume_root` exactly like
+  `activate_root`/`_activate_root`); (b) `transaction()`'s except-path rollback
+  no longer masks — a failing rollback is suppressed with a type-name-only
+  debug log and the ORIGINAL exception re-raises. Regression tests:
+  `test_shutdown_settles_in_flight_pause_and_resume_before_store_close`
+  (parametrized pause/resume; a `_GatedTransactionStore` parks the pool thread
+  mid-transaction, reproducing the reviewer's probe — red-first it failed with
+  shutdown completing under the gated op and the exact masked-ProgrammingError
+  signature) and
+  `test_transaction_error_is_not_masked_by_rollback_on_a_closed_connection`.
+- **MINOR-1 (rig hardening)**: the adapted rollback-atomicity rig now proves,
+  through an INDEPENDENT connection before `store.close()` can implicitly roll
+  back, that the denied transaction neither committed its first UPDATE
+  (bindings still `active`) nor still holds the write slot
+  (`BEGIN IMMEDIATE` at zero busy timeout must succeed). Mutation-verified:
+  a skip-rollback mutant reds the rig via `database is locked`; a
+  commit-instead-of-rollback mutant reds it via `('paused',) != ('active',)`.
+
+Review-round evidence: red-first 3 failed (both runtime params + store
+masking test) with the reviewer's exact signatures; after the fix 411 passed /
+0 failed across store + runtime + executor + receipts + cutover + legacy
+migration; census/pragma/WAL-refusal tests re-confirmed green; ProductionApp
+lifecycle unchanged (same 6 pre-existing Actor_Packs reds); ruff clean.

@@ -13,6 +13,8 @@ from pathlib import Path
 from types import MappingProxyType
 from weakref import WeakValueDictionary
 
+from loguru import logger
+
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 from tldw_chatbook.Notes import notes_device_state_schema
 from tldw_chatbook.Notes.notes_sync_models import (
@@ -528,7 +530,17 @@ class NotesDeviceStateStore:
             yield connection
             connection.commit()
         except BaseException:
-            connection.rollback()
+            try:
+                connection.rollback()
+            except Exception as rollback_error:
+                # A rollback can itself fail (e.g. shutdown close()d the
+                # held connection under us); that secondary error must not
+                # mask the original one. Type name only: no private values.
+                logger.debug(
+                    "Notes device store rollback failed after a transaction "
+                    "error: {}",
+                    type(rollback_error).__name__,
+                )
             raise
 
     def close(self) -> None:

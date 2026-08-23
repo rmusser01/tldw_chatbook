@@ -7,6 +7,7 @@ import hashlib
 import sqlite3
 import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -2332,6 +2333,91 @@ async def test_pause_closes_root_admission_and_releases_its_lease(
         "lease-released",
     ]
     await owner.shutdown()
+
+
+class _GatedTransactionStore(NotesDeviceStateStore):
+    """Hold one armed transaction open with its connection checked out.
+
+    task-21101 review round: models a pool thread parked inside
+    ``transaction()`` while shutdown runs, so the store's held connection is
+    exactly mid-transaction when ``close()`` could fire.
+    """
+
+    def __init__(self, path: Path) -> None:
+        super().__init__(path)
+        self.mid_transaction = threading.Event()
+        self.release = threading.Event()
+        self._armed = False
+
+    def arm(self) -> None:
+        self._armed = True
+
+    @contextmanager
+    def transaction(self, *, immediate: bool = False):
+        with super().transaction(immediate=immediate) as connection:
+            if self._armed:
+                self._armed = False
+                self.mid_transaction.set()
+                assert self.release.wait(timeout=5)
+            yield connection
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["pause_root", "resume_root"])
+async def test_shutdown_settles_in_flight_pause_and_resume_before_store_close(
+    tmp_path: Path,
+    operation: str,
+) -> None:
+    """Reviewer probe for task-21101: pause/resume mid-transaction at shutdown.
+
+    pause_root/resume_root touch the held-connection store but were invisible
+    to settle(), so _shutdown_once could close the store while their pool
+    thread held a checked-out connection (ProgrammingError on a closed
+    database). Shutdown must now wait for them.
+    """
+
+    store = _GatedTransactionStore(tmp_path / "sync.sqlite3")
+    store.initialize()
+    store.create_root(
+        NotesSyncRootRecord(
+            root_id="root-1",
+            note_scope_id="local_note",
+            logical_folder_id="folder-1",
+            canonical_path=str(tmp_path / "root"),
+            direction=NotesSyncDirection.BIDIRECTIONAL,
+            state=NotesSyncRootState.ACTIVE,
+        )
+    )
+    store.set_setting(NotesSyncStoreSetting("cutover_marker", "notes-sync-cutover-v1"))
+    (tmp_path / "root").mkdir()
+    adapter = _Adapter(
+        [
+            _input(file_digest=_A, note_digest=_A),
+            _input(file_digest=_A, note_digest=_A),
+        ]
+    )
+    owner, _, _ = _owner(store=store, admitted=True, adapter=adapter)
+    await owner.start()
+    if operation == "resume_root":
+        await owner.pause_root("root-1")
+        expected_state = NotesSyncRootState.ACTIVE
+    else:
+        expected_state = NotesSyncRootState.PAUSED
+
+    store.arm()
+    in_flight = asyncio.create_task(getattr(owner, operation)("root-1"))
+    assert await asyncio.to_thread(store.mid_transaction.wait, 5)
+
+    shutdown = asyncio.create_task(owner.shutdown())
+    await asyncio.sleep(0.05)
+    assert not shutdown.done()
+
+    store.release.set()
+    result = await in_flight
+    await shutdown
+
+    assert result.accepted is True
+    assert store.get_root("root-1").state is expected_state
 
 
 @pytest.mark.asyncio
