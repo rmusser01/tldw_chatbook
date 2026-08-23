@@ -42,6 +42,11 @@ def test_probe_persists_four_exact_visual_state_captures(tmp_path: Path) -> None
     probe = Path(__file__).with_name("persona_buddy_terminal_probe.py")
     report = tmp_path / "report.json"
     captures = tmp_path / "captures"
+    captures.mkdir()
+    report_collision = tmp_path / f".report.json.{os.getpid()}.tmp"
+    capture_collision = captures / f".normal.ansi.{os.getpid()}.tmp"
+    report_collision.write_bytes(b"caller-owned report collision")
+    capture_collision.write_bytes(b"caller-owned capture collision")
 
     completed = subprocess.run(
         [
@@ -60,6 +65,8 @@ def test_probe_persists_four_exact_visual_state_captures(tmp_path: Path) -> None
     )
 
     assert completed.returncode == 0, completed.stderr
+    assert report_collision.read_bytes() == b"caller-owned report collision"
+    assert capture_collision.read_bytes() == b"caller-owned capture collision"
     payload = json.loads(report.read_text(encoding="utf-8"))
     assert all(payload["checks"][name] for name in _VISUAL_CHECKS)
     assert set(payload["regions"]) == {
@@ -74,7 +81,9 @@ def test_probe_persists_four_exact_visual_state_captures(tmp_path: Path) -> None
         assert region["width"] > 0
         assert region["height"] > 0
 
-    artifacts = {path.name for path in captures.iterdir()}
+    artifacts = {
+        path.name for path in captures.iterdir() if path.name in _CAPTURE_NAMES
+    }
     assert artifacts == _CAPTURE_NAMES
     capture_values = {(captures / name).read_bytes() for name in artifacts}
     assert len(capture_values) == len(_CAPTURE_NAMES)
@@ -101,6 +110,50 @@ def test_probe_persists_four_exact_visual_state_captures(tmp_path: Path) -> None
         "tool_result",
     ):
         assert forbidden not in serialized
+
+    failed_report = tmp_path / "failed-check.json"
+    failed_captures = tmp_path / "failed-captures"
+    failed_captures.mkdir()
+    for name in _CAPTURE_NAMES:
+        (failed_captures / name).write_text("stale", encoding="utf-8")
+    failed = subprocess.run(
+        [
+            sys.executable,
+            str(probe),
+            "--report",
+            str(failed_report),
+            "--capture-dir",
+            str(failed_captures),
+            "--inject-check-failure",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert failed.returncode == 1
+    failure = json.loads(failed_report.read_text(encoding="utf-8"))
+    assert failure["status"] == "FAIL"
+    assert failure["category"] == "persona_buddy_terminal_check_failure"
+    assert failure["phase"] == "parent:checks"
+    assert failure["parent_return_code"] == 1
+    assert failure["child_return_code"] == 0
+    assert len(failure["checks"]) == 22
+    assert set(failure["checks"]) == set(payload["checks"])
+    assert failure["checks"]["drag"] is False
+    assert all(
+        value is True for name, value in failure["checks"].items() if name != "drag"
+    )
+    assert failure["check_statuses"]["drag"] == "failed"
+    assert set(failure["check_statuses"].values()) == {"passed", "failed"}
+    assert len(failure["diagnostic_tail"].encode("utf-8")) <= 16_000
+    artifact = Path(failure["diagnostic_artifact"])
+    assert artifact.is_file()
+    assert artifact.parent == failed_report.parent
+    assert failure["category"] in artifact.read_text(encoding="utf-8")
+    assert failure["category"] in failed.stderr
+    assert not any((failed_captures / name).exists() for name in _CAPTURE_NAMES)
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX PTY capability required")
@@ -212,9 +265,24 @@ def test_drain_helpers_treat_linux_eio_as_clean_eof(
     assert probe._drain_for(7, 0.01) == b""
     assert probe._drain_until_quiet(7, timeout=0.01) == b""
 
+    source = Path(probe.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    direct_reads = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "os"
+        and node.func.attr == "read"
+    ]
+    assert len(direct_reads) == 1
+    assert direct_reads[0].lineno == probe._read_pty.__code__.co_firstlineno + 4
+
 
 def test_drain_helpers_propagate_non_eio_oserror(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     probe = _load_probe_module()
     monkeypatch.setattr(probe.select, "select", lambda *_args: ([7], [], []))
@@ -227,6 +295,33 @@ def test_drain_helpers_propagate_non_eio_oserror(
         probe._drain_for(7, 0.01)
     with pytest.raises(OSError, match="bad fd"):
         probe._drain_until_quiet(7, timeout=0.01)
+
+    class FailedProcess:
+        returncode = 1
+
+        def poll(self):
+            return self.returncode
+
+    monkeypatch.setattr(probe.pty, "openpty", lambda: (7, 8))
+    monkeypatch.setattr(probe, "_set_size", lambda *_args: None)
+    monkeypatch.setattr(probe.os, "close", lambda *_args: None)
+    monkeypatch.setattr(
+        probe.subprocess, "Popen", lambda *_args, **_kwargs: FailedProcess()
+    )
+    monkeypatch.setattr(probe, "_TIMEOUT_SECONDS", 0.0)
+    with pytest.raises(probe._ProbeChildFailure) as caught:
+        probe._run_child(
+            root=tmp_path,
+            preferences=tmp_path / "preferences.json",
+            report=tmp_path / "report.json",
+            drive=False,
+            phase="runtime-read",
+        )
+
+    assert caught.value.category == "persona_buddy_terminal_child_exit"
+    assert caught.value.phase == "runtime-read:startup"
+    assert caught.value.child_return_code == 1
+    assert "OSError: [Errno 9] bad fd" in caught.value.diagnostic_tail
 
 
 def test_posix_modules_are_imported_only_below_the_platform_guard() -> None:
@@ -252,10 +347,35 @@ def test_output_preflight_never_removes_an_unrelated_collision(tmp_path: Path) -
     collision = tmp_path / f".capture.{os.getpid()}.admission.tmp"
     collision.write_text("caller-owned", encoding="utf-8")
 
-    with pytest.raises(FileExistsError):
-        probe._preflight_atomic_directory(tmp_path, "capture")
+    probe._preflight_atomic_directory(tmp_path, "capture")
 
     assert collision.read_text(encoding="utf-8") == "caller-owned"
+
+    report = tmp_path / "report.json"
+    report_collision = tmp_path / f".report.json.{os.getpid()}.tmp"
+    report_collision.write_bytes(b"caller-owned report collision")
+    probe._atomic_write_json(report, {"status": "PASS"})
+    assert json.loads(report.read_text(encoding="utf-8")) == {"status": "PASS"}
+    assert report_collision.read_bytes() == b"caller-owned report collision"
+
+    failed_report = tmp_path / "failed.json"
+    failed_collision = tmp_path / f".failed.json.{os.getpid()}.tmp"
+    failed_collision.write_bytes(b"caller-owned failed collision")
+    with pytest.raises(OSError, match="report_publish_injected"):
+        probe._atomic_write_json(
+            failed_report,
+            {"status": "FAIL"},
+            inject_replace_failure=True,
+        )
+    assert not failed_report.exists()
+    assert failed_collision.read_bytes() == b"caller-owned failed collision"
+
+    capture = tmp_path / "capture.ansi"
+    capture_collision = tmp_path / f".capture.ansi.{os.getpid()}.tmp"
+    capture_collision.write_bytes(b"caller-owned capture collision")
+    probe._atomic_write_bytes(capture, b"\x1b[2Jstate")
+    assert capture.read_bytes() == b"\x1b[2Jstate"
+    assert capture_collision.read_bytes() == b"caller-owned capture collision"
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX PTY capability required")
@@ -265,6 +385,8 @@ def test_injected_child_failure_persists_atomic_parent_evidence(tmp_path: Path) 
     captures = tmp_path / "captures"
     captures.mkdir()
     report.write_text('{"status":"STALE"}', encoding="utf-8")
+    collision = tmp_path / f".failure-report.json.{os.getpid()}.tmp"
+    collision.write_bytes(b"caller-owned failure collision")
     for name in _CAPTURE_NAMES:
         (captures / name).write_text("stale", encoding="utf-8")
 
@@ -306,6 +428,7 @@ def test_injected_child_failure_persists_atomic_parent_evidence(tmp_path: Path) 
     )
     assert payload["category"] in completed.stderr
     assert str(artifact) in completed.stderr
+    assert collision.read_bytes() == b"caller-owned failure collision"
     assert not any((captures / name).exists() for name in _CAPTURE_NAMES)
 
 

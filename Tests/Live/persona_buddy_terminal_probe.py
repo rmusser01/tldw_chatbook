@@ -112,12 +112,14 @@ class _ProbeChildFailure(RuntimeError):
         phase: str,
         child_return_code: int,
         diagnostic_tail: str,
+        checks: dict[str, bool] | None = None,
     ) -> None:
         super().__init__(category)
         self.category = category
         self.phase = phase
         self.child_return_code = child_return_code
         self.diagnostic_tail = diagnostic_tail
+        self.checks = checks
 
 
 def _atomic_write_text(
@@ -126,12 +128,18 @@ def _atomic_write_text(
     """Replace one evidence file only after its complete contents are durable."""
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    temporary = Path(temporary_name)
     try:
-        temporary.write_text(value, encoding="utf-8")
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream.write(value)
+            stream.flush()
+            os.fsync(stream.fileno())
         if inject_replace_failure:
             raise OSError("persona_buddy_terminal_report_publish_injected")
-        temporary.replace(path)
+        os.replace(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -140,10 +148,16 @@ def _atomic_write_bytes(path: Path, value: bytes) -> None:
     """Atomically replace one exact terminal byte-stream artifact."""
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    temporary = Path(temporary_name)
     try:
-        temporary.write_bytes(value)
-        temporary.replace(path)
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(value)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -1254,7 +1268,10 @@ def _run_child(
         if not report.exists():
             captured = bytearray()
             while select.select([master], [], [], 0.05)[0]:
-                captured.extend(os.read(master, 65536))
+                chunk = _read_pty(master)
+                if not chunk:
+                    break
+                captured.extend(chunk)
             tail = bytes(captured[-6000:]).decode("utf-8", errors="replace")
             raise RuntimeError(f"persona_buddy_terminal_child_failed\n{tail}")
         process.send_signal(signal.SIGUSR2)
@@ -1269,6 +1286,7 @@ def _run_child(
         payload["observed_regions"] = observed_regions
         return payload
     except Exception as error:
+        failure_error = error
         captured = bytearray()
         drain_deadline = time.monotonic() + 0.25
         while time.monotonic() < drain_deadline:
@@ -1278,15 +1296,19 @@ def _run_child(
                     break
                 continue
             try:
-                captured.extend(os.read(master, 65536))
-            except OSError:
+                chunk = _read_pty(master)
+            except OSError as read_error:
+                failure_error = read_error
                 break
+            if not chunk:
+                break
+            captured.extend(chunk)
         child_return_code = process.poll()
         if child_return_code is None:
             process.terminate()
             process.wait(timeout=2)
             child_return_code = process.returncode
-        diagnostic = f"{type(error).__name__}: {error}"
+        diagnostic = f"{type(failure_error).__name__}: {failure_error}"
         if captured:
             diagnostic += "\n" + bytes(captured).decode("utf-8", errors="replace")
         category = (
@@ -1322,14 +1344,16 @@ def _preflight_atomic_directory(directory: Path, target_name: str) -> None:
     """Prove an atomic target's parent is writable without touching the target."""
 
     directory.mkdir(parents=True, exist_ok=True)
-    probe = directory / f".{target_name}.{os.getpid()}.admission.tmp"
-    created = False
+    if not directory.is_dir():
+        raise OSError("persona_buddy_terminal_output_parent_not_directory")
+    descriptor, probe_name = tempfile.mkstemp(
+        prefix=f".{target_name}.admission.", suffix=".tmp", dir=directory
+    )
+    probe = Path(probe_name)
     try:
-        with probe.open("xb"):
-            created = True
+        os.close(descriptor)
     finally:
-        if created:
-            probe.unlink(missing_ok=True)
+        probe.unlink(missing_ok=True)
 
 
 def _admit_outputs(report_output: Path | None, capture_output: Path | None) -> None:
@@ -1384,7 +1408,8 @@ def _persist_structured_failure(
             / f"persona-buddy-terminal-{os.getpid()}.diagnostic.log"
         ).resolve()
         _atomic_write_text(diagnostic_path, diagnostic)
-    checks = {name: False for name in _CHECK_NAMES}
+    supplied_checks = failure.checks or {}
+    checks = {name: bool(supplied_checks.get(name, False)) for name in _CHECK_NAMES}
     result = {
         "status": "FAIL",
         "category": failure.category,
@@ -1394,7 +1419,16 @@ def _persist_structured_failure(
         "diagnostic_tail": diagnostic,
         "diagnostic_artifact": str(diagnostic_path),
         "checks": checks,
-        "check_statuses": {name: "not_run" for name in _CHECK_NAMES},
+        "check_statuses": {
+            name: (
+                "passed"
+                if checks[name]
+                else "failed"
+                if name in supplied_checks
+                else "not_run"
+            )
+            for name in _CHECK_NAMES
+        },
     }
     try:
         _atomic_write_json(preferred_report, result)
@@ -1419,6 +1453,7 @@ def _parent(
     inject_publication_failure: bool = False,
     inject_report_publication_failure: bool = False,
     inject_startup_noise: bool = False,
+    inject_check_failure: bool = False,
 ) -> int:
     if os.name == "nt":
         print("SKIP persona_buddy_terminal windows_no_posix_pty")
@@ -1494,6 +1529,8 @@ def _parent(
                 "real_folded_thumbnail": first["observed"]["real_folded_thumbnail"],
                 "constrained_two_icons": first["observed"]["constrained_two_icons"],
             }
+            if inject_check_failure:
+                checks["drag"] = False
             captures_complete = all(
                 (staged_captures / name).is_file()
                 and (staged_captures / name).stat().st_size > 0
@@ -1505,6 +1542,20 @@ def _parent(
                     phase="parent:capture",
                     child_return_code=0,
                     diagnostic_tail="persona_buddy_terminal_capture_incomplete",
+                )
+            if not all(checks.values()):
+                failed_checks = ",".join(
+                    name for name, passed in checks.items() if not passed
+                )
+                raise _ProbeChildFailure(
+                    category="persona_buddy_terminal_check_failure",
+                    phase="parent:checks",
+                    child_return_code=0,
+                    diagnostic_tail=(
+                        "persona_buddy_terminal_check_failure\n"
+                        f"failed_checks={failed_checks}"
+                    ),
+                    checks=checks,
                 )
             result = {
                 "checks": checks,
@@ -1520,16 +1571,13 @@ def _parent(
                     inject_replace_failure=inject_report_publication_failure,
                 )
             phase = "parent:capture"
-            if all(checks.values()) and capture_output is not None:
+            if capture_output is not None:
                 _publish_capture_group(
                     staged_captures,
                     capture_output,
                     inject_failure=inject_publication_failure,
                 )
             print(json.dumps(result, sort_keys=True))
-            if not all(checks.values()):
-                print("FAIL persona_buddy_terminal")
-                return 1
             print("PASS persona_buddy_terminal")
             return 0
     except _ProbeChildFailure as caught_failure:
@@ -1577,6 +1625,9 @@ def main() -> int:
     parser.add_argument(
         "--inject-startup-noise", action="store_true", help=argparse.SUPPRESS
     )
+    parser.add_argument(
+        "--inject-check-failure", action="store_true", help=argparse.SUPPRESS
+    )
     arguments = parser.parse_args()
     if arguments.child:
         if arguments.preferences is None or arguments.report is None:
@@ -1606,6 +1657,7 @@ def main() -> int:
                 arguments.inject_report_publication_failure
             ),
             inject_startup_noise=arguments.inject_startup_noise,
+            inject_check_failure=arguments.inject_check_failure,
         )
     except RuntimeError as error:
         print(str(error), file=sys.stderr)
