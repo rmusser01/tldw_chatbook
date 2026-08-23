@@ -3,11 +3,11 @@ id: TASK-21108
 title: >-
   app.py import diet - 5.6k-line settings panel imported for one dataclass, and
   the import-weight guard is too loose to notice
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-22'
-updated_date: '2026-08-23 17:08'
+updated_date: '2026-08-23 18:30'
 labels:
   - performance
   - startup
@@ -73,7 +73,8 @@ reason the review recorded:
   most of the subtree (`notes_device_state_store`, `notes_sync_filesystem`,
   `notes_sync_reconciler`, `note_import_*`, `sync_paths`) hangs off the legacy module
   that the TASK-21112 start gate reads, which `app.py` imported separately.
-- `app.py` top-level import statements measured 223, not the review's 220.
+- `app.py` top-level import statements measured 223, not the review's 220 (220 after
+  this change).
 
 ### The four changes
 
@@ -138,6 +139,16 @@ change real boot cost by ~0, i.e. it would make the new budget look better witho
 app booting faster. A real fix belongs with deferring that wiring (21105 family), not
 with an import-only shuffle.
 
+### Found while measuring, filed for someone else
+
+`Tests/Packaging/test_persona_buddy_import_closure.py` (TASK-21103's guard) is RED on
+dev and was already red before this branch. `Actor_Packs/__init__.py:8` ->
+`activation.py:21-22` puts `Persona_Visual.repository` and, through
+`Character_Chat/visual_identity.py:24`, PIL back on the boot path — 15 modules
+(10 PIL + 5 Persona_Visual) — re-broken by the Actor Pack activation work
+(`ae817fefe`). Out of scope here; reclaiming it is worth ~15 more modules of the new
+budget's headroom.
+
 ### Verification
 
 - Closure: `Tests/Packaging/test_app_import_diet_closure.py` (new, 2 tests) and the two
@@ -156,4 +167,16 @@ with an import-only shuffle.
 - `./scripts/preflight.sh` all green (CSS bundle, profile-owned paths, diagnostic
   inventory 532 owners, duplicate ids, chachanotes allowlist) — no drift from these
   changes.
+- Suites, each A/B'd against a `git archive HEAD` tree so no red is inherited blind:
+  Notes+TTS 6,932 passed / 1 failed (that one, `test_app_lifecycle_shutdown_drains_all_
+  owners_in_authority_order`, fails identically on HEAD — Actor-Pack shutdown, not ours);
+  Packaging+Performance+App 315 passed / 6 failed / 58 errors, all 6 and all 58 identical
+  on HEAD (the errors are `setuptools.build_meta` missing from this uv venv);
+  ProductionApp 63 passed / 6 failed -> after the collaborator-capture fix, back to
+  HEAD's 4; speech/panel UI 444 passed / 0 failed; library UI 723 passed / 18 failed vs
+  HEAD's 721 / 20 — re-running the exact 18 node ids on both trees gives 18 failed on
+  each, so the branch's set is a strict subset of HEAD's.
+- `--collect-only` sweep: 56,876 tests collected, 4 collection errors, byte-identical to
+  HEAD's (3x missing `playwright`, 1x pre-existing fixture/parametrize mismatch in
+  `Tests/UI/test_library_file_notes_workspace.py`).
 <!-- SECTION:NOTES:END -->
