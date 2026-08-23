@@ -12,25 +12,44 @@ import threading
 import pytest
 from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll
-from textual.widgets import DataTable, Static
+from textual.widgets import DataTable, Input, Static
 
 from tldw_chatbook.Chat.trajectory import (
     TrajectoryRecord,
     TrajectorySnapshot,
     TrajectoryTurn,
+    derive_trajectory,
 )
-from tldw_chatbook.UI.Screens.trajectory_screen import TrajectoryScreen
+from tldw_chatbook.css import build_css
+from tldw_chatbook.UI.Screens.trajectory_screen import PAGE_SIZE, TrajectoryScreen
 import tldw_chatbook.UI.Screens.trajectory_screen as trajectory_screen_module
 
 from .test_trajectory_screen import base_snapshot
 
 
 VIEWPORTS = ((60, 18), (80, 24), (100, 30), (120, 35))
+_CSS_DIR = Path(build_css.__file__).parent
+_SCOPED_CSS, _SELF_CSS = build_css.screen_css_paths(_CSS_DIR)
+_PRODUCTION_CSS = [
+    str(_SCOPED_CSS),
+    str(_CSS_DIR / "tldw_cli_modular.tcss"),
+    str(_SELF_CSS),
+]
 
 
 class _TraceHost(App[None]):
+    CSS_PATH = _PRODUCTION_CSS
+
     def compose(self) -> ComposeResult:
         yield Static("Console")
+
+
+def test_trace_harness_loads_the_three_production_stylesheets_in_order() -> None:
+    assert [Path(path).name for path in _TraceHost.CSS_PATH] == [
+        "screen_css_scoped.tcss",
+        "tldw_cli_modular.tcss",
+        "screen_css_self.tcss",
+    ]
 
 
 @contextlib.asynccontextmanager
@@ -50,7 +69,7 @@ async def _mounted(
 
 def _painted_text(app: App) -> str:
     svg = app.export_screenshot(simplify=True)
-    return unescape(re.sub(r"<[^>]+>", " ", svg))
+    return unescape(re.sub(r"<[^>]+>", " ", svg)).replace("\N{NO-BREAK SPACE}", " ")
 
 
 def _column_labels(table: DataTable) -> tuple[str, ...]:
@@ -98,6 +117,33 @@ def _untimed_snapshot() -> TrajectorySnapshot:
         event_id="message:message-1",
     )
     return TrajectorySnapshot((TrajectoryTurn("turn-1", (record,)),))
+
+
+def _snapshot_with_records(records: list[TrajectoryRecord]) -> TrajectorySnapshot:
+    return TrajectorySnapshot((TrajectoryTurn("turn-1", tuple(records)),))
+
+
+def _numbered_records(count: int) -> list[TrajectoryRecord]:
+    return [
+        TrajectoryRecord(
+            seq=index,
+            kind="assistant",
+            turn_id="turn-1",
+            message_id=f"message-{index}",
+            content_preview=f"event {index}",
+            usage=None,
+            step_started_at=float(index),
+            first_token_at=None,
+            completed_at=float(index) + 0.1,
+            model="model",
+            provider="provider",
+            payload=None,
+            variants=(),
+            depth=0,
+            event_id=f"event-{index}",
+        )
+        for index in range(1, count + 1)
+    ]
 
 
 @pytest.mark.asyncio
@@ -296,7 +342,7 @@ async def test_explicit_empty_filtered_imported_incomplete_and_no_timing_states(
         state = str(screen.query_one("#trajectory-state", Static).render())
         assert "NO MATCHES" in state
         assert "0/6 events" in state
-        assert "clear search" in state.lower()
+        assert "x clear filters" in state.lower()
 
     async with _mounted(base_snapshot(), shared_trace=True) as (app, pilot, screen):
         state = str(screen.query_one("#trajectory-state", Static).render())
@@ -341,7 +387,7 @@ async def test_loading_state_is_visible_until_real_render_worker_lands(
 
     monkeypatch.setattr(trajectory_screen_module, "WORKER_THRESHOLD", 0)
     app = _TraceHost()
-    async with app.run_test(size=(80, 24)) as pilot:
+    async with app.run_test(size=(60, 18)) as pilot:
         screen = _BlockingRenderScreen(base_snapshot())
         await app.push_screen(screen)
         for _ in range(100):
@@ -377,7 +423,7 @@ async def test_render_failure_is_payload_safe_and_r_retries_real_worker(
 
     monkeypatch.setattr(trajectory_screen_module, "WORKER_THRESHOLD", 0)
     app = _TraceHost()
-    async with app.run_test(size=(80, 24)) as pilot:
+    async with app.run_test(size=(60, 18)) as pilot:
         screen = _FailOnceScreen(base_snapshot())
         await app.push_screen(screen)
         state_widget = screen.query_one("#trajectory-state", Static)
@@ -389,6 +435,15 @@ async def test_render_failure_is_payload_safe_and_r_retries_real_worker(
         assert "FAILED" in failed
         assert "r retry" in failed
         assert "SECRET_PAYLOAD_MUST_NOT_RENDER" not in failed
+        assert "r retry" in _painted_text(app)
+
+        search = screen.query_one("#trajectory-search", Input)
+        search.value = "checking"
+        await pilot.pause()
+        await pilot.resize_terminal(100, 30)
+        await pilot.pause()
+        assert "FAILED" in str(state_widget.render())
+        assert screen._retry_target == "render"
 
         await pilot.press("r")
         table = screen.query_one("#trajectory-table", DataTable)
@@ -426,6 +481,14 @@ async def test_live_failure_is_visible_and_retry_uses_snapshot_builder() -> None
         failed = str(state_widget.render())
         assert "FAILED" in failed
         assert "SECRET_LIVE_PAYLOAD" not in failed
+
+        search = screen.query_one("#trajectory-search", Input)
+        search.value = "zebras"
+        await pilot.pause()
+        await pilot.resize_terminal(100, 30)
+        await pilot.pause()
+        assert "FAILED" in str(state_widget.render())
+        assert screen._retry_target == "live"
 
         state["fail"] = False
         await pilot.press("r")
@@ -496,4 +559,320 @@ async def test_empty_ledgers_do_not_advertise_row_only_actions() -> None:
         assert "inspect" not in hints
         assert "collapse" not in hints
         assert "inspector" not in hints
-        assert "open" in hints
+        assert "o open trace" in hints
+
+
+@pytest.mark.asyncio
+async def test_projected_generic_retrieval_payload_is_preserved_as_safe_json() -> None:
+    snapshot = derive_trajectory(
+        messages=[],
+        usage_by_id={},
+        traj_rows=[],
+        variant_sets=[],
+        compaction_records=[],
+        retrieval_runs=[
+            {
+                "run_id": "rag-7",
+                "conversation_id": "conv-1",
+                "turn_id": "turn-1",
+                "run_ordinal": 2,
+                "stage": "hybrid_search",
+                "status": "complete",
+                "started_at": 10.0,
+                "ended_at": 12.0,
+            }
+        ],
+    )
+    record = _flat(snapshot)[0]
+    assert record.kind == "retrieval_run"
+    assert record.payload == {"stage": "hybrid_search"}
+
+    async with _mounted(snapshot, size=(60, 18)) as (app, pilot, screen):
+        table = screen.query_one("#trajectory-table", DataTable)
+        table.move_cursor(row=table.get_row_index(record.event_id), animate=False)
+        await pilot.press("enter")
+        await pilot.pause()
+
+        content = screen.query_one("#trajectory-inspector-content", Static)
+        detail = str(content.render())
+        assert content._render_markup is False
+        assert 'payload {"stage": "hybrid_search"}' in detail
+        assert "tool —" not in detail
+
+
+@pytest.mark.asyncio
+async def test_full_detail_keeps_visible_inspector_focus_and_compact_hints() -> None:
+    async with _mounted(_long_detail_snapshot(), size=(60, 18)) as (
+        app,
+        pilot,
+        screen,
+    ):
+        table = screen.query_one("#trajectory-table", DataTable)
+        tool_key = next(
+            key
+            for key, record in screen._row_records.items()
+            if record is not None and record.kind == "tool_call"
+        )
+        table.move_cursor(row=table.get_row_index(tool_key), animate=False)
+        await pilot.press("enter")
+        await pilot.press("d")
+        await pilot.pause()
+
+        inspector = screen.query_one("#trajectory-inspector", VerticalScroll)
+        search = screen.query_one("#trajectory-search", Input)
+        hints = str(screen.query_one("#trajectory-hints", Static).render())
+        painted = _painted_text(app)
+        assert inspector.has_focus
+        assert search.display is False
+        assert "d split view" in hints
+        assert "d split view" in painted
+        assert "search" not in hints
+        assert "inspect" not in hints
+        assert "collapse" not in hints
+
+        await pilot.press("/")
+        await pilot.pause()
+        assert inspector.has_focus
+        assert not search.has_focus
+
+
+@pytest.mark.asyncio
+async def test_x_clears_search_and_timeline_brush_together() -> None:
+    async with _mounted(base_snapshot(), size=(60, 18)) as (app, pilot, screen):
+        search = screen.query_one("#trajectory-search", Input)
+        domain = screen._timeline.model.domain
+        assert domain is not None
+        screen._timeline.apply_brush((domain[1] + 100, domain[1] + 200))
+        await pilot.pause()
+
+        state = str(screen.query_one("#trajectory-state", Static).render())
+        hints = str(screen.query_one("#trajectory-hints", Static).render())
+        assert search.value == ""
+        assert "NO MATCHES" in state
+        assert "x clear filters" in state.lower()
+        assert "x clear filters" in hints
+
+        search.value = "no-event-can-match-this"
+        await pilot.pause()
+        await pilot.press("x")
+        await pilot.pause()
+        assert search.value == ""
+        assert screen._query == ""
+        assert screen._brush_range is None
+        assert screen._timeline._brush is None
+        assert "x clear filters" not in str(
+            screen.query_one("#trajectory-hints", Static).render()
+        )
+
+
+@pytest.mark.asyncio
+async def test_inspector_scroll_survives_same_event_refresh_and_resets_on_change() -> (
+    None
+):
+    snapshot = _long_detail_snapshot()
+    async with _mounted(snapshot, size=(60, 18)) as (app, pilot, screen):
+        table = screen.query_one("#trajectory-table", DataTable)
+        tool_key = next(
+            key
+            for key, record in screen._row_records.items()
+            if record is not None and record.kind == "tool_call"
+        )
+        table.move_cursor(row=table.get_row_index(tool_key), animate=False)
+        await pilot.press("enter")
+        await pilot.press("end")
+        await pilot.pause()
+        inspector = screen.query_one("#trajectory-inspector", VerticalScroll)
+        before = inspector.scroll_y
+        assert before > 0
+
+        screen._render_ledger()
+        await pilot.pause()
+        assert inspector.scroll_y == before
+
+        screen._follow = False
+        screen._apply_live_snapshot(snapshot)
+        await pilot.pause()
+        assert screen._cursor_key() == tool_key
+        assert inspector.scroll_y == before
+
+        different_key = next(
+            key
+            for key, record in screen._row_records.items()
+            if record is not None and key != tool_key
+        )
+        table.move_cursor(row=table.get_row_index(different_key), animate=False)
+        await pilot.pause()
+        assert screen._cursor_key() == different_key
+        assert inspector.scroll_y == 0
+
+
+@pytest.mark.asyncio
+async def test_empty_modes_and_compound_state_truth_are_painted_at_60_columns() -> None:
+    empty = TrajectorySnapshot(())
+    async with _mounted(empty, size=(60, 18), shared_trace=True) as (
+        app,
+        pilot,
+        screen,
+    ):
+        painted = _painted_text(app)
+        assert "READ-ONLY SHARED TRACE" in painted
+        assert "EMPTY" in painted
+        assert "o open trace" in painted
+
+    async with _mounted(
+        empty,
+        size=(60, 18),
+        revision_provider=lambda: 1,
+        snapshot_builder=lambda: empty,
+    ) as (app, pilot, screen):
+        state = str(screen.query_one("#trajectory-state", Static).render())
+        assert "LIVE" in state
+        assert "FOLLOWING" in state
+        assert "EMPTY" in state
+        await pilot.press("i", "enter")
+        inspector = screen.query_one("#trajectory-inspector", VerticalScroll)
+        assert not inspector.display
+        assert not inspector.has_focus
+
+    record = replace(
+        _untimed_snapshot().turns[0].records[0],
+        field_states={"payload": "capture_failed"},
+    )
+    async with _mounted(
+        _snapshot_with_records([record]), size=(60, 18), shared_trace=True
+    ) as (app, pilot, screen):
+        screen.query_one("#trajectory-search", Input).value = "no-match"
+        await pilot.pause()
+        painted = _painted_text(app)
+        for expected in (
+            "READ-ONLY SHARED TRACE",
+            "INCOMPLETE",
+            "NO MATCHES",
+            "NO TIMING",
+            "x clear filters",
+        ):
+            assert expected in painted
+
+    live_snapshot = _snapshot_with_records([record])
+    async with _mounted(
+        live_snapshot,
+        size=(60, 18),
+        revision_provider=lambda: 1,
+        snapshot_builder=lambda: live_snapshot,
+    ) as (app, pilot, screen):
+        screen.query_one("#trajectory-search", Input).value = "no-match"
+        await pilot.pause()
+        painted = _painted_text(app)
+        for expected in (
+            "LIVE",
+            "FOLLOWING",
+            "INCOMPLETE",
+            "NO MATCHES",
+            "NO TIMING",
+            "x clear filters",
+        ):
+            assert expected in painted
+
+
+@pytest.mark.asyncio
+async def test_paused_live_append_retains_selected_event_outside_newest_page() -> None:
+    records = _numbered_records(PAGE_SIZE + 1)
+    snapshot = _snapshot_with_records(records)
+    async with _mounted(snapshot, size=(80, 24)) as (app, pilot, screen):
+        table = screen.query_one("#trajectory-table", DataTable)
+        table.move_cursor(row=table.get_row_index("event-2"), animate=False)
+        screen._follow = False
+
+        appended = _snapshot_with_records(
+            records + _numbered_records(PAGE_SIZE + 2)[-1:]
+        )
+        screen._apply_live_snapshot(appended)
+        await pilot.pause()
+
+        assert screen._cursor_key() == "event-2"
+        assert "event-2" in screen._visible_keys
+        assert screen._visible_count >= PAGE_SIZE + 1
+
+
+def _legacy_record(seq: int, provider: str) -> TrajectoryRecord:
+    return TrajectoryRecord(
+        seq=seq,
+        kind="assistant",
+        turn_id="turn-1",
+        message_id="shared-message",
+        content_preview="same preview",
+        usage=None,
+        step_started_at=10.0,
+        first_token_at=11.0,
+        completed_at=12.0,
+        model="same-model",
+        provider=provider,
+        payload={"attempt": 1},
+        variants=(),
+        depth=0,
+        event_id="",
+        status="completed",
+    )
+
+
+@pytest.mark.asyncio
+async def test_legacy_identity_survives_insertion_when_provider_distinguishes_rows() -> (
+    None
+):
+    before_records = [_legacy_record(1, "provider-a"), _legacy_record(2, "provider-b")]
+    async with _mounted(_snapshot_with_records(before_records)) as (app, pilot, screen):
+        table = screen.query_one("#trajectory-table", DataTable)
+        provider_b_key = screen._record_key(before_records[1])
+        table.move_cursor(row=table.get_row_index(provider_b_key), animate=False)
+        screen._follow = False
+
+        after_records = [
+            _legacy_record(1, "provider-new"),
+            _legacy_record(2, "provider-a"),
+            _legacy_record(3, "provider-b"),
+        ]
+        screen._apply_live_snapshot(_snapshot_with_records(after_records))
+        await pilot.pause()
+
+        assert screen._record_key(after_records[2]) == provider_b_key
+        assert screen._cursor_key() == provider_b_key
+        selected = screen._row_records[screen._cursor_key()]
+        assert selected is not None
+        assert selected.provider == "provider-b"
+
+
+@pytest.mark.asyncio
+async def test_six_digit_record_identity_is_fully_painted_without_horizontal_scroll() -> (
+    None
+):
+    record = replace(_numbered_records(1)[0], seq=123456)
+    async with _mounted(_snapshot_with_records([record]), size=(60, 18)) as (
+        app,
+        pilot,
+        screen,
+    ):
+        table = screen.query_one("#trajectory-table", DataTable)
+        assert "123456" in _painted_text(app)
+        assert table.max_scroll_x == 0
+
+
+@pytest.mark.asyncio
+async def test_record_label_prefers_projection_label_then_generic_sentence_case() -> (
+    None
+):
+    records = [
+        replace(
+            _numbered_records(1)[0],
+            kind="future_provider_step",
+            label="Provider-specific step",
+        ),
+        replace(
+            _numbered_records(2)[1],
+            kind="future_custom_kind",
+            label="",
+        ),
+    ]
+    async with _mounted(_snapshot_with_records(records)) as (app, pilot, screen):
+        table = screen.query_one("#trajectory-table", DataTable)
+        assert str(table.get_row("event-1")[1]) == "Provider-specific step"
+        assert str(table.get_row("event-2")[1]) == "Future custom kind"

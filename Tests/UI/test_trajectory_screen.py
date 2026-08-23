@@ -19,7 +19,12 @@ from textual.containers import VerticalScroll
 from textual.widgets import DataTable, Input, Static
 
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
-from tldw_chatbook.Chat.trajectory import TrajectoryRecord, derive_trajectory
+from tldw_chatbook.Chat.trajectory import (
+    TrajectoryRecord,
+    TrajectorySnapshot,
+    TrajectoryTurn,
+    derive_trajectory,
+)
 from tldw_chatbook.UI.Screens.trajectory_screen import (
     PAGE_SIZE,
     WORKER_THRESHOLD,
@@ -564,7 +569,7 @@ def test_bindings_avoid_terminal_conventions() -> None:
 
 def test_bindings_use_single_letter_htop_style() -> None:
     bound = {binding.key for binding in TrajectoryScreen.BINDINGS}
-    assert {"t", "i", "e", "/"} <= bound
+    assert {"t", "i", "e", "/", "x"} <= bound
 
 
 def test_every_binding_has_an_implemented_action() -> None:
@@ -590,9 +595,6 @@ def test_inspector_renders_feedback_payload_not_a_phantom_tool() -> None:
     result). A user_feedback record has none of those keys, so it would
     render a bogus `tool —` line and hide the action, quote and comment that
     are the entire content of the record."""
-    from tldw_chatbook.Chat.trajectory import TrajectoryRecord
-    from tldw_chatbook.UI.Screens.trajectory_screen import TrajectoryScreen
-
     record = TrajectoryRecord(
         seq=3,
         kind="user_feedback",
@@ -614,7 +616,8 @@ def test_inspector_renders_feedback_payload_not_a_phantom_tool() -> None:
         depth=1,
     )
 
-    text = TrajectoryScreen._inspector_text_for_record(None, record)  # type: ignore[arg-type]
+    screen = TrajectoryScreen(TrajectorySnapshot((TrajectoryTurn("t1", (record,)),)))
+    text = screen._inspector_text_for_record(record)
 
     assert "tool" not in text
     assert "feedback request-changes" in text
@@ -654,7 +657,10 @@ def test_inspector_exposes_causal_privacy_and_source_metadata() -> None:
         sensitivity="restricted",
     )
 
-    text = TrajectoryScreen._inspector_text_for_record(None, record)  # type: ignore[arg-type]
+    screen = TrajectoryScreen(
+        TrajectorySnapshot((TrajectoryTurn("turn-9", (record,)),))
+    )
+    text = screen._inspector_text_for_record(record)
 
     for expected in (
         "source sequence 2",

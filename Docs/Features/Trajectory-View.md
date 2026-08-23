@@ -33,7 +33,7 @@ The line under the title makes the current mode explicit:
 - Imported files show `READ-ONLY SHARED TRACE` and never write local data.
 - `LOADING`, `INCOMPLETE`, `NO TIMING`, `EMPTY`, and `NO MATCHES` explain why
   information is absent instead of leaving a blank ledger.
-- Search and time filters show the visible/total event count.
+- Search and time filters show the visible/total event count; `x` clears both.
 - A failed ledger render or live refresh shows `FAILED · … · r retry` without
   exposing payload or exception text.
 
@@ -69,16 +69,19 @@ read / cache write / output), timing (step start → first token → completed,
 with elapsed spans when both endpoints exist), superseded variants
 (turn-level), and for tool records the full untruncated result. For
 imported traces with redacted payloads, the inspector shows the redaction
-marker instead of the payload. `▼ more — scroll…` appears only while content
+marker instead of the payload. Other structured event payloads are shown as
+JSON so retrieval, context, and agent facts are not dropped. `▼ more — scroll…` appears only while content
 remains below the fold. Press **`d`** for a reversible full-pane detail view;
-press `d` again to return to the ledger.
+press `d` again to return to the ledger. Live refresh keeps the reading
+position when the same stable event remains selected.
 
 ### Search
 
 `/` focuses the search box. Queries match record content **and** tool
 payloads (so you can find a turn by a path a tool touched or text deep
 inside a result). Matching collapses the ledger to hits; turn headers
-survive while any child matches; clearing the box restores the view.
+survive while any child matches. Press `x` to clear both search and timeline
+filters.
 
 ## The timeline
 
@@ -151,6 +154,7 @@ shows its `no timing data` placeholder. New turns get the full treatment.
 | `e` | Load earlier records |
 | `f` | Resume tail-follow |
 | `r` | Retry a failed render or live refresh |
+| `x` | Clear search and timeline filters |
 | `o` | Open an imported trace file (read-only) |
 | `escape` | Close the view |
 
