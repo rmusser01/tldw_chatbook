@@ -35,6 +35,9 @@ _FULL_CONTENT_HEIGHT = 8
 _OPERABLE_WIDTH = 10
 _OPERABLE_HEIGHT = 4
 _BOUNDARY_SIZE = 2
+# Task 2 removes these current panel padding and text-row costs.
+_CURRENT_CHROME_HORIZONTAL_OVERHEAD = _BOUNDARY_SIZE + 2
+_CURRENT_CHROME_VERTICAL_OVERHEAD = _BOUNDARY_SIZE + 5
 _DUAL_CONTROL_WIDTH = 14
 _COLLAPSED_HEIGHT = 3
 _COMPACT_HEIGHT = 1
@@ -265,6 +268,7 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         self._resolved_authority: tuple[object, ...] | None = None
         self._requested_authority: tuple[object, ...] | None = None
         self._interaction: tuple[str, int, int, PersonaBuddyGeometry] | None = None
+        self._last_screen_size: tuple[int, int] | None = None
         self._next_frame_at = 0.0
         self._frame_was_frozen = True
 
@@ -330,8 +334,10 @@ class PersonaBuddyWidget(Widget, can_focus=True):
             return None
         viewport = self.screen.size
         geometry = self._working_preferences.geometry
-        cols = min(geometry.width, viewport.width) - _BOUNDARY_SIZE
-        lines = min(geometry.height, viewport.height) - _BOUNDARY_SIZE
+        cols = min(geometry.width, viewport.width) - _CURRENT_CHROME_HORIZONTAL_OVERHEAD
+        lines = (
+            min(geometry.height, viewport.height) - _CURRENT_CHROME_VERTICAL_OVERHEAD
+        )
         if cols < 1 or lines < 1:
             return None
         return cols, lines
@@ -458,10 +464,13 @@ class PersonaBuddyWidget(Widget, can_focus=True):
 
         if not self._is_current_view():
             return
-        setter = getattr(self._controller, "set_viewport_generation", None)
-        if callable(setter):
-            snapshot = self._controller.snapshot()
-            setter(snapshot.viewport_generation + 1)
+        screen_size = (self.screen.size.width, self.screen.size.height)
+        if screen_size != self._last_screen_size:
+            self._last_screen_size = screen_size
+            setter = getattr(self._controller, "set_viewport_generation", None)
+            if callable(setter):
+                snapshot = self._controller.snapshot()
+                setter(snapshot.viewport_generation + 1)
         self._apply_geometry(self._working_preferences.geometry)
 
     def refresh_from_controller(self, *, schedule_resolution: bool = True) -> None:
@@ -630,11 +639,13 @@ class PersonaBuddyWidget(Widget, can_focus=True):
                 height = min(_COLLAPSED_HEIGHT, viewport.height)
             elif self._accepted_render is not None:
                 width = min(
-                    self._accepted_render.content_width + _BOUNDARY_SIZE,
+                    self._accepted_render.content_width
+                    + _CURRENT_CHROME_HORIZONTAL_OVERHEAD,
                     viewport.width,
                 )
                 height = min(
-                    self._accepted_render.content_height + _BOUNDARY_SIZE,
+                    self._accepted_render.content_height
+                    + _CURRENT_CHROME_VERTICAL_OVERHEAD,
                     viewport.height,
                 )
             else:
