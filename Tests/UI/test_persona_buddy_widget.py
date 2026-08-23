@@ -1191,7 +1191,7 @@ async def test_exact_cell_layouts_keep_complete_icon_controls(
 
 
 @pytest.mark.asyncio
-async def test_compact_corner_keeps_resize_authority_and_close_operable():
+async def test_compact_controls_never_overlap_lower_right_resize_zone():
     controller = _FakeController()
     app = _BuddyApp(controller)
     async with app.run_test(size=(10, 2)) as pilot:
@@ -1204,16 +1204,33 @@ async def test_compact_corner_keeps_resize_authority_and_close_operable():
         )
         await pilot.pause()
         close = buddy.query_one("#persona-buddy-close", Button)
+        frame = buddy.query_one("#persona-buddy-frame", Static)
+        controls = tuple(control for control in buddy.query(Button) if control.display)
 
-        assert [control.id for control in buddy.query(Button) if control.display] == [
+        assert [control.id for control in controls] == [
             "persona-buddy-collapse",
             "persona-buddy-close",
         ]
+        assert not frame.display
+        assert "BUDDY-A" not in _compositor_text(app.screen)
+        assert "Buddy" not in _compositor_text(app.screen)
+        resize_zone_x = buddy.region.right - 2
+        assert close.region.right <= resize_zone_x
+        for x in range(close.region.x, close.region.right):
+            target, _ = app.screen.get_widget_at(x, close.region.y)
+            assert target is close
+            buddy.on_mouse_down(
+                _mouse(events.MouseDown, x=x, y=close.region.y, widget=close)
+            )
+            assert buddy._interaction is None
+            assert app.mouse_captured is None
+
         corner = (buddy.region.right - 1, buddy.region.bottom - 1)
-        assert _point_is_inside(close, *corner)
+        target, _ = app.screen.get_widget_at(*corner)
+        assert target not in controls
 
         buddy.on_mouse_down(
-            _mouse(events.MouseDown, x=corner[0], y=corner[1], widget=close)
+            _mouse(events.MouseDown, x=corner[0], y=corner[1], widget=target)
         )
 
         assert buddy._interaction is not None
@@ -1221,9 +1238,10 @@ async def test_compact_corner_keeps_resize_authority_and_close_operable():
         assert app.mouse_captured is buddy
         buddy.release_interaction_capture()
 
-        assert close.region.x < buddy.region.right - 2
-        await pilot.click(close, offset=(0, 0))
+        await pilot.click(close, offset=(close.region.width - 1, 0))
         await _wait_until(lambda: not controller.preferences.open)
+        assert buddy._interaction is None
+        assert app.mouse_captured is None
 
 
 @pytest.mark.asyncio

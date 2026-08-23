@@ -34,6 +34,7 @@ _OPERABLE_WIDTH = 10
 _OPERABLE_HEIGHT = 4
 _BOUNDARY_SIZE = 2
 _COMPACT_HEIGHT = 1
+_RESIZE_GRIP_WIDTH = 2
 _POLL_SECONDS = 0.10
 _ACTIONABLE_ALERTS = {
     "approval_needed": "Approval needed",
@@ -749,7 +750,12 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         content_width = clamped.width - (
             0 if self.has_class("persona-buddy-compact") else _BOUNDARY_SIZE
         )
-        close.styles.offset = Offset(max(0, content_width - close_width), 0)
+        resize_grip_width = (
+            _RESIZE_GRIP_WIDTH if self.has_class("persona-buddy-compact") else 0
+        )
+        close.styles.offset = Offset(
+            max(0, content_width - close_width - resize_grip_width), 0
+        )
 
     def on_mouse_down(self, event: events.MouseDown) -> None:
         """Arm pet-surface drag or lower-right resize for a terminal event."""
@@ -759,11 +765,13 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         screen_x = int(event.screen_x if event.screen_x is not None else event.x)
         screen_y = int(event.screen_y if event.screen_y is not None else event.y)
         region = self.region
-        resize = screen_x >= region.right - 2 and screen_y >= region.bottom - 1
+        resize = (
+            screen_x >= region.right - _RESIZE_GRIP_WIDTH
+            and screen_y >= region.bottom - 1
+        )
         for button in self.query(Button):
             if (
-                not resize
-                and button.display
+                button.display
                 and button.region.x <= screen_x < button.region.right
                 and button.region.y <= screen_y < button.region.bottom
             ):
