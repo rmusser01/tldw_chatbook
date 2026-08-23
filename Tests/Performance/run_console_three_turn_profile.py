@@ -755,6 +755,8 @@ def _promote_reviewed_artifacts_locked(
         raise RuntimeError("review_receipt_binding_mismatch")
 
     _mkdir_namespace(stage)
+    stage_metadata = stage.stat(follow_symlinks=False)
+    stage_identity = (stage_metadata.st_dev, stage_metadata.st_ino)
     for name in REVIEWED_ARTIFACTS:
         shutil.copy2(attempt_root / name, stage / name)
     copied_receipt = stage / "confirmatory-review-receipt.json"
@@ -801,29 +803,47 @@ def _promote_reviewed_artifacts_locked(
             raise RuntimeError("review_destination_exists")
 
     publication_error: BaseException | None = None
+    rename_succeeded = False
     try:
         _atomic_rename_directory_noreplace(
             stage, destination, verify=verify_final_binding
         )
+        rename_succeeded = True
     except BaseException as exc:
         publication_error = exc
         raise
     finally:
         if sys.platform == "darwin":
-            sealed_root = destination if destination.exists() else stage
+            owned_metadata: os.stat_result | None = None
             try:
-                for path in (
-                    *(sealed_root / name for name in REVIEWED_ARTIFACTS),
-                    sealed_root / "confirmatory-review-receipt.json",
-                ):
-                    if path.is_file() and not path.is_symlink():
-                        os.chflags(
-                            path,
-                            path.stat().st_flags & ~stat.UF_IMMUTABLE,
-                        )
+                owned_root = destination if rename_succeeded else stage
+                owned_metadata = owned_root.stat(follow_symlinks=False)
+            except FileNotFoundError:
+                pass
             except OSError as exc:
                 if publication_error is None:
                     raise RuntimeError("publication_durability_uncertain") from exc
+            if (
+                owned_metadata is not None
+                and stat.S_ISDIR(owned_metadata.st_mode)
+                and (owned_metadata.st_dev, owned_metadata.st_ino)
+                == stage_identity
+            ):
+                try:
+                    for path in (
+                        *(owned_root / name for name in REVIEWED_ARTIFACTS),
+                        owned_root / "confirmatory-review-receipt.json",
+                    ):
+                        if path.is_file() and not path.is_symlink():
+                            os.chflags(
+                                path,
+                                path.stat().st_flags & ~stat.UF_IMMUTABLE,
+                            )
+                except OSError as exc:
+                    if publication_error is None:
+                        raise RuntimeError(
+                            "publication_durability_uncertain"
+                        ) from exc
     try:
         _fsync_directory(destination.parent)
     except OSError as exc:

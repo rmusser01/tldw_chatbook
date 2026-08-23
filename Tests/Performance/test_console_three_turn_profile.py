@@ -5355,6 +5355,58 @@ def test_sealed_stage_blocks_post_verify_name_replacement_before_native_rename(
     assert stat.S_IMODE(destination.stat().st_mode) == 0o555
 
 
+@pytest.mark.skipif(sys.platform != "darwin", reason="Darwin immutable flags only")
+def test_failed_native_rename_never_clears_foreign_destination_flags(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    campaign, attempt, digest, _raw_sha256 = _prepare_review_attempt(tmp_path)
+    receipt = _write_review_receipt(attempt, digest)
+    destination = tmp_path / "published"
+    stage = destination.parent / f".{destination.name}.task-20010-stage"
+    native_library = profile.ctypes.CDLL(None, use_errno=True)
+    real_native = native_library.renamex_np
+    foreign_names = REVIEWED_ARTIFACT_NAMES | {
+        "confirmatory-review-receipt.json"
+    }
+    foreign_state: dict[str, tuple[bytes, int]] = {}
+
+    class RacingRename:
+        argtypes = None
+        restype = None
+
+        def __call__(self, *args) -> int:
+            destination.mkdir()
+            for name in foreign_names:
+                path = destination / name
+                path.write_bytes(f"foreign:{name}".encode())
+                os.chflags(path, path.stat().st_flags | stat.UF_IMMUTABLE)
+                foreign_state[name] = (path.read_bytes(), path.stat().st_flags)
+            return int(real_native(*args))
+
+    class RacingLibrary:
+        renamex_np = RacingRename()
+
+    monkeypatch.setattr(
+        profile.ctypes, "CDLL", lambda _name, *, use_errno: RacingLibrary()
+    )
+
+    with pytest.raises(RuntimeError, match="^review_destination_exists$"):
+        profile.promote_reviewed_artifacts(
+            campaign, "attempt-0001", receipt, destination
+        )
+
+    assert stage.is_dir()
+    assert stat.S_IMODE(stage.stat().st_mode) == 0o555
+    assert all(
+        not ((stage / name).stat().st_flags & stat.UF_IMMUTABLE)
+        for name in foreign_names
+    )
+    assert {
+        name: ((destination / name).read_bytes(), (destination / name).stat().st_flags)
+        for name in foreign_names
+    } == foreign_state
+
+
 @pytest.mark.parametrize("failure", ("file", "stage_directory"))
 def test_promotion_pre_rename_fsync_failure_preserves_source_and_stage(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
