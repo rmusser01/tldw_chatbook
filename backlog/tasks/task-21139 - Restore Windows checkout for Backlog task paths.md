@@ -32,3 +32,20 @@ a supported CI platform while preserving task IDs and task content.
 ## References
 
 - `Docs/superpowers/specs/2026-08-23-task-21139-windows-safe-backlog-paths-design.md`
+
+## Implementation Plan
+
+Follow `Docs/superpowers/plans/2026-08-23-task-21139-windows-safe-backlog-paths.md`:
+
+1. Add focused RED tests for the Win32 basename contract and combined reporting.
+2. Add the minimal stdlib classifier/scanner to the existing Backlog guard without changing `duplicate_ids()`.
+3. Rename TASK-21130 byte-for-byte and verify the tracked Backlog inventory passes.
+4. Record the checkout incident and run only checker-related tests/static analysis.
+5. Independently review, rebase on current `dev`, address Qodo feedback, and verify the two affected Windows job types pass checkout.
+6. Complete TASK-21139 and merge only after current-head evidence is green.
+
+ADR required: no
+
+ADR path: N/A
+
+Reason: this is a focused CI-portability repair within an existing stdlib guard; it changes no architectural boundary, dependency, schema, storage, security, or runtime policy.
