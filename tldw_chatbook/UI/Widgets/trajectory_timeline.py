@@ -348,7 +348,8 @@ class TrajectoryTimeline(Widget):
       :class:`TrajectoryBrushChanged` with the time range (or ``None``
       when cleared).
     - click on a bar: posts :class:`TrajectoryBarSelected` with the
-      record's stable row key and clears any brush.
+      record's stable row key. The host accepts or rejects that intent
+      before synchronizing selection and any active brush.
     - click on empty space: clears the brush.
     - wheel / ``[`` ``]``: zoom out/in (wheel centers on the mouse x,
       keys on the strip center); ```,`' ``/`` .`` pan left/right. Every
@@ -517,6 +518,8 @@ class TrajectoryTimeline(Widget):
         for boundary in model.boundaries:
             if boundary.kind != "turn":
                 continue
+            if not window[0] <= boundary.time <= window[1]:
+                continue
             col = int(TimelineModel.fraction(boundary.time, window) * width)
             cells[min(max(col, 0), width - 1)] = (TURN_BOUNDARY_CHAR, _CAPTION_STYLE)
         for record, record_lane in zip(model.timed_records, model.lanes):
@@ -532,6 +535,8 @@ class TrajectoryTimeline(Widget):
                 cells[col] = (model.glyph_for(record), style)
         for boundary in model.boundaries:
             if boundary.kind != "agent" or lane != 3:
+                continue
+            if not window[0] <= boundary.time <= window[1]:
                 continue
             col = int(TimelineModel.fraction(boundary.time, window) * width)
             col = min(max(col, 0), width - 1)
@@ -550,7 +555,8 @@ class TrajectoryTimeline(Widget):
                 # A boundary and instantaneous event share one cell. Preserve
                 # both meanings instead of overwriting the event marker.
                 _, style = cells[col]
-                cells[col] = ("◉", style or _CAPTION_STYLE)
+                combined = "◉" if record.kind.lower().endswith("_run") else "⊙"
+                cells[col] = (combined, style or _CAPTION_STYLE)
             else:
                 cells[col] = (AGENT_BOUNDARY_CHAR, _CAPTION_STYLE)
         if self._brush is not None:
@@ -587,6 +593,8 @@ class TrajectoryTimeline(Widget):
         as exactly one cell.
         """
         start, end = TimelineModel.interval(record)
+        if end < window[0] or start > window[1]:
+            return None
         c0 = int(TimelineModel.fraction(start, window) * width)
         c1 = max(c0, int(TimelineModel.fraction(end, window) * width))
         if c1 < 0 or c0 >= width:
@@ -610,7 +618,7 @@ class TrajectoryTimeline(Widget):
             active = len(self._model.records_in_range(lo, hi))
             caption = f"{_fmt_clock(lo)}–{_fmt_clock(hi)} · {active} active"
         else:
-            caption = "no brush · ◇ feedback ! error ▶ call ◀ result ○ step"
+            caption = "no brush · ◇ feedback ! error ▶ call ◀ result ◉ run ⊙ step"
         pad = " " * max(width - len(caption), 0)
         return Text(pad + caption, style=_CAPTION_STYLE)
 
@@ -639,33 +647,38 @@ class TrajectoryTimeline(Widget):
         )
         self._set_brush((min(t1, t2), max(t1, t2)))
 
-    def _set_brush(self, brush: tuple[float, float] | None) -> None:
+    def _set_brush(
+        self, brush: tuple[float, float] | None, *, emit: bool = True
+    ) -> None:
         if self._brush == brush:
             return
         self._brush = brush
         self.refresh()
-        self.post_message(self.TrajectoryBrushChanged(brush))
+        if emit:
+            self.post_message(self.TrajectoryBrushChanged(brush))
 
-    def clear_range(self) -> bool:
+    def clear_range(self, *, emit: bool = True) -> bool:
         """Clear an active brush/keyboard anchor; return whether state changed."""
 
         changed = self._brush is not None or self._range_anchor is not None
         self._range_anchor = None
-        self._set_brush(None)
+        self._set_brush(None, emit=emit)
         if changed:
             self.refresh()
         return changed
 
-    def apply_brush(self, brush_range: tuple[float, float] | None) -> None:
+    def apply_brush(
+        self, brush_range: tuple[float, float] | None, *, emit: bool = True
+    ) -> None:
         """Public re-brush seam for hosts (``None`` clears).
 
         ``set_snapshot`` resets the brush without posting; a host that
         swaps in a new snapshot (e.g. a live-refreshed trajectory
         screen) uses this to re-apply a brush that is still relevant,
-        keeping its own filters in sync via the posted
-        :class:`TrajectoryBrushChanged`.
+        optionally emitting :class:`TrajectoryBrushChanged` when the
+        change originated in the widget rather than host-owned state.
         """
-        self._set_brush(brush_range)
+        self._set_brush(brush_range, emit=emit)
 
     def record_at(self, x: int, y: int) -> TrajectoryRecord | None:
         """The record whose rendered bar covers column ``x`` on row ``y``."""
@@ -727,13 +740,14 @@ class TrajectoryTimeline(Widget):
         self.release_mouse()
         start_x, self._drag_x = self._drag_x, None
         if not self._drag_moved:
-            # Plain click: bar select (and clear brush) or clear brush.
+            # A bar click is only selection INTENT. The host may reject it
+            # under search/structured filters, or accept it and atomically
+            # clear the time brush. Empty space remains a direct clear.
             record = self.record_at(event.x, event.y)
             if record is not None:
-                self.clear_range()
-                self._selected = self._model.record_key(record)
-                self.refresh()
-                self.post_message(self.TrajectoryBarSelected(self._selected))
+                self.post_message(
+                    self.TrajectoryBarSelected(self._model.record_key(record))
+                )
             else:
                 self.clear_range()
         else:

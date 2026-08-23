@@ -11,7 +11,7 @@ import re
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Button, DataTable, Select, Static
+from textual.widgets import Button, DataTable, Input, Select, Static
 
 from tldw_chatbook.Chat.trajectory import (
     TrajectoryRecord,
@@ -193,7 +193,9 @@ async def test_filter_bar_uses_one_state_owner_in_compact_and_wide_layouts(
         assert len(bars) == 1
         bar = bars[0]
         assert bar.compact is compact
-        assert "7/7 match · T7" in str(bar.render())
+        assert "7 shown" in str(bar.render())
+        assert "7 matches" in str(bar.render())
+        assert "7 total" in str(bar.render())
         visible_selects = [
             select for select in bar.query(Select) if select.region.width
         ]
@@ -209,8 +211,15 @@ async def test_wide_filter_bar_paints_visible_and_total_counts() -> None:
         assert len(count_widgets) == 1
         counts = count_widgets[0]
         assert counts.region.width > 0
-        assert "7/7 match · T7" in str(counts.render())
-        assert "7/7" in app.export_screenshot(simplify=True)
+        assert str(counts.render()).splitlines() == [
+            "Shown 7",
+            "Matches 7",
+            "Total 7",
+        ]
+        painted = _painted_text(app)
+        assert "Shown 7" in painted
+        assert "Matches 7" in painted
+        assert "Total 7" in painted
 
 
 @pytest.mark.asyncio
@@ -226,7 +235,28 @@ async def test_wide_filter_controls_are_contained_and_every_tab_target_is_visibl
         assert all(_inside(select, wide) for select in selects)
         assert all(select in app.screen.focus_chain for select in selects)
         assert all(select.region.width > 0 for select in selects)
+        assert screen.query_one("#trace-filter-bar") not in app.screen.focus_chain
         app.export_screenshot(simplify=True)
+
+
+@pytest.mark.asyncio
+async def test_wide_tab_chain_has_no_inert_filter_bar_stop() -> None:
+    async with _mounted(size=(100, 30)) as (app, pilot, screen):
+        relevant = [
+            widget.id
+            for widget in app.screen.focus_chain
+            if isinstance(widget, (Input, Select, TrajectoryTimeline, DataTable))
+        ]
+
+        assert relevant[:7] == [
+            "trajectory-search",
+            "trace-filter-kind",
+            "trace-filter-status",
+            "trace-filter-agent",
+            "trace-filter-provider",
+            "trajectory-timeline",
+            "trajectory-table",
+        ]
 
 
 @pytest.mark.asyncio
@@ -252,6 +282,21 @@ async def test_compact_filter_action_opens_keyboard_dismissible_dialog() -> None
     async with _mounted(size=(60, 18)) as (app, pilot, screen):
         assert hasattr(screen, "action_open_filters")
         await screen.action_open_filters()
+        assert type(app.screen).__name__ == "TraceFiltersDialog"
+        await pilot.press("escape")
+        assert app.screen is screen
+
+
+@pytest.mark.asyncio
+async def test_compact_filter_bar_is_actionable_with_enter_and_paints_cue() -> None:
+    async with _mounted(size=(60, 18)) as (app, pilot, screen):
+        bar = screen.query_one("#trace-filter-bar")
+        assert bar in app.screen.focus_chain
+        bar.focus()
+        await pilot.pause()
+        assert "g filters" in _painted_text(app).lower()
+
+        await pilot.press("enter")
         assert type(app.screen).__name__ == "TraceFiltersDialog"
         await pilot.press("escape")
         assert app.screen is screen
@@ -306,7 +351,9 @@ async def test_structured_dimensions_filter_the_ledger_and_report_counts() -> No
         assert {record.event_id for record in visible} == {"event:2", "event:3"}
         assert bar.visible_count == 2
         assert bar.total_count == 7
-        assert "2/2 match · T7" in bar.summary_text
+        assert "2 shown" in bar.summary_text
+        assert "2 matches" in bar.summary_text
+        assert "7 total" in bar.summary_text
 
 
 @pytest.mark.asyncio
@@ -598,11 +645,26 @@ async def test_filter_counts_distinguish_mounted_matches_from_total_matches(
         assert bar.shown_count == 250
         assert bar.matching_count == 300
         assert bar.total_count == 600
-        assert "250/300 match · T600" in bar.summary_text
+        assert "250 shown" in bar.summary_text
+        assert "300 matches" in bar.summary_text
+        assert "600 total" in bar.summary_text
         presentation = (
             bar.query_one("#trace-filter-compact", Static)
             if size[0] < 100
             else bar.query_one("#trace-filter-counts", Static)
         )
-        assert len(str(presentation.render())) <= presentation.size.width
+        assert max(map(len, str(presentation.render()).splitlines())) <= (
+            presentation.size.width
+        )
+        painted = _painted_text(app)
+        if size[0] < 100:
+            assert "250 shown" in painted
+            assert "300 matches" in painted
+            assert "600 total" in painted
+            assert "1 active" in painted
+            assert "g filters" in painted
+        else:
+            assert "Shown 250" in painted
+            assert "Matches 300" in painted
+            assert "Total 600" in painted
         assert screen.query_one("#trajectory-table", DataTable).max_scroll_x == 0

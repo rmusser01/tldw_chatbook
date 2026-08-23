@@ -315,6 +315,83 @@ async def test_bar_select_moves_ledger_cursor_and_highlights() -> None:
 
 
 @pytest.mark.asyncio
+async def test_click_outside_active_brush_atomically_clears_time_and_selects(
+    monkeypatch,
+) -> None:
+    async with _mounted(base_snapshot()) as (app, pilot, screen):
+        timeline = screen.query_one("#trajectory-timeline", TrajectoryTimeline)
+        await _brush(pilot, timeline, _T0 - 1.0, _T0 + 6.0)
+        target = next(record for record in screen._all_records() if record.seq == 5)
+        cols = timeline._record_columns(
+            target, timeline._plot_width(), timeline.viewport
+        )
+        assert cols is not None
+        notices: list[str] = []
+        monkeypatch.setattr(
+            app, "notify", lambda message, **_kwargs: notices.append(str(message))
+        )
+        render_count = 0
+        render_ledger = screen._render_ledger
+
+        def counted_render() -> None:
+            nonlocal render_count
+            render_count += 1
+            render_ledger()
+
+        monkeypatch.setattr(screen, "_render_ledger", counted_render)
+
+        clicked = await pilot.click(
+            timeline,
+            offset=(LANE_LABEL_WIDTH + cols[0], timeline.model.lane_for(target)),
+        )
+        assert clicked
+        await pilot.pause()
+
+        target_key = _record_key_for_seq(screen, 5)
+        assert screen._filter_bar.state.time_range is None
+        assert timeline.brush is None
+        assert screen._cursor_key() == target_key
+        assert timeline.selected == target_key
+        assert render_count == 1
+        assert not any("hidden" in notice.lower() for notice in notices)
+
+
+@pytest.mark.asyncio
+async def test_keyboard_enter_outside_active_brush_uses_same_selection_transaction(
+    monkeypatch,
+) -> None:
+    async with _mounted(base_snapshot()) as (app, pilot, screen):
+        timeline = screen.query_one("#trajectory-timeline", TrajectoryTimeline)
+        await _brush(pilot, timeline, _T0 - 1.0, _T0 + 6.0)
+        timeline.focus()
+        timeline.set_selected(_record_key_for_seq(screen, 4))
+        notices: list[str] = []
+        monkeypatch.setattr(
+            app, "notify", lambda message, **_kwargs: notices.append(str(message))
+        )
+        render_count = 0
+        render_ledger = screen._render_ledger
+
+        def counted_render() -> None:
+            nonlocal render_count
+            render_count += 1
+            render_ledger()
+
+        monkeypatch.setattr(screen, "_render_ledger", counted_render)
+
+        await pilot.press("j", "enter")
+        await pilot.pause()
+
+        target_key = _record_key_for_seq(screen, 5)
+        assert screen._filter_bar.state.time_range is None
+        assert timeline.brush is None
+        assert screen._cursor_key() == target_key
+        assert timeline.selected == target_key
+        assert render_count == 1
+        assert not any("hidden" in notice.lower() for notice in notices)
+
+
+@pytest.mark.asyncio
 async def test_bar_message_hidden_by_search_restores_shared_ledger_selection(
     monkeypatch,
 ) -> None:

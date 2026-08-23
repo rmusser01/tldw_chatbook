@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Iterable, Sequence
 
+from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -237,6 +238,8 @@ class TraceFilterBar(Widget):
 
     can_focus = True
 
+    BINDINGS = [Binding("enter", "open_filters", "Filters", show=False)]
+
     DEFAULT_CSS = """
     TraceFilterBar { width: 1fr; height: 3; }
     #trace-filter-wide { width: 1fr; height: 3; }
@@ -267,12 +270,25 @@ class TraceFilterBar(Widget):
 
     @property
     def summary_text(self) -> str:
-        active = f"{self.state.active_count} active" if self.state.is_active else "none"
-        return f"Filters {self.count_text} · {active} · {self.state.summary}"
+        return (
+            f"{self.count_text} · {self.state.active_count} active · "
+            f"{self.state.summary}"
+        )
 
     @property
     def count_text(self) -> str:
-        return f"{self.shown_count}/{self.matching_count} match · T{self.total_count}"
+        return (
+            f"{self.shown_count} shown · {self.matching_count} matches · "
+            f"{self.total_count} total"
+        )
+
+    @property
+    def wide_count_text(self) -> str:
+        return (
+            f"Shown {self.shown_count}\n"
+            f"Matches {self.matching_count}\n"
+            f"Total {self.total_count}"
+        )
 
     @property
     def visible_count(self) -> int:
@@ -307,6 +323,7 @@ class TraceFilterBar(Widget):
 
     def set_compact(self, compact: bool) -> None:
         self._compact = compact
+        self.can_focus = compact
         self.styles.height = 1 if compact else 3
         self._refresh_presentation()
 
@@ -382,11 +399,11 @@ class TraceFilterBar(Widget):
         if not self.is_mounted:
             return
         self.query_one("#trace-filter-wide").display = not self._compact
-        self.query_one("#trace-filter-counts", Static).update(self.count_text)
+        self.query_one("#trace-filter-counts", Static).update(self.wide_count_text)
         compact = self.query_one("#trace-filter-compact", Static)
         compact.display = self._compact
-        active = f"{self.state.active_count} active" if self.state.is_active else "none"
-        compact.update(f"Filters {self.count_text} · {active} · g edit")
+        copy = f"{self.count_text} · {self.state.active_count} active · g filters"
+        compact.update(Text(copy, no_wrap=True, overflow="ellipsis"))
 
     @on(Select.Changed)
     def _on_select_changed(self, event: Select.Changed) -> None:
@@ -410,3 +427,9 @@ class TraceFilterBar(Widget):
             TraceFiltersDialog(self.state, self.options),
             callback=self._dialog_dismissed,
         )
+
+    async def action_open_filters(self) -> None:
+        """Open the compact editor from the bar's actionable Tab stop."""
+
+        if self._compact:
+            await self.open_dialog()

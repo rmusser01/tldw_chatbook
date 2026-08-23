@@ -741,7 +741,9 @@ class TrajectoryScreen(ModalScreen[None]):
                     replace(self._filter_bar.state, time_range=None), emit=False
                 )
             else:
-                self._timeline.apply_brush(self._filter_bar.state.time_range)
+                self._timeline.apply_brush(
+                    self._filter_bar.state.time_range, emit=False
+                )
         # Keep collapsed turns and the search query; never shrink the window.
         self._visible_count = max(
             self._visible_count, min(self._total_records, PAGE_SIZE)
@@ -1473,7 +1475,7 @@ class TrajectoryScreen(ModalScreen[None]):
     def _on_trace_filters_changed(self, event: TraceFilterBar.Changed) -> None:
         event.stop()
         if event.state.time_range != self._timeline.brush:
-            self._timeline.apply_brush(event.state.time_range)
+            self._timeline.apply_brush(event.state.time_range, emit=False)
         self._render_ledger()
 
     @on(TrajectoryTimeline.TrajectoryBrushChanged)
@@ -1485,12 +1487,12 @@ class TrajectoryScreen(ModalScreen[None]):
 
     @on(TrajectoryTimeline.TrajectoryBarSelected)
     def _on_bar_selected(self, event: TrajectoryTimeline.TrajectoryBarSelected) -> None:
-        """Bar click: move the ledger cursor to that record's row.
+        """Accept one mouse/keyboard timeline selection transaction.
 
-        The widget clears its own brush before posting, so mirror that
-        here (the time filter drops; the SEARCH stays). If the record is
-        only paginated out, grow the mounted window to cover it; if the
-        search still hides it, that is a no-op on the cursor.
+        Search and non-time structured filters may reject the intent. An
+        old time brush may not: accepting an otherwise-visible record
+        clears that brush silently, reveals/pages the stable key, renders
+        once, and leaves timeline and ledger selection synchronized.
         """
         flat = list(self._all_records())
         try:
@@ -1502,25 +1504,28 @@ class TrajectoryScreen(ModalScreen[None]):
         except StopIteration:
             return  # unknown record (stale bar from a live snapshot): no-op
         key = self._record_key(selected_record)
-        if not self._record_matches(selected_record, self._query.lower()) or not (
-            self._filter_bar.state.matches(selected_record)
-        ):
+        state_without_time = replace(self._filter_bar.state, time_range=None)
+        if not self._record_matches(
+            selected_record, self._query.lower()
+        ) or not state_without_time.matches(selected_record):
             self._sync_timeline_selection()
             self.app.notify(
                 "Event is hidden by active Trace filters; selection unchanged.",
                 severity="information",
             )
             return
+
+        had_time_range = (
+            self._filter_bar.state.time_range is not None
+            or self._timeline.brush is not None
+        )
         if self._filter_bar.state.time_range is not None:
-            self._filter_bar.set_state(replace(self._filter_bar.state, time_range=None))
+            self._filter_bar.set_state(state_without_time, emit=False)
+        self._timeline.clear_range(emit=False)
+
         must_reveal = selected_record.turn_id in self._collapsed
         if must_reveal:
             self._collapsed.discard(selected_record.turn_id)
-            self._pending_restore_key = key
-            self._render_ledger()
-        if key in self._visible_keys:
-            self._move_cursor_to_key(key)
-            return
         try:
             flat_index = next(
                 i
@@ -1529,9 +1534,17 @@ class TrajectoryScreen(ModalScreen[None]):
             )
         except StopIteration:
             return  # unknown record (stale bar from a live snapshot): no-op
-        if flat_index < len(flat) - self._visible_count:
+        must_page = flat_index < len(flat) - self._visible_count
+        if must_page:
             self._visible_count = len(flat) - flat_index
+
+        if had_time_range or must_reveal or must_page or key not in self._visible_keys:
+            self._pending_restore_key = key
             self._render_ledger()
+
+        # ``_render_ledger`` uses the pending key while rebuilding, but an
+        # explicit best-effort move makes the accepted intent equally clear
+        # on both synchronous and future worker-backed paths.
         if key in self._visible_keys:
             self._move_cursor_to_key(key)
 

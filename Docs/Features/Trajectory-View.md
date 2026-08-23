@@ -33,9 +33,9 @@ The line under the title makes the current mode explicit:
 - Imported files show `READ-ONLY SHARED TRACE` and never write local data.
 - `LOADING`, `INCOMPLETE`, `NO TIMING`, `EMPTY`, and `NO MATCHES` explain why
   information is absent instead of leaving a blank ledger.
-- Search, structured filters, and time ranges show `shown/matching` plus the
-  trace total, so pagination is never mistaken for the complete result set;
-  `x` clears all of them.
+- Search, structured filters, and time ranges label **Shown**, **Matches**, and
+  **Total** separately, so pagination is never mistaken for the complete
+  result set; `x` clears all of them.
 - A failed ledger render or live refresh shows `FAILED · … · r retry` without
   exposing payload or exception text. While the single retry worker runs, the
   state changes to `RETRYING` and another retry cannot be started.
@@ -92,11 +92,12 @@ ordinary query text; press `escape`, then `x`, to clear filters.
 Filter by event kind, state, agent run, and provider; all selected dimensions,
 search, and the timeline range combine with AND semantics. The Agent options
 name actual primary/child run identities rather than model or user actors. At
-100 columns and wider, the four native selectors and the
-`shown/matching · total` count stay above the ledger. On narrower terminals,
-press **`g`** to edit the same filter state in a compact dialog; the one-line
-summary still shows counts and the number of active filters. `x` is the single
-clear-all action for search, structured filters, and the timeline range.
+100 columns and wider, the four native selectors and three explicit count rows
+stay above the ledger. On narrower terminals, focus the compact filter row and
+press **`enter`**, or press **`g`** anywhere, to edit the same state; its
+one-line summary shows shown, matching, and total counts plus the number of
+active filters. `x` is the single clear-all action for search, structured
+filters, and the timeline range.
 
 ## The timeline
 
@@ -104,14 +105,18 @@ The strip above the ledger projects each timed record at its real
 start/duration in named **Input**, **Model**, **Tools**, and **Agents** lanes.
 Distinct glyphs remain recognizable in monochrome; color is secondary:
 `◆` input / `◇` feedback, `━` model / `!` error, `▶` tool call / `◀` result,
-and `●` agent run / `○` agent step. Turn and child-agent boundary marks show
+and `●` agent run / `○` agent step. When an instantaneous child event shares
+its boundary cell, `◉` preserves run and `⊙` preserves step meaning. Turn and
+child-agent boundary marks show
 grouping without implying a fabricated serial dependency:
 
 - **Drag** horizontally to brush a time range — the ledger filters to
   records active in that range (composed with the search filter). The
   caption shows the range and the number of active records.
-- **Click** a bar to jump the ledger cursor to that record (clicking empty
-  space clears the brush).
+- **Click** a bar to jump the ledger cursor to that record. An accepted jump
+  outside the active time range clears the range atomically; search or another
+  structured filter can still reject the jump without changing selection.
+  Clicking empty space clears the brush.
 - **Wheel** zooms in/out centered on the mouse; when the timeline is
   focused, `[` / `]` zoom and `,` / `.` pan.
 - With timeline focus, **`j` / `k`** select the next/previous timed event,
@@ -176,7 +181,7 @@ shows its `no timing data` placeholder. New turns get the full treatment.
 | `e` | Load earlier records |
 | `f` | Resume tail-follow |
 | `r` | Retry a failed render or live refresh |
-| `g` | Open structured filters on compact terminals |
+| `g` (or `enter` on the compact filter row) | Open structured filters |
 | `x` | Clear search, structured filters, and timeline range |
 | `o` | Open an imported trace file (read-only) |
 | `n` / `p` | Next / previous visible match |
