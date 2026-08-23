@@ -189,16 +189,24 @@ class _BlockAfterAcceptedController(_FakeController):
         self.direct_visual = self.visual
         self.resolve_started = asyncio.Event()
         self.resolve_release = asyncio.Event()
+        self.stale_resolve_completed = asyncio.Event()
+        self.next_resolve_started = asyncio.Event()
+        self.blocked_resolves = 0
 
     async def resolve_current_visual(self, *, cols: int, lines: int):
         self.resolve_sizes.append((cols, lines))
         if not self.block:
             return self.visual
+        self.blocked_resolves += 1
         visual = self.direct_visual
-        self.resolve_started.set()
+        if self.blocked_resolves == 1:
+            self.resolve_started.set()
+        else:
+            self.next_resolve_started.set()
         await self.resolve_release.wait()
         self.resolve_release.clear()
-        self.resolve_started.clear()
+        if self.blocked_resolves == 1:
+            self.stale_resolve_completed.set()
         return visual
 
 
@@ -295,8 +303,8 @@ def _visual_with_frame(
     controller: _FakeController,
     *,
     label: str,
-    width: int,
-    height: int,
+    width: object,
+    height: object,
 ) -> PersonaBuddyVisualSnapshot:
     frame = SimpleNamespace(
         cache_identity=f"cache-{label}",
@@ -624,7 +632,7 @@ async def test_accepted_visual_uses_one_maximum_frame_box_without_jitter():
     async with app.run_test(size=(80, 24)):
         buddy = app.screen.query_one(PersonaBuddyWidget)
         await _wait_until(lambda: "SMALL" in _compositor_text(app.screen))
-        await _wait_until(lambda: buddy.region.size == (16, 12))
+        await _wait_until(lambda: buddy.region.size == (22, 12))
 
         accepted = buddy._accepted_render
         assert accepted is not None
@@ -648,7 +656,7 @@ async def test_single_frame_fits_to_content_without_persisting_dimensions():
     app = _BuddyApp(controller)
     async with app.run_test(size=(80, 24)):
         buddy = app.screen.query_one(PersonaBuddyWidget)
-        await _wait_until(lambda: buddy.region.size == (16, 12))
+        await _wait_until(lambda: buddy.region.size == (22, 12))
 
         assert controller.preferences.geometry.width == 28
         assert controller.preferences.geometry.height == 12
@@ -666,6 +674,88 @@ async def test_single_frame_fits_to_content_without_persisting_dimensions():
 
 
 @pytest.mark.asyncio
+async def test_undersized_accepted_frame_keeps_labelled_controls_operable():
+    controller = _FakeController(
+        frames=("FITTED",),
+        frame_sizes=((12, 10),),
+    )
+    app = _BuddyApp(controller)
+    async with app.run_test(size=(80, 24)) as pilot:
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        await _wait_until(lambda: "FITTED" in _compositor_text(app.screen))
+        await _wait_until(lambda: buddy.region.width == 22)
+        await pilot.pause()
+        collapse = buddy.query_one("#persona-buddy-collapse", Button)
+        close = buddy.query_one("#persona-buddy-close", Button)
+        frame = buddy.query_one("#persona-buddy-frame", Static)
+
+        assert buddy.region.width == 22
+        assert frame.content_region.width == 12
+        assert buddy.region.right <= app.size.width
+        for control in (collapse, close):
+            assert buddy.region.contains_region(control.region)
+            assert str(control.label) in _compositor_text(app.screen)
+            target, _ = app.screen.get_widget_at(
+                control.region.x + control.region.width // 2,
+                control.region.y + control.region.height // 2,
+            )
+            assert target is control
+
+
+@pytest.mark.asyncio
+async def test_empty_direct_visual_uses_operable_fail_soft_box():
+    controller = _FakeController(frames=())
+    app = _BuddyApp(controller)
+    async with app.run_test(size=(80, 24)):
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        await _wait_until(lambda: buddy._accepted_render is not None)
+
+        accepted = buddy._accepted_render
+        assert accepted is not None
+        assert (accepted.content_width, accepted.content_height) == (10, 4)
+        assert buddy.region.size == (22, 11)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("width", "height"), ((0, 10), (12, True)))
+async def test_invalid_direct_dimensions_cannot_replace_accepted_render(
+    width: object,
+    height: object,
+):
+    controller = _FakeController(
+        frames=("CURRENT",),
+        frame_sizes=((12, 10),),
+    )
+    app = _BuddyApp(controller)
+    async with app.run_test(size=(80, 24)):
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        await _wait_until(lambda: "CURRENT" in _compositor_text(app.screen))
+        accepted = buddy._accepted_render
+        accepted_region = buddy.region
+
+        controller.visual = _visual_with_frame(
+            controller,
+            label="INVALID",
+            width=width,
+            height=height,
+        )
+        controller.generation += 1
+        buddy.refresh_from_controller()
+        await _wait_until(
+            lambda: (
+                len(controller.resolve_sizes) == 2
+                and buddy._resolution_worker is not None
+                and buddy._resolution_worker.is_finished
+            )
+        )
+
+        assert buddy._accepted_render is accepted
+        assert buddy.region == accepted_region
+        assert "CURRENT" in _compositor_text(app.screen)
+        assert "INVALID" not in _compositor_text(app.screen)
+
+
+@pytest.mark.asyncio
 async def test_accepted_self_fit_does_not_advance_viewport_or_reresolve():
     controller = _ViewportGenerationController(
         frames=("FITTED",),
@@ -675,7 +765,11 @@ async def test_accepted_self_fit_does_not_advance_viewport_or_reresolve():
     async with app.run_test(size=(80, 24)) as pilot:
         buddy = app.screen.query_one(PersonaBuddyWidget)
         frame = buddy.query_one("#persona-buddy-frame", Static)
-        await _wait_until(lambda: frame.content_region.size == (12, 5))
+        await _wait_until(lambda: buddy.region.size == (22, 12))
+        assert frame.content_region.size == (12, 5)
+        accepted = buddy._accepted_render
+        assert accepted is not None
+        assert (accepted.content_width, accepted.content_height) == (12, 5)
         await asyncio.sleep(0.25)
 
         assert controller.viewport_updates == [1]
@@ -697,7 +791,7 @@ async def test_prior_budget_snapshot_visual_cannot_refit_current_view():
     app = _BuddyApp(controller)
     async with app.run_test(size=(80, 24)):
         buddy = app.screen.query_one(PersonaBuddyWidget)
-        await _wait_until(lambda: buddy.region.size == (14, 11))
+        await _wait_until(lambda: buddy.region.size == (22, 11))
         assert "CURRENT" in _compositor_text(app.screen)
         accepted_region = buddy.region
 
@@ -720,8 +814,8 @@ async def test_prior_budget_snapshot_visual_cannot_refit_current_view():
         controller.visual = stale
         buddy.refresh_from_controller(schedule_resolution=False)
         controller.resolve_release.set()
-        await _wait_until(lambda: controller.resolve_started.is_set())
-        await asyncio.sleep(0)
+        await asyncio.wait_for(controller.stale_resolve_completed.wait(), timeout=1)
+        await asyncio.wait_for(controller.next_resolve_started.wait(), timeout=1)
 
         assert "CURRENT" in _compositor_text(app.screen)
         assert "PRIOR-BUDGET" not in _compositor_text(app.screen)
@@ -737,7 +831,7 @@ async def test_prior_viewport_direct_result_cannot_replace_accepted_render():
     app = _BuddyApp(controller)
     async with app.run_test(size=(80, 24)):
         buddy = app.screen.query_one(PersonaBuddyWidget)
-        await _wait_until(lambda: buddy.region.size == (14, 11))
+        await _wait_until(lambda: buddy.region.size == (22, 11))
         assert "CURRENT" in _compositor_text(app.screen)
         accepted_region = buddy.region
 
@@ -757,8 +851,8 @@ async def test_prior_viewport_direct_result_cannot_replace_accepted_render():
         controller.visual = stale
         buddy.refresh_from_controller(schedule_resolution=False)
         controller.resolve_release.set()
-        await _wait_until(lambda: controller.resolve_started.is_set())
-        await asyncio.sleep(0)
+        await asyncio.wait_for(controller.stale_resolve_completed.wait(), timeout=1)
+        await asyncio.wait_for(controller.next_resolve_started.wait(), timeout=1)
 
         assert "CURRENT" in _compositor_text(app.screen)
         assert "PRIOR-VIEWPORT" not in _compositor_text(app.screen)

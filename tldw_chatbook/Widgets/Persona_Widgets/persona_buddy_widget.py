@@ -38,6 +38,7 @@ _BOUNDARY_SIZE = 2
 # Task 2 removes these current panel padding and text-row costs.
 _CURRENT_CHROME_HORIZONTAL_OVERHEAD = _BOUNDARY_SIZE + 2
 _CURRENT_CHROME_VERTICAL_OVERHEAD = _BOUNDARY_SIZE + 5
+_CURRENT_CHROME_MIN_WIDTH = _MIN_WIDTH + _CURRENT_CHROME_HORIZONTAL_OVERHEAD
 _DUAL_CONTROL_WIDTH = 14
 _COLLAPSED_HEIGHT = 3
 _COMPACT_HEIGHT = 1
@@ -639,8 +640,11 @@ class PersonaBuddyWidget(Widget, can_focus=True):
                 height = min(_COLLAPSED_HEIGHT, viewport.height)
             elif self._accepted_render is not None:
                 width = min(
-                    self._accepted_render.content_width
-                    + _CURRENT_CHROME_HORIZONTAL_OVERHEAD,
+                    max(
+                        _CURRENT_CHROME_MIN_WIDTH,
+                        self._accepted_render.content_width
+                        + _CURRENT_CHROME_HORIZONTAL_OVERHEAD,
+                    ),
                     viewport.width,
                 )
                 height = min(
@@ -674,6 +678,15 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         self.styles.width = clamped.width
         self.styles.height = clamped.height
         self.absolute_offset = Offset(clamped.x, clamped.y)
+        frame = self.query_one("#persona-buddy-frame", Static)
+        accepted = self._accepted_render
+        frame.styles.width = (
+            accepted.content_width
+            if accepted is not None
+            and not self.has_class("persona-buddy-compact")
+            and not (self._snapshot and self._snapshot.collapsed)
+            else "100%"
+        )
 
     def on_mouse_down(self, event: events.MouseDown) -> None:
         """Arm header drag or lower-right resize for the real terminal event shape."""
