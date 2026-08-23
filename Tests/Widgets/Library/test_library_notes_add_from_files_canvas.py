@@ -103,6 +103,12 @@ class _Host(App[None]):
         self.messages.append(message)
 
 
+class _HostWithExternalControl(_Host):
+    def compose(self) -> ComposeResult:
+        yield Button("External control", id="external-control")
+        yield LibraryNotesAddFromFilesCanvas(self.snapshot)
+
+
 def _frame(app: App[None]) -> str:
     return "\n".join(strip.text for strip in app.screen._compositor.render_strips())
 
@@ -634,6 +640,114 @@ async def test_new_token_focus_request_survives_full_review_recompose() -> None:
             lambda: app.focused is app.query_one("#notes-sync-conflict-view-0", Button),
             message="new-token focus request was lost during full recompose",
         )
+
+
+@pytest.mark.parametrize("origin_selector", ("#notes-sync-apply", "#notes-sync-back"))
+async def test_new_token_focus_request_accepts_old_canvas_action_origin(
+    origin_selector: str,
+) -> None:
+    snapshot = replace(
+        initial_lasting_sync_snapshot(lasting_available=True),
+        phase="review",
+        review=_conflict_review(selected=NotesSyncConflictChoice.KEEP_FILE),
+    )
+    app = _Host(snapshot)
+
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        canvas = app.query_one(LibraryNotesAddFromFilesCanvas)
+        app.query_one(origin_selector, Button).focus()
+        await pilot.pause()
+
+        canvas.sync_state(
+            replace(
+                snapshot,
+                review=replace(snapshot.review, observation_token="d" * 64),
+                conflict_focus_binding_id="bind-1",
+            )
+        )
+
+        await _wait_for(
+            pilot,
+            lambda: app.focused is app.query_one("#notes-sync-conflict-view-0", Button),
+            message=f"focus request did not survive recompose from {origin_selector}",
+        )
+
+
+async def test_new_token_focus_request_does_not_steal_external_newer_focus(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = replace(
+        initial_lasting_sync_snapshot(lasting_available=True),
+        phase="review",
+        review=_conflict_review(),
+    )
+    app = _HostWithExternalControl(snapshot)
+
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        canvas = app.query_one(LibraryNotesAddFromFilesCanvas)
+        back = app.query_one("#notes-sync-back", Button)
+        back.focus()
+        await pilot.pause()
+        pending: list[tuple[tuple[str, str, str], object, bool]] = []
+        focus_requested_conflict = canvas._focus_requested_conflict
+        monkeypatch.setattr(
+            canvas,
+            "_focus_requested_conflict",
+            lambda request, focused, focused_in_canvas: pending.append(
+                (request, focused, focused_in_canvas)
+            ),
+        )
+
+        canvas.sync_state(
+            replace(
+                snapshot,
+                review=replace(snapshot.review, observation_token="d" * 64),
+                conflict_focus_binding_id="bind-1",
+            )
+        )
+        await _wait_for(
+            pilot,
+            lambda: bool(pending),
+            message="focus request callback was not scheduled after recompose",
+        )
+        external = app.query_one("#external-control", Button)
+        external.focus()
+        await pilot.pause()
+
+        request, focused, focused_in_canvas = pending.pop()
+        focus_requested_conflict(request, focused, focused_in_canvas)
+        await pilot.pause()
+
+        assert app.focused is external
+
+
+async def test_new_token_focus_request_rejects_external_origin() -> None:
+    snapshot = replace(
+        initial_lasting_sync_snapshot(lasting_available=True),
+        phase="review",
+        review=_conflict_review(),
+    )
+    app = _HostWithExternalControl(snapshot)
+
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        canvas = app.query_one(LibraryNotesAddFromFilesCanvas)
+        external = app.query_one("#external-control", Button)
+        external.focus()
+        await pilot.pause()
+
+        canvas.sync_state(
+            replace(
+                snapshot,
+                review=replace(snapshot.review, observation_token="d" * 64),
+                conflict_focus_binding_id="bind-1",
+            )
+        )
+        await pilot.pause()
+
+        assert app.focused is external
 
 
 async def test_normal_new_token_recompose_does_not_focus_a_conflict() -> None:

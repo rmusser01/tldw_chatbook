@@ -971,27 +971,54 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             return
         self._scheduled_conflict_focus_request = request
         focused = self.screen.focused
-        self.call_after_refresh(self._focus_requested_conflict, request, focused)
+        focused_in_canvas = focused is self or (
+            focused is not None and self in focused.ancestors
+        )
+        self.call_after_refresh(
+            self._defer_requested_conflict_focus,
+            request,
+            focused,
+            focused_in_canvas,
+        )
+
+    def _defer_requested_conflict_focus(
+        self,
+        request: tuple[str, str, str],
+        focused: Widget | None,
+        focused_in_canvas: bool,
+    ) -> None:
+        self.call_after_refresh(
+            self._focus_requested_conflict,
+            request,
+            focused,
+            focused_in_canvas,
+        )
 
     def _focus_requested_conflict(
         self,
         request: tuple[str, str, str],
         focused: Widget | None,
+        focused_in_canvas: bool,
     ) -> None:
         """Honor one fresh focus request without stealing newer user focus."""
 
         view = self._requested_conflict_view(request)
         current_focus = self.screen.focused
-        replaced_target_lost_focus = (
-            focused is not None
-            and not focused.is_mounted
-            and isinstance(focused, Button)
-            and focused.has_class("notes-sync-conflict-view")
-            and focused.name == request[2]
+        same_canvas_origin = (
+            focused_in_canvas
+            and focused is not None
+            and focused.is_attached
+            and current_focus is focused
+        )
+        no_initial_origin = focused is None and current_focus is None
+        old_canvas_origin_lost_focus = (
+            focused_in_canvas
+            and focused is not None
+            and not focused.is_attached
             and current_focus is None
         )
-        if view is None or (
-            current_focus is not focused and not replaced_target_lost_focus
+        if view is None or not (
+            same_canvas_origin or no_initial_origin or old_canvas_origin_lost_focus
         ):
             return
         view.focus()
