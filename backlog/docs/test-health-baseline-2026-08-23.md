@@ -1,7 +1,8 @@
 # Test-suite health baseline — 2026-08-23
 
-Pinned at `origin/dev` **`b2b1e2e0d3c6d144388aba67cbd4bee123f35665`**, plus the two
-repairs this baseline required to be measurable at all (TASK-20972, TASK-19570.1).
+Measured at `origin/dev` **`b2b1e2e0d3c6d144388aba67cbd4bee123f35665`**; rebased onto
+`73a43c71f` for review. Two repairs were needed before it could be measured at all:
+TASK-20972 (fixed on dev by `1796ff16a`, not by this branch -- see §4) and TASK-19570.1.
 
 Environment: macOS 24.6.0, `.venv` Python 3.12.11, pytest 8.4.2, pytest-xdist 3.8.0,
 textual 8.2.8 (the exact pin). Every optional group installed, so nothing is skipped
@@ -21,8 +22,9 @@ for want of a dependency.
 | **UI** (`Tests/UI`) | 14,424 | 428 | 28 | 5 | CI run 32647831275, 12 shards |
 | **Total** | ~56,859 | ~572 | 31 | 234 | |
 
-Repo-wide collection: **58,023 tests collected, exit 0, zero collection errors.**
-It exited non-zero before TASK-20972.
+Repo-wide collection: **58,023 tests collected, exit 0, zero collection errors** at the
+measured commit; **58,066** re-verified at the rebase target `73a43c71f`. It exited
+non-zero until TASK-20972's collection error was fixed.
 
 **The suite is far healthier than its reputation.** The core half fails at 0.34%. The
 problem is not that the suite is bad; it is that nothing has been reading it.
@@ -63,7 +65,7 @@ Six causes account for well over half of everything red.
 | **C** | `types.SimpleNamespace` app doubles missing attributes production now calls (`run_worker`, `_library_note_import_execution_active`, …) | 20 | 5 | open |
 | **D** | `Docs` MCP inventory drifted from the code it documents | — | 14 | open |
 | **E** | Prompt-browse settle race | 19 | — | open |
-| **F** | Broken `@parametrize` aborting collection repo-wide | 24 | — | **Fixed**, TASK-20972 |
+| **F** | Displaced `@parametrize` block aborting collection repo-wide | 24 | — | **Fixed on dev**, `1796ff16a` |
 
 **A, B and C are one family**: the harness presents production with something it no
 longer recognises — a fresh profile, a half-built screen, a stub grown stale. That, not
@@ -93,7 +95,28 @@ by the egress guard — they were never stubbed, and the guard is doing its job.
 
 ---
 
-## 4. How this was measured, and how to reproduce it
+## 4. A correction worth keeping
+
+The TASK-20972 collection error was two `@pytest.mark.parametrize` decorators declaring
+five parameters above `test_wide_files_task_return_restores_database_browse_receipt`,
+whose signature takes none.
+
+This branch originally **deleted** them, on the evidence that the test was introduced
+without them and that its body references none of the five. Both facts are true and the
+conclusion drawn from them -- "debris, never wired up, no coverage lost" -- was wrong.
+`1796ff16a` on dev shows what actually happened: the block had **slid up by one test**.
+It belongs to `test_path_transition_authority_names_file_operation_and_settles`, which
+takes all five parameters by name. The correct repair moves the decorators down; deleting
+them would have silently dropped four real parametrized cases while leaving collection
+green and every assertion passing.
+
+**The lesson generalises:** when a decorator block does not fit the function beneath it,
+check the function *below* it before concluding it is debris. A displaced decorator and an
+abandoned one are indistinguishable from the signature mismatch alone, and only one of the
+two resolutions preserves coverage. "The body does not reference these names" is evidence
+of displacement, not of worthlessness.
+
+## 5. How this was measured, and how to reproduce it
 
 Two things silently corrupt any run here and are worth stating plainly.
 
@@ -110,7 +133,7 @@ marker per chunk so a killed run resumes at chunk granularity. Hour-scale single
 invocations are not completable on this machine — concurrent sessions kill them, and
 190 worktrees share this checkout.
 
-## 5. What this baseline does not cover
+## 6. What this baseline does not cover
 
 - **`Tests/UI` was not re-measured locally**; its numbers come from CI run 32647831275,
   whose head is `ac1aa2da5` on `fix/inventory-drift-21100` — near dev, but not dev.
