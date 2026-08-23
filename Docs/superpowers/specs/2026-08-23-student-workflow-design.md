@@ -196,7 +196,8 @@ pattern; the spec's §11-equivalent is this section).
 6. **The upgraded student story (§7.6 of #4's test, extended):** the full
    read path from #4's test now *saves* the Chapter-7 note, re-reads it
    through `library_get_note`, and a **re-run leg** proves
-   list-first + update-not-duplicate; the flashcard convention leg saves a
+   search-first (the third-review correction to "list-first") +
+   update-not-duplicate; the flashcard convention leg saves a
    QA-note and re-reads it.
 7. Suites: `Tests/Library/`, the notes scope/interop suites touched,
    `Tests/RuntimePolicy/`, MCP local-control.
