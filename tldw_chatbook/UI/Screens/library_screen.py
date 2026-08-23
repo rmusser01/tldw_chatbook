@@ -1754,6 +1754,35 @@ def _sync_library_canvas(
 
     except Exception:
         logger.debug(f"Library {kind} canvas sync failed.")
+        # task-21116 review, M3: a targeted canvas projection detaches the
+        # canvas host's child for the duration of its remove/mount await.
+        # Any sync landing inside that window cannot find its canvas and
+        # would take this fallback -- firing the very whole-screen
+        # recompose the conversion removed, and racing a fresh
+        # same-id canvas into the in-flight ``mount`` (observed:
+        # ``DuplicateIds`` on '#library-media-canvas', then a 30 s pilot
+        # stall). Reproduced BOTH ways: detaching the host and calling this
+        # helper fires exactly one whole-screen recompose, and a real
+        # viewer-back whose list reload outlives the swap does the same --
+        # the shipped tests missed it only because their in-memory service
+        # always won the race.
+        #
+        # Suppressing is safe rather than lossy: the projection rebuilds
+        # the destination child from CURRENT screen state, so the state
+        # this sync wanted to paint is picked up by the projection itself.
+        # ``then`` is deliberately not run -- it is a focus/scroll
+        # follow-up, and the projection owns focus through its own
+        # ``then=`` (whose callback is ordered after the new children
+        # mount); running it here would target children about to be
+        # replaced, the stranded-focus shape task-15457 recorded.
+        if getattr(screen, "_library_canvas_projection_depth", 0) > 0:
+            logger.debug(
+                f"Library {kind} canvas sync suppressed: a targeted "
+                "projection owns the canvas host."
+            )
+            if then is not None and isinstance(canvas, PostRecomposeCallback):
+                canvas.queue_after_recompose(None)
+            return False
         if allow_screen_fallback:
             screen.refresh(recompose=True)
             if then is not None:
@@ -3777,6 +3806,17 @@ class LibraryScreen(BaseAppScreen):
             tuple[int, tuple[object, ...]] | None
         ) = None
         self._library_entry_focus_capture: _LibraryEntryFocusCapture | None = None
+        #: task-21116 review (M3). Non-zero while a targeted canvas
+        #: projection (``_replace_library_canvas_child``) has the canvas
+        #: host's child detached across its remove/mount awaits. A
+        #: ``_sync_library_canvas`` landing in that window cannot find its
+        #: canvas, and its whole-screen fallback would both undo this
+        #: task's conversion and race a duplicate-id canvas into the
+        #: in-flight mount -- so the fallback is suppressed while this is
+        #: set. A DEPTH counter, not a bool: nested/overlapping
+        #: projections must not have the inner one's exit clear the outer
+        #: one's window.
+        self._library_canvas_projection_depth: int = 0
         self._seed_local_source_snapshot_from_cache()
 
     def _library_route_shortcuts_for_current_state(
@@ -8129,13 +8169,10 @@ class LibraryScreen(BaseAppScreen):
                 state, id="library-conversations-canvas"
             )
         if shell.canvas_kind == "media":
-            if self._library_media_view == "trash":
-                trash_state = self._build_library_media_trash_state()
-                self._selected_media_trash_id = trash_state.selected_id
-                return LibraryMediaTrashCanvas(
-                    trash_state,
-                    id="library-media-trash-canvas",
-                )
+            # Every media view (list / viewer / trash) resolves through the
+            # one shared builder -- the duplicated "trash" check that used
+            # to live here is exactly what let the builder itself go
+            # missing one (task-21116 review, M1).
             return self._build_library_media_active_child()
         if shell.canvas_kind in (
             LIBRARY_CANVAS_KIND_NOTES,
@@ -8246,14 +8283,34 @@ class LibraryScreen(BaseAppScreen):
         )
 
     async def _repair_library_entry_canvas_owner(self) -> bool:
-        """Converge an interrupted child swap on the latest route, in place."""
+        """Converge an interrupted child swap on the latest route, in place.
+
+        Two review-round (m3) hardenings:
+
+        * the generation/route pair is captured AFTER the builder runs.
+          ``_build_library_entry_active_child`` RESOLVES state as it builds
+          (the media arm mirrors the resolved ``_selected_media_id`` back
+          onto the screen, and that field is part of the route key), so
+          capturing first made this loop see its own builder's resolution
+          as a newer navigation -- the identical shape as the supersede
+          defect found in ``_apply_library_open_item_surface``. It
+          self-healed in one iteration, but only by spinning.
+        * the iteration count is bounded. Every ``continue`` path here is
+          await-free, so a mismatch that does NOT clear would spin this
+          loop hot rather than merely retry it.
+        """
         mount_failures = 0
-        while self.is_mounted:
-            generation = self._library_snapshot_state_generation
-            route_key = self._library_entry_route_key()
+        # Bounded purely as a hot-spin guard: convergence normally happens
+        # on the first or second pass.
+        for _attempt in range(8):
+            if not self.is_mounted:
+                break
             replacement = self._build_library_entry_active_child()
             if replacement is None:
                 return False
+            # Captured AFTER the builder -- see the docstring.
+            generation = self._library_snapshot_state_generation
+            route_key = self._library_entry_route_key()
             try:
                 canvas_host = self.query_one("#library-canvas", Vertical)
             except (NoMatches, QueryError):
@@ -8267,6 +8324,12 @@ class LibraryScreen(BaseAppScreen):
                 if self._library_entry_reconcile_is_current(generation, route_key):
                     return self._sync_library_entry_owner_from_current_state(owner)
                 continue
+            # This loop detaches the host's child across awaits too, so it
+            # holds the same projection marker: a ``_sync_library_canvas``
+            # landing inside the window must suppress its whole-screen
+            # fallback rather than race a duplicate-id canvas into the
+            # mount (review round, M3).
+            self._library_canvas_projection_depth += 1
             try:
                 outgoing = tuple(canvas_host.children)
                 for child in outgoing:
@@ -8290,6 +8353,8 @@ class LibraryScreen(BaseAppScreen):
                 )
                 if mount_failures >= 2:
                     return False
+            finally:
+                self._library_canvas_projection_depth -= 1
         return False
 
     def _schedule_library_entry_canvas_repair(self) -> None:
@@ -8392,6 +8457,43 @@ class LibraryScreen(BaseAppScreen):
         if not self._library_entry_reconcile_is_current(generation, route_key):
             return LibraryEntryReconcileResult.SUPERSEDED
 
+        # From here the canvas host's child is detached across awaits.
+        # Mark the window so a ``_sync_library_canvas`` landing inside it
+        # suppresses its whole-screen fallback instead of racing a
+        # duplicate-id canvas into the in-flight mount (review round, M3).
+        # try/finally rather than an inline guard: this region has eight
+        # early returns.
+        self._library_canvas_projection_depth += 1
+        try:
+            return await self._project_library_canvas_child(
+                widget,
+                canvas_host=canvas_host,
+                generation=generation,
+                route_key=route_key,
+                focus_identity=focus_identity,
+                restore_focus=restore_focus,
+                then=then,
+            )
+        finally:
+            self._library_canvas_projection_depth -= 1
+
+    async def _project_library_canvas_child(
+        self,
+        widget: Widget,
+        *,
+        canvas_host: Vertical,
+        generation: int,
+        route_key: tuple[object, ...],
+        focus_identity: LibraryEntryFocusIdentity | None,
+        restore_focus: Callable[[], bool] | None,
+        then: Callable[[], None] | None,
+    ) -> LibraryEntryReconcileResult:
+        """Swap the canvas host's child and synchronize the new owner.
+
+        Split out of ``_replace_library_canvas_child`` purely so that its
+        caller can hold ``_library_canvas_projection_depth`` across every
+        one of this region's early-return paths (review round, M3).
+        """
         outgoing = tuple(canvas_host.children)
         try:
             for child in outgoing:
@@ -8605,7 +8707,30 @@ class LibraryScreen(BaseAppScreen):
             self.refresh(recompose=True)
             if then is not None:
                 then()
-        # SUPERSEDED is deliberately NOT a fallback: the generation/route
+        elif (
+            result is LibraryEntryReconcileResult.SUPERSEDED
+            and then is not None
+            and route_key == self._library_entry_route_key()
+        ):
+            # A GENERATION-only supersede is not a navigation (review round,
+            # M4). ``_library_entry_reconcile_is_current`` compares the
+            # snapshot generation as well as the route key, and the ORDINARY
+            # local-source snapshot bumps that generation -- one that
+            # ``_exit_library_media_viewer`` itself kicks (via
+            # ``_load_library_media_list_if_needed``) a line before
+            # scheduling this projection. A snapshot landing mid-await
+            # therefore dropped the follow-up, silently losing BOTH the
+            # task-2856 AC1 first-row focus and the media_return scroll
+            # restore that the pre-conversion code armed unconditionally.
+            #
+            # The route is unchanged here, so the destination is still ours
+            # and the follow-up is still meaningful; the reconcile pass the
+            # new generation schedules repaints the canvas. A genuine
+            # ROUTE-change supersede still skips it -- that is the
+            # TASK-15706 transitioning-surface rule, and it is the only
+            # case the branch below now covers.
+            then()
+        # A ROUTE-change SUPERSEDED is deliberately NOT a fallback: the route
         # moved mid-await, so a newer navigation owns the canvas and will
         # paint (or already painted) its own surface -- rebuilding the
         # whole screen here is exactly the transitioning-surface stomp
@@ -8620,10 +8745,18 @@ class LibraryScreen(BaseAppScreen):
         and rebuilding an unrelated mounted surface is the TASK-15706
         transition stomp.
 
+        The Trash view is one of those "no longer owns it" cases (review
+        round, M1): it is a distinct surface with its own updater
+        (``_sync_library_canvas(self, "media-trash")``), so a media-detail
+        worker landing after the user pressed "Trash" must leave it alone
+        rather than remount it and drop its selection.
+
         Returns:
             None.
         """
         if self._library_selected_row_id != LIBRARY_ROW_BROWSE_MEDIA:
+            return
+        if self._library_media_view == "trash":
             return
         await self._apply_library_open_item_surface(
             self._build_library_media_active_child
@@ -31752,7 +31885,29 @@ class LibraryScreen(BaseAppScreen):
             )
 
     def _build_library_media_active_child(self) -> Widget:
-        """Build the current Media viewer/loading child or its list fallback."""
+        """Build the media child for the CURRENT ``_library_media_view``.
+
+        Covers all three of the media canvas's views. The "trash" branch is
+        not decoration: this builder is the shared source of truth for
+        "which media child is current", and before task-21116's review round
+        it silently fell through to the LIST canvas for a screen sitting in
+        the Trash view -- unlike ``compose_content`` and
+        ``_build_library_entry_active_child``, which both checked "trash"
+        first. A media-detail worker resolving after the user pressed
+        "Trash" therefore mounted the list over the mounted
+        ``LibraryMediaTrashCanvas`` while ``_library_media_view`` stayed
+        "trash", diverging the DOM from the state and breaking the
+        follow-on ``_sync_library_canvas(self, "media-trash")``. The
+        route-key supersede guard cannot catch that: the view is INSIDE the
+        route key, so the key stays self-consistent.
+        """
+        if self._library_media_view == "trash":
+            trash_state = self._build_library_media_trash_state()
+            self._selected_media_trash_id = trash_state.selected_id
+            return LibraryMediaTrashCanvas(
+                trash_state,
+                id="library-media-trash-canvas",
+            )
         if self._library_media_view != "viewer":
             media_state = self._build_library_media_state()
             self._selected_media_id = media_state.selected_id
@@ -31863,6 +32018,17 @@ class LibraryScreen(BaseAppScreen):
                     "Mouse-capture release before media viewer sync skipped.",
                     exc_info=True,
                 )
+        # The retired whole-screen recompose re-ran ``compose_content``,
+        # which re-registers the footer shortcut set on every pass. This
+        # seam does not, and the set genuinely differs across the flip the
+        # caller just made: ``_library_route_shortcuts_for_current_state``
+        # branches on ``_library_media_viewer_substate_active()``, so
+        # without this the footer kept advertising the sub-state's "back a
+        # step" after Escape had already returned to the plain viewer,
+        # where Escape means "back to list" (review round, M2). Registered
+        # here rather than in each of Escape's three branches so no future
+        # sub-state can be added without it.
+        self._register_footer_shortcuts()
         viewer = self._mounted_library_media_viewer()
         if viewer is None or not self._sync_library_media_viewer_state(viewer):
             self.refresh(recompose=True)
