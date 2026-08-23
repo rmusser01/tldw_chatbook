@@ -182,7 +182,6 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "Failed to restore a Library media item in bulk-delete undo": (
             "type(exc).__name__",
         ),
-        "Failed to persist a Library notes setting": (),
         "Failed to persist the Library ingest backend": (),
         "Failed to persist Library ingest options": (),
         "Failed to restore a Library note": (),
