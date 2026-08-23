@@ -19,6 +19,8 @@ from textual.containers import VerticalScroll
 from textual.widgets import Button, Input, Static
 
 import tldw_chatbook.UI.Console_Modules.session as session_module
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+
 from tldw_chatbook.Character_Chat.visual_identity import (
     SAMIRA_EXPRESSION_KEYS,
     SAMIRA_REACTION_LABELS,
@@ -68,7 +70,7 @@ def _samira_options() -> tuple[ReactionOption, ...]:
     )
 
 
-class PickerHarness(App[None]):
+class PickerHarness(ConsolidatedCSSApp):
     def __init__(
         self,
         options: tuple[ReactionOption, ...],

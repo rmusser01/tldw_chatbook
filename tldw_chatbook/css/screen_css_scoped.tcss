@@ -8,6 +8,68 @@
  * Edit those declarations, then re-run build_css.py.
  * ======================================== */
 
+/* ===== WIDGET: SiteConfigSettings (UI/SiteConfigSettings.py) ===== */
+
+
+
+    SiteConfigSettings .site-list-container {
+        height: 100%;
+        width: 40%;
+        border: solid $primary;
+        padding: 1;
+    }
+
+    SiteConfigSettings .site-config-container {
+        height: 100%;
+        width: 60%;
+        border: solid $secondary;
+        padding: 1;
+        margin-left: 1;
+    }
+
+    SiteConfigSettings .config-header {
+        height: 3;
+        background: $surface;
+        padding: 0 1;
+        margin-bottom: 1;
+    }
+
+    SiteConfigSettings .config-section {
+        margin-bottom: 2;
+        padding: 1;
+        border: solid $accent;
+    }
+
+    SiteConfigSettings .section-title {
+        color: $text;
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    SiteConfigSettings .config-table {
+        margin: 1 0;
+        height: auto;
+        max-height: 15;
+    }
+
+    SiteConfigSettings .action-buttons {
+        dock: bottom;
+        height: 3;
+        padding: 1 0;
+    }
+
+    SiteConfigSettings .preset-selector {
+        width: 100%;
+        margin: 1 0;
+    }
+
+    SiteConfigSettings .stats-display {
+        padding: 1;
+        background: $surface;
+        margin: 1 0;
+    }
+
+
 /* ===== WIDGET: NoteSelectionDialog (Widgets/Note_Widgets/note_selection_dialog.py) ===== */
 
 

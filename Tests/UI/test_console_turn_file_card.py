@@ -11,6 +11,8 @@ from textual import on
 from textual.app import App, ComposeResult
 from textual.widgets import Button
 
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+
 from tldw_chatbook.css import build_css
 from tldw_chatbook.Widgets.Console.console_turn_file_card import (
     MAX_MOUNTED_HUNKS,
@@ -129,7 +131,7 @@ class _NotesCapableMultiHunkProvider(_MultiHunkProvider):
         raise NotImplementedError("not exercised by this test")
 
 
-class _Host(App):
+class _Host(ConsolidatedCSSApp):
     CSS_PATH = [str(_SELF), str(_CSS_DIR / "tldw_cli_modular.tcss"), str(_SCOPED)]
 
     def compose(self) -> ComposeResult:

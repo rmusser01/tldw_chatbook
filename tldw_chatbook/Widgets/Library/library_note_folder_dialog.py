@@ -21,7 +21,7 @@ class LibraryNoteFolderNameDialog(SafeModalDismissMixin, ModalScreen[str | None]
     SAFE_MODAL_CONTENT = "#library-note-folder-name-dialog"
     AUTO_FOCUS = "#library-note-folder-name"
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     LibraryNoteFolderNameDialog { align: center middle; }
     LibraryNoteFolderNameDialog > Vertical {
         width: 56; height: auto; padding: 1 2;
@@ -81,7 +81,7 @@ class LibraryNoteFolderTargetDialog(SafeModalDismissMixin, ModalScreen[str | Non
     SAFE_MODAL_CONTENT = "#library-note-folder-target-dialog"
     AUTO_FOCUS = "#library-note-folder-target"
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     LibraryNoteFolderTargetDialog { align: center middle; }
     LibraryNoteFolderTargetDialog > Vertical {
         width: 64; height: auto; padding: 1 2;

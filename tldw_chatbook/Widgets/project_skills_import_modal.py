@@ -89,7 +89,7 @@ class ProjectSkillsImportModal(SafeModalDismissMixin, ModalScreen[ImportDecision
             this modal for anything except an "Import selected" press.
     """
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ProjectSkillsImportModal {
         align: center middle;
     }

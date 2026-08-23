@@ -163,7 +163,7 @@ class ConsoleInspectorRail(Vertical):
     here reaches ``app_instance``.
     """
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ConsoleInspectorRail .console-inspector-scroll-owner,
     ConsoleInspectorRail .console-inspector-scroll-owner .console-rail-section-title {
         text-style: bold underline;

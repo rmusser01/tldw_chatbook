@@ -16,6 +16,8 @@ from textual.events import MouseDown, MouseMove, MouseUp
 from textual.widget import Widget
 from textual.widgets import Button, Markdown, Static
 
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
@@ -47,7 +49,7 @@ async def _wait_for_menu(app, pilot, predicate):
     raise AssertionError("Selection menu never reached the expected geometry")
 
 
-class _MenuApp(App[None]):
+class _MenuApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.add_to_chat_events: list[ConsoleSelectionMenu.AddToChat] = []
@@ -147,7 +149,7 @@ async def test_click_inside_menu_does_not_propagate():
         assert len(app.quote_requests) == 1
 
 
-class _TranscriptMenuApp(App[None]):
+class _TranscriptMenuApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.quote_requests: list[ConsoleSelectionQuoteRequested] = []
@@ -379,7 +381,7 @@ async def test_side_chat_quote_is_capped_ask():
         )
 
 
-class _TallTranscriptMenuApp(App[None]):
+class _TallTranscriptMenuApp(ConsolidatedCSSApp):
     CSS = """
     ConsoleTranscript {
         height: 100%;
@@ -513,7 +515,7 @@ async def test_last_row_release_keeps_menu_within_transcript_not_composer():
         assert menu.region.bottom <= region.bottom
 
 
-class _TinyTranscriptFeedbackApp(App[None]):
+class _TinyTranscriptFeedbackApp(ConsolidatedCSSApp):
     """Transcript box (7 rows) shorter than the compact feedback menu.
 
     Clamp-fix review: on 24-30 row terminals the transcript box can be
@@ -731,7 +733,7 @@ async def test_null_selection_row_region_selection_top_none_no_crash_keeps_conta
         assert menu.region.right <= region.right
 
 
-class _GeometryOwnerApp(App[None]):
+class _GeometryOwnerApp(ConsolidatedCSSApp):
     """Short owner box for direct clamp-geometry tests (no transcript).
 
     The owner is a plain 10-row Vertical at the screen top; the base menu
@@ -853,7 +855,7 @@ async def test_far_right_release_keeps_menu_inside_transcript():
         assert menu.region.bottom <= region.bottom
 
 
-class _FrFlowApp(App[None]):
+class _FrFlowApp(ConsolidatedCSSApp):
     """Minimal screen-shaped app: docked navbar/footer around a 1fr content
     container, mirroring BaseAppScreen's arrangement.
 
@@ -1120,7 +1122,7 @@ _FEEDBACK_BUTTON_IDS = [
 ]
 
 
-class _FeedbackMenuApp(App[None]):
+class _FeedbackMenuApp(ConsolidatedCSSApp):
     """Menu harness with the phase-3 feedback ctor knobs + event capture."""
 
     def __init__(
@@ -1177,7 +1179,7 @@ async def test_compact_menu_fits_height_budget():
         assert menu.region.height <= 8
 
 
-class _AnsiFeedbackMenuApp(App[None]):
+class _AnsiFeedbackMenuApp(ConsolidatedCSSApp):
     """Feedback menu harness with native ANSI color mode pinned ON.
 
     Increment review of e2dc272e4: textual 8.2.8's ANSI-mode
@@ -1408,7 +1410,7 @@ class _OwnerCapture(Widget):
         self.received.append(("comment", event))
 
 
-class _OwnerMenuApp(App[None]):
+class _OwnerMenuApp(ConsolidatedCSSApp):
     """Mounts the menu with an explicit owner (transcript-like routing)."""
 
     def __init__(self, *, run_active: bool = True) -> None:

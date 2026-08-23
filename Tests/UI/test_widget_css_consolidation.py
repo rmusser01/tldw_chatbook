@@ -962,3 +962,283 @@ def test_staleness_check_counts_declarations_not_mentions():
         f"stylesheet inputs.\n  only the check sees: {sorted(matched - declaring)}"
         f"\n  only the builder sees: {sorted(declaring - matched)}"
     )
+
+
+# ---------------------------------------------------------------------------
+# TASK-21115: the static allowlist ratchet.
+#
+# Every class-level ``DEFAULT_CSS`` (and every Screen's class-level ``CSS``)
+# registers one more stylesheet source at its first mount, and Textual's parse
+# cache is an ``LRUCache(64)``: past that cliff every first-mount of a
+# not-yet-seen class re-pays a full cold ``Stylesheet.parse()`` (measured
+# 127-378 ms) for the rest of the session. The consolidation exists to keep
+# the live source count under that cliff, but the only guard that noticed new
+# declarations was the *integration tour* above -- slow, and red for stretches
+# (TASK-21106) exactly when accretion was fastest (34 new declarations in the
+# 2 months after TASK-15450 shipped; the 2026-08-22 holistic review measured a
+# feature-rich session crossing the cliff).
+#
+# This ratchet is the fast, boot-free version of the invariant: an AST walk
+# over the package fails on any class-level ``DEFAULT_CSS``/``CSS`` binding
+# that is not explicitly allowlisted below. The allowlist is a snapshot of the
+# declarations that existed when the ratchet landed -- it may only SHRINK
+# (entries whose declaration was converted or deleted are flagged as stale so
+# the recorded debt cannot silently rot).
+# ---------------------------------------------------------------------------
+
+_RATCHETED_CSS_ATTRS = ("DEFAULT_CSS", "CSS")
+
+
+def _textual_css_declarations(
+    root: Path | None = None,
+    *,
+    excluded_dirs: tuple[str, ...] = widget_css.EXCLUDED_DIRS,
+) -> list[tuple[str, str, str]]:
+    """Every class-level ``DEFAULT_CSS``/``CSS`` *binding* under ``root``.
+
+    Deliberately broader than ``_class_css_blocks``: that helper collects only
+    plain-string ``ast.Assign`` values (all it needs to parse-check CSS text),
+    which would let an annotated assignment (``DEFAULT_CSS: str = ...``) or a
+    non-literal value (an f-string, a concatenation, a name) slip past the
+    ratchet -- and a non-literal ``DEFAULT_CSS`` still registers a stylesheet
+    source at runtime exactly like a literal one.
+
+    Returns:
+        ``(module, class_name, attr)`` triples, sorted.
+    """
+    root = _PACKAGE_ROOT if root is None else root
+    found: list[tuple[str, str, str]] = []
+    for path in sorted(root.rglob("*.py")):
+        relative = path.relative_to(root)
+        if any(part in excluded_dirs for part in relative.parts):
+            continue
+        source = path.read_text(encoding="utf-8")
+        if not any(name in source for name in _RATCHETED_CSS_ATTRS):
+            continue
+        for node in ast.walk(ast.parse(source, filename=str(path))):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            for stmt in node.body:
+                names: set[str] = set()
+                if isinstance(stmt, ast.Assign):
+                    names = {t.id for t in stmt.targets if isinstance(t, ast.Name)}
+                elif isinstance(stmt, ast.AnnAssign) and isinstance(
+                    stmt.target, ast.Name
+                ):
+                    names = {stmt.target.id}
+                for attr in names & set(_RATCHETED_CSS_ATTRS):
+                    found.append((relative.as_posix(), node.name, attr))
+    return sorted(found)
+
+
+#: The class-level CSS declarations that existed when the ratchet landed
+#: (TASK-21115) -- the pre-TASK-15450 residue the consolidation deliberately
+#: left in place. Additions require review: the sanctioned default for new
+#: widget CSS is ``BUNDLED_CSS`` / ``BUNDLED_SCREEN_CSS`` (see the module
+#: docstring), which costs zero live stylesheet sources. Removals (after
+#: converting or deleting a declaration) are mandatory -- a stale entry fails
+#: the ratchet.
+_UNCONSOLIDATED_CSS_ALLOWLIST: frozenset[tuple[str, str, str]] = frozenset([
+    ("UI/CCP_Modules/ccp_loading_indicators.py", "InlineLoadingIndicator", "DEFAULT_CSS"),
+    ("UI/ChatbookCreationWindow.py", "ChatbookCreationWindow", "DEFAULT_CSS"),
+    ("UI/ChatbookExportManagementWindow.py", "ChatbookExportManagementWindow", "DEFAULT_CSS"),
+    ("UI/Chatbooks_Window_Improved.py", "ChatbookCard", "DEFAULT_CSS"),
+    ("UI/Chatbooks_Window_Improved.py", "ChatbooksWindowImproved", "DEFAULT_CSS"),
+    ("UI/Chatbooks_Window_Improved.py", "EmptyStateWidget", "DEFAULT_CSS"),
+    ("UI/Chatbooks_Window.py", "ChatbooksWindow", "DEFAULT_CSS"),
+    ("UI/ChatbookTemplatesWindow.py", "ChatbookTemplatesWindow", "DEFAULT_CSS"),
+    ("UI/Console_Modules/provider_continuation_recovery.py", "ProviderContinuationRecoveryCallout", "DEFAULT_CSS"),
+    ("UI/Dictation_Window_Improved.py", "ImprovedDictationWindow", "DEFAULT_CSS"),
+    ("UI/Library_Modules/prompt_collection_manager_modal.py", "PromptCollectionManagerModal", "DEFAULT_CSS"),
+    ("UI/MCP_Modules/mcp_profile_form.py", "MCPImportPanel", "DEFAULT_CSS"),
+    ("UI/MCP_Modules/mcp_profile_form.py", "MCPProfileForm", "DEFAULT_CSS"),
+    ("UI/MCP_Modules/mcp_schema_form.py", "MCPSchemaForm", "DEFAULT_CSS"),
+    ("UI/MCP_Modules/mcp_server_mutations.py", "MCPServerMutationsPanel", "DEFAULT_CSS"),
+    ("UI/MediaWindow_v2.py", "MediaWindow", "DEFAULT_CSS"),
+    ("UI/Navigation/nav_overflow_menu.py", "NavOverflowMenu", "DEFAULT_CSS"),
+    ("UI/Outputs_Panel.py", "OutputsPanel", "DEFAULT_CSS"),
+    ("UI/Screens/scheduling/forms/reminder_form.py", "ReminderForm", "DEFAULT_CSS"),
+    ("UI/Screens/skills_screen.py", "SkillTrustBootstrapModal", "DEFAULT_CSS"),
+    ("UI/Screens/skills_screen.py", "SkillTrustPassphraseModal", "DEFAULT_CSS"),
+    ("UI/Sharing_Panel.py", "SharingPanel", "DEFAULT_CSS"),
+    ("UI/Speech/speech_clone_setup.py", "SpeechCloneSetup", "DEFAULT_CSS"),
+    ("UI/stts_profile_library.py", "STTSProfileLibrary", "DEFAULT_CSS"),
+    ("UI/stts_profile_library.py", "TTSCloneProfileSaveReviewModal", "DEFAULT_CSS"),
+    ("UI/stts_profile_library.py", "TTSProfileDeleteModal", "DEFAULT_CSS"),
+    ("UI/stts_profile_library.py", "TTSProfileEditorModal", "DEFAULT_CSS"),
+    ("UI/stts_profile_library.py", "TTSProfileNameModal", "DEFAULT_CSS"),
+    ("UI/STTS_Window.py", "AudioBookGenerationWidget", "DEFAULT_CSS"),
+    ("UI/STTS_Window.py", "STTSWindow", "DEFAULT_CSS"),
+    ("UI/STTS_Window.py", "VoiceProfilePickerModal", "DEFAULT_CSS"),
+    ("UI/Study_Window.py", "AnkiFlashcardsWidget", "DEFAULT_CSS"),
+    ("UI/Study_Window.py", "CourseCreationWidget", "DEFAULT_CSS"),
+    ("UI/Study_Window.py", "LearningMapWidget", "DEFAULT_CSS"),
+    ("UI/Study_Window.py", "MindmapsWidget", "DEFAULT_CSS"),
+    ("UI/Study_Window.py", "QuizzesWidget", "DEFAULT_CSS"),
+    ("UI/Study_Window.py", "StructuredLearningWidget", "DEFAULT_CSS"),
+    ("UI/Study_Window.py", "StudyGuideWidget", "DEFAULT_CSS"),
+    ("UI/Study_Window.py", "StudyWindow", "DEFAULT_CSS"),
+    ("UI/Tools_Settings_Window.py", "ConfirmDisableDialog", "DEFAULT_CSS"),
+    ("UI/Tools_Settings_Window.py", "ToolsSettingsWindow", "DEFAULT_CSS"),
+    ("UI/Voice_Cloning_Window.py", "VoiceCloningWindow", "DEFAULT_CSS"),
+    ("UI/Wizards/BaseWizard.py", "WizardContainer", "DEFAULT_CSS"),
+    ("UI/Wizards/BaseWizard.py", "WizardProgress", "DEFAULT_CSS"),
+    ("UI/Wizards/BaseWizard.py", "WizardScreen", "DEFAULT_CSS"),
+    ("UI/Workbench/help.py", "WorkbenchHelpPanel", "DEFAULT_CSS"),
+    ("Utils/widget_helpers.py", "FeatureNotAvailableDialog", "DEFAULT_CSS"),
+    ("Widgets/audio_troubleshooting_dialog.py", "AudioTroubleshootingDialog", "DEFAULT_CSS"),
+    ("Widgets/base_components.py", "ActionButtonRow", "DEFAULT_CSS"),
+    ("Widgets/base_components.py", "ConfigurationForm", "DEFAULT_CSS"),
+    ("Widgets/base_components.py", "NavigationButton", "DEFAULT_CSS"),
+    ("Widgets/base_components.py", "SectionContainer", "DEFAULT_CSS"),
+    ("Widgets/base_components.py", "StatusDisplay", "DEFAULT_CSS"),
+    ("Widgets/cancel_confirmation_dialog.py", "CancelConfirmationDialog", "DEFAULT_CSS"),
+    ("Widgets/Chat_Widgets/chat_handoff_card.py", "ChatHandoffCard", "DEFAULT_CSS"),
+    ("Widgets/Chat_Widgets/chat_message_enhanced.py", "ChatMessageEnhanced", "DEFAULT_CSS"),
+    ("Widgets/Chat_Widgets/chat_message.py", "ChatMessage", "DEFAULT_CSS"),
+    ("Widgets/Chat_Widgets/chat_shell_bar.py", "ChatShellBar", "DEFAULT_CSS"),
+    ("Widgets/chunk_preview_modal.py", "ChunkPreviewModal", "DEFAULT_CSS"),
+    ("Widgets/Coding_Widgets/repo_tree_widgets.py", "TreeNode", "DEFAULT_CSS"),
+    ("Widgets/Coding_Widgets/repo_tree_widgets.py", "TreeView", "DEFAULT_CSS"),
+    ("Widgets/confirmation_dialog.py", "ConfirmationDialog", "DEFAULT_CSS"),
+    ("Widgets/Console/console_character_picker_modal.py", "ConsoleCharacterPickerModal", "DEFAULT_CSS"),
+    ("Widgets/Console/console_composer_menu_modal.py", "ConsoleComposerMenuModal", "DEFAULT_CSS"),
+    ("Widgets/Console/console_edit_message_modal.py", "ConsoleEditMessageModal", "DEFAULT_CSS"),
+    ("Widgets/Console/console_generate_image_modal.py", "ConsoleGenerateImageModal", "DEFAULT_CSS"),
+    ("Widgets/Console/console_image_viewer_modal.py", "ConsoleImageViewerModal", "DEFAULT_CSS"),
+    ("Widgets/Console/console_model_popover.py", "ConsoleModelPopover", "DEFAULT_CSS"),
+    ("Widgets/Console/console_prompt_improve_view.py", "ConsolePromptImproveView", "DEFAULT_CSS"),
+    ("Widgets/Console/console_prompt_queue_modal.py", "ConsolePromptQueueModal", "DEFAULT_CSS"),
+    ("Widgets/Console/console_prompts_modal.py", "ConsolePromptsModal", "DEFAULT_CSS"),
+    ("Widgets/Console/console_rag_settings_modal.py", "ConsoleRagSettingsModal", "DEFAULT_CSS"),
+    ("Widgets/Console/console_rename_session_modal.py", "ConsoleRenameSessionModal", "DEFAULT_CSS"),
+    ("Widgets/Console/console_rewind_modal.py", "ConsoleRewindModal", "DEFAULT_CSS"),
+    ("Widgets/Console/console_save_as_modal.py", "ConsoleSaveAsModal", "DEFAULT_CSS"),
+    ("Widgets/Console/console_session_switcher_modal.py", "ConsoleSessionSwitcherModal", "DEFAULT_CSS"),
+    ("Widgets/Console/console_settings_modal.py", "ConsoleSettingsModal", "DEFAULT_CSS"),
+    ("Widgets/Console/console_transcript.py", "ConsoleMarkdownMessage", "DEFAULT_CSS"),
+    ("Widgets/Console/console_video_capacity_modal.py", "ConsoleVideoCapacityModal", "DEFAULT_CSS"),
+    ("Widgets/Console/console_workspace_switcher_modal.py", "ConsoleWorkspaceRenameModal", "DEFAULT_CSS"),
+    ("Widgets/Console/console_workspace_switcher_modal.py", "ConsoleWorkspaceSwitcherModal", "DEFAULT_CSS"),
+    ("Widgets/delete_confirmation_dialog.py", "DeleteConfirmationDialog", "DEFAULT_CSS"),
+    ("Widgets/destination_workbench.py", "DestinationWorkbench", "DEFAULT_CSS"),
+    ("Widgets/dictation_performance_widget.py", "DictationPerformanceWidget", "DEFAULT_CSS"),
+    ("Widgets/document_generation_modal.py", "DocumentGenerationModal", "DEFAULT_CSS"),
+    ("Widgets/enhanced_file_picker.py", "DirectorySearch", "DEFAULT_CSS"),
+    ("Widgets/enhanced_file_picker.py", "EnhancedFileDialog", "DEFAULT_CSS"),
+    ("Widgets/enhanced_file_picker.py", "PathBreadcrumbs", "DEFAULT_CSS"),
+    ("Widgets/feedback_dialog.py", "FeedbackDialog", "DEFAULT_CSS"),
+    ("Widgets/Library/library_file_notes_git_panel.py", "LibraryFileNotesGitPanel", "DEFAULT_CSS"),
+    ("Widgets/Library/library_file_notes_git_panel.py", "PushDestinationAuthorizationDialog", "DEFAULT_CSS"),
+    ("Widgets/Library/library_file_notes_git_panel.py", "PushEndpointDetailsDialog", "DEFAULT_CSS"),
+    ("Widgets/Library/library_file_notes_workspace.py", "FileNotesConflictCompareDialog", "DEFAULT_CSS"),
+    ("Widgets/Library/library_file_notes_workspace.py", "FileNotesRootDetailsDialog", "DEFAULT_CSS"),
+    ("Widgets/Library/library_file_notes_workspace.py", "LibraryFileNotesWorkspace", "DEFAULT_CSS"),
+    ("Widgets/Library/library_ingest_canvas.py", "LibraryIngestCanvas", "DEFAULT_CSS"),
+    ("Widgets/Library/library_media_content.py", "LibraryMediaContentSearchControls", "DEFAULT_CSS"),
+    ("Widgets/Library/library_media_viewer.py", "LibraryMediaViewer", "DEFAULT_CSS"),
+    ("Widgets/Library/prompt_delete_confirmation_modal.py", "PromptDeleteConfirmationModal", "DEFAULT_CSS"),
+    ("Widgets/Media/media_list_panel.py", "MediaListPanel", "DEFAULT_CSS"),
+    ("Widgets/Media/media_navigation_panel.py", "MediaNavigationPanel", "DEFAULT_CSS"),
+    ("Widgets/Media/media_search_panel.py", "MediaSearchPanel", "DEFAULT_CSS"),
+    ("Widgets/Media/media_viewer_panel.py", "DeleteConfirmDialog", "DEFAULT_CSS"),
+    ("Widgets/Media/media_viewer_panel.py", "MediaViewerPanel", "DEFAULT_CSS"),
+    ("Widgets/model_search_picker.py", "ModelSearchPicker", "DEFAULT_CSS"),
+    ("Widgets/ModelArtifacts/activation_controls.py", "ModelActivationControls", "DEFAULT_CSS"),
+    ("Widgets/ModelArtifacts/install_modal.py", "ModelInstallModal", "DEFAULT_CSS"),
+    ("Widgets/ModelArtifacts/local_gguf_import.py", "LocalGGUFImportConsentModal", "DEFAULT_CSS"),
+    ("Widgets/ModelArtifacts/local_gguf_import.py", "LocalGGUFImportControls", "DEFAULT_CSS"),
+    ("Widgets/Note_Widgets/note_creation_modal.py", "NoteCreationModal", "DEFAULT_CSS"),
+    ("Widgets/password_dialog.py", "EncryptionSetupDialog", "DEFAULT_CSS"),
+    ("Widgets/password_dialog.py", "PasswordDialog", "DEFAULT_CSS"),
+    ("Widgets/Persona_Widgets/character_tts_portability_dialogs.py", "CharacterTTSExistingAssignmentDialog", "DEFAULT_CSS"),
+    ("Widgets/Persona_Widgets/character_tts_portability_dialogs.py", "CharacterTTSProfileCollisionDialog", "DEFAULT_CSS"),
+    ("Widgets/Persona_Widgets/conversation_attach_picker.py", "ConversationAttachPicker", "DEFAULT_CSS"),
+    ("Widgets/Persona_Widgets/dictionary_attach_picker.py", "DictionaryAttachPicker", "DEFAULT_CSS"),
+    ("Widgets/Persona_Widgets/dictionary_picker.py", "DictionaryPicker", "DEFAULT_CSS"),
+    ("Widgets/Persona_Widgets/tag_filter_picker.py", "TagFilterPicker", "DEFAULT_CSS"),
+    ("Widgets/Persona_Widgets/world_book_picker.py", "WorldBookPicker", "DEFAULT_CSS"),
+    ("Widgets/Prompts/prompt_block_editor.py", "PromptBlockEditor", "DEFAULT_CSS"),
+    ("Widgets/Settings_Widgets/server_switch_modal.py", "ServerSwitchModal", "DEFAULT_CSS"),
+    ("Widgets/status_widget.py", "EnhancedStatusWidget", "DEFAULT_CSS"),
+    ("Widgets/Study/quiz_session_widget.py", "QuizSessionWidget", "DEFAULT_CSS"),
+    ("Widgets/Study/study_dashboard.py", "StudyDashboard", "DEFAULT_CSS"),
+    ("Widgets/Tamagotchi/base_tamagotchi.py", "BaseTamagotchi", "DEFAULT_CSS"),
+    ("Widgets/TTS/chapter_editor_widget.py", "ChapterEditorWidget", "DEFAULT_CSS"),
+    ("Widgets/TTS/character_voice_widget.py", "CharacterVoiceWidget", "DEFAULT_CSS"),
+    ("Widgets/voice_input_widget.py", "VoiceInputWidget", "DEFAULT_CSS"),
+    ("Widgets/voice_profile_dialog.py", "VoiceProfileDialog", "DEFAULT_CSS"),
+])
+
+
+def test_class_level_css_stays_within_the_allowlist():
+    """No new ``DEFAULT_CSS``/``CSS`` outside the allowlist; no stale entries.
+
+    TASK-21115. Static and boot-free on purpose: the integration tour above is
+    the *measurement*, but it is slow and has spent red stretches during which
+    34 new ``DEFAULT_CSS`` declarations accreted unnoticed -- enough that a
+    feature-rich session (~10 distinct modal opens) crossed the LRUCache(64)
+    parse-cache cliff. This test makes the invariant cheap enough to run on
+    every change.
+    """
+    declared = set(_textual_css_declarations())
+    assert declared, "no class-level CSS declarations found -- the walk is broken"
+
+    offenders = sorted(declared - _UNCONSOLIDATED_CSS_ALLOWLIST)
+    assert not offenders, (
+        f"{len(offenders)} class-level CSS declaration(s) outside the "
+        "allowlist:\n"
+        + "\n".join(f"  {module}::{name}.{attr}" for module, name, attr in offenders)
+        + "\n\nEvery class-level DEFAULT_CSS/CSS registers one more stylesheet "
+        "source at first mount, and Textual's parse cache holds 64 -- past the "
+        "cliff every first-mount of an unseen class re-pays a full cold parse "
+        "(~150-450 ms) for the rest of the session. Two sanctioned options:\n"
+        "  1. (default) Ride the bundle: rename DEFAULT_CSS -> BUNDLED_CSS "
+        "(widget-defaults tier), or a Screen's CSS -> BUNDLED_SCREEN_CSS "
+        "(app-CSS tier), keep the block a plain string literal, then run "
+        "`python tldw_chatbook/css/build_css.py` and commit the regenerated "
+        "sheets in css/ together with your source change.\n"
+        "  2. (reviewed exception only) add the (module, class, attr) triple "
+        "to _UNCONSOLIDATED_CSS_ALLOWLIST in this file, with the reason in "
+        "your PR -- e.g. the CSS genuinely cannot be a plain string literal, "
+        "or the widget belongs to a standalone app that never loads this "
+        "app's bundle."
+    )
+
+    stale = sorted(_UNCONSOLIDATED_CSS_ALLOWLIST - declared)
+    assert not stale, (
+        "allowlist entries with no matching declaration (converted, renamed "
+        "or deleted) -- the ratchet only moves down, remove them from "
+        "_UNCONSOLIDATED_CSS_ALLOWLIST:\n"
+        + "\n".join(f"  {module}::{name}.{attr}" for module, name, attr in stale)
+    )
+
+
+def test_css_ratchet_walker_sees_declarations_the_block_extractor_skips(tmp_path):
+    """Born-red proof the ratchet cannot be dodged with a non-literal block.
+
+    ``_class_css_blocks`` collects only plain-string ``ast.Assign`` values, so
+    an annotated assignment or an f-string ``DEFAULT_CSS`` is invisible to it
+    -- but still registers a live stylesheet source at runtime. The ratchet's
+    own walker must see all three shapes.
+    """
+    (tmp_path / "dodgy.py").write_text(
+        "class AnnotatedDeclaration:\n"
+        "    DEFAULT_CSS: str = 'X { height: 1; }'\n\n\n"
+        "class FStringDeclaration:\n"
+        "    DEFAULT_CSS = f'X {{ width: {1}; }}'\n\n\n"
+        "class ScreenCssDeclaration:\n"
+        "    CSS = 'X { height: 1; }'\n",
+        encoding="utf-8",
+    )
+    seen = _textual_css_declarations(tmp_path, excluded_dirs=())
+    assert seen == [
+        ("dodgy.py", "AnnotatedDeclaration", "DEFAULT_CSS"),
+        ("dodgy.py", "FStringDeclaration", "DEFAULT_CSS"),
+        ("dodgy.py", "ScreenCssDeclaration", "CSS"),
+    ], f"ratchet walker missed a declaration shape: {seen}"
+    # And the narrow extractor really does skip the two dodges -- if this ever
+    # starts seeing them, the walkers have converged and this proof is moot.
+    narrow = {name for _m, name, _css in _class_css_blocks(tmp_path, excluded_dirs=())}
+    assert "AnnotatedDeclaration" not in narrow
+    assert "FStringDeclaration" not in narrow

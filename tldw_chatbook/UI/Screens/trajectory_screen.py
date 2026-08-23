@@ -155,7 +155,7 @@ class TrajectoryScreen(ModalScreen[None]):
         ("o", "open"),
     )
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     TrajectoryScreen {
         align: left top;
         background: $background;

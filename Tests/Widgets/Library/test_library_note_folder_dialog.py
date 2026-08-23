@@ -7,6 +7,8 @@ from textual import events
 from textual.app import App
 from textual.widgets import Input, Select, Static
 
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+
 from tldw_chatbook.Widgets.Library.library_note_folder_dialog import (
     LibraryNoteFolderNameDialog,
     LibraryNoteFolderTargetDialog,
@@ -15,7 +17,7 @@ from tldw_chatbook.Widgets.Library.library_note_folder_dialog import (
 
 @pytest.mark.asyncio
 async def test_name_dialog_echoes_action_and_initial_name():
-    app = App()
+    app = ConsolidatedCSSApp()
     async with app.run_test() as pilot:
         await app.push_screen(
             LibraryNoteFolderNameDialog(title="Rename folder", initial_name="Ideas")
@@ -29,7 +31,7 @@ async def test_name_dialog_echoes_action_and_initial_name():
 
 @pytest.mark.asyncio
 async def test_target_dialog_includes_root_and_bounded_folder_choices():
-    app = App()
+    app = ConsolidatedCSSApp()
     async with app.run_test() as pilot:
         await app.push_screen(
             LibraryNoteFolderTargetDialog(
@@ -72,7 +74,7 @@ async def test_note_folder_library_modal_contract_exact_negative_once(
     kind: str,
     source: str,
 ) -> None:
-    app = App()
+    app = ConsolidatedCSSApp()
     results: list[str | None] = []
     modal = _note_folder_modal(kind)
 
@@ -97,7 +99,7 @@ async def test_note_folder_library_modal_contract_exact_negative_once(
 async def test_note_folder_library_modal_contract_inside_and_non_primary_stay_open(
     kind: str,
 ) -> None:
-    app = App()
+    app = ConsolidatedCSSApp()
     results: list[str | None] = []
     modal = _note_folder_modal(kind)
 
@@ -128,7 +130,7 @@ async def test_note_folder_library_modal_contract_inside_and_non_primary_stay_op
 @pytest.mark.parametrize("kind", ["name", "target"])
 @pytest.mark.asyncio
 async def test_note_folder_library_modal_contract_positive_is_str(kind: str) -> None:
-    app = App()
+    app = ConsolidatedCSSApp()
     results: list[str | None] = []
     modal = _note_folder_modal(kind)
 
@@ -150,7 +152,7 @@ async def test_note_folder_library_modal_contract_positive_is_str(kind: str) -> 
 @pytest.mark.parametrize("kind", ["name", "target"])
 @pytest.mark.asyncio
 async def test_note_folder_repeated_input_dismisses_once(kind: str) -> None:
-    app = App()
+    app = ConsolidatedCSSApp()
     results: list[str | None] = []
     modal = _note_folder_modal(kind)
 

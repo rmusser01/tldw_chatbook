@@ -8,6 +8,32 @@
  * Edit those declarations, then re-run build_css.py.
  * ======================================== */
 
+/* ===== WIDGET: SiteConfigSettings (UI/SiteConfigSettings.py) ===== */
+
+    SiteConfigSettings {
+        height: 100%;
+        overflow: hidden;
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 /* ===== WIDGET: NoteSelectionDialog (Widgets/Note_Widgets/note_selection_dialog.py) ===== */
 
     NoteSelectionDialog {

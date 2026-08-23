@@ -10,6 +10,8 @@ from textual.app import App, ComposeResult
 from textual.containers import Container, VerticalScroll
 from textual.widgets import Button, Input, Static
 
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+
 from tldw_chatbook.Library.library_note_import_state import (
     LibraryNoteImportItemSnapshot,
     LibraryNoteImportSnapshot,
@@ -55,7 +57,7 @@ def _plain(widget: Static) -> str:
     return getattr(widget.renderable, "plain", str(widget.renderable))
 
 
-class _CanvasApp(App[None]):
+class _CanvasApp(ConsolidatedCSSApp):
     def __init__(self, snapshot: LibraryNoteImportSnapshot) -> None:
         super().__init__()
         self.snapshot = snapshot
@@ -625,7 +627,7 @@ async def test_destination_burst_typing_retains_every_character_and_inline_error
 async def test_wrapper_handler_keeps_destination_input_mounted_during_burst_typing() -> (
     None
 ):
-    class WrapperApp(App[None]):
+    class WrapperApp(ConsolidatedCSSApp):
         def __init__(self) -> None:
             super().__init__()
             self.snapshot = _snapshot(
@@ -691,7 +693,7 @@ async def test_wrapper_handler_keeps_destination_input_mounted_during_burst_typi
 async def test_wrapper_keeps_applied_collision_rename_focused_when_edit_clears_choice() -> (
     None
 ):
-    class WrapperApp(App[None]):
+    class WrapperApp(ConsolidatedCSSApp):
         def __init__(self) -> None:
             super().__init__()
             self.snapshot = _snapshot(
@@ -773,11 +775,14 @@ async def test_collision_rename_is_disabled_with_specific_inline_error() -> None
         error = app.query_one("#note-import-collision-rename-error", Static)
         assert "already exists" in _plain(error)
         assert error.has_class("note-import-error")
+        # TASK-21115: the class CSS rides the consolidated bundle now, so the
+        # source-text pin reads BUNDLED_CSS (DEFAULT_CSS would resolve to the
+        # inherited Vertical defaults via normal attribute lookup).
         assert (
             "LibraryNoteImportCanvas .note-import-error"
-            in LibraryNoteImportCanvas.DEFAULT_CSS
+            in LibraryNoteImportCanvas.BUNDLED_CSS
         )
-        assert "color: $ds-status-error-readable" in LibraryNoteImportCanvas.DEFAULT_CSS
+        assert "color: $ds-status-error-readable" in LibraryNoteImportCanvas.BUNDLED_CSS
 
 
 async def test_review_item_shows_source_target_membership_and_content_effect() -> None:

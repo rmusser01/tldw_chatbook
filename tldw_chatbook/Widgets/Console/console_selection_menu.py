@@ -123,7 +123,7 @@ class ConsoleSelectionMenu(Vertical):
 
     can_focus = True
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ConsoleSelectionMenu {
         position: absolute;
         /* Live spike 2026-08-16: textual 8.2.8's vertical layout excludes

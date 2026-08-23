@@ -1159,7 +1159,7 @@ def _sync_message_classes(
 class ConsoleMessageHeader(Horizontal):
     """Stable one-line speaker header with its sole visible speech control."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ConsoleMessageHeader {
         width: 100%;
         height: 1;

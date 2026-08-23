@@ -82,7 +82,7 @@ def filter_reaction_options(
 class ConsoleReactionPickerModal(SafeModalDismissMixin, ModalScreen[None]):
     """Filter reaction metadata and request at most one highlighted preview."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ConsoleReactionPickerModal {
         align: center middle;
     }
