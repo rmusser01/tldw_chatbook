@@ -519,6 +519,23 @@ def test_persona_portrait_anchor_uses_normal_sequential_character_id(
         )
 
 
+def test_persona_portrait_plans_reserve_distinct_sequential_ids(
+    activation_components,
+) -> None:
+    activation, _importer, _repository, _local_service, db = activation_components
+
+    first = activation._persona_portrait_plan(
+        {"id": "local-persona-first"}, PNG_1X1, "First"
+    )
+    second = activation._persona_portrait_plan(
+        {"id": "local-persona-second"}, PNG_1X1, "Second"
+    )
+    following_id = db.add_character_card({"name": "After reservations"})
+
+    assert second.character_id == first.character_id + 1
+    assert following_id == second.character_id + 1
+
+
 def test_character_activation_binds_included_shared_visual_identity(
     activation_components, tmp_path: Path
 ) -> None:

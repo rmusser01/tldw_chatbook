@@ -119,15 +119,16 @@ class ActorPackRepository:
 
         identity = _portable_uuid(portable_uuid)
         try:
-            rows = self.db.execute_query(
-                """
-                SELECT actor_kind, local_actor_id, portable_uuid,
-                       source_portable_uuid, version
-                  FROM actor_portable_identities
-                 WHERE portable_uuid = ?
-                """,
-                (identity,),
-            ).fetchall()
+            with self.db.transaction() as cursor:
+                rows = cursor.execute(
+                    """
+                    SELECT actor_kind, local_actor_id, portable_uuid,
+                           source_portable_uuid, version
+                      FROM actor_portable_identities
+                     WHERE portable_uuid = ?
+                    """,
+                    (identity,),
+                ).fetchall()
             if not rows:
                 return None
             if len(rows) != 1:

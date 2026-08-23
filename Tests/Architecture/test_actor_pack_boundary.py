@@ -180,6 +180,30 @@ def test_import_modules_remain_screen_network_and_provider_free() -> None:
             )
 
 
+def test_importer_does_not_eagerly_import_pillow() -> None:
+    tree = _tree(ACTOR_PACK_ROOT / "importer.py")
+    eager_imports = {
+        alias.name
+        for node in tree.body
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    } | {node.module or "" for node in tree.body if isinstance(node, ast.ImportFrom)}
+
+    assert not any(name == "PIL" or name.startswith("PIL.") for name in eager_imports)
+
+
+def test_character_insert_query_is_static_sql() -> None:
+    tree = _tree(CHACHANOTES_DB)
+    insert = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_insert_character_card_in_transaction"
+    )
+
+    assert not any(isinstance(node, ast.JoinedStr) for node in ast.walk(insert))
+
+
 def test_export_public_records_hide_paths_ids_bytes_and_graph_authority() -> None:
     sensitive = {
         "actor_payload",

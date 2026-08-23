@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 import threading
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -64,11 +65,26 @@ def test_copy_gets_fresh_identity_and_exact_source_provenance(tmp_path: Path) ->
         database.close_connection()
 
 
-def test_lookup_by_portable_uuid_returns_exact_cross_kind_identity(repository) -> None:
+def test_lookup_by_portable_uuid_returns_exact_cross_kind_identity(
+    repository, monkeypatch: pytest.MonkeyPatch
+) -> None:
     identity = repository.assign_identity("character", 7)
+    transaction = repository.db.transaction
+    entered = False
+
+    @contextmanager
+    def observe_transaction(*args, **kwargs):
+        nonlocal entered
+        with transaction(*args, **kwargs) as cursor:
+            entered = True
+            assert getattr(repository.db._local, "transaction_depth", 0) == 1
+            yield cursor
+
+    monkeypatch.setattr(repository.db, "transaction", observe_transaction)
 
     assert repository.get_identity_by_portable_uuid(UUID_A) == identity
     assert repository.get_identity_by_portable_uuid(UUID_B) is None
+    assert entered
 
 
 @pytest.mark.parametrize(

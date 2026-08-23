@@ -606,12 +606,12 @@ class ActorPackActivationService:
                     linked["name"],
                     owner,
                 )
-        row = self.db.execute_query(
-            "SELECT COALESCE(MAX(id), 0) + 1 FROM character_cards"
-        ).fetchone()
-        candidate = None if row is None else row[0]
-        if type(candidate) is not int or candidate < 1:
-            raise ActorPackActivationError("actor_pack_import_activation_failed")
+        try:
+            candidate = self.db._reserve_character_card_id()
+        except Exception:
+            raise ActorPackActivationError(
+                "actor_pack_import_activation_failed"
+            ) from None
         safe_name = str(actor_name).strip()[:120] or "Persona"
         return _PersonaPortraitPlan(
             "create",

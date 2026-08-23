@@ -6740,8 +6740,6 @@ UPDATE db_schema_version
             return value if isinstance(value, str) else self._ensure_json_string(value)
 
         now = self._get_current_utc_timestamp_iso()
-        id_column = "id, " if explicit_id is not None else ""
-        id_value = "?, " if explicit_id is not None else ""
         values = ((explicit_id,) if explicit_id is not None else ()) + (
             card_data["name"],
             card_data.get("description"),
@@ -6762,21 +6760,81 @@ UPDATE db_schema_version
             now,
             self.client_id,
         )
-        cursor.execute(
-            f"""
-            INSERT INTO character_cards(
-                {id_column}name, description, personality, scenario, image,
-                post_history_instructions, first_message, message_example,
-                creator_notes, system_prompt, alternate_greetings, tags, creator,
-                character_version, extensions, created_at, last_modified,
-                client_id, version, deleted
-            ) VALUES ({id_value}?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0)
-            """,
-            values,
-        )
+        if explicit_id is None:
+            cursor.execute(
+                """
+                INSERT INTO character_cards(
+                    name, description, personality, scenario, image,
+                    post_history_instructions, first_message, message_example,
+                    creator_notes, system_prompt, alternate_greetings, tags,
+                    creator, character_version, extensions, created_at,
+                    last_modified, client_id, version, deleted
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0)
+                """,
+                values,
+            )
+        else:
+            cursor.execute(
+                """
+                INSERT INTO character_cards(
+                    id, name, description, personality, scenario, image,
+                    post_history_instructions, first_message, message_example,
+                    creator_notes, system_prompt, alternate_greetings, tags,
+                    creator, character_version, extensions, created_at,
+                    last_modified, client_id, version, deleted
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0)
+                """,
+                values,
+            )
         if cursor.lastrowid is None:
             raise CharactersRAGDBError("Character insert did not return an ID.")
         return int(cursor.lastrowid)
+
+    def _reserve_character_card_id(self) -> int:
+        """Atomically reserve the next Character AUTOINCREMENT identifier.
+
+        Returns:
+            A positive identifier that automatic inserts will not reuse.
+
+        Raises:
+            CharactersRAGDBError: SQLite sequence state is invalid or cannot be
+                advanced.
+        """
+
+        try:
+            with self.transaction(immediate=True) as cursor:
+                sequence = cursor.execute(
+                    "SELECT seq FROM sqlite_sequence WHERE name = 'character_cards'"
+                ).fetchone()
+                maximum = cursor.execute(
+                    "SELECT COALESCE(MAX(id), 0) FROM character_cards"
+                ).fetchone()
+                current = 0 if sequence is None else sequence[0]
+                highest = 0 if maximum is None else maximum[0]
+                if type(current) is not int or type(highest) is not int:
+                    raise CharactersRAGDBError("Character ID sequence is invalid.")
+                reserved = max(current, highest) + 1
+                if sequence is None:
+                    cursor.execute(
+                        "INSERT INTO sqlite_sequence(name, seq) VALUES ('character_cards', ?)",
+                        (reserved,),
+                    )
+                else:
+                    changed = cursor.execute(
+                        "UPDATE sqlite_sequence SET seq = ? WHERE name = 'character_cards'",
+                        (reserved,),
+                    )
+                    if changed.rowcount != 1:
+                        raise CharactersRAGDBError(
+                            "Character ID sequence could not be reserved."
+                        )
+                return reserved
+        except CharactersRAGDBError:
+            raise
+        except sqlite3.Error as exc:
+            raise CharactersRAGDBError(
+                "Character ID sequence could not be reserved."
+            ) from exc
 
     def get_character_card_by_id(self, character_id: int) -> Optional[Dict[str, Any]]:
         """

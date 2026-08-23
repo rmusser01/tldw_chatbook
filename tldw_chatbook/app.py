@@ -6765,6 +6765,9 @@ class TldwCli(
         return result
 
     def _wire_character_persona_services(self) -> None:
+        from .DB.VisualIdentity_DB import VisualIdentityRepository
+        from .Persona_Visual.repository import PersonaVisualRepository
+
         self.server_character_persona_service = (
             ServerCharacterPersonaService.from_server_context_provider(
                 self.server_context_provider,

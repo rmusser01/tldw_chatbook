@@ -16,8 +16,6 @@ from pathlib import Path
 from typing import Any, BinaryIO
 from uuid import uuid4
 
-from PIL import Image
-
 from tldw_chatbook.Character_Chat.local_character_persona_service import (
     LocalCharacterPersonaService,
 )
@@ -30,6 +28,7 @@ from tldw_chatbook.Persona_Visual.validation import (
     validate_persona_visual_manifest,
 )
 from tldw_chatbook.Utils.private_paths import secure_private_directory
+from tldw_chatbook.Utils.path_validation import validate_path
 
 from .contracts import (
     MAX_FILES,
@@ -258,7 +257,19 @@ class ActorPackImportService:
         *,
         cancel_requested: Callable[[], bool] = lambda: False,
     ) -> ActorPackImportReview:
-        """Inspect and stage one archive while exposing only path-free metadata."""
+        """Inspect and stage one archive while exposing path-free metadata.
+
+        Args:
+            archive_path: Absolute user-selected Actor Pack archive path.
+            cancel_requested: Callback returning whether inspection should stop.
+
+        Returns:
+            An immutable review lease for a validated staged archive.
+
+        Raises:
+            ActorPackImportError: The archive is invalid, unsupported, cancelled,
+                unavailable, or cannot be staged safely.
+        """
 
         candidate: Path | None = None
         try:
@@ -704,7 +715,10 @@ def _absolute_path(value: os.PathLike[str] | str) -> Path:
     path = Path(raw)
     if not path.is_absolute() or str(path) != raw:
         raise ActorPackImportError("actor_pack_import_invalid")
-    return path
+    try:
+        return validate_path(path, path.parent, redact_paths=True)
+    except ValueError:
+        raise ActorPackImportError("actor_pack_import_invalid") from None
 
 
 def _pin_source(path: Path) -> tuple[BinaryIO, tuple[int, ...], str, int]:
@@ -938,23 +952,27 @@ def _create_candidate(root: Path) -> tuple[Path, tuple[int, int], str]:
     name = f".import-{uuid4().hex}"
     candidate = root / name
     candidate.mkdir(mode=0o700)
-    metadata = os.lstat(candidate)
-    if not stat.S_ISDIR(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) & 0o077:
-        raise ValueError
-    identity = (metadata.st_dev, metadata.st_ino)
-    secret = os.urandom(32).hex()
-    marker = f"api1:{secret}:{name}:{identity[0]}:{identity[1]}".encode()
-    descriptor = os.open(
-        candidate / _MARKER,
-        os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
-        0o600,
-    )
     try:
-        _write_all(descriptor, marker)
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-    return candidate, identity, secret
+        metadata = os.lstat(candidate)
+        if not stat.S_ISDIR(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) & 0o077:
+            raise ValueError
+        identity = (metadata.st_dev, metadata.st_ino)
+        secret = os.urandom(32).hex()
+        marker = f"api1:{secret}:{name}:{identity[0]}:{identity[1]}".encode()
+        descriptor = os.open(
+            candidate / _MARKER,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        try:
+            _write_all(descriptor, marker)
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        return candidate, identity, secret
+    except BaseException:
+        shutil.rmtree(candidate, ignore_errors=True)
+        raise
 
 
 def _stage_root(candidate: Path, data: bytes) -> _StagedFile:
@@ -1054,6 +1072,7 @@ def _portrait_review(member: str, data: bytes) -> ActorPackPortraitReview:
     if mime_type is None:
         raise ValueError
     from io import BytesIO
+    from PIL import Image
 
     with Image.open(BytesIO(data)) as image:
         width, height = image.size
@@ -1159,6 +1178,7 @@ def _section_image(
     if mime is None:
         raise ValueError
     from io import BytesIO
+    from PIL import Image
 
     with Image.open(BytesIO(data)) as image:
         width, height = image.size

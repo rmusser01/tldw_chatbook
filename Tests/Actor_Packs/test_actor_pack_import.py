@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import inspect
 import json
 import os
 import shutil
@@ -35,6 +36,54 @@ def import_service(tmp_path: Path) -> ActorPackImportService:
         staging_root=tmp_path / "staging",
         profile_root=tmp_path,
     )
+
+
+def test_inspect_archive_uses_central_path_validation(
+    import_service: ActorPackImportService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    archive = (FIXTURES / "minimal-character.tldw-actor-pack").resolve()
+    calls: list[tuple[Path, Path]] = []
+
+    def validate(selected: Path, base_directory: Path, **_kwargs: object) -> Path:
+        calls.append((selected, base_directory))
+        return selected
+
+    monkeypatch.setattr(importer_module, "validate_path", validate)
+
+    review = import_service.inspect_archive(archive)
+
+    assert calls == [(archive, archive.parent)]
+    import_service.cleanup_review(review)
+
+
+def test_inspect_archive_documents_public_contract() -> None:
+    docstring = inspect.getdoc(ActorPackImportService.inspect_archive) or ""
+
+    assert "Args:" in docstring
+    assert "Returns:" in docstring
+    assert "Raises:" in docstring
+
+
+def test_candidate_creation_failure_removes_private_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "staging"
+    root.mkdir()
+    real_open = importer_module.os.open
+
+    def fail_marker(path: object, *args: object, **kwargs: object) -> int:
+        if Path(path).name == ".actor-pack-import":
+            raise OSError("injected marker failure")
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(importer_module.os, "open", fail_marker)
+
+    with pytest.raises(OSError, match="injected marker failure"):
+        importer_module._create_candidate(root)
+
+    assert list(root.iterdir()) == []
 
 
 def test_inspects_independent_character_golden_path_free(
@@ -214,6 +263,8 @@ def test_section_image_rejects_suffix_mime_mismatch() -> None:
 def test_section_image_rejects_decode_budget_before_loading(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from PIL import Image
+
     loaded = False
 
     class OversizedImage:
@@ -231,7 +282,7 @@ def test_section_image_rejects_decode_budget_before_loading(
             nonlocal loaded
             loaded = True
 
-    monkeypatch.setattr(importer_module.Image, "open", lambda _stream: OversizedImage())
+    monkeypatch.setattr(Image, "open", lambda _stream: OversizedImage())
 
     with pytest.raises(ValueError):
         importer_module._section_image("persona-runtime/assets/frame.png", b"image")
