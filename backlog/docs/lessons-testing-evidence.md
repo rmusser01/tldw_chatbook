@@ -7032,3 +7032,26 @@ acquisitions per 100 reads before the fix) — and keep wall-clock numbers
 informational; (2) when you do report reader latency against a bursty
 contender, report max and a stall count, never percentiles alone, because an
 unpaced sampler weights its own idle loop, not the user's exposure.
+
+## A "is this feature configured?" probe that reads the store CREATES the store (TASK-21112, 2026-08-23)
+
+**TASK-21112, 2026-08-23.** Gating the notes-sync runtime's unconditional
+start on "non-empty root summaries" looked like a one-liner:
+`store.list_root_summaries()`. But that call goes `transaction()` →
+`_get_connection()` → `sqlite3.connect(path)`, and connect **creates the
+database file** (plus the WAL side files and a full schema census) — the
+probe would have manufactured the exact zero-profile state DB the gate
+exists to prevent, and the "no DB file after boot" regression pin would have
+gone red against the *gate itself*. The shipped gate never opens SQLite: it
+is `legacy_sync_directory_configured(app_config) or state_db_path.exists()`
+(config-key presence + `Path.exists()`), evaluated off-thread inside
+`_start_once`, with `review_setup` force-starting the runtime on first real
+feature use. Two rules: (1) a lazy-open/no-side-effect gate must be decided
+from evidence that is itself side-effect-free — file presence, config keys —
+never by calling into the store it guards; check the read path all the way
+to `connect()` before trusting a "read-only" method. (2) the regression pin
+must assert on the FILESYSTEM (`not path.exists()` after boot AND after
+shutdown), not on which methods were called — that is the only shape that
+catches a probe, a shutdown hook, or a migrator quietly creating the file.
+This recurs for every store queued in TASK-21105 (seven more feature DBs to
+be made first-use-lazy).

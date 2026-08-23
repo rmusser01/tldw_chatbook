@@ -142,6 +142,10 @@ _ACTION_LABELS = {
     "close_other_process_and_restart": "Close other process and restart",
 }
 _ROOT_PAGE_SIZE = 20
+# TASK-21112: "not_configured" is the boot-deferred runtime — nothing is set
+# up yet, but first-time setup must be offered (review_setup live-starts the
+# machinery on demand), so it counts as available alongside "active".
+_SETUP_READY_STATUSES = frozenset({"active", "not_configured"})
 
 
 class LibraryNotesSyncController:
@@ -160,7 +164,7 @@ class LibraryNotesSyncController:
         self._publish_snapshot = publish_snapshot
         self._review_plan: ReconciliationPlan | None = None
         self._state = initial_lasting_sync_snapshot(
-            lasting_available=runtime.snapshot().status == "active"
+            lasting_available=runtime.snapshot().status in _SETUP_READY_STATUSES
         )
         self._all_roots: tuple[LastingSyncRootRow, ...] = ()
         self.refresh_roots()
@@ -188,7 +192,7 @@ class LibraryNotesSyncController:
         """Refresh path-free root rows from the public runtime projection."""
 
         runtime = self._runtime.snapshot()
-        available = runtime.status == "active"
+        available = runtime.status in _SETUP_READY_STATUSES
         self._all_roots = tuple(
             LastingSyncRootRow(
                 root.root_id,
@@ -240,7 +244,7 @@ class LibraryNotesSyncController:
             return "import"
         if relationship != "keep_synced":
             raise ValueError("unknown relationship")
-        available = self._runtime.snapshot().status == "active"
+        available = self._runtime.snapshot().status in _SETUP_READY_STATUSES
         if available != self._state.lasting_available:
             self._state = replace(self._state, lasting_available=available)
         if not self._state.lasting_available:

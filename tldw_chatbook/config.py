@@ -4065,6 +4065,10 @@ model_download_dir = "~/Downloads/tldw_models"  # Legacy read-only scan root for
 # Device-private lasting-sync settings. Legacy sync keys are intentionally not
 # emitted for fresh profiles; already-present keys remain migration input only.
 recovery_capacity_bytes = 268435456  # Device-private lasting-sync recovery capacity (256 MiB)
+# Lasting-sync change watcher: base poll interval, and the cap it backs off to
+# while roots are quiet (backed-off sleeps are jittered by up to +/-50%).
+sync_watcher_interval_seconds = 1.0
+sync_watcher_max_interval_seconds = 10.0
 
 # Auto-save settings
 auto_save_enabled = true             # Enable auto-save feature
@@ -6907,6 +6911,62 @@ def get_notes_sync_recovery_capacity_bytes(
     if type(capacity) is not int or not 1 <= capacity <= 2**63 - 1:
         raise ValueError("notes.recovery_capacity_bytes must be a positive integer.")
     return capacity
+
+
+NOTES_SYNC_WATCHER_INTERVAL_SECONDS_DEFAULT = 1.0
+NOTES_SYNC_WATCHER_MAX_INTERVAL_SECONDS_DEFAULT = 10.0
+_NOTES_SYNC_WATCHER_INTERVAL_CEILING_SECONDS = 3600.0
+
+
+def get_notes_sync_watcher_intervals(
+    config_data: Mapping[str, Any] | None = None,
+) -> tuple[float, float]:
+    """Return the notes-sync watcher's (base, max) polling intervals.
+
+    TASK-21112: the lasting-sync watcher polls at the base interval and backs
+    off toward the max while roots are quiet. Read from
+    ``[notes] sync_watcher_interval_seconds`` (default 1.0) and
+    ``[notes] sync_watcher_max_interval_seconds`` (default 10.0; backed-off
+    sleeps are jittered by up to +/-50 percent around it).
+
+    Args:
+        config_data: Optional pre-loaded settings mapping; loads the CLI
+            config when omitted.
+
+    Returns:
+        A ``(interval_seconds, max_interval_seconds)`` pair.
+
+    Raises:
+        ValueError: If either configured value is not a positive number in
+            range, or the max is below the base interval.
+    """
+
+    selected = (
+        load_cli_config_and_ensure_existence() if config_data is None else config_data
+    )
+    notes = selected.get("notes") if isinstance(selected, Mapping) else None
+    base: object = NOTES_SYNC_WATCHER_INTERVAL_SECONDS_DEFAULT
+    peak: object = NOTES_SYNC_WATCHER_MAX_INTERVAL_SECONDS_DEFAULT
+    if isinstance(notes, Mapping):
+        base = notes.get("sync_watcher_interval_seconds", base)
+        peak = notes.get("sync_watcher_max_interval_seconds", peak)
+    for label, value in (
+        ("notes.sync_watcher_interval_seconds", base),
+        ("notes.sync_watcher_max_interval_seconds", peak),
+    ):
+        if (
+            type(value) not in (int, float)
+            or not 0.05 <= value <= _NOTES_SYNC_WATCHER_INTERVAL_CEILING_SECONDS
+        ):
+            raise ValueError(
+                f"{label} must be a number between 0.05 and 3600 seconds."
+            )
+    if peak < base:
+        raise ValueError(
+            "notes.sync_watcher_max_interval_seconds must be at least "
+            "notes.sync_watcher_interval_seconds."
+        )
+    return float(base), float(peak)
 
 
 def get_prompts_db_path(*, ignore_override: bool = False) -> Path:

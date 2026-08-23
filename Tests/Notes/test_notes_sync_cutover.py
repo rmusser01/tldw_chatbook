@@ -936,3 +936,146 @@ def test_missing_lasting_runtime_has_no_legacy_fallback() -> None:
     assert "NotesSyncEngine" not in screen
     assert "NotesSyncService" not in screen
     assert "sync_service" not in screen
+
+
+@pytest.mark.asyncio
+async def test_unconfigured_start_defers_without_creating_the_state_db(
+    tmp_path: Path,
+) -> None:
+    """TASK-21112: a zero-profile boot must not create notes-sync state."""
+
+    from tldw_chatbook.Notes.notes_sync_runtime import NotesSyncRuntimeOwner
+
+    store = NotesDeviceStateStore(tmp_path / "sync.sqlite3")
+    migrations: list[str] = []
+    coordinator = _Coordinator()
+    owner = NotesSyncRuntimeOwner(
+        store=store,
+        migrate_legacy=lambda: migrations.append("migrated"),
+        coordinator=coordinator,
+        adapter=_Adapter(),
+        watcher_factory=lambda _schedule: _Watcher(),
+        cutover_admitted=True,
+        profile_process_is_sole=True,
+        start_evidence=lambda: False,
+    )
+
+    await owner.start()
+
+    assert not (tmp_path / "sync.sqlite3").exists()
+    assert (owner.snapshot().status, owner.snapshot().next_action) == (
+        "not_configured",
+        "none",
+    )
+    assert migrations == []
+    assert coordinator.calls == 0
+    with pytest.raises(RuntimeError, match="cutover"):
+        await owner.activate_root("root-1", authorization=None)
+
+    await owner.shutdown()
+
+    assert not (tmp_path / "sync.sqlite3").exists()
+    assert owner.snapshot().status == "stopped"
+
+
+@pytest.mark.asyncio
+async def test_forced_start_brings_up_a_previously_deferred_runtime(
+    tmp_path: Path,
+) -> None:
+    from tldw_chatbook.Notes.notes_sync_runtime import NotesSyncRuntimeOwner
+
+    store = NotesDeviceStateStore(tmp_path / "sync.sqlite3")
+    migrations: list[str] = []
+    owner = NotesSyncRuntimeOwner(
+        store=store,
+        migrate_legacy=lambda: migrations.append("migrated"),
+        coordinator=_SetupCoordinator(),
+        adapter=_SetupAdapter(),
+        watcher_factory=lambda _schedule: _Watcher(),
+        cutover_admitted=True,
+        profile_process_is_sole=True,
+        start_evidence=lambda: False,
+    )
+
+    await owner.start()
+    assert owner.snapshot().status == "not_configured"
+    assert not (tmp_path / "sync.sqlite3").exists()
+
+    await owner.start(force=True)
+
+    assert (tmp_path / "sync.sqlite3").exists()
+    assert migrations == ["migrated"]
+    assert owner.snapshot().status == "active"
+    await owner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_review_setup_live_starts_a_deferred_runtime(tmp_path: Path) -> None:
+    """Activating the first root at runtime brings the machinery up on demand."""
+
+    from tldw_chatbook.Notes.notes_sync_models import NotesSyncDirection
+    from tldw_chatbook.Notes.notes_sync_runtime import (
+        NotesSyncRootSetup,
+        NotesSyncRuntimeOwner,
+    )
+
+    store = NotesDeviceStateStore(tmp_path / "sync.sqlite3")
+    adapter = _SetupAdapter()
+    owner = NotesSyncRuntimeOwner(
+        store=store,
+        migrate_legacy=lambda: None,
+        coordinator=_SetupCoordinator(),
+        adapter=adapter,
+        watcher_factory=lambda _schedule: _Watcher(),
+        cutover_admitted=True,
+        profile_process_is_sole=True,
+        start_evidence=lambda: False,
+    )
+    await owner.start()
+    assert owner.snapshot().status == "not_configured"
+
+    review = await owner.review_setup(
+        NotesSyncRootSetup(
+            display_name="Research",
+            canonical_path=str(tmp_path / "research"),
+            note_scope_id="local_note",
+            direction=NotesSyncDirection.BIDIRECTIONAL,
+        )
+    )
+
+    assert owner.snapshot().status == "active"
+    assert (tmp_path / "sync.sqlite3").exists()
+    result = await owner.activate_root(review.root_id, review.observation_token)
+    assert result.accepted is True
+    assert store.get_root(review.root_id).state.value == "active"
+    await owner.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_start_evidence_probe_failure_fails_open_and_starts(
+    tmp_path: Path,
+) -> None:
+    """A broken probe must never silently disable a configured user's sync."""
+
+    from tldw_chatbook.Notes.notes_sync_runtime import NotesSyncRuntimeOwner
+
+    def broken_probe() -> bool:
+        raise RuntimeError("private probe failure")
+
+    store = NotesDeviceStateStore(tmp_path / "sync.sqlite3")
+    owner = NotesSyncRuntimeOwner(
+        store=store,
+        migrate_legacy=lambda: None,
+        coordinator=_Coordinator(),
+        adapter=_Adapter(),
+        watcher_factory=lambda _schedule: _Watcher(),
+        cutover_admitted=True,
+        profile_process_is_sole=True,
+        start_evidence=broken_probe,
+    )
+
+    await owner.start()
+
+    assert owner.snapshot().status == "active"
+    assert (tmp_path / "sync.sqlite3").exists()
+    await owner.shutdown()
