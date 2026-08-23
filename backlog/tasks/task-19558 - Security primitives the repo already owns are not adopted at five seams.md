@@ -295,3 +295,154 @@ failures and the `test_console_prompt_picker` collection error reproduce on
 base). Repo-wide `--collect-only -q`: **56,915 tests collected**, 1 error —
 `Tests/UI/test_library_file_notes_workspace.py`, the known dev red
 (TASK-20972).
+
+## Implementation Notes — review round (2026-08-23)
+
+Independent review returned **fix-then-ship** with six items. The disposition
+of finding 5 and the inverted Prompts test were independently confirmed; the
+rest of this section is what changed.
+
+**1 — the headline the first round shipped and did not name: a multi-word
+recall narrowing at eight seams.** Quoting each seam's whole query as ONE
+FTS5 phrase closed the injections and also made the words CONTIGUITY-bound.
+This repo had already learned that once: `RAG_Search/simplified/rag_service.
+_escape_fts5_query`'s docstring records TASK-3995 discovering that
+whole-query phrase quoting "is strictly stronger than AND-of-terms, not
+equivalent to it". Round one re-created that defect while removing a
+different one.
+
+Measured on one corpus (two records per seam: words adjacent / words split),
+`dragon lore`:
+
+| seam | base 72a82bc56 | round 1 | now |
+|---|---|---|---|
+| `search_character_cards` | 2 | **1** | 2 |
+| `search_conversations_by_title` | 2 | **1** | 2 |
+| `search_conversations_by_content` | 2 | **1** | 2 |
+| `search_messages_by_content` | 2 | **1** | 2 |
+| `list_flashcards` | 2 | **1** | 2 |
+| `search_flashcards` | 2 | **1** | 2 |
+| `Prompts_DB.search_prompts` | 2 | **1** | 2 |
+| `Prompts_DB.search_prompts_by_text` | 2 | **1** | 2 |
+
+The other half of the bar, on the same corpus and the same run: every
+injection probe still returns **0 rows at all 14 seams** — column filter
+(`dragon" OR title:"Other`), bare quote (`foo"bar`), and a typed operator
+(`dragon OR zzznomatch`, which really executed under the base raw bind and
+returned 2-3 rows). Recall was restored without trading the closure back.
+
+The fix routes the plain-text branch through the repo's existing form:
+`fts5_query_tokens` + per-token `quote_fts5_token`, joined by FTS5's
+implicit AND — added to `Utils/fts5_match_forms` as
+`build_and_match_expression` / `build_and_match_query`, and
+`rag_service._escape_fts5_query` now builds its expression with the same
+function instead of its own copy of the join.
+
+**The rule applied, stated once rather than left to be inferred from
+thirteen call sites: a seam that bound its query RAW (FTS5 implicit AND)
+gets `build_and_match_query`; a seam that already bound a quoted PHRASE
+keeps `build_phrase_match_query`.** That restores every regression round one
+introduced and introduces no unmeasured behaviour change of its own —
+`search_notes`, `search_keywords`, `search_keyword_collections` and both
+Evals seams matched phrases before this task too, so they still do.
+`test_the_phrase_seams_are_deliberately_left_as_phrases` pins that as a
+decision, and shows the AND form would have returned 2 rather than 1.
+
+A consequence stated rather than buried: the base docstrings' "Supports FTS
+query syntax" promise is retired at these seams — a typed `dragon*` or `OR`
+is now literal text. That is the point of the fix, and the three docstrings
+that still advertised the old contract were retired in `51a42ca98`.
+
+**2 — E1, a NUL byte.** `sqlite3` hands a bound TEXT parameter to SQLite as
+a C string, so the value is truncated at the first NUL **after** quoting:
+`"a\x00b"` arrives as `"a` and FTS5 raises `unterminated string`. No correct
+quoting survives it — the closing quote is past the truncation point — and
+raw binds escaped only by luck, the truncated `a` still being a valid
+bareword. Nine seams went rows→raise. `Notes/file_notes_replica.search` had
+guarded this since it was written; that rule is now
+`fts5_query_is_searchable` and every seam shares it.
+
+**3 — E2, `None`.** Quoting `None` raised a bare `AttributeError`, not even
+wrapped in `CharactersRAGDBError`. Fixed in the same predicate, plus
+`isinstance` guards ahead of the two `.strip()` calls that ran before it.
+`Evals_DB.search_tasks(None)` raised `TypeError` at base too and is swept
+here as the last seam in the family with that shape.
+
+After both: the 126-cell probe matrix has **zero** raising cells; base had
+17 and round one had 19.
+
+**4 — the XML census now exists.** Round one scoped it to `Subscriptions/`
+and claimed the other seven parsers were "not allowlisted so widening turns
+them red" — describing a widening that had not happened, so nothing could
+red and only memory stopped an eighth. It is now repo-wide with
+`_KNOWN_UNHARDENED: dict[str, str]`, a **register of open defects** naming
+each of the seven and what reaches it, plus
+`test_known_unhardened_entries_are_still_unhardened` and
+`test_the_register_matches_the_measured_population_exactly` so an entry
+cannot outlive its defect. Bite-proof both ways, by real in-tree mutation: a
+synthetic eighth parser reds two tests; hardening
+`Research_Interop/academic_providers.py` reds two others.
+
+**For filing (out of scope here, four take untrusted input today):**
+`Evals/eval_runner.py:1842` (parses MODEL OUTPUT — prompt-injection
+reachable), `Research_Interop/academic_providers.py:218` (remote Atom feed),
+`Web_Scraping/Article_Scraper/crawler.py:398` and
+`Web_Scraping/Article_Extractor_Lib.py:1063` (fetched sitemaps; a byte cap
+is no defence — amplification is the point), plus
+`Local_Ingestion/XML_Ingestion.py` (same threat shape as the OPML importer),
+`Media/local_media_reading_service.py` (`iterparse` still expands internal
+entities) and `Utils/file_extraction.py`.
+
+**5 — guard-limitation honesty, and a third census.** Census 1's docstring
+now states plainly that it fires on the CORRECT escape hand-rolled
+(`.replace('"', '""')`) and is **blind to the spelling that actually caused
+this task** (`f'"{x}"'`, which contains nothing to match). A repo-wide
+detector for that shape was tried and rejected on measurement: four false
+positives (SQL identifier quoting, UI copy) and zero true ones. What is
+available structurally is **census 3** — a module that binds a parameter to
+`... MATCH ?` must import `Utils/fts5_match_forms`; seven modules do and all
+seven import it. It catches BOTH spellings in a new file, proven by an
+in-tree mutation with the broken one. Its blind spot is stated too: a new
+seam inside one of the seven already-importing modules is not covered.
+Census 2's docstring now names `logger.opt(exception=True).error(...)` — this
+repo's house style — as a real evasion of its logging-root walk.
+`test_dead_store_census_rediscovers_the_three_base_defects` no longer
+`skip`s: it raises with instructions. It keeps a PINNED revision rather than
+`git merge-base HEAD origin/dev`, because merge-base moves on rebase and
+would eventually resolve to a commit where the defects are already fixed —
+turning the one test that proves the census detects anything into a failure
+whose obvious "repair" is deletion.
+
+**6 —** the `test_personas_workbench` stub comment now says what is true:
+when `fts_match_query` is supplied, `search_term` is unused, including by
+the error message.
+
+**Born-red at the reviewed HEAD `51a42ca98`:** 11 of the new tests fail
+there (6 recall seams, the phrase-seam decision, injections-under-AND, both
+NUL tests, the None sweep). Census 3 and the widened XML census pass at that
+HEAD by design — they harden rather than fix, and saying otherwise would be
+overclaiming.
+
+**Merge check against current dev (`ae018308b`).** Verified by merging this
+branch into a throwaway worktree rather than by reading the textual merge:
+the only conflict is `lessons-testing-evidence.md` (both sides append), and
+`ChaChaNotes_DB.py` auto-merges across dev's `messages_fts` rebuild
+(TASK-21100). On the merged tree `Tests/DB` + `ChaChaNotesDB` + `Utils` +
+`Library` + `Media_DB` + `Prompts_DB` = **5121 passed / 1 failed**, that one
+being a pre-existing baseline red — so the clean textual merge is a clean
+semantic merge too. Also measured there: dev's TASK-21160 fixes the
+`config_profiles`↔`simplified` cycle, so the priming import in
+`Tests/Utils/test_agent_path_redaction_adoption.py` becomes redundant on
+that dev and is annotated to be dropped then; it is still required at this
+branch's base.
+
+**Test counts (review round).** `Tests/DB` + `ChaChaNotesDB` +
+`Subscriptions` + `Utils` + `Library`: **5618 passed / 4 skipped / 0
+failed** (round 1: 5604). `Evals`, `Media`, `Media_DB`, `RAG_Search`, `RAG`,
+`RAG_Eval`, `Prompts_DB`, `Study_Interop`, `Notes`, `Character_Chat`,
+`Agents`, `MCP`, `Tools`: **10457 passed / 16 failed**, the failure set
+byte-identical to the recorded 72a82bc56 baseline. Affected UI set: **775
+passed / 2 failed / 1 collection error**, identical to that set at base.
+Repo-wide `--collect-only -q`: **56,933 collected**, 1 error
+(`test_library_file_notes_workspace.py`, TASK-20972).
+`scripts/preflight.sh`: all green.

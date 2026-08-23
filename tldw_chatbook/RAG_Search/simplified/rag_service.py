@@ -46,6 +46,7 @@ import psutil
 from tldw_chatbook.config import load_settings
 from tldw_chatbook.Utils.fts5_match_forms import (
     FTS5_STOPWORDS,
+    build_and_match_expression,
     build_prefix_match_expression,
     fts5_query_tokens,
     fts5_token_runs,
@@ -3578,13 +3579,16 @@ class RAGService:
                 f"Query truncated from {len(query)} to {MAX_QUERY_LENGTH} characters"
             )
 
-        quoted_tokens = [
-            self._quote_fts5_token(token)
-            for token in self._fts5_query_tokens(query)
-        ]
-
-        # FTS5 joins space-separated quoted terms with an implicit AND.
-        return " ".join(quoted_tokens)
+        # TASK-19558 moved the JOIN, not just the escape, to
+        # `Utils/fts5_match_forms.build_and_match_expression`: the DB search
+        # seams needed this same AND form and a second copy of it is how the
+        # phrase-vs-AND distinction gets lost again. `_quote_fts5_token` and
+        # `_fts5_query_tokens` remain as this class's named seams (probes and
+        # tests monkeypatch them by name) and still delegate to the same
+        # module, so the expression built here is byte-identical. (Named
+        # seams because RAG_Eval's probes and harness call them directly;
+        # nothing intercepts them to observe this method.)
+        return build_and_match_expression(self._fts5_query_tokens(query))
 
     @staticmethod
     def _quote_fts5_token(token: str) -> str:

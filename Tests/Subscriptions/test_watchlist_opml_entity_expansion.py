@@ -39,7 +39,53 @@ from tldw_chatbook.Subscriptions.watchlist_opml_service import (
 )
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "tldw_chatbook"
-SUBSCRIPTIONS_ROOT = PACKAGE_ROOT / "Subscriptions"
+
+#: Modules that parse XML with stdlib ElementTree and do NOT consult
+#: defusedxml, recorded with what reaches them. This is a REGISTER OF OPEN
+#: DEFECTS, not an allowlist of acceptable ones: every entry below is a live
+#: entity-expansion exposure of the same shape as the OPML importer this
+#: task fixed, and each is filed for its own change rather than fixed here
+#: (TASK-19558 was scoped to the seams the holistic review named).
+#:
+#: The census is repo-wide precisely so that an EIGHTH such module cannot be
+#: added silently -- it fails immediately, and the author must either harden
+#: it or write down here what reaches it and why it is being left open.
+#: `test_known_unhardened_entries_are_still_unhardened` deletes the register
+#: as each one is fixed, so it cannot rot into folklore.
+_KNOWN_UNHARDENED: dict[str, str] = {
+    "Evals/eval_runner.py": (
+        "Parses MODEL OUTPUT (`ET.fromstring` over a generated XML answer), "
+        "so the payload is prompt-injection reachable -- the sharpest of "
+        "the seven: a poisoned document in the corpus can choose the XML "
+        "the model emits."
+    ),
+    "Local_Ingestion/XML_Ingestion.py": (
+        "Parses user-supplied .xml files chosen for ingestion -- the same "
+        "threat shape as the OPML importer fixed by TASK-19558 (a file the "
+        "user did not write, imported on their behalf)."
+    ),
+    "Media/local_media_reading_service.py": (
+        "`ET.iterparse` over stored media documents. iterparse streams "
+        "elements but still expands internal entities, so a byte cap on the "
+        "source does not bound the expansion."
+    ),
+    "Research_Interop/academic_providers.py": (
+        "Parses a REMOTE Atom feed (arXiv) -- fully attacker-controlled "
+        "bytes if the endpoint or the transport is."
+    ),
+    "Utils/file_extraction.py": (
+        "Parses XML pulled out of user-supplied archives/documents during "
+        "extraction."
+    ),
+    "Web_Scraping/Article_Extractor_Lib.py": (
+        "Parses FETCHED sitemaps. A response size cap does not help here: "
+        "amplification is the whole point of a billion-laughs payload -- a "
+        "few hundred bytes on the wire become gigabytes in the parser."
+    ),
+    "Web_Scraping/Article_Scraper/crawler.py": (
+        "Parses FETCHED sitemaps, same as `Article_Extractor_Lib` above."
+    ),
+}
 
 #: Six nesting levels of a 10x entity: ~1,000,000 "lol" copies if expanded.
 BILLION_LAUGHS_OPML = """<?xml version="1.0"?>
@@ -215,29 +261,75 @@ def unhardened_xml_parsers(source: str) -> list[tuple[int, str]]:
     return hits
 
 
-def test_no_subscriptions_module_parses_xml_without_defusedxml() -> None:
-    """Scoped to `Subscriptions/`, where the rule is fully satisfied today.
-
-    Stated rather than overclaimed: a repo-wide version of this census
-    currently reports seven other modules (`Evals/eval_runner.py`,
-    `Local_Ingestion/XML_Ingestion.py`,
-    `Media/local_media_reading_service.py`,
-    `Research_Interop/academic_providers.py`, `Utils/file_extraction.py`,
-    `Web_Scraping/Article_Extractor_Lib.py`,
-    `Web_Scraping/Article_Scraper/crawler.py`) that parse XML with stdlib
-    ElementTree and never import defusedxml. Those are a real, separate
-    population -- outside this task's scope, and NOT allowlisted here,
-    because an allowlist would quietly bless them. Widening the census to
-    the package tree is what turns them red.
-    """
-    offenders: dict[str, list[tuple[int, str]]] = {}
-    for path in sorted(SUBSCRIPTIONS_ROOT.rglob("*.py")):
-        hits = unhardened_xml_parsers(path.read_text(encoding="utf-8"))
+def _unhardened_modules() -> dict[str, list[tuple[int, str]]]:
+    """Every module under `tldw_chatbook/` that parses XML unhardened."""
+    found: dict[str, list[tuple[int, str]]] = {}
+    for path in sorted(PACKAGE_ROOT.rglob("*.py")):
+        hits = unhardened_xml_parsers(path.read_text(encoding="utf-8", errors="replace"))
         if hits:
-            offenders[str(path.relative_to(PACKAGE_ROOT.parent))] = hits
+            found[path.relative_to(PACKAGE_ROOT).as_posix()] = hits
+    return found
+
+
+def test_no_module_parses_xml_without_defusedxml() -> None:
+    """Repo-wide, so an EIGHTH unhardened parser cannot appear silently.
+
+    The first version of this census was scoped to `Subscriptions/`, which
+    made it green and inert: it could never red on anything, and the note
+    saying the other seven were "deliberately not allowlisted so widening
+    turns them red" described a widening that had not happened. The register
+    above is the honest form -- the census covers the whole package, and the
+    seven known-open modules are named with what reaches them.
+    """
+    offenders = {
+        key: hits
+        for key, hits in _unhardened_modules().items()
+        if key not in _KNOWN_UNHARDENED
+    }
     assert offenders == {}, (
-        "These Subscriptions modules parse XML without consulting "
-        f"defusedxml: {offenders}"
+        "These modules parse XML without consulting defusedxml: "
+        f"{offenders} -- import `defusedxml.ElementTree` (a core dependency; "
+        "see `watchlist_opml_service` for the shape), or add an entry to "
+        "_KNOWN_UNHARDENED saying what reaches this parser and why it is "
+        "being left open."
+    )
+
+
+def test_known_unhardened_entries_are_still_unhardened() -> None:
+    """A register entry for a module that no longer needs it is stale.
+
+    Without this, fixing one of the seven leaves a permanent hole in the
+    census: the module would stay skipped, and a LATER regression in the
+    same file would never red.
+    """
+    found = _unhardened_modules()
+    for key in _KNOWN_UNHARDENED:
+        path = PACKAGE_ROOT / key
+        assert path.exists(), f"stale register entry for a deleted module: {key}"
+        assert key in found, (
+            f"stale register entry: {key} no longer parses XML unhardened -- "
+            "drop the entry so the census covers it again"
+        )
+
+
+def test_the_register_matches_the_measured_population_exactly() -> None:
+    """The register is a measurement, not a wish: no entry may be missing."""
+    assert sorted(_unhardened_modules()) == sorted(_KNOWN_UNHARDENED)
+
+
+def test_no_subscriptions_module_parses_xml_without_defusedxml() -> None:
+    """The narrower claim TASK-19558 actually delivered, kept explicit.
+
+    `Subscriptions/` is fully hardened -- the OPML importer was its last
+    unhardened parser -- and no entry in the register lives there.
+    """
+    subscriptions = {
+        key: hits
+        for key, hits in _unhardened_modules().items()
+        if key.startswith("Subscriptions/")
+    }
+    assert subscriptions == {}, (
+        f"These Subscriptions modules parse XML without defusedxml: {subscriptions}"
     )
 
 

@@ -59,7 +59,13 @@ from .sql_validation import (
 from .sql_logging import preview_params
 from .private_sqlite import backup_connection_to_private, connect_private_sqlite
 from tldw_chatbook.Utils.private_paths import PrivatePathError, lexical_path
-from tldw_chatbook.Utils.fts5_match_forms import quote_fts5_phrase, quote_fts5_token
+from tldw_chatbook.Utils.fts5_match_forms import (
+    build_and_match_expression,
+    fts5_query_is_searchable,
+    fts5_query_tokens,
+    quote_fts5_prefix,
+    quote_fts5_token,
+)
 #
 ########################################################################################################################
 #
@@ -2257,12 +2263,15 @@ class MediaDatabase:
         Args:
             search_query (Optional[str]): The primary PLAIN-TEXT string for
                 searching. If `search_fields` include 'title' or 'content',
-                this query is quoted as a literal FTS5 phrase
-                (`Utils.fts5_match_forms.quote_fts5_phrase`) before it is
+                every token of this query is quoted individually and the
+                tokens are ANDed
+                (`Utils.fts5_match_forms.build_and_match_query`) before being
                 matched against the FTS index -- TASK-19558; it is no longer
                 accepted pre-formatted, and FTS5 operators typed into it are
-                inert. Supply a real MATCH expression through
-                `fts_match_query` instead. For 'author' or 'type' in
+                inert. AND-of-tokens rather than one whole-query phrase, so
+                `dragon lore` still finds media titled "lore of the dragon
+                reversed" as the pre-TASK-19558 raw bind did. Supply a real
+                MATCH expression through `fts_match_query` instead. For 'author' or 'type' in
                 `search_fields`, it's used in a LIKE '%query%' match.
             search_fields (Optional[List[str]]): A list of fields to apply the
                 `search_query` against. Valid fields: 'title', 'content' (FTS),
@@ -2533,8 +2542,11 @@ class MediaDatabase:
                     # TASK-19558: plain user text from the media search box.
                     # It used to be bound to MATCH RAW, so a typed `"` raised
                     # OperationalError('unterminated string') and a typed
-                    # `OR`/column filter executed as FTS5 syntax. It is now a
-                    # quoted literal phrase.
+                    # `OR`/column filter executed as FTS5 syntax. Each token
+                    # is now quoted individually and the tokens are ANDed --
+                    # the raw bind's own semantics (FTS5 joins bare terms
+                    # with an implicit AND), so recall is unchanged, unlike
+                    # the whole-query phrase this task's first round used.
                     #
                     # The lowercased duplicates the raw path used to OR in
                     # are gone with it: unicode61 matching is already
@@ -2544,20 +2556,38 @@ class MediaDatabase:
                     # is kept, measured on the RAW length -- quoting adds two
                     # characters, so testing the quoted string's length would
                     # have silently retired that branch.
-                    quoted_fts_query = quote_fts5_phrase(search_query)
-                    if len(search_query) <= 2:
+                    tokens = (
+                        fts5_query_tokens(search_query)
+                        if fts5_query_is_searchable(search_query)
+                        else []
+                    )
+                    if not tokens:
+                        quoted_fts_query = ""
+                    elif len(search_query) <= 2:
                         # Note: SQLite FTS5 doesn't support prefix wildcards
                         # (*term); "ends with" is handled by the LIKE
                         # conditions built below.
-                        fts_query_parts.append(f"{quoted_fts_query}*")
+                        quoted_fts_query = quote_fts5_prefix(search_query)
                     else:
+                        quoted_fts_query = build_and_match_expression(tokens)
+                    if quoted_fts_query:
                         fts_query_parts.append(quoted_fts_query)
 
                 # Combine all FTS query parts with OR
                 combined_fts_query = " OR ".join(fts_query_parts)
-                # Add a single MATCH condition
-                conditions.append("fts.media_fts MATCH ?")
-                params.append(combined_fts_query)
+                if combined_fts_query:
+                    # Add a single MATCH condition
+                    conditions.append("fts.media_fts MATCH ?")
+                    params.append(combined_fts_query)
+                else:
+                    # Unsearchable text (task-19558): `None`, punctuation
+                    # only, or containing a NUL -- which SQLite truncates the
+                    # bound parameter at, mid-literal, so no quoting can
+                    # survive it. `MATCH ''` is an FTS5 syntax error, and
+                    # simply DROPPING the condition would widen the result
+                    # set (these conditions are AND-joined), so the leg is
+                    # made explicitly false instead.
+                    conditions.append("0")
 
                 # Add LIKE search for 'title' and 'content' to ensure partial matches work
                 title_content_like_parts = []

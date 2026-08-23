@@ -72,7 +72,8 @@ from .sql_logging import preview_params
 from .private_sqlite import backup_connection_to_private, connect_private_sqlite
 from tldw_chatbook.Utils.private_paths import PrivatePathError, lexical_path
 from tldw_chatbook.Utils.fts5_match_forms import (
-    quote_fts5_phrase,
+    build_and_match_query,
+    build_phrase_match_query,
     quote_fts5_prefix,
     quote_fts5_token,
 )
@@ -7786,14 +7787,17 @@ UPDATE db_schema_version
 
         TASK-19558: this method used to compute ``safe_search_term`` and then
         bind the RAW ``search_term`` -- the quoting reached the error message
-        and nothing else. The dead store is gone; ``search_term`` is now a
-        literal phrase (``quote_fts5_phrase``), so a typed ``OR``/``NEAR``/
-        column filter matches literally instead of being executed, and a
-        typed ``"`` no longer raises ``OperationalError``.
+        and nothing else. The dead store is gone; every token of
+        ``search_term`` is now quoted individually and the tokens are ANDed
+        (``build_and_match_query``), so a typed ``OR``/``NEAR``/column filter
+        matches literally instead of being executed and a typed ``"`` no
+        longer raises ``OperationalError`` -- while ``dragon lore`` keeps
+        matching a card named "lore of the dragon reversed", which the raw
+        bind did and a whole-query phrase would not.
 
         Args:
-            search_term: Plain user-typed search text, matched as a literal
-                phrase. FTS5 operators in it are inert.
+            search_term: Plain user-typed search text. Every token must
+                appear; FTS5 operators in it are inert.
             limit: The maximum number of results to return. Defaults to 10.
             fts_match_query: Optional caller-built FTS5 MATCH expression
                 (must already be injection-safe -- build it with
@@ -7810,8 +7814,10 @@ UPDATE db_schema_version
             CharactersRAGDBError: For database errors during the search.
         """
         match_expression = (
-            fts_match_query if fts_match_query else quote_fts5_phrase(search_term)
+            fts_match_query if fts_match_query else build_and_match_query(search_term)
         )
+        if not match_expression:
+            return []
         query = """
                 SELECT cc.*
                 FROM character_cards_fts fts
@@ -9950,12 +9956,18 @@ UPDATE db_schema_version
         Raises:
             CharactersRAGDBError: For database search errors.
         """
-        if not title_query.strip():
+        if not isinstance(title_query, str) or not title_query.strip():
+            # `isinstance` first (task-19558 E2): `None` reaches this seam
+            # from callers passing an unset filter through, and `.strip()`
+            # on it raised a bare AttributeError -- not even wrapped in
+            # CharactersRAGDBError, so no caller was written to catch it.
             logger.warning(
                 "Empty title_query provided for conversation search. Returning empty list."
             )
             return []
-        safe_search_term = quote_fts5_phrase(title_query)
+        safe_search_term = build_and_match_query(title_query)
+        if not safe_search_term:
+            return []
         base_query = """
                      SELECT c.*
                      FROM conversations_fts fts
@@ -10017,14 +10029,19 @@ UPDATE db_schema_version
         Raises:
             CharactersRAGDBError: For database search errors.
         """
-        if not search_query.strip() and not (fts_match_query or "").strip():
+        plain_is_empty = not isinstance(search_query, str) or not search_query.strip()
+        if plain_is_empty and not (fts_match_query or "").strip():
+            # See `search_conversations_by_title` for why the isinstance
+            # check comes first (task-19558 E2).
             logger.warning(
                 "Empty search_query provided for conversation content search. Returning empty list."
             )
             return []
         safe_search_query = (
-            fts_match_query if fts_match_query else quote_fts5_phrase(search_query)
+            fts_match_query if fts_match_query else build_and_match_query(search_query)
         )
+        if not safe_search_query:
+            return []
 
         # Search for messages containing the query, then get their conversations
         query = """
@@ -12196,7 +12213,9 @@ UPDATE db_schema_version
         Raises:
             CharactersRAGDBError: For database search errors.
         """
-        safe_search_term = quote_fts5_phrase(content_query)
+        safe_search_term = build_and_match_query(content_query)
+        if not safe_search_term:
+            return []
         base_query = """
                      SELECT m.id, m.conversation_id, m.parent_message_id,
                             m.sender, m.content, m.image_data, m.image_mime_type,
@@ -12924,12 +12943,11 @@ UPDATE db_schema_version
         Returns:
             A list of matching keyword dictionaries.
         """
+        match_expression = build_phrase_match_query(search_term)
+        if not match_expression:
+            return []
         return self._search_generic_items_fts(
-            "keywords_fts",
-            "keywords",
-            "keyword",
-            quote_fts5_phrase(search_term),
-            limit,
+            "keywords_fts", "keywords", "keyword", match_expression, limit
         )
 
     # Keyword Collections
@@ -13072,11 +13090,14 @@ UPDATE db_schema_version
         self, search_term: str, limit: int = 10
     ) -> List[Dict[str, Any]]:
         """Search keyword collections by name; ``search_term`` is a literal phrase."""
+        match_expression = build_phrase_match_query(search_term)
+        if not match_expression:
+            return []
         return self._search_generic_items_fts(
             "keyword_collections_fts",
             "keyword_collections",
             "name",
-            quote_fts5_phrase(search_term),
+            match_expression,
             limit,
         )
 
@@ -14181,8 +14202,10 @@ UPDATE db_schema_version
         # nothing) or escaped the literal into a live column filter
         # (`alpha" OR title:"Other` matched notes containing neither term).
         safe_search_term = (
-            fts_match_query if fts_match_query else quote_fts5_phrase(search_term)
+            fts_match_query if fts_match_query else build_phrase_match_query(search_term)
         )
+        if not safe_search_term:
+            return []
 
         params: List[Any] = [safe_search_term]
         id_filter_sql = ""
@@ -16436,7 +16459,12 @@ UPDATE db_schema_version
         flashcard search box, so a card front containing a quote (or any
         typed ``"``) surfaced as a bare ``sqlite3.OperationalError``
         propagating out of the handler -- nothing on that path catches it.
-        The value is now a literal phrase.
+        Every token is now quoted individually and ANDed, which keeps the
+        raw bind's multi-word recall (``dragon lore`` still finds a card
+        fronted "lore of the dragon reversed") while making operators inert.
+        An unsearchable ``q`` -- ``None``, punctuation-only, or containing a
+        NUL, which SQLite truncates the bound parameter at -- returns no
+        rows rather than raising.
         """
         normalized_q = str(q or "").strip() or None
         params: List[Any] = []
@@ -16448,7 +16476,10 @@ UPDATE db_schema_version
                 JOIN decks d ON d.id = f.deck_id
                 WHERE flashcards_fts MATCH ? AND f.is_deleted = 0 AND d.is_deleted = 0
             """
-            params.append(quote_fts5_phrase(normalized_q))
+            match_expression = build_and_match_query(normalized_q)
+            if not match_expression:
+                return []
+            params.append(match_expression)
             if deck_id:
                 query += " AND f.deck_id = ?"
                 params.append(deck_id)
@@ -17697,13 +17728,19 @@ UPDATE db_schema_version
     def search_flashcards(
         self, query: str, deck_id: Optional[str] = None
     ) -> List[Dict[str, Any]]:
-        """Search flashcards using FTS; ``query`` is matched as a literal phrase."""
+        """Search flashcards using FTS; every token of ``query`` must appear.
+
+        See ``list_flashcards`` for the form and its rationale (task-19558).
+        """
         base_query = """
             SELECT f.* FROM flashcards f
             JOIN flashcards_fts fts ON f.rowid = fts.rowid
             WHERE flashcards_fts MATCH ? AND f.is_deleted = 0
         """
-        params = [quote_fts5_phrase(query)]
+        match_expression = build_and_match_query(query)
+        if not match_expression:
+            return []
+        params = [match_expression]
 
         if deck_id:
             base_query += " AND f.deck_id = ?"

@@ -52,7 +52,10 @@ from .sql_logging import preview_params
 from .private_sqlite import backup_connection_to_private, connect_private_sqlite
 from ..Metrics.metrics_logger import log_counter, log_histogram
 from tldw_chatbook.Utils.private_paths import PrivatePathError, lexical_path
-from tldw_chatbook.Utils.fts5_match_forms import quote_fts5_phrase, quote_fts5_token
+from tldw_chatbook.Utils.fts5_match_forms import (
+    build_and_match_query,
+    quote_fts5_token,
+)
 #
 ########################################################################################################################
 #
@@ -3745,12 +3748,16 @@ class PromptsDatabase:
         """Searches prompts using FTS.
 
         Args:
-            search_query: Plain user search text, matched against
-                ``prompts_fts``/``prompt_keywords_fts`` as a literal phrase
-                (TASK-19558 -- it is quoted with
-                ``Utils.fts5_match_forms.quote_fts5_phrase``, NOT used
+            search_query: Plain user search text. Every token must appear
+                in ``prompts_fts``/``prompt_keywords_fts``
+                (TASK-19558 -- each token is quoted with
+                ``Utils.fts5_match_forms.build_and_match_query``, NOT used
                 verbatim as a MATCH clause; FTS5 operators typed into it are
-                inert, and a typed ``"`` no longer raises).
+                inert, and a typed ``"`` no longer raises). The AND-of-tokens
+                form, not a whole-query phrase: a prompt named "lore of the
+                dragon reversed" is still found by ``dragon lore``.
+                Unsearchable text -- ``None``, punctuation-only, or
+                containing a NUL -- matches nothing instead of raising.
             search_fields: Fields to search; defaults to the standard text
                 fields when ``search_query`` is set.
             page: 1-indexed page number.
@@ -3807,13 +3814,22 @@ class PromptsDatabase:
                 "user_prompt",
             }
             # Forward the caller-built MATCH expression when provided;
-            # otherwise quote the user's text as a literal phrase.
+            # otherwise quote each of the user's tokens and AND them.
             # TASK-19558: the else-branch used to bind `search_query` RAW,
             # so a typed `"` raised OperationalError('unterminated string')
             # and a typed column filter/`OR` executed as FTS5 syntax.
             effective_match_query = (
-                fts_match_query if fts_match_query else quote_fts5_phrase(search_query)
+                fts_match_query
+                if fts_match_query
+                else build_and_match_query(search_query)
             )
+            # "" means the text cannot be searched at all (punctuation only,
+            # or containing a NUL that SQLite truncates the bound parameter
+            # at). `MATCH ''` is an FTS5 syntax error, so skip both FTS legs
+            # and let the id-set stay empty rather than raising into the
+            # prompt search box.
+            if not effective_match_query:
+                return [], 0
 
             # Search in prompt text fields
             if any(field in text_search_fields for field in search_fields):
@@ -4448,11 +4464,16 @@ class PromptsDatabase:
 
         try:
             # Use FTS to find matching prompt IDs
-            # TASK-19558: `search_text` is plain user text; quote it as a
-            # literal phrase rather than binding it as an FTS5 expression.
+            # TASK-19558: `search_text` is plain user text; quote each of
+            # its tokens and AND them rather than binding it as an FTS5
+            # expression (and rather than one whole-query phrase, which
+            # would halve recall -- see `build_and_match_query`).
+            match_expression = build_and_match_query(search_text)
+            if not match_expression:
+                return []
             cursor = self.execute_query(
                 "SELECT rowid FROM prompts_fts WHERE prompts_fts MATCH ?",
-                (quote_fts5_phrase(search_text),),
+                (match_expression,),
             )
             matching_ids = [row["rowid"] for row in cursor.fetchall()]
 

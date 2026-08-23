@@ -38,7 +38,11 @@ from typing import FrozenSet, Iterable, List
 
 __all__ = [
     "FTS5_STOPWORDS",
+    "build_and_match_expression",
+    "build_and_match_query",
+    "build_phrase_match_query",
     "build_prefix_match_expression",
+    "fts5_query_is_searchable",
     "fts5_query_tokens",
     "fts5_token_runs",
     "is_fts5_stopword",
@@ -250,3 +254,123 @@ def build_prefix_match_expression(tokens: Iterable[str]) -> str:
         for token in tokens
         if not is_fts5_stopword(token)
     )
+
+
+def fts5_query_is_searchable(query: object) -> bool:
+    """Whether a raw user query can produce a MATCH expression at all.
+
+    Three rejections, each for a concrete reason rather than defensiveness:
+
+    * **Not a string / empty.** ``None`` reaches these seams from callers
+      that pass an unset filter through unchanged. Before TASK-19558 the
+      raw value went to ``sqlite3`` and produced ``[]`` or a wrapped DB
+      error; quoting it produced a bare ``AttributeError: 'NoneType' object
+      has no attribute 'replace'`` instead -- an unwrapped exception type no
+      caller of a DB search method is written against.
+
+    * **Contains a NUL.** This is the one that is not obvious.
+      ``sqlite3`` hands a bound TEXT parameter to SQLite as a C string, so
+      the value is truncated at the first NUL -- **after** we have quoted
+      it. ``a\\x00b`` becomes the literal ``"a\\x00b"``, SQLite sees ``"a``,
+      and FTS5 raises ``unterminated string``. No amount of correct quoting
+      can survive that, because the closing quote is on the far side of the
+      truncation point. Raw binds were unaffected only by luck: the
+      truncated value ``a`` was still a syntactically valid bareword.
+      ``Notes/file_notes_replica.search`` has guarded this since it was
+      written (``if "\\x00" in query: return []``); this is that rule, moved
+      to where every seam can share it.
+
+    * **No alphanumeric character.** FTS5's ``unicode61`` tokenizer indexes
+      only alphanumeric runs, so a pure-punctuation query cannot match
+      anything. Answering ``""`` lets the caller skip the query rather than
+      run one that is guaranteed to return nothing.
+
+    Args:
+        query: The raw value a search seam was handed.
+
+    Returns:
+        True when a MATCH expression built from it can be executed.
+    """
+    if not isinstance(query, str) or not query:
+        return False
+    if "\x00" in query:
+        return False
+    return any(ch.isalnum() for ch in query)
+
+
+def build_and_match_expression(tokens: Iterable[str]) -> str:
+    """Build the AND form: every token quoted, joined by FTS5's implicit AND.
+
+    **This is the form a plain-text search box wants**, and getting that
+    wrong is the defect TASK-3995 fixed once already and TASK-19558's first
+    round re-created. Wrapping a whole multi-word query in ONE pair of
+    quotes makes it a PHRASE query, which requires the words to appear as a
+    contiguous run -- strictly stronger than "all of these words appear",
+    not equivalent to it. Measured on a real corpus: ``dragon lore`` matched
+    a record titled "dragon lore adjacent" but not one titled "lore of the
+    dragon reversed", halving recall at eight seams while looking like a
+    pure safety change.
+
+    Quoting each token INDIVIDUALLY keeps the whole injection-safety
+    property -- a quoted token is a string literal with no operator
+    semantics, so a typed ``OR``, a typed ``NEAR``, a ``col:`` filter and a
+    stray ``"`` are all inert -- while restoring AND-of-terms recall.
+    ``RAG_Search/simplified/rag_service._escape_fts5_query`` has built this
+    exact expression since TASK-3995 and now delegates the escape here; this
+    is the shared definition of the whole form.
+
+    Args:
+        tokens: Raw query tokens, normally from ``fts5_query_tokens``.
+
+    Returns:
+        The AND expression, or ``""`` when there are no tokens. ``""`` means
+        "no rows": callers must skip the query rather than run ``MATCH ''``,
+        which FTS5 rejects as a syntax error.
+    """
+    return " ".join(quote_fts5_token(token) for token in tokens)
+
+
+def build_and_match_query(query: object) -> str:
+    """Raw user text -> the AND form, or ``""`` when it cannot be searched.
+
+    The entry point for a plain-text search seam. Combines
+    ``fts5_query_is_searchable`` (None / NUL / punctuation-only) with
+    ``fts5_query_tokens`` + ``build_and_match_expression``, so a seam needs
+    exactly two lines: build, and return no rows on ``""``.
+
+    Args:
+        query: The raw value the search seam was handed; need not be a
+            string.
+
+    Returns:
+        An executable FTS5 MATCH expression, or ``""`` meaning "no rows".
+    """
+    if not fts5_query_is_searchable(query):
+        return ""
+    return build_and_match_expression(fts5_query_tokens(str(query)))
+
+
+def build_phrase_match_query(query: object) -> str:
+    """Raw user text -> ONE quoted phrase, or ``""`` when it cannot be searched.
+
+    The deliberate counterpart to ``build_and_match_query``, for the seams
+    whose documented behaviour is phrase matching and always was -- notes,
+    keywords, keyword collections, datasets. TASK-19558 kept those as
+    phrases on purpose: they matched phrases before the task too, so
+    widening them to AND would be an unmeasured behaviour change smuggled in
+    beside a security fix. The rule the task applied, stated once here so
+    the next reader does not have to infer it from thirteen call sites:
+    **a seam that bound its query RAW (FTS5 implicit AND) gets
+    ``build_and_match_query``; a seam that already bound a quoted phrase
+    keeps ``build_phrase_match_query``.**
+
+    Args:
+        query: The raw value the search seam was handed.
+
+    Returns:
+        The whole query as one quoted FTS5 phrase, or ``""`` meaning
+        "no rows".
+    """
+    if not fts5_query_is_searchable(query):
+        return ""
+    return quote_fts5_token(str(query))

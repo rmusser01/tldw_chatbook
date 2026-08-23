@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 from tldw_chatbook.DB.sql_validation import validate_identifier
-from tldw_chatbook.Utils.fts5_match_forms import quote_fts5_phrase
+from tldw_chatbook.Utils.fts5_match_forms import build_phrase_match_query
 
 # Database Schema Version
 SCHEMA_VERSION = 5
@@ -1091,6 +1091,12 @@ class EvalsDB:
 
     def search_tasks(self, query: str, limit: int = 50) -> List[Dict[str, Any]]:
         """Search tasks using FTS5."""
+        if not isinstance(query, str):
+            # task-19558 (E2 sweep): `None` from an unset filter reached the
+            # generator below and raised a bare `TypeError`. Pre-dates the
+            # task -- fixed here because it is the same failure mode, at the
+            # last seam in this family that still had it.
+            return []
         conn = self._get_connection()
 
         # Remove null bytes and other control characters
@@ -1109,8 +1115,13 @@ class EvalsDB:
             )
         else:
             # For normal queries, use FTS5 with proper escaping (the ONE
-            # escape lives in `Utils/fts5_match_forms`; TASK-19558).
-            safe_query = quote_fts5_phrase(query)
+            # escape lives in `Utils/fts5_match_forms`; TASK-19558). Phrase,
+            # not AND-of-tokens: this seam bound a quoted PHRASE before the
+            # task too, so widening it would be an unmeasured behaviour
+            # change riding along with a security fix.
+            safe_query = build_phrase_match_query(query)
+            if not safe_query:
+                return []
             cursor = conn.execute(
                 """
                 SELECT t.* FROM eval_tasks t
@@ -1313,8 +1324,12 @@ class EvalsDB:
         # TASK-19558: this wrapping never doubled an embedded `"`, so a
         # dataset search containing one raised OperationalError and one
         # shaped `x" OR name:"y` escaped the literal into a live column
-        # filter. `quote_fts5_phrase` is the ONE escape.
-        safe_query = quote_fts5_phrase(query or "")
+        # filter. `build_phrase_match_query` is the ONE escape; phrase
+        # rather than AND-of-tokens because this seam bound a phrase before
+        # the task too (see `search_tasks`).
+        safe_query = build_phrase_match_query(query)
+        if not safe_query:
+            return []
 
         conn = self._get_connection()
         cursor = conn.execute(

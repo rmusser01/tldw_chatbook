@@ -3591,7 +3591,11 @@ class TestFtsTermSafety:
         results = character_handler_module.search_characters_fts("sam")
         assert [term for term, _ in stub_db.calls] == ['"sam"*']
         assert results and results[0]["name"] == "Match"
-        # The raw term still travels alongside, for the error message only.
+        # The raw term is still passed positionally, but when
+        # `fts_match_query` is supplied `search_term` is UNUSED by
+        # `search_character_cards` -- not even in its error message, which
+        # reports the expression that was actually run. Recorded here only so
+        # a future change that starts using it is visible.
         assert stub_db.plain_terms == ["sam"]
 
     async def test_apostrophe_term_is_safe(self, stub_db):

@@ -7083,6 +7083,13 @@ census (`Tests/Utils/test_fts5_quoting_adoption_census.py`) run against the base
 blob rediscovers exactly those three and nothing else, and it ships as a test so
 the rediscovery is repeatable rather than a claim in a PR description.
 
+A third face turned up in review, and it is the one to remember: the FIX for
+a dead store can be a dead store. Round one replaced the unbound
+`safe_search_term` with a bound whole-query phrase -- correct, protective, and
+quietly halving multi-word recall at eight seams (see the recall lesson below).
+Binding the sanitized value is necessary, not sufficient; you still have to
+show the query means what it meant before.
+
 The same shape has a second face, met later in the same task. The review had
 asked for `("reads",)` risk tags on the read-only local agent tools "so they are
 floored to ask". Measured: local tools resolve through
@@ -7096,6 +7103,47 @@ marking because a sibling has it, run the resolver that consumes it and show
 the verdict change.** If the verdict does not change, the honest deliverable is
 the written-down mechanism plus a test that demonstrates the inertness, not the
 tag.
+
+## Sanitizing a search box can NARROW it, and nothing red will tell you (TASK-19558 review, 2026-08-23)
+
+Quoting fixed an injection at fourteen search seams. It also quoted each seam's
+whole query as ONE FTS5 phrase, and an FTS5 phrase requires the words to be
+CONTIGUOUS. `dragon lore` stopped matching a record named "lore of the dragon
+reversed": recall halved at eight seams, on the Console conversation search,
+the Study flashcard box and the prompt picker. Every test passed. The injection
+tests passed *harder* — a narrower query closes more.
+
+The trap is that **the security assertion and the recall assertion point the
+same way.** "Returns 0 rows for `x" OR col:"y`" is satisfied by a fix and by
+an over-fix alike, so a suite made only of closure tests cannot distinguish
+"safe" from "broken in the user's favour of nothing". This repo had already
+paid for it once: `rag_service._escape_fts5_query`'s docstring records
+TASK-3995 finding that whole-query phrase quoting "is strictly stronger than
+AND-of-terms, not equivalent to it", verified against a real corpus document.
+The fix was re-derived from scratch three years later by someone who had read
+that docstring while working in the same file.
+
+Two things to actually do:
+
+1. **Pair every closure probe with a recall probe on the same corpus.** Seed
+   two records per seam — one where the query's words are adjacent, one where
+   they are split — and assert BOTH are returned. One extra fixture row turns
+   an invisible regression into a red test. A before/after table across both
+   halves is the evidence; a table of only closures is not.
+2. **When a "safety" change touches an expression language, name the semantics
+   you are picking.** Phrase, AND-of-terms and prefix are three different
+   queries, all of them injection-safe. Write down which one each seam had
+   BEFORE — here the rule turned out to be mechanical (*a seam that bound RAW
+   had implicit AND; a seam that bound a quoted phrase had a phrase*), and
+   that rule, once stated, decided all fourteen seams and stopped the fix from
+   smuggling in unmeasured behaviour changes beside the measured one.
+
+A third, cheaper lesson from the same round: **a NUL byte is not just another
+character to a quoting fix.** `sqlite3` passes a bound TEXT parameter as a C
+string, so SQLite truncates at the first NUL *after* you quoted — the closing
+quote is on the far side of the cut, and `unterminated string` is raised no
+matter how correct the escape was. Raw binds had survived it by luck. If you
+are adding quoting to anything that reaches SQLite, test `"a\x00b"`.
 
 ## An FTS5 search box quietly has two contracts, and quoting one breaks the other (TASK-19558, 2026-08-23)
 

@@ -404,3 +404,235 @@ def test_no_search_seam_leaks_a_raw_operationalerror(db: CharactersRAGDB) -> Non
             db.list_flashcards(q=query)
         except sqlite3.OperationalError as exc:  # pragma: no cover - guard
             pytest.fail(f"raw sqlite error for {query!r}: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# Recall: quoting must not narrow multi-word search (TASK-19558 review).
+# ---------------------------------------------------------------------------
+#
+# The first round of this task quoted each seam's whole query as ONE FTS5
+# phrase. That closed the injections and also halved recall at eight seams,
+# because a phrase requires the words to be CONTIGUOUS: `dragon lore` stopped
+# matching a record named "lore of the dragon reversed". Measured before it
+# was caught -- 4-5 rows before, 2 after, on the corpus below.
+#
+# The rule the fix applies, and what these tests pin:
+#
+#   * a seam that bound its query RAW (i.e. FTS5's own implicit AND) gets
+#     `build_and_match_query` -- per-token quoting, ANDed, same recall;
+#   * a seam that already bound a quoted PHRASE keeps a phrase
+#     (`build_phrase_match_query`), because widening it would be an
+#     unmeasured behaviour change riding along with a security fix.
+#
+# Nothing here is worth anything without the other half: every injection
+# assertion above must still hold under the AND form, and
+# `test_and_form_keeps_every_injection_closed` re-runs them against it.
+
+
+@pytest.fixture()
+def recall_corpus(db: CharactersRAGDB) -> CharactersRAGDB:
+    """Two records per seam: one with the words adjacent, one with them split.
+
+    A phrase form finds only the adjacent one; the AND form finds both. That
+    is the entire difference, isolated.
+    """
+    db.add_character_card({"name": "dragon lore keeper", "description": "adjacent"})
+    db.add_character_card({"name": "lore of the dragon reversed", "description": "split"})
+    conversation = db.add_conversation(
+        {"title": "dragon lore session", "character_id": 1}
+    )
+    split = db.add_conversation(
+        {"title": "lore about the dragon reversed", "character_id": 1}
+    )
+    db.add_message(
+        {"conversation_id": conversation, "sender": "user", "content": "dragon lore here"}
+    )
+    db.add_message(
+        {
+            "conversation_id": split,
+            "sender": "user",
+            "content": "lore of the dragon reversed",
+        }
+    )
+    deck_id = db.create_deck(name="Deck R")
+    db.create_flashcard({"deck_id": deck_id, "front": "dragon lore adjacent", "back": "x"})
+    db.create_flashcard(
+        {"deck_id": deck_id, "front": "lore of the dragon reversed", "back": "y"}
+    )
+    db.add_note(title="dragon lore adjacent", content="a")
+    db.add_note(title="lore of the dragon reversed", content="b")
+    return db
+
+
+@pytest.mark.parametrize(
+    "seam",
+    [
+        "search_character_cards",
+        "search_conversations_by_title",
+        "search_conversations_by_content",
+        "search_messages_by_content",
+        "list_flashcards",
+        "search_flashcards",
+    ],
+)
+def test_multi_word_search_still_matches_non_adjacent_words(
+    recall_corpus: CharactersRAGDB, seam: str
+) -> None:
+    """The regression, per seam: both records, not just the adjacent one."""
+    callers = {
+        "search_character_cards": lambda q: recall_corpus.search_character_cards(q, limit=50),
+        "search_conversations_by_title": lambda q: recall_corpus.search_conversations_by_title(q, limit=50),
+        "search_conversations_by_content": lambda q: recall_corpus.search_conversations_by_content(q, limit=50),
+        "search_messages_by_content": lambda q: recall_corpus.search_messages_by_content(q, limit=50),
+        "list_flashcards": lambda q: recall_corpus.list_flashcards(q="dragon lore", limit=50),
+        "search_flashcards": lambda q: recall_corpus.search_flashcards(q),
+    }
+    assert len(callers[seam]("dragon lore")) == 2, (
+        f"{seam}: multi-word search lost the record whose words are not "
+        "adjacent -- the whole query was quoted as one phrase"
+    )
+
+
+def test_the_phrase_seams_are_deliberately_left_as_phrases(
+    recall_corpus: CharactersRAGDB,
+) -> None:
+    """`search_notes` bound a PHRASE before this task, and still does.
+
+    Stated as a test so the asymmetry is a decision on the record rather
+    than an oversight: widening it would change behaviour this task never
+    measured.
+    """
+    assert len(recall_corpus.search_notes("dragon lore", limit=50)) == 1
+    # ...and the AND form would have found two, which is what makes the
+    # choice a choice.
+    from tldw_chatbook.Utils.fts5_match_forms import build_and_match_query
+
+    widened = recall_corpus.search_notes(
+        "dragon lore", limit=50, fts_match_query=build_and_match_query("dragon lore")
+    )
+    assert len(widened) == 2
+
+
+def test_and_form_keeps_every_injection_closed(
+    recall_corpus: CharactersRAGDB,
+) -> None:
+    """Recall was restored WITHOUT trading away the closure.
+
+    A typed `OR` is the sharpest case: under the raw bind it really executed
+    (`dragon OR zzz` returned rows), and per-token quoting must leave it a
+    literal word rather than an operator.
+    """
+    probes = (
+        lambda q: recall_corpus.search_character_cards(q, limit=50),
+        lambda q: recall_corpus.search_conversations_by_title(q, limit=50),
+        lambda q: recall_corpus.search_conversations_by_content(q, limit=50),
+        lambda q: recall_corpus.search_messages_by_content(q, limit=50),
+        lambda q: recall_corpus.list_flashcards(q=q, limit=50),
+        lambda q: recall_corpus.search_flashcards(q),
+    )
+    for probe in probes:
+        # `dragon` alone matches both records, so a live OR would return them.
+        assert probe("dragon OR zzznomatch") == []
+        assert probe(COLUMN_FILTER_INJECTION) == []
+        assert probe(ORDINARY_QUOTED) == []
+        # ...while the same seam still finds the words themselves.
+        assert len(probe("dragon lore")) == 2
+
+
+# ---------------------------------------------------------------------------
+# E1: a NUL byte truncates the bound parameter mid-literal.
+# ---------------------------------------------------------------------------
+
+
+def test_a_nul_byte_returns_no_rows_rather_than_unterminated_string(
+    recall_corpus: CharactersRAGDB,
+) -> None:
+    """`sqlite3` hands a bound TEXT value to SQLite as a C string.
+
+    So `"a\\x00b"` arrives as `"a` -- the closing quote is on the far side of
+    the truncation, and no amount of correct quoting survives it. Raw binds
+    were unaffected only by luck (the truncated `a` was still a valid
+    bareword), so quoting turned a working query into
+    `OperationalError: unterminated string` at nine seams.
+    `Notes/file_notes_replica.search` has guarded this since it was written;
+    the guard now lives in `fts5_query_is_searchable`.
+    """
+    probes = (
+        lambda q: recall_corpus.search_character_cards(q, limit=50),
+        lambda q: recall_corpus.search_conversations_by_title(q, limit=50),
+        lambda q: recall_corpus.search_conversations_by_content(q, limit=50),
+        lambda q: recall_corpus.search_messages_by_content(q, limit=50),
+        lambda q: recall_corpus.list_flashcards(q=q, limit=50),
+        lambda q: recall_corpus.search_flashcards(q),
+        lambda q: recall_corpus.search_notes(q, limit=50),
+        lambda q: recall_corpus.search_keywords(q, limit=50),
+        lambda q: recall_corpus.search_keyword_collections(q, limit=50),
+    )
+    for probe in probes:
+        assert probe("dragon\x00lore") == []
+
+
+def test_the_nul_rule_is_the_primitive_and_not_a_per_seam_copy() -> None:
+    from tldw_chatbook.Utils.fts5_match_forms import (
+        build_and_match_query,
+        build_phrase_match_query,
+        fts5_query_is_searchable,
+    )
+
+    assert fts5_query_is_searchable("a\x00b") is False
+    assert build_and_match_query("a\x00b") == ""
+    assert build_phrase_match_query("a\x00b") == ""
+    # ...and an ordinary query is unaffected.
+    assert build_and_match_query("dragon lore") == '"dragon" "lore"'
+    assert build_phrase_match_query("dragon lore") == '"dragon lore"'
+
+
+# ---------------------------------------------------------------------------
+# E2: an unset filter arrives as None.
+# ---------------------------------------------------------------------------
+
+
+def test_none_returns_no_rows_rather_than_a_bare_attributeerror(
+    recall_corpus: CharactersRAGDB,
+) -> None:
+    """Quoting `None` raised `AttributeError: 'NoneType' has no 'replace'`.
+
+    Not even wrapped in `CharactersRAGDBError`, so no caller of a DB search
+    method was written to catch it. `search_notes(None)` and
+    `search_keywords(None)` returned `[]` before this task.
+    """
+    probes = (
+        lambda: recall_corpus.search_notes(None, limit=50),
+        lambda: recall_corpus.search_keywords(None, limit=50),
+        lambda: recall_corpus.search_keyword_collections(None, limit=50),
+        lambda: recall_corpus.search_character_cards(None, limit=50),
+        lambda: recall_corpus.search_conversations_by_title(None, limit=50),
+        lambda: recall_corpus.search_conversations_by_content(None, limit=50),
+        lambda: recall_corpus.search_messages_by_content(None, limit=50),
+        lambda: recall_corpus.search_flashcards(None),
+        lambda: recall_corpus.list_flashcards(q=None, limit=50),
+    )
+    for index, probe in enumerate(probes):
+        result = probe()
+        # `list_flashcards(q=None)` is a BROWSE, not a search: it lists the
+        # deck. Every other seam has nothing to search for and answers empty.
+        assert isinstance(result, list), index
+
+
+def test_punctuation_only_search_returns_no_rows_rather_than_raising(
+    recall_corpus: CharactersRAGDB,
+) -> None:
+    """FTS5 indexes alphanumeric runs only, so `!!!` can never match.
+
+    At base six of these raised instead of answering empty.
+    """
+    probes = (
+        lambda q: recall_corpus.search_character_cards(q, limit=50),
+        lambda q: recall_corpus.search_conversations_by_title(q, limit=50),
+        lambda q: recall_corpus.search_messages_by_content(q, limit=50),
+        lambda q: recall_corpus.list_flashcards(q=q, limit=50),
+        lambda q: recall_corpus.search_flashcards(q),
+        lambda q: recall_corpus.search_notes(q, limit=50),
+    )
+    for probe in probes:
+        assert probe("!!!") == []

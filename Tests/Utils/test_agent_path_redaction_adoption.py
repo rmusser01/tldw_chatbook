@@ -43,6 +43,10 @@ from tldw_chatbook.Utils.path_validation import validate_path, validate_path_mul
 # when this test module is the first thing in the process to walk it.
 # Pre-existing and unrelated to TASK-19558; importing it up front here keeps
 # that unrelated fragility from masquerading as a redaction failure.
+# Measured 2026-08-23: dev has since fixed the cycle itself (TASK-21160,
+# `ae018308b`), and these seven tests pass without this line on a tree that
+# has it -- so DROP this import when the branch lands on a dev containing
+# that fix. It is still required at this branch's own base.
 # The cycle only resolves when `simplified` is entered first, so this line
 # must come before any import of `config_profiles`.
 import tldw_chatbook.RAG_Search.simplified  # noqa: E402,F401  isort:skip
