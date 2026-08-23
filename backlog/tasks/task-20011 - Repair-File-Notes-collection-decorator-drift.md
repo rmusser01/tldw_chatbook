@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-23 18:12'
-updated_date: '2026-08-23 18:19'
+updated_date: '2026-08-23 18:25'
 labels:
   - testing
   - ui
@@ -37,6 +37,10 @@ Restore collection of the File Notes workspace UI suite after parametrization de
 3. Verify exact collection cardinality, focused behavior, full module, and static checks.
 4. Record ADR required: no; this is a test-only correction with no architectural decision.
 5. Complete review and task hygiene.
+
+ADR required: no
+ADR path: N/A
+Reason: This test-only decorator correction changes no architecture, production boundary, storage, security, or long-lived application behavior.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
