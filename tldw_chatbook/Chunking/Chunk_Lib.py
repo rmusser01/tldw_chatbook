@@ -674,6 +674,79 @@ def _synthesize_flat_offsets(
 #######################################################################################################################
 # Chunker adapter
 #
+def _wrap_payload_dict_llm_for_positional_engine(
+    llm_call_function: Callable[[Dict[str, Any]], Any],
+    llm_api_config: Optional[Dict[str, Any]] = None,
+) -> Callable[..., Any]:
+    """Wrap a payload-dict LLM callback into the engine's positional contract.
+
+    The engine's LLM-calling strategies (propositions, rolling_summarize)
+    invoke their ``llm_call_func`` positionally, analyze-style:
+    ``llm_call_func(api_name, prompt, None, api_key, system_message, temp,
+    False, False, False, model_override=..., **snapshot_kwargs)``. Chatbook
+    callers instead supply the legacy payload-dict callback (one dict
+    argument) established by the rolling_summarize port -- the same key set
+    this wrapper emits (see ``Chunker._rolling_summarize``'s
+    ``payload_for_llm_call``): api_name, input_data, custom_prompt_arg,
+    api_key, system_message, temp, streaming, model, max_tokens.
+
+    Mapping notes (mirroring the rolling_summarize payload precedent):
+    - positional ``prompt`` -> ``input_data``; positional arg 3
+      (``custom_prompt_arg``, always None from the engine) -> "".
+    - the ``model_override`` keyword -> the payload's ``model`` slot.
+    - ``max_tokens`` is not part of the positional contract; it rides in
+      from ``llm_api_config`` exactly as rolling_summarize fills it.
+    - the server-only snapshot kwargs (``app_config``,
+      ``credentials_resolved``, ``provider_credentials``) are accepted and
+      dropped: they only arrive if a caller put them in the LLM config, and
+      the payload-dict contract has no slots for them (their absence is
+      benign upstream -- guarded reads).
+    - trailing positional flags beyond the nine the propositions engine
+      passes (e.g. rolling_summarize's ``chunk_options`` None) are accepted
+      for signature tolerance and dropped.
+
+    Args:
+        llm_call_function: Blocking callable receiving one payload dict and
+            returning the provider's string (or tuple whose first element
+            is the string).
+        llm_api_config: Caller LLM config (only ``max_tokens`` is read
+            here; every other key flows to the engine's own
+            ``llm_config.get(...)`` reads upstream of this wrapper).
+
+    Returns:
+        A positional-callable that forwards to ``llm_call_function``.
+    """
+
+    def _positional_llm_call(
+        api_name: str,
+        input_data: str,
+        custom_prompt_arg: Optional[str],
+        api_key: Optional[str],
+        system_message: Optional[str],
+        temp: float,
+        streaming: bool = False,
+        recursive_summarization: bool = False,  # tolerated, dropped
+        chunked_summarization: bool = False,  # tolerated, dropped
+        *_extra_positional: Any,
+        model_override: Optional[str] = None,
+        **_snapshot_kwargs: Any,  # server-only config; dropped (see docstring)
+    ) -> Any:
+        payload: Dict[str, Any] = {
+            "api_name": api_name,
+            "input_data": input_data,
+            "custom_prompt_arg": custom_prompt_arg or "",
+            "api_key": api_key,
+            "system_message": system_message,
+            "temp": temp,
+            "streaming": bool(streaming),
+            "model": model_override,
+            "max_tokens": (llm_api_config or {}).get("max_tokens"),
+        }
+        return llm_call_function(payload)
+
+    return _positional_llm_call
+
+
 class Chunker:
     """Legacy-signature adapter over the engine ``Chunker``.
 
@@ -955,6 +1028,48 @@ class Chunker:
                 {"text": item["text"], "metadata": item["metadata"]}
                 for item in results
             ]
+
+        if resolved_method == "propositions" and llm_call_function is not None:
+            # LLM-contract adapter (propositions spec §5.1): the engine's
+            # strategy calls its llm_call_func positionally (analyze-style)
+            # while chatbook callers supply the payload-dict callback. The
+            # engine's chunk_text has no llm_call_func parameter -- it reads
+            # the per-instance llm_call_func/llm_config hooks -- so install
+            # the wrapped callable there for the duration of this call and
+            # restore afterwards (the hooks are instance state; a later
+            # call with a different callback must not see this one). No
+            # callback -> nothing installed: the engine's default heuristic
+            # engine stands (and its engine="llm" leg degrades to
+            # heuristics on its own -- upstream parity, not fail-close).
+            previous_func = self._engine.llm_call_func
+            previous_cfg = self._engine.llm_config
+            self._engine.llm_call_func = _wrap_payload_dict_llm_for_positional_engine(
+                llm_call_function, llm_api_config
+            )
+            self._engine.llm_config = llm_api_config or {}
+            try:
+                raw = self._engine.chunk_text(
+                    text,
+                    method=resolved_method,
+                    max_size=engine_options.get("max_size"),
+                    overlap=engine_options.get("overlap"),
+                    language=engine_options.get("language"),
+                    **{
+                        k: v
+                        for k, v in engine_options.items()
+                        if k
+                        not in {
+                            "method",
+                            "max_size",
+                            "overlap",
+                            "language",
+                        }
+                    },
+                )
+            finally:
+                self._engine.llm_call_func = previous_func
+                self._engine.llm_config = previous_cfg
+            return [chunk for chunk in raw if isinstance(chunk, str)]
 
         raw = self._engine.chunk_text(
             text,

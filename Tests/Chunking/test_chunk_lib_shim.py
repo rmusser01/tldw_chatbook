@@ -397,3 +397,221 @@ def test_flat_offsets_correct_for_overlapping_chunks():
                 f"chunk {chunk['text']!r} mapped to span "
                 f"{text[chunk['start_char']:chunk['end_char']]!r}"
             )
+
+
+# ---------------------------------------------------------------------------
+# Propositions LLM-contract adapter (propositions sub-project #6 Task 2,
+# spec §5.1/§6.4-6.5). Chatbook callers hand the shim a payload-dict
+# callback (the _rolling_summarize contract, pinned above); the engine's
+# propositions strategy calls it positionally (analyze-style:
+# llm_call_func(api_name, prompt, None, api_key, system_message, temp,
+# False, False, False, model_override=..., **snapshot_kwargs)). The shim's
+# adapter wraps one into the other so callers keep their signature.
+#
+# Deliberate upstream contrast pinned here: rolling_summarize FAILS CLOSED
+# (ChunkingError, see test_rolling_summarize_provider_exception_raises)
+# while propositions DEGRADES to heuristic extraction on LLM failure --
+# upstream design, not an oversight (spec §5.1); do not "fix" it to
+# fail-close.
+#
+# Assertion discipline (Task 1 carry): structure, not YAML-equal prompt
+# text -- at most a substring of the engine's IN-CODE default instruction
+# (which is what the engine actually sends; the server ships no override
+# files for the proposition profiles).
+# ---------------------------------------------------------------------------
+
+import json as _json  # stdlib; local to the propositions test block
+
+_PROPS_TEXT = (
+    "The quick brown fox jumps over the lazy dog because it was startled. "
+    "A second sentence carries another complete thought about the meadow. "
+    "Meanwhile the dog barked loudly until the fox disappeared from view."
+)
+_PROPS_STUB_OUTPUT = [
+    "The quick brown fox jumps over the lazy dog",
+    "A second sentence carries another complete thought",
+    "Meanwhile the dog barked loudly at the fox",
+    "The fox disappeared from view soon after that",
+]
+
+
+def test_propositions_llm_engine_payload_dict_callback():
+    # The happy path: caller supplies the payload-dict callback; the adapter
+    # translates the engine's positional call; the stub's returned
+    # propositions (a JSON array of strings) become the packed chunks.
+    captured = []
+
+    def fake_llm(payload):
+        captured.append(payload)
+        return _json.dumps(_PROPS_STUB_OUTPUT)
+
+    chunks = Chunk_Lib.improved_chunking_process(
+        _PROPS_TEXT,
+        {"method": "propositions", "max_size": 2, "overlap": 0, "engine": "llm"},
+        llm_call_function_for_chunker=fake_llm,
+        llm_api_config_for_chunker={},
+    )
+    assert captured, "positional adapter never invoked the payload-dict callback"
+    payload = captured[0]
+    # Engine defaults applied from the empty llm_config (structure, not
+    # YAML-equal prompt text: the system message is the engine's IN-CODE
+    # default instruction, checked by substring only).
+    assert payload["api_name"] == "openai"
+    assert "atomic" in payload["system_message"].lower()
+    assert payload["temp"] == pytest.approx(0.2)
+    assert payload["streaming"] is False
+    assert payload["custom_prompt_arg"] == ""
+    assert "fox" in payload["input_data"]  # the prompt carries the source window
+    # 4 propositions, max_size=2, overlap=0 -> exactly 2 packed chunks, and
+    # every stub proposition survives into the chunk text.
+    assert len(chunks) == 2, f"expected 2 packed chunks, got {len(chunks)}"
+    assert all(c["metadata"]["chunk_method"] == "propositions" for c in chunks)
+    joined = " ".join(c["text"] for c in chunks)
+    for prop in _PROPS_STUB_OUTPUT:
+        assert prop in joined, f"stub proposition missing from chunks: {prop!r}"
+
+
+def test_propositions_llm_adapter_config_overrides_and_model_override():
+    # llm_api_config keys ride through the engine's llm_config; the
+    # model_override kwarg lands in the payload's "model" slot (the
+    # rolling_summarize payload-dict key for the same concept).
+    captured = []
+
+    def fake_llm(payload):
+        captured.append(payload)
+        return _json.dumps(_PROPS_STUB_OUTPUT)
+
+    chunks = Chunk_Lib.improved_chunking_process(
+        _PROPS_TEXT,
+        {"method": "propositions", "max_size": 2, "overlap": 0, "engine": "llm"},
+        llm_call_function_for_chunker=fake_llm,
+        llm_api_config_for_chunker={
+            "api_name": "anthropic",
+            "api_key": "sk-test-123",
+            "system_message": "Custom proposition system message",
+            "temp": 0.5,
+            "model_override": "claude-3-5-sonnet",
+        },
+    )
+    assert chunks and captured
+    payload = captured[0]
+    assert payload["api_name"] == "anthropic"
+    assert payload["api_key"] == "sk-test-123"
+    assert payload["system_message"] == "Custom proposition system message"
+    assert payload["temp"] == pytest.approx(0.5)
+    assert payload["model"] == "claude-3-5-sonnet"  # model_override passthrough
+
+
+def test_propositions_positional_wrapper_shape_verbatim():
+    # Spec §5.1's positional contract, verbatim: the wrapper must accept the
+    # exact argument shape the engine's _call_llm emits (9 positionals +
+    # model_override kwarg + snapshot kwargs) and translate it into the
+    # payload-dict keys the rolling_summarize port established. A signature
+    # drift here would TypeError inside the engine's catch-all and silently
+    # degrade to heuristics -- so the shape is pinned directly.
+    wrap = Chunk_Lib._wrap_payload_dict_llm_for_positional_engine(
+        lambda payload: payload
+    )
+    payload = wrap(
+        "openai",  # api_name
+        "prompt text",  # input_data (the built proposition prompt)
+        None,  # custom_prompt_arg
+        "sk-key",  # api_key
+        "You extract atomic factual propositions.",  # system_message
+        0.2,  # temp
+        False,  # streaming
+        False,  # recursive_summarization
+        False,  # chunked_summarization
+        model_override="gpt-4o-mini",
+        app_config={"x": 1},  # snapshot kwargs: accepted (guarded upstream)
+        credentials_resolved={"y": 2},
+        provider_credentials={"z": 3},
+    )
+    assert payload == {
+        "api_name": "openai",
+        "input_data": "prompt text",
+        "custom_prompt_arg": "",
+        "api_key": "sk-key",
+        "system_message": "You extract atomic factual propositions.",
+        "temp": 0.2,
+        "streaming": False,
+        "model": "gpt-4o-mini",
+        "max_tokens": None,
+    }
+
+
+def test_propositions_llm_failure_falls_back_to_heuristics():
+    # The fallback pin (spec §5.1): _propositions_via_llm failure -> warning
+    # -> heuristic propositions. Chunks return, NO raise. Contrast:
+    # rolling_summarize fail-closes (ChunkingError, pinned above) --
+    # propositions degrades by upstream design.
+    def exploding_llm(payload):
+        raise RuntimeError("proposition provider down")
+
+    chunks = Chunk_Lib.improved_chunking_process(
+        _PROPS_TEXT,
+        {"method": "propositions", "max_size": 2, "overlap": 0, "engine": "llm"},
+        llm_call_function_for_chunker=exploding_llm,
+        llm_api_config_for_chunker={},
+    )
+    assert chunks, "LLM failure must degrade to heuristic propositions, not raise"
+    assert all(c["metadata"]["chunk_method"] == "propositions" for c in chunks)
+    # Heuristic propositions come from the source text, not the (dead) stub.
+    joined = " ".join(c["text"] for c in chunks)
+    assert "fox" in joined and "dog" in joined
+
+
+def test_propositions_no_llm_callback_heuristic_default():
+    # No callback + engine=llm requested: the engine's own no-func leg logs
+    # and falls back to heuristics -- the adapter must not crash on the
+    # absent callback either.
+    chunks = Chunk_Lib.improved_chunking_process(
+        _PROPS_TEXT,
+        {"method": "propositions", "max_size": 2, "overlap": 0, "engine": "llm"},
+    )
+    assert chunks
+    assert all(c["metadata"]["chunk_method"] == "propositions" for c in chunks)
+
+    # And the plain default (no engine key): the heuristic engine is the
+    # default contract (Task 1's AC-2 execution check, pinned here).
+    default_chunks = Chunk_Lib.improved_chunking_process(
+        _PROPS_TEXT, {"method": "propositions", "max_size": 5}
+    )
+    assert default_chunks
+    assert all(
+        c["metadata"]["chunk_method"] == "propositions" for c in default_chunks
+    )
+
+
+def test_propositions_adapter_via_chunker_chunk_text():
+    # The adapter lives in Chunker.chunk_text; a direct-call caller (not via
+    # improved_chunking_process) gets the same translation, and the engine
+    # attributes the adapter sets are restored afterwards (a later
+    # heuristic call on the same adapter instance is unaffected).
+    chunker = Chunk_Lib.Chunker(
+        options={
+            "method": "propositions",
+            "max_size": 2,
+            "overlap": 0,
+            "engine": "llm",
+        }
+    )
+    captured = []
+
+    def fake_llm(payload):
+        captured.append(payload)
+        return _json.dumps(_PROPS_STUB_OUTPUT)
+
+    raw = chunker.chunk_text(
+        _PROPS_TEXT,
+        method="propositions",
+        llm_call_function=fake_llm,
+        llm_api_config={},
+    )
+    assert captured, "adapter not invoked through Chunker.chunk_text"
+    assert len(raw) == 2  # 4 propositions packed 2-per-chunk
+    # Engine LLM hooks restored: a follow-up heuristic call works and the
+    # engine's llm_call_func is back to its pre-adapter value.
+    assert chunker._engine.llm_call_func is None
+    heuristic = chunker.chunk_text(_PROPS_TEXT, method="propositions")
+    assert heuristic and all(isinstance(c, str) for c in heuristic)

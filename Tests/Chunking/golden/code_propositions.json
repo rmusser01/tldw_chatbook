@@ -1,0 +1,22 @@
+{
+  "chunks": [
+    {
+      "metadata": {
+        "adaptive_chunking_used": false,
+        "chunk_content_hash": "38690bedf470da553ff75f51a480564d",
+        "chunk_index": 1,
+        "chunk_method": "propositions",
+        "language": "en",
+        "max_size": 50,
+        "max_size_setting": 50,
+        "origin": "unified_chunker",
+        "overlap": 10,
+        "overlap_setting": 10,
+        "relative_position": 1.0,
+        "total_chunks": 1
+      },
+      "text": "def f%d (): return %d def f%d (): return %d def f%d (): return %d def f%d (): return %d def f%d (): return %d def f%d (): return %d def f%d (): return %d def f%d (): return %d def f%d (): return %d def f%d (): return %d"
+    }
+  ],
+  "outcome": "ok"
+}
