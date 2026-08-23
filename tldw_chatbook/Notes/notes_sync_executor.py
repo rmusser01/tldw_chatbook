@@ -63,6 +63,8 @@ CONFLICT_SUBSTAGES = (
     "binding_updated",
     "verified",
 )
+_CONFLICT_FOLDER_ID_CAPACITY = 256
+_CONFLICT_FOLDER_VERSION_CAPACITY = 20
 _RESOLUTION_JOURNAL_ACTIONS = {
     "resolve_keep_file": NotesSyncActionKind.UPDATE_NOTE,
     "resolve_keep_note": NotesSyncActionKind.UPDATE_FILE,
@@ -646,6 +648,12 @@ class _NoteAuthority(Protocol):
         self, request: ManualFolderRequest
     ) -> VerifiedFolder: ...
 
+    async def verify_manual_folder(
+        self,
+        request: ManualFolderRequest,
+        expected: VerifiedFolder,
+    ) -> VerifiedFolder: ...
+
     async def create_or_verify_conflict_note(
         self, request: ConflictNoteRequest
     ) -> NotesSyncNoteSnapshot: ...
@@ -788,6 +796,8 @@ class NotesSyncExecutor:
             raise RuntimeError("operation_already_completed")
         recovery = self._store.load_operation_recovery(operation_id)
         metadata = self._recovery_metadata(recovery)
+        if operation.kind == "resolve_keep_both":
+            self._require_keep_both_payload(recovery, metadata)
         try:
             action = NotesSyncActionKind(metadata["action"])
             direction = NotesSyncDirection(metadata["direction"])
@@ -2453,8 +2463,20 @@ class NotesSyncExecutor:
             "conflict_copy_title": authority.copy_title,
             "conflict_parent_folder_id": authority.parent_folder_id,
             "conflict_parent_folder_name": authority.parent_folder_name,
+            "conflict_parent_actual_folder_id": "",
+            "conflict_parent_actual_folder_id_padding": " "
+            * _CONFLICT_FOLDER_ID_CAPACITY,
+            "conflict_parent_actual_folder_version": "",
+            "conflict_parent_actual_folder_version_padding": " "
+            * _CONFLICT_FOLDER_VERSION_CAPACITY,
             "conflict_root_folder_id": authority.root_folder_id,
             "conflict_root_folder_name": authority.root_folder_name,
+            "conflict_root_actual_folder_id": "",
+            "conflict_root_actual_folder_id_padding": " "
+            * _CONFLICT_FOLDER_ID_CAPACITY,
+            "conflict_root_actual_folder_version": "",
+            "conflict_root_actual_folder_version_padding": " "
+            * _CONFLICT_FOLDER_VERSION_CAPACITY,
             "conflict_substage": "recovery_admitted",
             "conflict_substage_padding": " " * (longest - len("recovery_admitted")),
             "desired_digest": _file_content_digest(file),
@@ -2467,6 +2489,7 @@ class NotesSyncExecutor:
             "note_scope_id": note.note_scope_id,
             "recovery_title": note.title,
             "recovery_updated_at": note.updated_at,
+            "recovery_payload_digest": note.content_digest,
             "underlying_action_kind": NotesSyncActionKind.UPDATE_NOTE.value,
         }
         decision = self._store.admit_operation_recovery(
@@ -2621,6 +2644,8 @@ class NotesSyncExecutor:
     ) -> NotesSyncExecutionResult:
         while True:
             stage = self._keep_both_substage(request)
+            if stage != "recovery_admitted":
+                await self._verify_checkpointed_conflict_folders(request)
             cancelled = False
             if stage == "recovery_admitted":
                 self._require_reviewed_owner(request)
@@ -2707,6 +2732,12 @@ class NotesSyncExecutor:
                 "recovery_admitted",
                 "folders_established",
                 NotesSyncOperationState.RECOVERY_ADMITTED,
+                folder_authority=(
+                    parent.folder_id,
+                    parent.version,
+                    child.folder_id,
+                    child.version,
+                ),
             )
             self._stage(NotesSyncOperationState.RECOVERY_ADMITTED)
         return child
@@ -2745,7 +2776,7 @@ class NotesSyncExecutor:
     async def _placement_request(
         self, request: NotesSyncExecutionRequest
     ) -> ManualPlacementRequest:
-        child = await self._establish_conflict_folders(request, checkpoint=False)
+        _, child = self._checkpointed_conflict_folders(request)
         copy = await self._notes.verify_conflict_note(
             self._conflict_note_request(request)
         )
@@ -2896,28 +2927,140 @@ class NotesSyncExecutor:
         current: str,
         following: str,
         expected_state: NotesSyncOperationState,
+        folder_authority: tuple[str, int, str, int] | None = None,
     ) -> None:
         recovery = self._store.load_operation_recovery(request.operation_id)
+        metadata = self._recovery_metadata(recovery)
+        expected_payload_digest = metadata.get("recovery_payload_digest")
+        if type(expected_payload_digest) is not str:
+            raise RuntimeError("recovery_authority_changed")
         self._store.advance_conflict_substage(
             operation_id=request.operation_id,
             recovery_id=request.recovery_id,
             expected_operation_state=expected_state,
             expected_substage=current,
             next_substage=following,
-            expected_payload_digest=hashlib.sha256(recovery.payload).hexdigest(),
+            expected_payload_digest=expected_payload_digest,
             expected_metadata_length=len(recovery.metadata),
+            folder_authority=folder_authority,
         )
 
     def _keep_both_substage(self, request: NotesSyncExecutionRequest) -> str:
         recovery = self._store.load_operation_recovery(request.operation_id)
         metadata = self._recovery_metadata(recovery)
+        self._require_keep_both_payload(recovery, metadata)
         stage = metadata.get("conflict_substage")
         if type(stage) is not str or stage not in CONFLICT_SUBSTAGES:
             raise RuntimeError("recovery_authority_changed")
         longest = max(map(len, CONFLICT_SUBSTAGES))
         if metadata.get("conflict_substage_padding") != " " * (longest - len(stage)):
             raise RuntimeError("recovery_authority_changed")
+        checkpointed = self._checkpointed_conflict_folders_from_metadata(metadata)
+        if (stage == "recovery_admitted") != (checkpointed is None):
+            raise RuntimeError("recovery_authority_changed")
         return stage
+
+    async def _verify_checkpointed_conflict_folders(
+        self, request: NotesSyncExecutionRequest
+    ) -> tuple[VerifiedFolder, VerifiedFolder]:
+        authority = request.keep_both
+        assert authority is not None
+        parent, child = self._checkpointed_conflict_folders(request)
+        await self._notes.verify_manual_folder(
+            ManualFolderRequest(
+                authority.parent_folder_id,
+                None,
+                authority.parent_folder_name,
+                (authority.parent_folder_name,),
+            ),
+            parent,
+        )
+        await self._notes.verify_manual_folder(
+            ManualFolderRequest(
+                authority.root_folder_id,
+                parent.folder_id,
+                authority.root_folder_name,
+                (authority.parent_folder_name, authority.root_folder_name),
+            ),
+            child,
+        )
+        return parent, child
+
+    def _checkpointed_conflict_folders(
+        self, request: NotesSyncExecutionRequest
+    ) -> tuple[VerifiedFolder, VerifiedFolder]:
+        recovery = self._store.load_operation_recovery(request.operation_id)
+        checkpointed = self._checkpointed_conflict_folders_from_metadata(
+            self._recovery_metadata(recovery)
+        )
+        if checkpointed is None:
+            raise RuntimeError("recovery_authority_changed")
+        return checkpointed
+
+    @staticmethod
+    def _checkpointed_conflict_folders_from_metadata(
+        metadata: dict[str, object],
+    ) -> tuple[VerifiedFolder, VerifiedFolder] | None:
+        values: list[tuple[str, int]] = []
+        for prefix in ("conflict_parent", "conflict_root"):
+            folder_id = metadata.get(f"{prefix}_actual_folder_id")
+            folder_id_padding = metadata.get(f"{prefix}_actual_folder_id_padding")
+            version = metadata.get(f"{prefix}_actual_folder_version")
+            version_padding = metadata.get(f"{prefix}_actual_folder_version_padding")
+            if not all(
+                type(value) is str
+                for value in (
+                    folder_id,
+                    folder_id_padding,
+                    version,
+                    version_padding,
+                )
+            ):
+                raise RuntimeError("recovery_authority_changed")
+            assert isinstance(folder_id, str)
+            assert isinstance(folder_id_padding, str)
+            assert isinstance(version, str)
+            assert isinstance(version_padding, str)
+            if folder_id_padding != " " * (
+                _CONFLICT_FOLDER_ID_CAPACITY - len(folder_id)
+            ) or version_padding != " " * (
+                _CONFLICT_FOLDER_VERSION_CAPACITY - len(version)
+            ):
+                raise RuntimeError("recovery_authority_changed")
+            if not folder_id and not version:
+                values.append(("", 0))
+                continue
+            try:
+                validate_notes_sync_opaque_id(folder_id, field_name="folder_id")
+                parsed_version = int(version)
+            except (TypeError, ValueError):
+                raise RuntimeError("recovery_authority_changed") from None
+            if parsed_version < 0 or str(parsed_version) != version:
+                raise RuntimeError("recovery_authority_changed")
+            values.append((folder_id, parsed_version))
+        if values == [("", 0), ("", 0)]:
+            return None
+        if any(not folder_id for folder_id, _version in values):
+            raise RuntimeError("recovery_authority_changed")
+        parent_id, parent_version = values[0]
+        child_id, child_version = values[1]
+        return (
+            VerifiedFolder(parent_id, None, "", parent_version),
+            VerifiedFolder(child_id, parent_id, "", child_version),
+        )
+
+    @staticmethod
+    def _require_keep_both_payload(
+        recovery: NotesSyncRecoveryRecord,
+        metadata: dict[str, object],
+    ) -> str:
+        expected = metadata.get("recovery_payload_digest")
+        if (
+            type(expected) is not str
+            or hashlib.sha256(recovery.payload).hexdigest() != expected
+        ):
+            raise RuntimeError("recovery_authority_changed")
+        return expected
 
     def _validate_keep_both_recovery(self, request: NotesSyncExecutionRequest) -> None:
         recovery = self._store.load_recovery(request.recovery_id)
@@ -2925,9 +3068,11 @@ class NotesSyncExecutor:
         assert authority is not None
         note, file = self._keep_both_authorities(request)
         metadata = self._recovery_metadata(recovery)
+        payload_digest = self._require_keep_both_payload(recovery, metadata)
         if (
             recovery.operation_id != request.operation_id
             or recovery.payload != note.content.encode("utf-8")
+            or payload_digest != note.content_digest
             or metadata.get("action") != NotesSyncActionKind.UPDATE_NOTE.value
             or metadata.get("underlying_action_kind")
             != NotesSyncActionKind.UPDATE_NOTE.value

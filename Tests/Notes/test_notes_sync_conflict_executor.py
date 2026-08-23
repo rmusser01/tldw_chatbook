@@ -75,6 +75,37 @@ _CONFLICT_SUBSTAGES = (
 )
 
 
+def _conflict_cas_metadata(
+    stage: str,
+    payload: bytes,
+    *,
+    checkpointed: bool = False,
+    extra: dict[str, object] | None = None,
+) -> bytes:
+    parent_id = "actual-parent" if checkpointed else ""
+    parent_version = "7" if checkpointed else ""
+    child_id = "actual-child" if checkpointed else ""
+    child_version = "9" if checkpointed else ""
+    longest = max(map(len, _CONFLICT_SUBSTAGES))
+    metadata: dict[str, object] = {
+        "conflict_parent_actual_folder_id": parent_id,
+        "conflict_parent_actual_folder_id_padding": " " * (256 - len(parent_id)),
+        "conflict_parent_actual_folder_version": parent_version,
+        "conflict_parent_actual_folder_version_padding": " "
+        * (20 - len(parent_version)),
+        "conflict_root_actual_folder_id": child_id,
+        "conflict_root_actual_folder_id_padding": " " * (256 - len(child_id)),
+        "conflict_root_actual_folder_version": child_version,
+        "conflict_root_actual_folder_version_padding": " " * (20 - len(child_version)),
+        "conflict_substage": stage,
+        "conflict_substage_padding": " " * max(0, longest - len(stage)),
+        "recovery_payload_digest": hashlib.sha256(payload).hexdigest(),
+    }
+    if extra:
+        metadata.update(extra)
+    return json.dumps(metadata, separators=(",", ":"), sort_keys=True).encode()
+
+
 class _AdmissionCheckingFilesystem(FakeFilesystem):
     def __init__(self, snapshot: object, check: object) -> None:
         super().__init__(snapshot)
@@ -126,6 +157,24 @@ class _KeepBothAuthority(FakeNoteAuthority):
             self.folders[request.folder_id] = verified
         return verified
 
+    async def verify_manual_folder(
+        self,
+        request: ManualFolderRequest,
+        expected: VerifiedFolder,
+    ) -> VerifiedFolder:
+        del request
+        observed = self.folders[expected.folder_id]
+        assert (
+            observed.folder_id,
+            observed.parent_id,
+            observed.version,
+        ) == (
+            expected.folder_id,
+            expected.parent_id,
+            expected.version,
+        )
+        return observed
+
     async def create_or_verify_conflict_note(
         self, request: ConflictNoteRequest
     ) -> NotesSyncNoteSnapshot:
@@ -167,6 +216,24 @@ class _KeepBothAuthority(FakeNoteAuthority):
         self.effects.append("verify_placement")
         assert self.placement is not None
         return self.placement
+
+
+class _ReusedFolderAuthority(_KeepBothAuthority):
+    async def create_or_verify_manual_folder(
+        self, request: ManualFolderRequest
+    ) -> VerifiedFolder:
+        parent = request.parent_id is None
+        folder_id = "actual-parent" if parent else "actual-child"
+        version = 7 if parent else 9
+        verified = VerifiedFolder(
+            folder_id,
+            request.parent_id,
+            "/" + "/".join(request.path_segments).casefold(),
+            version,
+        )
+        self.folders[folder_id] = verified
+        self.effects.append("parent_folder" if parent else "child_folder")
+        return verified
 
 
 class _DatabaseLocalNotes:
@@ -246,15 +313,7 @@ class _BlockingKeepBothAuthority:
         assert self.release.wait(5)
 
     async def observe(self, note_id: str) -> NotesSyncNoteSnapshot:
-        result = await self.authority.observe(note_id)
-        stage_target = {
-            "bound_note_updated": "file_recheck",
-            "file_reverified": "binding_update",
-            "binding_updated": "final_verification",
-        }.get(self._substage())
-        if stage_target is not None:
-            self._pause(stage_target)
-        return result
+        return await self.authority.observe(note_id)
 
     async def replace(
         self,
@@ -280,6 +339,13 @@ class _BlockingKeepBothAuthority:
         result = await self.authority.create_or_verify_conflict_note(request)
         self._pause("copy_note")
         return result
+
+    async def verify_manual_folder(
+        self,
+        request: ManualFolderRequest,
+        expected: VerifiedFolder,
+    ) -> VerifiedFolder:
+        return await self.authority.verify_manual_folder(request, expected)
 
     async def create_or_verify_manual_placement(
         self, request: ManualPlacementRequest
@@ -487,6 +553,252 @@ async def test_keep_both_executes_exact_copy_before_bound_note_sequence(
 
 
 @pytest.mark.asyncio
+async def test_keep_both_folders_checkpoint_actual_reused_ids_and_versions(
+    tmp_path: Path,
+) -> None:
+    store, _database = _execution_store(tmp_path)
+    note = _note(content="before", version=4)
+    file = _file(content="file side")
+    notes = _ReusedFolderAuthority(note)
+    request = _keep_both_request(note, file)
+
+    admitted = await NotesSyncExecutor(
+        store,
+        notes,
+        FakeFilesystem(file),
+        recovery_capacity_bytes=65_536,
+    ).execute(request)
+
+    assert admitted.state is NotesSyncOperationState.COMPLETED
+    metadata = json.loads(store.load_operation_recovery("operation-1").metadata)
+    assert (
+        metadata["conflict_parent_actual_folder_id"],
+        metadata["conflict_parent_actual_folder_version"],
+        metadata["conflict_root_actual_folder_id"],
+        metadata["conflict_root_actual_folder_version"],
+    ) == ("actual-parent", "7", "actual-child", "9")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("substitution", ("identity", "version"))
+async def test_keep_both_restart_rejects_checkpointed_folder_substitution_before_effect(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    substitution: str,
+) -> None:
+    if not PosixNotesSyncFilesystem.supports_writes():
+        pytest.skip("guarded POSIX replacement is unavailable")
+    (
+        notes_path,
+        state_path,
+        sync_root,
+        store,
+        database,
+        authority,
+        request,
+    ) = await _prepare_real_keep_both(tmp_path)
+    repository = LocalNoteFolderRepository(database)
+    parent = repository.create_folder(
+        folder_id="actual-parent",
+        name="Conflict copies",
+        parent_id=None,
+    )
+    child = repository.create_folder(
+        folder_id="actual-child",
+        name="My synced notes",
+        parent_id=parent.folder_id,
+    )
+    original_advance = store.advance_conflict_substage
+
+    def crash_after_folders(*args: object, **kwargs: object) -> object:
+        result = original_advance(*args, **kwargs)
+        if kwargs.get("next_substage") == "folders_established":
+            raise InjectedCrash
+        return result
+
+    monkeypatch.setattr(store, "advance_conflict_substage", crash_after_folders)
+    with PosixNotesSyncFilesystem(sync_root) as filesystem:
+        with pytest.raises(InjectedCrash):
+            await NotesSyncExecutor(
+                store,
+                authority,
+                filesystem,
+                recovery_capacity_bytes=65_536,
+            ).execute(request)
+
+    if substitution == "identity":
+        repository.soft_delete_folder(
+            child.folder_id,
+            expected_version=child.version,
+        )
+        repository.create_folder(
+            folder_id="replacement-child",
+            name="My synced notes",
+            parent_id=parent.folder_id,
+        )
+    else:
+        with database.transaction() as cursor:
+            cursor.execute(
+                "UPDATE note_folders SET version = version + 1 WHERE id = ?",
+                (parent.folder_id,),
+            )
+    database.close_connection()
+
+    reopened_database = CharactersRAGDB(notes_path, client_id="substitution")
+    reopened_store = NotesDeviceStateStore(state_path)
+    with PosixNotesSyncFilesystem(sync_root) as fresh_filesystem:
+        fresh_executor = NotesSyncExecutor(
+            reopened_store,
+            _real_keep_both_authority(reopened_database),
+            fresh_filesystem,
+            recovery_capacity_bytes=65_536,
+        )
+        reconstructed = await fresh_executor.reconstruct_request("operation-1")
+        result = await fresh_executor.resume(reconstructed)
+
+    assert result.state is NotesSyncOperationState.NEEDS_ATTENTION
+    assert result.reason_code == "folder_authority_changed"
+    assert (
+        reopened_database.get_connection()
+        .execute("SELECT COUNT(*) FROM notes WHERE deleted = 0")
+        .fetchone()[0]
+        == 1
+    )
+    reopened_database.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_keep_both_restart_rejects_same_length_durable_payload_mutation(
+    tmp_path: Path,
+) -> None:
+    if not PosixNotesSyncFilesystem.supports_writes():
+        pytest.skip("guarded POSIX replacement is unavailable")
+    (
+        notes_path,
+        state_path,
+        sync_root,
+        store,
+        database,
+        authority,
+        request,
+    ) = await _prepare_real_keep_both(tmp_path)
+
+    def crash_after_admission(stage: NotesSyncOperationState) -> None:
+        if stage is NotesSyncOperationState.RECOVERY_ADMITTED:
+            raise InjectedCrash
+
+    with PosixNotesSyncFilesystem(sync_root) as filesystem:
+        with pytest.raises(InjectedCrash):
+            await NotesSyncExecutor(
+                store,
+                authority,
+                filesystem,
+                recovery_capacity_bytes=65_536,
+                after_stage=crash_after_admission,
+            ).execute(request)
+    with store.transaction(immediate=True) as connection:
+        connection.execute(
+            "UPDATE notes_sync_recovery SET payload = ? WHERE recovery_id = ?",
+            (b"alter!", request.recovery_id),
+        )
+    database.close_connection()
+
+    reopened_database = CharactersRAGDB(notes_path, client_id="payload-mutation")
+    reopened_store = NotesDeviceStateStore(state_path)
+    with PosixNotesSyncFilesystem(sync_root) as fresh_filesystem:
+        fresh_executor = NotesSyncExecutor(
+            reopened_store,
+            _real_keep_both_authority(reopened_database),
+            fresh_filesystem,
+            recovery_capacity_bytes=65_536,
+        )
+        rejected = False
+        try:
+            reconstructed = await fresh_executor.reconstruct_request("operation-1")
+        except RuntimeError as error:
+            rejected = str(error) == "recovery_authority_changed"
+        else:
+            result = await fresh_executor.resume(reconstructed)
+            rejected = result.reason_code == "recovery_authority_changed"
+
+    assert rejected
+    assert (
+        reopened_database.get_connection()
+        .execute("SELECT COUNT(*) FROM note_folders WHERE deleted = 0")
+        .fetchone()[0]
+        == 0
+    )
+    reopened_database.close_connection()
+
+
+def test_keep_both_folders_checkpoint_records_authority_without_byte_growth(
+    tmp_path: Path,
+) -> None:
+    store, _database = _execution_store(tmp_path)
+    payload = b"note side"
+    longest = max(map(len, _CONFLICT_SUBSTAGES))
+    metadata = json.dumps(
+        {
+            "conflict_parent_actual_folder_id": "",
+            "conflict_parent_actual_folder_id_padding": " " * 256,
+            "conflict_parent_actual_folder_version": "",
+            "conflict_parent_actual_folder_version_padding": " " * 20,
+            "conflict_root_actual_folder_id": "",
+            "conflict_root_actual_folder_id_padding": " " * 256,
+            "conflict_root_actual_folder_version": "",
+            "conflict_root_actual_folder_version_padding": " " * 20,
+            "conflict_substage": "recovery_admitted",
+            "conflict_substage_padding": " " * (longest - len("recovery_admitted")),
+            "recovery_payload_digest": hashlib.sha256(payload).hexdigest(),
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    store.admit_operation_recovery(
+        NotesSyncOperationRecord(
+            "operation-1",
+            "root-1",
+            "binding-1",
+            "resolve_keep_both",
+            NotesSyncOperationState.PENDING,
+            None,
+            "observation-1",
+            4,
+            "a" * 64,
+        ),
+        NotesSyncRecoveryRecord(
+            "recovery-operation-1",
+            "operation-1",
+            payload,
+            metadata,
+            100_000,
+        ),
+        capacity_bytes=65_536,
+    )
+
+    store.advance_conflict_substage(
+        operation_id="operation-1",
+        recovery_id="recovery-operation-1",
+        expected_operation_state=NotesSyncOperationState.RECOVERY_ADMITTED,
+        expected_substage="recovery_admitted",
+        next_substage="folders_established",
+        expected_payload_digest=hashlib.sha256(payload).hexdigest(),
+        expected_metadata_length=len(metadata),
+        folder_authority=("actual-parent", 7, "actual-child", 9),
+    )
+
+    recovery = store.load_operation_recovery("operation-1")
+    decoded = json.loads(recovery.metadata)
+    assert len(recovery.metadata) == len(metadata)
+    assert (
+        decoded["conflict_parent_actual_folder_id"],
+        decoded["conflict_parent_actual_folder_version"],
+        decoded["conflict_root_actual_folder_id"],
+        decoded["conflict_root_actual_folder_version"],
+    ) == ("actual-parent", "7", "actual-child", "9")
+
+
+@pytest.mark.asyncio
 async def test_keep_both_restart_reconstructs_all_private_authority_after_admission(
     tmp_path: Path,
 ) -> None:
@@ -653,6 +965,7 @@ async def test_keep_both_restart_reopens_every_durable_substage_with_real_author
 )
 async def test_keep_both_cancellation_joins_effect_and_checkpoint_then_fresh_resumes(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     cancel_target: str,
     following_substage: str,
 ) -> None:
@@ -668,6 +981,16 @@ async def test_keep_both_cancellation_joins_effect_and_checkpoint_then_fresh_res
         request,
     ) = await _prepare_real_keep_both(tmp_path)
     blocking = _BlockingKeepBothAuthority(authority, store, cancel_target)
+    if cancel_target in {"file_recheck", "binding_update", "final_verification"}:
+        original_advance = store.advance_conflict_substage
+
+        def pause_after_effect(*args: object, **kwargs: object) -> object:
+            if kwargs.get("next_substage") == following_substage:
+                blocking.calls.append(f"effect_returned:{cancel_target}")
+                blocking._pause(cancel_target)
+            return original_advance(*args, **kwargs)
+
+        monkeypatch.setattr(store, "advance_conflict_substage", pause_after_effect)
     with PosixNotesSyncFilesystem(sync_root) as filesystem:
         task = asyncio.create_task(
             NotesSyncExecutor(
@@ -685,6 +1008,12 @@ async def test_keep_both_cancellation_joins_effect_and_checkpoint_then_fresh_res
                 f"{unexpected.state}/{unexpected.reason_code}/{blocking.calls}/"
                 f"{json.loads(store.load_operation_recovery('operation-1').metadata)}"
             )
+        if cancel_target in {
+            "file_recheck",
+            "binding_update",
+            "final_verification",
+        }:
+            assert f"effect_returned:{cancel_target}" in blocking.calls
         task.cancel()
         blocking.release.set()
         with pytest.raises(asyncio.CancelledError):
@@ -717,15 +1046,9 @@ def test_keep_both_substage_cas_is_capacity_neutral_and_exactly_forward(
     store, _database = _execution_store(tmp_path)
     payload = b"note side"
     longest = max(map(len, _CONFLICT_SUBSTAGES))
-    metadata = json.dumps(
-        {
-            "conflict_substage": "recovery_admitted",
-            "conflict_substage_padding": " " * (longest - len("recovery_admitted")),
-            "private": "authority",
-        },
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode()
+    metadata = _conflict_cas_metadata(
+        "recovery_admitted", payload, extra={"private": "authority"}
+    )
     admitted = store.admit_operation_recovery(
         NotesSyncOperationRecord(
             operation_id="operation-keep-both",
@@ -773,6 +1096,9 @@ def test_keep_both_substage_cas_is_capacity_neutral_and_exactly_forward(
             next_substage=following,
             expected_payload_digest=hashlib.sha256(payload).hexdigest(),
             expected_metadata_length=expected_length,
+            folder_authority=("actual-parent", 7, "actual-child", 9)
+            if current == "recovery_admitted"
+            else None,
         )
         recovery = store.load_operation_recovery("operation-keep-both")
         decoded = json.loads(recovery.metadata)
@@ -851,15 +1177,7 @@ def test_keep_both_substage_cas_rejects_padding_length_digest_and_state_drift(
 ) -> None:
     store, _database = _execution_store(tmp_path)
     payload = b"note side"
-    longest = max(map(len, _CONFLICT_SUBSTAGES))
-    metadata = json.dumps(
-        {
-            "conflict_substage": "recovery_admitted",
-            "conflict_substage_padding": " " * (longest - len("recovery_admitted")),
-        },
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode()
+    metadata = _conflict_cas_metadata("recovery_admitted", payload)
     store.admit_operation_recovery(
         NotesSyncOperationRecord(
             "operation-keep-both",
@@ -914,6 +1232,7 @@ def test_keep_both_substage_cas_rejects_padding_length_digest_and_state_drift(
             expected_metadata_length=(
                 len(metadata) + 1 if corruption == "metadata_length" else len(metadata)
             ),
+            folder_authority=("actual-parent", 7, "actual-child", 9),
         )
 
 

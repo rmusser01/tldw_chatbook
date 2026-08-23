@@ -1693,6 +1693,24 @@ def test_conflict_copy_exact_manual_membership_reads_active_then_latest_deleted(
     assert deleted[1] is True
 
 
+def test_conflict_copy_folder_ownership_detects_managed_candidate_and_ancestor(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    parent = repository.create_folder(name="Conflict copies", parent_id=None)
+    child = repository.create_folder(
+        name="My synced notes", parent_id=parent.folder_id
+    )
+    note_id = repository.db.add_note("Managed", "body")
+    assert note_id is not None
+    repository.reconcile_managed(
+        owner_id="another-root",
+        desired=((child.folder_id, note_id),),
+    )
+
+    assert repository.has_managed_folder_ownership(child.folder_id) is True
+    assert repository.has_managed_folder_ownership(parent.folder_id) is True
+
+
 def test_attach_manual_expected_note_version_guards_new_active_and_revived_rows(
     repository: LocalNoteFolderRepository,
 ) -> None:

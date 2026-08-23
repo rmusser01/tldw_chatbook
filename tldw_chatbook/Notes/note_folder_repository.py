@@ -778,6 +778,13 @@ class LocalNoteFolderRepository:
             return None
         return _membership_from_row(row), bool(row["deleted"])
 
+    def has_managed_folder_ownership(self, folder_id: str) -> bool:
+        """Return whether an active managed placement owns this folder subtree."""
+
+        _validate_folder_id(folder_id, field="folder_id")
+        with self.db.transaction() as cursor:
+            return bool(_load_managed_folder_rows(cursor, (folder_id,)))
+
     def reconcile_managed(
         self, *, owner_id: str, desired: Iterable[tuple[str, str]]
     ) -> tuple[NoteFolderMembership, ...]:

@@ -303,9 +303,9 @@ class NotesScopeSyncAuthority:
             raise NotesSyncAuthorityError("folder_authority_changed")
         existing = await self._read_folder_path(request.path_segments)
         if existing is not None:
-            return self._verified_folder(existing, request, expected_path)
+            return await self._verified_folder(existing, request, expected_path)
         if deterministic is not None:
-            return self._verified_folder(deterministic, request, expected_path)
+            return await self._verified_folder(deterministic, request, expected_path)
         try:
             await self._service.create_manual_note_folder_for_sync(
                 scope=self._scope,
@@ -321,7 +321,7 @@ class NotesScopeSyncAuthority:
             winner = await self._read_folder_id(request.folder_id)
         if winner is None:
             raise NotesSyncAuthorityError("folder_mutation_failed")
-        return self._verified_folder(winner, request, expected_path)
+        return await self._verified_folder(winner, request, expected_path)
 
     async def create_or_verify_conflict_note(
         self,
@@ -349,6 +349,48 @@ class NotesScopeSyncAuthority:
         if winner is None:
             raise NotesSyncAuthorityError("note_mutation_failed")
         return self._verify_conflict_note(winner, request)
+
+    async def verify_manual_folder(
+        self,
+        request: ManualFolderRequest,
+        expected: VerifiedFolder,
+    ) -> VerifiedFolder:
+        """Read and verify one checkpointed active manual folder identity."""
+
+        if type(request) is not ManualFolderRequest:
+            raise TypeError("request must be a ManualFolderRequest.")
+        if type(expected) is not VerifiedFolder:
+            raise TypeError("expected must be a VerifiedFolder.")
+        self._require_local_copy_scope()
+        deterministic = await self._read_folder_id(request.folder_id)
+        by_id = await self._read_folder_id(expected.folder_id)
+        by_path = await self._read_folder_path(request.path_segments)
+        if (
+            by_id is None
+            or by_path is None
+            or by_path.folder_id != expected.folder_id
+            or (
+                deterministic is not None
+                and deterministic.folder_id != expected.folder_id
+            )
+        ):
+            raise NotesSyncAuthorityError("folder_authority_changed")
+        verified = await self._verified_folder(
+            by_id,
+            request,
+            _normalized_folder_path(request.path_segments),
+        )
+        if (
+            verified.folder_id,
+            verified.parent_id,
+            verified.version,
+        ) != (
+            expected.folder_id,
+            expected.parent_id,
+            expected.version,
+        ):
+            raise NotesSyncAuthorityError("folder_authority_changed")
+        return verified
 
     async def create_or_verify_manual_placement(
         self,
@@ -461,14 +503,21 @@ class NotesScopeSyncAuthority:
             == normalize_folder_name(request.name).key
         )
 
-    @classmethod
-    def _verified_folder(
-        cls,
+    async def _verified_folder(
+        self,
         folder: NoteFolder,
         request: ManualFolderRequest,
         expected_path: str,
     ) -> VerifiedFolder:
-        if not cls._folder_matches(folder, request, expected_path):
+        try:
+            managed = await self._service.has_managed_note_folder_ownership_for_sync(
+                scope=self._scope,
+                folder_id=folder.folder_id,
+                user_id=self._user_id,
+            )
+        except Exception:
+            raise NotesSyncAuthorityError("folder_observation_failed") from None
+        if managed or not self._folder_matches(folder, request, expected_path):
             raise NotesSyncAuthorityError("folder_authority_changed")
         return VerifiedFolder(
             folder_id=folder.folder_id,

@@ -153,6 +153,8 @@ _CONFLICT_SUBSTAGE_STATES = {
     "binding_updated": NotesSyncOperationState.BINDING_UPDATED,
     "verified": NotesSyncOperationState.VERIFIED,
 }
+_CONFLICT_FOLDER_ID_CAPACITY = 256
+_CONFLICT_FOLDER_VERSION_CAPACITY = 20
 
 
 def _now() -> int:
@@ -1421,6 +1423,7 @@ class NotesDeviceStateStore:
         next_substage: str,
         expected_payload_digest: str,
         expected_metadata_length: int,
+        folder_authority: tuple[str, int, str, int] | None = None,
     ) -> NotesSyncOperationRecord:
         """Advance one exact Keep-both checkpoint without growing recovery."""
 
@@ -1444,6 +1447,21 @@ class NotesDeviceStateStore:
             raise NotesDeviceStateError(
                 "The requested conflict substage transition is not allowed."
             )
+        if expected_substage == "recovery_admitted":
+            if type(folder_authority) is not tuple or len(folder_authority) != 4:
+                raise NotesDeviceStateError("The folder authority is corrupt.")
+            parent_id, parent_version, child_id, child_version = folder_authority
+            validate_notes_sync_opaque_id(parent_id, field_name="parent_folder_id")
+            validate_notes_sync_opaque_id(child_id, field_name="child_folder_id")
+            if any(
+                type(version) is not int
+                or version < 0
+                or len(str(version)) > _CONFLICT_FOLDER_VERSION_CAPACITY
+                for version in (parent_version, child_version)
+            ):
+                raise NotesDeviceStateError("The folder authority is corrupt.")
+        elif folder_authority is not None:
+            raise NotesDeviceStateError("The folder authority is corrupt.")
         expected_current_state = _CONFLICT_SUBSTAGE_STATES[expected_substage]
         if expected_substage == "file_reverified":
             expected_current_state = NotesSyncOperationState.BINDING_UPDATED
@@ -1485,8 +1503,39 @@ class NotesDeviceStateStore:
                 not isinstance(decoded, dict)
                 or decoded.get("conflict_substage") != expected_substage
                 or decoded.get("conflict_substage_padding") != expected_padding
+                or decoded.get("recovery_payload_digest") != expected_payload_digest
             ):
                 raise NotesDeviceStateError("The conflict substage is corrupt.")
+            for prefix in ("conflict_parent", "conflict_root"):
+                folder_id = decoded.get(f"{prefix}_actual_folder_id")
+                folder_id_padding = decoded.get(f"{prefix}_actual_folder_id_padding")
+                version = decoded.get(f"{prefix}_actual_folder_version")
+                version_padding = decoded.get(f"{prefix}_actual_folder_version_padding")
+                if (
+                    type(folder_id) is not str
+                    or type(folder_id_padding) is not str
+                    or type(version) is not str
+                    or type(version_padding) is not str
+                    or folder_id_padding
+                    != " " * (_CONFLICT_FOLDER_ID_CAPACITY - len(folder_id))
+                    or version_padding
+                    != " " * (_CONFLICT_FOLDER_VERSION_CAPACITY - len(version))
+                ):
+                    raise NotesDeviceStateError("The folder authority is corrupt.")
+            if folder_authority is not None:
+                for prefix, folder_id, version in (
+                    ("conflict_parent", parent_id, parent_version),
+                    ("conflict_root", child_id, child_version),
+                ):
+                    decoded[f"{prefix}_actual_folder_id"] = folder_id
+                    decoded[f"{prefix}_actual_folder_id_padding"] = " " * (
+                        _CONFLICT_FOLDER_ID_CAPACITY - len(folder_id)
+                    )
+                    encoded_version = str(version)
+                    decoded[f"{prefix}_actual_folder_version"] = encoded_version
+                    decoded[f"{prefix}_actual_folder_version_padding"] = " " * (
+                        _CONFLICT_FOLDER_VERSION_CAPACITY - len(encoded_version)
+                    )
             decoded["conflict_substage"] = next_substage
             decoded["conflict_substage_padding"] = " " * (longest - len(next_substage))
             replacement = json.dumps(

@@ -367,6 +367,23 @@ class NotesScopeService:
             include_deleted=include_deleted,
         )
 
+    async def has_managed_note_folder_ownership_for_sync(
+        self,
+        *,
+        scope: ScopeType | str,
+        folder_id: str,
+        user_id: str | None = None,
+    ) -> bool:
+        """Classify one exact local folder as manual or sync-managed."""
+
+        repository = self._folder_repository_for_action(
+            scope=scope, user_id=user_id, action="list", operation="list"
+        )
+        return await self._run_folder_repository(
+            repository.has_managed_folder_ownership,
+            folder_id,
+        )
+
     async def create_manual_note_folder_for_sync(
         self,
         *,

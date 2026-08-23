@@ -110,6 +110,7 @@ class RecordingFolderRepository:
         self.folder_creates = 0
         self.placement_creates = 0
         self.race_folder: NoteFolder | None = None
+        self.managed_folder_ids: set[str] = set()
 
     def get_folder_by_path(self, segments: tuple[str, ...]) -> NoteFolder | None:
         normalized = "/" + "/".join(segment.strip().casefold() for segment in segments)
@@ -129,6 +130,9 @@ class RecordingFolderRepository:
         if folder is None or (folder.deleted and not include_deleted):
             return None
         return folder
+
+    def has_managed_folder_ownership(self, folder_id: str) -> bool:
+        return folder_id in self.managed_folder_ids
 
     def create_folder(
         self, *, name: str, parent_id: str | None, folder_id: str
@@ -544,6 +548,49 @@ async def test_conflict_copy_manual_folder_rejects_id_path_or_parent_collision()
 
     with pytest.raises(NotesSyncAuthorityError, match="folder_authority_changed"):
         await authority.create_or_verify_manual_folder(request)
+
+    assert repository.folder_creates == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("winner_kind", ("deterministic_id", "normalized_path"))
+@pytest.mark.parametrize("level", ("parent", "child"))
+async def test_conflict_copy_manual_folder_rejects_managed_parent_or_child_winner(
+    winner_kind: str,
+    level: str,
+) -> None:
+    authority, _local, repository = _authority_with_folders()
+    parent_id = None if level == "parent" else "verified-parent"
+    name = "Conflict copies" if level == "parent" else "My synced notes"
+    segments = (
+        ("Conflict copies",)
+        if level == "parent"
+        else (
+            "Conflict copies",
+            "My synced notes",
+        )
+    )
+    requested_id = f"deterministic-{level}"
+    winner_id = requested_id if winner_kind == "deterministic_id" else f"actual-{level}"
+    winner = _folder(
+        winner_id,
+        name,
+        parent_id=parent_id,
+        parent_path="" if level == "parent" else "Conflict copies",
+        version=7,
+    )
+    repository.folders[winner.folder_id] = winner
+    repository.managed_folder_ids.add(winner.folder_id)
+
+    with pytest.raises(NotesSyncAuthorityError, match="folder_authority_changed"):
+        await authority.create_or_verify_manual_folder(
+            ManualFolderRequest(
+                folder_id=requested_id,
+                parent_id=parent_id,
+                name=name,
+                path_segments=segments,
+            )
+        )
 
     assert repository.folder_creates == 0
 
