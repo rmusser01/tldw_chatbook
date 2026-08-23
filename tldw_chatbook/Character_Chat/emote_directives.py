@@ -44,6 +44,33 @@ class CharacterEmoteStreamResult:
     events: tuple[CharacterEmoteEvent, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class CharacterEmoteAssetReference:
+    """Profile-local immutable asset identity for one projected state."""
+
+    state: str
+    expression_key: str
+    asset_id: int
+    expression_id: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CharacterEmoteRunSnapshot:
+    """One immutable authority shared by prompt, capture, and resolution."""
+
+    actor_id: int | None = None
+    pack_id: int | None = None
+    pack_version_id: int | None = None
+    states: tuple[str, ...] = ()
+    assets: tuple[CharacterEmoteAssetReference, ...] = ()
+    fallback_reason: str = ""
+
+    def asset_for_state(self, state: str) -> CharacterEmoteAssetReference | None:
+        """Return the exact captured asset identity for a projected slug."""
+
+        return next((asset for asset in self.assets if asset.state == state), None)
+
+
 def normalize_character_emote_state(value: object) -> str | None:
     """Return a normalized safe state slug when valid."""
 
@@ -227,6 +254,14 @@ class CharacterEmoteStreamParser:
             working._consume(character, visible_parts, events)
         self._adopt(working)
         return CharacterEmoteStreamResult("".join(visible_parts), tuple(events))
+
+    def safe_copy(self) -> CharacterEmoteStreamParser:
+        """Return a base-parser checkpoint suitable for fail-closed recovery."""
+
+        clone = CharacterEmoteStreamParser()
+        clone._adopt(self)
+        clone._directive_chars = self._directive_chars.copy()
+        return clone
 
     def flush(self) -> CharacterEmoteStreamResult:
         """Finalize a successful stream and publish any ordinary suffix."""

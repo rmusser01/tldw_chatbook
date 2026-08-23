@@ -14,6 +14,13 @@ from uuid import uuid4
 
 from loguru import logger
 
+from tldw_chatbook.Character_Chat.character_mood import detect_character_mood
+from tldw_chatbook.Character_Chat.emote_directives import (
+    CharacterEmoteEvent,
+    CharacterEmoteRunSnapshot,
+    CharacterEmoteStreamParser,
+    utf16_length,
+)
 from tldw_chatbook.Agents.agent_models import (
     FinalContinuation,
     ProviderContinuationEvent,
@@ -68,7 +75,11 @@ from tldw_chatbook.Chat.console_speech import (
     TTSMessageSpeechSnapshot,
 )
 from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
-from tldw_chatbook.Chat.message_metadata import MessageMetadata
+from tldw_chatbook.Chat.message_metadata import (
+    CharacterEmoteEventMetadata,
+    CharacterEmoteMetadata,
+    MessageMetadata,
+)
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.trajectory import contains_local_path
 from tldw_chatbook.Chat.provider_continuation import (
@@ -98,6 +109,26 @@ MAX_PENDING_ATTACHMENTS = 5
 TerminalCitationFinalizer = Callable[[str], SealedCitationWrite | None]
 
 
+@dataclass(frozen=True, slots=True)
+class CharacterEmoteLiveEvent:
+    """Content-free process-local expression event for a Console session."""
+
+    sequence: int
+    session_id: str
+    message_id: str
+    state: str
+
+
+@dataclass(slots=True)
+class _CharacterEmoteCapture:
+    """Ephemeral parser state for one armed assistant generation."""
+
+    parser: CharacterEmoteStreamParser
+    snapshot: CharacterEmoteRunSnapshot
+    events: list[CharacterEmoteEvent] = field(default_factory=list)
+    fail_closed: bool = False
+
+
 def _refuse_roleplay_projection_write(**_kwargs: object) -> bool:
     """Represent a missing durable projection seam in an immutable plan."""
     return False
@@ -119,6 +150,7 @@ class _VariantStreamBase:
     content: str
     prior_status: ConsoleMessageStatus
     prior_usage: "ProviderUsage | None" = None
+    prior_metadata: MessageMetadata | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -758,6 +790,11 @@ class ConsoleChatStore:
         self._terminal_persistence_deferred_ids: set[str] = set()
         self._stream_chunks_by_message: dict[str, list[str]] = {}
         self._stream_materialized_counts: dict[str, int] = {}
+        self._character_emote_captures: dict[str, _CharacterEmoteCapture] = {}
+        self._character_emote_feed_by_session: dict[
+            str, deque[CharacterEmoteLiveEvent]
+        ] = {}
+        self._character_emote_sequence = 0
         self._sync_v2_message_versions: dict[str, str] = {}
         self._roleplay_system_projection_candidates: dict[
             str, tuple[str | None, ...]
@@ -1689,6 +1726,7 @@ class ConsoleChatStore:
             self._native_parent_by_message.pop(message_id, None)
             self._roleplay_message_projection_candidates.pop(message_id, None)
             self._exchange_blob_cache.pop(message_id, None)
+            self._character_emote_captures.pop(message_id, None)
 
         self._messages_by_session.pop(session_id, None)
         self._tool_markers_by_session.pop(session_id, None)
@@ -1699,6 +1737,7 @@ class ConsoleChatStore:
         self._roleplay_system_projection_candidates.pop(session_id, None)
         self._conversation_context_epochs.pop(session_id, None)
         self._speech_preference_epochs.pop(session_id, None)
+        self._character_emote_feed_by_session.pop(session_id, None)
         self._sessions.pop(session_id, None)
 
         if self.active_session_id != session_id:
@@ -2133,6 +2172,8 @@ class ConsoleChatStore:
         self._terminal_persistence_deferred_ids.clear()
         self._stream_chunks_by_message.clear()
         self._stream_materialized_counts.clear()
+        self._character_emote_captures.clear()
+        self._character_emote_feed_by_session.clear()
         self._sync_v2_message_versions.clear()
         self._roleplay_system_projection_candidates.clear()
         self._roleplay_message_projection_candidates.clear()
@@ -3084,6 +3125,16 @@ class ConsoleChatStore:
                 "Selected body exceeds the answer-attempt UTF-8 byte limit."
             )
 
+        capture = self._character_emote_captures.get(message.id)
+        replacement_events: tuple[CharacterEmoteEvent, ...] = ()
+        replacement_parser: CharacterEmoteStreamParser | None = None
+        if capture is not None:
+            replacement_parser = CharacterEmoteStreamParser()
+            pushed = replacement_parser.push(selected_body)
+            flushed = replacement_parser.flush()
+            selected_body = pushed.visible_text + flushed.visible_text
+            replacement_events = pushed.events + flushed.events
+
         message.content = selected_body
         buffer = self._stream_chunks_by_message.get(message.id)
         if buffer is None:
@@ -3091,6 +3142,11 @@ class ConsoleChatStore:
         else:
             buffer[:] = [selected_body]
         self._stream_materialized_counts[message.id] = 1
+        if capture is not None and replacement_parser is not None:
+            capture.parser = replacement_parser
+            capture.events = list(replacement_events)
+            capture.fail_closed = False
+            self._publish_character_emote_events(message.id, replacement_events)
         self._bump_message_speech_revision(message.id)
         self._bump_payload_revision(self._message_session_index[message.id])
         return self._snapshot(message)
@@ -3260,6 +3316,7 @@ class ConsoleChatStore:
             self._failed_retry_message_ids.discard(node_id)
             self._message_speech_revisions.pop(node_id, None)
             self._exchange_blob_cache.pop(node_id, None)
+            self._character_emote_captures.pop(node_id, None)
         self._purge_tool_markers(session_id, removed)
         if self._active_leaf_by_session.get(session_id) in removed:
             self._active_leaf_by_session[session_id] = owner_id
@@ -4390,6 +4447,72 @@ class ConsoleChatStore:
         index = sibling_ids.index(message_id) if message_id in sibling_ids else 0
         return snapshots, index, len(sibling_ids)
 
+    def begin_character_emote_capture(
+        self,
+        message_id: str,
+        snapshot: CharacterEmoteRunSnapshot,
+    ) -> None:
+        """Arm one character-owned assistant row for safe directive parsing."""
+
+        message = self._message_or_raise(message_id)
+        session_id = self._message_session_index[message_id]
+        session = self._session_or_raise(session_id)
+        if message.role is not ConsoleMessageRole.ASSISTANT:
+            raise ValueError("Only assistant messages support character emotes.")
+        if message.status not in {"pending", "streaming"}:
+            raise ValueError("Character emotes require an active assistant message.")
+        if session.assistant_kind != "character":
+            raise ValueError("Character emotes require character session ownership.")
+        if not isinstance(snapshot, CharacterEmoteRunSnapshot):
+            raise TypeError("snapshot must be CharacterEmoteRunSnapshot")
+        if (
+            snapshot.actor_id is not None
+            and session.character_id is not None
+            and snapshot.actor_id != session.character_id
+        ):
+            raise ValueError("Character emote snapshot actor does not own the session.")
+        self._character_emote_captures[message_id] = _CharacterEmoteCapture(
+            parser=CharacterEmoteStreamParser(),
+            snapshot=snapshot,
+        )
+
+    def character_emote_events_after(
+        self,
+        session_id: str,
+        cursor: int,
+    ) -> tuple[CharacterEmoteLiveEvent, ...]:
+        """Return ordered content-free live events newer than ``cursor``."""
+
+        self._session_or_raise(session_id)
+        if isinstance(cursor, bool) or not isinstance(cursor, int) or cursor < 0:
+            raise ValueError("cursor must be a nonnegative integer")
+        return tuple(
+            event
+            for event in self._character_emote_feed_by_session.get(session_id, ())
+            if event.sequence > cursor
+        )
+
+    def _publish_character_emote_events(
+        self,
+        message_id: str,
+        events: Sequence[CharacterEmoteEvent],
+    ) -> None:
+        session_id = self._message_session_index[message_id]
+        feed = self._character_emote_feed_by_session.setdefault(
+            session_id,
+            deque(maxlen=512),
+        )
+        for event in events:
+            self._character_emote_sequence += 1
+            feed.append(
+                CharacterEmoteLiveEvent(
+                    sequence=self._character_emote_sequence,
+                    session_id=session_id,
+                    message_id=message_id,
+                    state=event.state,
+                )
+            )
+
     def append_stream_chunk(self, message_id: str, chunk: str) -> ConsoleChatMessage:
         """Append streamed assistant content to an existing message.
 
@@ -4407,13 +4530,32 @@ class ConsoleChatStore:
         if message.status == "stopped":
             return self._snapshot(message)
         self._validate_can_stream(message)
+        capture = self._character_emote_captures.get(message.id)
+        accepted_events: tuple[CharacterEmoteEvent, ...] = ()
+        if capture is not None:
+            checkpoint = capture.parser.safe_copy()
+            try:
+                parsed = capture.parser.push(chunk)
+                if not capture.fail_closed:
+                    accepted_events = parsed.events
+            except Exception:
+                logger.warning("character_emote_parser_failed")
+                capture.fail_closed = True
+                capture.parser = checkpoint
+                parsed = capture.parser.push(chunk)
+            chunk = parsed.visible_text
+            if accepted_events:
+                capture.events.extend(accepted_events)
+                self._publish_character_emote_events(message.id, accepted_events)
         buffer = self._stream_chunks_by_message.setdefault(
             message.id,
             [message.content] if message.content else [],
         )
-        buffer.append(chunk)
+        if chunk:
+            buffer.append(chunk)
         message.status = "streaming"
-        self._bump_message_speech_revision(message.id)
+        if chunk:
+            self._bump_message_speech_revision(message.id)
         # Trajectory sidecar (schema v38): the first provider chunk is the
         # first-token boundary. Stamped at THIS seam (rather than in the
         # controller's direct-provider loop) because it is the single point
@@ -4421,7 +4563,8 @@ class ConsoleChatStore:
         # through. Only stamps an armed capture: no step-start, no timing.
         stash = self._trajectory_timing.get(message.id)
         if (
-            stash is not None
+            chunk
+            and stash is not None
             and stash.get("step_started_at") is not None
             and stash.get("first_token_at") is None
         ):
@@ -5261,6 +5404,103 @@ class ConsoleChatStore:
         """
         return frozenset(self._abandoned_exchange_run_tags.get(message_id, ()))
 
+    def _finalize_character_emote_capture(
+        self,
+        message: ConsoleChatMessage,
+        *,
+        outcome: str,
+    ) -> None:
+        """Finalize sanitized content and attach local-only expression metadata."""
+
+        capture = self._character_emote_captures.get(message.id)
+        if capture is None:
+            return
+        successful = outcome in {"complete", "variant"}
+        if successful:
+            terminal = capture.parser.flush()
+            if terminal.visible_text:
+                self._stream_chunks_by_message.setdefault(message.id, []).append(
+                    terminal.visible_text
+                )
+            if terminal.events and not capture.fail_closed:
+                capture.events.extend(terminal.events)
+                self._publish_character_emote_events(message.id, terminal.events)
+        else:
+            capture.parser.cancel()
+
+        self._materialize_stream_buffer(message)
+        mood_label: str | None = None
+        mood_confidence: float | None = None
+        mood_topic: str | None = None
+        fallback_reason = capture.snapshot.fallback_reason
+        if capture.events:
+            mood_label = capture.events[-1].state
+        elif successful and not capture.fail_closed:
+            try:
+                detected = detect_character_mood(
+                    assistant_text=message.content,
+                    user_text=self._preceding_user_text(message.id),
+                )
+                mood_label = detected.label
+                mood_confidence = detected.confidence
+                mood_topic = detected.topic
+            except Exception:
+                fallback_reason = "heuristic_error"
+        elif outcome in {"stopped", "failed"}:
+            fallback_reason = outcome
+
+        asset = (
+            capture.snapshot.asset_for_state(mood_label)
+            if mood_label is not None
+            else None
+        )
+        if capture.fail_closed:
+            fallback_reason = "parser_error"
+        elif mood_label is not None and asset is None:
+            fallback_reason = (
+                "no_active_pack"
+                if capture.snapshot.pack_version_id is None
+                else "state_unavailable"
+            )
+
+        emote_metadata = CharacterEmoteMetadata(
+            sanitized_utf16_length=utf16_length(message.content),
+            mood_label=mood_label,
+            mood_confidence=mood_confidence,
+            mood_topic=mood_topic,
+            emote_events=tuple(
+                CharacterEmoteEventMetadata(event.state, event.at_char)
+                for event in capture.events
+            ),
+            actor_kind=("character" if capture.snapshot.actor_id is not None else ""),
+            actor_id=capture.snapshot.actor_id,
+            pack_id=capture.snapshot.pack_id,
+            pack_version_id=capture.snapshot.pack_version_id,
+            expression_key=asset.expression_key if asset is not None else None,
+            expression_id=asset.expression_id if asset is not None else None,
+            asset_id=asset.asset_id if asset is not None else None,
+            fallback_reason=fallback_reason,
+        )
+        message.metadata = replace(
+            message.metadata or MessageMetadata(),
+            character_emote=emote_metadata,
+        )
+        self._character_emote_captures.pop(message.id, None)
+
+    def _preceding_user_text(self, message_id: str) -> str | None:
+        session_id = self._message_session_index[message_id]
+        message_ids = self.active_path_message_ids(session_id)
+        try:
+            index = message_ids.index(message_id)
+        except ValueError:
+            return None
+        nodes = self._nodes_by_session[session_id]
+        for candidate_id in reversed(message_ids[:index]):
+            candidate = nodes[candidate_id]
+            if candidate.role is ConsoleMessageRole.USER:
+                return candidate.content
+        return None
+
     def set_message_metadata(
         self, message_id: str, metadata: MessageMetadata
     ) -> ConsoleChatMessage:
@@ -5296,6 +5536,7 @@ class ConsoleChatStore:
         """Mark a message complete and flush final visible content to persistence."""
         message = self._message_or_raise(message_id)
         self._validate_can_mark_terminal(message)
+        self._finalize_character_emote_capture(message, outcome="complete")
         self._materialize_stream_buffer(message)
         session_id = self._message_session_index[message.id]
         finalizer = self._terminal_citation_finalizers.pop(message.id, None)
@@ -5389,6 +5630,7 @@ class ConsoleChatStore:
         """
         message = self._message_or_raise(message_id)
         self._validate_can_mark_terminal(message)
+        self._finalize_character_emote_capture(message, outcome="stopped")
         self._materialize_stream_buffer(message)
         session_id = self._message_session_index[message.id]
         self.clear_terminal_citation_state(message.id)
@@ -5397,6 +5639,7 @@ class ConsoleChatStore:
             message.content = base.content
             message.status = base.prior_status
             message.usage = base.prior_usage
+            message.metadata = base.prior_metadata
             self._variant_restored_message_ids.add(message.id)
         else:
             message.status = "stopped"
@@ -5432,6 +5675,7 @@ class ConsoleChatStore:
         """
         message = self._message_or_raise(message_id)
         self._validate_can_mark_terminal(message)
+        self._finalize_character_emote_capture(message, outcome="failed")
         self._materialize_stream_buffer(message)
         session_id = self._message_session_index[message.id]
         self.clear_terminal_citation_state(message.id)
@@ -5440,6 +5684,7 @@ class ConsoleChatStore:
             message.content = base.content
             message.status = base.prior_status
             message.usage = base.prior_usage
+            message.metadata = base.prior_metadata
             self._variant_restored_message_ids.add(message.id)
         else:
             message.status = "failed"
@@ -5534,6 +5779,8 @@ class ConsoleChatStore:
             )
         message.content = ""
         message.status = "pending"
+        if message.metadata is not None and message.metadata.character_emote is not None:
+            message.metadata = replace(message.metadata, character_emote=None)
         self._stream_chunks_by_message.pop(message.id, None)
         self._stream_materialized_counts.pop(message.id, None)
         # A new generation starts here -- see `begin_variant_stream`.
@@ -5595,6 +5842,7 @@ class ConsoleChatStore:
             content=message.content,
             prior_status=message.status,
             prior_usage=message.usage,
+            prior_metadata=message.metadata,
         )
         # A new generation starts here, so this message's next usage attach
         # is legitimate again even if an earlier regenerate was abandoned.
@@ -5627,6 +5875,7 @@ class ConsoleChatStore:
             or message.id not in self._variant_stream_bases
         ):
             raise ValueError("Message has no active variant stream.")
+        self._finalize_character_emote_capture(message, outcome="variant")
         self._materialize_stream_buffer(message)
         new_content = message.content
         base_entry = self._variant_stream_bases.pop(message.id)
