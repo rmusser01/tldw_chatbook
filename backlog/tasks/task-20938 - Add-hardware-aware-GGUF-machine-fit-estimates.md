@@ -73,14 +73,47 @@ sheet was regenerated from existing source, narrow machine actions now stack,
 and completion reapplies the existing pane visibility policy after its internal
 recompose. No new architecture decision was required beyond accepted ADR-080.
 
-Targeted verification: import provenance `1 passed`; the four focused feature
-files unfiltered `187 passed`; selected LLMScreen cases `13 passed, 126
-deselected`; canonical CSS consolidation `31 passed`; CSS bundle sync, Ruff
-check, Ruff format check, compileall, and `git diff --check` all passed. The
-planned `Tests/UI/test_ui_css_parse.py` path does not exist, so the canonical
-`Tests/UI/test_widget_css_consolidation.py` full run plus bundle-sync guard was
-used under controller ruling. A once-only isolated `Darwin-arm64` diagnostic
-passed with unified memory, one Apple shared marker, and no discrete accelerator
-command; no observed capacity/device values were persisted. Full evidence and
-RED/GREEN diagnosis are in the Task 5 implementation report.
+Authoritative targeted evidence (run from the feature worktree):
+
+```text
+../../.venv/bin/pytest -q Tests/test_probe_import_provenance.py -s
+1 passed; imports resolved from this worktree
+
+../../.venv/bin/pytest -q Tests/Model_Artifacts/test_machine_memory.py Tests/Model_Artifacts/test_machine_memory_probe.py Tests/UI/test_model_memory_presenter.py Tests/UI/test_model_remote_view.py
+187 passed, 1 dependency warning
+
+../../.venv/bin/pytest -q Tests/UI/test_llm_screen_lab_adoption.py -k "machine_memory or remote_drill_down_install_action or remote_memory_scenarios_survive_recompose or remote_completion"
+13 passed, 126 deselected, 1 dependency warning
+
+../../.venv/bin/pytest -q Tests/UI/test_llm_screen_lab_adoption.py::test_remote_memory_scenarios_survive_recompose_at_80_columns
+1 passed, 1 dependency warning
+
+../../.venv/bin/pytest -q Tests/UI/test_widget_css_consolidation.py
+31 passed, 2 existing warnings
+
+../../.venv/bin/python tldw_chatbook/css/check_bundle_sync.py
+passed; all five generated CSS artifacts reproduce from source
+
+../../.venv/bin/ruff check tldw_chatbook/Model_Artifacts/machine_memory.py tldw_chatbook/Model_Artifacts/machine_memory_probe.py tldw_chatbook/UI/Screens/model_memory_presenter.py tldw_chatbook/UI/Screens/model_remote_view.py tldw_chatbook/UI/Screens/llm_screen.py Tests/Model_Artifacts/test_machine_memory.py Tests/Model_Artifacts/test_machine_memory_probe.py Tests/UI/test_model_memory_presenter.py Tests/UI/test_model_remote_view.py Tests/UI/test_llm_screen_lab_adoption.py
+passed; All checks passed
+
+../../.venv/bin/ruff format --check tldw_chatbook/Model_Artifacts/machine_memory.py tldw_chatbook/Model_Artifacts/machine_memory_probe.py tldw_chatbook/UI/Screens/model_memory_presenter.py tldw_chatbook/UI/Screens/model_remote_view.py tldw_chatbook/UI/Screens/llm_screen.py Tests/Model_Artifacts/test_machine_memory.py Tests/Model_Artifacts/test_machine_memory_probe.py Tests/UI/test_model_memory_presenter.py Tests/UI/test_model_remote_view.py Tests/UI/test_llm_screen_lab_adoption.py
+passed; 10 files already formatted
+
+../../.venv/bin/python -m compileall -q tldw_chatbook/Model_Artifacts/machine_memory.py tldw_chatbook/Model_Artifacts/machine_memory_probe.py tldw_chatbook/UI/Screens/model_memory_presenter.py tldw_chatbook/UI/Screens/model_remote_view.py tldw_chatbook/UI/Screens/llm_screen.py
+passed
+
+git diff --check
+passed
+```
+
+The planned `Tests/UI/test_ui_css_parse.py` path does not exist, so the full
+canonical `Tests/UI/test_widget_css_consolidation.py` suite plus the bundle-sync
+guard was used under controller ruling. A once-only, worktree-first, scratch
+HOME/XDG/config-isolated diagnostic passed on platform class `Darwin-arm64`:
+unified memory had a positive total, exactly one Apple shared marker was
+present, and an injected guard proved no discrete accelerator command was
+attempted. No observed capacity/device values were persisted. The Task 5 report
+retains the RED/GREEN production diagnoses; this task record contains the
+authoritative completion commands and results.
 <!-- SECTION:NOTES:END -->

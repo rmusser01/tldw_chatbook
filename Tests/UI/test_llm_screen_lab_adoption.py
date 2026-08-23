@@ -1086,25 +1086,29 @@ async def test_remote_memory_scenarios_survive_recompose_at_80_columns():
             rail_handle = screen.query_one("#lab-rail-handle")
             assert rail.display is True
             assert rail_handle.display is False
-            assert await _wait_for(lambda: remote.has_class("-single-pane"), pilot)
+            assert await _wait_for(
+                lambda: (
+                    0 < remote.content_region.width < 72
+                    and remote.has_class("-single-pane")
+                ),
+                pilot,
+            )
+            verified_rail_state_widths = {
+                "expanded": remote.content_region.width,
+            }
             screen.query_one("#lab-rail-collapse", Button).press()
             assert await _wait_for(
                 lambda: (
                     not rail.display
                     and rail_handle.display
+                    and verified_rail_state_widths["expanded"]
+                    < remote.content_region.width
+                    < 72
                     and remote.has_class("-single-pane")
                 ),
                 pilot,
             )
-            screen.query_one("#lab-rail-open", Button).press()
-            assert await _wait_for(
-                lambda: (
-                    rail.display
-                    and not rail_handle.display
-                    and remote.has_class("-single-pane")
-                ),
-                pilot,
-            )
+            verified_rail_state_widths["collapsed"] = remote.content_region.width
 
             query = remote.query_one("#remote-model-query", Input)
             query.value = "memory model"
@@ -1130,6 +1134,10 @@ async def test_remote_memory_scenarios_survive_recompose_at_80_columns():
 
             back = remote.query_one("#remote-back-to-results", Button)
             await assert_painted(back, parent, pilot, app)
+            assert not rail.display
+            assert (
+                remote.content_region.width == verified_rail_state_widths["collapsed"]
+            )
             back.press()
             assert await _wait_for(
                 lambda: (
@@ -1139,6 +1147,20 @@ async def test_remote_memory_scenarios_survive_recompose_at_80_columns():
                 pilot,
             )
             assert remote.query_one(".remote-result", Button) is result
+
+            screen.query_one("#lab-rail-open", Button).press()
+            assert await _wait_for(
+                lambda: (
+                    rail.display
+                    and not rail_handle.display
+                    and remote.content_region.width
+                    == verified_rail_state_widths["expanded"]
+                    and remote.content_region.width
+                    < verified_rail_state_widths["collapsed"]
+                    and remote.has_class("-single-pane")
+                ),
+                pilot,
+            )
 
             query.value = repository
             remote.query_one("#remote-model-search", Button).press()
@@ -1156,6 +1178,8 @@ async def test_remote_memory_scenarios_survive_recompose_at_80_columns():
             assert adapter.resolve_calls == [repository, repository]
             assert probe_calls == [0]
 
+            back = remote.query_one("#remote-back-to-results", Button)
+            await assert_painted(back, parent, pilot, app)
             candidate = remote.query_one(".remote-candidate", Button)
             await assert_painted(candidate, parent, pilot, app)
             candidate.focus()
@@ -1233,6 +1257,74 @@ async def test_remote_memory_scenarios_survive_recompose_at_80_columns():
             )
             await assert_painted(selection, parent, pilot, app)
             await assert_painted(install, parent, pilot, app)
+            assert rail.display
+            assert remote.content_region.width == verified_rail_state_widths["expanded"]
+            verified_control_states = {"expanded"}
+
+            screen.query_one("#lab-rail-collapse", Button).press()
+            assert await _wait_for(
+                lambda: (
+                    not rail.display
+                    and rail_handle.display
+                    and screen.query_one(RemoteView) is remote
+                    and remote.content_region.width
+                    == verified_rail_state_widths["collapsed"]
+                    and remote.content_region.width < 72
+                    and remote.has_class("-single-pane")
+                    and remote.query_one(".remote-candidate", Button) is candidate
+                ),
+                pilot,
+            )
+
+            collapsed_back = remote.query_one("#remote-back-to-results", Button)
+            collapsed_panel = remote.query_one(".remote-machine-panel")
+            collapsed_toggle = remote.query_one(
+                "#remote-machine-details-toggle", Button
+            )
+            collapsed_recheck = remote.query_one("#remote-machine-recheck", Button)
+            collapsed_candidate = remote.query_one(".remote-candidate", Button)
+            collapsed_selection = remote.query_one("#remote-model-selection", Static)
+            collapsed_install = remote.query_one("#remote-model-install", Button)
+            collapsed_model_details = remote.query_one("#remote-model-details")
+            assert collapsed_back is back
+            assert collapsed_panel is panel
+            assert collapsed_toggle is toggle
+            assert collapsed_recheck is recheck
+            assert collapsed_candidate is candidate
+            assert collapsed_selection is selection
+            assert collapsed_install is install
+
+            await assert_scroll_section_painted(
+                collapsed_panel,
+                collapsed_model_details,
+                parent,
+                (
+                    (
+                        remote.query_one("#remote-machine-headline", Static),
+                        "Machine memory: 32.0 GiB RAM",
+                    ),
+                    (
+                        remote.query_one("#remote-machine-evidence", Static),
+                        "VRAM observed on 3 devices",
+                    ),
+                ),
+                pilot,
+                app,
+            )
+            for control in (
+                collapsed_back,
+                collapsed_toggle,
+                collapsed_recheck,
+                collapsed_candidate,
+                collapsed_selection,
+                collapsed_install,
+            ):
+                await assert_painted(control, parent, pilot, app)
+            assert str(collapsed_selection.renderable).startswith(
+                f"Selected: {filename}"
+            )
+            assert collapsed_install.disabled is False
+            verified_control_states.add("collapsed")
 
             initial_generation = screen._machine_memory_generation
             recheck.focus()
@@ -1289,7 +1381,16 @@ async def test_remote_memory_scenarios_survive_recompose_at_80_columns():
             next(
                 row for row in _rail_rows(screen) if row.lab_view_key == "remote"
             ).press()
-            assert await _wait_for(lambda: fresh_window.active_view == "remote", pilot)
+            assert await _wait_for(
+                lambda: (
+                    fresh_window.active_view == "remote"
+                    and fresh_remote.content_region.width
+                    == verified_rail_state_widths["collapsed"]
+                    and fresh_remote.content_region.width < 72
+                    and fresh_remote.has_class("-single-pane")
+                ),
+                pilot,
+            )
             fresh_remote.query_one("#remote-model-query", Input).value = repository
             fresh_remote.query_one("#remote-model-search", Button).press()
             assert await _wait_for(
@@ -1301,6 +1402,14 @@ async def test_remote_memory_scenarios_survive_recompose_at_80_columns():
                 pilot,
             )
             assert probe_calls == [0, 1]
+            assert set(verified_rail_state_widths) == {"expanded", "collapsed"}
+            assert verified_rail_state_widths["expanded"] < 72
+            assert (
+                verified_rail_state_widths["expanded"]
+                < verified_rail_state_widths["collapsed"]
+                < 72
+            )
+            assert verified_control_states == {"expanded", "collapsed"}
     finally:
         for release in probe_releases:
             release.set()
