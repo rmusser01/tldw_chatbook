@@ -8,12 +8,13 @@ from importlib import metadata
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import stat
 import subprocess
 import sys
 import tarfile
-from typing import Iterator, NamedTuple
+from typing import Iterable, Iterator, NamedTuple
 import venv
 import zipfile
 
@@ -31,52 +32,38 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # deleted (spec §8.1.2): no tldw_chatbook/Chunking/templates/ path may ship
 # in either artifact, and the installed tree must not carry the directory.
 CHUNKING_TEMPLATES_PREFIX = "tldw_chatbook/Chunking/templates/"
-CITATION_MIGRATION_PATH = (
-    "tldw_chatbook/DB/migrations/chachanotes_v26_to_v27_citation_provenance.sql"
-)
-CHARACTER_AUTHORITY_MIGRATION_PATH = (
-    "tldw_chatbook/DB/migrations/chachanotes_v27_to_v28_character_authority.sql"
-)
-CONSOLE_CONTEXT_MIGRATION_PATH = (
-    "tldw_chatbook/DB/migrations/chachanotes_v32_to_v33_console_context_memory.sql"
-)
-VISUAL_COMPACTION_MIGRATION_PATH = (
-    "tldw_chatbook/DB/migrations/chachanotes_v33_to_v34_visual_compaction_policy.sql"
-)
-DICTIONARY_ATTACHMENTS_MIGRATION_PATH = (
-    "tldw_chatbook/DB/migrations/"
-    "chachanotes_v34_to_v35_conversation_dictionary_attachments.sql"
-)
-NOTE_FOLDER_MIGRATION_PATH = (
-    "tldw_chatbook/DB/migrations/chachanotes_v35_to_v36_note_folders.sql"
-)
-PROVIDER_CONTINUATION_MIGRATION_PATH = (
-    "tldw_chatbook/DB/migrations/chachanotes_v36_to_v37_provider_continuation.sql"
-)
-VISUAL_IDENTITY_MIGRATION_PATH = (
-    "tldw_chatbook/DB/migrations/chachanotes_v38_to_v39_visual_identity.sql"
-)
-TRANSCRIPT_ANNOTATIONS_MIGRATION_PATH = (
-    "tldw_chatbook/DB/migrations/chachanotes_v39_to_v40_transcript_annotations.sql"
-)
-MESSAGE_TRAJECTORY_MIGRATION_PATH = (
-    "tldw_chatbook/DB/migrations/"
-    "chachanotes_v37_to_v38_message_trajectory_metadata.sql"
-)
-TRANSCRIPT_ANNOTATIONS_MIGRATION_PATH = (
-    "tldw_chatbook/DB/migrations/"
-    "chachanotes_v39_to_v40_transcript_annotations.sql"
-)
-MESSAGE_EXCHANGES_MIGRATION_PATH = (
-    "tldw_chatbook/DB/migrations/"
-    "chachanotes_v42_to_v43_message_exchanges.sql"
-)
-SYNC_CONFLICT_PRESERVATION_MIGRATION_PATH = (
-    "tldw_chatbook/DB/migrations/"
-    "chachanotes_v43_to_v44_sync_conflict_preservation.sql"
-)
-ACTOR_PACK_MIGRATION_PATH = (
-    "tldw_chatbook/DB/migrations/chachanotes_v44_to_v45_actor_packs.sql"
+# Migration expectations are DERIVED, never listed (task-19860). The
+# fifteen hand-written constants this replaced had drifted to thirteen files
+# (one was even defined twice), and the app cannot start without two of the
+# ones nobody added: a wheel built from that list died at V40->V41 with a
+# SchemaError, and the two later gaps were invisible because the chain
+# aborts at the first.
+MIGRATIONS_PREFIX = "tldw_chatbook/DB/migrations/"
+CHACHANOTES_DB_MODULE_PATH = "tldw_chatbook/DB/ChaChaNotes_DB.py"
+# Matches ``Path(__file__).parent / "migrations" / "<name>.sql"``, the form
+# every file-backed migration step uses to locate its script.
+RUNTIME_MIGRATION_READ = re.compile(r'"migrations"\s*/\s*"([^"\n]+\.sql)"')
+
+
+def _source_migration_paths(repo_root: Path) -> frozenset[str]:
+    """Return every migration script present in a checkout."""
+    directory = repo_root / "tldw_chatbook" / "DB" / "migrations"
+    return frozenset(
+        f"{MIGRATIONS_PREFIX}{path.name}" for path in directory.glob("*.sql")
+    )
+
+
+def _runtime_migration_paths(module_source: str) -> frozenset[str]:
+    """Return the migrations a schema-runner source text opens at runtime."""
+    return frozenset(
+        f"{MIGRATIONS_PREFIX}{name}"
+        for name in RUNTIME_MIGRATION_READ.findall(module_source)
+    )
+
+
+SOURCE_MIGRATION_PATHS = _source_migration_paths(REPO_ROOT)
+RUNTIME_MIGRATION_PATHS = _runtime_migration_paths(
+    (REPO_ROOT / CHACHANOTES_DB_MODULE_PATH).read_text(encoding="utf-8")
 )
 SAMIRA_RESOURCE_ROOT = "tldw_chatbook/assets/characters/samira"
 SAMIRA_REACTION_LABELS = (
@@ -127,21 +114,6 @@ SAMIRA_RESOURCE_PATHS = {
 AUDIO_CPP_ARTIFACT_MANIFEST_PATH = "tldw_chatbook/TTS/audio_cpp_artifact_manifest.json"
 AUDIO_CPP_ARTIFACT_REPOSITORY = "audio-cpp/audio.cpp-gguf"
 AUDIO_CPP_ARTIFACT_COMMIT = "597048d9a920592808d7d4e2acd7b9c4596a143a"
-RUNTIME_MIGRATION_PATHS = {
-    CITATION_MIGRATION_PATH,
-    CHARACTER_AUTHORITY_MIGRATION_PATH,
-    CONSOLE_CONTEXT_MIGRATION_PATH,
-    VISUAL_COMPACTION_MIGRATION_PATH,
-    DICTIONARY_ATTACHMENTS_MIGRATION_PATH,
-    NOTE_FOLDER_MIGRATION_PATH,
-    PROVIDER_CONTINUATION_MIGRATION_PATH,
-    MESSAGE_TRAJECTORY_MIGRATION_PATH,
-    VISUAL_IDENTITY_MIGRATION_PATH,
-    TRANSCRIPT_ANNOTATIONS_MIGRATION_PATH,
-    MESSAGE_EXCHANGES_MIGRATION_PATH,
-    SYNC_CONFLICT_PRESERVATION_MIGRATION_PATH,
-    ACTOR_PACK_MIGRATION_PATH,
-}
 _PRIVATE_CHILD_BASELINE_ENV_KEYS = (
     "PATH",
     "LANG",
@@ -838,6 +810,22 @@ migration_path = validate_path("installed-migration-probe.sqlite", home_path)
 # is that the fixed v35 baseline below remains a genuine downgrade.
 current_schema_version = CharactersRAGDB._CURRENT_SCHEMA_VERSION
 assert current_schema_version > 35
+
+# A from-scratch initialization first: this is precisely what a user gets
+# after `pip install tldw_chatbook`, and it walks the WHOLE v4->current
+# chain, reading every file-backed migration off the installed tree. A wheel
+# short of one script dies here with a SchemaError (task-19860). The reached
+# version is read back out of the database, never asserted from the constant.
+fresh_path = validate_path("installed-fresh-probe.sqlite", home_path)
+assert not fresh_path.exists()
+fresh_db = CharactersRAGDB(fresh_path, client_id="installed-probe-fresh")
+fresh_version = fresh_db.get_connection().execute(
+    "SELECT version FROM db_schema_version WHERE schema_name = ?",
+    (CharactersRAGDB._SCHEMA_NAME,),
+).fetchone()[0]
+fresh_db.close_connection()
+assert fresh_version == current_schema_version, (fresh_version, current_schema_version)
+print(f"installed-wheel-fresh-init-ok v{fresh_version}")
 CharactersRAGDB._CURRENT_SCHEMA_VERSION = 35
 try:
     legacy_db = CharactersRAGDB(migration_path, client_id="installed-probe-v35")
@@ -1181,6 +1169,94 @@ def _wheel_members(path: Path) -> set[str]:
         return {name for name in archive.namelist() if not name.endswith("/")}
 
 
+def _sdist_member_text(path: Path, member: str) -> str:
+    with tarfile.open(path, "r:gz") as archive:
+        item = next(
+            entry
+            for entry in archive.getmembers()
+            if entry.isfile() and entry.name.split("/", 1)[-1] == member
+        )
+        stream = archive.extractfile(item)
+        assert stream is not None, member
+        return stream.read().decode("utf-8")
+
+
+def _wheel_member_text(path: Path, member: str) -> str:
+    with zipfile.ZipFile(path) as archive:
+        return archive.read(member).decode("utf-8")
+
+
+def _link_or_copy(source: Path, destination: Path) -> None:
+    """Hard link an unmodified archive, falling back to a copy across devices."""
+    try:
+        os.link(source, destination)
+    except OSError:
+        shutil.copy2(source, destination)
+
+
+def _dist_dir_without(
+    built: BuiltDistributions,
+    tmp_path: Path,
+    *,
+    drop_from_wheel: Iterable[str] = (),
+    drop_from_sdist: Iterable[str] = (),
+) -> Path:
+    """Copy the built dist directory, omitting the named archive members.
+
+    Only the archive that is actually mutated is rewritten; the other is hard
+    linked, so a parametrized mutation sweep does not re-copy tens of
+    megabytes per case.
+
+    Args:
+        built: The module-scoped build under test.
+        tmp_path: Per-test temporary directory.
+        drop_from_wheel: Wheel member names to omit.
+        drop_from_sdist: Sdist member names (archive-relative, without the
+            top-level directory) to omit.
+
+    Returns:
+        Path to the new distribution directory.
+    """
+    dropped_wheel = set(drop_from_wheel)
+    dropped_sdist = set(drop_from_sdist)
+    dist_dir = tmp_path / "dist"
+    dist_dir.mkdir()
+
+    wheel = dist_dir / built.wheel.name
+    if dropped_wheel:
+        with (
+            zipfile.ZipFile(built.wheel) as source,
+            zipfile.ZipFile(wheel, "w") as destination,
+        ):
+            present = set(source.namelist())
+            assert dropped_wheel <= present, sorted(dropped_wheel - present)
+            for member in source.infolist():
+                if member.filename not in dropped_wheel:
+                    destination.writestr(member, source.read(member.filename))
+    else:
+        _link_or_copy(built.wheel, wheel)
+
+    sdist = dist_dir / built.sdist.name
+    if dropped_sdist:
+        seen: set[str] = set()
+        with (
+            tarfile.open(built.sdist, "r:gz") as source,
+            tarfile.open(sdist, "w:gz") as destination,
+        ):
+            for member in source.getmembers():
+                relative = member.name.split("/", 1)[-1]
+                if member.isfile() and relative in dropped_sdist:
+                    seen.add(relative)
+                    continue
+                stream = source.extractfile(member) if member.isfile() else None
+                destination.addfile(member, stream)
+        assert seen == dropped_sdist, sorted(dropped_sdist - seen)
+    else:
+        _link_or_copy(built.sdist, sdist)
+
+    return dist_dir
+
+
 def _run_manifest_checker(
     built: BuiltDistributions,
     dist_dir: Path,
@@ -1459,7 +1535,6 @@ def test_built_artifacts_match_distribution_contract(
             "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
             AUDIO_CPP_ARTIFACT_MANIFEST_PATH,
         }
-        | RUNTIME_MIGRATION_PATHS
         | SAMIRA_RESOURCE_PATHS
     )
     required_wheel = (
@@ -1471,7 +1546,6 @@ def test_built_artifacts_match_distribution_contract(
             "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
             AUDIO_CPP_ARTIFACT_MANIFEST_PATH,
         }
-        | RUNTIME_MIGRATION_PATHS
         | SAMIRA_RESOURCE_PATHS
     )
     assert not required_sdist - sdist_members
@@ -1560,6 +1634,14 @@ def test_installed_distribution_migrates_v35_database_to_current(
     tmp_path: Path,
     wheel_source: str,
 ) -> None:
+    """Install the wheel into an empty tree and drive the schema for real.
+
+    Two databases, both created inside the installed distribution: one from
+    scratch -- the fresh-install path, which walks the entire v4->current
+    chain -- and one pinned back to v35 to prove the upgrade path. Each reads
+    its reached version out of ``db_schema_version`` rather than asserting the
+    constant back at itself (task-19044, task-19860).
+    """
     wheel, build_source_root = (
         (built_distributions.wheel, built_distributions.source_root)
         if wheel_source == "source"
@@ -1584,6 +1666,7 @@ def test_installed_distribution_migrates_v35_database_to_current(
             env,
         )
 
+    assert "installed-wheel-fresh-init-ok" in result.stdout
     assert "installed-wheel-v35-to-current-ok" in result.stdout
 
 
@@ -1743,51 +1826,116 @@ def test_release_checker_rejects_missing_samira_reaction(
     assert missing in result.stdout + result.stderr
 
 
+def test_migration_expectations_are_derived_not_enumerated() -> None:
+    """The expectations must come from reality, or they cannot catch drift."""
+    assert SOURCE_MIGRATION_PATHS, "no migration scripts found in the checkout"
+    assert RUNTIME_MIGRATION_PATHS, (
+        "no migration reads detected in ChaChaNotes_DB.py; "
+        "RUNTIME_MIGRATION_READ no longer matches the schema runner"
+    )
+    orphans = sorted(RUNTIME_MIGRATION_PATHS - SOURCE_MIGRATION_PATHS)
+    assert not orphans, f"schema runner opens missing scripts: {orphans}"
+
+
+@pytest.mark.parametrize("archive_kind", ["wheel", "sdist"])
+def test_built_artifact_contains_every_migration_script(
+    built_distributions: BuiltDistributions,
+    archive_kind: str,
+) -> None:
+    """Every ``.sql`` in the tree must be inside the artifact -- all reported.
+
+    The assertion reads the ARCHIVE's members, never the text of
+    ``pyproject.toml`` or ``MANIFEST.in``: swapping the build backend cannot
+    make it pass vacuously. Every missing file is named at once; the enumerated
+    lists this replaced were 19 files behind and the runtime symptom showed
+    only the first (task-19860).
+    """
+    members = (
+        _wheel_members(built_distributions.wheel)
+        if archive_kind == "wheel"
+        else _sdist_members(built_distributions.sdist)
+    )
+
+    missing = sorted(SOURCE_MIGRATION_PATHS - members)
+
+    assert not missing, (
+        f"{len(missing)} migration script(s) present in the source tree are "
+        f"absent from the {archive_kind}:\n  " + "\n  ".join(missing)
+    )
+
+
+@pytest.mark.parametrize("archive_kind", ["wheel", "sdist"])
+def test_built_artifact_ships_the_migrations_its_own_code_opens(
+    built_distributions: BuiltDistributions,
+    archive_kind: str,
+) -> None:
+    """Self-consistency: the packaged schema runner's reads must resolve.
+
+    Derived from the artifact's own ``ChaChaNotes_DB.py``, so this holds for
+    any artifact from anywhere -- no checkout required. This is the property a
+    user's install actually depends on.
+    """
+    archive, members = (
+        (built_distributions.wheel, _wheel_members(built_distributions.wheel))
+        if archive_kind == "wheel"
+        else (built_distributions.sdist, _sdist_members(built_distributions.sdist))
+    )
+    read_text = _wheel_member_text if archive_kind == "wheel" else _sdist_member_text
+    required = _runtime_migration_paths(read_text(archive, CHACHANOTES_DB_MODULE_PATH))
+
+    assert required, "packaged schema runner exposed no migration reads"
+    missing = sorted(required - members)
+
+    assert not missing, (
+        f"the {archive_kind}'s own ChaChaNotes_DB.py opens "
+        f"{len(missing)} script(s) the {archive_kind} does not carry:\n  "
+        + "\n  ".join(missing)
+    )
+
+
+@pytest.mark.parametrize("archive_kind", ["wheel", "sdist"])
+def test_release_checker_reports_every_missing_database_migration(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+    archive_kind: str,
+) -> None:
+    """Removing several migrations must name all of them, not just the first.
+
+    Aborting at the first gap is exactly how 19 missing files stayed invisible
+    behind one reported symptom (task-19860).
+    """
+    dropped = set(sorted(SOURCE_MIGRATION_PATHS)[:3]) | {
+        max(SOURCE_MIGRATION_PATHS)
+    }
+    dist_dir = _dist_dir_without(
+        built_distributions,
+        tmp_path,
+        drop_from_wheel=dropped if archive_kind == "wheel" else (),
+        drop_from_sdist=dropped if archive_kind == "sdist" else (),
+    )
+
+    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
+
+    output = result.stdout + result.stderr
+    assert result.returncode == 1, output
+    unreported = sorted(name for name in dropped if name not in output)
+    assert not unreported, f"checker stayed silent about {unreported}\n{output}"
+
+
+@pytest.mark.parametrize("archive_kind", ["wheel", "sdist"])
 @pytest.mark.parametrize("missing", sorted(RUNTIME_MIGRATION_PATHS))
 def test_release_checker_rejects_missing_database_migration(
     built_distributions: BuiltDistributions,
     tmp_path: Path,
+    archive_kind: str,
     missing: str,
 ) -> None:
-    dist_dir = tmp_path / "dist"
-    shutil.copytree(built_distributions.dist_dir, dist_dir)
-    wheel = next(dist_dir.glob("*.whl"))
-    rewritten = wheel.with_suffix(".rewritten")
-    with (
-        zipfile.ZipFile(wheel) as source,
-        zipfile.ZipFile(rewritten, "w") as destination,
-    ):
-        for member in source.infolist():
-            if member.filename != missing:
-                destination.writestr(member, source.read(member.filename))
-    rewritten.replace(wheel)
-
-    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
-
-    assert result.returncode == 1
-    assert missing in result.stdout + result.stderr
-
-
-@pytest.mark.parametrize("missing", sorted(RUNTIME_MIGRATION_PATHS))
-def test_release_checker_rejects_missing_database_migration_from_sdist(
-    built_distributions: BuiltDistributions,
-    tmp_path: Path,
-    missing: str,
-) -> None:
-    dist_dir = tmp_path / "dist"
-    shutil.copytree(built_distributions.dist_dir, dist_dir)
-    sdist = next(dist_dir.glob("*.tar.gz"))
-    rewritten = sdist.with_name(f"{sdist.name}.rewritten")
-    with (
-        tarfile.open(sdist, "r:gz") as source,
-        tarfile.open(rewritten, "w:gz") as destination,
-    ):
-        for member in source.getmembers():
-            if member.name.endswith(f"/{missing}"):
-                continue
-            stream = source.extractfile(member) if member.isfile() else None
-            destination.addfile(member, stream)
-    rewritten.replace(sdist)
+    dist_dir = _dist_dir_without(
+        built_distributions,
+        tmp_path,
+        drop_from_wheel=[missing] if archive_kind == "wheel" else (),
+        drop_from_sdist=[missing] if archive_kind == "sdist" else (),
+    )
 
     result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
 

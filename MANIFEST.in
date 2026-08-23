@@ -14,17 +14,11 @@ recursive-include tldw_chatbook/Image_Generation/workflows *.json
 recursive-include tldw_chatbook/Video_Generation/workflows *.json
 recursive-include tldw_chatbook/css *.tcss *.css
 include tldw_chatbook/TTS/audio_cpp_artifact_manifest.json
-include tldw_chatbook/DB/migrations/chachanotes_v26_to_v27_citation_provenance.sql
-include tldw_chatbook/DB/migrations/chachanotes_v27_to_v28_character_authority.sql
-include tldw_chatbook/DB/migrations/chachanotes_v32_to_v33_console_context_memory.sql
-include tldw_chatbook/DB/migrations/chachanotes_v33_to_v34_visual_compaction_policy.sql
-include tldw_chatbook/DB/migrations/chachanotes_v34_to_v35_conversation_dictionary_attachments.sql
-include tldw_chatbook/DB/migrations/chachanotes_v35_to_v36_note_folders.sql
-include tldw_chatbook/DB/migrations/chachanotes_v36_to_v37_provider_continuation.sql
-include tldw_chatbook/DB/migrations/chachanotes_v39_to_v40_transcript_annotations.sql
-include tldw_chatbook/DB/migrations/chachanotes_v42_to_v43_message_exchanges.sql
-include tldw_chatbook/DB/migrations/chachanotes_v43_to_v44_sync_conflict_preservation.sql
-include tldw_chatbook/DB/migrations/chachanotes_v44_to_v45_actor_packs.sql
+# Every migration script, matched -- never enumerated (task-19860). The
+# hand-written list this replaced named 11 of 32; the sdist is the input to
+# every rebuild, so a migration missing here is a migration that can never
+# reach a wheel built from it.
+recursive-include tldw_chatbook/DB/migrations *.sql
 include tldw_chatbook/Third_Party/aider/LICENSE.txt
 include tldw_chatbook/Third_Party/textual_fspicker/LICENSE
 

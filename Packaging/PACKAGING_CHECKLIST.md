@@ -10,6 +10,12 @@ must start from a fresh output directory; do not treat an existing checkout
 - [x] `tldw-cli` and `tldw-serve` are declared in `[project.scripts]`.
 - [x] `[tool.setuptools.package-data]` explicitly owns wheel runtime data.
 - [x] `include-package-data = false` keeps sdist-only files out of wheels.
+- [x] Asset directories that grow are matched by pattern, never enumerated.
+  Only three lists name files on purpose, each for a reason recorded beside
+  it in `pyproject.toml`: `Config_Files/rag_pipelines.toml` (a `*.toml` glob
+  would ship the forbidden example TOML), `TTS/audio_cpp_artifact_manifest.json`
+  (one pinned manifest), and the vendored `LICENSE` notices. Adding a new
+  runtime asset to one of those three means adding its name too.
 - [x] The project license uses the `AGPL-3.0-or-later` SPDX expression and
   declares `LICENSE`.
 
@@ -19,9 +25,8 @@ must start from a fresh output directory; do not treat an existing checkout
 - [x] The sdist contains release metadata, runtime data, TCSS modules, the
   source-only `stats_screen.css` input, and project/vendored licenses.
 - [x] The wheel contains the compiled CSS bundle, RAG pipeline configuration,
-  thirteen chunking JSON templates, eval configuration, configuration
-  resources, the ChaChaNotes citation-provenance and character-authority
-  runtime migrations, and both vendored license notices.
+  eval configuration, configuration resources, **every** `.sql` file under
+  `tldw_chatbook/DB/migrations/`, and both vendored license notices.
 - [x] The wheel excludes source-only CSS, example TOML, development Markdown,
   the namespace-discovered chunking example, tests, caches, and OS metadata.
 - [x] Wheel and sdist metadata use Core Metadata 2.4 and declare the project
@@ -37,8 +42,11 @@ python Packaging/check_manifest.py fresh-dist
 ```
 
 `check_manifest.py` requires exactly one sdist and one wheel. It checks
-required and forbidden archive paths, exact chunking templates, entry points,
-SPDX metadata, the project license, and vendored notices.
+required and forbidden archive paths, entry points, SPDX metadata, the project
+license, and vendored notices. Its migration requirement is derived twice and
+fails closed: from the `.sql` files in the checkout beside it, and from the
+`.sql` names the artifact's own `ChaChaNotes_DB.py` opens. It names every
+missing script, not just the first.
 
 Run the isolated installed-wheel regression:
 
