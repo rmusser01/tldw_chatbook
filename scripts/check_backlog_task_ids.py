@@ -99,7 +99,14 @@ def _label(path: Path) -> str:
 
 
 def windows_incompatible_reason(name: str) -> str | None:
-    """Return why a basename cannot be represented by Win32, else ``None``."""
+    """Return why a basename cannot be represented by Win32, else ``None``.
+
+    Args:
+        name: Basename to validate against the Windows filename contract.
+
+    Returns:
+        The incompatibility reason, or ``None`` when the basename is valid.
+    """
     for character in name:
         if ord(character) <= 0x1F:
             return f"contains ASCII control U+{ord(character):04X}"
@@ -114,7 +121,16 @@ def windows_incompatible_reason(name: str) -> str | None:
 
 
 def windows_incompatible_paths(*task_dirs: Path) -> dict[str, str]:
-    """Return directly contained files whose basenames Win32 rejects."""
+    """Return directly contained files whose basenames Win32 rejects.
+
+    Args:
+        *task_dirs: Direct task-bucket directories to scan; absent directories
+            are skipped.
+
+    Returns:
+        Mapping of labeled invalid paths to their Windows incompatibility
+        reasons.
+    """
     invalid: dict[str, str] = {}
     for task_dir in task_dirs:
         if not task_dir.is_dir():
