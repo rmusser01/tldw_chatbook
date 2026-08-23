@@ -218,7 +218,10 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         self._snapshot: Any = None
         self._painted_visual_identity: object | None = None
         self._accepted_render: _AcceptedRender | None = None
-        self._non_alert_content_boxes: dict[bool, tuple[int, int]] = {}
+        self._display_content_boxes: dict[bool, tuple[int, int]] = {}
+        self._alert_entry_authority: tuple[str, bool, tuple[int, int] | None] | None = (
+            None
+        )
         self._working_preferences: PersonaBuddyPreferences = (
             controller.current_preferences()
         )
@@ -332,10 +335,21 @@ class PersonaBuddyWidget(Widget, can_focus=True):
                         content_width=content_box[0],
                         content_height=content_box[1],
                     )
+                    collapsed = bool(current_snapshot.collapsed)
+                    alert_entry = self._alert_entry_authority
                     if current_snapshot.state not in _ACTIONABLE_ALERTS:
-                        self._non_alert_content_boxes[
-                            bool(current_snapshot.collapsed)
-                        ] = content_box
+                        self._display_content_boxes[collapsed] = content_box
+                    elif (
+                        alert_entry is not None
+                        and alert_entry[:2] == (current_snapshot.state, collapsed)
+                        and alert_entry[2] != budget
+                    ):
+                        self._display_content_boxes[collapsed] = content_box
+                        self._alert_entry_authority = (
+                            current_snapshot.state,
+                            collapsed,
+                            budget,
+                        )
             self._resolved_authority = authority
             self.refresh_from_controller(schedule_resolution=False)
             current_visual = current_snapshot.visual
@@ -455,6 +469,19 @@ class PersonaBuddyWidget(Widget, can_focus=True):
                 geometry=self._working_preferences.geometry,
             )
         self._working_preferences = preferences
+        alert_state = snapshot.state if snapshot.state in _ACTIONABLE_ALERTS else None
+        alert_key = (alert_state, bool(snapshot.collapsed))
+        if alert_state is None:
+            self._alert_entry_authority = None
+        elif (
+            self._alert_entry_authority is None
+            or self._alert_entry_authority[:2] != alert_key
+        ):
+            self._alert_entry_authority = (
+                alert_state,
+                alert_key[1],
+                self._requested_render_budget(snapshot),
+            )
         self._sync_compact_state(snapshot.collapsed)
 
         accepted = self._accepted_render
@@ -632,7 +659,7 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         else:
             width = min(max(_MIN_WIDTH, geometry.width), viewport.width)
             collapsed = bool(self._snapshot and self._snapshot.collapsed)
-            content_box = self._non_alert_content_boxes.get(collapsed)
+            content_box = self._display_content_boxes.get(collapsed)
             if (
                 content_box is None
                 and self._snapshot is not None

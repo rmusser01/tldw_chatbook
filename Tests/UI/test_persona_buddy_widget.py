@@ -495,6 +495,117 @@ async def test_only_actionable_states_replace_pet_with_fixed_path_free_text(
 
 
 @pytest.mark.asyncio
+async def test_explicit_geometry_change_refits_current_alert_without_state_resize():
+    controller = _FakeController(
+        frames=("PET",),
+        frame_sizes=((26, 20),),
+    )
+    app = _BuddyApp(controller)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        await _wait_until(lambda: "PET" in _compositor_text(app.screen))
+        await _wait_until(
+            lambda: (
+                buddy._resolution_worker is not None
+                and buddy._resolution_worker.is_finished
+            )
+        )
+        await pilot.pause()
+        normal_region = buddy.region
+        assert normal_region.size == (28, 12)
+
+        controller.state = "offline"
+        controller.visual = _visual_with_frame(
+            controller,
+            label="HIDDEN-LARGE-ALERT",
+            width=30,
+            height=20,
+        )
+        controller.generation += 1
+        buddy.refresh_from_controller()
+        await _wait_until(
+            lambda: (
+                buddy._accepted_render is not None
+                and "HIDDEN-LARGE-ALERT"
+                in str(buddy._accepted_render.visual.frames[0].renderable)
+            )
+        )
+        await _wait_until(
+            lambda: (
+                buddy._resolution_worker is not None
+                and buddy._resolution_worker.is_finished
+            )
+        )
+        await pilot.pause()
+
+        assert buddy.region == normal_region
+        assert "Offline" in _compositor_text(app.screen)
+        assert "HIDDEN-LARGE-ALERT" not in _compositor_text(app.screen)
+
+        requested = replace(controller.preferences.geometry, width=20)
+        controller.visual = _visual_with_frame(
+            controller,
+            label="HIDDEN-RESIZED-ALERT",
+            width=18,
+            height=20,
+        )
+        controller.apply_preferences_patch(geometry=requested)
+        buddy.refresh_from_controller()
+        await _wait_until(lambda: controller.resolve_sizes[-1] == (18, 10))
+        await _wait_until(
+            lambda: (
+                buddy._accepted_render is not None
+                and "HIDDEN-RESIZED-ALERT"
+                in str(buddy._accepted_render.visual.frames[0].renderable)
+            )
+        )
+        await _wait_until(
+            lambda: (
+                buddy._resolution_worker is not None
+                and buddy._resolution_worker.is_finished
+            )
+        )
+        await pilot.pause()
+
+        assert buddy.region.size == (20, 12)
+        assert buddy.region.width <= requested.width
+        assert buddy.region.height <= requested.height
+        assert "Offline" in _compositor_text(app.screen)
+        assert "HIDDEN-RESIZED-ALERT" not in _compositor_text(app.screen)
+        assert controller.preference_writes == [{"geometry": requested}]
+
+        controller.state_source = "new-state-source-only"
+        controller.visual = _visual_with_frame(
+            controller,
+            label="HIDDEN-STATE-ONLY-ALERT",
+            width=8,
+            height=8,
+        )
+        controller.generation += 1
+        buddy.refresh_from_controller()
+        await _wait_until(
+            lambda: (
+                buddy._accepted_render is not None
+                and "HIDDEN-STATE-ONLY-ALERT"
+                in str(buddy._accepted_render.visual.frames[0].renderable)
+            )
+        )
+        await _wait_until(
+            lambda: (
+                buddy._resolution_worker is not None
+                and buddy._resolution_worker.is_finished
+            )
+        )
+        await pilot.pause()
+
+        assert buddy.region.size == (20, 12)
+        assert "Offline" in _compositor_text(app.screen)
+        assert "new-state-source-only" not in _compositor_text(app.screen)
+        assert "HIDDEN-STATE-ONLY-ALERT" not in _compositor_text(app.screen)
+
+
+@pytest.mark.asyncio
 async def test_initial_actionable_mount_uses_minimum_until_non_alert_direct_result():
     controller = _FakeController(
         frames=("HIDDEN-INITIAL-ALERT-VISUAL",),
@@ -523,6 +634,34 @@ async def test_initial_actionable_mount_uses_minimum_until_non_alert_direct_resu
         assert buddy.region.size == (12, 6)
         assert "Offline" in _compositor_text(app.screen)
         assert "HIDDEN-INITIAL-ALERT-VISUAL" not in _compositor_text(app.screen)
+
+        requested = replace(controller.preferences.geometry, width=20)
+        controller.visual = _visual_with_frame(
+            controller,
+            label="HIDDEN-INITIAL-RESIZED-ALERT",
+            width=18,
+            height=20,
+        )
+        controller.apply_preferences_patch(geometry=requested)
+        buddy.refresh_from_controller()
+        await _wait_until(
+            lambda: (
+                buddy._accepted_render is not None
+                and "HIDDEN-INITIAL-RESIZED-ALERT"
+                in str(buddy._accepted_render.visual.frames[0].renderable)
+            )
+        )
+        await _wait_until(
+            lambda: (
+                buddy._resolution_worker is not None
+                and buddy._resolution_worker.is_finished
+            )
+        )
+        await pilot.pause()
+
+        assert buddy.region.size == (20, 12)
+        assert "Offline" in _compositor_text(app.screen)
+        assert "HIDDEN-INITIAL-RESIZED-ALERT" not in _compositor_text(app.screen)
 
         controller.state = "idle"
         controller.visual = _visual_with_frame(
