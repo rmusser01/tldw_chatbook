@@ -186,6 +186,7 @@ ambiguous set of preferences.
 `WatchlistsCollectionsScreen` remains the single controller and owns:
 
 - normalized reader scope;
+- pending scope while a replacement snapshot loads;
 - selected item id and selected item;
 - preferred layout, responsive priority target, and Article Focus state;
 - Feed Items search/filter/page state;
@@ -246,6 +247,12 @@ to `created_at`, converts to local time, and supplies Today/Yesterday/calendar g
 and row grouping must call the same helper. A bounded SQL prefilter may reduce candidates, but
 Python performs the final local-day classification.
 
+The item-query service also exposes a canonical UTC effective-date sort key for keyset pagination.
+That database-comparable projection and the Python helper are two projections of the same contract:
+parseable `published_date`, otherwise parseable `created_at`, otherwise the deterministic item-id
+fallback. Their ordering parity is covered by the same aware, naive, date-only, missing, and malformed
+timestamp fixtures; the implementation must not use raw mixed-format string ordering.
+
 ## Feed Items
 
 Read replaces the operations `DataTable` with a list-oriented pane. Each article row uses three
@@ -271,19 +278,42 @@ reading list. The existing one-batch `a`/`u` mark-all-read and undo behavior rem
 
 ### Stable snapshot and restoration
 
-Each scope load is a stable, paginated snapshot ordered by effective date descending and then item
+Each scope load is a paginated reading snapshot ordered by effective date descending and then item
 id descending as the deterministic tie-breaker. The snapshot records the maximum matching item id;
-subsequent pages remain constrained to that high-water mark. Rows with larger ids are arrivals,
-not part of the mounted snapshot. A scope-specific item-creation high-water mark—not unread-count
-changes—produces a **“N new items”** affordance. Explicit refresh replaces the snapshot.
+subsequent pages remain constrained to that high-water mark. Pages use a keyset cursor over the
+effective-date/item-id pair rather than `OFFSET`, and the screen keeps a seen-id set so an item is
+never mounted twice. This is required because marking an item read can remove it from the Unread
+predicate while the user is still paging.
+
+The practical snapshot guarantee is deliberately narrower than a database transaction held open for
+the whole reading session:
+
+- already mounted row order remains stable;
+- rows inserted after the high-water mark do not enter the mounted list;
+- no item id appears twice;
+- an existing, not-yet-mounted row whose publication metadata changes during a background upsert may
+  move to a later page or be deferred until explicit refresh.
+
+An id watermark alone cannot freeze future effective-date order because the existing upsert path may
+update `published_date` without allocating a new id. Strictly freezing every future page would require
+materializing an unbounded id/sort-key index at scope load, which is disproportionate for this reader.
+Rows with larger ids are arrivals, not part of the mounted snapshot. A scope-specific item-creation
+high-water mark—not unread-count changes—produces a **“N new items”** affordance. Explicit refresh
+replaces the snapshot.
+
+The active Feed Items header reports counts bounded by the mounted snapshot's high-water mark.
+Navigation and Smart Feed badges remain live. The new-items affordance explains the difference between
+those live badges and the currently mounted snapshot; successful local read/star mutations patch all
+affected visible counts without silently admitting new rows.
 
 A successful **scope change clears Reader selection** and shows the empty state until the user
 selects an item in the new scope. Only a rebuild of the same scope restores its selected item and
 Reader position. This avoids carrying an item into a scope where it is not visible or no longer
 matches the Unread filter.
 
-Opening an unread item marks it read but pins that selected row in an Unread view until the user
-navigates away or refreshes. It cannot disappear under the cursor.
+An action that makes the selected item stop matching the active predicate pins that row until the
+user navigates away or refreshes. This covers opening/marking an item read in All Unread and
+unstarring an item in Starred; neither can disappear under the cursor.
 
 Layout rebuilds restore Feed Items semantically:
 
@@ -317,8 +347,9 @@ Ingest, Queue/Unqueue for Briefing, and other advanced actions remain in Inspect
 Inspector call the same shared item-action helpers so status and star semantics cannot drift.
 
 Selecting/opening a feed item automatically marks it read. Programmatic restoration after a layout
-rebuild must not manufacture a second user-selection event. Per-item read/star mutations are
-serialized and deduplicated so repeated keys or clicks cannot complete out of order.
+rebuild must not manufacture a second user-selection event. Per-item mutations are serialized so
+repeated keys or clicks cannot complete out of order, but status and star retain independent desired
+intents: toggling Star must not replace a pending automatic mark-read, or vice versa.
 
 `m` changes only the reversible reader statuses `new` and `reviewed`. For `ingested`, `ignored`, or
 `error`, the action is disabled/refused with an explanation and never rewrites the terminal
@@ -346,26 +377,33 @@ current Smart Feed has zero matching items.
 
 ## State transitions and data flow
 
-The primary flow is:
+Scope navigation and item activation are separate flows. Merely choosing a scope must not
+automatically consume its first item:
 
 ```text
 scope gesture
   → resolve ReaderScope
+  → store pending scope; keep committed scope/list visibly active
   → load counts and stable item snapshot in a worker
-  → atomically commit scope + rows
-  → select a row
+  → atomically commit active navigation highlight + scope + rows
+  → clear item selection and show Reader empty state
+
+explicit item activation
+  → select the row
   → render Reader
   → serialize mark-read intent
   → patch row and counts after success
 ```
 
 A failed scope change never shows old rows under a new heading. The current scope remains active
-until the replacement load succeeds. Failure copy names both facts, for example: **“Couldn't open
-Today; still showing All Unread.”**
+until the replacement load succeeds. The attempted Navigation control may retain keyboard focus, but
+the active-selection styling is restored to the committed scope. Failure copy names both facts, for
+example: **“Couldn't open Today; still showing All Unread.”**
 
-Background arrivals update counts and the new-items affordance in place. They do not trigger a
-screen-wide recompose. Layout changes may rebuild factories, but all user position is restored from
-screen-owned semantic state.
+Background arrivals update live Navigation badges and the new-items affordance in place; they leave
+the active Feed Items header's snapshot-bounded counts unchanged until explicit refresh. They do not
+trigger a screen-wide recompose. Layout changes may rebuild factories, but all user position is
+restored from screen-owned semantic state.
 
 ## Persistence and migration
 
@@ -376,12 +414,18 @@ Watchlists layout configuration becomes versioned. The migration:
 - preserves saved Navigation, Feed Items, and Inspector values;
 - discards any saved Reader/Content collapse because Reader is no longer collapsible;
 - removes unknown retired region names;
-- writes normalized layout values and the new version in one configuration update.
+- writes normalized layout values and the new version in one
+  `save_settings_to_cli_config(...)` configuration mutation.
 
 If normalization cannot be persisted, the safe normalized layout still applies in memory and the
 migration version remains old so the next launch retries. The implementation must not repeat the
 earlier CONTENT-migration failure mode where a marker could advance without the corrected layout
 being durable.
+
+Ordinary preference writes have the same durability rule. The in-memory “last persisted” marker may
+advance only after the worker reports success. A failed write keeps the latest preferred layout
+pending and restores retry eligibility so a later manual gesture can retry it; the current store's
+pre-write bookkeeping and ignored worker result must not be carried forward.
 
 Only preferred-layout grip/key gestures write configuration. Responsive recalculation, Article
 Focus, background refresh, tab switching, and selection changes never do.
@@ -389,17 +433,29 @@ Focus, background refresh, tab switching, and selection changes never do.
 ## Failure handling
 
 - **Scope load fails:** keep the previous scope/list active, show attempted-scope failure and Retry.
+- **Scope load is pending:** keep the previous active Navigation styling until the new snapshot
+  commits; focus alone must not imply that old rows belong to the attempted scope.
 - **Read/star write fails:** keep prior visual state and selection; show a concise action-specific
   error. Do not apply a success-looking optimistic state that might not roll back cleanly.
-- **Repeated item action:** coalesce through the per-item intent queue; latest valid intent wins.
+- **Repeated item action:** coalesce per item and mutation field; the latest valid status intent and
+  latest valid star intent each win without replacing one another.
 - **FTS fails:** bounded off-thread scoped fallback with a visible notice.
 - **Refresh partially fails:** keep successful runs and report one aggregate result with failure
   count; Runs retains detailed failures.
 - **Missing body:** show an honest “No body was captured for this item” message.
 - **Browser open fails:** preserve Reader and notify. Accept only supported `http`/`https` URLs and
-  call a browser API directly, never a shell.
+  call a browser API directly from a worker, never a shell or the UI event loop.
 - **Config write fails:** retain the in-memory choice for the session, notify only when useful, and
   retry persistence on a later manual change or next migration load.
+
+## Delivery isolation
+
+Planning and implementation must not proceed in the current dirty
+`feat/task-3401-video-generation-foundation` worktree. Before Slice 1 starts, create a dedicated
+Watchlists branch/worktree from the user-approved integration base and transplant the Watchlists
+documentation commits into it. Do not rewrite, reset, clean, or otherwise disturb the unrelated video
+branch or its uncommitted files. The implementation plan records the chosen base and transplanted
+commit ids before any code change.
 
 ## Security and accessibility
 
@@ -440,10 +496,11 @@ split it into the following dependency-ordered, independently verifiable slices:
    Watchlists-local ASCII grips; introduce preferred/effective/Article Focus state, responsive
    resolution, shared Inspector behavior, and versioned layout normalization. This slice delivers
    the requested collapse behavior across all Watchlists tabs without changing item presentation.
-2. **Contextual Feed Items and Reader actions.** Replace the Read `DataTable` with the stable,
+2. **Contextual Feed Items and Reader actions.** Replace the Read `DataTable` with the snapshot-bounded,
    date-grouped contextual list; add the shared effective-date helper, semantic restoration,
-   deterministic snapshot ordering, Star/Unstar, protected-status `m`, Open in browser, and the
-   three-action Reader header. Depends on slice 1's permanent host and state-restoration seams.
+   deterministic keyset ordering and seen-id guard, Star/Unstar, protected-status `m`, off-loop Open
+   in browser, and the three-action Reader header. Depends on slice 1's permanent host and
+   state-restoration seams.
 3. **Smart Feeds and scoped search.** Add normalized Smart Feed scopes/counts, the shared date and
    predicate contracts, Starred/Today/All Unread navigation, FTS search, and bounded fallback;
    reuse slice 2's effective-date helper for Today. Depends on slice 2's article list and star
@@ -463,6 +520,7 @@ the whole programme.
 
 - Independent preferred toggles and exact restart round-trip.
 - Versioned normalization, including unknown/Reader values and failed atomic writes.
+- Failed ordinary preference writes remain eligible for a same-session retry.
 - Effective layout at width boundaries derived from declared minimums.
 - Responsive priority Inspector → Navigation → Feed Items.
 - Management responsive priority Inspector → Navigation with only two mounted grips.
@@ -477,10 +535,15 @@ the whole programme.
 - Refresh source-universe tests prove empty Smart Feeds still check every eligible local source.
 - All Unread, Today, Starred, Watchlist, Source, All Sources, and Unassigned semantics.
 - Mixed aware/naive/missing/future publication dates.
+- Canonical database sort keys and Python effective-date parsing agree for every supported timestamp
+  shape and never fall back to raw string ordering.
 - Star persistence across item re-fetch/upsert.
 - Safe FTS query construction and bounded fallback pagination.
 - Creation high-water mark ignores read/unread transitions.
-- Snapshot pagination remains ordered by effective date/item id and bounded by the initial max id.
+- Snapshot pagination uses an effective-date/item-id keyset, is bounded by the initial max id, never
+  duplicates a seen id, and documents the behavior of mutable metadata on unseen rows.
+- Active-pane snapshot counts, live Navigation badges, and the new-items affordance remain mutually
+  intelligible.
 
 ### Widgets and integration
 
@@ -490,13 +553,17 @@ the whole programme.
 - Management tabs keep their centre canvas while Feed Items' preference remains parked for Read.
 - Server-backed Read shows local-only recovery and issues no local-reader queries under Server.
 - New-user defaults and existing-user migration.
-- Contextual rows, date groups, pinning, pagination, search, stable arrivals, and empty states.
+- Contextual rows, date groups, Unread/Starred predicate pinning, pagination, search, stable arrivals,
+  and empty states.
 - Cursor/visible-row offset, Reader scroll, selected item, focus, and filter survival across every
   manual and responsive layout change.
 - Auto-read occurs on genuine selection but not on restoration; serialized mutation order is
   deterministic.
+- Scope loading never auto-selects or auto-reads the first row, and a failed load restores committed
+  active-selection styling.
+- Status and star intent coalescing cannot cancel each other's pending mutation.
 - `m` never rewrites ingested, ignored, or error workflow statuses.
-- Hostile remote markup and invalid browser URLs fail safely.
+- Hostile remote markup and invalid browser URLs fail safely; browser launch runs off the UI thread.
 
 ### Production evidence
 
