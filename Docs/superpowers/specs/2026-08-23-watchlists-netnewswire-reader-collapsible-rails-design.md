@@ -82,9 +82,13 @@ Read has four spatial roles:
 | Reader | Permanent. Selected item or the empty-state message. |
 | Inspector | Collapsible. Shared preference across all Watchlists tabs. |
 
-On management tabs, Feed Items and Reader are not mounted. Navigation and Inspector retain the
-same preferred state and the same grip behavior, so the Inspector never becomes a Read-only
-affordance.
+On management tabs, the Feed Items **role** and Reader are not mounted, but the centre host remains.
+It renders the active Sources, Runs, Rules, Notifications, Artifacts, or Overview canvas between
+Navigation and Inspector, exactly as shipped phase 1 currently uses `Region.ITEMS` as the
+management-detail host. That management canvas is the tab's permanent centre anchor and does not
+inherit Feed Items' collapsed preference. Returning to Read reapplies the saved Feed Items choice.
+Navigation and Inspector retain the same preferred state and grip behavior on every tab, so the
+Inspector never becomes a Read-only affordance and no management surface loses its host.
 
 The first-run preferred layout is:
 
@@ -96,6 +100,14 @@ The first-run preferred layout is:
 Reader empty-state copy is: **“Select a feed item to display it here.”** This deliberately says
 “feed item”: selecting a feed in Navigation scopes the list, while selecting a feed item displays
 content.
+
+### Backend behavior
+
+Read remains honestly local-only. If the active Watchlists backend is Server, the centre area shows
+the existing local-only explanation plus **Switch to Local**. It does not issue unsupported item,
+Smart Feed, count, search, or refresh queries and does not display local rows under a Server label.
+Management tabs continue to use their existing backend behavior. Switching to Local performs a
+normal scope load before replacing the centre state.
 
 ## Pane grips
 
@@ -148,6 +160,14 @@ numbers:
 Starting from the preferred layout, the resolver collapses side panes until the sum of Reader,
 grips, and expanded-pane minimums fits. Default responsive collapse priority is Inspector,
 Navigation, then Feed Items. Reader is never a candidate.
+
+Reader's 44 columns are a **comfort threshold**, not a hard CSS minimum. After all three side panes
+are collapsed, a terminal narrower than Reader comfort plus the three fixed grips keeps all grips
+and lets Reader consume the remaining width with `min-width: 0`; no grip disappears and no
+horizontal overflow is introduced. The supported live-verification floor is 60 columns, where the
+three grips consume 15 and Reader receives 45. Below the supported floor the layout remains
+structurally reachable but may truncate article content like the rest of the application; it must
+still avoid a compositor exception or horizontal overflow.
 
 If the user explicitly opens a responsively hidden pane, that pane becomes the temporary priority
 target at the current width. The preferred state is updated to open and persisted; the effective
@@ -235,9 +255,16 @@ reading list. The existing one-batch `a`/`u` mark-all-read and undo behavior rem
 
 ### Stable snapshot and restoration
 
-Each scope load is a stable, paginated snapshot. New arrivals do not reorder mounted rows. A
-scope-specific item-creation high-water mark—not unread-count changes—produces a **“N new items”**
-affordance. Explicit refresh replaces the snapshot.
+Each scope load is a stable, paginated snapshot ordered by effective date descending and then item
+id descending as the deterministic tie-breaker. The snapshot records the maximum matching item id;
+subsequent pages remain constrained to that high-water mark. Rows with larger ids are arrivals,
+not part of the mounted snapshot. A scope-specific item-creation high-water mark—not unread-count
+changes—produces a **“N new items”** affordance. Explicit refresh replaces the snapshot.
+
+A successful **scope change clears Reader selection** and shows the empty state until the user
+selects an item in the new scope. Only a rebuild of the same scope restores its selected item and
+Reader position. This avoids carrying an item into a scope where it is not visible or no longer
+matches the Unread filter.
 
 Opening an unread item marks it read but pins that selected row in an Unread view until the user
 navigates away or refreshes. It cannot disappear under the cursor.
@@ -276,6 +303,10 @@ Inspector call the same shared item-action helpers so status and star semantics 
 Selecting/opening a feed item automatically marks it read. Programmatic restoration after a layout
 rebuild must not manufacture a second user-selection event. Per-item read/star mutations are
 serialized and deduplicated so repeated keys or clicks cannot complete out of order.
+
+`m` changes only the reversible reader statuses `new` and `reviewed`. For `ingested`, `ignored`, or
+`error`, the action is disabled/refused with an explanation and never rewrites the terminal
+workflow status. This applies even though the All filter intentionally includes ingested items.
 
 Reader scroll position survives pane toggles and responsive recomposition. Article Focus (`Z`) is
 the explicit way to give Reader maximum width, and toggling it again restores the previous manual
@@ -383,6 +414,31 @@ Read retains or adds:
 | `Z` | Toggle transient Article Focus |
 | `[` / `]` | Preserve existing left/right rail shortcuts where they remain unambiguous |
 
+## Implementation decomposition
+
+This specification is one UX programme, not one atomic pull request. Planning and Backlog work must
+split it into the following dependency-ordered, independently verifiable slices:
+
+1. **Layout foundation and grips.** Make Reader/management canvas the permanent centre host; add
+   Watchlists-local ASCII grips; introduce preferred/effective/Article Focus state, responsive
+   resolution, shared Inspector behavior, and versioned layout normalization. This slice delivers
+   the requested collapse behavior across all Watchlists tabs without changing item presentation.
+2. **Contextual Feed Items and Reader actions.** Replace the Read `DataTable` with the stable,
+   date-grouped contextual list; add semantic restoration, deterministic snapshot ordering,
+   Star/Unstar, protected-status `m`, Open in browser, and the three-action Reader header. Depends
+   on slice 1's permanent host and state-restoration seams.
+3. **Smart Feeds and scoped search.** Add normalized Smart Feed scopes/counts, the shared date and
+   predicate contracts, Starred/Today/All Unread navigation, FTS search, and bounded fallback.
+   Depends on slice 2's article list and star writer.
+4. **Scoped refresh and stable-arrival polish.** Add concurrency-limited scope refresh, aggregate
+   completion feedback, high-water-mark arrival counting, the new-items affordance, narrow-width
+   live polish, and programme-level regression/documentation close-out. Depends on slices 1–3.
+
+Each slice receives its own atomic Backlog task, acceptance criteria, implementation plan, tests,
+and review. The writing-plans transition after this design reviews the sequence and writes the
+detailed plan for slice 1 first; later slice plans must not be treated as if one pull request owns
+the whole programme.
+
 ## Verification
 
 ### Pure state and persistence
@@ -392,6 +448,7 @@ Read retains or adds:
 - Effective layout at width boundaries derived from declared minimums.
 - Responsive priority Inspector → Navigation → Feed Items.
 - Explicit reopening of each responsively hidden pane.
+- All-grips-collapsed behavior from the 60-column supported floor through sub-floor degradation.
 - Repeated shrink/expand cycles and Article Focus exact restoration.
 
 ### Database and services
@@ -402,18 +459,22 @@ Read retains or adds:
 - Star persistence across item re-fetch/upsert.
 - Safe FTS query construction and bounded fallback pagination.
 - Creation high-water mark ignores read/unread transitions.
+- Snapshot pagination remains ordered by effective date/item id and bounded by the initial max id.
 
 ### Widgets and integration
 
 - Literal five-column ASCII grip geometry and correct arrow direction in every state.
 - Pointer, focus, tooltip, keyboard, and accessibility behavior.
 - Shared Inspector preference across all seven Watchlists tabs.
+- Management tabs keep their centre canvas while Feed Items' preference remains parked for Read.
+- Server-backed Read shows local-only recovery and issues no local-reader queries under Server.
 - New-user defaults and existing-user migration.
 - Contextual rows, date groups, pinning, pagination, search, stable arrivals, and empty states.
 - Cursor/visible-row offset, Reader scroll, selected item, focus, and filter survival across every
   manual and responsive layout change.
 - Auto-read occurs on genuine selection but not on restoration; serialized mutation order is
   deterministic.
+- `m` never rewrites ingested, ignored, or error workflow statuses.
 - Hostile remote markup and invalid browser URLs fail safely.
 
 ### Production evidence

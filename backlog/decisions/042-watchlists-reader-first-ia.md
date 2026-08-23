@@ -30,9 +30,10 @@ The approved
 `Docs/superpowers/specs/2026-08-23-watchlists-netnewswire-reader-collapsible-rails-design.md`
 finishes the reader-first IA and amends this decision as follows:
 
-- **Reader is the permanent centre anchor.** It is no longer independently
+- **Reader is the permanent centre anchor on Read.** It is no longer independently
   collapsible. Navigation, Feed Items, and Inspector are the three collapsible
-  side panes.
+  side panes. On management tabs the existing active management canvas remains the
+  permanent centre host; it is not removed or governed by Feed Items' preference.
 - **Collapsed panes remain reachable.** Each side pane leaves a narrow,
   full-height, clickable ASCII grip whose arrow points in the action direction.
 - **Preferred layout is distinct from effective layout.** Manual grip/key choices
