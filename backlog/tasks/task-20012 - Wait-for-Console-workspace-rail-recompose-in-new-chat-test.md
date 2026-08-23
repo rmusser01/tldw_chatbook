@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-23 18:12'
-updated_date: '2026-08-23 18:49'
+updated_date: '2026-08-23 18:51'
 labels:
   - testing
   - console
@@ -23,13 +23,25 @@ Remove a load-sensitive false failure by asserting the eventual mounted Console 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 New-chat rail test waits through the existing bounded paint-settle seam,The test verifies Chat 1 remains and Chat 2 becomes selected,No fixed sleep or production module change is introduced,The required four-suite aggregate gate passes,Focused tests and static checks pass
+- [x] #1 New-chat rail test waits through the existing bounded paint-settle seam.
+- [x] #2 The test verifies Chat 1 remains and Chat 2 becomes selected.
+- [x] #3 No fixed sleep or production module change is introduced.
+- [x] #4 The required four-suite aggregate gate passes.
+- [x] #5 Focused tests and static checks pass.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Preserve the aggregate-suite failure and direct-DOM timing diagnosis as RED evidence.\n2. Reuse the existing bounded workspace-conversation paint helper for both Chat 1 and selected Chat 2 assertions.\n3. Verify focused test, full Console native-flow file, required four-suite aggregate, and static checks.\n4. Record ADR required: no; this is a test-only synchronization correction with no runtime behavior change.\n5. Complete review and task hygiene.
+1. Preserve the aggregate-suite failure and direct-DOM timing diagnosis as RED evidence.
+2. Reuse the existing bounded workspace-conversation paint helper for both Chat 1 and selected Chat 2 assertions.
+3. Verify focused test, full Console native-flow file, required four-suite aggregate, and static checks.
+4. Record the ADR determination for this test-only synchronization correction.
+5. Complete review and task hygiene.
+
+ADR required: no
+ADR path: N/A
+Reason: This is a test-only synchronization correction with no runtime behavior or architectural boundary change.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -54,6 +66,7 @@ Remove a load-sensitive false failure by asserting the eventual mounted Console 
 - Self-review moved the post-click selected Chat 2 wait ahead of the retained
   Chat 1 assertion, so Chat 1 cannot be matched against the old pre-recompose
   DOM. The final full-file and aggregate gates were rerun after that correction.
-- ADR required: no. This is a test-only synchronization correction and changes
-  no runtime behavior or architectural boundary.
+ADR required: no
+ADR path: N/A
+Reason: This is a test-only synchronization correction with no runtime behavior or architectural boundary change.
 <!-- SECTION:NOTES:END -->
