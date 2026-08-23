@@ -2011,6 +2011,12 @@
         color: $text;
         background: $panel;
     }
+    TrajectoryScreen #trajectory-state {
+        height: auto;
+        min-height: 1;
+        max-height: 4;
+        color: $text-muted;
+    }
     TrajectoryScreen #trajectory-search {
         height: 3;
     }
@@ -2019,11 +2025,27 @@
         min-height: 3;
     }
     TrajectoryScreen #trajectory-inspector {
-        height: auto;
+        height: 40%;
         max-height: 40%;
         border-top: solid $primary;
         padding: 0 1;
+        overflow-y: auto;
+        scrollbar-gutter: stable;
     }
+    TrajectoryScreen #trajectory-inspector:focus {
+        border-top: heavy $accent;
+    }
+    TrajectoryScreen #trajectory-inspector-content {
+        width: 100%;
+        height: auto;
+    }
+    TrajectoryScreen #trajectory-inspector-overflow {
+        height: 1;
+        color: $text-muted;
+    }
+
+
+
     TrajectoryScreen #trajectory-hints {
         height: 1;
         color: $text-disabled;

@@ -21,36 +21,23 @@ from tldw_chatbook.Chat.trajectory import (
     TrajectoryTurn,
     derive_trajectory,
 )
-from tldw_chatbook.css import build_css
 from tldw_chatbook.UI.Screens.trajectory_screen import PAGE_SIZE, TrajectoryScreen
 import tldw_chatbook.UI.Screens.trajectory_screen as trajectory_screen_module
 
+from .consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 from .test_trajectory_screen import base_snapshot
 
 
 VIEWPORTS = ((60, 18), (80, 24), (100, 30), (120, 35))
-_CSS_DIR = Path(build_css.__file__).parent
-_SCOPED_CSS, _SELF_CSS = build_css.screen_css_paths(_CSS_DIR)
-_PRODUCTION_CSS = [
-    str(_SCOPED_CSS),
-    str(_CSS_DIR / "tldw_cli_modular.tcss"),
-    str(_SELF_CSS),
-]
-
-
-class _TraceHost(App[None]):
-    CSS_PATH = _PRODUCTION_CSS
+class _TraceHost(ConsolidatedCSSApp):
+    CSS_PATH = BUNDLED_STYLESHEET
 
     def compose(self) -> ComposeResult:
         yield Static("Console")
 
 
-def test_trace_harness_loads_the_three_production_stylesheets_in_order() -> None:
-    assert [Path(path).name for path in _TraceHost.CSS_PATH] == [
-        "screen_css_scoped.tcss",
-        "tldw_cli_modular.tcss",
-        "screen_css_self.tcss",
-    ]
+def test_trace_harness_uses_latest_dev_consolidated_production_css() -> None:
+    assert Path(_TraceHost.CSS_PATH).name == "tldw_cli_modular.tcss"
 
 
 @contextlib.asynccontextmanager

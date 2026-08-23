@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll
-from textual.widgets import DataTable, Input, RadioButton, Static
+from textual.widgets import DataTable, Input, RadioButton, RadioSet, Static
 
 from tldw_chatbook.Chat.trajectory_export import (
     TraceExportProfile,
@@ -208,6 +208,43 @@ async def test_export_dialog_remains_reachable_at_60_by_18() -> None:
         assert dialog.query_one("#trace-export-submit").display
 
 
+@pytest.mark.asyncio
+async def test_compact_export_keeps_selected_profile_and_focus_visible() -> None:
+    app = _TraceHost()
+    async with app.run_test(size=(60, 18)) as pilot:
+        dialog = TraceExportDialog(base_snapshot())
+        await app.push_screen(dialog)
+        await pilot.pause()
+
+        summary = dialog.query_one("#trace-export-selection", Static)
+        assert "Profile: Redacted diagnostic" in str(summary.render())
+        assert summary.region.y >= 0 and summary.region.bottom <= 18
+        assert app.focused is dialog.query_one("#trace-export-path", Input)
+        assert app.focused.region.y >= 0 and app.focused.region.bottom <= 18
+        painted = unescape(app.export_screenshot(simplify=True)).replace(
+            "\N{NO-BREAK SPACE}", " "
+        )
+        assert "Profile: Redacted diagnostic" in painted
+
+        await pilot.press("shift+tab")
+        await pilot.pause()
+        assert app.focused is dialog.query_one("#trace-export-profiles", RadioSet)
+        focused_summary = str(summary.render())
+        assert "↑/↓" in focused_summary
+        assert "Enter apply" in focused_summary
+        assert summary.has_class("is-selector-focused")
+        focused_painted = unescape(app.export_screenshot(simplify=True)).replace(
+            "\N{NO-BREAK SPACE}", " "
+        )
+        assert "Enter apply" in focused_painted
+
+        await pilot.press("tab")
+        await pilot.pause()
+        assert app.focused is dialog.query_one("#trace-export-path", Input)
+        assert "Profile: Redacted diagnostic" in str(summary.render())
+        assert not summary.has_class("is-selector-focused")
+
+
 @pytest.mark.parametrize("size", [(60, 18), (80, 24), (100, 30), (120, 35)])
 @pytest.mark.asyncio
 async def test_export_dialog_composites_with_production_css_at_supported_widths(
@@ -229,6 +266,7 @@ async def test_export_dialog_composites_with_production_css_at_supported_widths(
         for selector in (
             "#trace-export-inventory",
             "#trace-export-policy",
+            "#trace-export-selection",
             "#trace-export-path",
             "#trace-export-status",
         ):

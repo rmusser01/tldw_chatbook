@@ -15,7 +15,7 @@ from dataclasses import dataclass, replace
 
 import pytest
 from textual import events
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 
 from tldw_chatbook.Chat.trajectory import (
     KIND_ASSISTANT,
@@ -35,6 +35,7 @@ from tldw_chatbook.UI.Widgets.trajectory_timeline import (
     TimelineModel,
     TrajectoryTimeline,
 )
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 
 # ---------------------------------------------------------------------------
 # Pure-model fixtures
@@ -388,7 +389,7 @@ def untimed_snapshot():
     return derive_trajectory(messages, {}, rows, [], [])
 
 
-class TimelineApp(App[None]):
+class TimelineApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.captured: list[object] = []

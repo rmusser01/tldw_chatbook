@@ -1476,11 +1476,32 @@
 
 
 
+
+    TrajectoryScreen.trace-detail-full #trajectory-search,
+    TrajectoryScreen.trace-detail-full #trajectory-timeline,
+    TrajectoryScreen.trace-detail-full #trajectory-table {
+        display: none;
+    }
+    TrajectoryScreen.trace-inspector-open #trajectory-timeline {
+        display: none;
+    }
+    TrajectoryScreen.trace-detail-full #trajectory-inspector {
+        height: 1fr;
+        max-height: 100%;
+    }
+
+
+
 /* ===== WIDGET: TrajectoryTimeline (UI/Widgets/trajectory_timeline.py) ===== */
 
     TrajectoryTimeline {
         height: 6;
         width: 1fr;
+
+        &>.timeline--brush {
+            background: $primary 35%;
+            text-style: bold;
+        }
     }
 
 

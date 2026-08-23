@@ -9,6 +9,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.events import DescendantBlur, DescendantFocus
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, RadioButton, RadioSet, Static
 
@@ -38,6 +39,12 @@ _PROFILE_COPY = {
         "Full trace — includes ordinary captured detail after an additional warning. "
         "Credentials remain forbidden."
     ),
+}
+
+_PROFILE_LABEL = {
+    TraceExportProfile.SAFE_SUMMARY: "Safe summary",
+    TraceExportProfile.REDACTED_DIAGNOSTIC: "Redacted diagnostic (recommended)",
+    TraceExportProfile.FULL_TRACE: "Full trace",
 }
 
 
@@ -78,6 +85,7 @@ class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
     }
     #trace-export-policy,
     #trace-export-inventory,
+    #trace-export-selection,
     #trace-export-status {
         height: auto;
     }
@@ -87,6 +95,12 @@ class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
     #trace-export-profiles {
         height: auto;
         margin-top: 1;
+    }
+    #trace-export-selection {
+        text-style: bold;
+    }
+    #trace-export-selection.is-selector-focused {
+        color: $accent;
     }
     #trace-export-path {
         margin-top: 0;
@@ -128,6 +142,11 @@ class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
                 id="trace-export-policy",
                 markup=False,
             )
+            yield Static(
+                f"Profile: {_PROFILE_LABEL[self._selected_profile]}",
+                id="trace-export-selection",
+                markup=False,
+            )
             with VerticalScroll(id="trace-export-body"):
                 yield Static(
                     "Review exactly what will leave this machine before writing a portable JSON bundle.",
@@ -135,13 +154,19 @@ class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
                     markup=False,
                 )
                 with RadioSet(id="trace-export-profiles"):
-                    yield RadioButton("Safe summary", id="trace-export-profile-safe")
                     yield RadioButton(
-                        "Redacted diagnostic (recommended)",
+                        _PROFILE_LABEL[TraceExportProfile.SAFE_SUMMARY],
+                        id="trace-export-profile-safe",
+                    )
+                    yield RadioButton(
+                        _PROFILE_LABEL[TraceExportProfile.REDACTED_DIAGNOSTIC],
                         id="trace-export-profile-redacted",
                         value=True,
                     )
-                    yield RadioButton("Full trace", id="trace-export-profile-full")
+                    yield RadioButton(
+                        _PROFILE_LABEL[TraceExportProfile.FULL_TRACE],
+                        id="trace-export-profile-full",
+                    )
                 yield Static("", id="trace-export-profile-copy", markup=False)
             yield Input(
                 value=str(Path.cwd() / "trace-export.json"),
@@ -161,12 +186,13 @@ class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
 
     async def on_mount(self) -> None:
         await self.select_profile(self._selected_profile)
-        self.query_one("#trace-export-profiles", RadioSet).focus()
+        self.query_one("#trace-export-path", Input).focus()
 
     async def select_profile(self, profile: TraceExportProfile) -> None:
         """Recompute the single-pass preflight off the UI thread."""
         self._selected_profile = profile
         self.query_one("#trace-export-submit", Button).disabled = True
+        self._update_profile_selection()
         self.query_one("#trace-export-profile-copy", Static).update(
             _PROFILE_COPY[profile]
         )
@@ -194,6 +220,28 @@ class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
         )
         self._set_status("")
         self.query_one("#trace-export-submit", Button).disabled = False
+
+    def _update_profile_selection(self) -> None:
+        """Keep the selected profile legible when its compact selector is hidden."""
+        profiles = self.query_one("#trace-export-profiles", RadioSet)
+        selection = self.query_one("#trace-export-selection", Static)
+        selection.set_class(profiles.has_focus, "is-selector-focused")
+        label = _PROFILE_LABEL[self._selected_profile]
+        if profiles.has_focus:
+            label = label.replace(" (recommended)", "")
+            selection.update(f"Profile: {label} · ↑/↓ · Enter apply")
+        else:
+            selection.update(f"Profile: {label}")
+
+    def on_descendant_focus(self, event: DescendantFocus) -> None:
+        """Expose a focus cue when the compact profile selector owns focus."""
+        if event.widget.id == "trace-export-profiles":
+            self._update_profile_selection()
+
+    def on_descendant_blur(self, event: DescendantBlur) -> None:
+        """Restore the normal selected-profile summary after selector blur."""
+        if event.widget.id == "trace-export-profiles":
+            self._update_profile_selection()
 
     @on(RadioSet.Changed, "#trace-export-profiles")
     async def _profile_changed(self, event: RadioSet.Changed) -> None:
