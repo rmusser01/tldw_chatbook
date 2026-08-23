@@ -2130,25 +2130,11 @@ class ConsoleSessionController:
         console_config = (
             app_config.get("console", {}) if isinstance(app_config, Mapping) else {}
         )
-        chat_defaults = (
-            app_config.get("chat_defaults", {})
-            if isinstance(app_config, Mapping)
-            else {}
-        )
         if not isinstance(console_config, Mapping):
             console_config = {}
-        if not isinstance(chat_defaults, Mapping):
-            chat_defaults = {}
         self._ensure_console_chat_store().set_library_policy_defaults(
             ConsoleLibraryPolicyDefaults(
-                auto_retrieve=(
-                    ConsoleAutoRetrieve.AUTOMATIC
-                    if coerce_bool_setting(
-                        chat_defaults.get("rag_auto_retrieve_on_send", False),
-                        False,
-                    )
-                    else ConsoleAutoRetrieve.NEVER
-                ),
+                auto_retrieve=ConsoleAutoRetrieve.NEVER,
                 assistant_access=(
                     ConsoleAssistantLibraryAccess.ALLOWED
                     if coerce_bool_setting(
@@ -2244,15 +2230,8 @@ class ConsoleSessionController:
         console_config = (
             app_config.get("console", {}) if isinstance(app_config, Mapping) else {}
         )
-        chat_defaults = (
-            app_config.get("chat_defaults", {})
-            if isinstance(app_config, Mapping)
-            else {}
-        )
         if not isinstance(console_config, Mapping):
             console_config = {}
-        if not isinstance(chat_defaults, Mapping):
-            chat_defaults = {}
         workspace_id = self._ensure_console_chat_store().session_workspace_id(
             session_id
         )
@@ -2273,10 +2252,6 @@ class ConsoleSessionController:
                 "max_history_images": max_history_images(selection.provider, model),
             },
             rag_defaults={
-                "auto_retrieve_on_send": coerce_bool_setting(
-                    chat_defaults.get("rag_auto_retrieve_on_send", False),
-                    False,
-                ),
                 "source_types": tuple(self._rag_source_types_accessor()),
                 "top_k": self._rag_top_k_accessor(),
             },

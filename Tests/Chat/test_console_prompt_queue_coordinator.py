@@ -15,6 +15,10 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleSubmissionOrigin,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+    ConsoleEgressClass,
+    ConsoleResolvedDestination,
+)
 from tldw_chatbook.Chat.console_prompt_queue import (
     PromptQueueMode,
     PromptQueuePauseReason,
@@ -42,6 +46,12 @@ class SequencedGateway:
                 "model": "test-model",
                 "base_url": "http://127.0.0.1:9099",
                 "visible_copy": "",
+                "resolved_destination": ConsoleResolvedDestination(
+                    provider="llama_cpp",
+                    model="test-model",
+                    endpoint_identity="http://127.0.0.1:9099",
+                    egress_class=ConsoleEgressClass.ON_DEVICE,
+                ),
             },
         )()
 
@@ -595,12 +605,10 @@ async def test_shutdown_during_claimed_readiness_cannot_accept_or_dispatch_it():
 
     assert accepted_entries == []
     assert gateway.user_turns == ["one"]
-    queued_echo = next(
-        message
+    assert not any(
+        message.role is ConsoleMessageRole.USER and message.content == "two"
         for message in store.messages_for_session(session_id)
-        if message.role is ConsoleMessageRole.USER and message.content == "two"
     )
-    assert queued_echo.status == "failed"
 
 
 @pytest.mark.asyncio

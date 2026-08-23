@@ -94,6 +94,12 @@ class StreamingGateway:
                 "model": "test-model",
                 "base_url": "http://127.0.0.1:9099",
                 "visible_copy": "",
+                "resolved_destination": ConsoleResolvedDestination(
+                    provider="llama_cpp",
+                    model="test-model",
+                    endpoint_identity="http://127.0.0.1:9099",
+                    egress_class=ConsoleEgressClass.ON_DEVICE,
+                ),
             },
         )()
 
@@ -263,6 +269,12 @@ class ContinuationHistoryGateway(ConsoleProviderGateway):
             execution_key="deepseek",
             max_tokens=10,
             continuation_protocol="responses",
+            resolved_destination=ConsoleResolvedDestination(
+                provider="deepseek",
+                model="deepseek-v4-flash",
+                endpoint_identity="https://api.deepseek.com/v1",
+                egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
+            ),
         )
 
     def prepare_chat_request(self, resolution, messages, **kwargs):
@@ -713,11 +725,8 @@ async def test_accepted_send_persists_the_deferred_user_echo():
 
 
 @pytest.mark.asyncio
-async def test_skill_refuse_after_optimistic_echo_marks_row_blocked():
-    """TASK-457(a) (code-review finding 1): a skill-substitution refusal after
-    the optimistic echo is a block outcome like the not-ready / probe-raise
-    paths — the echoed USER row must be failed so the refused command cannot
-    leak into the next send's provider context (skip_failed only drops failed)."""
+async def test_skill_refuse_after_preparation_removes_transient_echo():
+    """A preaccept refusal removes only the preparation's transient USER echo."""
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
 
@@ -730,15 +739,13 @@ async def test_skill_refuse_after_optimistic_echo_marks_row_blocked():
 
     assert result.accepted is False
     messages = store.messages_for_session(store.active_session_id)
-    assert messages[0].role.value == "user"
-    assert messages[0].status == "failed"
+    assert all(message.role.value != "user" for message in messages)
+    assert store.preparation_for_session(store.active_session_id) is None
 
 
 @pytest.mark.asyncio
-async def test_dictionary_apply_raise_after_optimistic_echo_marks_row_blocked():
-    """TASK-457(a) (code-review finding 1): a raise from chat-dictionary / world-
-    info application (or prefill) after the optimistic echo must also fail the
-    echoed row so a never-sent message cannot leak into the next send."""
+async def test_dictionary_apply_raise_after_preparation_removes_transient_echo():
+    """A composition error removes its volatile preparation and transient echo."""
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
 
@@ -751,8 +758,8 @@ async def test_dictionary_apply_raise_after_optimistic_echo_marks_row_blocked():
         await controller.submit_draft("hello")
 
     messages = store.messages_for_session(store.active_session_id)
-    assert messages[0].role.value == "user"
-    assert messages[0].status == "failed"
+    assert all(message.role.value != "user" for message in messages)
+    assert store.preparation_for_session(store.active_session_id) is None
 
 
 @pytest.mark.asyncio
@@ -4249,6 +4256,12 @@ async def test_provider_switch_ignores_unrelated_completed_continuation_history(
                 readiness_key="openai",
                 execution_key="openai",
                 max_tokens=10,
+                resolved_destination=ConsoleResolvedDestination(
+                    provider="openai",
+                    model="gpt-4.1",
+                    endpoint_identity="https://api.openai.com/v1",
+                    egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
+                ),
             )
 
     store = ConsoleChatStore()
@@ -4309,6 +4322,12 @@ async def test_provider_switch_race_blocks_active_continuation_before_dispatch(
                 readiness_key="openai",
                 execution_key="openai",
                 max_tokens=10,
+                resolved_destination=ConsoleResolvedDestination(
+                    provider="openai",
+                    model="gpt-4.1",
+                    endpoint_identity="https://api.openai.com/v1",
+                    egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
+                ),
             )
 
         async def stream_chat(self, resolution, messages, **kwargs):
@@ -5013,6 +5032,12 @@ async def test_trim_budgets_against_resolution_model_not_controller_state(monkey
         model="small-window",
         max_tokens=0,
         visible_copy="",
+        resolved_destination=ConsoleResolvedDestination(
+            provider="llama_cpp",
+            model="small-window",
+            endpoint_identity="http://127.0.0.1:9099",
+            egress_class=ConsoleEgressClass.ON_DEVICE,
+        ),
     )
     configuration = controller.resolve_turn_configuration_snapshot(session.id)
     authority = await controller._capture_turn_library_authority(

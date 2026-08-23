@@ -50,13 +50,20 @@ class _PausedGateway:
         self.selections.append(selection)
         self.resolve_started.set()
         await self.release_resolve.wait()
+        model = selection.explicit_model or selection.configured_model or ""
         return SimpleNamespace(
             ready=True,
             provider=selection.provider,
-            model=selection.explicit_model or selection.configured_model or "",
+            model=model,
             base_url=selection.base_url,
             max_tokens=selection.max_tokens,
             visible_copy="",
+            resolved_destination=ConsoleResolvedDestination(
+                provider=selection.provider,
+                model=model,
+                endpoint_identity="https://api.openai.com",
+                egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
+            ),
         )
 
     async def stream_chat(self, resolution, messages, **_kwargs):
@@ -431,7 +438,6 @@ def test_session_builder_captures_roots_rag_tools_and_generation(
     assert context.workspace_roots == (str(Path("C:/workspace/a")),)
     assert context.scratch_space is scratch_snapshot
     assert context.rag_defaults == {
-        "auto_retrieve_on_send": True,
         "source_types": ("notes", "media"),
         "top_k": 7,
     }

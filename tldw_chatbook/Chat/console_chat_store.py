@@ -1907,7 +1907,13 @@ class ConsoleChatStore:
             self.library_policy_coordinator.unregister_holder(session_id)
         self._sessions.pop(session_id, None)
         with self._preparation_lock:
-            self._preparations_by_session.pop(session_id, None)
+            preparation = self._preparations_by_session.get(session_id)
+            if preparation is None or preparation.state not in {
+                ConsoleTurnPreparationState.ACCEPTED,
+                ConsoleTurnPreparationState.DISPATCH_STARTED,
+                ConsoleTurnPreparationState.DISPATCHED,
+            }:
+                self._preparations_by_session.pop(session_id, None)
 
         if self.active_session_id != session_id:
             return self._sessions.get(self.active_session_id or "")
@@ -1953,6 +1959,19 @@ class ConsoleChatStore:
             return None
         with self._preparation_lock:
             return self._preparations_by_session.get(session_id)
+
+    def preparation_by_id(
+        self, preparation_id: str
+    ) -> ConsoleTurnPreparation | None:
+        """Return one exact volatile owner, including during session teardown."""
+
+        if not isinstance(preparation_id, str) or not preparation_id:
+            return None
+        with self._preparation_lock:
+            for preparation in self._preparations_by_session.values():
+                if preparation.preparation_id == preparation_id:
+                    return preparation
+        return None
 
     def compare_and_set_preparation(
         self,
@@ -2010,6 +2029,26 @@ class ConsoleChatStore:
             ):
                 self.delete_message(transient_id)
             return updated
+
+    def remove_preparation(
+        self,
+        session_id: str,
+        preparation_id: str,
+        *,
+        expected_states: frozenset[ConsoleTurnPreparationState],
+    ) -> ConsoleTurnPreparation | None:
+        """Remove one exact terminal or abandoned volatile preparation."""
+
+        with self._preparation_lock:
+            current = self._preparations_by_session.get(session_id)
+            if (
+                current is None
+                or current.preparation_id != preparation_id
+                or current.state not in expected_states
+            ):
+                return None
+            self._preparations_by_session.pop(session_id, None)
+            return current
 
     def begin_session_library_destination_attempt(
         self,

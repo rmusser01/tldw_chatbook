@@ -88,15 +88,14 @@ def test_console_assistant_library_access_default_is_false():
     )
 
 
-def test_legacy_console_rag_auto_retrieve_template_default_is_false():
-    """Fresh sessions begin with the pre-upgrade automatic-retrieval setting off."""
+def test_legacy_console_rag_auto_retrieve_is_not_a_standing_template_default():
+    """The obsolete setting is read only from an existing migration input."""
     template = tomllib.loads(config_module.CONFIG_TOML_CONTENT)
 
-    assert template["chat_defaults"]["rag_auto_retrieve_on_send"] is False
+    assert "rag_auto_retrieve_on_send" not in template["chat_defaults"]
     assert (
-        config_module.DEFAULT_CONFIG_FROM_TOML["chat_defaults"]
-        ["rag_auto_retrieve_on_send"]
-        is False
+        "rag_auto_retrieve_on_send"
+        not in config_module.DEFAULT_CONFIG_FROM_TOML["chat_defaults"]
     )
 
 
@@ -134,7 +133,6 @@ def test_malformed_legacy_console_rag_auto_retrieve_value_falls_back_safely(
     settings = config_module.load_settings(force_reload=True)
     seed = config_module.load_console_library_migration_seed(settings)
 
-    assert settings["chat_defaults"]["rag_auto_retrieve_on_send"] is False
     assert seed.auto_retrieve_on_send is False
 
 

@@ -309,21 +309,25 @@ WAVE6_GROUPS = {
                 "_console_world_book_inspector_actions",
                 "_console_library_rag_scope_label",
                 "_stage_console_library_rag_launch",
-                "_maybe_auto_retrieve_for_send",
                 "_apply_console_rag_settings_choice",
                 "_resolve_console_library_rag_scope",
                 "_apply_console_library_rag_search_outcome",
+            }
+        ),
+        delegates=frozenset(
+            {
+                "_execute_console_library_rag_search",
+            }
+        ),
+        deleted=frozenset(
+            {
+                "_maybe_auto_retrieve_for_send",
                 "_rag_service_still_initializing",
                 "_notify_console_auto_rag_scope_empty",
                 "_notify_auto_rag_degraded",
                 "_notify_console_auto_rag",
                 "_clear_console_auto_rag_placeholder",
-            }
-        ),
-        delegates=frozenset(
-            {
                 "_persist_console_rag_auto_retrieve_on_send",
-                "_execute_console_library_rag_search",
             }
         ),
         raw_lines=992,
@@ -557,7 +561,6 @@ DELEGATE_BINDINGS = {
     "_console_command_generate_video": "_dispatch_console_command",
     "_console_command_stream_video": "_dispatch_console_command",
     "on_console_workspace_conversation_search_changed": "@on",
-    "_persist_console_rag_auto_retrieve_on_send": "_open_console_rag_settings",
     "_execute_console_library_rag_search": "_run_console_library_rag_from_visible_action",
     "_console_command_skills": "_dispatch_console_command",
     "handle_console_skill_install_decided": "@on",
@@ -1517,7 +1520,6 @@ def test_skill_dead_surface_oracle_is_non_vacuous() -> None:
 @pytest.mark.parametrize(
     ("method_name", "awaited"),
     [
-        ("_persist_console_rag_auto_retrieve_on_send", False),
         ("_execute_console_library_rag_search", True),
     ],
 )
@@ -1666,7 +1668,7 @@ def test_wave6_projection_clears_both_ratchet_overages() -> None:
     assert raw_lines == 4_640
     assert residue_lines + DESCRIPTOR_LINE_BUDGET == 119
     assert raw_lines - residue_lines - DESCRIPTOR_LINE_BUDGET == 4_521
-    assert removed_methods == 131
+    assert removed_methods == 132
     assert 4_521 > LINE_OVERAGE
     assert removed_methods > METHOD_OVERAGE
 

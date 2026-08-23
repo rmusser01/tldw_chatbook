@@ -126,7 +126,6 @@ from tldw_chatbook.Chat.console_context_repository import (
     ConsoleMemoryRecord,
 )
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
-    ConsoleEgressClass,
     ConsoleLibraryItemScopeSnapshot,
     ConsoleProviderIntent,
     ConsoleResolvedDestination,
@@ -1671,6 +1670,13 @@ class ConsolePreparationOutcome:
     error_code: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class _PreparedSendContinuation:
+    """Bounded volatile inputs needed to continue one admitted send."""
+
+    preparation_id: str
+
+
 @dataclass(frozen=True)
 class ConsoleSubmitResult:
     """Result returned to the composer after a Console submit attempt."""
@@ -1817,6 +1823,7 @@ class ConsoleChatController:
             0.001, float(library_preparation_timeout)
         )
         self._preparation_outcomes: dict[str, ConsolePreparationOutcome] = {}
+        self._prepared_send_continuations: dict[str, _PreparedSendContinuation] = {}
         self._provider_config = provider_config
         #: Task 4 (D2 fix wave, "bonus race"): screen-owned callable that
         #: builds a fresh default `ConsoleSessionSettings` snapshot (mirrors
@@ -3426,14 +3433,7 @@ class ConsoleChatController:
 
         if not isinstance(preparation_id, str) or not preparation_id:
             return None
-        for session in self.store.sessions():
-            preparation = self.store.preparation_for_session(session.id)
-            if (
-                preparation is not None
-                and preparation.preparation_id == preparation_id
-            ):
-                return preparation
-        return None
+        return self.store.preparation_by_id(preparation_id)
 
     @staticmethod
     def _automatic_scope_for_authority(
@@ -3564,7 +3564,6 @@ class ConsoleChatController:
                     contribution=None,
                     error_code=None,
                 )
-                self._preparation_outcomes[preparation_id] = outcome
                 return outcome
             outcome = ConsolePreparationOutcome(
                 preparation_id=current.preparation_id,
@@ -3605,7 +3604,6 @@ class ConsoleChatController:
                 contribution=None,
                 error_code=None,
             )
-            self._preparation_outcomes[preparation_id] = outcome
             return outcome
         contribution = (
             self._preparation_contribution("zero_matches", current)
@@ -3625,7 +3623,7 @@ class ConsoleChatController:
 
     async def retry_library_preparation(
         self, preparation_id: str
-    ) -> ConsolePreparationOutcome:
+    ) -> ConsoleSubmitResult:
         """Retry a retrieval pause with one fresh attempt and frozen authority."""
 
         preparation = self._preparation_by_id(preparation_id)
@@ -3666,11 +3664,14 @@ class ConsoleChatController:
                 return existing
             raise RuntimeError("Library preparation retry is no longer available.")
         self._preparation_outcomes.pop(preparation_id, None)
-        return await self.prepare_library_for_turn(preparation_id)
+        outcome = await self.prepare_library_for_turn(preparation_id)
+        if outcome.state is not ConsoleTurnPreparationState.READY:
+            return ConsoleSubmitResult(False, False, "Library preparation remains paused.")
+        return await self._continue_prepared_submission(preparation_id)
 
-    def bypass_library_preparation(
+    async def bypass_library_preparation(
         self, preparation_id: str
-    ) -> ConsolePreparationOutcome:
+    ) -> ConsoleSubmitResult:
         """Advance one retrieval pause without changing its standing policy."""
 
         preparation = self._preparation_by_id(preparation_id)
@@ -3719,7 +3720,71 @@ class ConsoleChatController:
             error_code=None,
         )
         self._preparation_outcomes[preparation_id] = outcome
-        return outcome
+        return await self._continue_prepared_submission(preparation_id)
+
+    async def _continue_prepared_submission(
+        self, preparation_id: str
+    ) -> ConsoleSubmitResult:
+        """Resume the exact frozen send after Retry or one-shot Bypass."""
+
+        preparation = self._preparation_by_id(preparation_id)
+        continuation = self._prepared_send_continuations.get(preparation_id)
+        if preparation is None or continuation is None:
+            return ConsoleSubmitResult(False, False, "Prepared turn is no longer available.")
+        selection = preparation.execution_context.configuration.provider_selection
+        resolution = await self.provider_gateway.resolve_for_send(selection)
+        destination = getattr(resolution, "resolved_destination", None)
+        if (
+            not getattr(resolution, "ready", False)
+            or not isinstance(destination, ConsoleResolvedDestination)
+            or destination != preparation.execution_context.resolved_destination
+        ):
+            paused = self.store.compare_and_set_preparation(
+                preparation.session_id,
+                ConsolePreparationTransition(
+                    preparation_id=preparation.preparation_id,
+                    expected_state=ConsoleTurnPreparationState.READY,
+                    new_state=ConsoleTurnPreparationState.COMMITTING,
+                    pause_kind=None,
+                    new_attempt_id=None,
+                ),
+            )
+            if paused is not None:
+                self.store.compare_and_set_preparation(
+                    preparation.session_id,
+                    ConsolePreparationTransition(
+                        preparation_id=preparation.preparation_id,
+                        expected_state=ConsoleTurnPreparationState.COMMITTING,
+                        new_state=ConsoleTurnPreparationState.PAUSED,
+                        pause_kind=ConsolePreparationPauseKind.DESTINATION_CHANGED,
+                        new_attempt_id=None,
+                    ),
+                )
+            return ConsoleSubmitResult(False, False, "Prepared destination changed.")
+        queue_authorization = None
+        if preparation.origin == ConsoleSubmissionOrigin.QUEUED.value:
+            assert preparation.queue_entry_id is not None
+            queue_authorization = self.prompt_queue_coordinator.reclaim_prepared_entry(
+                preparation.session_id, preparation.queue_entry_id
+            )
+            if queue_authorization is None:
+                return ConsoleSubmitResult(
+                    False, False, "Queued preparation could not reclaim its entry."
+                )
+        result = await self.submit_draft(
+            preparation.executed_draft,
+            session_id=preparation.session_id,
+            origin=ConsoleSubmissionOrigin(preparation.origin),
+            queue_entry_id=preparation.queue_entry_id,
+            queue_authorization=queue_authorization,
+            _resume_preparation_id=preparation_id,
+            _resume_resolution=resolution,
+        )
+        if queue_authorization is not None:
+            await self.prompt_queue_coordinator.complete_prepared_entry(
+                preparation.session_id, result
+            )
+        return result
 
     def cancel_library_preparation(
         self, preparation_id: str
@@ -3753,10 +3818,13 @@ class ConsoleChatController:
             contribution=None,
             error_code=None,
         )
-        self._preparation_outcomes[preparation_id] = outcome
+        self._drop_preparation(
+            preparation_id,
+            expected_states=frozenset({ConsoleTurnPreparationState.CANCELLED}),
+        )
         return outcome
 
-    def _has_explicit_staged_evidence(self, session_id: str) -> bool:
+    def _has_explicit_staged_evidence(self, session_id: str) -> bool | None:
         provider = self._staged_evidence_provider
         if provider is None:
             owner = getattr(self._rag_capture_provider, "__self__", None)
@@ -3769,9 +3837,9 @@ class ConsoleChatController:
             try:
                 return bool(provider())
             except Exception:
-                return False
+                return None
         except Exception:
-            return False
+            return None
 
     @staticmethod
     def _ordinary_library_text(
@@ -3787,79 +3855,117 @@ class ConsoleChatController:
             ConsoleSubmissionOrigin.QUEUED: True,
             ConsoleSubmissionOrigin.AGENT_WAKE: False,
         }
-        if not admitted_origins.get(origin, False) or has_pending_attachment:
+        if not admitted_origins.get(origin, False):
             return False
         stripped = draft.lstrip()
         return bool(stripped) and not stripped.startswith((COMMAND_PREFIX, MENTION_SIGIL))
 
-    def _settle_preparation_after_dispatch(self, preparation_id: str) -> None:
-        """Retire Task-13's in-memory owner after the current legacy dispatch."""
+    def _drop_preparation(
+        self,
+        preparation_id: str,
+        *,
+        expected_states: frozenset[ConsoleTurnPreparationState],
+    ) -> None:
+        """Remove one exact volatile owner and all controller sidecars."""
 
         preparation = self._preparation_by_id(preparation_id)
         if preparation is None:
             return
-        sequences = {
-            ConsoleTurnPreparationState.READY: (
-                ConsoleTurnPreparationState.COMMITTING,
-                ConsoleTurnPreparationState.ACCEPTED,
-                ConsoleTurnPreparationState.DISPATCH_STARTED,
-                ConsoleTurnPreparationState.DISPATCHED,
-                ConsoleTurnPreparationState.SETTLED,
-            ),
-            ConsoleTurnPreparationState.ACCEPTED: (
-                ConsoleTurnPreparationState.DISPATCH_STARTED,
-                ConsoleTurnPreparationState.DISPATCHED,
-                ConsoleTurnPreparationState.SETTLED,
-            ),
-            ConsoleTurnPreparationState.DISPATCH_STARTED: (
-                ConsoleTurnPreparationState.DISPATCHED,
-                ConsoleTurnPreparationState.SETTLED,
-            ),
-            ConsoleTurnPreparationState.DISPATCHED: (
-                ConsoleTurnPreparationState.SETTLED,
-            ),
-        }
-        sequence = sequences.get(preparation.state, ())
-        for new_state in sequence:
-            updated = self.store.compare_and_set_preparation(
-                preparation.session_id,
-                ConsolePreparationTransition(
-                    preparation_id=preparation.preparation_id,
-                    expected_state=preparation.state,
-                    new_state=new_state,
-                    pause_kind=None,
-                    new_attempt_id=None,
-                ),
-            )
-            if updated is None:
-                return
-            preparation = updated
+        removed = self.store.remove_preparation(
+            preparation.session_id,
+            preparation.preparation_id,
+            expected_states=expected_states,
+        )
+        if removed is not None:
+            self._preparation_outcomes.pop(preparation_id, None)
+            self._prepared_send_continuations.pop(preparation_id, None)
 
-    def _mark_preparation_dispatch_started(self, preparation_id: str) -> bool:
-        """Cross only the in-memory legacy acceptance states before dispatch."""
+    def _abandon_preparation(self, preparation_id: str) -> None:
+        """Cancel and remove one exact preaccept preparation without a wedge."""
 
         preparation = self._preparation_by_id(preparation_id)
-        if preparation is None or preparation.state is not ConsoleTurnPreparationState.READY:
-            return False
-        for new_state in (
-            ConsoleTurnPreparationState.COMMITTING,
-            ConsoleTurnPreparationState.ACCEPTED,
-            ConsoleTurnPreparationState.DISPATCH_STARTED,
-        ):
-            updated = self.store.compare_and_set_preparation(
-                preparation.session_id,
-                ConsolePreparationTransition(
-                    preparation_id=preparation.preparation_id,
-                    expected_state=preparation.state,
-                    new_state=new_state,
-                    pause_kind=None,
-                    new_attempt_id=None,
-                ),
+        if preparation is None:
+            return
+        cancelled = self.store.cancel_preparation(
+            preparation.session_id,
+            preparation.preparation_id,
+            expected_state=preparation.state,
+        )
+        if cancelled is not None:
+            self._drop_preparation(
+                preparation_id,
+                expected_states=frozenset({ConsoleTurnPreparationState.CANCELLED}),
             )
-            if updated is None:
-                return False
-            preparation = updated
-        return True
+
+    def _rollback_committing_preparation(self, preparation_id: str) -> None:
+        """Restore one failed preaccept commit through the legal store CAS path."""
+
+        preparation = self._preparation_by_id(preparation_id)
+        if preparation is None:
+            return
+        paused = self.store.compare_and_set_preparation(
+            preparation.session_id,
+            ConsolePreparationTransition(
+                preparation_id=preparation.preparation_id,
+                expected_state=ConsoleTurnPreparationState.COMMITTING,
+                new_state=ConsoleTurnPreparationState.PAUSED,
+                pause_kind=ConsolePreparationPauseKind.PERSISTENCE,
+                new_attempt_id=None,
+            ),
+        )
+        if paused is not None:
+            self._abandon_preparation(preparation_id)
+
+    def _settle_accepted_preparation(self, preparation_id: str) -> None:
+        """Settle a volatile accepted owner after its live path exits."""
+
+        preparation = self._preparation_by_id(preparation_id)
+        if preparation is None:
+            return
+        if preparation.state is ConsoleTurnPreparationState.DISPATCH_STARTED:
+            self._transition_preparation(
+                preparation_id,
+                ConsoleTurnPreparationState.DISPATCH_STARTED,
+                ConsoleTurnPreparationState.DISPATCHED,
+            )
+        current = self._preparation_by_id(preparation_id)
+        if current is None:
+            return
+        if current.state in {
+            ConsoleTurnPreparationState.ACCEPTED,
+            ConsoleTurnPreparationState.DISPATCHED,
+        }:
+            self._transition_preparation(
+                preparation_id,
+                current.state,
+                ConsoleTurnPreparationState.SETTLED,
+            )
+        self._drop_preparation(
+            preparation_id,
+            expected_states=frozenset({ConsoleTurnPreparationState.SETTLED}),
+        )
+
+    def _transition_preparation(
+        self,
+        preparation_id: str,
+        expected: ConsoleTurnPreparationState,
+        new: ConsoleTurnPreparationState,
+    ) -> bool:
+        """Cross one exact volatile boundary at the matching real operation."""
+
+        preparation = self._preparation_by_id(preparation_id)
+        if preparation is None or preparation.state is not expected:
+            return False
+        return self.store.compare_and_set_preparation(
+            preparation.session_id,
+            ConsolePreparationTransition(
+                preparation_id=preparation.preparation_id,
+                expected_state=expected,
+                new_state=new,
+                pause_kind=None,
+                new_attempt_id=None,
+            ),
+        ) is not None
 
     async def submit_draft(
         self,
@@ -3870,6 +3976,8 @@ class ConsoleChatController:
         queue_entry_id: str | None = None,
         queue_authorization: QueueGenerationAuthorization | None = None,
         wake_authorization: AgentWakeAuthorization | None = None,
+        _resume_preparation_id: str | None = None,
+        _resume_resolution: Any | None = None,
     ) -> ConsoleSubmitResult:
         """Submit a composer draft through native Console validation and provider resolution.
 
@@ -3922,9 +4030,19 @@ class ConsoleChatController:
         if not isinstance(origin, ConsoleSubmissionOrigin):
             raise ValueError("origin must be an explicit ConsoleSubmissionOrigin")
         target_id = session_id or self.store.active_session_id or ""
+        resumed_preparation = (
+            self._preparation_by_id(_resume_preparation_id)
+            if _resume_preparation_id is not None
+            else None
+        )
+        if _resume_preparation_id is not None and resumed_preparation is None:
+            return ConsoleSubmitResult(False, False, "Prepared turn is no longer available.")
         if origin is ConsoleSubmissionOrigin.QUEUED:
-            if not queue_entry_id or not self.prompt_queue_coordinator.authorizes(
+            if not queue_entry_id or (
+                _resume_preparation_id is None
+                and not self.prompt_queue_coordinator.authorizes(
                 queue_authorization, target_id
+                )
             ):
                 raise PermissionError(
                     "queued sends require coordinator-issued generation authority"
@@ -3968,7 +4086,7 @@ class ConsoleChatController:
             append_row=origin is not ConsoleSubmissionOrigin.AGENT_WAKE,
             queue_authorization=queue_authorization,
         )
-        if active_rejection is not None:
+        if active_rejection is not None and resumed_preparation is None:
             return active_rejection
 
         if session_id:
@@ -4030,7 +4148,11 @@ class ConsoleChatController:
             )
         if validation_error is not None:
             return self._block(session.id, validation_error)
-        configuration = self.resolve_turn_configuration_snapshot(session.id)
+        configuration = (
+            resumed_preparation.execution_context.configuration
+            if resumed_preparation is not None
+            else self.resolve_turn_configuration_snapshot(session.id)
+        )
         turn_selection = configuration.provider_selection
         if has_pending_attachment:
             vision_model = configuration.effective_model
@@ -4051,22 +4173,35 @@ class ConsoleChatController:
             return self._block(
                 session.id, turn_selection.workspace_context.recovery_copy
             )
-        library_authority = await self._capture_turn_library_authority(
-            session.id,
-            configuration,
+        library_authority = (
+            resumed_preparation.execution_context.library_authority
+            if resumed_preparation is not None
+            else await self._capture_turn_library_authority(session.id, configuration)
         )
         existing_preparation = self.store.preparation_for_session(session.id)
-        if existing_preparation is not None and existing_preparation.state not in {
+        if (
+            existing_preparation is not None
+            and existing_preparation is not resumed_preparation
+            and existing_preparation.state not in {
             ConsoleTurnPreparationState.CANCELLED,
             ConsoleTurnPreparationState.SETTLED,
-        }:
+            }
+        ):
             return ConsoleSubmitResult(
                 False,
                 False,
                 "Another send is still preparing for this conversation.",
             )
-        pre_send_title = session.title
-        pre_send_conversation_id = session.persisted_conversation_id
+        pre_send_title = (
+            resumed_preparation.pre_send_title
+            if resumed_preparation is not None
+            else session.title
+        )
+        pre_send_conversation_id = (
+            resumed_preparation.pre_send_conversation_id
+            if resumed_preparation is not None
+            else session.persisted_conversation_id
+        )
         explicit_evidence_staged = self._has_explicit_staged_evidence(session.id)
 
         # TASK-457(a): echo the USER message BEFORE resolving the provider, so a
@@ -4085,7 +4220,7 @@ class ConsoleChatController:
         # early-returns. Titling first means the conversation is created as the
         # derived title (e.g. "hello") instead of the default "Chat 1", so the
         # workspace rail shows it immediately after persistence.
-        if origin is not ConsoleSubmissionOrigin.AGENT_WAKE:
+        if origin is not ConsoleSubmissionOrigin.AGENT_WAKE and resumed_preparation is None:
             self._maybe_auto_title_session(session, clean_draft)
         staged_attachments = tuple(
             MessageAttachment(
@@ -4112,6 +4247,10 @@ class ConsoleChatController:
         # one watching for it, and appending late means a blocked wake
         # leaves no orphaned notice row to clean up).
         echoed_user = (
+            self.store.get_message(resumed_preparation.transient_user_message_id)
+            if resumed_preparation is not None
+            and resumed_preparation.transient_user_message_id is not None
+            else
             self.store.append_message(
                 session.id,
                 role=ConsoleMessageRole.USER,
@@ -4128,7 +4267,11 @@ class ConsoleChatController:
             session_id=session.id,
         )
         try:
-            resolution = await self.provider_gateway.resolve_for_send(turn_selection)
+            resolution = (
+                _resume_resolution
+                if resumed_preparation is not None
+                else await self.provider_gateway.resolve_for_send(turn_selection)
+            )
         except BaseException:
             # A readiness probe that raises or is cancelled AFTER the optimistic
             # USER echo must still fail that row — otherwise a never-sent USER
@@ -4150,24 +4293,37 @@ class ConsoleChatController:
                 self.store.mark_message_send_blocked(echoed_user.id)
             return self._block(session.id, visible_copy)
 
-        turn_context = self._finalize_turn_execution_context(
-            configuration,
-            library_authority,
-            resolution,
-        )
+        if resumed_preparation is not None:
+            turn_context = resumed_preparation.execution_context
+        else:
+            try:
+                turn_context = self._finalize_turn_execution_context(
+                    configuration,
+                    library_authority,
+                    resolution,
+                )
+            except (TypeError, ValueError):
+                if echoed_user is not None:
+                    self.store.mark_message_send_blocked(echoed_user.id)
+                    self.store.delete_message(echoed_user.id)
+                return self._block(session.id, "Provider destination is incomplete.")
 
-        preparation: ConsoleTurnPreparation | None = None
-        preparation_outcome: ConsolePreparationOutcome | None = None
+        preparation: ConsoleTurnPreparation | None = resumed_preparation
+        preparation_outcome: ConsolePreparationOutcome | None = (
+            self._preparation_outcomes.get(resumed_preparation.preparation_id)
+            if resumed_preparation is not None
+            else None
+        )
         ordinary_library_text = self._ordinary_library_text(
             clean_draft,
             origin,
             has_pending_attachment=has_pending_attachment,
         )
-        if ordinary_library_text:
+        if ordinary_library_text and resumed_preparation is None:
             automatic_eligible = (
                 library_authority.policy.auto_retrieve
                 is ConsoleAutoRetrieve.AUTOMATIC
-                and not explicit_evidence_staged
+                and explicit_evidence_staged is False
             )
             initial_state = (
                 initial_preparation_state(library_authority.policy.auto_retrieve)
@@ -4222,6 +4378,9 @@ class ConsoleChatController:
                     False,
                     "Another send is still preparing for this conversation.",
                 )
+            self._prepared_send_continuations[preparation.preparation_id] = (
+                _PreparedSendContinuation(preparation.preparation_id)
+            )
             if preparation.state is ConsoleTurnPreparationState.PREPARING:
                 preparation_outcome = await self.prepare_library_for_turn(
                     preparation.preparation_id
@@ -4242,8 +4401,6 @@ class ConsoleChatController:
                         queue_entry_id=queue_entry_id,
                     )
 
-        if pendings:
-            self.store.clear_pending_attachments(session.id)
         citation_context: str | None = None
         citation_trace_builder: CitationTraceBuilder | None = None
         prompt_evidence_set_id: str | None = None
@@ -4267,6 +4424,8 @@ class ConsoleChatController:
                 # (A wake echoed nothing: None guard.)
                 if echoed_user is not None:
                     self.store.mark_message_send_blocked(echoed_user.id)
+                if preparation is not None:
+                    self._abandon_preparation(preparation.preparation_id)
                 return self._block(session.id, refuse)
             for note in skill_notes:
                 # An embedded skipped-skill note is never an abort: append the
@@ -4363,6 +4522,8 @@ class ConsoleChatController:
             # (A wake echoed nothing: None guard.)
             if echoed_user is not None:
                 self.store.mark_message_send_blocked(echoed_user.id)
+            if preparation is not None:
+                self._abandon_preparation(preparation.preparation_id)
             raise
         # The accepted-hook fires only once the turn is confirmed to
         # actually proceed (Qodo finding 3, PR #636 bot review): it used to
@@ -4384,6 +4545,8 @@ class ConsoleChatController:
             # nothing: None guard.)
             if echoed_user is not None:
                 self.store.mark_message_send_blocked(echoed_user.id)
+            if preparation is not None:
+                self._abandon_preparation(preparation.preparation_id)
             return ConsoleSubmitResult(
                 False,
                 False,
@@ -4408,9 +4571,12 @@ class ConsoleChatController:
                     "content": clean_draft,
                 },
             ]
-        if preparation is not None and not self._mark_preparation_dispatch_started(
-            preparation.preparation_id
+        if preparation is not None and not self._transition_preparation(
+            preparation.preparation_id,
+            ConsoleTurnPreparationState.READY,
+            ConsoleTurnPreparationState.COMMITTING,
         ):
+            self._abandon_preparation(preparation.preparation_id)
             return ConsoleSubmitResult(
                 False,
                 False,
@@ -4420,12 +4586,6 @@ class ConsoleChatController:
                 queue_entry_id=queue_entry_id,
             )
         committed_context_epoch = self.store.conversation_context_epoch(session.id)
-        self._notify_submission_accepted(
-            session_id=session.id,
-            origin=origin,
-            entry_id=queue_entry_id,
-            context_epoch=committed_context_epoch,
-        )
         # TASK-1364: record the accepted send to the shared prompt history.
         # Same placement rule as the accepted-hook above: only a send that is
         # confirmed to proceed is recorded -- every `_block`/refusal path
@@ -4433,7 +4593,14 @@ class ConsoleChatController:
         # skips empty (attachment-only) drafts. A wake notice is not a
         # prompt the user typed and never enters their prompt history.
         if origin is not ConsoleSubmissionOrigin.AGENT_WAKE:
-            await self._record_prompt_history(clean_draft)
+            try:
+                await self._record_prompt_history(clean_draft)
+            except BaseException:
+                if preparation is not None:
+                    self._rollback_committing_preparation(
+                        preparation.preparation_id
+                    )
+                raise
         # TASK-485: the turn is confirmed to proceed — flush the deferred USER
         # echo to durable storage now (creating the conversation), BEFORE the
         # assistant row, so a reload shows the user's prompt ahead of its reply.
@@ -4452,7 +4619,14 @@ class ConsoleChatController:
                 metadata=MessageMetadata(origin=MESSAGE_ORIGIN_AGENT_WAKE),
             )
         else:
-            self.store.persist_message_if_needed(echoed_user.id)
+            try:
+                self.store.persist_message_if_needed(echoed_user.id)
+            except BaseException:
+                if preparation is not None:
+                    self._rollback_committing_preparation(
+                        preparation.preparation_id
+                    )
+                raise
         assistant: ConsoleChatMessage | None = None
         citation_repair_session = (
             ConsoleCitationRepairSession(
@@ -4476,6 +4650,20 @@ class ConsoleChatController:
                 terminal_citation_finalizer=terminal_citation_finalizer,
                 defer_terminal_persistence=citation_repair_session is not None,
             )
+            if preparation is not None and not self._transition_preparation(
+                preparation.preparation_id,
+                ConsoleTurnPreparationState.COMMITTING,
+                ConsoleTurnPreparationState.ACCEPTED,
+            ):
+                raise RuntimeError("Prepared turn changed before acceptance.")
+            if pendings:
+                self.store.clear_pending_attachments(session.id)
+            self._notify_submission_accepted(
+                session_id=session.id,
+                origin=origin,
+                entry_id=queue_entry_id,
+                context_epoch=committed_context_epoch,
+            )
             stream_result = await self._stream_assistant_response(
                 resolution=resolution,
                 provider_messages=provider_messages,
@@ -4486,6 +4674,11 @@ class ConsoleChatController:
                 skill_bundle_block=skill_bundle_block,
                 citation_repair_session=citation_repair_session,
                 turn_context=turn_context,
+                preparation_id=(
+                    preparation.preparation_id
+                    if preparation is not None
+                    else None
+                ),
             )
             result = replace(
                 stream_result,
@@ -4498,8 +4691,24 @@ class ConsoleChatController:
                 committed_context_epoch=committed_context_epoch,
             )
             if preparation is not None:
-                self._settle_preparation_after_dispatch(preparation.preparation_id)
+                self._settle_accepted_preparation(preparation.preparation_id)
             return result
+        except BaseException:
+            if preparation is not None:
+                current = self._preparation_by_id(preparation.preparation_id)
+                if current is not None and current.state is ConsoleTurnPreparationState.COMMITTING:
+                    self._rollback_committing_preparation(
+                        preparation.preparation_id
+                    )
+                elif current is not None and current.state in {
+                    ConsoleTurnPreparationState.ACCEPTED,
+                    ConsoleTurnPreparationState.DISPATCH_STARTED,
+                    ConsoleTurnPreparationState.DISPATCHED,
+                }:
+                    self._settle_accepted_preparation(
+                        preparation.preparation_id
+                    )
+            raise
         finally:
             if origin is ConsoleSubmissionOrigin.AGENT_WAKE:
                 self._agent_wake_turn_sessions.discard(session.id)
@@ -4759,6 +4968,13 @@ class ConsoleChatController:
         # Queue tombstone MUST precede stop/cancel: cancellation can wake a
         # terminal callback, which must observe that no next claim is legal.
         self.prompt_queue_coordinator.mark_closing(session_id)
+        preparation = self.store.preparation_for_session(session_id)
+        if preparation is not None and preparation.state in {
+            ConsoleTurnPreparationState.PREPARING,
+            ConsoleTurnPreparationState.READY,
+            ConsoleTurnPreparationState.PAUSED,
+        }:
+            self._abandon_preparation(preparation.preparation_id)
         # PR3b Task 5 (Qodo #1808 finding 3): closing a session is
         # DESTRUCTIVE -- `ConsoleChatStore.close_session` purges every
         # message and drops the session -- so its fleet must die with it.
@@ -4814,6 +5030,12 @@ class ConsoleChatController:
             )
         previous_active_id = self.store.active_session_id
         closed = self.store.close_session(session_id)
+        if preparation is not None and preparation.state in {
+            ConsoleTurnPreparationState.ACCEPTED,
+            ConsoleTurnPreparationState.DISPATCH_STARTED,
+            ConsoleTurnPreparationState.DISPATCHED,
+        }:
+            self._settle_accepted_preparation(preparation.preparation_id)
         self.prompt_queue_coordinator.remove_session(session_id)
         self._clear_project_instruction_delivery(session_id)
         new_active_id = self.store.active_session_id
@@ -7344,11 +7566,7 @@ class ConsoleChatController:
                     ConsoleTurnPreparationState.PAUSED,
                 }:
                     continue
-                self.store.cancel_preparation(
-                    session.id,
-                    preparation.preparation_id,
-                    expected_state=preparation.state,
-                )
+                self._abandon_preparation(preparation.preparation_id)
             self._shutdown_requested.set()
             self._cancel_headless_rounds()
 
@@ -9345,14 +9563,7 @@ class ConsoleChatController:
                 and is_vision_capable(selection.provider, model or ""),
                 "max_history_images": max_history_images(selection.provider, model),
             },
-            rag_defaults={
-                "auto_retrieve_on_send": coerce_bool_setting(
-                    get_cli_setting(
-                        "chat_defaults", "rag_auto_retrieve_on_send", False
-                    ),
-                    False,
-                )
-            },
+            rag_defaults={},
             tool_configuration={
                 "agent_runtime_enabled": self._agent_runtime_enabled,
                 "native_tool_calls_enabled": True,
@@ -9473,25 +9684,11 @@ class ConsoleChatController:
 
     @staticmethod
     def _resolved_destination_for_context(resolution: Any) -> ConsoleResolvedDestination:
-        """Adapt the existing gateway seam without Task 9 classification."""
+        """Require the exact typed Task-9 destination from a ready gateway."""
         destination = getattr(resolution, "resolved_destination", None)
         if isinstance(destination, ConsoleResolvedDestination):
             return destination
-        return ConsoleResolvedDestination(
-            provider=str(getattr(resolution, "provider", "") or "unknown"),
-            model=(
-                str(getattr(resolution, "model", ""))
-                if getattr(resolution, "model", None) is not None
-                else None
-            ),
-            # Minimal gateway doubles and legacy embedders may not expose the
-            # Task-9 classified destination.  The complete Task-12 context
-            # contract still requires a non-empty credential-free identity;
-            # this bounded literal is explicitly unknown and never inferred
-            # from provider name or key presence.
-            endpoint_identity="unknown://unresolved",
-            egress_class=ConsoleEgressClass.UNKNOWN,
-        )
+        raise ValueError("Ready provider resolution omitted its typed destination.")
 
     def _finalize_turn_execution_context(
         self,
@@ -11257,6 +11454,7 @@ class ConsoleChatController:
         skill_bundle_block: str = "",
         citation_repair_session: ConsoleCitationRepairSession | None = None,
         turn_context: ConsoleTurnExecutionContext | None = None,
+        preparation_id: str | None = None,
     ) -> ConsoleSubmitResult:
         try:
             return await self._stream_assistant_response_inner(
@@ -11271,6 +11469,7 @@ class ConsoleChatController:
                 skill_bundle_block=skill_bundle_block,
                 citation_repair_session=citation_repair_session,
                 turn_context=turn_context,
+                preparation_id=preparation_id,
             )
         finally:
             if isinstance(turn_context, ConsoleTurnExecutionContext):
@@ -11299,6 +11498,7 @@ class ConsoleChatController:
         skill_bundle_block: str = "",
         citation_repair_session: ConsoleCitationRepairSession | None = None,
         turn_context: ConsoleTurnExecutionContext | None = None,
+        preparation_id: str | None = None,
     ) -> ConsoleSubmitResult:
         try:
             owner_id = self.store.session_id_for_message(assistant_message_id)
@@ -11536,6 +11736,14 @@ class ConsoleChatController:
                 and not prefill
                 and not force_plain
             ):
+                if preparation_id is not None and not self._transition_preparation(
+                    preparation_id,
+                    ConsoleTurnPreparationState.ACCEPTED,
+                    ConsoleTurnPreparationState.DISPATCH_STARTED,
+                ):
+                    raise RuntimeError(
+                        "Prepared turn changed before provider dispatch."
+                    )
                 return await self._run_agent_reply(
                     resolution=resolution,
                     provider_messages=provider_messages,
@@ -11550,6 +11758,12 @@ class ConsoleChatController:
                     continuation_sidecar=continuation_sidecar,
                     continuation_history_target=continuation_target,
                 )
+            if preparation_id is not None and not self._transition_preparation(
+                preparation_id,
+                ConsoleTurnPreparationState.ACCEPTED,
+                ConsoleTurnPreparationState.DISPATCH_STARTED,
+            ):
+                raise RuntimeError("Prepared turn changed before provider dispatch.")
             return await self._run_direct_provider_reply(
                 resolution=resolution,
                 provider_messages=provider_messages,

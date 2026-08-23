@@ -1537,12 +1537,6 @@ def _load_settings_uncached(
     final_chat_defaults_cli = copy.deepcopy(get_toml_section("chat_defaults"))
     if not isinstance(final_chat_defaults_cli, dict):
         final_chat_defaults_cli = {}
-    legacy_auto_retrieve = final_chat_defaults_cli.get(
-        "rag_auto_retrieve_on_send", False
-    )
-    final_chat_defaults_cli["rag_auto_retrieve_on_send"] = (
-        legacy_auto_retrieve if type(legacy_auto_retrieve) is bool else False
-    )
     final_character_defaults_cli = get_toml_section("character_defaults")
     final_notes_settings_cli = get_toml_section("notes")
     # (task 11, spec §9.1/AC 40) The [chunking] table -- the config tier of
@@ -3871,12 +3865,6 @@ transcript_scrollback_lines = 96
 # links) in the Console transcript. Set false to restore the lightweight
 # span renderer, which keeps roleplay speech/action flavor colors.
 assistant_markdown = true
-
-# Console's RAG chip settings modal: when true, each plain text send first
-# retrieves Library evidence into the staged-evidence strip before the
-# message goes out. Off by default -- retrieval only runs when a user
-# explicitly asks for it (the RAG chip / "Run Library RAG").
-rag_auto_retrieve_on_send = false
 
 # Image attachment settings for chat
 [chat.images]

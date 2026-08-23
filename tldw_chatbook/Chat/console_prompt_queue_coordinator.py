@@ -564,6 +564,44 @@ class ConsolePromptQueueCoordinator:
         await self._drain_waiting(session_id, self._run_status(session_id))
         return resumed
 
+    def reclaim_prepared_entry(
+        self, session_id: str, entry_id: str
+    ) -> QueueGenerationAuthorization | None:
+        """Resume and reclaim the exact head entry owned by a paused preparation."""
+
+        resumed = self.resume(session_id)
+        if not resumed.applied:
+            return None
+        claimed = self.registry.claim_next(
+            session_id, expected_revision=resumed.snapshot.revision
+        )
+        if (
+            not claimed.applied
+            or claimed.claim is None
+            or claimed.claim.prompt.entry_id != entry_id
+        ):
+            if claimed.claim is not None:
+                self._return_claim(
+                    session_id,
+                    claimed.claim.prompt.entry_id,
+                    PromptQueuePauseReason.DISPATCH_REFUSED,
+                )
+            return None
+        chain = self._chains[session_id]
+        chain.current_entry_id = entry_id
+        self._changed(session_id)
+        return QueueGenerationAuthorization(self, session_id, _key=_AUTHORIZATION_KEY)
+
+    async def complete_prepared_entry(
+        self, session_id: str, result: "ConsoleSubmitResult"
+    ) -> None:
+        """Finish an exact reclaimed preparation and resume normal FIFO drain."""
+
+        chain = self._chains.get(session_id)
+        if chain is not None:
+            chain.current_entry_id = None
+        await self._after_turn(session_id, result)
+
     async def recover_and_drain(
         self,
         session_id: str,

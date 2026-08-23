@@ -28,7 +28,6 @@ from ...Chat.scope_picker_listers import (
     build_media_source_lister,
     build_notes_source_lister,
 )
-from ...config import save_setting_to_cli_config
 from ...Event_Handlers.Chat_Events.chat_rag_events import (
     capture_console_staged_evidence_for_chat,
     resolve_effective_scope_for_chat,
@@ -360,17 +359,6 @@ class ConsoleRetrievalController:
         self._set_library_rag_query(sanitize_console_library_rag_query(result.query))
         if result.run:
             self._run_library_rag_action()
-
-    def _persist_console_rag_auto_retrieve_on_send(self, value: bool) -> None:
-        """Persist the auto-retrieve preference off the UI thread."""
-        try:
-            save_setting_to_cli_config(
-                "chat_defaults", "rag_auto_retrieve_on_send", bool(value)
-            )
-        except Exception as exc:
-            logger.warning(
-                "Failed to persist Console auto-retrieve-on-send setting: {}", exc
-            )
 
     def _console_rag_source_status(
         self,

@@ -9670,10 +9670,6 @@ class ChatScreen(BaseAppScreen):
                 # derives from this same pending-launch source test.
                 rag_active=_source_mentions_rag(pending.source if pending else None),
                 staged_title=(pending.title if pending else ""),
-                auto_retrieve_on_send=get_cli_setting(
-                    "chat_defaults", "rag_auto_retrieve_on_send", False
-                ),
-                on_auto_retrieve_changed=self._persist_console_rag_auto_retrieve_on_send,
             ),
             callback=self._retrieval._apply_console_rag_settings_choice,
         )
@@ -9722,10 +9718,6 @@ class ChatScreen(BaseAppScreen):
         except QueryError:
             return
         scope_label.update(self._retrieval._console_library_rag_scope_label())
-
-    @work(thread=True)
-    def _persist_console_rag_auto_retrieve_on_send(self, value: bool) -> None:
-        self._retrieval._persist_console_rag_auto_retrieve_on_send(value)
 
     async def _open_console_character_picker(self) -> None:
         """Load characters off-thread and open the picker modal (task-1672)."""

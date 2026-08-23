@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -54,6 +55,23 @@ def test_mounted_retrieval_controller_has_no_automatic_send_owner():
     assert "Message sent without Library evidence" not in source
     assert "CONSOLE_AUTO_RAG_FAILED_NOTICE" not in source
     assert not hasattr(ConsoleRetrievalController, "_maybe_auto_retrieve_for_send")
+
+
+def test_legacy_automatic_toggle_survives_only_as_one_time_migration_input():
+    """No production owner may retain the obsolete standing toggle seam."""
+
+    production_root = Path(retrieval_module.__file__).parents[2]
+    matches = {
+        path.relative_to(production_root).as_posix(): text.count(
+            "rag_auto_retrieve_on_send"
+        )
+        for path in production_root.rglob("*.py")
+        if (text := path.read_text(encoding="utf-8")).count(
+            "rag_auto_retrieve_on_send"
+        )
+    }
+
+    assert matches == {"config.py": 1}
 
 
 @pytest.mark.asyncio
