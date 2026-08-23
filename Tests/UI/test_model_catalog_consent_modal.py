@@ -1,8 +1,17 @@
 """ModelCatalogConsentModal dismisses with the user's allow/deny choice."""
 
+from __future__ import annotations
+
+import time
+from types import MethodType
+
 import pytest
 from textual.app import App
+from textual.screen import Screen
 
+from Tests.UI.app_factory import _build_test_app
+from tldw_chatbook import config as config_module
+from tldw_chatbook.UI.Screens.home_screen import HomeScreen
 from tldw_chatbook.UI.Screens.model_catalog_consent import ModelCatalogConsentModal
 
 
@@ -61,3 +70,100 @@ async def test_app_push_suppresses_modal_in_headless_runs():
         TldwCli._push_model_catalog_consent_modal(app)
         await pilot.pause()
         assert not isinstance(app.screen, ModelCatalogConsentModal)
+
+
+@pytest.mark.asyncio
+async def test_splash_finishes_before_catalog_consent_and_deny_returns_home(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Consent stays topmost after splash startup and dismisses to Home."""
+    app = _build_test_app(configured_default="home")
+
+    get_cli_setting = config_module.get_cli_setting
+
+    def suppress_project_skills(section, *args, **kwargs):
+        if section == "skills" and args[:1] == ("project_skills_prompt_enabled",):
+            return False
+        return get_cli_setting(section, *args, **kwargs)
+
+    monkeypatch.setattr(config_module, "get_cli_setting", suppress_project_skills)
+
+    observed: list[tuple[bool, tuple[type[Screen], ...]]] = []
+
+    def observe_stack() -> tuple[type[Screen], ...]:
+        stack = tuple(type(screen) for screen in app.screen_stack)
+        snapshot = (bool(app.splash_screen_active), stack)
+        if not observed or observed[-1] != snapshot:
+            observed.append(snapshot)
+        return stack
+
+    def push_catalog_consent(self) -> None:
+        observe_stack()
+        self.push_screen(
+            ModelCatalogConsentModal(), self._handle_model_catalog_consent
+        )
+
+    app._push_model_catalog_consent_modal = MethodType(push_catalog_consent, app)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            stack = observe_stack()
+            if any(screen is HomeScreen for screen in stack) and any(
+                screen is ModelCatalogConsentModal for screen in stack
+            ):
+                break
+            await pilot.pause(0.01)
+        else:
+            pytest.fail(
+                "startup did not mount both Home and model-catalog consent; "
+                f"observed={[(active, [item.__name__ for item in stack]) for active, stack in observed]}"
+            )
+
+        final_stack = tuple(app.screen_stack)
+        assert isinstance(final_stack[-2], HomeScreen), (
+            "Home must be immediately below consent after startup; "
+            f"stack={[type(screen).__name__ for screen in final_stack]}"
+        )
+        assert isinstance(final_stack[-1], ModelCatalogConsentModal), (
+            "consent must remain the topmost actionable screen; "
+            f"stack={[type(screen).__name__ for screen in final_stack]}"
+        )
+
+        first_consent = next(
+            index
+            for index, (_, stack) in enumerate(observed)
+            if ModelCatalogConsentModal in stack
+        )
+        assert any(
+            active and stack == (Screen,)
+            for active, stack in observed[:first_consent]
+        ), f"splash/default Screen was not observed before consent: {observed}"
+        assert not observed[first_consent][0], (
+            "consent appeared before the splash completed; "
+            f"observed={observed}"
+        )
+        assert not any(
+            ModelCatalogConsentModal in stack
+            and stack[-1] is not ModelCatalogConsentModal
+            for _, stack in observed
+        ), f"consent was buried by a later startup screen: {observed}"
+
+        home = final_stack[-2]
+        assert await pilot.click("#model-catalog-consent-deny") is True
+
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            observe_stack()
+            if app.screen is home:
+                break
+            await pilot.pause(0.01)
+        else:
+            pytest.fail(
+                "Deny did not dismiss consent back to the same HomeScreen; "
+                f"stack={[type(screen).__name__ for screen in app.screen_stack]}"
+            )
+
+        assert app.screen is home
+        assert home.is_mounted
+        assert home.query("#home-triage-grid")
