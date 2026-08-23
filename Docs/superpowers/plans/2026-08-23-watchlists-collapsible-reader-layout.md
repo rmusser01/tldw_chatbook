@@ -228,12 +228,15 @@
   - in management, always mount the `Region.ITEMS` factory as the centre canvas with only Navigation and Inspector grips;
   - keep body ids (`#wl-region-<value>`) and factory-based rebuild safety where existing screen/test contracts rely on them;
   - update grip labels in place and mount/remove only a pane body when effective collapse changes;
-  - remove generic collapsed-header/suffix/sole-centre machinery;
+  - remove generic collapsed-header/sole-centre rendering machinery, but retain the
+    `collapsed_suffixes=` constructor keyword and `set_collapsed_suffixes(...)` as documented
+    no-op compatibility because the live screen still calls them through Task 6;
   - keep `refresh_region_content`, `refresh_header_content`, and `apply_section_view` incremental—no `recompose=True` regression.
 
-  The compatibility adapter must be covered by a real-screen scoped-rebuild test and removed in
-  Task 7 when the last `hidden=` call sites are replaced. This makes the Task 4 checkpoint runnable
-  rather than leaving the screen and workbench APIs out of sync.
+  The `hidden=` and collapsed-suffix compatibility adapters must be covered by a real-screen
+  scoped-rebuild test and removed in Task 7 when their last screen call sites are replaced. This
+  makes the Task 4 checkpoint runnable rather than leaving the screen and workbench APIs out of
+  sync.
 
   In the same step, make the minimum structural CSS change required for this DOM to be usable:
   vertical workbench root, horizontal `#wl-workbench-body`, flexing permanent centre, fixed
@@ -369,7 +372,13 @@
 
 **Files:**
 
+- Modify: `tldw_chatbook/UI/Watchlists_Modules/region_layout.py`
+- Modify: `tldw_chatbook/UI/Watchlists_Modules/region_layout_store.py`
+- Modify: `tldw_chatbook/UI/Watchlists_Modules/watchlists_workbench.py`
 - Modify: `tldw_chatbook/UI/Screens/watchlists_collections_screen.py`
+- Modify: `Tests/Watchlists/test_region_layout.py`
+- Modify: `Tests/Watchlists/test_region_layout_store.py`
+- Modify: `Tests/Watchlists/test_watchlists_workbench.py`
 - Modify: `Tests/Watchlists/test_watchlists_collections_screen.py`
 - Modify: `Tests/Watchlists/test_watchlists_scoped_rebuilds.py`
 - Modify: `Tests/Watchlists/test_watchlists_cold_open_layout.py`
@@ -425,7 +434,10 @@
   At the end of this step, remove the Task 1 legacy `solo_region`, `_pre_solo`, `solo()`, permissive
   `toggle()`, and `collapsed_for_persistence()` compatibility plus Task 4's `hidden=` adapter. Change
   every remaining screen/workbench/store call site to strict preferred/effective APIs in the same
-  commit, and run an import/compose smoke test before the broader controller suite.
+  commit. Remove the screen's collapsed-suffix construction/update calls and then remove Task 4's
+  no-op `collapsed_suffixes=`/`set_collapsed_suffixes(...)` adapter. Update the Task 1 transitional
+  pure tests to assert the final compatibility members are absent, update the workbench/store tests,
+  and run an import/compose smoke test before the broader controller suite.
 
 - [ ] **Step 6: Make ordinary preference persistence acknowledge success.**
 
@@ -433,10 +445,16 @@
 
 - [ ] **Step 7: Run the controller tests.**
 
+  Run the Step 4 command plus the compatibility-removal suites:
+
+  ```bash
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Watchlists/test_region_layout.py Tests/Watchlists/test_region_layout_store.py Tests/Watchlists/test_watchlists_responsive_layout.py Tests/Watchlists/test_watchlists_workbench.py -q
+  ```
+
 - [ ] **Step 8: Commit the screen controller integration.**
 
   ```bash
-  git add tldw_chatbook/UI/Screens/watchlists_collections_screen.py Tests/Watchlists/test_watchlists_collections_screen.py Tests/Watchlists/test_watchlists_scoped_rebuilds.py Tests/Watchlists/test_watchlists_cold_open_layout.py Tests/Watchlists/test_watchlists_pagination.py
+  git add tldw_chatbook/UI/Watchlists_Modules/region_layout.py tldw_chatbook/UI/Watchlists_Modules/region_layout_store.py tldw_chatbook/UI/Watchlists_Modules/watchlists_workbench.py tldw_chatbook/UI/Screens/watchlists_collections_screen.py Tests/Watchlists/test_region_layout.py Tests/Watchlists/test_region_layout_store.py Tests/Watchlists/test_watchlists_responsive_layout.py Tests/Watchlists/test_watchlists_workbench.py Tests/Watchlists/test_watchlists_collections_screen.py Tests/Watchlists/test_watchlists_scoped_rebuilds.py Tests/Watchlists/test_watchlists_cold_open_layout.py Tests/Watchlists/test_watchlists_pagination.py
   git commit -m "feat(watchlists): derive responsive and focus layouts"
   ```
 
