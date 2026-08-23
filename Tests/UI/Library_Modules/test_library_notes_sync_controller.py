@@ -1217,11 +1217,15 @@ async def test_completed_undo_refreshes_open_history_once_and_nonterminal_recove
 
 async def test_delayed_completed_undo_cannot_overwrite_newer_history_page() -> None:
     runtime = _Runtime()
+    runtime.receipts = (_receipt("operation-1", "Page one"),)
     runtime.history[0] = (_history_row("operation-1", "Page one"),)
+    statuses: list[str] = []
     controller = LibraryNotesSyncController(
         runtime=runtime,
         import_controller=_ImportController(),
+        publish_snapshot=lambda snapshot: statuses.append(snapshot.status_line),
     )
+    await controller.refresh_conflict_receipts("root-1")
     await controller.show_resolution_history("root-1", page=1)
     refresh_started = asyncio.Event()
     release_refresh = asyncio.Event()
@@ -1229,6 +1233,7 @@ async def test_delayed_completed_undo_cannot_overwrite_newer_history_page() -> N
     async def completed_undo(
         root_id: str, operation_id: str
     ) -> NotesSyncExecutionResult:
+        runtime.receipts = ()
         return NotesSyncExecutionResult(
             "undo-operation-1", NotesSyncOperationState.COMPLETED, False
         )
@@ -1253,12 +1258,16 @@ async def test_delayed_completed_undo_cannot_overwrite_newer_history_page() -> N
     )
     await refresh_started.wait()
     await controller.show_resolution_history("root-1", page=2)
+    assert controller.snapshot.receipts[0].operation_id == "operation-1"
+    statuses.clear()
     release_refresh.set()
     await pending
 
     assert controller.snapshot.history.page == 2
     assert controller.snapshot.history.rows[0].operation_id == "operation-current"
+    assert controller.snapshot.receipts == ()
     assert controller.snapshot.status_line == "Resolution history loaded."
+    assert statuses == ["Resolution history loaded."]
 
 
 async def test_history_page_bounds_reject_before_runtime_call() -> None:

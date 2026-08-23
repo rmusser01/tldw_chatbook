@@ -901,18 +901,8 @@ class LibraryNotesSyncController:
             )
             self._publish()
             return
-        if history_page is not None and (
-            history_generation is None
-            or not self._history_is_current(root_id, history_page, history_generation)
-        ):
-            return
         try:
             receipts = await self._read_receipts(root_id)
-            history = (
-                await self._read_history(root_id, history_page)
-                if history_page is not None
-                else None
-            )
         except Exception:
             if not self._receipt_is_current(root_id, receipt_generation):
                 return
@@ -924,10 +914,50 @@ class LibraryNotesSyncController:
             return
         if not self._receipt_is_current(root_id, receipt_generation):
             return
+        history_is_current = history_page is not None and (
+            history_generation is not None
+            and self._history_is_current(root_id, history_page, history_generation)
+        )
+        if history_page is not None and not history_is_current:
+            self.refresh_roots(publish=False)
+            self._state = replace(self._state, receipts=receipts)
+            self._publish()
+            return
+        try:
+            history = (
+                await self._read_history(root_id, history_page)
+                if history_page is not None
+                else None
+            )
+        except Exception:
+            if not self._receipt_is_current(root_id, receipt_generation):
+                return
+            if history_page is not None and (
+                history_generation is None
+                or not self._history_is_current(
+                    root_id, history_page, history_generation
+                )
+            ):
+                self.refresh_roots(publish=False)
+                self._state = replace(self._state, receipts=receipts)
+                self._publish()
+                return
+            self._state = replace(
+                self._state,
+                receipts=receipts,
+                status_line="Undo finished, but its fresh projection is unavailable.",
+            )
+            self._publish()
+            return
+        if not self._receipt_is_current(root_id, receipt_generation):
+            return
         if history_page is not None and (
             history_generation is None
             or not self._history_is_current(root_id, history_page, history_generation)
         ):
+            self.refresh_roots(publish=False)
+            self._state = replace(self._state, receipts=receipts)
+            self._publish()
             return
         self.refresh_roots(publish=False)
         self._state = replace(
