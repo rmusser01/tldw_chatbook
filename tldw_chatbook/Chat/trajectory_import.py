@@ -43,6 +43,7 @@ from tldw_chatbook.Chat.trajectory_export import (
     TRACE_EXPORT_VERSION,
     TraceExportProfile,
     TrajectoryExportError,
+    _has_credential_material,
     _trace_digest,
     validate_trajectory_export,
 )
@@ -904,6 +905,11 @@ def _validate_v2(document: Mapping) -> tuple[dict[str, Any], list[Mapping[str, A
         raise TrajectoryImportError(
             "Trace v2 integrity digest mismatch: the file is corrupted or was tampered with; "
             "SHA-256 does not establish authenticity"
+        )
+    if _has_credential_material(document):
+        raise TrajectoryImportError(
+            "Trace v2 import blocked: credentials are forbidden in collaboration "
+            "bundles; request a privacy-safe export"
         )
     return dict(manifest), events
 

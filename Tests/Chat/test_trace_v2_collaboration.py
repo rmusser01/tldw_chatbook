@@ -628,6 +628,18 @@ def test_resigned_bundle_cannot_claim_digest_authenticity() -> None:
         trajectory_import.load_imported_trace(payload)
 
 
+def test_resigned_bundle_with_credentials_is_rejected_on_import() -> None:
+    payload = _build(_snapshot())
+    payload["events"][0]["payload"]["injected"] = "password=IMPORTED-SECRET"
+    _resign(payload)
+
+    with pytest.raises(
+        trajectory_import.TrajectoryImportError,
+        match="credentials.*forbidden|credential material",
+    ):
+        trajectory_import.load_imported_trace(payload)
+
+
 @pytest.mark.parametrize("field", ["sensitive", "included", "observed"])
 def test_resigned_bundle_rejects_contradictory_privacy_inventory(field: str) -> None:
     payload = _build(_snapshot())
