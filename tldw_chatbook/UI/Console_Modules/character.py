@@ -486,7 +486,7 @@ class ConsoleCharacterController:
                 await asyncio.to_thread(resolver) if resolver is not None else None
             )
         except Exception:  # noqa: BLE001 -- the 0.2s sync tick must fail soft.
-            logger.opt(exception=True).debug("avatar: expression resolution failed")
+            logger.debug("avatar: expression resolution failed")
             resolution = None
         if not self._request_is_current(request):
             return
@@ -511,7 +511,7 @@ class ConsoleCharacterController:
             try:
                 resolution = await asyncio.to_thread(resolver)
             except Exception:  # noqa: BLE001 -- base portrait fallback is fail-soft.
-                logger.opt(exception=True).debug("avatar: base resolution failed")
+                logger.debug("avatar: base resolution failed")
                 return
         if resolution is None:
             return
