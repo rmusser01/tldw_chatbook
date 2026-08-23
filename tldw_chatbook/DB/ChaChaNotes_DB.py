@@ -6036,9 +6036,11 @@ UPDATE db_schema_version
         background backfill, which opens a window in which a live message row
         is legitimately absent from the index. For an external-content FTS5
         table, issuing the 'delete' command for an unindexed rowid corrupts
-        the index -- with the v46-shaped trigger, a plain content UPDATE of a
-        not-yet-backfilled row raises ``database disk image is malformed`` on
-        the UPDATE itself. This step recreates ``messages_au`` and
+        the index: it silently poisons the doclists (and can raise
+        ``database disk image is malformed`` depending on index state -- an
+        empty index raises on the statement itself, a partly-filled one
+        absorbs dangling delete-markers with no error and a green
+        integrity-check). This step recreates ``messages_au`` and
         ``messages_ad`` with an ``EXISTS (... messages_fts_docsize ...)``
         membership test on their delete halves (see the migration file header
         for the full analysis, including why this is a separate step rather
@@ -10121,7 +10123,20 @@ UPDATE db_schema_version
             provider_continuation_json,
         )
         try:
-            with self.transaction():
+            # IMMEDIATE (task-21100 review): every hot `messages` writer reserves the
+            # write lock up front. These methods read (conversation/version checks)
+            # before writing inside one transaction; on a DEFERRED begin, any commit
+            # landing between the read snapshot and the first write -- e.g. a chunk of
+            # the first-boot messages_fts backfill -- kills the writer with a
+            # non-retryable `database is locked` that BYPASSES the busy timeout
+            # (snapshot-upgrade SQLITE_BUSY; see TransactionContextManager's comment).
+            # Scoping rule: exactly the read-then-write `messages`-table writers on
+            # user-facing chat paths, enumerated in Tests/DB/
+            # test_chachanotes_v47_messages_fts_backfill.py's HOT_MESSAGE_WRITERS
+            # (whose comment also names the writers deliberately left DEFERRED:
+            # blind single-statement writers have no snapshot to upgrade, and
+            # plain SQLITE_BUSY honors the timeout).
+            with self.transaction(immediate=True):
                 conv_cursor = self.execute_query(
                     "SELECT 1 FROM conversations WHERE id = ? AND deleted = 0",
                     (msg_data["conversation_id"],),
@@ -10188,7 +10203,8 @@ UPDATE db_schema_version
         now = self._get_current_utc_timestamp_iso()
 
         try:
-            with self.transaction() as conn:
+            # IMMEDIATE: hot messages writer; see add_message's scoping comment.
+            with self.transaction(immediate=True) as conn:
                 conversation = conn.execute(
                     "SELECT version, deleted FROM conversations WHERE id = ?",
                     (conversation_id,),
@@ -10599,7 +10615,8 @@ UPDATE db_schema_version
             CharactersRAGDBError: On database errors.
         """
         now = self._get_current_utc_timestamp_iso()
-        with self.transaction() as cursor:
+        # IMMEDIATE: hot messages writer; see add_message's scoping comment.
+        with self.transaction(immediate=True) as cursor:
             msg_row = cursor.execute(
                 "SELECT image_data FROM messages WHERE id = ? AND deleted = 0",
                 (message_id,),
@@ -10685,7 +10702,8 @@ UPDATE db_schema_version
         temp_position = 1_000_000
 
         now = self._get_current_utc_timestamp_iso()
-        with self.transaction() as cursor:
+        # IMMEDIATE: hot messages writer; see add_message's scoping comment.
+        with self.transaction(immediate=True) as cursor:
             msg_row = cursor.execute(
                 "SELECT image_data, image_mime_type FROM messages WHERE id = ? AND deleted = 0",
                 (message_id,),
@@ -10994,7 +11012,8 @@ UPDATE db_schema_version
         final_params_for_execute = tuple(current_params_for_set_clause + where_values)
 
         try:
-            with self.transaction() as conn:
+            # IMMEDIATE: hot messages writer; see add_message's scoping comment.
+            with self.transaction(immediate=True) as conn:
                 current = conn.execute(
                     "SELECT conversation_id, version, deleted, content, "
                     "provider_continuation_json "
@@ -11635,7 +11654,8 @@ UPDATE db_schema_version
         params = (now, next_version_val, self.client_id, message_id, expected_version)
 
         try:
-            with self.transaction() as conn:
+            # IMMEDIATE: hot messages writer; see add_message's scoping comment.
+            with self.transaction(immediate=True) as conn:
                 try:
                     current_db_version = self._get_current_db_version(
                         conn, "messages", "id", message_id
@@ -11706,7 +11726,8 @@ UPDATE db_schema_version
         no longer expose them.
         """
         now = self._get_current_utc_timestamp_iso()
-        with self.transaction() as conn:
+        # IMMEDIATE: hot messages writer; see add_message's scoping comment.
+        with self.transaction(immediate=True) as conn:
             current = conn.execute(
                 "SELECT conversation_id, version, deleted FROM messages WHERE id = ?",
                 (message_id,),
@@ -11872,7 +11893,8 @@ UPDATE db_schema_version
             CharactersRAGDBError: For database errors.
         """
         try:
-            with self.transaction() as conn:
+            # IMMEDIATE: hot messages writer; see add_message's scoping comment.
+            with self.transaction(immediate=True) as conn:
                 # Get the original message details
                 cursor = conn.execute(
                     """
@@ -12046,7 +12068,8 @@ UPDATE db_schema_version
             CharactersRAGDBError: For database errors.
         """
         try:
-            with self.transaction() as conn:
+            # IMMEDIATE: hot messages writer; see add_message's scoping comment.
+            with self.transaction(immediate=True) as conn:
                 # Get the variant info
                 cursor = conn.execute(
                     """

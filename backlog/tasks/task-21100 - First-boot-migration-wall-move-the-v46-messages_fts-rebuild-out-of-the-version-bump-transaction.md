@@ -228,4 +228,67 @@ only extends the existing per-file inventories with the two files on its own cha
 No new lessons-file entry: the traps hit here (per-file packaging inventory, ADR-029
 connect census) are already documented by their own guards, which is how they were
 caught.
+
+### Review fix round (2026-08-22, adversarial review: FIX-FIRST on two Majors)
+
+**Major 1 -- backfill chunks killed concurrent hot writers.** Confirmed by the
+reviewer and reproduced red-first here: every hot ChaChaNotes message writer ran a
+DEFERRED read-then-write transaction, and one backfill chunk committing inside the
+read->write gap kills the writer with a NON-RETRYABLE `database is locked`
+(snapshot-upgrade SQLITE_BUSY bypasses the 15 s busy timeout entirely; throttling
+the backfill cannot help -- one commit in the gap is fatal). Fix per the
+controller's decision: the hot `messages` writers now open
+`self.transaction(immediate=True)` (the in-repo seq-assignment precedent), so the
+write lock is reserved before the first read and the backfill chunk queues on the
+busy timeout instead. Converted (scoped, not file-wide; each site carries a comment,
+the full scoping rule at `add_message`): `add_message` (ChaChaNotes_DB.py:10138),
+`create_assistant_with_continuation` (:10206), `append_message_attachment_with_
+metadata` (:10618), `swap_message_attachment_with_scalar` (:10705), `update_message`
+(:11015), `soft_delete_message` (:11657), `soft_delete_message_subtree` (:11729),
+`create_message_variant` (:11896), `select_message_variant` (:12071).
+`update_message_feedback` is covered by delegation to `update_message`. Deliberately
+NOT converted (rule documented in the test's `HOT_MESSAGE_WRITERS` comment): the
+blind single-statement writers (`update_message_usage_local`,
+`update_message_metadata_local`, `append_message_exchanges_local`) -- with no read
+before the write there is no snapshot to upgrade, and plain SQLITE_BUSY honors the
+timeout. Regression tests: `test_hot_writer_survives_a_backfill_commit_inside_its_
+transaction` (the reviewer's deterministic interleave through the production
+`add_message`: read snapshot -> one real backfill chunk from a second connection ->
+the write; RED on the pre-fix code with `sqlite3.OperationalError: database is
+locked` at ChaChaNotes_DB.py:3335, GREEN after -- and it additionally asserts the
+chunk was BLOCKED, proving the lock ordering) and `test_hot_message_writers_reserve_
+the_write_lock_up_front` (structural census over the enumerated writers, also
+red-first).
+
+**Major 2 -- the `messages_ad` membership guard had no behavioural witness.**
+Confirmed: mutating the guard away left the window test GREEN, because against a
+partly-filled index the unguarded FTS 'delete' of an unindexed row corrupts
+SILENTLY -- no raise, integrity-check(0) stays green, and the only observable is
+`messages_fts_data` growing dangling delete-marker blocks (re-measured here:
+(3,40)->(4,70); the raise I originally documented is index-STATE-dependent -- an
+empty index raises on the statement, a partly-filled one absorbs the poison). Fix:
+`_fts_data_footprint` (COUNT + SUM(LENGTH(block)) over `messages_fts_data`)
+witnesses around BOTH hard-delete-of-unindexed cells in the window test -- the
+un-backfilled-live case and a new hard-delete-of-TOMBSTONED case (the latent
+pre-existing bug) -- asserting the physical storage does not move. Mutation-proven:
+stripping the ad guard now reds the window test at the new witness ("the
+messages_ad membership guard is not holding"); restored, 13/13 green. All five
+comment sites claiming an unconditional malformed raise corrected to "silently
+poisons the doclists (and can raise malformed depending on index state)": the v47
+SQL header (two spots), `_migrate_from_v46_to_v47`'s docstring, the v45->v46 SQL
+comment, and the test module docstring + standalone-repro docstring.
+
+Fix-round test evidence (test-logs/task21100-fixround-*): interleave+census red
+(2 failed) -> conversion -> green (2 passed); v47 file 13 passed; new/changed files
+37 passed; Tests/ChaChaNotesDB + Tests/DB 1485 passed / 1 skipped with only the
+known pre-existing dev red (sql_validation actor tables). The converted writers'
+heavy consumers were swept whole: Tests/Character_Chat 917 passed / 1 failed --
+that failure reproduces verbatim on pristine dev; Tests/Chat first half 83 failed /
+3424 passed / 61 skipped / 11 errors, EXACTLY matching pristine dev at the same SHA
+on all four counts; Tests/Chat second half's failures isolate to 19 files which,
+run as one selection on BOTH trees, produce an identical 46 failed / 591 passed /
+20 errors -- zero failures attributable to this branch. One file
+(`Tests/Chat/test_fleet_teardown_notice.py`) hangs >420 s under a 60 s per-test
+timeout on PRISTINE DEV as well as here (it is what killed the earlier whole-suite
+background runs); excluded on both sides and left for its owner.
 <!-- SECTION:NOTES:END -->

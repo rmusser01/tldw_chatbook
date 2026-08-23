@@ -451,9 +451,10 @@ END;
    search sees a consistent, progressively-filling index; the triggers keep
    new and edited rows indexed regardless of backfill progress, and the
    v46->v47 step re-guards the FTS 'delete' halves on index membership so a
-   write to a not-yet-backfilled row cannot corrupt the index (without that
-   guard the write itself raises "database disk image is malformed";
-   reproduced in Tests/DB/test_chachanotes_v47_messages_fts_backfill.py).
+   write to a not-yet-backfilled row cannot corrupt the index (unguarded, it
+   silently poisons the doclists, and can raise "database disk image is
+   malformed" depending on index state; both forms pinned in
+   Tests/DB/test_chachanotes_v47_messages_fts_backfill.py).
 
    `keyword_collections_fts` and `world_books_fts` are tiny (user-curated
    lists, not chat history), so their repair stays inline and complete. */

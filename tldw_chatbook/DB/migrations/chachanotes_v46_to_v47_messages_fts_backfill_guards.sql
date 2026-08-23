@@ -11,13 +11,16 @@
 -- .backfill_messages_fts`). That opens a window in which a LIVE message row
 -- is legitimately absent from the index -- and for an external-content FTS5
 -- table, issuing the 'delete' command for a rowid that is not in the index
--- corrupts it. This is not theoretical or merely latent: with the v46-shaped
--- trigger (`WHERE old.deleted = 0` alone), a plain content UPDATE of a
--- not-yet-backfilled row raises `sqlite3.DatabaseError: database disk image
--- is malformed` on the UPDATE itself (reproduced in
--- Tests/DB/test_chachanotes_v47_messages_fts_backfill.py). It is the same
--- corruption class task-19567 fixed for tombstoned rows, reopened by the
--- deferral for un-backfilled rows.
+-- corrupts it: it silently poisons the doclists (and can raise `database
+-- disk image is malformed` depending on index state -- an empty index
+-- raises on the very statement; a partly-filled one absorbs dangling
+-- delete-markers into `messages_fts_data` with NO error and a GREEN
+-- integrity-check, measured (3,40)->(4,70) on this schema). Both forms are
+-- pinned in Tests/DB/test_chachanotes_v47_messages_fts_backfill.py (the
+-- raising form as a standalone reproduction, the silent form via
+-- `_fts_data_footprint` witnesses). It is the same corruption class
+-- task-19567 fixed for tombstoned rows, reopened by the deferral for
+-- un-backfilled rows.
 --
 -- THE GUARD
 -- ---------
@@ -40,7 +43,8 @@
 --     survived task-19567 because only `*_au` triggers were repaired. It
 --     gets the membership test alone: hard-deleting an un-backfilled row must
 --     do nothing, and hard-deleting a TOMBSTONED row (never in the index)
---     corrupted the index on the shipped code -- a latent pre-existing bug
+--     silently poisoned the doclists on the shipped code (or raised
+--     malformed, depending on index state) -- a latent pre-existing bug
 --     this step fixes as a side effect. Membership-only (rather than adding
 --     `old.deleted = 0`) also means a row that somehow violated the
 --     invariant would be cleaned out of the index rather than stranded in it.

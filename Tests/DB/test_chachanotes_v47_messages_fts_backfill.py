@@ -10,10 +10,13 @@ delivers the reinsert as a chunked, resumable background backfill
 (``CharactersRAGDB.backfill_messages_fts`` driven by
 ``DB/chachanotes_fts_backfill.py``). The v46->v47 step re-guards the FTS
 'delete' halves of ``messages_au``/``messages_ad`` on ``messages_fts_docsize``
-membership, because with the v46-shaped guard a plain content UPDATE of a
-not-yet-backfilled row raises ``database disk image is malformed`` on the
-UPDATE itself -- ``test_the_v46_shaped_trigger_would_corrupt_during_the_window``
-below keeps that reproduction.
+membership, because an FTS 'delete' of a not-yet-backfilled row silently
+poisons the doclists (and can raise ``database disk image is malformed``
+depending on index state: an empty index raises, a partly-filled one absorbs
+the poison with no error and a green integrity-check) --
+``test_the_v46_shaped_trigger_would_corrupt_during_the_window`` keeps the
+raising reproduction, and the ``_fts_data_footprint`` witnesses in the window
+test catch the silent form.
 
 Search semantics during the window, chosen deliberately: the index is
 empty-but-consistent after the upgrade commits and fills oldest-rowid-first in
@@ -34,6 +37,7 @@ index is queried DIRECTLY (never through a consumer that re-filters on
 
 from __future__ import annotations
 
+import inspect
 import os
 import signal
 import sqlite3
@@ -41,6 +45,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -48,7 +53,11 @@ from Tests.ChaChaNotesDB.historical_bootstrap import chachanotes_db_at_version
 from tldw_chatbook.DB.chachanotes_fts_backfill import (
     backfill_chachanotes_messages_fts,
 )
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, SchemaError
+from tldw_chatbook.DB.ChaChaNotes_DB import (
+    CharactersRAGDB,
+    CharactersRAGDBError,
+    SchemaError,
+)
 
 SCHEMA_NAME = CharactersRAGDB._SCHEMA_NAME
 
@@ -90,6 +99,22 @@ def _live_rowids(db: CharactersRAGDB) -> set[int]:
             "SELECT rowid FROM messages WHERE deleted = 0"
         ).fetchall()
     }
+
+
+def _fts_data_footprint(db: CharactersRAGDB) -> tuple[int, int]:
+    """(row count, total block bytes) of the index's physical storage.
+
+    The review of this task proved that an unguarded FTS 'delete' of an
+    unindexed row against a partly-filled index corrupts SILENTLY: no
+    exception, integrity-check(0) green, MATCH results unchanged -- the only
+    observable is `messages_fts_data` growing dangling delete-marker blocks
+    (measured (3,40)->(4,70) on this schema). So the guard's behavioural
+    witness must measure the storage itself.
+    """
+    row = db.execute_query(
+        "SELECT COUNT(*), COALESCE(SUM(LENGTH(block)), 0) FROM messages_fts_data"
+    ).fetchone()
+    return (row[0], row[1])
 
 
 def _assert_index_structurally_sound(db: CharactersRAGDB) -> None:
@@ -363,11 +388,21 @@ def test_writes_during_the_backfill_window_do_not_corrupt_the_index(
         migrated.soft_delete_message(message_ids[2], expected_version=1)
         _assert_index_structurally_sound(migrated)
 
-        # Hard-delete an un-backfilled row: the previously unguarded
-        # messages_ad corrupted the index here ("database disk image is
-        # malformed" on the DELETE); with the membership guard it is a no-op.
+        # Hard-delete an un-backfilled row: unguarded, messages_ad SILENTLY
+        # poisons the doclists here (and can raise "database disk image is
+        # malformed" depending on index state -- against this partly-filled
+        # index it is the silent form: no raise, integrity-check(0) stays
+        # green, and `messages_fts_data` grows a dangling delete-marker
+        # block). MATCH assertions cannot see that, so the witness measures
+        # the index's physical storage directly: with the membership guard
+        # the delete is a no-op and `messages_fts_data` must not move.
+        fts_data_before = _fts_data_footprint(migrated)
         with migrated.transaction() as conn:
             conn.execute("DELETE FROM messages WHERE id = ?", (message_ids[3],))
+        assert _fts_data_footprint(migrated) == fts_data_before, (
+            "hard-deleting an unindexed row wrote into messages_fts_data -- "
+            "the messages_ad membership guard is not holding"
+        )
         _assert_index_structurally_sound(migrated)
 
         # Converge. 6 seeded - 1 soft-deleted - 1 hard-deleted - 1 indexed
@@ -384,19 +419,38 @@ def test_writes_during_the_backfill_window_do_not_corrupt_the_index(
             conn.execute("DELETE FROM messages WHERE id = ?", (message_ids[4],))
         assert _fts_rowids(migrated, "windowneedle004") == []
         _assert_index_structurally_sound(migrated)
+
+        # Hard-delete a TOMBSTONED row (soft-deleted above, so never indexed):
+        # the pre-existing latent messages_ad bug. Same physical-storage
+        # witness -- unguarded, this either raises or silently appends
+        # dangling delete-markers depending on index state; guarded, it must
+        # not touch messages_fts_data at all.
+        fts_data_before = _fts_data_footprint(migrated)
+        with migrated.transaction() as conn:
+            conn.execute("DELETE FROM messages WHERE id = ?", (message_ids[2],))
+        assert _fts_data_footprint(migrated) == fts_data_before, (
+            "hard-deleting a tombstoned row wrote into messages_fts_data -- "
+            "the messages_ad membership guard is not holding"
+        )
+        _assert_index_structurally_sound(migrated)
     finally:
         migrated.close_connection()
 
 
 def test_the_v46_shaped_trigger_would_corrupt_during_the_window(tmp_path: Path):
-    """Keep the reproduction that makes v47 mandatory, not defensive.
+    """Keep the raising reproduction that makes v47 mandatory, not defensive.
 
     With the v46 trigger shape (``WHERE old.deleted = 0`` alone), editing a
-    live row that is not in the external-content index corrupts it -- SQLite
-    raises ``database disk image is malformed`` on the UPDATE itself. If this
-    test ever starts failing because SQLite stops objecting, the guard is
-    still required for correctness (a blind 'delete' also poisons term
-    lists), but the incident evidence should be re-verified.
+    live row that is not in the external-content index corrupts it. Whether
+    SQLite RAISES is index-state-dependent: against an empty index (this
+    minimal table, and a freshly cleared real one) the UPDATE itself raises
+    ``database disk image is malformed``; against a partly-filled index the
+    same 'delete' silently poisons the doclists with no error and a green
+    integrity-check -- the ``_fts_data_footprint`` witnesses in
+    ``test_writes_during_the_backfill_window_do_not_corrupt_the_index`` catch
+    that form. If this test ever starts failing because SQLite stops
+    objecting, the guard is still required for correctness; re-verify the
+    incident evidence.
     """
     probe = sqlite3.connect(tmp_path / "shape.db")
     try:
@@ -508,3 +562,123 @@ def test_backfill_chunk_size_must_be_positive(db):
     """A non-positive LIMIT would report completion over a real backlog."""
     with pytest.raises(ValueError, match="chunk_size"):
         db.backfill_messages_fts(chunk_size=0)
+
+
+# ---------------------------------------------------------------------------
+# review fix round: the backfill must not kill concurrent hot writers
+# ---------------------------------------------------------------------------
+#: Every writer on the `messages` table that runs a read-then-write
+#: transaction on a user-facing chat path. A DEFERRED begin that reads before
+#: writing can hit SQLite's non-retryable snapshot-upgrade SQLITE_BUSY when a
+#: concurrent writer (the per-chunk backfill commits during the whole
+#: first-boot window) commits inside the read->write gap -- the writer dies
+#: with `database is locked` INSTANTLY, bypassing the 15 s busy timeout
+#: (the exact failure TransactionContextManager's own comment documents,
+#: with `immediate=True` as its documented cure). These must all reserve the
+#: write lock up front. `update_message_feedback` is covered by delegation to
+#: `update_message`; the blind single-statement writers
+#: (`update_message_usage_local`, `update_message_metadata_local`,
+#: `append_message_exchanges_local`) are deliberately NOT here -- with no
+#: read before their write there is no snapshot to upgrade, and plain
+#: SQLITE_BUSY honors the busy timeout.
+HOT_MESSAGE_WRITERS = (
+    "add_message",
+    "create_assistant_with_continuation",
+    "append_message_attachment_with_metadata",
+    "swap_message_attachment_with_scalar",
+    "update_message",
+    "soft_delete_message",
+    "soft_delete_message_subtree",
+    "create_message_variant",
+    "select_message_variant",
+)
+
+
+def test_hot_writer_survives_a_backfill_commit_inside_its_transaction(
+    tmp_path: Path,
+):
+    """The reviewer's deterministic interleave, through the production writer.
+
+    Sequence: `add_message` enters its transaction and takes its read
+    snapshot (the conversation SELECT); one backfill chunk then commits from
+    another connection; the writer performs its INSERT. On the DEFERRED
+    shape this raises `database is locked` instantly (snapshot-upgrade
+    SQLITE_BUSY bypasses the busy timeout entirely -- throttling the
+    backfill cannot help, ONE commit inside the gap is fatal). With
+    `immediate=True` the writer holds the write lock before its first read,
+    so the backfill chunk queues on the busy timeout instead and the user's
+    message lands.
+    """
+    db_path = tmp_path / "chachanotes.db"
+    _seed_v45(db_path, [f"interleaveneedle{i:03d} body" for i in range(8)])
+
+    writer = CharactersRAGDB(db_path, client_id="v47-writer")
+    backfiller = CharactersRAGDB(db_path, client_id="v47-backfiller")
+    try:
+        assert _docsize_rowids(writer) == set()  # the window is open
+        conversation_id = writer.add_conversation(
+            {"title": "hot", "character_id": 1}
+        )
+
+        outcome: dict[str, str] = {}
+        original_execute_query = CharactersRAGDB.execute_query
+
+        def interleaved(self, query, params=None, **kwargs):
+            if (
+                self is writer
+                and "INSERT INTO messages" in query
+                and "chunk" not in outcome
+            ):
+                # The writer is between its read snapshot and its first
+                # write: commit one real backfill chunk from a second
+                # connection right here. Under the fixed (IMMEDIATE) shape
+                # the writer already holds the write lock, so the chunk
+                # must time out and queue for later instead of committing.
+                backfiller.get_connection().execute("PRAGMA busy_timeout = 200")
+                try:
+                    indexed, _ = backfiller.backfill_messages_fts(chunk_size=1)
+                    outcome["chunk"] = f"committed:{indexed}"
+                except (sqlite3.OperationalError, CharactersRAGDBError) as exc:
+                    outcome["chunk"] = f"blocked:{exc}"
+            return original_execute_query(self, query, params, **kwargs)
+
+        with patch.object(CharactersRAGDB, "execute_query", interleaved):
+            message_id = writer.add_message(
+                {
+                    "conversation_id": conversation_id,
+                    "sender": "user",
+                    "content": "hotneedle first message after the upgrade",
+                }
+            )
+
+        assert message_id, "the user's first message after the upgrade must land"
+        assert "chunk" in outcome, "the interleave never fired -- test is vacuous"
+        # The writer held the write lock, so the chunk queued instead of
+        # committing into the gap; nothing is lost -- it lands right after.
+        assert outcome["chunk"].startswith("blocked"), outcome["chunk"]
+        assert _fts_rowids(writer, "hotneedle") != []
+        assert backfill_chachanotes_messages_fts(backfiller) == 8
+        assert _docsize_rowids(writer) == _live_rowids(writer)
+    finally:
+        writer.close_connection()
+        backfiller.close_connection()
+
+
+def test_hot_message_writers_reserve_the_write_lock_up_front():
+    """Structural backstop for the interleave test above.
+
+    The behavioural witness exercises `add_message`; this pins the same
+    IMMEDIATE shape on every enumerated hot writer so a new or reverted
+    DEFERRED read-then-write on the chat path fails here by name. Each of
+    these methods has exactly one `self.transaction(` call site (verified by
+    AST when the list was built), so the two assertions are precise.
+    """
+    for name in HOT_MESSAGE_WRITERS:
+        source = inspect.getsource(getattr(CharactersRAGDB, name))
+        assert "self.transaction(immediate=True)" in source, (
+            f"{name} must reserve the write lock up front (see "
+            "HOT_MESSAGE_WRITERS)"
+        )
+        assert "self.transaction()" not in source, (
+            f"{name} still opens a DEFERRED transaction"
+        )
