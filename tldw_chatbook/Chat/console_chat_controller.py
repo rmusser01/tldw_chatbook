@@ -5584,24 +5584,15 @@ class ConsoleChatController:
                 initiator="agent",
             )
 
-        # expanduser() before resolve(): a configured "~/repo" must land
-        # under the user's home, not literal "~" under the cwd.
         if project_root is None:
-            raw_root = str(
-                (
-                    turn_context.tool_configuration.get("workspace_root", "")
-                    if turn_context is not None
-                    else get_cli_setting("console", "workspace_root", "")
-                )
-                or ""
-            ).strip()
-            root = (
-                Path(raw_root).expanduser().resolve()
-                if raw_root
-                else Path(os.getcwd()).resolve()
-            )
+            snapshot = turn_context.scratch_space if turn_context is not None else None
+            if snapshot is None:
+                return None, None
+            root = snapshot.root
+            authority_scope = functools.partial(self._scratch_spaces.lease, snapshot)
         else:
             root = project_root
+            authority_scope = None
         subscriptions_db = getattr(self.app, "subscriptions_db", None)
         watchlists_service = WatchlistsToolService(
             db_resolver=lambda: subscriptions_db,
@@ -5612,6 +5603,7 @@ class ConsoleChatController:
         provider = LocalToolProvider(
             workspace_root=root,
             allow_write=allow_write,
+            authority_scope=authority_scope,
             root_guard=(
                 project_root_guard
                 if project_root_guard is not None

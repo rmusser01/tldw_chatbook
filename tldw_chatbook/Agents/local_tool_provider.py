@@ -14,7 +14,16 @@ import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Iterator, Mapping, NotRequired, TypedDict
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    ContextManager,
+    Iterator,
+    Mapping,
+    NotRequired,
+    TypedDict,
+)
 
 from loguru import logger
 
@@ -95,6 +104,23 @@ LOCAL_GATE_ERROR_REFUSAL = (
 )
 LOCAL_ROOT_CHANGED_REFUSAL = (
     "Selected workspace root changed after dispatch started; the tool was not run."
+)
+
+_PATH_AUTHORITY_LOCAL_NAMES = frozenset(
+    {
+        "fs_list",
+        "fs_read",
+        "fs_write",
+        "fs_edit",
+        "fs_patch",
+        "fs_glob",
+        "fs_grep",
+        "git_status",
+        "git_diff",
+        "git_log",
+        "git_blame",
+        "git_branches",
+    }
 )
 
 _MAX_RESULT_BYTES = 32 * 1024
@@ -257,17 +283,18 @@ class LocalToolProvider:
         no_callback_refusal: str | None = None,
         allow_write: bool = True,
         root_guard: Callable[[], bool] | None = None,
+        authority_scope: Callable[[], ContextManager[Path]] | None = None,
     ) -> None:
         self._root = workspace_root
         selected_specs = (
             specs
             if specs is not None
             else _default_specs(
-                 workspace_root,
-                 todo_store=todo_store,
-                 on_todo_change=on_todo_change,
-                 watchlists_service=watchlists_service,
-             )
+                workspace_root,
+                todo_store=todo_store,
+                on_todo_change=on_todo_change,
+                watchlists_service=watchlists_service,
+            )
         )
         if not allow_write:
             selected_specs = [
@@ -275,10 +302,7 @@ class LocalToolProvider:
                 for spec in selected_specs
                 if spec.name not in {"fs_write", "fs_edit", "fs_patch"}
             ]
-        self._specs = {
-            s.name: s
-            for s in selected_specs
-        }
+        self._specs = {s.name: s for s in selected_specs}
         self._resolve_state = resolve_state or (
             lambda hub: EffectiveToolState(state="ask", origin="global_default")
         )
@@ -289,6 +313,7 @@ class LocalToolProvider:
         self._record_decision = record_decision
         self._no_callback_refusal = no_callback_refusal
         self._root_guard = root_guard
+        self._authority_scope = authority_scope
         # PR2a Task 5: keyed (run_id, tool_name), not tool_name -- one
         # provider instance is shared by a parent run and every sub-agent
         # it spawns, so a name-keyed dict let any run's turn clear or
@@ -305,6 +330,11 @@ class LocalToolProvider:
 
     def _tool_id(self, name: str) -> str:
         return f"{SOURCE}:{name}"
+
+    @property
+    def workspace_root(self) -> Path:
+        """Return the canonical confinement root for this provider."""
+        return Path(self._root).resolve()
 
     def list_catalog(self) -> list[ToolCatalogEntry]:
         """List this run's local tools as catalog entries.
@@ -426,6 +456,16 @@ class LocalToolProvider:
     def path_targets(
         self, tool_id: str, args: Mapping[str, Any]
     ) -> tuple[ToolPathTarget, ...]:
+        """Map path targets while holding scratch authority when required."""
+        name = tool_id.split(":", 1)[-1]
+        if self._authority_scope is not None and name in _PATH_AUTHORITY_LOCAL_NAMES:
+            with self._authority_scope():
+                return self._path_targets_without_authority(tool_id, args)
+        return self._path_targets_without_authority(tool_id, args)
+
+    def _path_targets_without_authority(
+        self, tool_id: str, args: Mapping[str, Any]
+    ) -> tuple[ToolPathTarget, ...]:
         """Map supported local file and git calls to validated path targets."""
         name = tool_id.split(":", 1)[-1]
         if name not in self._specs:
@@ -462,9 +502,7 @@ class LocalToolProvider:
             try:
                 plans = parse_patch_targets(args["diff"])
             except FilesystemPatchError as exc:
-                raise LocalToolError(
-                    f"fs_patch failed [{exc.reason_code}]"
-                ) from exc
+                raise LocalToolError(f"fs_patch failed [{exc.reason_code}]") from exc
             targets: list[ToolPathTarget] = []
             seen: set[Path] = set()
             for plan in plans:
@@ -697,14 +735,31 @@ class LocalToolProvider:
         # writes, so such a call resolves through the fresh gate below.
         verdict = self._verdict_for(name, args, current_run_id())
         if verdict == "allow":
-            if not self._root_is_valid():
-                return ToolResult.blocked(LOCAL_ROOT_CHANGED_REFUSAL)
-            try:
-                return ToolResult(ok=True, content=_fit_result(spec.handler(args)))
-            except Exception as exc:  # noqa: BLE001 — never raises across the boundary
-                return ToolResult(
-                    ok=False, error=(str(exc) or repr(exc))[:_MAX_ERROR_CHARS]
-                )
+
+            def _invoke_allowed() -> ToolResult:
+                if not self._root_is_valid():
+                    return ToolResult.blocked(LOCAL_ROOT_CHANGED_REFUSAL)
+                try:
+                    return ToolResult(
+                        ok=True,
+                        content=_fit_result(spec.handler(args)),
+                    )
+                except Exception as exc:  # noqa: BLE001 — protocol boundary
+                    return ToolResult(
+                        ok=False,
+                        error=(str(exc) or repr(exc))[:_MAX_ERROR_CHARS],
+                    )
+
+            if (
+                self._authority_scope is not None
+                and name in _PATH_AUTHORITY_LOCAL_NAMES
+            ):
+                try:
+                    with self._authority_scope():
+                        return _invoke_allowed()
+                except Exception:  # noqa: BLE001 - lease failure is fail-closed
+                    return ToolResult.blocked(LOCAL_ROOT_CHANGED_REFUSAL)
+            return _invoke_allowed()
         if verdict == "timeout":
             self._record_decision_safe(self.hub_tool_for(name), "denied-timeout")
             return ToolResult.blocked(LOCAL_TIMEOUT_REFUSAL)

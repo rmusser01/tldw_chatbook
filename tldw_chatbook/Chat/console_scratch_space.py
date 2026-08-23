@@ -84,7 +84,7 @@ class ConsoleScratchSpaceManager:
                     prefix="tldw-console-",
                     dir=str(self._temp_parent) if self._temp_parent is not None else None,
                 )
-                root = Path(raw_root)
+                root = Path(raw_root).resolve()
                 os.chmod(root, 0o700)
                 metadata = root.lstat()
                 if root.is_symlink() or not stat.S_ISDIR(metadata.st_mode):

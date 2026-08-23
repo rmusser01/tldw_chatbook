@@ -12,13 +12,16 @@ import asyncio
 import json
 import threading
 from collections.abc import Sequence
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 from typing import (
     Any,
     Callable,
+    ContextManager,
     Iterable,
+    Iterator,
     Literal,
     Mapping,
     NamedTuple,
@@ -142,9 +145,7 @@ WAIT_AGENTS_SCHEMA = ToolSchema(
             "ids": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": (
-                    "Handle ids to wait for (omit for all of them)."
-                ),
+                "description": ("Handle ids to wait for (omit for all of them)."),
             }
         },
         "required": [],
@@ -200,8 +201,7 @@ SEND_TO_AGENT_SCHEMA = ToolSchema(
             "message": {
                 "type": "string",
                 "description": (
-                    "The steering text to deliver. Plain text; must be "
-                    "non-empty."
+                    "The steering text to deliver. Plain text; must be non-empty."
                 ),
             },
         },
@@ -430,7 +430,8 @@ RUN_LOG_STATS_TOOL_SCHEMA = ToolSchema(
         "properties": {
             "group_by": {
                 "type": "string",
-                "description": "Dimension to group by: " + ", ".join(STATS_GROUP_BY_FIELDS)
+                "description": "Dimension to group by: "
+                + ", ".join(STATS_GROUP_BY_FIELDS)
                 + " (default: tool). An unrecognised value falls back to tool.",
             },
             "tool": {
@@ -646,6 +647,18 @@ def build_gateable_tool(entry: GateableTool) -> Any:
     return getattr(module, entry.factory_name)()
 
 
+_FILE_AUTHORITY_BUILTIN_NAMES = frozenset(
+    {
+        "read_file",
+        "write_file",
+        "list_directory",
+        "glob_files",
+        "grep_files",
+        "expand_document",
+    }
+)
+
+
 class BuiltinToolProvider:
     """Wraps tool_executor's built-in tools behind the provider interface."""
 
@@ -658,6 +671,8 @@ class BuiltinToolProvider:
         ephemeral: bool = False,
         diff_sink: Callable[[tuple[str, str, str, str]], None] | None = None,
         instruction_root: Path | None = None,
+        sandbox_root: Path | None = None,
+        sandbox_lease: Callable[[], ContextManager[Path]] | None = None,
     ) -> None:
         # settings-workspaces-folder-roots spec §3: the run's workspace,
         # bound around every tool execution (see `invoke`) so file tools
@@ -668,6 +683,10 @@ class BuiltinToolProvider:
         # in `builtin_tool_gate.builtin_permission_rows`) leaves
         # `allowed_file_roots` to fall back to the active workspace.
         self._workspace_id = workspace_id
+        self._sandbox_root = (
+            Path(sandbox_root).resolve() if sandbox_root is not None else None
+        )
+        self._sandbox_lease = sandbox_lease
         self._instruction_root = (
             Path(instruction_root).resolve() if instruction_root is not None else None
         )
@@ -749,6 +768,27 @@ class BuiltinToolProvider:
         # a `deque.append` (single-argument contract, atomic in CPython).
         self._diff_sink = diff_sink
 
+    @property
+    def sandbox_root(self) -> Path | None:
+        """Return this provider's explicit run sandbox, when one was bound."""
+        return self._sandbox_root
+
+    @contextmanager
+    def _file_authority(self) -> Iterator[None]:
+        """Keep the explicit scratch generation alive for one file access."""
+        from tldw_chatbook.Tools.workspace_file_roots import run_file_sandbox
+
+        lease = (
+            self._sandbox_lease() if self._sandbox_lease is not None else nullcontext()
+        )
+        sandbox = (
+            run_file_sandbox(self._sandbox_root)
+            if self._sandbox_root is not None
+            else nullcontext()
+        )
+        with lease, sandbox:
+            yield
+
     def _tool_id(self, name: str) -> str:
         return f"{self.SOURCE}:{name}"
 
@@ -788,16 +828,14 @@ class BuiltinToolProvider:
         from tldw_chatbook.Tools.workspace_file_roots import run_workspace
         from tldw_chatbook.Utils.path_validation import validate_path_multi
 
-        with run_workspace(self._workspace_id):
-            roots = allowed_file_roots(
-                write=write, sandbox_root=_tool_sandbox_root()
-            )
-        path = validate_path_multi(value, roots)
-        try:
-            path.relative_to(root)
-        except ValueError:
-            return (ToolPathTarget(path=path, kind="outside"),)
-        return (ToolPathTarget(path=path, kind=kind),)
+        with self._file_authority(), run_workspace(self._workspace_id):
+            roots = allowed_file_roots(write=write, sandbox_root=_tool_sandbox_root())
+            path = validate_path_multi(value, roots)
+            try:
+                path.relative_to(root)
+            except ValueError:
+                return (ToolPathTarget(path=path, kind="outside"),)
+            return (ToolPathTarget(path=path, kind=kind),)
 
     def _resolve_gate(self) -> Any:
         """Return the provider's gate, building one lazily on first use.
@@ -879,6 +917,11 @@ class BuiltinToolProvider:
             return ToolResult.blocked(refusal)
         from tldw_chatbook.Tools.workspace_file_roots import run_workspace
 
+        authority = (
+            self._file_authority()
+            if name in _FILE_AUTHORITY_BUILTIN_NAMES
+            else nullcontext()
+        )
         try:
             # Providers bridge async tools; the loop's interface is sync.
             # Safe here: the service runs in a worker thread with no
@@ -889,7 +932,7 @@ class BuiltinToolProvider:
             # concurrent run's. `self._workspace_id=None` keeps the
             # ContextVar at `None`, which is `allowed_file_roots`' own
             # documented fallback to the active workspace.
-            with run_workspace(self._workspace_id):
+            with authority, run_workspace(self._workspace_id):
                 raw = asyncio.run(tool.execute(**args))
         except Exception as exc:  # noqa: BLE001 — captured, never escapes
             return ToolResult(ok=False, error=str(exc))
@@ -1196,9 +1239,7 @@ class ToolCatalogRegistry:
     def _owner_record_for_name(self, name: str) -> _ToolOwnerRecord | None:
         return self._ensure_catalog_cache().by_name.get(name)
 
-    def resolve_owner_for_name(
-        self, name: str
-    ) -> tuple[str, ToolProvider] | None:
+    def resolve_owner_for_name(self, name: str) -> tuple[str, ToolProvider] | None:
         """Atomically resolve one LLM-facing name to its cached first owner."""
         record = self._owner_record_for_name(name)
         if record is None:

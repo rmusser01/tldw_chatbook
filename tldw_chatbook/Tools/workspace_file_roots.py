@@ -23,6 +23,9 @@ from loguru import logger
 _RUN_WORKSPACE_ID: ContextVar[str | None] = ContextVar(
     "tldw_run_workspace_id", default=None
 )
+_RUN_FILE_SANDBOX_ROOT: ContextVar[Path | None] = ContextVar(
+    "tldw_run_file_sandbox_root", default=None
+)
 
 #: The directory the app process was launched from, captured once at boot by
 #: ``set_launch_cwd``. The workspace-context note (``workspace_context_note``)
@@ -165,9 +168,7 @@ def workspace_context_note(
             suffix = f" ({', '.join(tags)})" if tags else ""
             root_lines.append(f"  - {display}{suffix}")
     except Exception:
-        logger.opt(exception=True).debug(
-            "workspace_context_note: registry unavailable"
-        )
+        logger.opt(exception=True).debug("workspace_context_note: registry unavailable")
         return _NOTE_UNAVAILABLE
     launch_label = f"{launch.name}/" if launch.name else (launch.anchor or "/")
     lines = [
@@ -187,6 +188,7 @@ def workspace_context_note(
     else:
         lines.append(_NOTE_NO_ROOTS)
     return "\n".join(lines)
+
 
 #: Process-wide cache for the default registry service (see
 #: ``_default_registry_factory``). Reset to ``None`` by tests that need a
@@ -285,9 +287,7 @@ def folder_binding_roots(workspace_id: str | None) -> tuple[Path, ...]:
                 continue
             roots.append(folder)
     except Exception:
-        logger.opt(exception=True).debug(
-            "folder_binding_roots: registry unavailable"
-        )
+        logger.opt(exception=True).debug("folder_binding_roots: registry unavailable")
         return ()
     return tuple(roots)
 
@@ -325,6 +325,24 @@ def current_run_workspace_id() -> str | None:
         current run/task, or ``None`` if no run has bound one.
     """
     return _RUN_WORKSPACE_ID.get()
+
+
+@contextmanager
+def run_file_sandbox(root: Path | None) -> Iterator[None]:
+    """Bind one run's private file-tool sandbox without changing global config."""
+
+    resolved = Path(root).resolve() if root is not None else None
+    token = _RUN_FILE_SANDBOX_ROOT.set(resolved)
+    try:
+        yield
+    finally:
+        _RUN_FILE_SANDBOX_ROOT.reset(token)
+
+
+def current_run_sandbox_root() -> Path | None:
+    """Return the private sandbox root bound to the current run, if any."""
+
+    return _RUN_FILE_SANDBOX_ROOT.get()
 
 
 def allowed_file_roots(*, write: bool, sandbox_root: Path) -> tuple[Path, ...]:

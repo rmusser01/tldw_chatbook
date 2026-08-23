@@ -11,6 +11,7 @@ import pytest
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Workspaces import DEFAULT_WORKSPACE_ID, LocalWorkspaceRegistryService
 from tldw_chatbook.Tools import workspace_file_roots as wfr
+from tldw_chatbook.Tools import file_operation_tools as file_tools
 
 
 @pytest.fixture(autouse=True)
@@ -86,6 +87,68 @@ def test_registry_failure_degrades_to_sandbox_only(tmp_path, monkeypatch) -> Non
     sandbox.mkdir()
     with wfr.run_workspace("ws-a"):
         assert wfr.allowed_file_roots(write=True, sandbox_root=sandbox) == (sandbox,)
+
+
+def test_run_file_sandbox_overrides_global_only_inside_scope(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    global_root = tmp_path / "global"
+    scratch = tmp_path / "chat"
+    global_root.mkdir()
+    scratch.mkdir()
+    monkeypatch.setattr(
+        file_tools,
+        "_resolve_sandbox_config",
+        lambda: str(global_root),
+    )
+
+    with wfr.run_file_sandbox(scratch):
+        assert file_tools._tool_sandbox_root() == scratch.resolve()
+
+    assert file_tools._tool_sandbox_root() == global_root.resolve()
+
+
+def test_scratch_stays_first_when_workspace_bindings_are_available(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    registry = _registry(tmp_path)
+    binding = tmp_path / "binding"
+    binding.mkdir()
+    registry.add_folder_binding("ws-a", binding)
+    monkeypatch.setattr(wfr, "_registry_factory", lambda: registry)
+    scratch = tmp_path / "chat"
+    scratch.mkdir()
+
+    with wfr.run_file_sandbox(scratch), wfr.run_workspace("ws-a"):
+        roots = wfr.allowed_file_roots(
+            write=False,
+            sandbox_root=file_tools._tool_sandbox_root(),
+        )
+
+    assert roots == (scratch.resolve(), binding.resolve())
+
+
+def test_registry_failure_keeps_captured_scratch_as_only_root(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    scratch = tmp_path / "chat"
+    scratch.mkdir()
+    monkeypatch.setattr(
+        wfr,
+        "_registry_factory",
+        lambda: (_ for _ in ()).throw(RuntimeError("registry unavailable")),
+    )
+
+    with wfr.run_file_sandbox(scratch), wfr.run_workspace("ws-a"):
+        roots = wfr.allowed_file_roots(
+            write=False,
+            sandbox_root=file_tools._tool_sandbox_root(),
+        )
+
+    assert roots == (scratch.resolve(),)
 
 
 def test_default_registry_factory_is_cached(tmp_path, monkeypatch) -> None:
@@ -175,9 +238,7 @@ def test_note_empty_for_no_workspace(tmp_path) -> None:
 
 def test_note_names_workspace_and_states_non_default(tmp_path) -> None:
     registry = _registry(tmp_path)
-    note = wfr.workspace_context_note(
-        "ws-a", launch_cwd=tmp_path, registry=registry
-    )
+    note = wfr.workspace_context_note("ws-a", launch_cwd=tmp_path, registry=registry)
     assert "NOT running in the default workspace" in note
     assert "Client A" in note
 

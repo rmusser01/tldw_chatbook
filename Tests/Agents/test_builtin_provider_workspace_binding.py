@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
+
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
+from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
 from tldw_chatbook.Tools import workspace_file_roots as wfr
+from tldw_chatbook.Tools.file_operation_tools import ReadFileTool
 
 
 class _ProbeTool:
@@ -56,6 +60,7 @@ def test_concurrent_providers_keep_distinct_workspace_bindings() -> None:
         async def execute(self, **kwargs):
             import asyncio
             from tldw_chatbook.Tools import workspace_file_roots as wfr
+
             await asyncio.sleep(0.05)  # force overlap window
             return {"workspace": wfr.current_run_workspace_id()}
 
@@ -76,3 +81,54 @@ def test_concurrent_providers_keep_distinct_workspace_bindings() -> None:
 
     assert '"workspace": "ws-alpha"' in (results["ws-alpha"] or "")
     assert '"workspace": "ws-beta"' in (results["ws-beta"] or "")
+
+
+def test_builtin_provider_cannot_read_another_chat_scratch(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    root_a = tmp_path / "chat-a"
+    root_b = tmp_path / "chat-b"
+    root_a.mkdir()
+    root_b.mkdir()
+    marker = root_a / "marker.txt"
+    marker.write_text("chat-a", encoding="utf-8")
+    monkeypatch.setattr(
+        "tldw_chatbook.Tools.file_operation_tools._resolve_sandbox_config",
+        lambda: str(tmp_path),
+    )
+    provider = BuiltinToolProvider(
+        gate=_OpenGate(),
+        workspace_id="workspace-default",
+        sandbox_root=root_b,
+        sandbox_lease=lambda: nullcontext(root_b),
+    )
+    provider._tools["read_file"] = ReadFileTool()
+
+    result = provider.invoke(
+        "builtin:read_file",
+        {"file_path": str(marker)},
+    )
+
+    assert result.ok is False
+    assert "outside" in str(result.error).lower()
+
+
+def test_builtin_provider_rejects_file_access_after_scratch_close(tmp_path) -> None:
+    manager = ConsoleScratchSpaceManager(temp_parent=tmp_path)
+    snapshot = manager.snapshot("chat-a")
+    marker = snapshot.root / "marker.txt"
+    marker.write_text("chat-a", encoding="utf-8")
+    provider = BuiltinToolProvider(
+        gate=_OpenGate(),
+        workspace_id="workspace-default",
+        sandbox_root=snapshot.root,
+        sandbox_lease=lambda: manager.lease(snapshot),
+    )
+    provider._tools["read_file"] = ReadFileTool()
+
+    manager.close("chat-a")
+    result = provider.invoke("builtin:read_file", {"file_path": str(marker)})
+
+    assert result.ok is False
+    assert manager.wait_for_cleanup(timeout_seconds=2.0)
