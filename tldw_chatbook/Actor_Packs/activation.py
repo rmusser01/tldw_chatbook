@@ -18,12 +18,15 @@ from tldw_chatbook.Character_Chat.local_character_persona_service import (
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
-from tldw_chatbook.Persona_Visual.repository import PersonaVisualRepository
-from tldw_chatbook.Character_Chat.visual_identity import (
-    compute_pack_content_sha256,
-    validate_visual_identity_manifest,
-)
 from tldw_chatbook.Utils.private_paths import secure_private_directory
+
+# TASK-21200: ``Persona_Visual.repository`` and ``Character_Chat.visual_identity``
+# (module-level ``from PIL import Image``) are imported inside the two functions
+# that need them, never at module scope. ``app.py`` imports this module at module
+# scope, so a module-level import here puts PIL and most of Persona_Visual back on
+# the ``import tldw_chatbook.app`` path -- the exact TASK-21103 regression this
+# module re-introduced. Guarded by
+# ``Tests/Packaging/test_persona_buddy_import_closure.py``.
 
 from .importer import (
     ActorPackImportError,
@@ -100,6 +103,9 @@ class ActorPackActivationService:
         persona_coordinator: PersonaActorPackCoordinator,
         importer: ActorPackImportService,
     ) -> None:
+        # Deferred: see the TASK-21200 note at the top of this module.
+        from tldw_chatbook.Persona_Visual.repository import PersonaVisualRepository
+
         if (
             not isinstance(db, CharactersRAGDB)
             or not isinstance(local_service, LocalCharacterPersonaService)
@@ -371,6 +377,12 @@ class ActorPackActivationService:
         cancel_requested: Callable[[], bool],
         published: list[_PublishedFile],
     ) -> _PreparedSharedVisual | None:
+        # Deferred: see the TASK-21200 note at the top of this module.
+        from tldw_chatbook.Character_Chat.visual_identity import (
+            compute_pack_content_sha256,
+            validate_visual_identity_manifest,
+        )
+
         if not sections:
             return None
         if len(sections) != 1 or sections[0].kind != "shared-visual-identity":
