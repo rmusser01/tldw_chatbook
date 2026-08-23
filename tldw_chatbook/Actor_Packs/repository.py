@@ -112,6 +112,36 @@ class ActorPackRepository:
         except (TypeError, ValueError, UnicodeError, OverflowError):
             raise ActorPackRepositoryError("actor_pack_repository_corrupt") from None
 
+    def get_identity_by_portable_uuid(
+        self, portable_uuid: str
+    ) -> PortableActorIdentity | None:
+        """Return the one cross-kind identity owning a portable UUID."""
+
+        identity = _portable_uuid(portable_uuid)
+        try:
+            rows = self.db.execute_query(
+                """
+                SELECT actor_kind, local_actor_id, portable_uuid,
+                       source_portable_uuid, version
+                  FROM actor_portable_identities
+                 WHERE portable_uuid = ?
+                """,
+                (identity,),
+            ).fetchall()
+            if not rows:
+                return None
+            if len(rows) != 1:
+                raise ActorPackRepositoryError("actor_pack_repository_corrupt")
+            return _decode_identity(rows[0])
+        except ActorPackRepositoryError:
+            raise
+        except (sqlite3.Error, CharactersRAGDBError):
+            raise ActorPackRepositoryError(
+                "actor_pack_repository_read_failed"
+            ) from None
+        except (TypeError, ValueError, UnicodeError, OverflowError):
+            raise ActorPackRepositoryError("actor_pack_repository_corrupt") from None
+
     def assign_identity(
         self,
         actor_kind: str,

@@ -64,6 +64,13 @@ def test_copy_gets_fresh_identity_and_exact_source_provenance(tmp_path: Path) ->
         database.close_connection()
 
 
+def test_lookup_by_portable_uuid_returns_exact_cross_kind_identity(repository) -> None:
+    identity = repository.assign_identity("character", 7)
+
+    assert repository.get_identity_by_portable_uuid(UUID_A) == identity
+    assert repository.get_identity_by_portable_uuid(UUID_B) is None
+
+
 @pytest.mark.parametrize(
     ("actor_kind", "actor_id", "source_uuid", "source"),
     [

@@ -7179,6 +7179,74 @@ UPDATE db_schema_version
         cursor = self.execute_query(query, ())
         return [str(r[0]) for r in cursor.fetchall() if r and r[0] is not None]
 
+    def _update_character_card_in_transaction(
+        self,
+        cursor: sqlite3.Cursor,
+        character_id: int,
+        card_data: Dict[str, Any],
+        *,
+        expected_version: int,
+        require_outermost: bool = False,
+    ) -> None:
+        """Update portable Character fields inside a caller-owned transaction."""
+
+        connection = self.get_connection()
+        depth = getattr(self._local, "transaction_depth", 0)
+        if (
+            type(cursor) is not sqlite3.Cursor
+            or cursor.connection is not connection
+            or not connection.in_transaction
+            or depth < 1
+            or (require_outermost and depth != 1)
+        ):
+            raise CharactersRAGDBError("Character transaction is not owned.")
+        direct_fields = {
+            "name",
+            "description",
+            "personality",
+            "scenario",
+            "image",
+            "post_history_instructions",
+            "first_message",
+            "message_example",
+            "creator_notes",
+            "system_prompt",
+            "creator",
+            "character_version",
+        }
+        updates: list[str] = []
+        params: list[Any] = []
+        for key, value in card_data.items():
+            if key in self._CHARACTER_CARD_JSON_FIELDS:
+                updates.append(f"{key} = ?")
+                params.append(self._ensure_json_string(value))
+            elif key in direct_fields:
+                updates.append(f"{key} = ?")
+                params.append(value)
+        if not updates:
+            raise InputError("No portable Character fields were provided.")
+        updates.extend(["last_modified = ?", "version = ?", "client_id = ?"])
+        params.extend(
+            [
+                self._get_current_utc_timestamp_iso(),
+                expected_version + 1,
+                self.client_id,
+                character_id,
+                expected_version,
+            ]
+        )
+        changed = cursor.execute(
+            f"UPDATE character_cards SET {', '.join(updates)} "
+            "WHERE id = ? AND version = ? AND deleted = 0",
+            tuple(params),
+        )
+        if changed.rowcount != 1:
+            raise ConflictError(
+                "Character card authority changed during Actor Pack activation.",
+                entity="character_cards",
+                entity_id=character_id,
+            )
+
     def update_character_card(
         self, character_id: int, card_data: Dict[str, Any], expected_version: int
     ) -> Optional[bool]:

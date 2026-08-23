@@ -5,6 +5,11 @@ from .contracts import (
     ActorPackValidationError,
     validate_actor_pack_document,
 )
+from .activation import (
+    ActorPackActivationError,
+    ActorPackActivationResult,
+    ActorPackActivationService,
+)
 from .controller import (
     ActorPackExportController,
     ActorPackExportControllerError,
@@ -24,6 +29,13 @@ from .export import (
     ActorPackExportSnapshot,
     write_actor_pack_archive,
 )
+from .importer import (
+    ActorPackImportError,
+    ActorPackImportReview,
+    ActorPackImportService,
+    ActorPackPortraitPreview,
+    ActorPackPortraitReview,
+)
 from .publication import (
     ActorPackDestinationContract,
     ActorPackPublicationError,
@@ -32,6 +44,9 @@ from .publication import (
 )
 
 __all__ = [
+    "ActorPackActivationError",
+    "ActorPackActivationResult",
+    "ActorPackActivationService",
     "ActorPackDocument",
     "ActorPackCreationError",
     "ActorPackCreationResult",
@@ -46,6 +61,11 @@ __all__ = [
     "ActorPackExportRequest",
     "ActorPackExportService",
     "ActorPackExportSnapshot",
+    "ActorPackImportError",
+    "ActorPackImportReview",
+    "ActorPackImportService",
+    "ActorPackPortraitPreview",
+    "ActorPackPortraitReview",
     "ActorPackDestinationContract",
     "ActorPackPublicationError",
     "capture_actor_pack_destination",
