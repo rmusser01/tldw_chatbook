@@ -208,6 +208,40 @@ def test_failed_child_and_completed_primary_project_after_reload(db):
     assert "agent_run_created" in child_kinds
     assert "agent_run_started" in child_kinds
     assert "agent_run_failed" in child_kinds
+    causal_kinds = [
+        record.kind
+        for record in records
+        if record.run_id == child["id"]
+        and record.kind
+        in {
+            "agent_run_created",
+            "agent_run_started",
+            "model_request_started",
+            "model_error",
+            "error",
+            "agent_run_failed",
+        }
+    ]
+    assert causal_kinds == [
+        "agent_run_created",
+        "agent_run_started",
+        "model_request_started",
+        "model_error",
+        "error",
+        "agent_run_failed",
+    ]
+    child_records = {
+        record.kind: record
+        for record in records
+        if record.run_id == child["id"]
+    }
+    service_error = child_records["error"]
+    model_error = child_records["model_error"]
+    failed = child_records["agent_run_failed"]
+    assert service_error.parent_event_id == model_error.event_id
+    assert service_error.source_event_id == model_error.event_id
+    assert failed.parent_event_id == service_error.event_id
+    assert failed.source_event_id == service_error.event_id
     parent_kinds = [record.kind for record in records if record.run_id == parent_id]
     assert "agent_run_completed" in parent_kinds
     event_ids = {record.event_id for record in records}
@@ -221,4 +255,77 @@ def test_failed_child_and_completed_primary_project_after_reload(db):
             )
     serialized = json.dumps(runs, sort_keys=True)
     assert "sk-private-error" not in serialized
+    reopened.close()
+
+
+def test_failure_after_control_steps_allocates_a_distinct_causal_error(db):
+    def explode():
+        raise RuntimeError("second provider call failed")
+
+    service, _chat, _coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "partially progressed child"}),
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "parent recovered safely",
+        ],
+        {
+            "partially progressed child": [
+                fence("calculator", {"expression": "1+1"}),
+                explode,
+            ]
+        },
+    )
+    service.run_turn(
+        conversation_id="trace-failure-after-step",
+        messages=[{"role": "user", "content": "delegate"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+    )
+    child = next(
+        row
+        for row in db.list_runs("trace-failure-after-step")
+        if row["agent_kind"] == "subagent"
+    )
+    path = db.db_path
+    db.close()
+    reopened = AgentRunsDB(path, client_id="failure-after-step-reload")
+    row = reopened.get_run(child["id"])
+    steps = row["steps"]
+    indices = [step["index"] for step in steps]
+    assert len(indices) == len(set(indices))
+    error = next(step for step in steps if step["kind"] == "error")
+    model_error = next(step for step in steps if step["kind"] == "model_error")
+    failed = next(step for step in steps if step["kind"] == "agent_run_failed")
+    error_event_id = f"agent-step:{child['id']}:{error['index']}"
+    model_error_event_id = f"agent-step:{child['id']}:{model_error['index']}"
+    assert error["owner_seq"] == model_error["owner_seq"] + 1
+    assert error["parent_event_id"] == model_error_event_id
+    assert error["source_event_id"] == model_error_event_id
+    assert failed["parent_event_id"] == error_event_id
+    assert failed["source_event_id"] == error_event_id
+    records = _records(
+        derive_trajectory(
+            messages=[],
+            usage_by_id={},
+            traj_rows=[],
+            variant_sets=[],
+            compaction_records=[],
+            agent_runs=[row],
+            agent_steps=[
+                {
+                    **step,
+                    "run_id": child["id"],
+                    "conversation_id": "trace-failure-after-step",
+                }
+                for step in steps
+            ],
+        )
+    )
+    causal = [
+        record.kind
+        for record in records
+        if record.kind in {"model_error", "error", "agent_run_failed"}
+    ]
+    assert causal == ["model_error", "error", "agent_run_failed"]
     reopened.close()

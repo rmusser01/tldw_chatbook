@@ -1469,6 +1469,118 @@ def test_terminal_recovery_does_not_duplicate_lifecycle_transition(db):
     assert len(completed) == 1
 
 
+def test_project_instruction_service_error_has_durable_causal_identity(
+    db, monkeypatch
+):
+    def fail_before_runtime(*_args, **_kwargs):
+        raise agent_service._ProjectInstructionPayloadError("delivery failed")
+
+    monkeypatch.setattr(agent_service, "run_agent_loop", fail_before_runtime)
+    service, _ = make_service(db, [])
+    run_id, outcome = service.run_turn(
+        conversation_id="project-error",
+        messages=[{"role": "user", "content": "q"}],
+        config=CFG,
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_ERROR
+
+    path = db.db_path
+    db.close()
+    reopened = AgentRunsDB(path, client_id="project-error-reload")
+    row = reopened.get_run(run_id)
+    steps = row["steps"]
+    records = [
+        record
+        for turn in derive_trajectory(
+            messages=[],
+            usage_by_id={},
+            traj_rows=[],
+            variant_sets=[],
+            compaction_records=[],
+            agent_runs=[row],
+            agent_steps=[
+                {**step, "run_id": run_id, "conversation_id": "project-error"}
+                for step in steps
+            ],
+        ).turns
+        for record in turn.records
+    ]
+    assert [
+        record.kind
+        for record in records
+        if record.kind.startswith("agent_run_") or record.kind == "error"
+    ] == [
+        "agent_run_created",
+        "agent_run_started",
+        "error",
+        "agent_run_failed",
+    ]
+    error = next(step for step in steps if step["kind"] == "error")
+    started = next(step for step in steps if step["kind"] == "agent_run_started")
+    failed = next(step for step in steps if step["kind"] == "agent_run_failed")
+    error_event_id = f"agent-step:{run_id}:{error['index']}"
+    started_event_id = f"agent-step:{run_id}:{started['index']}"
+    assert error["owner_seq"] == 2
+    assert error["parent_event_id"] == started_event_id
+    assert error["source_event_id"] == started_event_id
+    assert failed["parent_event_id"] == error_event_id
+    assert failed["source_event_id"] == error_event_id
+    reopened.close()
+
+
+def test_service_error_capture_recovers_idempotently_before_failed_lifecycle(
+    db, monkeypatch
+):
+    original_insert = db.insert_steps_at_indices
+    failed_once = False
+
+    def fail_service_error_once(run_id, indexed_steps):
+        nonlocal failed_once
+        if not failed_once and any(
+            step["kind"] == "error" for _index, step in indexed_steps
+        ):
+            failed_once = True
+            raise RuntimeError("simulated service error capture failure")
+        return original_insert(run_id, indexed_steps)
+
+    monkeypatch.setattr(db, "insert_steps_at_indices", fail_service_error_once)
+    service, _ = make_service(
+        db,
+        [lambda: (_ for _ in ()).throw(RuntimeError("provider failed"))],
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="error-capture-recovery",
+        messages=[{"role": "user", "content": "q"}],
+        config=CFG,
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_ERROR
+    assert not any(step["kind"] == "error" for step in db.get_run(run_id)["steps"])
+    assert not any(
+        step["kind"] == "agent_run_failed"
+        for step in db.get_run(run_id)["steps"]
+    )
+
+    service._persist(run_id, outcome)
+    service._persist(run_id, outcome)
+    steps = db.get_run(run_id)["steps"]
+    error = next(step for step in steps if step["kind"] == "error")
+    failed = [step for step in steps if step["kind"] == "agent_run_failed"]
+    assert len(failed) == 1
+    error_event_id = f"agent-step:{run_id}:{error['index']}"
+    assert failed[0]["parent_event_id"] == error_event_id
+    assert failed[0]["source_event_id"] == error_event_id
+
+    path = db.db_path
+    db.close()
+    reopened = AgentRunsDB(path, client_id="error-recovery-reload")
+    reloaded = reopened.get_run(run_id)["steps"]
+    assert sum(step["kind"] == "error" for step in reloaded) == 1
+    assert sum(step["kind"] == "agent_run_failed" for step in reloaded) == 1
+    reopened.close()
+
+
 def test_stuck_run_persists_stuck_status(db):
     replies = [fence("calculator", {"expression": "1"})] * 10
     service, _ = make_service(db, replies)

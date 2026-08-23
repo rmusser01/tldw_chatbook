@@ -2443,7 +2443,12 @@ class AgentService:
         return sequence + 1
 
     def _record_terminal_lifecycle(
-        self, run_id: str, status: str, *, parent_event_id: str | None = None
+        self,
+        run_id: str,
+        status: str,
+        *,
+        parent_event_id: str | None = None,
+        source_event_id: str | None = None,
     ) -> None:
         kind = {
             RUN_DONE: STEP_AGENT_RUN_COMPLETED,
@@ -2457,6 +2462,46 @@ class AgentService:
             kind,
             status,
             parent_event_id=parent_event_id,
+            source_event_id=source_event_id,
+        )
+
+    def _service_error_step(self, run_id: str, summary: str) -> AgentStep:
+        """Allocate a causal error after this run's durable observations."""
+        try:
+            durable = self.db.get_run(run_id)["steps"]
+        except Exception:  # noqa: BLE001 — terminal containment owns fallback
+            durable = []
+        runtime = [
+            step
+            for step in durable
+            if int(step.get("index", AGENT_LIFECYCLE_INDEX_BASE))
+            < AGENT_LIFECYCLE_INDEX_BASE
+        ]
+        index = max((int(step["index"]) for step in runtime), default=-1) + 1
+        prior = max(
+            durable,
+            key=lambda step: (
+                int(step["owner_seq"])
+                if step.get("owner_seq") is not None
+                else -1,
+                int(step.get("index", -1)),
+            ),
+            default=None,
+        )
+        prior_event_id = (
+            f"agent-step:{run_id}:{prior['index']}" if prior is not None else None
+        )
+        return AgentStep(
+            index=index,
+            kind=STEP_ERROR,
+            summary=summary,
+            created_at=safe_utc_timestamp(self.wall_clock),
+            status="failed",
+            owner_seq=self._next_owner_seq(run_id),
+            parent_event_id=prior_event_id,
+            source_event_id=prior_event_id,
+            field_states={"payload": "omitted"},
+            sensitivity="diagnostic",
         )
 
     def _persist(
@@ -2465,17 +2510,17 @@ class AgentService:
         outcome: RunOutcome,
         durable_handles: Mapping[str, str] | None = None,
     ) -> None:
-        try:
-            step_dicts = []
-            for step in outcome.steps:
-                if not step.created_at:
-                    step.created_at = safe_utc_timestamp(self.wall_clock)
-                step_dicts.append(
-                    (
-                        step.index,
-                        _safe_agent_step_record(run_id, step, durable_handles),
-                    )
+        step_dicts = []
+        for step in outcome.steps:
+            if not step.created_at:
+                step.created_at = safe_utc_timestamp(self.wall_clock)
+            step_dicts.append(
+                (
+                    step.index,
+                    _safe_agent_step_record(run_id, step, durable_handles),
                 )
+            )
+        try:
             self.db.insert_steps_at_indices(run_id, step_dicts)
         except Exception as exc:  # noqa: BLE001 — trace capture is best-effort
             logger.warning(
@@ -2483,22 +2528,44 @@ class AgentService:
                 run_id,
                 _safe_exception_type(exc),
             )
-        updated = self.db.set_status(
+        terminal_step = max(
+            outcome.steps,
+            key=lambda step: (
+                step.owner_seq if step.owner_seq is not None else -1
+            ),
+            default=None,
+        )
+        terminal_event_id = None
+        if terminal_step is not None:
+            expected = dict(step_dicts).get(terminal_step.index)
+            try:
+                stored = next(
+                    step
+                    for step in self.db.get_run(run_id)["steps"]
+                    if step["index"] == terminal_step.index
+                )
+                if stored == expected:
+                    terminal_event_id = (
+                        f"agent-step:{run_id}:{terminal_step.index}"
+                    )
+            except (KeyError, StopIteration, TypeError):
+                terminal_event_id = None
+        self.db.set_status(
             run_id, outcome.status, result=_safe_terminal_result(outcome.final_text)
         )
-        if updated:
-            last = max(
-                outcome.steps,
-                key=lambda step: (
-                    step.owner_seq if step.owner_seq is not None else -1
-                ),
-                default=None,
-            )
+        try:
+            current_status = self.db.get_run(run_id)["status"]
+        except Exception:  # noqa: BLE001 — terminal capture remains best effort
+            current_status = None
+        if current_status == outcome.status and (
+            outcome.status != RUN_ERROR or terminal_event_id is not None
+        ):
             self._record_terminal_lifecycle(
                 run_id,
                 outcome.status,
-                parent_event_id=(
-                    f"agent-step:{run_id}:{last.index}" if last is not None else None
+                parent_event_id=terminal_event_id,
+                source_event_id=(
+                    terminal_event_id if outcome.status == RUN_ERROR else None
                 ),
             )
 
@@ -4977,13 +5044,7 @@ class AgentService:
         except _ProjectInstructionPayloadError as error:
             outcome = RunOutcome(
                 status=RUN_ERROR,
-                steps=[
-                    AgentStep(
-                        index=0,
-                        kind=STEP_ERROR,
-                        summary=str(error),
-                    )
-                ],
+                steps=[self._service_error_step(run_id, str(error))],
             )
         except Exception as exc:  # noqa: BLE001 — a run never raises out
             from tldw_chatbook.Chat.provider_failures import describe_stream_failure
@@ -4994,10 +5055,8 @@ class AgentService:
             outcome = RunOutcome(
                 status=RUN_ERROR,
                 steps=[
-                    AgentStep(
-                        index=0,
-                        kind=STEP_ERROR,
-                        summary=describe_stream_failure(exc)[:500],
+                    self._service_error_step(
+                        run_id, describe_stream_failure(exc)[:500]
                     )
                 ],
             )
