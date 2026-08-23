@@ -24,6 +24,8 @@ from Tests.UI.background_signals import (
     await_background_task,
     wait_for_background_signal,
 )
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+
 from tldw_chatbook.Chat.console_chat_models import ConsoleContextSnapshot
 from tldw_chatbook.Chat.console_cost_tracker import ConsoleCostRowTotals
 from tldw_chatbook.Chat.console_prompt_queue import ConsolePromptQueueRegistry
@@ -1774,7 +1776,7 @@ def test_task6_settings_close_contract_is_adopted() -> None:
     ] == ["request_safe_cancel"]
 
 
-class _Task2Harness(App[None]):
+class _Task2Harness(ConsolidatedCSSApp):
     CSS = """
     Screen { align: center middle; }
     #console-citation-sources-modal,
@@ -2516,7 +2518,7 @@ class _HostScreen(Screen[None]):
         self.composer_fallback_calls.append(force)
 
 
-class _ModalHarness(App[None]):
+class _ModalHarness(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
         self.host = _HostScreen()

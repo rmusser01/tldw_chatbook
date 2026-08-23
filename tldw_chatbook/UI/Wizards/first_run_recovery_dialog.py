@@ -19,7 +19,7 @@ class SetupRecoveryDialog(ModalScreen[SetupRecoveryResult]):
 
     BINDINGS = [Binding("escape", "later", "Later", show=False)]
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     SetupRecoveryDialog {
         align: center middle;
     }

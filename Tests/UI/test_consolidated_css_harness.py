@@ -92,3 +92,80 @@ async def test_css_path_kwarg_override_loads_screen_sheets_and_keeps_own_entry(
             "a css_path= constructor kwarg override dropped the screen "
             "sheets (region.width=" + str(container.region.width) + ")"
         )
+
+
+# --- TASK-21115: dynamic first-mount vs the stale-tie-breaker parse ----------
+
+
+@pytest.mark.asyncio
+async def test_dynamic_first_mount_of_a_consolidated_class_keeps_its_geometry():
+    """A consolidated class first-mounted AFTER boot must still get its sheet.
+
+    Measured failure shape (TASK-21115): a bare ``Vertical`` mounts at boot,
+    registering Textual's ``Vertical { width: 1fr; height: 1fr }`` at
+    tie-breaker 0 (it is that widget's OWN class). A consolidated
+    Vertical-subclass then first-mounts dynamically: its registration lowers
+    the stored ``Vertical`` tie-breaker to -1, but Textual's ``add_source``
+    does not arm a reparse for a tie-breaker change, so the parsed rules
+    still carry 0 -- exactly tying the consolidated sheet's
+    ``ConsoleSelectionMenu { width: auto; ... }`` (specificity (0,0,1),
+    tie-breaker 0) and beating it on source order. The menu mounted
+    full-screen (measured: 80x40 instead of 24x6). Compose-time mounts never
+    showed it, because the widget's registration and the first parse happen
+    in the same mount batch.
+
+    ``TieAwareStylesheet`` (used by both ``TldwCli`` and
+    ``ConsolidatedCSSApp``) closes that window by treating a lowered
+    tie-breaker as a CSS change. Born red against the plain ``Stylesheet``.
+    """
+    from textual.containers import Vertical
+
+    from tldw_chatbook.Widgets.Console.console_selection_menu import (
+        ConsoleSelectionMenu,
+    )
+
+    class _DynamicMountApp(ConsolidatedCSSApp):
+        def compose(self):
+            yield Vertical(id="boot-time-vertical")
+
+    app = _DynamicMountApp()
+    async with app.run_test(size=(80, 40)) as pilot:
+        await pilot.pause()
+        await app.mount(ConsoleSelectionMenu(screen_x=2, screen_y=10))
+        await pilot.pause()
+        menu = app.query_one(ConsoleSelectionMenu)
+        assert str(menu.styles.width) == "auto" and str(menu.styles.height) == "auto", (
+            f"menu resolved {menu.styles.width}x{menu.styles.height} -- the "
+            "consolidated sheet lost to a stale base-class tie-breaker on a "
+            "dynamic first mount (see css/tie_aware_stylesheet.py)"
+        )
+        assert menu.region.width < 40 and menu.region.height < 10, (
+            f"menu mounted at {menu.region} -- full-container geometry means "
+            "its BUNDLED_CSS did not apply"
+        )
+
+
+def test_tie_aware_stylesheet_arms_reparse_when_a_tie_breaker_lowers():
+    """Unit pin for the mechanism itself, independent of any app boot.
+
+    Upstream ``Stylesheet.add_source`` keeps the LOWEST tie-breaker ever
+    offered for an existing source but leaves ``_require_parse`` unset when
+    lowering it -- the exact staleness the test above measures end-to-end.
+    """
+    from textual.css.stylesheet import Stylesheet
+
+    from tldw_chatbook.css.tie_aware_stylesheet import TieAwareStylesheet
+
+    for cls, expect_armed in ((Stylesheet, False), (TieAwareStylesheet, True)):
+        sheet = cls()
+        sheet.add_source("X { height: 1; }", read_from=("probe", "X"), tie_breaker=0)
+        sheet._require_parse = False  # simulate the post-parse steady state
+        sheet.add_source("X { height: 1; }", read_from=("probe", "X"), tie_breaker=-1)
+        assert sheet.source[("probe", "X")].tie_breaker == -1, (
+            "both classes must keep upstream's lowest-offer-wins contract"
+        )
+        assert sheet._require_parse is expect_armed, (
+            f"{cls.__name__}: _require_parse should be {expect_armed} after a "
+            "tie-breaker lowering (upstream leaves the stale parse in place; "
+            "the subclass exists to arm the reparse)"
+        )

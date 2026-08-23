@@ -278,7 +278,7 @@ class TrajectoryTimeline(Widget):
 
     can_focus = True
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     TrajectoryTimeline {
         height: 6;
         width: 1fr;

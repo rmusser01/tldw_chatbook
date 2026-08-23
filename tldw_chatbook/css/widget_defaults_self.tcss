@@ -72,6 +72,14 @@
     }
 
 
+/* ===== WIDGET: ConsoleInspectorRail (UI/Console_Modules/right_rail.py) ===== */
+
+    ConsoleInspectorRail .console-inspector-scroll-owner,
+    ConsoleInspectorRail .console-inspector-scroll-owner .console-rail-section-title {
+        text-style: bold underline;
+    }
+
+
 /* ===== WIDGET: LLMManagementWindow (UI/LLM_Management_Window.py) ===== */
 
     LLMManagementWindow {
@@ -890,6 +898,24 @@
 
 
 
+/* ===== WIDGET: ModelCatalogConsentModal (UI/Screens/model_catalog_consent.py) ===== */
+
+    ModelCatalogConsentModal {
+        align: center middle;
+        background: $background 75%;
+    }
+
+
+
+
+
+
+
+
+
+
+
+
 /* ===== WIDGET: CuratedView (UI/Screens/model_curated_view.py) ===== */
 
     CuratedView {
@@ -1436,6 +1462,68 @@
 
 
 
+/* ===== WIDGET: TrajectoryScreen (UI/Screens/trajectory_screen.py) ===== */
+
+    TrajectoryScreen {
+        align: left top;
+        background: $background;
+    }
+
+
+
+
+
+
+
+
+/* ===== WIDGET: TrajectoryTimeline (UI/Widgets/trajectory_timeline.py) ===== */
+
+    TrajectoryTimeline {
+        height: 6;
+        width: 1fr;
+    }
+
+
+/* ===== WIDGET: SetupRecoveryDialog (UI/Wizards/first_run_recovery_dialog.py) ===== */
+
+    SetupRecoveryDialog {
+        align: center middle;
+    }
+
+    SetupRecoveryDialog > Container {
+        width: 72;
+        max-width: 92%;
+        height: auto;
+        max-height: 90%;
+        border: thick $accent;
+        background: $surface;
+        padding: 1 2;
+    }
+
+    SetupRecoveryDialog .setup-recovery-title {
+        width: 100%;
+        text-align: center;
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    SetupRecoveryDialog .setup-recovery-message {
+        width: 100%;
+        height: auto;
+        margin-bottom: 1;
+    }
+
+    SetupRecoveryDialog .setup-recovery-actions {
+        width: 100%;
+        height: auto;
+    }
+
+    SetupRecoveryDialog Button {
+        width: 100%;
+        margin-top: 1;
+    }
+
+
 /* ===== WIDGET: DestinationHeader (UI/Workbench/workbench_widgets.py) ===== */
 
     DestinationHeader {
@@ -1474,6 +1562,17 @@
     }
 
 
+/* ===== WIDGET: AutoSpeakConsentModal (Widgets/Console/console_auto_speak_consent.py) ===== */
+
+    AutoSpeakConsentModal {
+        align: center middle;
+    }
+
+
+
+
+
+
 /* ===== WIDGET: ConsoleTranscriptSurface (Widgets/Console/console_background_effect.py) ===== */
 
     ConsoleTranscriptSurface {
@@ -1495,6 +1594,279 @@
     }
 
 
+/* ===== WIDGET: ConsoleChangedFilesSection (Widgets/Console/console_changed_files_section.py) ===== */
+
+    ConsoleChangedFilesSection {
+        height: auto;
+        min-height: 0;
+    }
+    ConsoleChangedFilesSection .console-changed-files-header {
+        height: 1;
+        width: 100%;
+        text-style: bold;
+    }
+    ConsoleChangedFilesSection .console-changed-files-row {
+        height: 1;
+        min-height: 1;
+        width: 100%;
+        text-align: left;
+    }
+    ConsoleChangedFilesSection .console-changed-files-tail {
+        height: 1;
+        width: 100%;
+        text-style: italic;
+    }
+    ConsoleChangedFilesSection .console-changed-files-pruned {
+        height: 1;
+        width: 100%;
+        text-style: dim;
+    }
+
+
+/* ===== WIDGET: ConsoleConversationInspector (Widgets/Console/console_conversation_inspector.py) ===== */
+
+    ConsoleConversationInspector { align: center middle; }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    /* Next Send tab (task-10, ported from the retired context modal).
+       LY-13 (TASK-2154.23) compacted the OLD modal's own top-level frame
+       to content when there was nothing to show yet; DROPPED here (task-10
+       review finding 1) -- the outer modal frame is now shared with the
+       Costs/Exchange tabs and stays a fixed height regardless of this
+       pane's state, so there was nothing left for a pane-scoped "auto"
+       height to compact (measured identically empty vs. populated). */
+
+
+
+
+
+
+
+
+
+/* ===== WIDGET: ConsoleFeedbackCommentModal (Widgets/Console/console_feedback_comment_modal.py) ===== */
+
+    ConsoleFeedbackCommentModal {
+        align: center middle;
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+/* ===== WIDGET: ConsoleProjectInstructionStatusRow (Widgets/Console/console_project_instructions.py) ===== */
+
+    ConsoleProjectInstructionStatusRow {
+        width: 100%;
+        height: 1;
+        min-height: 1;
+    }
+
+
+
+
+/* ===== WIDGET: ConsoleProjectInstructionContextPanel (Widgets/Console/console_project_instructions.py) ===== */
+
+    ConsoleProjectInstructionContextPanel {
+        width: 100%;
+        height: auto;
+        max-height: 9;
+        padding: 0 1;
+        background: $surface;
+    }
+
+
+
+
+
+/* ===== WIDGET: ProjectInstructionSetupModal (Widgets/Console/console_project_instructions.py) ===== */
+
+    ProjectInstructionSetupModal { align: center middle; }
+
+
+
+
+
+
+
+/* ===== WIDGET: ProjectInstructionNoticeModal (Widgets/Console/console_project_instructions.py) ===== */
+
+    ProjectInstructionNoticeModal { align: center middle; }
+
+
+
+
+
+/* ===== WIDGET: ConsoleReactionPickerModal (Widgets/Console/console_reaction_picker_modal.py) ===== */
+
+    ConsoleReactionPickerModal {
+        align: center middle;
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    ConsoleReactionPickerModal.-narrow #console-reaction-picker-modal {
+        width: 100%;
+        height: 100%;
+        padding: 0 1;
+    }
+
+    ConsoleReactionPickerModal.-narrow #console-reaction-picker-preview {
+        display: none;
+    }
+
+    ConsoleReactionPickerModal.-narrow #console-reaction-picker-results {
+        width: 100%;
+    }
+
+
+/* ===== WIDGET: ConsoleReviewNotesModal (Widgets/Console/console_review_notes_modal.py) ===== */
+
+    ConsoleReviewNotesModal {
+        align: center middle;
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/* ===== WIDGET: ConsoleSelectionMenu (Widgets/Console/console_selection_menu.py) ===== */
+
+    ConsoleSelectionMenu {
+        position: absolute;
+        /* Live spike 2026-08-16: textual 8.2.8's vertical layout excludes
+           position:absolute children from sibling stacking but still feeds
+           their height into the fr denominator -- mounted on the screen, the
+           menu shrank the 1fr #screen-content sibling by its own height and
+           floated the composer above dead rows (the "black bar").
+           overlay:screen is the style that removes an overlay from the
+           container's flow math entirely. */
+        overlay: screen;
+        width: auto;
+        height: auto;
+        border: round $primary;
+        background: $surface;
+        padding: 0 1;
+    }
+    /* One row per action (clamp-fix review): the library Button chrome
+       (line-pad 1 + tall bottom border) stacked 3 rows per button, so the
+       6-action feedback variant measured ~24 rows and towered over short
+       transcripts, bleeding past the owner-box clamp onto the composer.
+       !important is load-bearing: the library's variant/hover/disabled
+       rules re-assert border-top/bottom at equal-or-higher specificity. */
+    ConsoleSelectionMenu Button {
+        height: 1 !important;
+        min-height: 1 !important;
+        border: none !important;
+        border-top: none !important;
+        border-bottom: none !important;
+        padding: 0 1 !important;
+    }
+    /* ANSI color mode (increment review): the library's disabled rule
+       (Button:ansi.-style-flat:disabled, specificity (0,3,1)) beats the
+       generic compact rule above ((0,0,2)) -- both !important, so
+       specificity decides -- and re-grew tall borders on the run-gated
+       pair (2-row border-only boxes, labels clipped, 11-row menu). Per-ID
+       rules ((1,0,1)) beat any class/pseudo stack textual throws. Applied
+       to ALL seven action IDs, not just the two gated ones: any action may
+       end up disabled, and every action must stay one row in every state
+       and color mode. */
+    ConsoleSelectionMenu #console-selection-add-to-chat,
+    ConsoleSelectionMenu #console-selection-more-details,
+    ConsoleSelectionMenu #console-selection-ask-side-chat,
+    ConsoleSelectionMenu #console-selection-create-note,
+    ConsoleSelectionMenu #console-selection-request-changes,
+    ConsoleSelectionMenu #console-selection-lgm,
+    ConsoleSelectionMenu #console-selection-comment {
+        border: none !important;
+        border-top: none !important;
+        border-bottom: none !important;
+    }
+    ConsoleSelectionMenu #console-selection-feedback-hint {
+        color: $text-muted;
+        text-style: dim;
+        width: auto;
+    }
+    /* Shrink guard for boxes shorter than even the compact menu: the
+       measured clamp adds this class, trading the container border and
+       the hint line for 3 more usable rows (last resort before the
+       top-out tie-break; no actions are ever hidden). */
+    ConsoleSelectionMenu.shrunk-for-short-owner {
+        border: none;
+    }
+    ConsoleSelectionMenu.shrunk-for-short-owner #console-selection-feedback-hint {
+        display: none;
+    }
+
+
 /* ===== WIDGET: ConsoleSessionTabButton (Widgets/Console/console_session_surface.py) ===== */
 
     ConsoleSessionTabButton {
@@ -1508,6 +1880,183 @@
     ConsoleSetupBackdrop {
         width: 1fr;
         height: 1fr;
+    }
+
+
+/* ===== WIDGET: ConsoleSideChatModal (Widgets/Console/console_side_chat_modal.py) ===== */
+
+    ConsoleSideChatModal {
+        align: center middle;
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/* ===== WIDGET: ConsoleMessageHeader (Widgets/Console/console_transcript.py) ===== */
+
+    ConsoleMessageHeader {
+        width: 100%;
+        height: 1;
+        min-height: 1;
+    }
+
+    ConsoleMessageHeader > .console-transcript-speaker-label {
+        width: 1fr;
+        height: 1;
+        min-height: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    ConsoleMessageHeader > .console-message-speech-presentation {
+        width: 14;
+        min-width: 14;
+        height: 1;
+        min-height: 1;
+    }
+
+
+/* ===== WIDGET: ConsoleTurnFileCard (Widgets/Console/console_turn_file_card.py) ===== */
+
+    ConsoleTurnFileCard {
+        height: auto;
+        min-height: 1;
+    }
+    ConsoleTurnFileCard .console-turn-file-header-row {
+        height: 1;
+        width: 100%;
+    }
+    ConsoleTurnFileCard .console-turn-file-header {
+        width: 1fr;
+        height: 1;
+        text-style: bold;
+    }
+    ConsoleTurnFileCard .console-turn-file-toggle-all-btn,
+    ConsoleTurnFileCard .console-turn-file-review-btn {
+        min-width: 3;
+    }
+    ConsoleTurnFileCard .console-turn-file-row {
+        height: 1;
+        min-height: 1;
+        width: 100%;
+        text-align: left;
+    }
+    ConsoleTurnFileCard .console-turn-file-diff {
+        height: auto;
+        max-height: 20;
+        overflow-y: auto;
+        overflow-x: hidden;
+        scrollbar-size: 1 1;
+    }
+    ConsoleTurnFileCard .console-turn-file-hunk {
+        height: auto;
+        margin-bottom: 1;
+    }
+    ConsoleTurnFileCard .console-turn-file-hunk-tail {
+        height: auto;
+        margin-bottom: 1;
+        text-style: italic;
+    }
+    ConsoleTurnFileCard .console-turn-file-hunk-actions {
+        height: auto;
+    }
+    ConsoleTurnFileCard .console-turn-file-note-btn {
+        min-width: 10;
+    }
+    ConsoleTurnFileCard .console-turn-file-hunk-notes {
+        height: auto;
+    }
+    ConsoleTurnFileCard .console-turn-file-note {
+        height: auto;
+        min-height: 1;
+    }
+    ConsoleTurnFileCard .console-turn-file-note-text {
+        width: 1fr;
+    }
+    ConsoleTurnFileCard .console-turn-file-note-input {
+        width: 100%;
+    }
+
+
+/* ===== WIDGET: LibraryNoteFolderNameDialog (Widgets/Library/library_note_folder_dialog.py) ===== */
+
+    LibraryNoteFolderNameDialog { align: center middle; }
+    LibraryNoteFolderNameDialog > Vertical {
+        width: 56; height: auto; padding: 1 2;
+        border: tall $accent; background: $surface;
+    }
+
+
+
+/* ===== WIDGET: LibraryNoteFolderTargetDialog (Widgets/Library/library_note_folder_dialog.py) ===== */
+
+    LibraryNoteFolderTargetDialog { align: center middle; }
+    LibraryNoteFolderTargetDialog > Vertical {
+        width: 64; height: auto; padding: 1 2;
+        border: tall $accent; background: $surface;
+    }
+
+
+
+/* ===== WIDGET: LibraryNoteImportCanvas (Widgets/Library/library_note_import_canvas.py) ===== */
+
+
+
+    LibraryNoteImportCanvas {
+        width: 1fr;
+        min-width: 40;
+        height: 1fr;
+        overflow: hidden;
+    }
+
+    LibraryNoteImportCanvas #note-import-heading,
+    LibraryNoteImportCanvas #note-import-status,
+    LibraryNoteImportCanvas #note-import-overflow-hint,
+    LibraryNoteImportCanvas .note-import-primary {
+        height: auto;
+    }
+
+    LibraryNoteImportCanvas #note-import-body {
+        height: 1fr;
+        overflow-y: auto;
+    }
+
+    LibraryNoteImportCanvas Static,
+    LibraryNoteImportCanvas Input,
+    LibraryNoteImportCanvas Button {
+        width: 1fr;
+    }
+
+    LibraryNoteImportCanvas .note-import-group-heading {
+        text-style: bold;
+        margin-top: 1;
+    }
+
+    LibraryNoteImportCanvas .note-import-item-name {
+        text-style: bold;
+    }
+
+    LibraryNoteImportCanvas .note-import-quiet {
+        color: $text-muted;
+    }
+
+    LibraryNoteImportCanvas .note-import-error {
+        color: #ff8fa3;
+        text-style: bold;
     }
 
 
@@ -2697,3 +3246,62 @@
     PersonasVisualIdentityPackWidget.-narrow #personas-visual-identity-preview-image {
         display: none;
     }
+
+/* ===== WIDGET: _BackdropClickShield (Widgets/modal_dismissal.py) ===== */
+
+    _BackdropClickShield {
+        width: 1;
+        height: 1;
+        position: absolute;
+        overlay: screen;
+        background: transparent;
+    }
+
+
+/* ===== WIDGET: ProjectSkillsImportModal (Widgets/project_skills_import_modal.py) ===== */
+
+    ProjectSkillsImportModal {
+        align: center middle;
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/* ===== WIDGET: WorkspaceCreateModal (Widgets/workspace_create_modal.py) ===== */
+
+    WorkspaceCreateModal {
+        align: center middle;
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

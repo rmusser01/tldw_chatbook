@@ -61,7 +61,7 @@ class WorkspaceCreateModal(
 ):
     """Collect a workspace name + optional folder bindings."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     WorkspaceCreateModal {
         align: center middle;
     }

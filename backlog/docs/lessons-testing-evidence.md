@@ -6986,3 +6986,26 @@ below") and pinned the comment, not the construction. A source-index pin's
 needle must be an expression form that cannot appear in prose (here
 `"= ConsoleRuntime(self)"`), or writing a helpful comment breaks the pin —
 or worse, keeps it green while pinning nothing.
+---
+
+## A consolidated widget's first DYNAMIC mount can lose its own CSS to a stale tie-breaker
+
+**TASK-21115, 2026-08-23.** Converting 25 post-consolidation `DEFAULT_CSS` blocks
+to `BUNDLED_CSS` left every compose-time harness green while 19 UI tests went red —
+every one of them mounting a converted widget AFTER app boot. Textual's
+`Stylesheet.add_source` keeps the lowest tie-breaker ever offered for an existing
+source but does not arm `_require_parse` when lowering it (textual 8.2.8). A
+class's own `DEFAULT_CSS` used to mask that: it WAS a new source at first mount,
+arming the reparse itself. A consolidated class adds no source, so its dynamic
+first mount resolved against a stale parse in which a bare `Vertical`'s
+`width: 1fr; height: 1fr` defaults still carried tie-breaker 0 — exactly tying the
+sheet's `ConsoleSelectionMenu { width: auto; ... }` rule and beating it on source
+order. Measured: the menu mounted 80x40 instead of 24x6. Compose-time mounts never
+show it because registration and the first parse share the mount batch.
+
+**What to do.** Any change that stops a widget class registering its own stylesheet
+source must be verified with a DYNAMIC first mount (post-boot `app.mount(...)` /
+`push_screen`), not only compose-time mounts — the destination tour guard never
+exercises that path. The durable fix here is `css/tie_aware_stylesheet.py`
+(`TieAwareStylesheet`, used by both `TldwCli` and the `ConsolidatedCSSApp` harness),
+pinned born-red-vs-plain-`Stylesheet` in `Tests/UI/test_consolidated_css_harness.py`.

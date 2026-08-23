@@ -92,6 +92,7 @@ from functools import partial
 from pathlib import Path, PurePath
 
 from tldw_chatbook.css import build_css, widget_css
+from tldw_chatbook.css.tie_aware_stylesheet import TieAwareStylesheet
 from tldw_chatbook.css.Themes.themes import ALL_THEMES
 
 # from tldw_chatbook.css.css_loader import load_modular_css  # Removed - reverting to original CSS
@@ -5684,6 +5685,16 @@ class TldwCli(
         )
 
         super().__init__()
+
+        # TASK-21115: a consolidated (BUNDLED_CSS) class adds no stylesheet
+        # source at first mount, so a dynamic first mount can resolve against
+        # a stale parse in which a base class's defaults still carry
+        # tie-breaker 0 and shadow the consolidated sheet's rules (Textual's
+        # `add_source` lowers a stored tie-breaker without arming a reparse).
+        # This subclass reparses when that happens -- restoring exactly the
+        # cascade per-class DEFAULT_CSS produced. See
+        # `css/tie_aware_stylesheet.py` for the measured failure shape.
+        self.stylesheet = TieAwareStylesheet(variables=self.get_css_variables())
 
         # Phase 1: Basic initialization
         phase_start = time.perf_counter()

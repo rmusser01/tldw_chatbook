@@ -54,7 +54,7 @@ class _ImportBody(VerticalScroll):
 class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
     """Render one immutable import snapshot and post typed physical intents."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     $ds-status-error-readable: #ff8fa3;
 
     LibraryNoteImportCanvas {

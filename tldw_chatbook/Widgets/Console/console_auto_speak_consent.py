@@ -70,7 +70,7 @@ def _safe_label(value: object, *, fallback: str) -> str:
 class AutoSpeakConsentModal(SafeModalDismissMixin, ModalScreen[bool]):
     """Confirm automatic speech for one sanitized effective destination."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     AutoSpeakConsentModal {
         align: center middle;
     }

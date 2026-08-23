@@ -95,7 +95,7 @@ class ConsoleChangedFilesSection(RecomposeCaptureGuard, Vertical):
 
     MAX_VISIBLE_ROWS = MAX_VISIBLE_ROWS
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ConsoleChangedFilesSection {
         height: auto;
         min-height: 0;

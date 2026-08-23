@@ -1726,6 +1726,41 @@
     }
 
 
+/* ===== WIDGET: ModelCatalogConsentModal (UI/Screens/model_catalog_consent.py) ===== */
+
+
+
+    ModelCatalogConsentModal #model-catalog-consent-dialog {
+        width: 72;
+        height: auto;
+        background: $panel;
+        border: round $accent;
+        padding: 1 2;
+    }
+
+    ModelCatalogConsentModal #model-catalog-consent-title {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    ModelCatalogConsentModal #model-catalog-consent-copy {
+        height: auto;
+        margin-bottom: 1;
+    }
+
+    ModelCatalogConsentModal #model-catalog-consent-actions {
+        height: 3;
+        align-horizontal: right;
+    }
+
+    ModelCatalogConsentModal #model-catalog-consent-actions Button {
+        min-width: 16;
+        height: 3;
+        border: none;
+        margin-left: 1;
+    }
+
+
 /* ===== WIDGET: PersonasScreen (UI/Screens/personas_screen.py) ===== */
 
 
@@ -1962,6 +1997,499 @@
     }
 
 
+/* ===== WIDGET: TrajectoryScreen (UI/Screens/trajectory_screen.py) ===== */
+
+
+    TrajectoryScreen #trajectory-screen {
+        width: 100%;
+        height: 100%;
+        layout: vertical;
+        padding: 0 1;
+    }
+    TrajectoryScreen #trajectory-title {
+        height: 1;
+        color: $text;
+        background: $panel;
+    }
+    TrajectoryScreen #trajectory-search {
+        height: 3;
+    }
+    TrajectoryScreen #trajectory-table {
+        height: 1fr;
+        min-height: 3;
+    }
+    TrajectoryScreen #trajectory-inspector {
+        height: auto;
+        max-height: 40%;
+        border-top: solid $primary;
+        padding: 0 1;
+    }
+    TrajectoryScreen #trajectory-hints {
+        height: 1;
+        color: $text-disabled;
+    }
+
+
+/* ===== WIDGET: AutoSpeakConsentModal (Widgets/Console/console_auto_speak_consent.py) ===== */
+
+
+
+    AutoSpeakConsentModal #console-auto-speak-consent-modal {
+        width: 68;
+        max-width: 95%;
+        height: auto;
+        border: tall gray;
+        background: black;
+        padding: 1 2;
+    }
+
+    AutoSpeakConsentModal #console-auto-speak-consent-actions {
+        height: auto;
+        margin-top: 1;
+        align-horizontal: right;
+    }
+
+
+/* ===== WIDGET: ConsoleConversationInspector (Widgets/Console/console_conversation_inspector.py) ===== */
+
+
+    ConsoleConversationInspector #console-inspector-modal {
+        width: 110; max-width: 95%; height: 42; max-height: 90%;
+        border: tall gray; padding: 1 2;
+    }
+    ConsoleConversationInspector #console-inspector-header { height: auto; }
+    ConsoleConversationInspector #console-inspector-tabs { height: 1fr; margin-top: 1; }
+    ConsoleConversationInspector #console-inspector-costs-rows { height: 1fr; }
+    ConsoleConversationInspector .console-inspector-cost-row { height: auto; }
+    ConsoleConversationInspector #console-inspector-costs-totals { height: auto; margin-top: 1; text-style: bold; }
+    ConsoleConversationInspector #console-inspector-exchange-caveat { height: auto; color: gray; margin-bottom: 1; }
+    ConsoleConversationInspector #console-inspector-exchange-turns { height: 1fr; }
+    ConsoleConversationInspector .console-inspector-exchange-turn { height: auto; }
+    ConsoleConversationInspector .console-inspector-exchange-call { height: auto; }
+    ConsoleConversationInspector .console-inspector-exchange-section { height: auto; }
+    ConsoleConversationInspector .console-inspector-exchange-message { height: auto; }
+    ConsoleConversationInspector .console-inspector-exchange-call-actions { height: auto; margin-bottom: 1; }
+    ConsoleConversationInspector #console-inspector-actions { height: auto; margin-top: 1; }
+    /* Next Send tab (task-10, ported from the retired context modal).
+       LY-13 (TASK-2154.23) compacted the OLD modal's own top-level frame
+       to content when there was nothing to show yet; DROPPED here (task-10
+       review finding 1) -- the outer modal frame is now shared with the
+       Costs/Exchange tabs and stays a fixed height regardless of this
+       pane's state, so there was nothing left for a pane-scoped "auto"
+       height to compact (measured identically empty vs. populated). */
+    ConsoleConversationInspector #console-inspector-next-send-pane { height: 1fr; }
+    ConsoleConversationInspector #console-inspector-next-send-header { height: auto; }
+    ConsoleConversationInspector #console-inspector-next-send-warning { height: auto; color: yellow; }
+    ConsoleConversationInspector #console-inspector-next-send-loading { display: none; }
+    ConsoleConversationInspector #console-inspector-next-send-loading.loading { display: block; }
+    ConsoleConversationInspector #console-inspector-next-send-tabs { height: 1fr; }
+    ConsoleConversationInspector #console-inspector-next-send-actions { height: auto; }
+
+
+/* ===== WIDGET: ConsoleFeedbackCommentModal (Widgets/Console/console_feedback_comment_modal.py) ===== */
+
+
+
+    ConsoleFeedbackCommentModal #console-feedback-comment-modal {
+        width: 56;
+        height: auto;
+        border: tall gray;
+        background: black;
+        padding: 1 2;
+    }
+
+    ConsoleFeedbackCommentModal #console-feedback-comment-quote {
+        height: 5;
+        border: round gray;
+        padding: 0 1;
+        margin: 1 0;
+        color: $text-muted;
+    }
+
+    ConsoleFeedbackCommentModal #console-feedback-comment-input {
+        width: 100%;
+        margin: 0 0 1 0;
+    }
+
+    ConsoleFeedbackCommentModal #console-feedback-comment-actions {
+        height: 3;
+        min-height: 3;
+        margin: 1 0 0 0;
+        align-horizontal: right;
+    }
+
+    ConsoleFeedbackCommentModal #console-feedback-comment-cancel,
+    ConsoleFeedbackCommentModal #console-feedback-comment-submit {
+        width: 10;
+        min-width: 10;
+        height: 3;
+        min-height: 3;
+    }
+
+
+/* ===== WIDGET: ConsoleProjectInstructionStatusRow (Widgets/Console/console_project_instructions.py) ===== */
+
+
+    ConsoleProjectInstructionStatusRow #console-project-instruction-status-button {
+        width: 100%;
+        height: 1;
+        min-height: 1;
+        border: none;
+        padding: 0 1;
+        background: $surface;
+        color: $text;
+    }
+    ConsoleProjectInstructionStatusRow #console-project-instruction-status-button:focus {
+        outline: heavy $accent;
+    }
+
+
+/* ===== WIDGET: ConsoleProjectInstructionContextPanel (Widgets/Console/console_project_instructions.py) ===== */
+
+
+    ConsoleProjectInstructionContextPanel .console-project-instruction-meta { height: auto; color: $text-muted; }
+    ConsoleProjectInstructionContextPanel #console-project-instruction-recovery-actions { height: 1; margin-top: 1; }
+    ConsoleProjectInstructionContextPanel .console-project-instruction-recovery-action {
+        width: auto;
+        min-width: 10;
+        height: 1;
+        min-height: 1;
+        border: none;
+        padding: 0 1;
+    }
+
+
+/* ===== WIDGET: ProjectInstructionSetupModal (Widgets/Console/console_project_instructions.py) ===== */
+
+
+    ProjectInstructionSetupModal #console-project-setup-modal {
+        width: 90%;
+        max-width: 76;
+        height: auto;
+        max-height: 80%;
+        border: tall $accent;
+        background: $panel;
+        padding: 1 2;
+    }
+    ProjectInstructionSetupModal #console-project-binding-list { height: auto; max-height: 14; }
+    ProjectInstructionSetupModal .console-project-binding-option { width: 100%; height: 1; min-height: 1; }
+    ProjectInstructionSetupModal .console-project-binding-recovery { height: auto; color: $text-muted; }
+    ProjectInstructionSetupModal #console-project-setup-actions { height: 1; margin-top: 1; }
+
+
+/* ===== WIDGET: ProjectInstructionNoticeModal (Widgets/Console/console_project_instructions.py) ===== */
+
+
+    ProjectInstructionNoticeModal #console-project-notice-modal {
+        width: 90%;
+        max-width: 76;
+        height: auto;
+        max-height: 80%;
+        border: tall $warning;
+        background: $panel;
+        padding: 1 2;
+    }
+    ProjectInstructionNoticeModal .console-project-notice-copy { height: auto; }
+    ProjectInstructionNoticeModal #console-project-notice-actions { height: 1; margin-top: 1; }
+
+
+/* ===== WIDGET: ConsoleReactionPickerModal (Widgets/Console/console_reaction_picker_modal.py) ===== */
+
+
+
+    ConsoleReactionPickerModal #console-reaction-picker-modal {
+        width: 76;
+        max-width: 100%;
+        height: 30;
+        max-height: 100%;
+        border: tall $accent;
+        background: $panel;
+        padding: 1 2;
+    }
+
+    ConsoleReactionPickerModal #console-reaction-picker-filter {
+        width: 100%;
+        height: 3;
+    }
+
+    ConsoleReactionPickerModal #console-reaction-picker-count {
+        width: 100%;
+        height: 1;
+        color: $text-muted;
+    }
+
+    ConsoleReactionPickerModal #console-reaction-picker-body {
+        width: 100%;
+        height: 1fr;
+        min-height: 4;
+    }
+
+    ConsoleReactionPickerModal #console-reaction-picker-results {
+        width: 2fr;
+        height: 100%;
+        min-width: 0;
+        background: $surface-darken-1;
+    }
+
+    ConsoleReactionPickerModal .console-reaction-picker-row {
+        width: 100%;
+        height: 1;
+        min-height: 1;
+        border: none;
+        padding: 0 1;
+        margin: 0;
+        background: $surface;
+        color: $text;
+        content-align: left middle;
+        text-align: left;
+    }
+
+    ConsoleReactionPickerModal .console-reaction-picker-row-highlighted {
+        background: $accent 25%;
+        color: $text;
+        text-style: bold;
+    }
+
+    ConsoleReactionPickerModal #console-reaction-picker-preview {
+        width: 1fr;
+        height: 100%;
+        min-width: 0;
+        margin-left: 1;
+        padding: 1;
+        background: $surface;
+    }
+
+    ConsoleReactionPickerModal #console-reaction-picker-preview-label {
+        width: 100%;
+        height: auto;
+        text-style: bold;
+    }
+
+    ConsoleReactionPickerModal #console-reaction-picker-preview-meta {
+        width: 100%;
+        height: auto;
+        color: $text-muted;
+    }
+
+    ConsoleReactionPickerModal #console-reaction-picker-preview-image {
+        width: 100%;
+        height: 1fr;
+        content-align: center middle;
+    }
+
+    ConsoleReactionPickerModal #console-reaction-picker-actions {
+        width: 100%;
+        height: 3;
+        margin-top: 1;
+    }
+
+    ConsoleReactionPickerModal #console-reaction-picker-actions Button {
+        width: 1fr;
+        height: 3;
+        border: none;
+        margin: 0 1 0 0;
+    }
+
+    ConsoleReactionPickerModal #console-reaction-picker-select {
+        background: $primary;
+        color: $text;
+    }
+
+    ConsoleReactionPickerModal #console-reaction-picker-clear,
+    ConsoleReactionPickerModal #console-reaction-picker-cancel {
+        background: $surface;
+        color: $text;
+    }
+
+    ConsoleReactionPickerModal #console-reaction-picker-actions Button:focus {
+        outline: heavy $accent;
+    }
+
+
+
+
+
+
+
+
+/* ===== WIDGET: ConsoleReviewNotesModal (Widgets/Console/console_review_notes_modal.py) ===== */
+
+
+
+    ConsoleReviewNotesModal #console-review-notes-modal {
+        width: 76;
+        max-height: 90%;
+        height: auto;
+        border: tall gray;
+        background: black;
+        padding: 1 2;
+    }
+
+    ConsoleReviewNotesModal #console-review-notes-header {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    ConsoleReviewNotesModal #console-review-notes-list {
+        height: auto;
+        max-height: 26;
+    }
+
+    ConsoleReviewNotesModal .console-review-notes-row {
+        height: auto;
+        border: round gray;
+        padding: 0 1;
+        margin: 0 0 1 0;
+    }
+
+    ConsoleReviewNotesModal .console-review-notes-comment {
+        height: auto;
+        margin-bottom: 1;
+    }
+
+    ConsoleReviewNotesModal .console-review-notes-edit {
+        height: 5;
+        margin-bottom: 1;
+    }
+
+    ConsoleReviewNotesModal .console-review-notes-meta {
+        color: $text-muted;
+        height: auto;
+        margin-bottom: 1;
+    }
+
+    ConsoleReviewNotesModal .console-review-notes-actions {
+        height: 3;
+        min-height: 3;
+        align-horizontal: right;
+    }
+
+    ConsoleReviewNotesModal .console-review-notes-actions Button {
+        width: 10;
+        min-width: 10;
+        height: 3;
+        min-height: 3;
+        margin-left: 1;
+    }
+
+    ConsoleReviewNotesModal #console-review-notes-close-bar {
+        height: 3;
+        min-height: 3;
+        margin-top: 1;
+        align-horizontal: right;
+    }
+
+    ConsoleReviewNotesModal #console-review-notes-close {
+        width: 10;
+        min-width: 10;
+        height: 3;
+        min-height: 3;
+    }
+
+
+/* ===== WIDGET: ConsoleSelectionMenu (Widgets/Console/console_selection_menu.py) ===== */
+
+
+    /* One row per action (clamp-fix review): the library Button chrome
+       (line-pad 1 + tall bottom border) stacked 3 rows per button, so the
+       6-action feedback variant measured ~24 rows and towered over short
+       transcripts, bleeding past the owner-box clamp onto the composer.
+       !important is load-bearing: the library's variant/hover/disabled
+       rules re-assert border-top/bottom at equal-or-higher specificity. */
+
+    /* ANSI color mode (increment review): the library's disabled rule
+       (Button:ansi.-style-flat:disabled, specificity (0,3,1)) beats the
+       generic compact rule above ((0,0,2)) -- both !important, so
+       specificity decides -- and re-grew tall borders on the run-gated
+       pair (2-row border-only boxes, labels clipped, 11-row menu). Per-ID
+       rules ((1,0,1)) beat any class/pseudo stack textual throws. Applied
+       to ALL seven action IDs, not just the two gated ones: any action may
+       end up disabled, and every action must stay one row in every state
+       and color mode. */
+
+
+    /* Shrink guard for boxes shorter than even the compact menu: the
+       measured clamp adds this class, trading the container border and
+       the hint line for 3 more usable rows (last resort before the
+       top-out tie-break; no actions are ever hidden). */
+
+
+
+
+/* ===== WIDGET: ConsoleSideChatModal (Widgets/Console/console_side_chat_modal.py) ===== */
+
+
+
+    ConsoleSideChatModal #console-side-chat-modal {
+        width: 92;
+        height: 30;
+        border: tall gray;
+        background: black;
+        padding: 1 2;
+    }
+
+    ConsoleSideChatModal #console-side-chat-identity {
+        height: auto;
+        color: gray;
+    }
+
+    ConsoleSideChatModal #console-side-chat-quote {
+        height: 5;
+        border: round gray;
+        padding: 0 1;
+        margin: 1 0;
+        color: $text-muted;
+    }
+
+    ConsoleSideChatModal #console-side-chat-prompt {
+        height: 3;
+        margin: 0 0 1 0;
+    }
+
+    ConsoleSideChatModal #console-side-chat-reply-scroll {
+        height: 1fr;
+        min-height: 3;
+        margin: 0 0 1 0;
+    }
+
+    ConsoleSideChatModal #console-side-chat-status {
+        height: auto;
+        min-height: 1;
+        color: $text-muted;
+    }
+
+    ConsoleSideChatModal #console-side-chat-actions {
+        height: 3;
+        min-height: 3;
+        margin: 1 0 0 0;
+        align-horizontal: right;
+    }
+
+    ConsoleSideChatModal #console-side-chat-close,
+    ConsoleSideChatModal #console-side-chat-retry,
+    ConsoleSideChatModal #console-side-chat-send,
+    ConsoleSideChatModal #console-side-chat-stop {
+        width: 10;
+        min-width: 10;
+        height: 3;
+        min-height: 3;
+    }
+
+
+/* ===== WIDGET: LibraryNoteFolderNameDialog (Widgets/Library/library_note_folder_dialog.py) ===== */
+
+
+
+    LibraryNoteFolderNameDialog #library-note-folder-dialog-actions { height: auto; align-horizontal: right; }
+
+
+/* ===== WIDGET: LibraryNoteFolderTargetDialog (Widgets/Library/library_note_folder_dialog.py) ===== */
+
+
+
+    LibraryNoteFolderTargetDialog #library-note-folder-target-actions { height: auto; align-horizontal: right; }
+
+
 /* ===== WIDGET: PersonaProfileEditorWidget (Widgets/Persona_Widgets/persona_profile_editor_widget.py) ===== */
 
 
@@ -2162,4 +2690,107 @@
 
 
 
+
+
+/* ===== WIDGET: ProjectSkillsImportModal (Widgets/project_skills_import_modal.py) ===== */
+
+
+
+    ProjectSkillsImportModal #project-skills-modal {
+        width: 76;
+        height: auto;
+        max-height: 34;
+        border: tall gray;
+        background: black;
+        padding: 1 2;
+    }
+
+    ProjectSkillsImportModal #project-skills-provenance {
+        color: $text-muted;
+        margin: 0 0 1 0;
+    }
+
+    ProjectSkillsImportModal #project-skills-trust-line {
+        color: $text-muted;
+        margin: 0 0 1 0;
+    }
+
+    ProjectSkillsImportModal #project-skills-post-trust-line {
+        color: $text-muted;
+        margin: 0 0 1 0;
+    }
+
+    ProjectSkillsImportModal #project-skills-rows {
+        height: auto;
+        max-height: 18;
+        margin: 0 0 1 0;
+    }
+
+    ProjectSkillsImportModal #project-skills-results {
+        height: auto;
+        max-height: 18;
+        margin: 0 0 1 0;
+    }
+
+    ProjectSkillsImportModal #project-skills-footer {
+        color: $text-muted;
+        height: auto;
+    }
+
+    ProjectSkillsImportModal #project-skills-actions {
+        height: auto;
+        margin: 1 0 0 0;
+        align-horizontal: right;
+    }
+
+
+/* ===== WIDGET: WorkspaceCreateModal (Widgets/workspace_create_modal.py) ===== */
+
+
+
+    WorkspaceCreateModal #workspace-create-modal {
+        width: 72;
+        height: auto;
+        max-height: 32;
+        border: tall gray;
+        background: black;
+        padding: 1 2;
+    }
+
+    WorkspaceCreateModal #workspace-create-explainer {
+        color: $text-muted;
+        margin: 0 0 1 0;
+    }
+
+    WorkspaceCreateModal #workspace-create-error {
+        color: $error;
+        height: auto;
+    }
+
+    WorkspaceCreateModal #workspace-create-folder-row {
+        height: auto;
+    }
+
+    WorkspaceCreateModal #workspace-create-folder-path {
+        width: 1fr;
+    }
+
+    WorkspaceCreateModal #workspace-create-actions {
+        height: auto;
+        margin: 1 0 0 0;
+        align-horizontal: right;
+    }
+
+    WorkspaceCreateModal #workspace-create-folder-list {
+        height: auto;
+    }
+
+    WorkspaceCreateModal .workspace-create-folder-item {
+        height: auto;
+    }
+
+    WorkspaceCreateModal .workspace-create-folder-locator {
+        width: 1fr;
+        content-align: left middle;
+    }
 
