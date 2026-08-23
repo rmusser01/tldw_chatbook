@@ -16,7 +16,6 @@ import re
 import os
 import secrets
 import signal
-import shutil
 import sqlite3
 import stat
 import statistics
@@ -4929,171 +4928,6 @@ def _worktree_admin_marker_name(target: str) -> str:
     return f".campaign-worktree-cleanup-{digest}"
 
 
-def _local_target_receipt_name(name: str) -> str:
-    return f".{name}-cleanup-receipt.json"
-
-
-def _local_target_terminal_name(name: str) -> str:
-    return f".{name}-cleanup-terminal.json"
-
-
-def _local_target_receipt_payload(target: str, descriptor: int) -> bytes:
-    metadata = os.fstat(descriptor)
-    return (
-        json.dumps(
-            {
-                "target_dev": metadata.st_dev,
-                "target_ino": metadata.st_ino,
-                "target_sha256": hashlib.sha256(target.encode()).hexdigest(),
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode()
-        + b"\n"
-    )
-
-
-def _local_target_receipt_identity(
-    root_descriptor: int, target: str, name: str
-) -> tuple[int, int]:
-    payload = _read_regular_file_fd(
-        root_descriptor,
-        _local_target_receipt_name(name),
-        error_code="target_worktree_admin_marker_conflict",
-    )
-    try:
-        record = json.loads(payload)
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise RuntimeError("target_worktree_admin_marker_conflict") from exc
-    if (
-        not isinstance(record, dict)
-        or set(record) != {"target_dev", "target_ino", "target_sha256"}
-        or not isinstance(record["target_dev"], int)
-        or isinstance(record["target_dev"], bool)
-        or record["target_dev"] < 0
-        or not isinstance(record["target_ino"], int)
-        or isinstance(record["target_ino"], bool)
-        or record["target_ino"] < 0
-        or record["target_sha256"]
-        != hashlib.sha256(target.encode()).hexdigest()
-        or payload
-        != json.dumps(
-            record, sort_keys=True, separators=(",", ":")
-        ).encode()
-        + b"\n"
-    ):
-        raise RuntimeError("target_worktree_admin_marker_conflict")
-    return record["target_dev"], record["target_ino"]
-
-
-def _publish_local_target_receipt(
-    root_descriptor: int,
-    target: str,
-    name: str,
-    target_descriptor: int,
-) -> tuple[int, int]:
-    payload = _local_target_receipt_payload(target, target_descriptor)
-    receipt_name = _local_target_receipt_name(name)
-    try:
-        stage_name = f".{receipt_name}-stage-{secrets.token_hex(16)}"
-    except BaseException as exc:
-        raise RuntimeError("target_worktree_unregister_failed") from exc
-    try:
-        receipt_descriptor = os.open(
-            stage_name,
-            os.O_WRONLY
-            | os.O_CREAT
-            | os.O_EXCL
-            | getattr(os, "O_CLOEXEC", 0),
-            0o600,
-            dir_fd=root_descriptor,
-        )
-    except OSError as exc:
-        raise RuntimeError("target_worktree_unregister_failed") from exc
-    try:
-        os.fsync(root_descriptor)
-        remaining = memoryview(payload)
-        while remaining:
-            written = os.write(receipt_descriptor, remaining)
-            if written <= 0:
-                raise RuntimeError("target_worktree_unregister_failed")
-            remaining = remaining[written:]
-        os.fsync(receipt_descriptor)
-    finally:
-        os.close(receipt_descriptor)
-    try:
-        os.link(
-            stage_name,
-            receipt_name,
-            src_dir_fd=root_descriptor,
-            dst_dir_fd=root_descriptor,
-            follow_symlinks=False,
-        )
-        os.fsync(root_descriptor)
-    except FileExistsError:
-        if _read_regular_file_fd(
-            root_descriptor,
-            receipt_name,
-            error_code="target_worktree_admin_marker_conflict",
-        ) != payload:
-            raise RuntimeError("target_worktree_admin_marker_conflict")
-    finally:
-        try:
-            os.unlink(stage_name, dir_fd=root_descriptor)
-        except FileNotFoundError:
-            pass
-        os.fsync(root_descriptor)
-    return _local_target_receipt_identity(root_descriptor, target, name)
-
-
-def _local_target_receipt_is_terminal(
-    root_descriptor: int, name: str
-) -> bool:
-    terminal_name = _local_target_terminal_name(name)
-    try:
-        os.stat(
-            terminal_name,
-            dir_fd=root_descriptor,
-            follow_symlinks=False,
-        )
-    except FileNotFoundError:
-        return False
-    except OSError as exc:
-        raise RuntimeError("target_worktree_admin_marker_conflict") from exc
-    if _read_regular_file_fd(
-        root_descriptor,
-        terminal_name,
-        error_code="target_worktree_admin_marker_conflict",
-    ) != _read_regular_file_fd(
-        root_descriptor,
-        _local_target_receipt_name(name),
-        error_code="target_worktree_admin_marker_conflict",
-    ):
-        raise RuntimeError("target_worktree_admin_marker_conflict")
-    return True
-
-
-def _complete_local_target_receipt(
-    root_descriptor: int, name: str
-) -> None:
-    receipt_name = _local_target_receipt_name(name)
-    terminal_name = _local_target_terminal_name(name)
-    try:
-        os.link(
-            receipt_name,
-            terminal_name,
-            src_dir_fd=root_descriptor,
-            dst_dir_fd=root_descriptor,
-            follow_symlinks=False,
-        )
-        os.fsync(root_descriptor)
-    except FileExistsError:
-        if not _local_target_receipt_is_terminal(root_descriptor, name):
-            raise RuntimeError("target_worktree_admin_marker_conflict")
-    except OSError as exc:
-        raise RuntimeError("target_worktree_unregister_failed") from exc
-
-
 def _admin_tombstone_payload(
     target: str,
     admin_descriptor: int,
@@ -5728,7 +5562,6 @@ def _verify_target_worktree_terminal(
     expected_target_identity: tuple[int, int] | None,
     *,
     run_command: Any,
-    local_receipts: str = "none",
 ) -> None:
     registrations = _worktree_registrations(
         repository_root, run_command=run_command
@@ -5769,23 +5602,6 @@ def _verify_target_worktree_terminal(
         allowed_cleanup_names = (
             set() if observed_name is None else {observed_name}
         )
-        if local_receipts == "complete":
-            if expected_target_identity is None or (
-                _local_target_receipt_identity(
-                    root_descriptor, target, name
-                )
-                != expected_target_identity
-                or not _local_target_receipt_is_terminal(root_descriptor, name)
-            ):
-                raise RuntimeError("target_worktree_admin_marker_conflict")
-            allowed_cleanup_names.update(
-                {
-                    _local_target_receipt_name(name),
-                    _local_target_terminal_name(name),
-                }
-            )
-        elif local_receipts != "none":
-            raise RuntimeError("target_worktree_admin_marker_conflict")
         if observed_name is not None:
             current_descriptor = os.open(
                 observed_name,
@@ -5894,93 +5710,20 @@ def _remove_target_worktree(
         ) from None
     registered = target_text in registrations
     if allow_unregistered_owned and not registered:
+        if owned_name is not None:
+            raise RuntimeError(f"target_worktree_ownership_unproven:{name}")
         root_descriptor = _open_identity_bound_directory(
             root, root_identity, error_code=confinement_error
         )
-        owned_descriptor: int | None = None
         try:
-            if owned_name is None:
-                try:
-                    _verify_target_worktree_terminal(
-                        repository_root,
-                        root_descriptor,
-                        target_text,
-                        name,
-                        None,
-                        run_command=run_command,
-                    )
-                except RuntimeError as exc:
-                    if str(exc) == "target_worktree_admin_marker_conflict":
-                        raise RuntimeError(
-                            f"target_worktree_admin_marker_conflict:{name}"
-                        ) from exc
-                    raise
-                return
-            try:
-                owned_descriptor = os.open(
-                    owned_name,
-                    _directory_open_flags(),
-                    dir_fd=root_descriptor,
-                )
-            except OSError as exc:
-                raise RuntimeError(confinement_error) from exc
-            observed_owned = os.fstat(owned_descriptor)
-            if (observed_owned.st_dev, observed_owned.st_ino) != owned_identity:
-                raise RuntimeError(confinement_error)
-            try:
-                receipt_identity = _local_target_receipt_identity(
-                    root_descriptor, target_text, name
-                )
-            except RuntimeError as exc:
-                if owned_name != name:
-                    raise RuntimeError(
-                        f"target_worktree_admin_marker_conflict:{name}"
-                    ) from exc
-                try:
-                    receipt_identity = _publish_local_target_receipt(
-                        root_descriptor,
-                        target_text,
-                        name,
-                        owned_descriptor,
-                    )
-                except RuntimeError as publish_exc:
-                    if (
-                        str(publish_exc)
-                        == "target_worktree_admin_marker_conflict"
-                    ):
-                        raise RuntimeError(
-                            f"target_worktree_admin_marker_conflict:{name}"
-                        ) from publish_exc
-                    raise
-            if receipt_identity != owned_identity:
-                raise RuntimeError(
-                    f"target_worktree_admin_marker_conflict:{name}"
-                )
-            try:
-                receipt_is_terminal = _local_target_receipt_is_terminal(
-                    root_descriptor, name
-                )
-            except RuntimeError as exc:
-                raise RuntimeError(
-                    f"target_worktree_admin_marker_conflict:{name}"
-                ) from exc
-            if receipt_is_terminal:
-                if any(os.scandir(owned_descriptor)):
-                    raise RuntimeError(
-                        f"target_worktree_admin_marker_conflict:{name}"
-                    )
-            else:
-                _remove_directory_contents_fd(owned_descriptor)
-                _complete_local_target_receipt(root_descriptor, name)
             try:
                 _verify_target_worktree_terminal(
                     repository_root,
                     root_descriptor,
                     target_text,
                     name,
-                    receipt_identity,
+                    None,
                     run_command=run_command,
-                    local_receipts="complete",
                 )
             except RuntimeError as exc:
                 if str(exc) == "target_worktree_admin_marker_conflict":
@@ -5990,8 +5733,6 @@ def _remove_target_worktree(
                 raise
             return
         finally:
-            if owned_descriptor is not None:
-                os.close(owned_descriptor)
             os.close(root_descriptor)
     try:
         common = _git_common_directory(
@@ -6282,12 +6023,80 @@ def prepare_output_root(path: Path) -> None:
 
 
 def remove_successful_sample_root(run_root: Path, sample_root: Path) -> None:
-    """Remove only a completed child root directly below ``run_root/samples``."""
-    samples_root = run_root.resolve() / "samples"
-    target = sample_root.resolve()
-    if target.parent != samples_root or not target.is_dir():
-        raise RuntimeError("sample_cleanup_refused")
-    shutil.rmtree(target)
+    """Clear one completed child root without unlinking its owned inode."""
+    run_descriptor: int | None = None
+    samples_descriptor: int | None = None
+    sample_descriptor: int | None = None
+    current_run_descriptor: int | None = None
+    current_samples_descriptor: int | None = None
+    current_sample_descriptor: int | None = None
+    try:
+        run, run_identity = _strict_owned_directory(
+            run_root, parent=None, error_code="sample_cleanup_refused"
+        )
+        samples, samples_identity = _strict_owned_directory(
+            run_root / "samples",
+            parent=run,
+            error_code="sample_cleanup_refused",
+        )
+        sample, sample_identity = _strict_owned_directory(
+            sample_root,
+            parent=samples,
+            error_code="sample_cleanup_refused",
+        )
+        run_descriptor = _open_identity_bound_directory(
+            run, run_identity, error_code="sample_cleanup_refused"
+        )
+        samples_descriptor = os.open(
+            "samples", _directory_open_flags(), dir_fd=run_descriptor
+        )
+        samples_metadata = os.fstat(samples_descriptor)
+        if (samples_metadata.st_dev, samples_metadata.st_ino) != samples_identity:
+            raise RuntimeError("sample_cleanup_refused")
+        sample_descriptor = os.open(
+            sample.name,
+            _directory_open_flags(),
+            dir_fd=samples_descriptor,
+        )
+        sample_metadata = os.fstat(sample_descriptor)
+        if (sample_metadata.st_dev, sample_metadata.st_ino) != sample_identity:
+            raise RuntimeError("sample_cleanup_refused")
+        _remove_directory_contents_fd(sample_descriptor)
+        current_run_descriptor = _open_identity_bound_directory(
+            run, run_identity, error_code="sample_cleanup_refused"
+        )
+        current_samples_descriptor = os.open(
+            "samples",
+            _directory_open_flags(),
+            dir_fd=current_run_descriptor,
+        )
+        current_samples = os.fstat(current_samples_descriptor)
+        if (current_samples.st_dev, current_samples.st_ino) != samples_identity:
+            raise RuntimeError("sample_cleanup_refused")
+        current_sample_descriptor = os.open(
+            sample.name,
+            _directory_open_flags(),
+            dir_fd=current_samples_descriptor,
+        )
+        current_sample = os.fstat(current_sample_descriptor)
+        if (
+            (current_sample.st_dev, current_sample.st_ino) != sample_identity
+            or any(os.scandir(current_sample_descriptor))
+        ):
+            raise RuntimeError("sample_cleanup_refused")
+    except OSError as exc:
+        raise RuntimeError("sample_cleanup_refused") from exc
+    finally:
+        for descriptor in (
+            current_sample_descriptor,
+            current_samples_descriptor,
+            current_run_descriptor,
+            sample_descriptor,
+            samples_descriptor,
+            run_descriptor,
+        ):
+            if descriptor is not None:
+                os.close(descriptor)
 
 
 def run_parent_mode(args: argparse.Namespace) -> int:
@@ -6436,10 +6245,6 @@ def run_parent_mode(args: argparse.Namespace) -> int:
                     [primary_failure, cleanup_failure],
                 ) from None
             raise
-
-    samples_root = run_root / "samples"
-    if samples_root.is_dir():
-        samples_root.rmdir()
 
     validation_errors = statistics_module.validate_run(
         rows, expected_iterations=args.iterations

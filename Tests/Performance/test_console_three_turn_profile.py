@@ -3682,13 +3682,60 @@ def test_remove_successful_sample_root_is_confined_to_run_samples(tmp_path: Path
 
     assert callable(remove_successful_sample_root)
     remove_successful_sample_root(run_root, sample_root)
-    assert not sample_root.exists()
+    assert sample_root.is_dir()
+    assert list(sample_root.iterdir()) == []
+    remove_successful_sample_root(run_root, sample_root)
+    assert sample_root.is_dir()
 
     outside = tmp_path / "outside"
     outside.mkdir()
     with pytest.raises(RuntimeError, match="sample_cleanup_refused"):
         remove_successful_sample_root(run_root, outside)
     assert outside.is_dir()
+
+
+def test_remove_successful_sample_root_parent_swap_preserves_foreign(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_root = tmp_path / "run"
+    samples_root = run_root / "samples"
+    sample_root = samples_root / "000-measured-0-control"
+    sample_root.mkdir(parents=True)
+    (sample_root / "owned-sentinel").write_bytes(b"remove")
+    detached_samples = tmp_path / "detached-samples"
+    outside_samples = tmp_path / "outside-samples"
+    foreign_sample = outside_samples / sample_root.name
+    foreign_sample.mkdir(parents=True)
+    foreign_sentinel = foreign_sample / "foreign-sentinel"
+    foreign_sentinel.write_bytes(b"preserve")
+    original_clear = profile._remove_directory_contents_fd
+    swapped = False
+
+    def swap_parent() -> None:
+        nonlocal swapped
+        if swapped:
+            return
+        swapped = True
+        samples_root.rename(detached_samples)
+        samples_root.symlink_to(outside_samples, target_is_directory=True)
+
+    def clear_then_swap(descriptor: int, **kwargs) -> None:
+        swap_parent()
+        original_clear(descriptor, **kwargs)
+
+    monkeypatch.setattr(
+        profile, "_remove_directory_contents_fd", clear_then_swap
+    )
+
+    with pytest.raises(RuntimeError, match="^sample_cleanup_refused$"):
+        profile.remove_successful_sample_root(run_root, sample_root)
+
+    assert swapped
+    assert foreign_sentinel.read_bytes() == b"preserve"
+    retained = detached_samples / sample_root.name
+    assert retained.is_dir()
+    assert list(retained.iterdir()) == []
 
 
 def test_preflight_provider_verifies_exact_model_without_credentials() -> None:
@@ -4741,7 +4788,7 @@ def test_prepare_target_worktree_preserves_command_failure(tmp_path: Path) -> No
         )
 
 
-def test_prepare_target_worktree_cleans_partial_add_failure(tmp_path: Path) -> None:
+def test_prepare_target_worktree_preserves_partial_add_failure(tmp_path: Path) -> None:
     target = (tmp_path / "run/candidate").resolve()
     calls = []
 
@@ -4753,7 +4800,7 @@ def test_prepare_target_worktree_cleans_partial_add_failure(tmp_path: Path) -> N
         assert command == ["git", "worktree", "list", "--porcelain"]
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
-    with pytest.raises(RuntimeError, match="target_worktree_failed:candidate"):
+    with pytest.raises(BaseExceptionGroup, match="target_worktree_add_failed"):
         profile.prepare_target_worktree(
             tmp_path / "repository",
             tmp_path / "run",
@@ -4765,14 +4812,12 @@ def test_prepare_target_worktree_cleans_partial_add_failure(tmp_path: Path) -> N
     assert calls == [
         ["git", "worktree", "add", "--detach", str(target), profile.CANDIDATE_SHA],
         ["git", "worktree", "list", "--porcelain"],
-        ["git", "worktree", "list", "--porcelain"],
     ]
     assert target.is_dir()
-    _assert_retained_target_tombstone(target.parent, "candidate")
-    assert (target.parent / ".candidate-cleanup-receipt.json").is_file()
+    assert not (target.parent / ".candidate-cleanup-receipt.json").exists()
 
 
-def test_prepare_target_worktree_cleans_partial_when_git_proves_absent(
+def test_prepare_target_worktree_preserves_partial_when_git_proves_absent(
     tmp_path: Path,
 ) -> None:
     target = (tmp_path / "run/candidate").resolve()
@@ -4783,7 +4828,7 @@ def test_prepare_target_worktree_cleans_partial_when_git_proves_absent(
             return subprocess.CompletedProcess(command, 2, stdout="", stderr="add failed")
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
-    with pytest.raises(RuntimeError, match="^target_worktree_failed:candidate$"):
+    with pytest.raises(BaseExceptionGroup, match="target_worktree_add_failed"):
         profile.prepare_target_worktree(
             tmp_path / "repository",
             tmp_path / "run",
@@ -4793,11 +4838,10 @@ def test_prepare_target_worktree_cleans_partial_when_git_proves_absent(
         )
 
     assert target.is_dir()
-    _assert_retained_target_tombstone(target.parent, "candidate")
-    assert (target.parent / ".candidate-cleanup-receipt.json").is_file()
+    assert not (target.parent / ".candidate-cleanup-receipt.json").exists()
 
 
-def test_prepare_target_worktree_cleans_partial_directory_when_add_raises(
+def test_prepare_target_worktree_preserves_partial_directory_when_add_raises(
     tmp_path: Path,
 ) -> None:
     target = (tmp_path / "run/candidate").resolve()
@@ -4808,7 +4852,7 @@ def test_prepare_target_worktree_cleans_partial_directory_when_add_raises(
             raise RuntimeError("git-add-exploded")
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
-    with pytest.raises(RuntimeError, match="^git-add-exploded$"):
+    with pytest.raises(BaseExceptionGroup, match="target_worktree_add_failed"):
         profile.prepare_target_worktree(
             tmp_path / "repository",
             tmp_path / "run",
@@ -4818,8 +4862,34 @@ def test_prepare_target_worktree_cleans_partial_directory_when_add_raises(
         )
 
     assert target.is_dir()
-    _assert_retained_target_tombstone(target.parent, "candidate")
-    assert (target.parent / ".candidate-cleanup-receipt.json").is_file()
+    assert not (target.parent / ".candidate-cleanup-receipt.json").exists()
+
+
+def test_prepare_target_worktree_preserves_unregistered_foreign_add_failure(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "run/candidate"
+    sentinel = target / "foreign-sentinel"
+
+    def fake_run(command, **_kwargs):
+        if command[2] == "add":
+            target.mkdir(parents=True)
+            sentinel.write_bytes(b"preserve")
+            return subprocess.CompletedProcess(command, 2, stdout="", stderr="busy")
+        assert command == ["git", "worktree", "list", "--porcelain"]
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    with pytest.raises(BaseExceptionGroup, match="^target_worktree_add_failed"):
+        profile.prepare_target_worktree(
+            tmp_path / "repository",
+            tmp_path / "run",
+            name="candidate",
+            revision=profile.CANDIDATE_SHA,
+            run_command=fake_run,
+        )
+
+    assert sentinel.read_bytes() == b"preserve"
+    assert not (target.parent / ".candidate-cleanup-receipt.json").exists()
 
 
 @pytest.mark.parametrize(
@@ -4858,48 +4928,6 @@ def test_prepare_target_worktree_rejects_reserved_cleanup_namespace_before_git(
 
     assert calls == []
     assert (run_root / reserved_name).is_dir()
-
-
-def test_prepare_target_worktree_refuses_completed_target_tombstone_before_git(
-    tmp_path: Path,
-) -> None:
-    repository = tmp_path / "repository"
-    run_root = tmp_path / "run"
-    target = run_root / "candidate"
-    target.mkdir(parents=True)
-
-    def list_only(command, **_kwargs):
-        assert command == ["git", "worktree", "list", "--porcelain"]
-        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
-
-    profile._remove_target_worktree(
-        repository,
-        run_root,
-        name="candidate",
-        run_command=list_only,
-        allow_unregistered_owned=True,
-    )
-    calls: list[list[str]] = []
-
-    def reject_git(command, **_kwargs):
-        calls.append(command)
-        raise AssertionError("terminal target tombstone must block reuse")
-
-    with pytest.raises(
-        RuntimeError,
-        match="^target_worktree_failed:candidate:target_exists$",
-    ):
-        profile.prepare_target_worktree(
-            repository,
-            run_root,
-            name="candidate",
-            revision=profile.CANDIDATE_SHA,
-            run_command=reject_git,
-        )
-
-    assert calls == []
-    assert target.is_dir()
-    assert list(target.iterdir()) == []
 
 
 @pytest.mark.parametrize("name", ("control", "candidate"))
@@ -5032,27 +5060,16 @@ def test_remove_target_worktree_partial_no_owned_rechecks_injected_receipt(
 
 
 @pytest.mark.parametrize("name", ("control", "candidate"))
-@pytest.mark.parametrize("registered", (False, True), ids=("local", "registered"))
 def test_remove_target_worktree_final_verifier_rejects_injected_cleanup_orphan(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     name: str,
-    registered: bool,
 ) -> None:
-    repository = tmp_path / "repository"
+    repository = _init_real_worktree_repository(tmp_path)
     run_root = tmp_path / "run"
     target = run_root / name
-
-    def empty_registrations(*_args, **_kwargs):
-        return frozenset()
-
-    if registered:
-        repository = _init_real_worktree_repository(tmp_path)
-        _add_real_worktree(repository, target, branch=name)
-        original_registrations = profile._worktree_registrations
-    else:
-        target.mkdir(parents=True)
-        original_registrations = empty_registrations
+    _add_real_worktree(repository, target, branch=name)
+    original_registrations = profile._worktree_registrations
     orphan = run_root / f".{name}-cleanup-orphan-injected"
     registration_checks = 0
 
@@ -5060,8 +5077,7 @@ def test_remove_target_worktree_final_verifier_rejects_injected_cleanup_orphan(
         nonlocal registration_checks
         registrations = original_registrations(*args, **kwargs)
         registration_checks += 1
-        final_check = 3 if registered else 2
-        if registration_checks == final_check:
+        if registration_checks == 3:
             orphan.mkdir()
         return registrations
 
@@ -5076,217 +5092,9 @@ def test_remove_target_worktree_final_verifier_rejects_injected_cleanup_orphan(
             repository,
             run_root,
             name=name,
-            allow_unregistered_owned=not registered,
         )
 
     assert orphan.is_dir()
-    assert target.is_dir()
-
-
-@pytest.mark.parametrize("checkpoint", ("receipt_published", "target_cleared"))
-def test_remove_target_worktree_partial_owned_cleanup_is_crash_resumable(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    checkpoint: str,
-) -> None:
-    repository = tmp_path / "repository"
-    run_root = tmp_path / "run"
-    target = run_root / "candidate"
-    target.mkdir(parents=True)
-    (target / "partial-sentinel").write_bytes(b"remove")
-    target_metadata = target.stat()
-    target_identity = (target_metadata.st_dev, target_metadata.st_ino)
-    original_remove = profile._remove_directory_contents_fd
-    original_publish = profile._publish_local_target_receipt
-
-    def fake_run(command, **_kwargs):
-        assert command == ["git", "worktree", "list", "--porcelain"]
-        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
-
-    def clear_then_interrupt(descriptor: int, **kwargs) -> None:
-        original_remove(descriptor, **kwargs)
-        metadata = os.fstat(descriptor)
-        if (
-            checkpoint == "target_cleared"
-            and (metadata.st_dev, metadata.st_ino) == target_identity
-        ):
-            raise KeyboardInterrupt("partial target cleared")
-
-    def publish_then_interrupt(*args, **kwargs):
-        result = original_publish(*args, **kwargs)
-        if checkpoint == "receipt_published":
-            raise KeyboardInterrupt("partial receipt published")
-        return result
-
-    monkeypatch.setattr(
-        profile, "_remove_directory_contents_fd", clear_then_interrupt
-    )
-    monkeypatch.setattr(
-        profile, "_publish_local_target_receipt", publish_then_interrupt
-    )
-    with pytest.raises(KeyboardInterrupt):
-        profile._remove_target_worktree(
-            repository,
-            run_root,
-            name="candidate",
-            run_command=fake_run,
-            allow_unregistered_owned=True,
-        )
-
-    receipt = run_root / ".candidate-cleanup-receipt.json"
-    assert receipt.is_file()
-    assert str(target).encode() not in receipt.read_bytes()
-    retained = target.stat()
-    assert (retained.st_dev, retained.st_ino) == target_identity
-    monkeypatch.setattr(
-        profile, "_remove_directory_contents_fd", original_remove
-    )
-    monkeypatch.setattr(
-        profile, "_publish_local_target_receipt", original_publish
-    )
-
-    profile._remove_target_worktree(
-        repository,
-        run_root,
-        name="candidate",
-        run_command=fake_run,
-        allow_unregistered_owned=True,
-    )
-    profile._remove_target_worktree(
-        repository,
-        run_root,
-        name="candidate",
-        run_command=fake_run,
-        allow_unregistered_owned=True,
-    )
-
-    retained = target.stat()
-    assert (retained.st_dev, retained.st_ino) == target_identity
-    assert list(target.iterdir()) == []
-    terminal_receipt = run_root / ".candidate-cleanup-terminal.json"
-    assert terminal_receipt.is_file()
-    assert terminal_receipt.read_bytes() == receipt.read_bytes()
-
-
-def test_remove_target_worktree_partial_receipt_rejects_foreign_quarantine(
-    tmp_path: Path,
-) -> None:
-    repository = tmp_path / "repository"
-    run_root = tmp_path / "run"
-    target = run_root / "candidate"
-    target.mkdir(parents=True)
-
-    def fake_run(command, **_kwargs):
-        assert command == ["git", "worktree", "list", "--porcelain"]
-        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
-
-    profile._remove_target_worktree(
-        repository,
-        run_root,
-        name="candidate",
-        run_command=fake_run,
-        allow_unregistered_owned=True,
-    )
-    quarantine = run_root / ".candidate-cleanup"
-    quarantine.mkdir()
-    (quarantine / "foreign-sentinel").write_bytes(b"preserve")
-
-    with pytest.raises(
-        RuntimeError,
-        match="^target_worktree_admin_marker_conflict:candidate$",
-    ):
-        profile._remove_target_worktree(
-            repository,
-            run_root,
-            name="candidate",
-            run_command=fake_run,
-            allow_unregistered_owned=True,
-        )
-
-    assert target.is_dir()
-    assert (quarantine / "foreign-sentinel").read_bytes() == b"preserve"
-
-
-def test_remove_target_worktree_partial_terminal_rejects_nonempty_quarantine(
-    tmp_path: Path,
-) -> None:
-    repository = tmp_path / "repository"
-    run_root = tmp_path / "run"
-    target = run_root / "candidate"
-    target.mkdir(parents=True)
-
-    def fake_run(command, **_kwargs):
-        assert command == ["git", "worktree", "list", "--porcelain"]
-        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
-
-    profile._remove_target_worktree(
-        repository,
-        run_root,
-        name="candidate",
-        run_command=fake_run,
-        allow_unregistered_owned=True,
-    )
-    sentinel = target / "foreign-sentinel"
-    sentinel.write_bytes(b"preserve")
-
-    with pytest.raises(
-        RuntimeError,
-        match="^target_worktree_admin_marker_conflict:candidate$",
-    ):
-        profile._remove_target_worktree(
-            repository,
-            run_root,
-            name="candidate",
-            run_command=fake_run,
-            allow_unregistered_owned=True,
-        )
-
-    assert sentinel.read_bytes() == b"preserve"
-
-
-def test_remove_target_worktree_partial_does_not_replace_injected_empty_quarantine(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    repository = tmp_path / "repository"
-    run_root = tmp_path / "run"
-    target = run_root / "candidate"
-    target.mkdir(parents=True)
-    (target / "owned-sentinel").write_bytes(b"owned")
-    quarantine = run_root / ".candidate-cleanup"
-    original_publish = profile._publish_local_target_receipt
-    injected_identity: tuple[int, int] | None = None
-
-    def fake_run(command, **_kwargs):
-        assert command == ["git", "worktree", "list", "--porcelain"]
-        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
-
-    def publish_then_inject(*args, **kwargs):
-        nonlocal injected_identity
-        result = original_publish(*args, **kwargs)
-        quarantine.mkdir()
-        metadata = quarantine.stat()
-        injected_identity = (metadata.st_dev, metadata.st_ino)
-        return result
-
-    monkeypatch.setattr(
-        profile, "_publish_local_target_receipt", publish_then_inject
-    )
-    with pytest.raises(
-        RuntimeError,
-        match="^target_worktree_admin_marker_conflict:candidate$",
-    ):
-        profile._remove_target_worktree(
-            repository,
-            run_root,
-            name="candidate",
-            run_command=fake_run,
-            allow_unregistered_owned=True,
-        )
-
-    assert injected_identity is not None
-    current = quarantine.stat()
-    assert (current.st_dev, current.st_ino) == injected_identity
     assert target.is_dir()
 
 
@@ -6200,43 +6008,6 @@ def test_remove_target_worktree_resumes_legacy_registered_quarantine(
 
     profile._remove_target_worktree(
         repository, run_root, name="candidate"
-    )
-
-    assert quarantine.is_dir()
-    assert list(quarantine.iterdir()) == []
-    assert not target.exists()
-
-
-def test_remove_target_worktree_resumes_legacy_partial_quarantine(
-    tmp_path: Path,
-) -> None:
-    repository = tmp_path / "repository"
-    run_root = tmp_path / "run"
-    target = run_root / "candidate"
-    quarantine = run_root / ".candidate-cleanup"
-    target.mkdir(parents=True)
-    (target / "partial-sentinel").write_bytes(b"remove")
-    root_descriptor = os.open(run_root, os.O_RDONLY)
-    target_descriptor = os.open(target, os.O_RDONLY)
-    try:
-        profile._publish_local_target_receipt(
-            root_descriptor, str(target), "candidate", target_descriptor
-        )
-    finally:
-        os.close(target_descriptor)
-        os.close(root_descriptor)
-    target.rename(quarantine)
-
-    def fake_run(command, **_kwargs):
-        assert command == ["git", "worktree", "list", "--porcelain"]
-        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
-
-    profile._remove_target_worktree(
-        repository,
-        run_root,
-        name="candidate",
-        run_command=fake_run,
-        allow_unregistered_owned=True,
     )
 
     assert quarantine.is_dir()
