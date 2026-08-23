@@ -5422,8 +5422,8 @@ async def test_library_provider_factory_failure_degrades_to_no_provider():
 
 @pytest.mark.asyncio
 async def test_compose_mcp_provider_excludes_console_shadowed_builtin_names():
-    """The Console-composed MCP provider drops exactly the 23 shadowed raw
-    names (19 descriptor tools + 5 legacy readers) from the
+    """The Console-composed MCP provider drops exactly the 29 shadowed raw
+    names (24 descriptor tools + 5 legacy readers) from the
     `builtin:tldw_chatbook` source -- the Console serves Library retrieval
     through its own direct/RAG provider (either mode), so the MCP copies
     would be an ungoverned duplicate. Same-named external/local profile

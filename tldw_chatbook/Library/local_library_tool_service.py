@@ -128,7 +128,8 @@ def _storage_error_payload() -> dict[str, Any]:
     """Scrubbed operational-failure payload: no SQL, paths, or exception text."""
     return LibraryToolError(
         ERROR_STORAGE_ERROR,
-        "The local Library store could not complete the read.",
+        # "operation", not "read": the write paths (save-note) reuse this.
+        "The local Library store could not complete the operation.",
         retryable=True,
     ).to_payload()
 

@@ -1096,7 +1096,7 @@ other Library tools.
 
 ### The study-notes fan-out pattern
 
-A sixth `library_*` tool — and the third that writes —, `library_save_note`, closes the student story the
+A sixth `library_*` tool — and the third that writes — `library_save_note`, closes the student story the
 chunk tools set up: *"make me per-chapter notes of this book"* (or
 flashcards per section) runs as a fan-out over the ordinary sub-agent
 machinery — no special orchestration:

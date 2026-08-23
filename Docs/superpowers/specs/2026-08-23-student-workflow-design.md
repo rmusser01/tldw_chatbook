@@ -138,7 +138,8 @@ means a re-run that does not list-first can mint duplicates, and two
 concurrent identical creates both succeed. **Accepted deliberately** (same
 class as #2's cross-process races): the documented convention is
 **list-before-rerun** (`library_list_notes` in the folder, match by title,
-update via id); title-keyed upsert would invent natural-key semantics the
+update via id) — *(superseded by the third-review search-based ruling, §5)* —;
+title-keyed upsert would invent natural-key semantics the
 schema does not have. The `note_import_executor` reconcile-by-id precedent
 is noted and deliberately not extended to titles.
 
@@ -222,7 +223,8 @@ pattern; the spec's §11-equivalent is this section).
 6. **(Review pass 1)** Input bounds are schema-level `maxLength` (mirror
    spec-save's caps; verify-and-match).
 7. **(Review pass 1)** Duplicate-window accepted; list-before-rerun is the
-   documented convention; no title-keyed upsert.
+   documented convention *(superseded by the third-review search-based
+   ruling, §5)*; no title-keyed upsert.
 8. **(Review pass 2)** The provenance header carries `revision:` (span +
    revision = staleness-detectable).
 9. **(Review pass 2; resolved on pass 3)** `update_note` **raises

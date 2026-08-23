@@ -1441,7 +1441,7 @@ def test_invoke_kill_switch_check_survives_getter_exception(running_loop):
 # builtin_raw_name_exclusions (task-1337, plan Task 8)
 # ---------------------------------------------------------------------------
 #
-# The Console shadows 24 built-in raw names (the 19 `library_*` descriptor
+# The Console shadows 29 built-in raw names (the 24 `library_*` descriptor
 # tools served by its own LibraryToolProvider, plus the five legacy RAG/chat
 # readers whose Console coverage is the bounded RAG/direct tools). The
 # Console-composed provider must drop those names ONLY when they come from
