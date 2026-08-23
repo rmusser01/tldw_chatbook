@@ -20,6 +20,14 @@ from PIL import Image
 from tldw_chatbook.Character_Chat.local_character_persona_service import (
     LocalCharacterPersonaService,
 )
+from tldw_chatbook.Character_Chat.visual_identity import (
+    validate_visual_identity_manifest,
+)
+from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
+from tldw_chatbook.Persona_Visual.repository import PersonaVisualRepository
+from tldw_chatbook.Persona_Visual.validation import (
+    validate_persona_visual_manifest,
+)
 from tldw_chatbook.Utils.private_paths import secure_private_directory
 
 from .contracts import (
@@ -32,7 +40,8 @@ from .contracts import (
     ActorPackValidationError,
     canonical_json_bytes,
     canonical_member_order,
-    validate_actor_pack_document,
+    validate_actor_pack_manifest,
+    validate_actor_payload,
     validate_actor_portrait,
 )
 from .repository import ActorPackRepository
@@ -65,9 +74,9 @@ _MIME_BY_SUFFIX = {
 class ActorPackImportError(ValueError):
     """Stable path-free import failure."""
 
-    __slots__ = ("category", "cleanup_candidate")
+    __slots__ = ("category",)
 
-    def __init__(self, category: str, *, cleanup_candidate: str | None = None) -> None:
+    def __init__(self, category: str) -> None:
         if category not in {
             "actor_pack_import_invalid",
             "actor_pack_import_unsupported",
@@ -80,7 +89,6 @@ class ActorPackImportError(ValueError):
         }:
             category = "actor_pack_import_failed"
         self.category = category
-        self.cleanup_candidate = cleanup_candidate
         super().__init__(category)
 
 
@@ -106,6 +114,15 @@ class ActorPackPortraitPreview:
 
 
 @dataclass(frozen=True, slots=True)
+class ActorPackFieldDifference:
+    """One bounded portable-field difference for explicit review."""
+
+    field_name: str
+    current_value: str
+    incoming_value: str
+
+
+@dataclass(frozen=True, slots=True)
 class _StagedFile:
     member: str
     identity: tuple[int, int, int, int, int, int]
@@ -116,6 +133,25 @@ class _StagedFile:
 class _ActorPackImportMaterial:
     actor_fields: Mapping[str, Any]
     portrait: bytes = field(repr=False)
+    sections: tuple[_ActorPackSectionMaterial, ...] = field(repr=False, default=())
+
+
+@dataclass(frozen=True, slots=True)
+class _ActorPackSectionAsset:
+    asset_key: str
+    member: str
+    mime_type: str
+    width: int
+    height: int
+    byte_count: int
+    sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class _ActorPackSectionMaterial:
+    kind: str
+    manifest: Mapping[str, Any]
+    assets: tuple[tuple[_ActorPackSectionAsset, bytes], ...] = field(repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,6 +164,10 @@ class ActorPackImportReview:
     portrait: ActorPackPortraitReview
     sections: tuple[str, ...]
     section_effects: tuple[tuple[str, str], ...]
+    license: tuple[tuple[str, str], ...]
+    provenance: tuple[tuple[str, str], ...]
+    warnings: tuple[str, ...]
+    differences: tuple[ActorPackFieldDifference, ...]
     uuid_match: str
     allowed_actions: tuple[str, ...]
     archive_sha256: str
@@ -143,6 +183,15 @@ class ActorPackImportReview:
     _matched_identity_version: int | None = field(repr=False)
     _matched_actor_version: int | None = field(repr=False)
     _matched_actor_digest: str | None = field(repr=False)
+    _shared_visual_authority: tuple[Any, ...] | None = field(repr=False)
+    _persona_visual_authority: tuple[Any, ...] | None = field(repr=False)
+    _required_free_bytes: int = field(repr=False)
+    _section_assets: tuple[tuple[str, tuple[_ActorPackSectionAsset, ...]], ...] = field(
+        repr=False
+    )
+    _source_path: Path = field(repr=False)
+    _source_identity: tuple[int, ...] = field(repr=False)
+    _source_sha256: str = field(repr=False)
 
 
 class ActorPackImportService:
@@ -162,6 +211,44 @@ class ActorPackImportService:
         self._local_service = local_service
         self._staging_root = _absolute_path(staging_root)
         self._profile_root = _absolute_path(profile_root)
+        self.sweep_staging()
+
+    def sweep_staging(self, *, max_candidates: int = 32) -> int:
+        """Remove a bounded set of authenticated crash-left staging candidates."""
+
+        if type(max_candidates) is not int or not 1 <= max_candidates <= 128:
+            raise ActorPackImportError("actor_pack_import_invalid")
+        try:
+            privacy = secure_private_directory(
+                self._staging_root, create=True, application_owned=True
+            )
+            if not privacy.verified_private:
+                raise ValueError
+            removed = 0
+            examined = 0
+            with os.scandir(self._staging_root) as entries:
+                candidates = (entry.name for entry in entries)
+                for name in candidates:
+                    if examined >= max_candidates:
+                        break
+                    examined += 1
+                    if not _candidate_name(name):
+                        continue
+                    candidate = self._staging_root / name
+                    authority = _read_candidate_authority(candidate)
+                    if authority is None:
+                        continue
+                    identity, secret = authority
+                    try:
+                        _candidate_current(candidate, identity, secret)
+                    except Exception:
+                        continue
+                    removed += int(_cleanup_candidate(candidate, identity))
+            return removed
+        except ActorPackImportError:
+            raise
+        except Exception:
+            raise ActorPackImportError("actor_pack_import_cleanup_denied") from None
 
     def inspect_archive(
         self,
@@ -188,17 +275,11 @@ class ActorPackImportService:
                         cancel_requested,
                     )
                     manifest = _canonical_object(root_bytes)
-                    required = manifest.get("required_features")
-                    if type(required) is not list or any(
-                        feature
-                        not in {
-                            "shared-visual-identity/v1",
-                            "persona-runtime/sprite-frames-v1",
-                        }
-                        for feature in required
-                    ):
-                        raise ActorPackImportError("actor_pack_import_unsupported")
-                    inventory = _inventory(manifest)
+                    document = validate_actor_pack_manifest(manifest)
+                    inventory = tuple(
+                        (item.path, item.byte_count, item.sha256)
+                        for item in document.files
+                    )
                     declared = {item[0] for item in inventory}
                     if set(infos) != declared | {"actor-pack.json"}:
                         raise ValueError
@@ -206,11 +287,8 @@ class ActorPackImportService:
                         self._staging_root,
                         archive_bytes + sum(item[1] for item in inventory),
                     )
-                    candidate, identity, secret = _create_candidate(
-                        self._staging_root
-                    )
+                    candidate, identity, secret = _create_candidate(self._staging_root)
                     staged = [_stage_root(candidate, root_bytes)]
-                    files: dict[str, bytes] = {}
                     for member, expected_bytes, expected_digest in inventory:
                         _cancel(cancel_requested)
                         record = _extract_member(
@@ -223,22 +301,27 @@ class ActorPackImportService:
                             cancel_requested,
                         )
                         staged.append(record)
-                        # Pure contract validation currently consumes bytes. Keep the
-                        # bounded V1 call while section loaders move large assets from
-                        # their staged descriptors in the section-validation step.
-                        files[member] = _read_staged(candidate, record)
-                    document = validate_actor_pack_document(manifest, files)
-                    actor = _canonical_object(files[document.payload_path])
-                    actor_fields = tuple(sorted(actor["data"].items()))
-                    portrait_data = files[document.portrait_path]
-                    validate_actor_portrait(document.portrait_path, portrait_data)
-                    portrait = _portrait_review(
-                        document.portrait_path, portrait_data
+                    staged_records = {record.member: record for record in staged}
+                    actor_bytes = _read_staged(
+                        candidate, staged_records[document.payload_path]
                     )
+                    validate_actor_payload(
+                        actor_bytes,
+                        actor_kind=document.actor_kind,
+                        portable_uuid=document.portable_uuid,
+                    )
+                    actor = _canonical_object(actor_bytes)
+                    actor_fields = tuple(sorted(actor["data"].items()))
+                    portrait_data = _read_staged(
+                        candidate, staged_records[document.portrait_path]
+                    )
+                    validate_actor_portrait(document.portrait_path, portrait_data)
+                    portrait = _portrait_review(document.portrait_path, portrait_data)
                     sections = tuple(section.kind for section in document.sections)
-                    section_effects = tuple(
-                        (kind, "Included — imported visuals will be activated")
-                        for kind in sections
+                    section_assets = _validate_sections(
+                        document.sections,
+                        frozenset(staged_records),
+                        lambda member: _read_staged(candidate, staged_records[member]),
                     )
                     matched = self.repository.get_identity_by_portable_uuid(
                         document.portable_uuid
@@ -256,11 +339,33 @@ class ActorPackImportService:
                     actor_authority = (
                         None if matched is None else self._actor_authority(matched)
                     )
+                    shared_authority, persona_visual_authority = (
+                        self._visual_authorities(matched)
+                    )
+                    expected_sections = (
+                        ("shared-visual-identity", "persona-runtime")
+                        if document.actor_kind == "persona"
+                        else ("shared-visual-identity",)
+                    )
+                    section_effects = tuple(
+                        (
+                            kind,
+                            "Included — imported visuals will be activated"
+                            if kind in sections
+                            else "Not included — existing visuals will be preserved",
+                        )
+                        for kind in expected_sections
+                    )
+                    differences = (
+                        ()
+                        if matched is None
+                        else self._differences(matched, actor["data"])
+                    )
             finally:
                 if not source.closed:
                     source.close()
             _cancel(cancel_requested)
-            if _source_identity(source_path) != source_identity:
+            if not _source_is_current(source_path, source_identity, archive_sha256):
                 raise ActorPackImportError("actor_pack_import_review_stale")
             _candidate_current(candidate, identity, secret)
             return ActorPackImportReview(
@@ -270,6 +375,10 @@ class ActorPackImportService:
                 portrait=portrait,
                 sections=sections,
                 section_effects=section_effects,
+                license=_display_metadata(manifest.get("license")),
+                provenance=_display_metadata(manifest.get("provenance")),
+                warnings=(),
+                differences=differences,
                 uuid_match=uuid_match,
                 allowed_actions=allowed_actions,
                 archive_sha256=archive_sha256,
@@ -291,6 +400,13 @@ class ActorPackImportService:
                 _matched_actor_digest=(
                     None if actor_authority is None else actor_authority[1]
                 ),
+                _shared_visual_authority=shared_authority,
+                _persona_visual_authority=persona_visual_authority,
+                _required_free_bytes=sum(item[1] for item in inventory),
+                _section_assets=section_assets,
+                _source_path=source_path,
+                _source_identity=source_identity,
+                _source_sha256=archive_sha256,
             )
         except ActorPackImportError:
             if candidate is not None:
@@ -331,6 +447,8 @@ class ActorPackImportService:
             data = _read_staged(candidate, record)
             if len(data) > MAX_PORTRAIT_BYTES:
                 raise ValueError
+        except ActorPackImportError:
+            raise
         except Exception:
             raise ActorPackImportError("actor_pack_import_review_stale") from None
         return ActorPackPortraitPreview(
@@ -344,7 +462,7 @@ class ActorPackImportService:
         """Delete only the authenticated candidate owned by this review."""
 
         candidate = self._review_candidate(review)
-        if not _cleanup_candidate(candidate):
+        if not _cleanup_candidate(candidate, review._candidate_identity):
             raise ActorPackImportError("actor_pack_import_cleanup_denied")
         return True
 
@@ -358,6 +476,12 @@ class ActorPackImportService:
 
         candidate = self._review_candidate(review)
         try:
+            if not _source_is_current(
+                review._source_path,
+                review._source_identity,
+                review._source_sha256,
+            ):
+                raise ValueError
             for record in review._files:
                 _read_staged(candidate, record)
             current = self.repository.get_identity_by_portable_uuid(
@@ -383,6 +507,17 @@ class ActorPackImportService:
                     *alternate_actor_authorities,
                 ):
                     raise ValueError
+            shared_authority, persona_visual_authority = self._visual_authorities(
+                current
+            )
+            if (
+                shared_authority != review._shared_visual_authority
+                or persona_visual_authority != review._persona_visual_authority
+            ):
+                raise ValueError
+            _preflight_space(self._profile_root, review._required_free_bytes)
+        except ActorPackImportError:
+            raise
         except Exception:
             raise ActorPackImportError("actor_pack_import_review_stale") from None
 
@@ -402,7 +537,22 @@ class ActorPackImportService:
                 raise ValueError
         except Exception:
             raise ActorPackImportError("actor_pack_import_review_stale") from None
-        return _ActorPackImportMaterial(dict(fields), portrait)
+        section_records = {kind: assets for kind, assets in review._section_assets}
+        sections: list[_ActorPackSectionMaterial] = []
+        try:
+            for kind in review.sections:
+                manifest_member = f"{kind}/manifest.json"
+                manifest = _canonical_object(
+                    _read_staged(candidate, records[manifest_member])
+                )
+                assets = tuple(
+                    (asset, _read_staged(candidate, records[asset.member]))
+                    for asset in section_records[kind]
+                )
+                sections.append(_ActorPackSectionMaterial(kind, manifest, assets))
+        except Exception:
+            raise ActorPackImportError("actor_pack_import_review_stale") from None
+        return _ActorPackImportMaterial(dict(fields), portrait, tuple(sections))
 
     def _actor_authority(self, identity: Any) -> tuple[int, str]:
         if identity.actor_kind == "character":
@@ -437,9 +587,7 @@ class ActorPackImportService:
         else:
             if self._local_service is None:
                 raise ActorPackImportError("actor_pack_import_review_stale")
-            actor = self._local_service._find_persona_profile(
-                identity.local_actor_id
-            )
+            actor = self._local_service._find_persona_profile(identity.local_actor_id)
             version = actor.get("version")
             data = dict(actor)
         if type(version) is not int or version < 1:
@@ -449,6 +597,70 @@ class ActorPackImportService:
         except (ActorPackValidationError, TypeError, ValueError):
             raise ActorPackImportError("actor_pack_import_review_stale") from None
         return version, digest
+
+    def _differences(
+        self, identity: Any, incoming: Mapping[str, Any]
+    ) -> tuple[ActorPackFieldDifference, ...]:
+        if identity.actor_kind == "character":
+            current = self.repository.db.get_character_card_by_id(
+                int(identity.local_actor_id)
+            )
+        elif self._local_service is not None:
+            current = self._local_service._find_persona_profile(identity.local_actor_id)
+        else:
+            current = None
+        if current is None:
+            raise ActorPackImportError("actor_pack_import_review_stale")
+        return tuple(
+            ActorPackFieldDifference(
+                key,
+                _display_value(current.get(key)),
+                _display_value(value),
+            )
+            for key, value in sorted(incoming.items())
+            if current.get(key) != value
+        )
+
+    def _visual_authorities(
+        self, identity: Any | None
+    ) -> tuple[tuple[Any, ...] | None, tuple[Any, ...] | None]:
+        if identity is None:
+            return None, None
+        shared_graph = VisualIdentityRepository(
+            self.repository.db
+        ).get_active_actor_pack(identity.actor_kind, identity.local_actor_id)
+        shared = (
+            None
+            if shared_graph is None
+            else (
+                int(shared_graph["binding"]["id"]),
+                int(shared_graph["binding"]["version"]),
+                int(shared_graph["pack"]["id"]),
+                int(shared_graph["pack"]["version"]),
+                int(shared_graph["version"]["id"]),
+                hashlib.sha256(canonical_json_bytes(shared_graph)).hexdigest(),
+            )
+        )
+        if identity.actor_kind != "persona":
+            return shared, None
+        persona_graph = PersonaVisualRepository(
+            self.repository.db
+        ).get_active_persona_pack(identity.local_actor_id)
+        if persona_graph is None:
+            return shared, None
+        visual = persona_graph.identity
+        persona = (
+            visual.persona_id,
+            visual.persona_revision,
+            visual.binding_id,
+            visual.binding_version,
+            visual.pack_id,
+            visual.pack_revision,
+            visual.pack_version_id,
+            visual.version_number,
+            visual.manifest_sha256,
+        )
+        return shared, persona
 
     def _review_candidate(self, review: object) -> Path:
         if type(review) is not ActorPackImportReview:
@@ -514,8 +726,17 @@ def _pin_source(path: Path) -> tuple[BinaryIO, tuple[int, ...], str, int]:
             os.close(descriptor)
 
 
-def _source_identity(path: Path) -> tuple[int, ...]:
-    return _file_identity(os.lstat(path))
+def _source_is_current(
+    path: Path, identity: tuple[int, ...], expected_sha256: str
+) -> bool:
+    try:
+        stream, current, digest, _size = _pin_source(path)
+    except (OSError, TypeError, ValueError):
+        return False
+    try:
+        return current == identity and digest == expected_sha256
+    finally:
+        stream.close()
 
 
 def _validated_members(archive: zipfile.ZipFile) -> dict[str, zipfile.ZipInfo]:
@@ -598,30 +819,6 @@ def _canonical_object(data: bytes) -> dict[str, Any]:
     if type(value) is not dict or canonical_json_bytes(value) != data:
         raise ValueError
     return value
-
-
-def _inventory(manifest: Mapping[str, Any]) -> tuple[tuple[str, int, str], ...]:
-    raw = manifest.get("files")
-    if type(raw) is not list or not 2 <= len(raw) <= MAX_FILES:
-        raise ValueError
-    result: list[tuple[str, int, str]] = []
-    for item in raw:
-        if type(item) is not dict or set(item) != {"path", "bytes", "sha256"}:
-            raise ValueError
-        member = canonical_member_order((item["path"],))[0]
-        byte_count = item["bytes"]
-        digest = item["sha256"]
-        if (
-            type(byte_count) is not int
-            or not 0 < byte_count <= MAX_MEMBER_BYTES
-            or type(digest) is not str
-            or len(digest) != 64
-        ):
-            raise ValueError
-        result.append((member, byte_count, digest))
-    if [item[0] for item in result] != sorted(item[0] for item in result):
-        raise ValueError
-    return tuple(result)
 
 
 def _preflight_space(root: Path, required: int) -> None:
@@ -764,6 +961,212 @@ def _portrait_review(member: str, data: bytes) -> ActorPackPortraitReview:
     )
 
 
+def _validate_sections(
+    sections: tuple[Any, ...],
+    archive_members: frozenset[str],
+    read_member: Callable[[str], bytes],
+) -> tuple[tuple[str, tuple[_ActorPackSectionAsset, ...]], ...]:
+    validated: list[tuple[str, tuple[_ActorPackSectionAsset, ...]]] = []
+    for section in sections:
+        manifest_bytes = read_member(section.manifest_path)
+        manifest = _canonical_object(manifest_bytes)
+        asset_members = tuple(
+            sorted(
+                path
+                for path in archive_members
+                if path.startswith(f"{section.kind}/assets/")
+            )
+        )
+        if not asset_members:
+            raise ValueError
+        if section.kind == "shared-visual-identity":
+            visual = validate_visual_identity_manifest(
+                manifest,
+                directory_bytes=sum(
+                    len(read_member(member)) for member in asset_members
+                )
+                + len(manifest_bytes),
+            )
+            expected = tuple(asset.storage_relpath for asset in visual.assets)
+            if expected != asset_members:
+                raise ValueError
+            records = []
+            for asset in visual.assets:
+                data = read_member(asset.storage_relpath)
+                mime, width, height = _section_image(asset.storage_relpath, data)
+                if (
+                    mime != asset.content_type
+                    or width != asset.width
+                    or height != asset.height
+                    or len(data) != asset.bytes
+                    or hashlib.sha256(data).hexdigest() != asset.sha256
+                ):
+                    raise ValueError
+                records.append(
+                    _ActorPackSectionAsset(
+                        asset.expression_key,
+                        asset.storage_relpath,
+                        mime,
+                        width,
+                        height,
+                        len(data),
+                        asset.sha256,
+                    )
+                )
+        else:
+            asset_ids = _persona_asset_ids(manifest)
+            if len(asset_ids) != len(asset_members):
+                raise ValueError
+            records = []
+            dimensions: dict[str, tuple[int, int]] = {}
+            for asset_id, member in zip(asset_ids, asset_members, strict=True):
+                data = read_member(member)
+                mime, width, height = _section_image(member, data)
+                digest = hashlib.sha256(data).hexdigest()
+                records.append(
+                    _ActorPackSectionAsset(
+                        asset_id,
+                        member,
+                        mime,
+                        width,
+                        height,
+                        len(data),
+                        digest,
+                    )
+                )
+                dimensions[asset_id] = (width, height)
+            validate_persona_visual_manifest(manifest, dimensions)
+        section_members = {
+            path for path in archive_members if path.startswith(f"{section.kind}/")
+        }
+        if section_members != {section.manifest_path, *asset_members}:
+            raise ValueError
+        validated.append((section.kind, tuple(records)))
+    return tuple(validated)
+
+
+def _section_image(member: str, data: bytes) -> tuple[str, int, int]:
+    mime = _MIME_BY_SUFFIX.get(Path(member).suffix)
+    if mime is None:
+        raise ValueError
+    from io import BytesIO
+
+    with Image.open(BytesIO(data)) as image:
+        width, height = image.size
+        image.load()
+    return mime, width, height
+
+
+def _persona_asset_ids(manifest: Mapping[str, Any]) -> tuple[str, ...]:
+    animations = manifest.get("animations")
+    if type(animations) is not dict:
+        raise ValueError
+    asset_ids: set[str] = set()
+    for animation in animations.values():
+        if type(animation) is not dict or type(animation.get("frames")) is not list:
+            raise ValueError
+        preview = animation.get("preview_asset_id")
+        if preview is not None:
+            if type(preview) is not str:
+                raise ValueError
+            asset_ids.add(preview)
+        for frame in animation["frames"]:
+            if type(frame) is not dict or type(frame.get("asset_id")) is not str:
+                raise ValueError
+            asset_ids.add(frame["asset_id"])
+    return tuple(sorted(asset_ids))
+
+
+def _display_metadata(value: object) -> tuple[tuple[str, str], ...]:
+    if type(value) is not dict or not 1 <= len(value) <= 8:
+        raise ValueError
+    result: list[tuple[str, str]] = []
+    for key, item in sorted(value.items()):
+        if type(key) is not str or not key or len(key) > 64 or type(item) is not str:
+            raise ValueError
+        rendered = _display_value(item, quote_strings=False)
+        if not rendered or len(rendered) > 256:
+            raise ValueError
+        result.append((key, rendered))
+    return tuple(result)
+
+
+def _display_value(value: object, *, quote_strings: bool = True) -> str:
+    try:
+        rendered = json.dumps(
+            value,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+            allow_nan=False,
+        )
+    except (RecursionError, TypeError, UnicodeError, ValueError):
+        return "Complex value"
+    if not quote_strings and type(value) is str:
+        rendered = rendered[1:-1]
+    if len(rendered) > 512:
+        return f"{rendered[:509]}…"
+    return rendered
+
+
+def _candidate_name(name: str) -> bool:
+    suffix = name.removeprefix(".import-")
+    return (
+        len(suffix) == 32
+        and name.startswith(".import-")
+        and all(character in "0123456789abcdef" for character in suffix)
+    )
+
+
+def _read_candidate_authority(
+    candidate: Path,
+) -> tuple[tuple[int, int], str] | None:
+    directory_descriptor = marker_descriptor = -1
+    try:
+        metadata = os.lstat(candidate)
+        if (
+            not _candidate_name(candidate.name)
+            or not stat.S_ISDIR(metadata.st_mode)
+            or stat.S_IMODE(metadata.st_mode) & 0o077
+        ):
+            return None
+        directory_descriptor = os.open(
+            candidate,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
+        )
+        marker_descriptor = os.open(
+            _MARKER,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=directory_descriptor,
+        )
+        marker_metadata = os.fstat(marker_descriptor)
+        if (
+            not stat.S_ISREG(marker_metadata.st_mode)
+            or marker_metadata.st_nlink != 1
+            or marker_metadata.st_size > 256
+        ):
+            return None
+        marker = os.read(marker_descriptor, 257).decode("ascii")
+        scheme, secret, name, device, inode = marker.split(":")
+        if (
+            scheme != "api1"
+            or name != candidate.name
+            or len(secret) != 64
+            or any(character not in "0123456789abcdef" for character in secret)
+            or int(device) != metadata.st_dev
+            or int(inode) != metadata.st_ino
+        ):
+            return None
+        return (metadata.st_dev, metadata.st_ino), secret
+    except (OSError, UnicodeError, ValueError):
+        return None
+    finally:
+        if marker_descriptor >= 0:
+            os.close(marker_descriptor)
+        if directory_descriptor >= 0:
+            os.close(directory_descriptor)
+
+
 def _candidate_current(candidate: Path, identity: tuple[int, int], secret: str) -> None:
     metadata = os.lstat(candidate)
     if (
@@ -782,27 +1185,72 @@ def _candidate_current(candidate: Path, identity: tuple[int, int], secret: str) 
         os.close(descriptor)
 
 
-def _cleanup_candidate(candidate: Path) -> bool:
+def _cleanup_candidate(
+    candidate: Path, expected_identity: tuple[int, int] | None = None
+) -> bool:
+    parent_descriptor = candidate_descriptor = -1
     try:
-        metadata = os.lstat(candidate)
-        if not stat.S_ISDIR(metadata.st_mode):
+        if expected_identity is None:
+            authority = _read_candidate_authority(candidate)
+            if authority is None:
+                return False
+            expected_identity = authority[0]
+        parent_descriptor = os.open(
+            candidate.parent,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
+        )
+        metadata = os.stat(
+            candidate.name, dir_fd=parent_descriptor, follow_symlinks=False
+        )
+        if (
+            not stat.S_ISDIR(metadata.st_mode)
+            or (metadata.st_dev, metadata.st_ino) != expected_identity
+            or not _candidate_name(candidate.name)
+        ):
             return False
-        for root, directories, files in os.walk(candidate, topdown=False):
-            base = Path(root)
-            for name in files:
-                entry = base / name
-                if not stat.S_ISREG(os.lstat(entry).st_mode):
-                    return False
-                entry.unlink()
-            for name in directories:
-                entry = base / name
-                if not stat.S_ISDIR(os.lstat(entry).st_mode):
-                    return False
-                entry.rmdir()
-        candidate.rmdir()
+        candidate_descriptor = os.open(
+            candidate.name,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=parent_descriptor,
+        )
+        opened = os.fstat(candidate_descriptor)
+        if (opened.st_dev, opened.st_ino) != expected_identity:
+            return False
+        if not _remove_directory_contents(candidate_descriptor):
+            return False
+        os.close(candidate_descriptor)
+        candidate_descriptor = -1
+        os.rmdir(candidate.name, dir_fd=parent_descriptor)
         return True
     except OSError:
         return False
+    finally:
+        if candidate_descriptor >= 0:
+            os.close(candidate_descriptor)
+        if parent_descriptor >= 0:
+            os.close(parent_descriptor)
+
+
+def _remove_directory_contents(directory_descriptor: int) -> bool:
+    for name in os.listdir(directory_descriptor):
+        metadata = os.stat(name, dir_fd=directory_descriptor, follow_symlinks=False)
+        if stat.S_ISREG(metadata.st_mode):
+            os.unlink(name, dir_fd=directory_descriptor)
+            continue
+        if not stat.S_ISDIR(metadata.st_mode):
+            return False
+        child = os.open(
+            name,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=directory_descriptor,
+        )
+        try:
+            if not _remove_directory_contents(child):
+                return False
+        finally:
+            os.close(child)
+        os.rmdir(name, dir_fd=directory_descriptor)
+    return True
 
 
 def _file_identity(value: os.stat_result) -> tuple[int, int, int, int, int, int]:
@@ -835,6 +1283,7 @@ def _cancel(checker: Callable[[], bool]) -> None:
 
 
 __all__ = [
+    "ActorPackFieldDifference",
     "ActorPackImportError",
     "ActorPackImportReview",
     "ActorPackImportService",

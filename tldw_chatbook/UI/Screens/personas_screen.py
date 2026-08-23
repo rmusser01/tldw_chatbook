@@ -81,6 +81,11 @@ from ...Actor_Packs.controller import (
 )
 from ...Actor_Packs.creation import ActorPackCreationError, ActorPackCreationResult
 from ...Actor_Packs.export import ActorPackExportError
+from ...Actor_Packs.import_controller import (
+    ActorPackImportControllerError,
+    ActorPackImportOutcome,
+)
+from ...Actor_Packs.importer import ActorPackImportError, ActorPackImportReview
 from ...Actor_Packs.publication import (
     ActorPackPublicationError,
     capture_actor_pack_destination,
@@ -167,6 +172,9 @@ from ...Widgets.destination_workbench import DestinationModeStrip
 from ...Widgets.Persona_Widgets.persona_profile_card_widget import (
     PersonaProfileCardWidget,
 )
+from ...Widgets.Persona_Widgets.actor_pack_import_review import (
+    ActorPackImportReviewDialog,
+)
 from ...Widgets.Persona_Widgets.persona_profile_editor_widget import (
     PersonaProfileEditorWidget,
 )
@@ -223,6 +231,7 @@ from ...Widgets.Persona_Widgets.personas_library_pane import (
     PersonasLibraryPane,
 )
 from ...Widgets.Persona_Widgets.personas_messages import (
+    ActorPackImportRequested,
     ActorPackExportRequested,
     PersonaActionRequested,
     PersonaBuddyActionRequested,
@@ -816,6 +825,27 @@ def _actor_pack_export_filename(name: str) -> str:
     return f"{safe or 'actor'}.tldw-actor-pack"
 
 
+def _actor_pack_import_error_copy(category: str | None) -> str:
+    """Map fixed backend categories to path-free recovery copy."""
+
+    return {
+        "actor_pack_import_cancelled": "Actor Pack import cancelled.",
+        "actor_pack_import_invalid": "This is not a valid Actor Pack.",
+        "actor_pack_import_unsupported": (
+            "This Actor Pack uses features this version cannot activate."
+        ),
+        "actor_pack_import_review_stale": (
+            "The actor or staged pack changed. Review the Actor Pack again."
+        ),
+        "actor_pack_import_identity_conflict": (
+            "This portable UUID belongs to a different actor kind."
+        ),
+        "actor_pack_import_disk_unavailable": (
+            "There is not enough verified private storage to import this pack."
+        ),
+    }.get(category, "Actor Pack import failed.")
+
+
 async def _join_task(task: asyncio.Task[Any]) -> Any:
     """Await an existing task through the shared shield-and-drain boundary."""
 
@@ -1090,6 +1120,8 @@ class PersonasScreen(BaseAppScreen):
         self._actor_pack_portrait_generation: int = 0
         self._actor_pack_export_operation: int | None = None
         self._actor_pack_export_authority: _ActorPackExportUIAuthority | None = None
+        self._actor_pack_import_operation: int | None = None
+        self._actor_pack_import_review: ActorPackImportReview | None = None
         # Image-gen P3 Task 3: (character_id, state) pairs with an expression
         # generation worker currently in flight - refuses a re-entrant
         # generate click for the same slot rather than racing two writes.
@@ -1708,6 +1740,7 @@ class PersonasScreen(BaseAppScreen):
     async def on_unmount(self) -> None:
         self._advance_persona_buddy_session()
         self._cancel_actor_pack_export()
+        self._cancel_actor_pack_import()
         self._character_tts_request_generation += 1
         self._character_tts_snapshot = None
         self._clear_character_tts_profile_suggestion()
@@ -4153,6 +4186,14 @@ class PersonasScreen(BaseAppScreen):
         if operation is not None and authority is not None:
             authority.controller.cancel(operation)
 
+    def _cancel_actor_pack_import(self) -> None:
+        """Signal only the active import operation during screen teardown."""
+
+        controller = getattr(self.app_instance, "actor_pack_import_controller", None)
+        operation = self._actor_pack_import_operation
+        if operation is not None and controller is not None:
+            controller.cancel(operation)
+
     @on(ActorPackExportRequested)
     async def _handle_actor_pack_export(
         self, message: ActorPackExportRequested
@@ -4287,6 +4328,137 @@ class PersonasScreen(BaseAppScreen):
                 return
             self._notify("Actor Pack export failed.", "error")
         finally:
+            self._io_dialog_active = False
+
+    @on(ActorPackImportRequested)
+    async def _handle_actor_pack_import(
+        self, message: ActorPackImportRequested
+    ) -> None:
+        """Open the dedicated review-first Actor Pack import flow."""
+
+        message.stop()
+        if self._io_dialog_active or self._actor_pack_import_operation is not None:
+            return
+        controller = getattr(self.app_instance, "actor_pack_import_controller", None)
+        importer = getattr(self.app_instance, "actor_pack_import_service", None)
+        if controller is None or importer is None:
+            self._notify("Actor Pack import is unavailable.", "error")
+            return
+        self._io_dialog_active = True
+        self.run_worker(
+            self._actor_pack_import_dialog_worker(controller, importer),
+            group="personas-io",
+        )
+
+    async def _actor_pack_import_dialog_worker(
+        self, controller: object, importer: object
+    ) -> None:
+        """Pick, inspect, review, confirm, and activate without retaining paths."""
+
+        from ...Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
+
+        review: ActorPackImportReview | None = None
+        try:
+            selected = await self.app.push_screen_wait(
+                EnhancedFileOpen(
+                    title="Import Actor Pack",
+                    filters=Filters(
+                        (
+                            "Actor Packs",
+                            lambda path: path.suffix.lower() == ".tldw-actor-pack",
+                        ),
+                    ),
+                    context="actor_pack_import",
+                )
+            )
+            if not selected:
+                return
+            archive_path = Path(selected).resolve()
+            request = controller.create_request(archive_path)
+            operation = controller.start_inspection(request)
+            self._actor_pack_import_operation = operation
+            inspected = await controller.wait(operation)
+            self._actor_pack_import_operation = None
+            if not isinstance(inspected, ActorPackImportOutcome):
+                self._notify("Actor Pack import failed.", "error")
+                return
+            if inspected.error_category is not None:
+                self._notify(
+                    _actor_pack_import_error_copy(inspected.error_category), "error"
+                )
+                return
+            if type(inspected.review) is not ActorPackImportReview:
+                self._notify("Actor Pack import failed.", "error")
+                return
+            review = inspected.review
+            self._actor_pack_import_review = review
+            preview = await asyncio.to_thread(importer.read_portrait_preview, review)
+            action = await self.app.push_screen_wait(
+                ActorPackImportReviewDialog(review, preview)
+            )
+            if action is None:
+                return
+            if action == "update_existing":
+                confirmed = await self.app.push_screen_wait(
+                    ConfirmationDialog(
+                        title="Update existing actor?",
+                        message=(
+                            "Apply only the portable fields and visual sections shown "
+                            "in the review? Omitted visual sections will be preserved."
+                        ),
+                        confirm_label="Update actor",
+                    )
+                )
+                if confirmed is not True:
+                    return
+            operation = controller.start_activation(review, action)
+            self._actor_pack_import_operation = operation
+            activated = await controller.wait(operation)
+            self._actor_pack_import_operation = None
+            if not isinstance(activated, ActorPackImportOutcome):
+                self._notify("Actor Pack import failed.", "error")
+                return
+            if activated.result is None:
+                severity = (
+                    "warning"
+                    if activated.error_category == "actor_pack_import_review_stale"
+                    else "error"
+                )
+                self._notify(
+                    _actor_pack_import_error_copy(activated.error_category), severity
+                )
+                return
+            result = activated.result
+            self._actor_pack_import_review = None
+            review = None
+            if (
+                result.actor_kind == "character"
+                and self.state.active_mode == "characters"
+            ):
+                await self.character_handler.refresh_character_list()
+            elif (
+                result.actor_kind == "persona" and self.state.active_mode == "personas"
+            ):
+                await self._refresh_profile_rows_worker()
+            suffix = (
+                " Some views could not refresh." if activated.refresh_errors else ""
+            )
+            self._notify(f"Actor Pack activated.{suffix}", "information")
+        except asyncio.CancelledError:
+            raise
+        except (
+            ActorPackImportControllerError,
+            ActorPackImportError,
+            OSError,
+            TypeError,
+            ValueError,
+        ):
+            self._notify("Actor Pack import failed.", "error")
+        finally:
+            self._actor_pack_import_operation = None
+            self._actor_pack_import_review = None
+            if review is not None:
+                await asyncio.to_thread(controller.discard_review, review)
             self._io_dialog_active = False
 
     @on(PersonaEntitySelected)

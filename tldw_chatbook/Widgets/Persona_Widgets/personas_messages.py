@@ -41,6 +41,10 @@ PersonaBuddySource = Literal["local", "server"]
 ActorPackExportActorKind = Literal["character", "persona"]
 
 
+class ActorPackImportRequested(Message):
+    """Request the dedicated Actor Pack picker without carrying path/content."""
+
+
 @dataclass(frozen=True, slots=True)
 class _PersonaBuddyActionPayload:
     action: PersonaBuddyAction

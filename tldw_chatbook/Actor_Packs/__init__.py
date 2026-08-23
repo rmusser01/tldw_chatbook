@@ -30,11 +30,18 @@ from .export import (
     write_actor_pack_archive,
 )
 from .importer import (
+    ActorPackFieldDifference,
     ActorPackImportError,
     ActorPackImportReview,
     ActorPackImportService,
     ActorPackPortraitPreview,
     ActorPackPortraitReview,
+)
+from .import_controller import (
+    ActorPackImportController,
+    ActorPackImportControllerError,
+    ActorPackImportOutcome,
+    ActorPackImportRequest,
 )
 from .publication import (
     ActorPackDestinationContract,
@@ -62,6 +69,11 @@ __all__ = [
     "ActorPackExportService",
     "ActorPackExportSnapshot",
     "ActorPackImportError",
+    "ActorPackFieldDifference",
+    "ActorPackImportController",
+    "ActorPackImportControllerError",
+    "ActorPackImportOutcome",
+    "ActorPackImportRequest",
     "ActorPackImportReview",
     "ActorPackImportService",
     "ActorPackPortraitPreview",

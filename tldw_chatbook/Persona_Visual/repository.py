@@ -544,6 +544,92 @@ class PersonaVisualRepository:
         except (sqlite3.Error, CharactersRAGDBError):
             raise ValueError("persona_visual_repository_write_failed") from None
 
+    def _activate_new_pack_in_transaction(
+        self,
+        *,
+        persona_id: str,
+        title: str,
+        manifest: object,
+        manifest_storage_relpath: str,
+        assets: Sequence[Mapping[str, Any]],
+        expected_persona_revision: int,
+        source_context: object | None = None,
+    ) -> PersonaVisualGraph:
+        """Activate one new graph inside an Actor Pack-owned outer transaction."""
+
+        connection = self.db.get_connection()
+        depth = getattr(self.db._local, "transaction_depth", 0)
+        if not connection.in_transaction or depth != 1:
+            raise ValueError("persona_visual_transaction_not_owned")
+        _validate_persona_id(persona_id)
+        _validate_revision(expected_persona_revision)
+        title = _input_text(title, 256)
+        context_json = _source_context_json(
+            {} if source_context is None else source_context
+        )
+        manifest_relpath = _storage_relpath(manifest_storage_relpath)
+        asset_writes = _asset_writes(assets)
+        manifest_json, validated_manifest, manifest_sha256 = _manifest_json(
+            manifest, asset_writes
+        )
+        existing = self._active_binding_record(persona_id)
+        if existing is not None:
+            archived = self.db.execute_query(
+                """
+                UPDATE persona_visual_bindings
+                   SET status = 'archived', updated_at = CURRENT_TIMESTAMP,
+                       version = version + 1
+                 WHERE id = ? AND persona_id = ? AND status = 'active'
+                   AND version = ?
+                """,
+                (existing.id, persona_id, existing.revision),
+            )
+            if archived.rowcount != 1:
+                raise ValueError("persona_visual_binding_changed")
+        pack_id = int(
+            self.db.execute_query(
+                """
+                INSERT INTO persona_visual_packs(
+                    title, description, status, active_version_id,
+                    source_kind, source_context_json
+                ) VALUES (?, '', 'active', NULL, 'manual', ?)
+                """,
+                (title, context_json),
+                redact_params=True,
+            ).lastrowid
+        )
+        version_id = self._insert_version(
+            pack_id=pack_id,
+            version_number=1,
+            manifest_json=manifest_json,
+            manifest=validated_manifest,
+            manifest_sha256=manifest_sha256,
+            storage_relpath=manifest_relpath,
+        )
+        self._insert_assets(pack_id, version_id, asset_writes)
+        activated = self.db.execute_query(
+            """
+            UPDATE persona_visual_packs
+               SET active_version_id = ?, updated_at = CURRENT_TIMESTAMP
+             WHERE id = ? AND active_version_id IS NULL AND version = 1
+            """,
+            (version_id, pack_id),
+        )
+        if activated.rowcount != 1:
+            raise ValueError("persona_visual_identity_changed")
+        self.db.execute_query(
+            """
+            INSERT INTO persona_visual_bindings(
+                persona_id, persona_revision, pack_id, active_version_id
+            ) VALUES (?, ?, ?, ?)
+            """,
+            (persona_id, expected_persona_revision, pack_id, version_id),
+        )
+        graph = self._get_active_persona_pack(persona_id)
+        if graph is None:
+            raise ValueError("persona_visual_activation_failed")
+        return graph
+
     def archive_binding(
         self,
         *,

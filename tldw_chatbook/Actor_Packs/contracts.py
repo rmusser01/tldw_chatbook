@@ -264,9 +264,55 @@ def validate_actor_pack_document(
         raise ActorPackValidationError("actor_pack_manifest_invalid") from None
 
 
+def validate_actor_pack_manifest(manifest: Mapping[str, Any]) -> ActorPackDocument:
+    """Validate the bounded root contract without materializing member bytes."""
+
+    try:
+        return _validate_actor_pack_manifest(manifest)
+    except ActorPackValidationError:
+        raise
+    except (
+        MemoryError,
+        OverflowError,
+        RecursionError,
+        TypeError,
+        UnicodeError,
+        ValueError,
+    ):
+        raise ActorPackValidationError("actor_pack_manifest_invalid") from None
+
+
 def _validate_actor_pack_document(
     manifest: Mapping[str, Any], files: Mapping[str, bytes]
 ) -> ActorPackDocument:
+    document = _validate_actor_pack_manifest(manifest)
+    supplied = _supplied_files(files)
+    if {item.path for item in document.files} != set(supplied):
+        raise ActorPackValidationError("actor_pack_inventory_invalid")
+    for item in document.files:
+        data = supplied[item.path]
+        if (
+            item.byte_count != len(data)
+            or item.sha256 != hashlib.sha256(data).hexdigest()
+        ):
+            raise ActorPackValidationError("actor_pack_inventory_mismatch")
+    _validate_actor_payload(
+        supplied[document.payload_path],
+        actor_kind=document.actor_kind,
+        portable_uuid=document.portable_uuid,
+    )
+    portrait = supplied[document.portrait_path]
+    if len(portrait) > MAX_PORTRAIT_BYTES or not _validate_portrait(
+        document.portrait_path, portrait
+    ):
+        raise ActorPackValidationError("actor_pack_portrait_invalid")
+    for section in document.sections:
+        if section.manifest_path not in supplied:
+            raise ActorPackValidationError("actor_pack_section_invalid")
+    return document
+
+
+def _validate_actor_pack_manifest(manifest: Mapping[str, Any]) -> ActorPackDocument:
     if not isinstance(manifest, Mapping) or set(manifest) != _MANIFEST_KEYS:
         raise ActorPackValidationError("actor_pack_manifest_invalid")
     if manifest.get("schema") != ACTOR_PACK_SCHEMA:
@@ -299,16 +345,6 @@ def _validate_actor_pack_document(
 
     sections = _sections(manifest.get("sections"), actor_kind)
     inventory = _inventory(manifest.get("files"))
-    supplied = _supplied_files(files)
-    if {item.path for item in inventory} != set(supplied):
-        raise ActorPackValidationError("actor_pack_inventory_invalid")
-    for item in inventory:
-        data = supplied[item.path]
-        if (
-            item.byte_count != len(data)
-            or item.sha256 != hashlib.sha256(data).hexdigest()
-        ):
-            raise ActorPackValidationError("actor_pack_inventory_mismatch")
     if sum(item.byte_count for item in inventory) > MAX_TOTAL_BYTES:
         raise ActorPackValidationError("actor_pack_inventory_invalid")
 
@@ -317,18 +353,6 @@ def _validate_actor_pack_document(
         raise ActorPackValidationError("actor_pack_manifest_invalid")
     if digest != actor_pack_content_digest(manifest):
         raise ActorPackValidationError("actor_pack_digest_mismatch")
-
-    _validate_actor_payload(
-        supplied[payload_path], actor_kind=actor_kind, portable_uuid=portable_uuid
-    )
-    portrait = supplied[portrait_path]
-    if len(portrait) > MAX_PORTRAIT_BYTES or not _validate_portrait(
-        portrait_path, portrait
-    ):
-        raise ActorPackValidationError("actor_pack_portrait_invalid")
-    for section in sections:
-        if section.manifest_path not in supplied:
-            raise ActorPackValidationError("actor_pack_section_invalid")
 
     return ActorPackDocument(
         schema=ACTOR_PACK_SCHEMA,
@@ -534,6 +558,16 @@ def validate_actor_portrait(path: str, data: bytes) -> None:
         raise ActorPackValidationError("actor_pack_portrait_invalid")
 
 
+def validate_actor_payload(data: bytes, *, actor_kind: str, portable_uuid: str) -> None:
+    """Validate one bounded canonical actor payload independently."""
+
+    _validate_actor_payload(
+        data,
+        actor_kind=actor_kind,
+        portable_uuid=_portable_uuid(portable_uuid),
+    )
+
+
 def _validate_json_tree(value: object) -> None:
     nodes = 0
     active: set[int] = set()
@@ -596,5 +630,7 @@ __all__ = [
     "canonical_member_order",
     "canonicalize_actor_payload",
     "validate_actor_portrait",
+    "validate_actor_payload",
     "validate_actor_pack_document",
+    "validate_actor_pack_manifest",
 ]

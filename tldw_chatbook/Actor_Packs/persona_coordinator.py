@@ -90,6 +90,7 @@ class PersonaActorPackCoordinator:
         cancel_requested: Callable[[], bool] = lambda: False,
         authority_guard: Callable[[], bool] = lambda: True,
         phase_hook: Callable[[str], None] | None = None,
+        sqlite_effect: Callable[[], None] | None = None,
     ) -> PersonaActorPackCreationResult:
         """Create/update one pack-ready Persona with compensating rollback."""
 
@@ -160,6 +161,7 @@ class PersonaActorPackCoordinator:
                     )
                     == "new"
                 ),
+                sqlite_effect=sqlite_effect,
             )
             committed = True
             self._phase(phase_hook, "committed")

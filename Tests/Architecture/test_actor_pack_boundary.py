@@ -19,6 +19,10 @@ FOUNDATION_MODULES = tuple(
 EXPORT_MODULES = tuple(
     ACTOR_PACK_ROOT / name for name in ("export.py", "publication.py", "controller.py")
 )
+IMPORT_MODULES = tuple(
+    ACTOR_PACK_ROOT / name
+    for name in ("importer.py", "activation.py", "import_controller.py")
+)
 CHACHANOTES_DB = REPO_ROOT / "tldw_chatbook" / "DB" / "ChaChaNotes_DB.py"
 FORBIDDEN_IMPORT_PARTS = frozenset(
     {
@@ -155,35 +159,90 @@ def test_export_modules_remain_screen_free_and_define_no_import_activation() -> 
                 )
 
 
+def test_import_modules_remain_screen_network_and_provider_free() -> None:
+    forbidden = {
+        "Agents",
+        "LLM_Calls",
+        "UI",
+        "Widgets",
+        "httpx",
+        "requests",
+        "socket",
+        "textual",
+        "tldw_api",
+        "tldw_server",
+        "urllib",
+    }
+    for path in IMPORT_MODULES:
+        for imported in _imports(path):
+            assert forbidden.isdisjoint(imported.split(".")), (
+                f"{path.relative_to(REPO_ROOT)} imports forbidden boundary {imported}"
+            )
+
+
 def test_export_public_records_hide_paths_ids_bytes_and_graph_authority() -> None:
     sensitive = {
         "actor_payload",
         "data",
         "destination",
         "graph_identity",
-        "local_actor_id",
+        "archive_path",
         "portrait_bytes",
         "source_identity",
+        "_source_identity",
+        "_source_path",
+        "_secret",
     }
-    for module_name in ("controller", "export", "publication"):
+    for module_name in (
+        "activation",
+        "controller",
+        "export",
+        "import_controller",
+        "importer",
+        "publication",
+    ):
         module = importlib.import_module(f"tldw_chatbook.Actor_Packs.{module_name}")
+        module_sensitive = sensitive | (
+            {"local_actor_id"}
+            if module_name in {"controller", "export", "publication"}
+            else set()
+        )
         for name, value in vars(module).items():
-            if not name.startswith("ActorPack") or not dataclasses.is_dataclass(value):
+            if (
+                not name.startswith("ActorPack")
+                or not dataclasses.is_dataclass(value)
+                or value.__module__ != module.__name__
+            ):
                 continue
             for field in dataclasses.fields(value):
-                if field.name in sensitive:
+                if field.name in module_sensitive:
                     assert field.repr is False, (
                         f"{module.__name__}.{name}.{field.name} leaks through repr"
                     )
 
 
 def test_public_actor_pack_records_and_errors_are_path_free() -> None:
-    for module_name in ("contracts", "creation", "repository"):
+    for module_name in (
+        "activation",
+        "contracts",
+        "creation",
+        "import_controller",
+        "importer",
+        "repository",
+    ):
         module = importlib.import_module(f"tldw_chatbook.Actor_Packs.{module_name}")
         for name, value in vars(module).items():
-            if not name.startswith("ActorPack") or not dataclasses.is_dataclass(value):
+            if (
+                not name.startswith("ActorPack")
+                or not dataclasses.is_dataclass(value)
+                or value.__module__ != module.__name__
+            ):
                 continue
-            fields = {field.name.lower() for field in dataclasses.fields(value)}
+            fields = {
+                field.name.lower()
+                for field in dataclasses.fields(value)
+                if not field.name.startswith("_")
+            }
             leaked = {
                 field
                 for field in fields

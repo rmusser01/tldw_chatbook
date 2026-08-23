@@ -238,6 +238,7 @@ class ActorPackRepository:
         intent_id: str,
         *,
         authority_guard: Callable[[], bool] | None = None,
+        sqlite_effect: Callable[[], None] | None = None,
     ) -> tuple[PortableActorIdentity, PersonaActorPackIntent]:
         """Atomically assign its Persona UUID and mark an intent committed."""
 
@@ -281,6 +282,12 @@ class ActorPackRepository:
                     identity = existing
                 else:
                     raise ActorPackRepositoryError("actor_pack_intent_state_changed")
+                if sqlite_effect is not None:
+                    if not callable(sqlite_effect):
+                        raise ActorPackRepositoryError(
+                            "actor_pack_intent_state_changed"
+                        )
+                    sqlite_effect()
                 changed = self.db.execute_query(
                     """
                     UPDATE actor_pack_persona_intents
