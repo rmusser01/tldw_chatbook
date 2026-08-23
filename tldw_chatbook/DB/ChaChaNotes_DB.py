@@ -6631,6 +6631,7 @@ UPDATE db_schema_version
             CharactersRAGDBError: For other database-related errors during insertion.
         """
         start_time = time.time()
+        self._reject_internal_character_extensions(card_data)
         try:
             with self.transaction() as cursor:
                 char_id = self._insert_character_card_in_transaction(
@@ -6710,6 +6711,8 @@ UPDATE db_schema_version
         cursor: sqlite3.Cursor,
         card_data: Dict[str, Any],
         *,
+        explicit_id: int | None = None,
+        allow_internal_portrait_owner: bool = False,
         require_outermost: bool = False,
     ) -> int:
         """Insert one Character inside a manager-owned transaction."""
@@ -6726,41 +6729,50 @@ UPDATE db_schema_version
             raise CharactersRAGDBError("Character transaction is not owned.")
         if "name" not in card_data or not card_data["name"]:
             raise InputError("Required field 'name' is missing or empty.")
+        if not allow_internal_portrait_owner:
+            self._reject_internal_character_extensions(card_data)
+        if explicit_id is not None and (
+            type(explicit_id) is not int or explicit_id < 1
+        ):
+            raise InputError("Explicit Character ID must be a positive integer.")
 
         def json_field(value: object) -> str | None:
             return value if isinstance(value, str) else self._ensure_json_string(value)
 
         now = self._get_current_utc_timestamp_iso()
+        id_column = "id, " if explicit_id is not None else ""
+        id_value = "?, " if explicit_id is not None else ""
+        values = ((explicit_id,) if explicit_id is not None else ()) + (
+            card_data["name"],
+            card_data.get("description"),
+            card_data.get("personality"),
+            card_data.get("scenario"),
+            card_data.get("image"),
+            card_data.get("post_history_instructions"),
+            card_data.get("first_message"),
+            card_data.get("message_example"),
+            card_data.get("creator_notes"),
+            card_data.get("system_prompt"),
+            json_field(card_data.get("alternate_greetings")),
+            json_field(card_data.get("tags")),
+            card_data.get("creator"),
+            card_data.get("character_version"),
+            json_field(card_data.get("extensions")),
+            now,
+            now,
+            self.client_id,
+        )
         cursor.execute(
-            """
+            f"""
             INSERT INTO character_cards(
-                name, description, personality, scenario, image,
+                {id_column}name, description, personality, scenario, image,
                 post_history_instructions, first_message, message_example,
                 creator_notes, system_prompt, alternate_greetings, tags, creator,
                 character_version, extensions, created_at, last_modified,
                 client_id, version, deleted
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0)
+            ) VALUES ({id_value}?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0)
             """,
-            (
-                card_data["name"],
-                card_data.get("description"),
-                card_data.get("personality"),
-                card_data.get("scenario"),
-                card_data.get("image"),
-                card_data.get("post_history_instructions"),
-                card_data.get("first_message"),
-                card_data.get("message_example"),
-                card_data.get("creator_notes"),
-                card_data.get("system_prompt"),
-                json_field(card_data.get("alternate_greetings")),
-                json_field(card_data.get("tags")),
-                card_data.get("creator"),
-                card_data.get("character_version"),
-                json_field(card_data.get("extensions")),
-                now,
-                now,
-                self.client_id,
-            ),
+            values,
         )
         if cursor.lastrowid is None:
             raise CharactersRAGDBError("Character insert did not return an ID.")
@@ -7019,7 +7031,11 @@ UPDATE db_schema_version
         """
         start_time = time.time()
         columns = self._character_card_select_columns(include_image=include_image)
-        query = f"SELECT {columns} FROM character_cards WHERE deleted = 0 ORDER BY name LIMIT ? OFFSET ?"
+        visible = self._USER_VISIBLE_CHARACTER.format(a="character_cards")
+        query = (
+            f"SELECT {columns} FROM character_cards "
+            f"WHERE deleted = 0 AND {visible} ORDER BY name LIMIT ? OFFSET ?"
+        )
         try:
             cursor = self.execute_query(query, (limit, offset))
             rows = cursor.fetchall()
@@ -7068,6 +7084,26 @@ UPDATE db_schema_version
 
     # P3a: json-valid guard so json_each never sees NULL / non-JSON tags.
     _TAGS_JSON_EACH = "json_each(CASE WHEN json_valid({t}.tags) THEN {t}.tags ELSE '[]' END)"
+    _USER_VISIBLE_CHARACTER = (
+        "json_extract(CASE WHEN json_valid({a}.extensions) "
+        "THEN {a}.extensions ELSE '{{}}' END, "
+        "'$.actor_pack_persona_portrait_owner') IS NULL"
+    )
+
+    @staticmethod
+    def _reject_internal_character_extensions(card_data: Dict[str, Any]) -> None:
+        """Reserve the app-owned Persona portrait marker from public mutations."""
+
+        extensions = card_data.get("extensions")
+        if isinstance(extensions, str):
+            try:
+                extensions = json.loads(extensions)
+            except json.JSONDecodeError:
+                return
+        if isinstance(extensions, dict) and (
+            "actor_pack_persona_portrait_owner" in extensions
+        ):
+            raise InputError("Reserved Character extension is app-owned.")
 
     def _resolve_sort_clause(self, order_by: str, *, searching: bool) -> str:
         clause = self._CHARACTER_SORT_CLAUSES.get(order_by)
@@ -7114,6 +7150,7 @@ UPDATE db_schema_version
         params: list[Any] = []
         where = ["cc.deleted = 0"] if searching else ["deleted = 0"]
         alias = "cc" if searching else "character_cards"
+        where.append(self._USER_VISIBLE_CHARACTER.format(a=alias))
         if searching:
             columns = self._character_card_select_columns(
                 include_image=include_image, alias="cc"
@@ -7149,6 +7186,7 @@ UPDATE db_schema_version
         params: list[Any] = []
         alias = "cc" if searching else "character_cards"
         where = ["cc.deleted = 0"] if searching else ["deleted = 0"]
+        where.append(self._USER_VISIBLE_CHARACTER.format(a=alias))
         if searching:
             head = (
                 "SELECT COUNT(*) FROM character_cards_fts fts "
@@ -7174,7 +7212,9 @@ UPDATE db_schema_version
             "SELECT DISTINCT je.value "
             "FROM character_cards cc, "
             + self._TAGS_JSON_EACH.format(t="cc")
-            + " je WHERE cc.deleted = 0 ORDER BY je.value COLLATE NOCASE"
+            + " je WHERE cc.deleted = 0 AND "
+            + self._USER_VISIBLE_CHARACTER.format(a="cc")
+            + " ORDER BY je.value COLLATE NOCASE"
         )
         cursor = self.execute_query(query, ())
         return [str(r[0]) for r in cursor.fetchall() if r and r[0] is not None]
@@ -7200,6 +7240,7 @@ UPDATE db_schema_version
             or (require_outermost and depth != 1)
         ):
             raise CharactersRAGDBError("Character transaction is not owned.")
+        self._reject_internal_character_extensions(card_data)
         direct_fields = {
             "name",
             "description",
@@ -7287,6 +7328,7 @@ UPDATE db_schema_version
             CharactersRAGDBError: For other database-related errors.
         """
         start_time = time.time()
+        self._reject_internal_character_extensions(card_data)
         logger.debug(
             f"Starting update_character_card for ID {character_id}, expected_version {expected_version} (SINGLE UPDATE STRATEGY)"
         )
@@ -7886,12 +7928,14 @@ UPDATE db_schema_version
         )
         if not match_expression:
             return []
-        query = """
+        visible = self._USER_VISIBLE_CHARACTER.format(a="cc")
+        query = f"""
                 SELECT cc.*
                 FROM character_cards_fts fts
                          JOIN character_cards cc ON fts.rowid = cc.id
                 WHERE fts.character_cards_fts MATCH ? \
                   AND cc.deleted = 0
+                  AND {visible}
                 ORDER BY rank LIMIT ? \
                 """
         try:

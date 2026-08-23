@@ -7,8 +7,8 @@ import json
 import os
 import sqlite3
 import stat
-from collections.abc import Callable
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -42,8 +42,9 @@ from .repository import ActorPackRepository, ActorPackRepositoryError
 class ActorPackActivationError(ValueError):
     """One fixed, path-free activation failure."""
 
-    def __init__(self, category: str) -> None:
+    def __init__(self, category: str, *, cleanup_pending: bool = False) -> None:
         self.category = category
+        self.cleanup_pending = cleanup_pending
         super().__init__(category)
 
 
@@ -55,6 +56,7 @@ class ActorPackActivationResult:
     local_actor_id: str
     portable_uuid: str
     cleanup_pending: bool = False
+    sections: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +71,22 @@ class _PreparedPersonaVisual:
     manifest: dict[str, Any]
     manifest_storage_relpath: str
     assets: tuple[dict[str, Any], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _PublishedFile:
+    path: Path
+    identity: tuple[int, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _PersonaPortraitPlan:
+    operation: str
+    character_id: int
+    expected_version: int | None
+    portrait: bytes = field(repr=False)
+    name: str
+    owner: str
 
 
 class ActorPackActivationService:
@@ -114,6 +132,7 @@ class ActorPackActivationService:
         ):
             raise ActorPackActivationError("actor_pack_import_action_invalid")
         self._raise_if_cancelled(cancel_requested)
+        published: list[_PublishedFile] = []
         try:
             material = self.importer._activation_material(review)
             if review.actor_kind == "character":
@@ -124,29 +143,42 @@ class ActorPackActivationService:
                     material.portrait,
                     material.sections,
                     cancel_requested,
+                    published,
                 )
             else:
                 result = self._activate_persona(
                     review,
                     action,
                     dict(material.actor_fields),
+                    material.portrait,
                     material.sections,
                     cancel_requested,
+                    published,
                 )
-        except ActorPackActivationError:
+        except ActorPackActivationError as exc:
+            pending = _cleanup_published(published)
+            if pending:
+                raise ActorPackActivationError(
+                    exc.category, cleanup_pending=True
+                ) from None
             raise
         except ActorPackImportError as exc:
-            raise ActorPackActivationError(exc.category) from None
+            raise ActorPackActivationError(
+                exc.category, cleanup_pending=_cleanup_published(published)
+            ) from None
         except PersonaActorPackCoordinatorError as exc:
             category = (
                 "actor_pack_import_cancelled"
                 if exc.category == "actor_pack_creation_cancelled"
                 else "actor_pack_import_activation_failed"
             )
-            raise ActorPackActivationError(category) from None
+            raise ActorPackActivationError(
+                category, cleanup_pending=_cleanup_published(published)
+            ) from None
         except (ActorPackRepositoryError, sqlite3.Error, TypeError, ValueError):
             raise ActorPackActivationError(
-                "actor_pack_import_activation_failed"
+                "actor_pack_import_activation_failed",
+                cleanup_pending=_cleanup_published(published),
             ) from None
         try:
             self.importer.cleanup_review(review)
@@ -156,6 +188,7 @@ class ActorPackActivationService:
                 result.local_actor_id,
                 result.portable_uuid,
                 cleanup_pending=True,
+                sections=result.sections,
             )
         return result
 
@@ -167,8 +200,11 @@ class ActorPackActivationService:
         portrait: bytes,
         sections: tuple[_ActorPackSectionMaterial, ...],
         cancel_requested: Callable[[], bool],
+        published: list[_PublishedFile],
     ) -> ActorPackActivationResult:
-        prepared = self._prepare_character_sections(review, sections)
+        prepared = self._prepare_character_sections(
+            review, sections, cancel_requested, published
+        )
         if action == "update_existing":
             if (
                 review._matched_local_actor_id is None
@@ -189,7 +225,10 @@ class ActorPackActivationService:
                 )
                 self._activate_shared_visual(prepared, "character", character_id)
             return ActorPackActivationResult(
-                "character", str(character_id), review.portable_uuid
+                "character",
+                str(character_id),
+                review.portable_uuid,
+                sections=tuple(section.kind for section in sections),
             )
         assigned = (
             review.portable_uuid
@@ -216,7 +255,10 @@ class ActorPackActivationService:
             )
             self._activate_shared_visual(prepared, "character", character_id)
         return ActorPackActivationResult(
-            "character", str(character_id), identity.portable_uuid
+            "character",
+            str(character_id),
+            identity.portable_uuid,
+            sections=tuple(section.kind for section in sections),
         )
 
     def _activate_persona(
@@ -224,10 +266,14 @@ class ActorPackActivationService:
         review: ActorPackImportReview,
         action: str,
         fields: dict[str, Any],
+        portrait: bytes,
         sections: tuple[_ActorPackSectionMaterial, ...],
         cancel_requested: Callable[[], bool],
+        published: list[_PublishedFile],
     ) -> ActorPackActivationResult:
-        shared, persona_visual = self._prepare_persona_sections(review, sections)
+        shared, persona_visual = self._prepare_persona_sections(
+            review, sections, cancel_requested, published
+        )
         if action == "update_existing":
             if (
                 review._matched_local_actor_id is None
@@ -236,13 +282,16 @@ class ActorPackActivationService:
                 raise ActorPackActivationError("actor_pack_import_review_stale")
             persona_id = review._matched_local_actor_id
             current = dict(self.local_service._find_persona_profile(persona_id))
+            portrait_character = self._persona_portrait_plan(
+                current,
+                portrait,
+                str(fields.get("name") or current.get("name") or "Persona"),
+            )
+            current["character_card_id"] = portrait_character.character_id
             current.update(fields)
             current["last_modified"] = self.local_service._now()
             current["version"] = review._matched_actor_version + 1
-            new_authority = (
-                current["version"],
-                hashlib.sha256(canonical_json_bytes(current)).hexdigest(),
-            )
+            new_authority = self.importer._persona_actor_authority(current)
             self.importer.revalidate_review(review)
             self._raise_if_cancelled(cancel_requested)
             committed = self.persona_coordinator.create_persona(
@@ -259,6 +308,7 @@ class ActorPackActivationService:
                     persona_visual,
                     persona_id,
                     current["version"],
+                    portrait_character,
                 ),
             )
             return ActorPackActivationResult(
@@ -266,14 +316,19 @@ class ActorPackActivationService:
                 persona_id,
                 committed.identity.portable_uuid,
                 cleanup_pending=committed.cleanup_pending,
+                sections=tuple(section.kind for section in sections),
             )
         self.importer.revalidate_review(review)
         self._raise_if_cancelled(cancel_requested)
         persona_id = f"local-persona-{uuid4().hex}"
         now = self.local_service._now()
+        portrait_character = self._persona_portrait_plan(
+            {"id": persona_id}, portrait, str(fields.get("name") or "Persona")
+        )
         profile = {
             **fields,
             "id": persona_id,
+            "character_card_id": portrait_character.character_id,
             "created_at": now,
             "last_modified": now,
             "version": 1,
@@ -298,6 +353,7 @@ class ActorPackActivationService:
                 persona_visual,
                 persona_id,
                 profile["version"],
+                portrait_character,
             ),
         )
         return ActorPackActivationResult(
@@ -305,12 +361,15 @@ class ActorPackActivationService:
             persona_id,
             committed.identity.portable_uuid,
             cleanup_pending=committed.cleanup_pending,
+            sections=tuple(section.kind for section in sections),
         )
 
     def _prepare_character_sections(
         self,
         review: ActorPackImportReview,
         sections: tuple[_ActorPackSectionMaterial, ...],
+        cancel_requested: Callable[[], bool],
+        published: list[_PublishedFile],
     ) -> _PreparedSharedVisual | None:
         if not sections:
             return None
@@ -347,7 +406,10 @@ class ActorPackActivationService:
                 }[asset.mime_type]
                 filename = f"asset-{index:04d}{suffix}"
                 target = publication_root / filename
-                _publish_immutable(target, data, asset.sha256)
+                created = _publish_immutable(target, data, asset.sha256)
+                if created is not None:
+                    published.append(created)
+                self._raise_if_cancelled(cancel_requested)
                 storage_relpath = f"actor_packs/{review.content_digest}/{filename}"
                 raw["storage_relpath"] = storage_relpath
                 row = dict(raw)
@@ -367,6 +429,8 @@ class ActorPackActivationService:
                 },
             }
             return _PreparedSharedVisual(pack, manifest, tuple(asset_rows))
+        except ActorPackActivationError:
+            raise
         except (KeyError, OSError, TypeError, ValueError):
             raise ActorPackActivationError(
                 "actor_pack_import_section_activation_failed"
@@ -376,6 +440,8 @@ class ActorPackActivationService:
         self,
         review: ActorPackImportReview,
         sections: tuple[_ActorPackSectionMaterial, ...],
+        cancel_requested: Callable[[], bool],
+        published: list[_PublishedFile],
     ) -> tuple[_PreparedSharedVisual | None, _PreparedPersonaVisual | None]:
         kinds = tuple(section.kind for section in sections)
         if len(kinds) != len(set(kinds)) or any(
@@ -390,7 +456,9 @@ class ActorPackActivationService:
         shared = (
             None
             if not shared_section
-            else self._prepare_character_sections(review, shared_section)
+            else self._prepare_character_sections(
+                review, shared_section, cancel_requested, published
+            )
         )
         runtime = next(
             (section for section in sections if section.kind == "persona-runtime"),
@@ -419,7 +487,12 @@ class ActorPackActivationService:
                     "image/gif": ".gif",
                 }[asset.mime_type]
                 filename = f"asset-{index:04d}{suffix}"
-                _publish_immutable(publication_root / filename, data, asset.sha256)
+                created = _publish_immutable(
+                    publication_root / filename, data, asset.sha256
+                )
+                if created is not None:
+                    published.append(created)
+                self._raise_if_cancelled(cancel_requested)
                 assets.append(
                     {
                         "asset_key": asset.asset_key,
@@ -440,11 +513,14 @@ class ActorPackActivationService:
             manifest = json.loads(canonical_json_bytes(runtime.manifest))
             manifest_name = "manifest.json"
             manifest_bytes = canonical_json_bytes(manifest)
-            _publish_immutable(
+            created = _publish_immutable(
                 publication_root / manifest_name,
                 manifest_bytes,
                 hashlib.sha256(manifest_bytes).hexdigest(),
             )
+            if created is not None:
+                published.append(created)
+            self._raise_if_cancelled(cancel_requested)
             return (
                 shared,
                 _PreparedPersonaVisual(
@@ -456,6 +532,8 @@ class ActorPackActivationService:
                     tuple(assets),
                 ),
             )
+        except ActorPackActivationError:
+            raise
         except (KeyError, OSError, TypeError, ValueError):
             raise ActorPackActivationError(
                 "actor_pack_import_section_activation_failed"
@@ -467,7 +545,31 @@ class ActorPackActivationService:
         persona_visual: _PreparedPersonaVisual | None,
         persona_id: str,
         persona_revision: int,
+        portrait_character: _PersonaPortraitPlan,
     ) -> None:
+        cursor = self.db.get_connection().cursor()
+        if portrait_character.operation == "create":
+            self.db._insert_character_card_in_transaction(
+                cursor,
+                {
+                    "name": portrait_character.name,
+                    "image": portrait_character.portrait,
+                    "extensions": {
+                        "actor_pack_persona_portrait_owner": portrait_character.owner
+                    },
+                },
+                explicit_id=portrait_character.character_id,
+                allow_internal_portrait_owner=True,
+                require_outermost=True,
+            )
+        else:
+            self.db._update_character_card_in_transaction(
+                cursor,
+                portrait_character.character_id,
+                {"image": portrait_character.portrait},
+                expected_version=portrait_character.expected_version,
+                require_outermost=True,
+            )
         self._activate_shared_visual(shared, "persona", persona_id)
         if persona_visual is not None:
             self.persona_visual_repository._activate_new_pack_in_transaction(
@@ -479,6 +581,46 @@ class ActorPackActivationService:
                 expected_persona_revision=persona_revision,
                 source_context={"provenance": "actor-pack-import"},
             )
+
+    def _persona_portrait_plan(
+        self, profile: Mapping[str, Any], portrait: bytes, actor_name: str
+    ) -> _PersonaPortraitPlan:
+        owner = profile.get("id")
+        if type(owner) is not str or not owner:
+            raise ActorPackActivationError("actor_pack_import_activation_failed")
+        current_id = profile.get("character_card_id")
+        if type(current_id) is int and current_id > 0:
+            linked = self.db.get_character_card_by_id(current_id)
+            extensions = None if linked is None else linked.get("extensions")
+            if (
+                linked is not None
+                and type(linked.get("version")) is int
+                and type(extensions) is dict
+                and extensions.get("actor_pack_persona_portrait_owner") == owner
+            ):
+                return _PersonaPortraitPlan(
+                    "update",
+                    current_id,
+                    linked["version"],
+                    portrait,
+                    linked["name"],
+                    owner,
+                )
+        row = self.db.execute_query(
+            "SELECT COALESCE(MAX(id), 0) + 1 FROM character_cards"
+        ).fetchone()
+        candidate = None if row is None else row[0]
+        if type(candidate) is not int or candidate < 1:
+            raise ActorPackActivationError("actor_pack_import_activation_failed")
+        safe_name = str(actor_name).strip()[:120] or "Persona"
+        return _PersonaPortraitPlan(
+            "create",
+            candidate,
+            None,
+            portrait,
+            f"{safe_name} (Persona portrait {candidate})",
+            owner,
+        )
 
     def _activate_shared_visual(
         self,
@@ -533,7 +675,9 @@ class ActorPackActivationService:
             raise ActorPackActivationError("actor_pack_import_cancelled")
 
 
-def _publish_immutable(target: Path, data: bytes, expected_sha256: str) -> None:
+def _publish_immutable(
+    target: Path, data: bytes, expected_sha256: str
+) -> _PublishedFile | None:
     """Create or attest one content-addressed private immutable asset."""
 
     try:
@@ -559,7 +703,9 @@ def _publish_immutable(target: Path, data: bytes, expected_sha256: str) -> None:
             os.close(descriptor)
         if digest.hexdigest() != expected_sha256:
             raise ValueError
-        return
+        return None
+    identity: tuple[int, ...] | None = None
+    complete = False
     try:
         view = memoryview(data)
         while view:
@@ -568,8 +714,53 @@ def _publish_immutable(target: Path, data: bytes, expected_sha256: str) -> None:
                 raise OSError
             view = view[written:]
         os.fsync(descriptor)
+        identity = _publication_identity(os.fstat(descriptor))
+        complete = True
     finally:
+        if not complete:
+            try:
+                identity = _publication_identity(os.fstat(descriptor))
+            except OSError:
+                identity = None
         os.close(descriptor)
+        if not complete and identity is not None:
+            try:
+                metadata = os.lstat(target)
+                if _publication_identity(metadata) == identity:
+                    os.unlink(target)
+            except OSError:
+                pass
+    if identity is None:
+        raise OSError
+    return _PublishedFile(target, identity)
+
+
+def _cleanup_published(records: list[_PublishedFile]) -> bool:
+    pending = False
+    for record in reversed(records):
+        try:
+            current = os.lstat(record.path)
+            if _publication_identity(current) != record.identity:
+                pending = True
+                continue
+            os.unlink(record.path)
+        except FileNotFoundError:
+            continue
+        except OSError:
+            pending = True
+    return pending
+
+
+def _publication_identity(value: os.stat_result) -> tuple[int, ...]:
+    return (
+        value.st_dev,
+        value.st_ino,
+        value.st_mode,
+        value.st_nlink,
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+    )
 
 
 __all__ = [

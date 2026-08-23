@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Coroutine, Mapping
 import dataclasses
 import hashlib
+import inspect
 import json
 import os
 import re
@@ -4374,76 +4375,82 @@ class PersonasScreen(BaseAppScreen):
             if not selected:
                 return
             archive_path = Path(selected).resolve()
-            request = controller.create_request(archive_path)
-            operation = controller.start_inspection(request)
-            self._actor_pack_import_operation = operation
-            inspected = await controller.wait(operation)
-            self._actor_pack_import_operation = None
-            if not isinstance(inspected, ActorPackImportOutcome):
-                self._notify("Actor Pack import failed.", "error")
-                return
-            if inspected.error_category is not None:
-                self._notify(
-                    _actor_pack_import_error_copy(inspected.error_category), "error"
-                )
-                return
-            if type(inspected.review) is not ActorPackImportReview:
-                self._notify("Actor Pack import failed.", "error")
-                return
-            review = inspected.review
-            self._actor_pack_import_review = review
-            preview = await asyncio.to_thread(importer.read_portrait_preview, review)
-            action = await self.app.push_screen_wait(
-                ActorPackImportReviewDialog(review, preview)
-            )
-            if action is None:
-                return
-            if action == "update_existing":
-                confirmed = await self.app.push_screen_wait(
-                    ConfirmationDialog(
-                        title="Update existing actor?",
-                        message=(
-                            "Apply only the portable fields and visual sections shown "
-                            "in the review? Omitted visual sections will be preserved."
-                        ),
-                        confirm_label="Update actor",
-                    )
-                )
-                if confirmed is not True:
+            while True:
+                request = controller.create_request(archive_path)
+                operation = controller.start_inspection(request)
+                self._actor_pack_import_operation = operation
+                inspected = await controller.wait(operation)
+                self._actor_pack_import_operation = None
+                if not isinstance(inspected, ActorPackImportOutcome):
+                    self._notify("Actor Pack import failed.", "error")
                     return
-            operation = controller.start_activation(review, action)
-            self._actor_pack_import_operation = operation
-            activated = await controller.wait(operation)
-            self._actor_pack_import_operation = None
-            if not isinstance(activated, ActorPackImportOutcome):
-                self._notify("Actor Pack import failed.", "error")
-                return
-            if activated.result is None:
-                severity = (
-                    "warning"
-                    if activated.error_category == "actor_pack_import_review_stale"
-                    else "error"
+                if inspected.error_category is not None:
+                    self._notify(
+                        _actor_pack_import_error_copy(inspected.error_category), "error"
+                    )
+                    return
+                if type(inspected.review) is not ActorPackImportReview:
+                    self._notify("Actor Pack import failed.", "error")
+                    return
+                review = inspected.review
+                self._actor_pack_import_review = review
+                preview = await asyncio.to_thread(
+                    importer.read_portrait_preview, review
                 )
-                self._notify(
-                    _actor_pack_import_error_copy(activated.error_category), severity
+                action = await self.app.push_screen_wait(
+                    ActorPackImportReviewDialog(review, preview)
                 )
+                if action is None:
+                    return
+                if action == "update_existing":
+                    confirmed = await self.app.push_screen_wait(
+                        ConfirmationDialog(
+                            title="Update existing actor?",
+                            message=(
+                                "Apply only the portable fields and visual sections "
+                                "shown in the review? Omitted visual sections will be "
+                                "preserved."
+                            ),
+                            confirm_label="Update actor",
+                        )
+                    )
+                    if confirmed is not True:
+                        return
+                operation = controller.start_activation(review, action)
+                self._actor_pack_import_operation = operation
+                activated = await controller.wait(operation)
+                self._actor_pack_import_operation = None
+                if not isinstance(activated, ActorPackImportOutcome):
+                    self._notify("Actor Pack import failed.", "error")
+                    return
+                if (
+                    activated.result is None
+                    and activated.error_category == "actor_pack_import_review_stale"
+                ):
+                    self._notify(
+                        _actor_pack_import_error_copy(activated.error_category),
+                        "warning",
+                    )
+                    await asyncio.to_thread(controller.discard_review, review)
+                    review = None
+                    self._actor_pack_import_review = None
+                    continue
+                if activated.result is None:
+                    self._notify(
+                        _actor_pack_import_error_copy(activated.error_category), "error"
+                    )
+                    return
+                result = activated.result
+                self._actor_pack_import_review = None
+                review = None
+                refresh_errors = await self._refresh_after_actor_pack_activation(result)
+                suffix = (
+                    " Some views could not refresh."
+                    if activated.refresh_errors or refresh_errors
+                    else ""
+                )
+                self._notify(f"Actor Pack activated.{suffix}", "information")
                 return
-            result = activated.result
-            self._actor_pack_import_review = None
-            review = None
-            if (
-                result.actor_kind == "character"
-                and self.state.active_mode == "characters"
-            ):
-                await self.character_handler.refresh_character_list()
-            elif (
-                result.actor_kind == "persona" and self.state.active_mode == "personas"
-            ):
-                await self._refresh_profile_rows_worker()
-            suffix = (
-                " Some views could not refresh." if activated.refresh_errors else ""
-            )
-            self._notify(f"Actor Pack activated.{suffix}", "information")
         except asyncio.CancelledError:
             raise
         except (
@@ -4460,6 +4467,58 @@ class PersonasScreen(BaseAppScreen):
             if review is not None:
                 await asyncio.to_thread(controller.discard_review, review)
             self._io_dialog_active = False
+
+    async def _refresh_after_actor_pack_activation(
+        self, result: object
+    ) -> tuple[str, ...]:
+        """Refresh each affected mounted consumer without undoing a commit."""
+
+        errors: list[str] = []
+        actor_kind = getattr(result, "actor_kind", None)
+        actor_id = getattr(result, "local_actor_id", None)
+        sections = set(getattr(result, "sections", ()) or ())
+        try:
+            if actor_kind == "character" and self.state.active_mode == "characters":
+                await self.character_handler.refresh_character_list()
+            elif actor_kind == "persona" and self.state.active_mode == "personas":
+                await self._refresh_profile_rows_worker()
+        except Exception:
+            errors.append("actor_pack_import_refresh_failed")
+
+        for mounted in tuple(getattr(self.app, "screen_stack", ())):
+            session = getattr(mounted, "_session", None)
+            callbacks: list[tuple[object, tuple[object, ...]]] = [
+                (
+                    getattr(session, "invalidate_visual_identity_actor", None),
+                    (actor_kind, actor_id),
+                )
+            ]
+            if actor_kind == "persona" and "persona-runtime" in sections:
+                callbacks.append(
+                    (
+                        getattr(session, "invalidate_persona_visual_identity", None),
+                        (actor_id,),
+                    )
+                )
+            for callback, arguments in callbacks:
+                if not callable(callback):
+                    continue
+                try:
+                    response = callback(*arguments)
+                    if inspect.isawaitable(response):
+                        await response
+                except Exception:
+                    errors.append("actor_pack_import_refresh_failed")
+        if actor_kind == "persona":
+            reconcile = getattr(self.app, "reconcile_persona_buddy_view", None)
+            if callable(reconcile):
+                try:
+                    response = reconcile()
+                    if inspect.isawaitable(response):
+                        await response
+                except Exception:
+                    errors.append("actor_pack_import_refresh_failed")
+        return tuple(errors)
 
     @on(PersonaEntitySelected)
     async def _handle_entity_selected(self, message: PersonaEntitySelected) -> None:

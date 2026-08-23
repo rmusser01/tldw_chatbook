@@ -151,6 +151,67 @@ async def test_one_active_operation_and_shutdown_drain(tmp_path: Path) -> None:
     assert outcome.error_category == "actor_pack_import_cancelled"
 
 
+@pytest.mark.asyncio
+async def test_cancelled_waiter_does_not_strand_completed_review_lease(
+    tmp_path: Path,
+) -> None:
+    entered = threading.Event()
+    released = threading.Event()
+    importer = _Importer()
+
+    def inspect_archive(_path: Path, *, cancel_requested):
+        entered.set()
+        released.wait(2)
+        return _Review()
+
+    importer.inspect_archive = inspect_archive
+    controller = ActorPackImportController(importer, _Activation())
+    operation = controller.start_inspection(
+        controller.create_request((tmp_path / "incoming.tldw-actor-pack").resolve())
+    )
+    waiter = asyncio.create_task(controller.wait(operation))
+    await asyncio.to_thread(entered.wait, 2)
+
+    waiter.cancel()
+    released.set()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    await asyncio.sleep(0)
+
+    assert importer.cleaned == [_Review()]
+    next_operation = controller.start_inspection(
+        controller.create_request((tmp_path / "next.tldw-actor-pack").resolve())
+    )
+    assert (await controller.wait(next_operation)).review == _Review()
+
+
+@pytest.mark.asyncio
+async def test_activation_cleanup_uncertainty_is_exposed_in_outcome(
+    tmp_path: Path,
+) -> None:
+    class _CleanupPendingError(ValueError):
+        category = "actor_pack_import_activation_failed"
+        cleanup_pending = True
+
+    class _FailingActivation:
+        def activate(self, _review: object, _action: str, *, cancel_requested):
+            raise _CleanupPendingError
+
+    controller = ActorPackImportController(_Importer(), _FailingActivation())
+    inspected = await controller.wait(
+        controller.start_inspection(
+            controller.create_request((tmp_path / "incoming.tldw-actor-pack").resolve())
+        )
+    )
+
+    outcome = await controller.wait(
+        controller.start_activation(inspected.review, "create_new")
+    )
+
+    assert outcome.error_category == "actor_pack_import_activation_failed"
+    assert outcome.cleanup_pending is True
+
+
 def test_request_repr_does_not_expose_archive_path(tmp_path: Path) -> None:
     controller = ActorPackImportController(_Importer(), _Activation())
     archive = (tmp_path / "private-name.tldw-actor-pack").resolve()

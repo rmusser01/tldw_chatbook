@@ -35,6 +35,7 @@ class ActorPackImportOutcome:
     result: Any | None = None
     error_category: str | None = None
     refresh_errors: tuple[str, ...] = ()
+    cleanup_pending: bool = False
 
 
 @dataclass(slots=True)
@@ -150,6 +151,9 @@ class ActorPackImportController:
                 cancelled.set()
         outcome = task.result()
         if outer_cancellation is not None:
+            self._finish(active, task)
+            if outcome.review is not None:
+                self.discard_review(outcome.review)
             raise outer_cancellation
         return outcome
 
@@ -236,6 +240,7 @@ class ActorPackImportController:
                 result=outcome.result,
                 error_category=outcome.error_category,
                 refresh_errors=outcome.refresh_errors,
+                cleanup_pending=outcome.cleanup_pending,
             )
 
         task = asyncio.create_task(
@@ -264,7 +269,11 @@ class ActorPackImportController:
         except BaseException as exc:
             if isinstance(exc, (KeyboardInterrupt, SystemExit)):
                 raise
-            return ActorPackImportOutcome(0, error_category=_error_category(exc))
+            return ActorPackImportOutcome(
+                0,
+                error_category=_error_category(exc),
+                cleanup_pending=getattr(exc, "cleanup_pending", False) is True,
+            )
 
     def _activate(
         self, review: object, action: str, cancelled: threading.Event
@@ -276,14 +285,23 @@ class ActorPackImportController:
         except BaseException as exc:
             if isinstance(exc, (KeyboardInterrupt, SystemExit)):
                 raise
-            return ActorPackImportOutcome(0, error_category=_error_category(exc))
+            return ActorPackImportOutcome(
+                0,
+                error_category=_error_category(exc),
+                cleanup_pending=getattr(exc, "cleanup_pending", False) is True,
+            )
         errors: list[str] = []
         for callback in self._refresh_callbacks:
             try:
                 callback(result)
             except Exception:
                 errors.append("actor_pack_import_refresh_failed")
-        return ActorPackImportOutcome(0, result=result, refresh_errors=tuple(errors))
+        return ActorPackImportOutcome(
+            0,
+            result=result,
+            refresh_errors=tuple(errors),
+            cleanup_pending=getattr(result, "cleanup_pending", False) is True,
+        )
 
     def _finish(
         self,

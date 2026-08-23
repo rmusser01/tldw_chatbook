@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import stat
+import struct
 import unicodedata
 import zipfile
 from collections.abc import Callable, Mapping
@@ -49,6 +50,7 @@ from .repository import ActorPackRepository
 
 _MAX_ARCHIVE_BYTES = MAX_TOTAL_BYTES + 16 * 1024 * 1024
 _MAX_RATIO = 100
+_MAX_CENTRAL_DIRECTORY_BYTES = (MAX_FILES + 1) * 2048
 _READ_CHUNK = 64 * 1024
 _MARKER = ".actor-pack-import"
 _NESTED_SUFFIXES = (
@@ -266,6 +268,7 @@ class ActorPackImportService:
                 source_path
             )
             try:
+                _preflight_zip_directory(source, archive_bytes)
                 with source, zipfile.ZipFile(source, "r") as archive:
                     infos = _validated_members(archive)
                     root_bytes = _read_member(
@@ -347,14 +350,8 @@ class ActorPackImportService:
                         if document.actor_kind == "persona"
                         else ("shared-visual-identity",)
                     )
-                    section_effects = tuple(
-                        (
-                            kind,
-                            "Included — imported visuals will be activated"
-                            if kind in sections
-                            else "Not included — existing visuals will be preserved",
-                        )
-                        for kind in expected_sections
+                    section_effects = _section_effects(
+                        expected_sections, sections, allowed_actions
                     )
                     differences = (
                         ()
@@ -588,8 +585,31 @@ class ActorPackImportService:
             if self._local_service is None:
                 raise ActorPackImportError("actor_pack_import_review_stale")
             actor = self._local_service._find_persona_profile(identity.local_actor_id)
-            version = actor.get("version")
-            data = dict(actor)
+            return self._persona_actor_authority(actor)
+        if type(version) is not int or version < 1:
+            raise ActorPackImportError("actor_pack_import_review_stale")
+        try:
+            digest = hashlib.sha256(canonical_json_bytes(data)).hexdigest()
+        except (ActorPackValidationError, TypeError, ValueError):
+            raise ActorPackImportError("actor_pack_import_review_stale") from None
+        return version, digest
+
+    def _persona_actor_authority(self, actor: Mapping[str, Any]) -> tuple[int, str]:
+        version = actor.get("version")
+        data = dict(actor)
+        character_id = actor.get("character_card_id")
+        if type(character_id) is int and character_id > 0:
+            linked = self.repository.db.get_character_card_by_id(character_id)
+            if linked is None:
+                data["portrait_character_missing"] = True
+            else:
+                if type(linked.get("version")) is not int:
+                    raise ActorPackImportError("actor_pack_import_review_stale")
+                image = linked.get("image")
+                if type(image) is not bytes:
+                    raise ActorPackImportError("actor_pack_import_review_stale")
+                data["portrait_character_version"] = linked["version"]
+                data["portrait_sha256"] = hashlib.sha256(image).hexdigest()
         if type(version) is not int or version < 1:
             raise ActorPackImportError("actor_pack_import_review_stale")
         try:
@@ -724,6 +744,91 @@ def _pin_source(path: Path) -> tuple[BinaryIO, tuple[int, ...], str, int]:
     finally:
         if descriptor >= 0:
             os.close(descriptor)
+
+
+def _preflight_zip_directory(source: BinaryIO, archive_bytes: int) -> None:
+    """Reject an oversized central directory before ``ZipFile`` allocates it."""
+
+    eocd_size = 22
+    tail_size = min(archive_bytes, eocd_size + 65_535)
+    source.seek(archive_bytes - tail_size)
+    tail = source.read(tail_size)
+    relative = tail.rfind(b"PK\x05\x06")
+    if relative < 0 or relative + eocd_size > len(tail):
+        raise ValueError
+    eocd_offset = archive_bytes - tail_size + relative
+    (
+        signature,
+        disk_number,
+        directory_disk,
+        entries_on_disk,
+        entries_total,
+        directory_bytes,
+        directory_offset,
+        comment_bytes,
+    ) = struct.unpack("<4s4H2LH", tail[relative : relative + eocd_size])
+    if (
+        signature != b"PK\x05\x06"
+        or disk_number != 0
+        or directory_disk != 0
+        or relative + eocd_size + comment_bytes != len(tail)
+    ):
+        raise ValueError
+    if (
+        entries_on_disk == 0xFFFF
+        or entries_total == 0xFFFF
+        or directory_bytes == 0xFFFFFFFF
+        or directory_offset == 0xFFFFFFFF
+    ):
+        locator_offset = eocd_offset - 20
+        if locator_offset < 0:
+            raise ValueError
+        source.seek(locator_offset)
+        locator = source.read(20)
+        locator_signature, locator_disk, zip64_offset, total_disks = struct.unpack(
+            "<4sLQL", locator
+        )
+        if (
+            locator_signature != b"PK\x06\x07"
+            or locator_disk != 0
+            or total_disks != 1
+            or zip64_offset >= locator_offset
+        ):
+            raise ValueError
+        source.seek(zip64_offset)
+        zip64 = source.read(56)
+        if len(zip64) != 56:
+            raise ValueError
+        (
+            zip64_signature,
+            record_bytes,
+            _made_by,
+            _required,
+            zip64_disk,
+            zip64_directory_disk,
+            entries_on_disk,
+            entries_total,
+            directory_bytes,
+            directory_offset,
+        ) = struct.unpack("<4sQ2H2L4Q", zip64)
+        if (
+            zip64_signature != b"PK\x06\x06"
+            or record_bytes < 44
+            or zip64_disk != 0
+            or zip64_directory_disk != 0
+        ):
+            raise ValueError
+        directory_end_limit = zip64_offset
+    else:
+        directory_end_limit = eocd_offset
+    if (
+        entries_on_disk != entries_total
+        or not 2 <= entries_total <= MAX_FILES + 1
+        or directory_bytes > _MAX_CENTRAL_DIRECTORY_BYTES
+        or directory_offset + directory_bytes > directory_end_limit
+    ):
+        raise ValueError
+    source.seek(0)
 
 
 def _source_is_current(
@@ -993,7 +1098,9 @@ def _validate_sections(
             records = []
             for asset in visual.assets:
                 data = read_member(asset.storage_relpath)
-                mime, width, height = _section_image(asset.storage_relpath, data)
+                mime, width, height = _section_image(
+                    asset.storage_relpath, data, max_frames=512
+                )
                 if (
                     mime != asset.content_type
                     or width != asset.width
@@ -1045,7 +1152,9 @@ def _validate_sections(
     return tuple(validated)
 
 
-def _section_image(member: str, data: bytes) -> tuple[str, int, int]:
+def _section_image(
+    member: str, data: bytes, *, max_frames: int = 240
+) -> tuple[str, int, int]:
     mime = _MIME_BY_SUFFIX.get(Path(member).suffix)
     if mime is None:
         raise ValueError
@@ -1053,8 +1162,57 @@ def _section_image(member: str, data: bytes) -> tuple[str, int, int]:
 
     with Image.open(BytesIO(data)) as image:
         width, height = image.size
+        expected_format = {
+            "image/png": "PNG",
+            "image/jpeg": "JPEG",
+            "image/gif": "GIF",
+            "image/webp": "WEBP",
+        }[mime]
+        frame_count = int(getattr(image, "n_frames", 1) or 1)
+        if (
+            image.format != expected_format
+            or type(width) is not int
+            or type(height) is not int
+            or not 1 <= width <= 4096
+            or not 1 <= height <= 4096
+            or not 1 <= frame_count <= max_frames
+            or width * height * frame_count > 4096**2 * 4
+        ):
+            raise ValueError
         image.load()
     return mime, width, height
+
+
+def _section_effects(
+    expected_sections: tuple[str, ...],
+    included_sections: tuple[str, ...],
+    allowed_actions: tuple[str, ...],
+) -> tuple[tuple[str, str], ...]:
+    labels = {
+        "create_new": "Create New",
+        "create_copy": "Create Copy",
+        "update_existing": "Update Existing",
+    }
+    effects: list[tuple[str, str]] = []
+    for kind in expected_sections:
+        included = kind in included_sections
+        descriptions = []
+        for action in allowed_actions:
+            if included:
+                effect = (
+                    "imported visuals will replace the current binding"
+                    if action == "update_existing"
+                    else "imported visuals will be activated"
+                )
+            else:
+                effect = (
+                    "Not included — existing visuals will be preserved"
+                    if action == "update_existing"
+                    else "Not included — no visual binding will be created"
+                )
+            descriptions.append(f"{labels[action]}: {effect}")
+        effects.append((kind, "; ".join(descriptions)))
+    return tuple(effects)
 
 
 def _persona_asset_ids(manifest: Mapping[str, Any]) -> tuple[str, ...]:

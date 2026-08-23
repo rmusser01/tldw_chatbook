@@ -19,6 +19,7 @@ from tldw_chatbook.Actor_Packs.contracts import (
 from tldw_chatbook.Actor_Packs.export import (
     ActorPackExportFile,
     ActorPackExportSection,
+    ActorPackExportService,
     ActorPackExportSnapshot,
     write_actor_pack_archive,
 )
@@ -31,7 +32,7 @@ from tldw_chatbook.Actor_Packs.repository import ActorPackRepository
 from tldw_chatbook.Character_Chat.local_character_persona_service import (
     LocalCharacterPersonaService,
 )
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, InputError
 from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
 from tldw_chatbook.Persona_Visual.repository import PersonaVisualRepository
 from tldw_chatbook.Character_Chat.visual_identity import (
@@ -210,7 +211,7 @@ def test_create_copy_character_gets_fresh_uuid_and_source_provenance(
 
 
 def test_create_new_persona_preserves_incoming_uuid(activation_components) -> None:
-    activation, importer, repository, local_service, _db = activation_components
+    activation, importer, repository, local_service, db = activation_components
     review = importer.inspect_archive(
         (FIXTURES / "minimal-persona.tldw-actor-pack").resolve()
     )
@@ -222,6 +223,72 @@ def test_create_new_persona_preserves_incoming_uuid(activation_components) -> No
     identity = repository.get_identity("persona", result.local_actor_id)
     assert identity is not None
     assert identity.portable_uuid == review.portable_uuid
+    assert type(profile.get("character_card_id")) is int
+    portrait_actor = db.get_character_card_by_id(profile["character_card_id"])
+    assert portrait_actor is not None
+    assert portrait_actor["image"] == PNG_1X1
+    snapshot = ActorPackExportService(db, local_service, repository).capture_snapshot(
+        "persona", result.local_actor_id, source="local"
+    )
+    assert snapshot.portrait_bytes == PNG_1X1
+
+
+def test_cancel_after_section_publication_removes_owned_orphans(
+    activation_components, tmp_path: Path
+) -> None:
+    activation, importer, repository, _local_service, _db = activation_components
+    archive = _write_archive(
+        tmp_path / "cancel-section.tldw-actor-pack",
+        actor_kind="character",
+        portable_uuid=PORTABLE_UUID,
+        sections=(_shared_visual_section(),),
+    )
+    review = importer.inspect_archive(archive)
+    publication_root = (
+        importer._profile_root
+        / "visual_identities"
+        / "actor_packs"
+        / review.content_digest
+    )
+
+    with pytest.raises(ActorPackActivationError) as raised:
+        activation.activate(
+            review,
+            "create_new",
+            cancel_requested=lambda: (
+                publication_root.exists() and any(publication_root.iterdir())
+            ),
+        )
+
+    assert raised.value.category == "actor_pack_import_cancelled"
+    assert not publication_root.exists() or list(publication_root.iterdir()) == []
+    assert repository.get_identity_by_portable_uuid(PORTABLE_UUID) is None
+
+
+def test_partial_immutable_publication_is_removed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tldw_chatbook.Actor_Packs import activation as activation_module
+
+    target = tmp_path / "asset.png"
+    real_write = activation_module.os.write
+    calls = 0
+
+    def fail_after_partial(descriptor: int, data: object) -> int:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return real_write(descriptor, memoryview(data)[:1])
+        raise OSError("injected")
+
+    monkeypatch.setattr(activation_module.os, "write", fail_after_partial)
+
+    with pytest.raises(OSError):
+        activation_module._publish_immutable(
+            target, PNG_1X1, hashlib.sha256(PNG_1X1).hexdigest()
+        )
+
+    assert not target.exists()
 
 
 def test_cancellation_before_commit_leaves_no_actor_or_identity(
@@ -311,7 +378,7 @@ def test_update_character_changes_only_present_portable_fields(
 def test_update_persona_changes_only_present_portable_fields(
     activation_components,
 ) -> None:
-    activation, importer, repository, local_service, _db = activation_components
+    activation, importer, repository, local_service, db = activation_components
     original_review = importer.inspect_archive(
         (FIXTURES / "minimal-persona.tldw-actor-pack").resolve()
     )
@@ -321,6 +388,14 @@ def test_update_persona_changes_only_present_portable_fields(
         original.local_actor_id,
         {"description": "Keep this local description"},
         expected_version=current["version"],
+    )
+    portrait_id = current["character_card_id"]
+    portrait_actor = db.get_character_card_by_id(portrait_id)
+    assert portrait_actor is not None
+    db.update_character_card(
+        portrait_id,
+        {"image": b"locally replaced portrait"},
+        expected_version=portrait_actor["version"],
     )
     update_review = importer.inspect_archive(
         (FIXTURES / "minimal-persona.tldw-actor-pack").resolve()
@@ -336,6 +411,112 @@ def test_update_persona_changes_only_present_portable_fields(
     identity = repository.get_identity("persona", original.local_actor_id)
     assert identity is not None
     assert identity.portable_uuid == original.portable_uuid
+    assert db.get_character_card_by_id(portrait_id)["image"] == PNG_1X1
+
+
+def test_persona_review_becomes_stale_when_portrait_authority_changes(
+    activation_components,
+) -> None:
+    activation, importer, _repository, local_service, db = activation_components
+    created = activation.activate(
+        importer.inspect_archive(
+            (FIXTURES / "minimal-persona.tldw-actor-pack").resolve()
+        ),
+        "create_new",
+    )
+    review = importer.inspect_archive(
+        (FIXTURES / "minimal-persona.tldw-actor-pack").resolve()
+    )
+    profile = local_service.get_persona_profile(created.local_actor_id)
+    portrait_id = profile["character_card_id"]
+    portrait_actor = db.get_character_card_by_id(portrait_id)
+    assert portrait_actor is not None
+    db.update_character_card(
+        portrait_id,
+        {"image": b"concurrent portrait"},
+        expected_version=portrait_actor["version"],
+    )
+
+    with pytest.raises(ActorPackActivationError) as raised:
+        activation.activate(review, "update_existing")
+
+    assert raised.value.category == "actor_pack_import_review_stale"
+
+
+def test_update_persona_rebinds_shared_portrait_without_mutating_character(
+    activation_components,
+) -> None:
+    activation, importer, repository, local_service, db = activation_components
+    shared_id = db.add_character_card(
+        {"name": "Shared portrait", "image": b"shared portrait bytes"}
+    )
+    assert shared_id is not None
+    persona = local_service.create_persona_profile(
+        {
+            "id": "local-persona-shared",
+            "name": "Existing Persona",
+            "character_card_id": shared_id,
+        }
+    )
+    with db.transaction(immediate=True):
+        repository._assign_identity_in_transaction(
+            "persona",
+            persona["id"],
+            portable_uuid=PORTABLE_UUID,
+        )
+    review = importer.inspect_archive(
+        (FIXTURES / "minimal-persona.tldw-actor-pack").resolve()
+    )
+
+    activation.activate(review, "update_existing")
+
+    assert db.get_character_card_by_id(shared_id)["image"] == b"shared portrait bytes"
+    updated = local_service.get_persona_profile(persona["id"])
+    assert updated["character_card_id"] != shared_id
+    owned = db.get_character_card_by_id(updated["character_card_id"])
+    assert owned["image"] == PNG_1X1
+    assert owned["extensions"]["actor_pack_persona_portrait_owner"] == persona["id"]
+
+
+def test_persona_portrait_anchor_uses_normal_sequential_character_id(
+    activation_components,
+) -> None:
+    activation, importer, _repository, _local_service, db = activation_components
+    result = activation.activate(
+        importer.inspect_archive(
+            (FIXTURES / "minimal-persona.tldw-actor-pack").resolve()
+        ),
+        "create_new",
+    )
+    profile = activation.local_service.get_persona_profile(result.local_actor_id)
+    portrait_id = profile["character_card_id"]
+
+    following_id = db.add_character_card({"name": "Following Character"})
+
+    assert portrait_id < 1_000
+    assert following_id == portrait_id + 1
+    assert portrait_id not in {
+        card["id"] for card in db.list_character_cards(limit=1_000)
+    }
+    assert portrait_id not in {
+        card["id"] for card in db.list_character_cards_page(limit=1_000, offset=0)
+    }
+    assert portrait_id not in {
+        card["id"] for card in db.search_character_cards("Golden")
+    }
+    with pytest.raises(InputError):
+        db.add_character_card(
+            {
+                "name": "Spoofed internal Character",
+                "extensions": {"actor_pack_persona_portrait_owner": "spoofed"},
+            }
+        )
+    with pytest.raises(InputError):
+        db.update_character_card(
+            following_id,
+            {"extensions": {"actor_pack_persona_portrait_owner": "spoofed"}},
+            expected_version=1,
+        )
 
 
 def test_character_activation_binds_included_shared_visual_identity(

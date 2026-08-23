@@ -11,6 +11,11 @@ from pathlib import Path
 import pytest
 
 from tldw_chatbook.Actor_Packs import importer as importer_module
+from tldw_chatbook.Actor_Packs.contracts import (
+    ActorPackValidationError,
+    canonical_json_bytes,
+    validate_actor_payload,
+)
 from tldw_chatbook.Actor_Packs.importer import (
     ActorPackImportError,
     ActorPackImportService,
@@ -46,7 +51,8 @@ def test_inspects_independent_character_golden_path_free(
     assert review.section_effects == (
         (
             "shared-visual-identity",
-            "Not included — existing visuals will be preserved",
+            "Create New: Not included — no visual binding will be created; "
+            "Create Copy: Not included — no visual binding will be created",
         ),
     )
     assert review.portrait.mime_type == "image/png"
@@ -165,6 +171,102 @@ def test_rejects_truncated_archive_without_leaving_staging(
     assert list(import_service._staging_root.iterdir()) == []
 
 
+def test_rejects_oversized_central_directory_count_before_zipfile_parsing(
+    import_service: ActorPackImportService,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    archive = tmp_path / "many-members.tldw-actor-pack"
+    count = 4098
+    archive.write_bytes(
+        b"PK\x05\x06"
+        + (0).to_bytes(2, "little")
+        + (0).to_bytes(2, "little")
+        + count.to_bytes(2, "little")
+        + count.to_bytes(2, "little")
+        + (0).to_bytes(4, "little")
+        + (0).to_bytes(4, "little")
+        + (0).to_bytes(2, "little")
+    )
+    parsed = False
+
+    def forbidden_zipfile(*_args, **_kwargs):
+        nonlocal parsed
+        parsed = True
+        raise AssertionError("ZipFile must not parse an over-budget directory")
+
+    monkeypatch.setattr(importer_module.zipfile, "ZipFile", forbidden_zipfile)
+
+    with pytest.raises(ActorPackImportError) as raised:
+        import_service.inspect_archive(archive.resolve())
+
+    assert raised.value.category == "actor_pack_import_invalid"
+    assert parsed is False
+
+
+def test_section_image_rejects_suffix_mime_mismatch() -> None:
+    from .conftest import PNG_1X1
+
+    with pytest.raises(ValueError):
+        importer_module._section_image("persona-runtime/assets/frame.jpg", PNG_1X1)
+
+
+def test_section_image_rejects_decode_budget_before_loading(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loaded = False
+
+    class OversizedImage:
+        format = "PNG"
+        size = (4097, 4096)
+        n_frames = 1
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def load(self) -> None:
+            nonlocal loaded
+            loaded = True
+
+    monkeypatch.setattr(importer_module.Image, "open", lambda _stream: OversizedImage())
+
+    with pytest.raises(ValueError):
+        importer_module._section_image("persona-runtime/assets/frame.png", b"image")
+
+    assert loaded is False
+
+
+@pytest.mark.parametrize(
+    "actor_fields",
+    [
+        {"name": "Guide", "voice_defaults": {"vad_threshold": {"bad": True}}},
+        {"name": "Guide", "setup": {"status": "impossible", "version": 0}},
+    ],
+)
+def test_import_rejects_invalid_nested_persona_mutation_fields(
+    actor_fields: dict[str, object],
+) -> None:
+    payload = canonical_json_bytes(
+        {
+            "schema": "tldw.actor/v1",
+            "actor_kind": "persona",
+            "portable_uuid": "123e4567-e89b-42d3-a456-426614174000",
+            "data": actor_fields,
+        }
+    )
+    with pytest.raises(ActorPackValidationError) as raised:
+        validate_actor_payload(
+            payload,
+            actor_kind="persona",
+            portable_uuid="123e4567-e89b-42d3-a456-426614174000",
+        )
+
+    assert raised.value.category == "actor_pack_actor_invalid"
+
+
 def test_rejects_casefold_alias_collision(
     import_service: ActorPackImportService,
     tmp_path: Path,
@@ -265,6 +367,13 @@ def test_same_kind_uuid_match_offers_copy_or_explicit_update(
 
     assert review.uuid_match == "same_kind"
     assert review.allowed_actions == ("create_copy", "update_existing")
+    assert review.section_effects == (
+        (
+            "shared-visual-identity",
+            "Create Copy: Not included — no visual binding will be created; "
+            "Update Existing: Not included — existing visuals will be preserved",
+        ),
+    )
 
 
 def test_cross_kind_uuid_match_is_rejected(

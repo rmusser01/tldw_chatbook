@@ -1996,6 +1996,7 @@ def _stream_fileno(stream: Any) -> int:
 # heavy-lane cap limits how many of these parse concurrently.
 _INGEST_HEAVY_TYPES = frozenset({"audio", "video"})
 
+
 # (task 10, spec §9.1 AC 37/AC-24b) The named template errors the ingest
 # dispatch fails an item on: an unresolvable choice (deleted/renamed) and a
 # stored-invalid body refused by the validator.
@@ -2042,6 +2043,7 @@ def _template_resolution_errors() -> tuple[type[Exception], ...]:
         return ()
 
     return (TemplateResolutionError, InvalidTemplateError)
+
 
 _INGEST_LOCAL_STT_PHASE_MESSAGES: dict[WorkerPhase, str] = {
     WorkerPhase.PREPARING: "Preparing import",
@@ -11937,8 +11939,7 @@ class TldwCli(
             return
         if any(reconciled.values()):
             self.loguru_logger.info(
-                f"Startup reconcile failed interrupted subscriptions work: "
-                f"{reconciled}"
+                f"Startup reconcile failed interrupted subscriptions work: {reconciled}"
             )
 
     async def _reconcile_citation_artifact_ownership(self) -> None:
