@@ -104,7 +104,7 @@ class _SearchAttemptState:
     query: str = ""
     debounce: Any = None
     generation: int = 0
-    request_key: tuple[str, str, int, object, object] | None = None
+    request_key: tuple[str, str, int, object, object, int] | None = None
     rows: tuple[ConsoleConversationBrowserInputRow, ...] = ()
     total: int | None = None
     settled_rows: tuple[ConsoleConversationBrowserInputRow, ...] = ()
@@ -320,6 +320,7 @@ class ConsoleWorkspaceController:
         self._workspace_membership_rows: dict[
             str, tuple[ConsoleConversationBrowserInputRow, ...]
         ] = {}
+        self._canonical_membership_revision = 0
         self._canonical_owner_observations: dict[str, str] = {}
 
         # Canonical flat-browser state. Legacy workspace-search names below are
@@ -707,6 +708,7 @@ class ConsoleWorkspaceController:
             generation,
             owner_token,
             lifecycle_token,
+            self._canonical_membership_revision,
         )
         lane.request_key = request_key
         lane.error = ""
@@ -746,6 +748,7 @@ class ConsoleWorkspaceController:
             generation,
             owner_token,
             lifecycle_token,
+            self._canonical_membership_revision,
         )
         lane.request_key = request_key
         lane.error = ""
@@ -786,7 +789,7 @@ class ConsoleWorkspaceController:
             await self.refresh_flat_conversation_search(query)
 
     def _workspace_search_attempt_is_current(
-        self, request_key: tuple[str, str, int, object, object]
+        self, request_key: tuple[str, str, int, object, object, int]
     ) -> bool:
         lane = self._workspace_tree_search
         return bool(
@@ -796,10 +799,11 @@ class ConsoleWorkspaceController:
             and lane.query == request_key[1]
             and self._workspace_tree_owner_token() is request_key[3]
             and self._screen_lifecycle_token() is request_key[4]
+            and self._canonical_membership_revision == request_key[5]
         )
 
     def _flat_search_attempt_is_current(
-        self, request_key: tuple[str, str, int, object, object]
+        self, request_key: tuple[str, str, int, object, object, int]
     ) -> bool:
         lane = self._flat_conversation_search
         return bool(
@@ -809,6 +813,7 @@ class ConsoleWorkspaceController:
             and lane.query == request_key[1]
             and self._flat_conversation_owner_token() is request_key[3]
             and self._screen_lifecycle_token() is request_key[4]
+            and self._canonical_membership_revision == request_key[5]
         )
 
     async def _load_workspace_tree_search_rows(
@@ -1163,6 +1168,7 @@ class ConsoleWorkspaceController:
             labels.setdefault(owner_id, str(row.workspace_label or owner_id))
 
         if complete:
+            self._canonical_membership_revision += 1
             complete_owners: dict[str, str] = {}
             for workspace_id in sorted(current_tokens):
                 for conversation_id in current_tokens[workspace_id]:
@@ -1401,6 +1407,7 @@ class ConsoleWorkspaceController:
             token,
             self._flat_conversation_owner_token(),
             self._screen_lifecycle_token(),
+            self._canonical_membership_revision,
         )
         if self._console_conversation_browser_search_timer is not None:
             self._console_conversation_browser_search_timer.stop()
@@ -1492,6 +1499,7 @@ class ConsoleWorkspaceController:
             token,
             self._flat_conversation_owner_token(),
             self._screen_lifecycle_token(),
+            self._canonical_membership_revision,
         )
         self._invalidate_console_persisted_rows_cache()
         if not query.strip():
@@ -2107,6 +2115,7 @@ class ConsoleWorkspaceController:
             token,
             self._flat_conversation_owner_token(),
             self._screen_lifecycle_token(),
+            self._canonical_membership_revision,
         )
         scheduled_attempt = self._flat_conversation_search.request_key == request_key
         settled_rows = (

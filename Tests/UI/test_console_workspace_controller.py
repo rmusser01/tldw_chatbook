@@ -1520,6 +1520,147 @@ async def test_complete_default_snapshot_supersedes_named_observation_without_mo
     assert owners == ["flat"]
 
 
+@pytest.mark.asyncio
+async def test_workspace_search_completion_before_complete_owner_move_is_stale() -> (
+    None
+):
+    controller = _workspace_controller(
+        app_instance=SimpleNamespace(
+            workspace_registry_service=SimpleNamespace(
+                list_workspaces=lambda: (
+                    SimpleNamespace(
+                        workspace_id="workspace-7", name="Seven", archived=False
+                    ),
+                    SimpleNamespace(
+                        workspace_id="workspace-8", name="Eight", archived=False
+                    ),
+                )
+            )
+        )
+    )
+    old_owner = _browser_row("moving", "Old owner")
+    attempt = controller._new_workspace_page_state(rows=(old_owner,), next_cursor=75)
+    attempt.membership_token = ("moving",)
+    controller._workspace_page_attempts["workspace-7"] = attempt
+    settled = _browser_row("settled", "Settled search row")
+    controller._workspace_tree_search.rows = (settled,)
+    controller._workspace_tree_search.settled_rows = (settled,)
+    controller._workspace_tree_search.settled_query = "settled"
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def stale_search(_query):
+        started.set()
+        await release.wait()
+        return (old_owner,), 1
+
+    controller._load_workspace_tree_search_rows = stale_search
+    task = asyncio.create_task(controller.refresh_workspace_tree_search("owner"))
+    await started.wait()
+
+    controller.apply_workspace_membership_snapshot(
+        {"workspace-7": (), "workspace-8": ("moving",)},
+        complete=True,
+        workspace_labels={"workspace-7": "Seven", "workspace-8": "Eight"},
+    )
+    release.set()
+    await task
+
+    assert controller._workspace_tree_search.rows == (settled,)
+    assert controller._workspace_tree_search.settled_rows == (settled,)
+    assert controller._canonical_owner_observations["moving"] == "workspace-8"
+
+    controller.transition_workspace_tree_search("", disabled=False)
+    state = controller._with_console_conversation_browser_state(_workspace_state())
+    assert state.conversation_browser is not None
+    owners = [
+        *(
+            node.workspace_id
+            for node in state.workspace_tree
+            for row in node.conversations
+            if row.conversation_id == "moving"
+        ),
+        *(
+            "flat"
+            for section in state.conversation_browser.sections
+            for row in section.rows
+            if row.conversation_id == "moving"
+        ),
+    ]
+
+    assert owners == ["workspace-8"]
+
+
+@pytest.mark.asyncio
+async def test_flat_search_completion_before_complete_owner_move_is_stale() -> None:
+    controller = _workspace_controller(
+        app_instance=SimpleNamespace(
+            workspace_registry_service=SimpleNamespace(
+                list_workspaces=lambda: (
+                    SimpleNamespace(
+                        workspace_id="workspace-8", name="Eight", archived=False
+                    ),
+                )
+            )
+        )
+    )
+    old_owner = _browser_row(
+        "moving", "Old Default owner", workspace_id=DEFAULT_WORKSPACE_ID
+    )
+    controller._workspace_membership_rows[DEFAULT_WORKSPACE_ID] = (old_owner,)
+    settled = _browser_row(
+        "settled",
+        "Settled flat search row",
+        workspace_id=DEFAULT_WORKSPACE_ID,
+    )
+    controller._flat_conversation_search.rows = (settled,)
+    controller._flat_conversation_search.settled_rows = (settled,)
+    controller._flat_conversation_search.settled_query = "settled"
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def stale_search(_query):
+        started.set()
+        await release.wait()
+        return (old_owner,), 1
+
+    controller._load_flat_conversation_search_rows = stale_search
+    task = asyncio.create_task(controller.refresh_flat_conversation_search("owner"))
+    await started.wait()
+
+    controller.apply_workspace_membership_snapshot(
+        {DEFAULT_WORKSPACE_ID: (), "workspace-8": ("moving",)},
+        complete=True,
+        workspace_labels={"workspace-8": "Eight"},
+    )
+    release.set()
+    await task
+
+    assert controller._flat_conversation_search.rows == (settled,)
+    assert controller._flat_conversation_search.settled_rows == (settled,)
+    assert controller._canonical_owner_observations["moving"] == "workspace-8"
+
+    controller.clear_console_conversation_browser_search()
+    state = controller._with_console_conversation_browser_state(_workspace_state())
+    assert state.conversation_browser is not None
+    owners = [
+        *(
+            node.workspace_id
+            for node in state.workspace_tree
+            for row in node.conversations
+            if row.conversation_id == "moving"
+        ),
+        *(
+            "flat"
+            for section in state.conversation_browser.sections
+            for row in section.rows
+            if row.conversation_id == "moving"
+        ),
+    ]
+
+    assert owners == ["workspace-8"]
+
+
 def test_partial_production_owner_observation_preserves_unobserved_page_members() -> (
     None
 ):
