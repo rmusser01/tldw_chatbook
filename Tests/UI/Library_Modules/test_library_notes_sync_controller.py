@@ -961,3 +961,315 @@ async def test_receipt_undo_dismiss_and_history_paging_use_fresh_runtime_project
     assert controller.snapshot.history.page == 2
     assert controller.snapshot.history.rows[0].operation_id == "operation-2"
     assert ("resolution_history", "root-1", 100, 100) in runtime.calls
+
+
+def _receipt(operation_id: str, label: str) -> RuntimeConflictReceipt:
+    return RuntimeConflictReceipt(
+        operation_id,
+        label,
+        NotesSyncConflictChoice.KEEP_FILE,
+        "completed",
+        True,
+    )
+
+
+def _history_row(
+    operation_id: str,
+    label: str,
+    *,
+    state: str = "completed",
+    undo_available: bool = True,
+    undo_reason: str | None = None,
+) -> RuntimeConflictHistoryRow:
+    return RuntimeConflictHistoryRow(
+        operation_id,
+        label,
+        NotesSyncConflictChoice.KEEP_FILE,
+        state,
+        "2026-08-22T12:00:00+00:00",
+        "2026-08-22T12:00:00+00:00",
+        undo_available,
+        undo_reason,
+    )
+
+
+async def test_root_switch_clears_and_fences_delayed_receipt_and_history_results() -> (
+    None
+):
+    runtime = _Runtime()
+    runtime.receipts = (_receipt("operation-old", "Old root"),)
+    runtime.history[0] = (_history_row("operation-old", "Old root"),)
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+    await controller.refresh_conflict_receipts("root-1")
+    await controller.show_resolution_history("root-1")
+    assert controller.snapshot.receipts
+    assert controller.snapshot.history.rows
+
+    receipt_started = {root: asyncio.Event() for root in ("root-1", "root-2")}
+    history_started = {root: asyncio.Event() for root in ("root-1", "root-2")}
+    receipt_release = {root: asyncio.Event() for root in ("root-1", "root-2")}
+    history_release = {root: asyncio.Event() for root in ("root-1", "root-2")}
+
+    async def delayed_receipts(root_id: str) -> tuple[RuntimeConflictReceipt, ...]:
+        receipt_started[root_id].set()
+        await receipt_release[root_id].wait()
+        return (_receipt(f"operation-{root_id}", root_id),)
+
+    async def delayed_history(
+        root_id: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        now: int | None = None,
+    ) -> tuple[RuntimeConflictHistoryRow, ...]:
+        history_started[root_id].set()
+        await history_release[root_id].wait()
+        return (_history_row(f"operation-{root_id}", root_id),)
+
+    runtime.active_conflict_receipts = delayed_receipts
+    runtime.resolution_history = delayed_history
+    old_receipts = asyncio.create_task(controller.refresh_conflict_receipts("root-1"))
+    old_history = asyncio.create_task(controller.show_resolution_history("root-1"))
+    await receipt_started["root-1"].wait()
+    await history_started["root-1"].wait()
+
+    runtime.check_plan = _conflict_plan(root_id="root-2")
+    await controller.check_root("root-2")
+    assert controller.snapshot.receipts == ()
+    assert controller.snapshot.history.rows == ()
+
+    new_receipts = asyncio.create_task(controller.refresh_conflict_receipts("root-2"))
+    new_history = asyncio.create_task(controller.show_resolution_history("root-2"))
+    await receipt_started["root-2"].wait()
+    await history_started["root-2"].wait()
+    receipt_release["root-2"].set()
+    history_release["root-2"].set()
+    await asyncio.gather(new_receipts, new_history)
+
+    receipt_release["root-1"].set()
+    history_release["root-1"].set()
+    await asyncio.gather(old_receipts, old_history)
+    assert controller.snapshot.receipts[0].item_label == "root-2"
+    assert controller.snapshot.history.root_id == "root-2"
+    assert controller.snapshot.history.rows[0].item_label == "root-2"
+
+
+async def test_remount_and_history_page_generations_reject_out_of_order_results() -> (
+    None
+):
+    runtime = _Runtime()
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+    started = [asyncio.Event() for _ in range(4)]
+    release = [asyncio.Event() for _ in range(4)]
+    calls = 0
+
+    async def delayed_history(
+        root_id: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        now: int | None = None,
+    ) -> tuple[RuntimeConflictHistoryRow, ...]:
+        nonlocal calls
+        call = calls
+        calls += 1
+        started[call].set()
+        await release[call].wait()
+        return (_history_row(f"operation-{call}", f"page-{offset // 100 + 1}"),)
+
+    runtime.resolution_history = delayed_history
+    page_one = asyncio.create_task(controller.show_resolution_history("root-1", page=1))
+    await started[0].wait()
+    page_two = asyncio.create_task(controller.show_resolution_history("root-1", page=2))
+    await started[1].wait()
+    release[1].set()
+    await page_two
+    release[0].set()
+    await page_one
+    assert controller.snapshot.history.page == 2
+    assert controller.snapshot.history.rows[0].item_label == "page-2"
+
+    old = asyncio.create_task(controller.show_resolution_history("root-1", page=2))
+    await started[2].wait()
+    controller.invalidate_for_remount()
+    fresh = asyncio.create_task(controller.show_resolution_history("root-1", page=2))
+    await started[3].wait()
+    release[3].set()
+    await fresh
+    release[2].set()
+    await old
+    assert controller.snapshot.history.rows[0].operation_id == "operation-3"
+
+
+async def test_remount_generation_rejects_stale_same_root_receipt_completion() -> None:
+    runtime = _Runtime()
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+    started = [asyncio.Event(), asyncio.Event()]
+    release = [asyncio.Event(), asyncio.Event()]
+    calls = 0
+
+    async def delayed_receipts(root_id: str) -> tuple[RuntimeConflictReceipt, ...]:
+        nonlocal calls
+        call = calls
+        calls += 1
+        started[call].set()
+        await release[call].wait()
+        return (_receipt(f"operation-{call}", "Old" if call == 0 else "Fresh"),)
+
+    runtime.active_conflict_receipts = delayed_receipts
+    old = asyncio.create_task(controller.refresh_conflict_receipts("root-1"))
+    await started[0].wait()
+    controller.invalidate_for_remount()
+    fresh = asyncio.create_task(controller.refresh_conflict_receipts("root-1"))
+    await started[1].wait()
+    release[1].set()
+    await fresh
+    release[0].set()
+    await old
+
+    assert controller.snapshot.receipts[0].item_label == "Fresh"
+
+
+async def test_completed_undo_refreshes_open_history_once_and_nonterminal_recovers() -> (
+    None
+):
+    runtime = _Runtime()
+    runtime.receipts = (_receipt("operation-1", "Note"),)
+    runtime.history[0] = (_history_row("operation-1", "Note"),)
+    statuses: list[str] = []
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+        publish_snapshot=lambda snapshot: statuses.append(snapshot.status_line),
+    )
+    await controller.show_resolution_history("root-1", page=1)
+
+    async def completed_undo(
+        root_id: str, operation_id: str
+    ) -> NotesSyncExecutionResult:
+        runtime.receipts = ()
+        runtime.history[0] = (
+            _history_row(
+                operation_id,
+                "Note",
+                state="undone",
+                undo_available=False,
+                undo_reason="Undone",
+            ),
+        )
+        return NotesSyncExecutionResult(
+            "undo-operation-1", NotesSyncOperationState.COMPLETED, False
+        )
+
+    runtime.undo_resolution = completed_undo
+    statuses.clear()
+    await controller.undo_conflict_resolution("root-1", "operation-1")
+    assert statuses == ["Undo finished. Check changes before applying again."]
+    assert controller.snapshot.phase == "history"
+    assert controller.snapshot.history.rows[0].state == "undone"
+    assert controller.snapshot.receipts == ()
+
+    from tldw_chatbook.Notes.notes_sync_executor import NotesSyncRecoveryChoice
+
+    async def nonterminal_undo(
+        root_id: str, operation_id: str
+    ) -> NotesSyncExecutionResult:
+        return NotesSyncExecutionResult(
+            "undo-operation-2",
+            NotesSyncOperationState.NEEDS_ATTENTION,
+            True,
+            "operation_failed",
+            tuple(NotesSyncRecoveryChoice),
+        )
+
+    runtime.undo_resolution = nonterminal_undo
+    statuses.clear()
+    await controller.undo_conflict_resolution("root-1", "operation-1")
+    assert controller.snapshot.phase == "roots"
+    assert "recovery needs attention" in controller.snapshot.status_line.casefold()
+    assert "Undo finished" not in controller.snapshot.status_line
+    assert statuses == [controller.snapshot.status_line]
+
+    async def intermediate_undo(
+        root_id: str, operation_id: str
+    ) -> NotesSyncExecutionResult:
+        return NotesSyncExecutionResult(
+            "undo-operation-3", NotesSyncOperationState.VERIFIED, False
+        )
+
+    runtime.undo_resolution = intermediate_undo
+    statuses.clear()
+    await controller.undo_conflict_resolution("root-1", "operation-1")
+    assert controller.snapshot.phase == "roots"
+    assert "recovery needs attention" in controller.snapshot.status_line.casefold()
+    assert "Undo finished" not in controller.snapshot.status_line
+    assert statuses == [controller.snapshot.status_line]
+
+
+async def test_delayed_completed_undo_cannot_overwrite_newer_history_page() -> None:
+    runtime = _Runtime()
+    runtime.history[0] = (_history_row("operation-1", "Page one"),)
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+    await controller.show_resolution_history("root-1", page=1)
+    refresh_started = asyncio.Event()
+    release_refresh = asyncio.Event()
+
+    async def completed_undo(
+        root_id: str, operation_id: str
+    ) -> NotesSyncExecutionResult:
+        return NotesSyncExecutionResult(
+            "undo-operation-1", NotesSyncOperationState.COMPLETED, False
+        )
+
+    async def delayed_history(
+        root_id: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        now: int | None = None,
+    ) -> tuple[RuntimeConflictHistoryRow, ...]:
+        if offset == 0:
+            refresh_started.set()
+            await release_refresh.wait()
+            return (_history_row("operation-stale", "Stale page one"),)
+        return (_history_row("operation-current", "Page two"),)
+
+    runtime.undo_resolution = completed_undo
+    runtime.resolution_history = delayed_history
+    pending = asyncio.create_task(
+        controller.undo_conflict_resolution("root-1", "operation-1")
+    )
+    await refresh_started.wait()
+    await controller.show_resolution_history("root-1", page=2)
+    release_refresh.set()
+    await pending
+
+    assert controller.snapshot.history.page == 2
+    assert controller.snapshot.history.rows[0].operation_id == "operation-current"
+    assert controller.snapshot.status_line == "Resolution history loaded."
+
+
+async def test_history_page_bounds_reject_before_runtime_call() -> None:
+    runtime = _Runtime()
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+    largest_page = ((2**63 - 1) // 100) + 1
+
+    for invalid in (True, largest_page + 1, 10**100):
+        with pytest.raises(ValueError, match="history page|SQLite"):
+            await controller.show_resolution_history("root-1", page=invalid)
+    assert not any(call[0] == "resolution_history" for call in runtime.calls)

@@ -87,6 +87,8 @@ _ROOT_NEXT_ACTIONS = frozenset(
         "close_other_process_and_restart",
     }
 )
+LASTING_SYNC_HISTORY_PAGE_SIZE = 100
+_SQLITE_INTEGER_MAX = 2**63 - 1
 
 
 class LastingSyncApplyBlocker(StrEnum):
@@ -355,8 +357,7 @@ class LastingSyncHistory:
             raise TypeError("history rows must be a tuple of history rows")
         if len(self.rows) > 100:
             raise ValueError("history rows must be bounded to one page")
-        if type(self.page) is not int or self.page < 1:
-            raise ValueError("history page must be a positive integer")
+        validate_lasting_sync_history_page(self.page)
         if type(self.has_next) is not bool or type(self.unavailable) is not bool:
             raise TypeError("history flags must be booleans")
 
@@ -366,6 +367,17 @@ class LastingSyncHistory:
             f"rows={len(self.rows)}, page={self.page}, "
             f"has_next={self.has_next}, unavailable={self.unavailable})"
         )
+
+
+def validate_lasting_sync_history_page(page: int) -> int:
+    """Return a SQLite-safe page offset for one bounded history projection."""
+
+    if type(page) is not int or page < 1:
+        raise ValueError("history page must be a positive integer")
+    largest_page = (_SQLITE_INTEGER_MAX // LASTING_SYNC_HISTORY_PAGE_SIZE) + 1
+    if page > largest_page:
+        raise ValueError("history page offset exceeds SQLite's integer range")
+    return (page - 1) * LASTING_SYNC_HISTORY_PAGE_SIZE
 
 
 @dataclass(frozen=True, slots=True)
@@ -727,6 +739,7 @@ def _apply_blocker(
 
 
 __all__ = [
+    "LASTING_SYNC_HISTORY_PAGE_SIZE",
     "LastingSyncApplyBlocker",
     "LastingSyncHistory",
     "LastingSyncHistoryRow",
@@ -739,4 +752,5 @@ __all__ = [
     "build_reconciliation_review",
     "initial_lasting_sync_snapshot",
     "set_setup_value",
+    "validate_lasting_sync_history_page",
 ]

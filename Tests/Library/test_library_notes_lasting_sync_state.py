@@ -468,3 +468,13 @@ def test_snapshot_conflict_projection_is_immutable_bounded_and_typed() -> None:
         replace(snapshot, receipts=(receipt,) * 101)
     with pytest.raises(TypeError, match="history"):
         replace(snapshot, history=object())
+
+
+def test_history_page_rejects_bool_and_offsets_outside_sqlite_integer_range() -> None:
+    history_type = lasting_state.LastingSyncHistory
+    largest_page = ((2**63 - 1) // 100) + 1
+
+    assert history_type(page=largest_page).page == largest_page
+    for invalid in (True, largest_page + 1, 10**100):
+        with pytest.raises(ValueError, match="history page|SQLite"):
+            history_type(page=invalid)
