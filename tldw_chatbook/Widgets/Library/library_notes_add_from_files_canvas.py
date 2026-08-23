@@ -25,6 +25,7 @@ from tldw_chatbook.Notes.notes_sync_conflicts import (
     ConflictComparison,
     NotesSyncConflictChoice,
 )
+from tldw_chatbook.Notes.notes_sync_models import validate_notes_sync_opaque_id
 
 
 _CHOICE_SLUGS = {
@@ -132,6 +133,7 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
     ) -> None:
         super().__init__(**kwargs)
         self.snapshot = snapshot
+        self._handled_conflict_focus_binding_id = snapshot.conflict_focus_binding_id
         self.add_class("library-notes-lasting-sync-canvas")
 
     def compose(self) -> ComposeResult:
@@ -362,8 +364,25 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
         self, index: int, row: LastingSyncReviewRow
     ) -> ComposeResult:
         comparison = self.snapshot.comparison
-        expanded = comparison is not None and comparison.binding_id == row.item_id
+        shown_comparison = (
+            comparison
+            if comparison is not None and comparison.binding_id == row.item_id
+            else None
+        )
+        expanded = shown_comparison is not None
         if row.conflict_eligible:
+            yield Static(
+                row.conflict_title,
+                id=f"notes-sync-conflict-title-{index}",
+                classes="notes-sync-conflict-title",
+                markup=False,
+            )
+            yield Static(
+                row.conflict_relative_path,
+                id=f"notes-sync-conflict-path-{index}",
+                classes="notes-sync-conflict-path",
+                markup=False,
+            )
             yield Button(
                 "View comparison",
                 name=row.item_id,
@@ -426,13 +445,17 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
         comparison_panel.display = expanded
         with comparison_panel:
             yield Static(
-                self._comparison_summary(comparison) if expanded else "Comparison",
+                (
+                    self._comparison_summary(shown_comparison)
+                    if shown_comparison is not None
+                    else "Comparison"
+                ),
                 id=f"notes-sync-comparison-summary-{index}",
                 classes="destination-purpose",
                 markup=False,
             )
             yield TextArea(
-                comparison.diff if expanded else "",
+                shown_comparison.diff if shown_comparison is not None else "",
                 language=None,
                 soft_wrap=False,
                 read_only=True,
@@ -669,12 +692,23 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                     )
             root_id = self._root_id()
             if root_id:
+                history_available = self.snapshot.history_available
                 yield Button(
-                    "Resolution history",
+                    (
+                        "Resolution history"
+                        if history_available
+                        else "○ Resolution history"
+                    ),
                     name=root_id,
                     id="notes-sync-history-open",
                     classes="library-canvas-action",
                     compact=True,
+                    disabled=not history_available,
+                    tooltip=(
+                        None
+                        if history_available
+                        else "No durable conflict resolutions are available for this root."
+                    ),
                 )
             yield Button(
                 "Back",
@@ -685,12 +719,23 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
         elif phase == "receipt":
             root_id = self._root_id()
             if root_id:
+                history_available = self.snapshot.history_available
                 yield Button(
-                    "Resolution history",
+                    (
+                        "Resolution history"
+                        if history_available
+                        else "○ Resolution history"
+                    ),
                     name=root_id,
                     id="notes-sync-history-open",
                     classes="library-canvas-action",
                     compact=True,
+                    disabled=not history_available,
+                    tooltip=(
+                        None
+                        if history_available
+                        else "No durable conflict resolutions are available for this root."
+                    ),
                 )
             yield Button(
                 "Back to Notes",
@@ -777,11 +822,15 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             and previous_snapshot.receipts == snapshot.receipts
             and previous_snapshot.receipts_unavailable == snapshot.receipts_unavailable
         ):
-            self._sync_review(snapshot)
+            self._sync_review(snapshot, previous_snapshot)
             return
         self.refresh(recompose=True)
 
-    def _sync_review(self, snapshot: LibraryNotesLastingSyncSnapshot) -> None:
+    def _sync_review(
+        self,
+        snapshot: LibraryNotesLastingSyncSnapshot,
+        previous_snapshot: LibraryNotesLastingSyncSnapshot,
+    ) -> None:
         status = self.query("#notes-sync-status")
         if status:
             status.first(Static).update(snapshot.status_line)
@@ -797,6 +846,20 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             apply_button = apply.first(Button)
             apply_button.disabled = not snapshot.review.can_apply
             apply_button.tooltip = self._apply_tooltip()
+        history = self.query("#notes-sync-history-open")
+        if history:
+            history_button = history.first(Button)
+            history_button.disabled = not snapshot.history_available
+            history_button.label = (
+                "Resolution history"
+                if snapshot.history_available
+                else "○ Resolution history"
+            )
+            history_button.tooltip = (
+                None
+                if snapshot.history_available
+                else "No durable conflict resolutions are available for this root."
+            )
 
         comparison = snapshot.comparison
         for index, row in enumerate(snapshot.review.rows):
@@ -820,14 +883,62 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             comparison_panel = self.query_one(f"#notes-sync-comparison-{index}")
             choices.display = not expanded
             comparison_panel.display = expanded
-            if expanded:
+            if comparison is not None and expanded:
                 self.query_one(
                     f"#notes-sync-comparison-summary-{index}", Static
                 ).update(self._comparison_summary(comparison))
                 diff = self.query_one(f"#notes-sync-comparison-diff-{index}", TextArea)
                 diff.load_text(comparison.diff)
                 if move_focus:
-                    self.call_after_refresh(diff.focus)
+                    self.call_after_refresh(
+                        self._focus_published_comparison,
+                        row.item_id,
+                        view,
+                        diff,
+                    )
+        focus_binding_id = snapshot.conflict_focus_binding_id
+        if focus_binding_id is None:
+            self._handled_conflict_focus_binding_id = None
+        elif focus_binding_id != self._handled_conflict_focus_binding_id:
+            self._handled_conflict_focus_binding_id = focus_binding_id
+            self.call_after_refresh(
+                self._focus_requested_conflict,
+                focus_binding_id,
+            )
+
+    def _focus_published_comparison(
+        self,
+        binding_id: str,
+        view: Button,
+        diff: TextArea,
+    ) -> None:
+        """Focus a published diff only while its exact View still owns focus."""
+
+        if not self.is_mounted or self.screen.focused is not view:
+            return
+        comparison = self.snapshot.comparison
+        if comparison is None or comparison.binding_id != binding_id:
+            return
+        views = tuple(self.query(".notes-sync-conflict-view"))
+        diffs = tuple(self.query(".notes-sync-comparison-diff"))
+        if (
+            view not in views
+            or view.name != binding_id
+            or diff not in diffs
+            or not diff.display
+        ):
+            return
+        diff.focus()
+
+    def _focus_requested_conflict(self, binding_id: str) -> None:
+        """Honor one fresh post-apply focus request on the mounted review."""
+
+        if not self.is_mounted or self.snapshot.conflict_focus_binding_id != binding_id:
+            return
+        for view in self.query(".notes-sync-conflict-view"):
+            if isinstance(view, Button) and view.name == binding_id:
+                view.focus()
+                return
 
     def focus_first_safe_control(self) -> None:
         """Focus the first non-destructive control for the current phase."""
@@ -879,12 +990,21 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             self.post_message(self.ViewRequested(event.button.name or ""))
         elif button_id.startswith("notes-sync-conflict-"):
             parts = button_id.removeprefix("notes-sync-conflict-").split("-", 1)
-            row = self.snapshot.review.rows[int(parts[0])]
+            if len(parts) != 2:
+                return
             choice_slug = parts[1]
             choice = next(
-                label for label, slug in _CHOICE_SLUGS.items() if slug == choice_slug
+                (label for label, slug in _CHOICE_SLUGS.items() if slug == choice_slug),
+                None,
             )
-            self.post_message(self.ChoiceRequested(row.item_id, choice))
+            binding_id = event.button.name
+            if choice is None or not binding_id:
+                return
+            try:
+                validate_notes_sync_opaque_id(binding_id, field_name="binding_id")
+            except (TypeError, ValueError):
+                return
+            self.post_message(self.ChoiceRequested(binding_id, choice))
         elif button_id.startswith("notes-sync-comparison-return-"):
             index = int(button_id.rsplit("-", 1)[1])
             choices = self.query_one(f"#notes-sync-conflict-choices-{index}")

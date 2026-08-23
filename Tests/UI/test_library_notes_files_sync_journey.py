@@ -87,6 +87,7 @@ from tldw_chatbook.Notes.notes_sync_runtime import (
     NotesSyncControlResult,
     NotesSyncRootRuntimeSnapshot,
     NotesSyncRuntimeSnapshot,
+    RuntimeConflictLabel,
 )
 from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (
     LibraryFileNotesWorkspace,
@@ -452,6 +453,9 @@ async def test_lasting_setup_keeps_server_unavailable_copy_painted(
             screen.query_one("#notes-sync-back", Button)
             in host.screen._compositor.visible_widgets
         )
+        screen.query_one("#notes-sync-back", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-notes-add-from-files")
+        assert screen._library_notes_view == "list"
 
 
 @pytest.mark.asyncio
@@ -513,6 +517,16 @@ async def test_lasting_conflict_comparison_uses_named_worker_without_stealing_mo
                 output_elided=False,
             )
 
+        async def conflict_labels(
+            self, root_id: str, observation_token: str
+        ) -> tuple[RuntimeConflictLabel, ...]:
+            assert (root_id, observation_token) == ("root-1", "c" * 64)
+            return (RuntimeConflictLabel("bind-1", "Release note", "notes/release.md"),)
+
+        async def conflict_history_available(self, root_id: str) -> bool:
+            assert root_id == "root-1"
+            return True
+
     app = _build_test_app()
     _seed_conversations(app, [], notes=_two_notes())
     app.notes_sync_runtime_owner = _ComparisonRuntime()
@@ -564,6 +578,10 @@ async def test_lasting_conflict_comparison_uses_named_worker_without_stealing_mo
             lambda: screen.focused is view,
             message="Return did not restore the originating View control",
         )
+        back = screen.query_one("#notes-sync-back", Button)
+        back.press()
+        await _wait_for_selector(screen, pilot, "#notes-sync-roots-back")
+        assert screen._library_notes_view == "lasting_roots"
 
 
 @pytest.mark.asyncio
@@ -609,6 +627,16 @@ async def test_lasting_review_activation_receipt_and_remount_recovery_journey(
                 managed_placement_effects=(),
                 deletion_groups=(),
             )
+
+        async def conflict_labels(
+            self, root_id: str, observation_token: str
+        ) -> tuple[RuntimeConflictLabel, ...]:
+            del root_id, observation_token
+            return ()
+
+        async def conflict_history_available(self, root_id: str) -> bool:
+            del root_id
+            return False
 
         async def abandon_setup(self, root_id: str) -> None:
             self.calls.append(("abandon_setup", root_id))

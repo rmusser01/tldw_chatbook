@@ -3181,6 +3181,7 @@ class LibraryScreen(BaseAppScreen):
         # it in place without touching the default-selection logic.
         self._library_media_content_mode: str = "raw"
         self._library_notes_view: str = "list"
+        self._library_notes_lasting_origin: str | None = None
         self._library_notes_select_mode: bool = False
         self._library_notes_row_selection = RowSelection("notes")
         self._library_notes_sort: str = "newest"
@@ -26519,6 +26520,7 @@ class LibraryScreen(BaseAppScreen):
         if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
             return
         self._supersede_library_notes_navigation()
+        self._library_notes_lasting_origin = "setup"
         self._library_notes_view = "lasting_add"
         self._apply_library_notes_footer_context()
         _sync_library_canvas(
@@ -26530,6 +26532,7 @@ class LibraryScreen(BaseAppScreen):
         """Open the path-free lasting root list."""
         event.stop()
         self._library_notes_sync_controller.refresh_roots()
+        self._library_notes_lasting_origin = None
         self._library_notes_view = "lasting_roots"
         self._apply_library_notes_footer_context()
         _sync_library_canvas(self, "notes")
@@ -26545,6 +26548,7 @@ class LibraryScreen(BaseAppScreen):
             event.relationship
         )
         if route == "import":
+            self._library_notes_lasting_origin = None
             self._library_notes_view = "import"
             self._apply_library_notes_footer_context()
             _sync_library_canvas(self, "notes")
@@ -26705,6 +26709,7 @@ class LibraryScreen(BaseAppScreen):
         elif event.action == "migration":
             await controller.check_migration(event.root_id)
         elif event.action == "review":
+            self._library_notes_lasting_origin = "roots"
             self._library_notes_view = "lasting_add"
             await controller.check_root(event.root_id)
         elif event.action == "pause":
@@ -26737,6 +26742,16 @@ class LibraryScreen(BaseAppScreen):
         """Return from a directly mounted inert surface without mutation."""
 
         event.stop()
+        if (
+            isinstance(event, LibraryNotesAddFromFilesCanvas.BackRequested)
+            and self._library_notes_lasting_origin == "roots"
+        ):
+            self._library_notes_sync_controller.return_to_roots()
+            self._library_notes_lasting_origin = None
+            self._library_notes_view = "lasting_roots"
+            self._apply_library_notes_footer_context()
+            _sync_library_canvas(self, "notes")
+            return
         await self._exit_library_notes_lasting_sync()
 
     async def _exit_library_notes_lasting_sync(self) -> bool:
@@ -26748,6 +26763,7 @@ class LibraryScreen(BaseAppScreen):
             return False
         await self._library_notes_sync_controller.abandon_setup()
         self._supersede_library_notes_navigation()
+        self._library_notes_lasting_origin = None
         self._library_notes_view = "list"
         _sync_library_canvas(self, "notes", then=self._focus_library_notes_filter_input)
         return True

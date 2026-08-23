@@ -9316,13 +9316,19 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     text-style: bold;
 }
 
+.notes-sync-conflict-title,
+.notes-sync-conflict-path,
 .notes-sync-conflict-selected {
     width: 100%;
     height: auto;
     min-height: 1;
-    color: $text-muted;
     text-wrap: wrap;
     text-overflow: clip;
+}
+
+.notes-sync-conflict-path,
+.notes-sync-conflict-selected {
+    color: $text-muted;
 }
 
 .notes-sync-comparison-diff {

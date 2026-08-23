@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import time
 
 import pytest
 from textual.app import App, ComposeResult
@@ -107,7 +108,8 @@ def _frame(app: App[None]) -> str:
 
 
 async def _wait_for(pilot, predicate, *, message: str) -> None:
-    for _ in range(100):
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
         if predicate():
             return
         await pilot.pause(0.01)
@@ -142,6 +144,8 @@ def _conflict_review(
                 conflict_eligible=True,
                 selected_choice=selected,
                 selected_label=label,
+                conflict_title="Release [red]note[/red]",
+                conflict_relative_path="notes/release.md",
             ),
         ),
         can_apply=blocker is LastingSyncApplyBlocker.NONE,
@@ -249,7 +253,10 @@ async def test_receipt_keeps_durable_status_and_back_visible() -> None:
         assert app.query_one("#notes-sync-back", Button)
 
 
-async def test_conflict_choices_are_keyboard_reachable_and_update_in_place() -> None:
+@pytest.mark.parametrize("size", ((60, 20), (120, 36)))
+async def test_conflict_choices_are_keyboard_reachable_and_update_in_place(
+    size: tuple[int, int],
+) -> None:
     review = _conflict_review()
     app = _Host(
         replace(
@@ -259,7 +266,7 @@ async def test_conflict_choices_are_keyboard_reachable_and_update_in_place() -> 
             status_line="Review changes.",
         )
     )
-    async with app.run_test(size=(60, 20)) as pilot:
+    async with app.run_test(size=size) as pilot:
         await _wait_for(
             pilot,
             lambda: len(app.query(".notes-sync-conflict-choice")) == 4,
@@ -321,9 +328,72 @@ async def test_conflict_choices_are_keyboard_reachable_and_update_in_place() -> 
         )
 
 
-async def test_conflict_comparison_is_literal_scrollable_and_return_restores_view_focus() -> (
+async def test_queued_choice_keeps_button_binding_identity_across_row_replacement() -> (
     None
 ):
+    snapshot = replace(
+        initial_lasting_sync_snapshot(lasting_available=True),
+        phase="review",
+        review=_conflict_review(),
+    )
+    app = _Host(snapshot)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        canvas = app.query_one(LibraryNotesAddFromFilesCanvas)
+        original = app.query_one("#notes-sync-conflict-0-keep-file", Button)
+        replacement = replace(
+            _conflict_review(),
+            rows=(
+                replace(
+                    _conflict_review().rows[0],
+                    item_id="bind-2",
+                    conflict_title="Other note",
+                    conflict_relative_path="other.md",
+                ),
+            ),
+        )
+        canvas.sync_state(replace(snapshot, review=replacement))
+        await pilot.pause()
+
+        canvas._button_pressed(Button.Pressed(original))  # noqa: SLF001 - queued event
+        await pilot.pause()
+
+    choice = next(
+        message
+        for message in app.messages
+        if type(message).__name__ == "ChoiceRequested"
+    )
+    assert choice.binding_id == "bind-1"
+
+
+async def test_collapsed_conflict_labels_are_literal_and_history_is_durably_gated() -> (
+    None
+):
+    snapshot = replace(
+        initial_lasting_sync_snapshot(lasting_available=True),
+        phase="review",
+        review=_conflict_review(),
+        history_available=False,
+    )
+    app = _Host(snapshot)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        assert "Release [red]note[/red]" in _frame(app)
+        assert "notes/release.md" in _frame(app)
+        history = app.query_one("#notes-sync-history-open", Button)
+        assert history.disabled is True
+        assert "No durable conflict resolutions" in str(history.tooltip)
+
+        canvas = app.query_one(LibraryNotesAddFromFilesCanvas)
+        canvas.sync_state(replace(snapshot, history_available=True))
+        await pilot.pause()
+        assert history.disabled is False
+
+
+@pytest.mark.parametrize("size", ((60, 20), (120, 36)))
+async def test_conflict_comparison_is_literal_scrollable_and_return_restores_view_focus(
+    size: tuple[int, int],
+) -> None:
     comparison = ConflictComparison(
         binding_id="bind-1",
         note_title="Release [red]note[/red]",
@@ -346,7 +416,7 @@ async def test_conflict_comparison_is_literal_scrollable_and_return_restores_vie
         status_line="Review changes.",
     )
     app = _Host(snapshot)
-    async with app.run_test(size=(60, 20)) as pilot:
+    async with app.run_test(size=size) as pilot:
         await _wait_for(
             pilot,
             lambda: bool(app.query("#notes-sync-conflict-view-0")),
@@ -382,7 +452,7 @@ async def test_conflict_comparison_is_literal_scrollable_and_return_restores_vie
         diff.scroll_visible(immediate=True)
         await pilot.pause()
         assert diff in app.screen._compositor.visible_widgets
-        assert diff.region.right <= 60
+        assert diff.region.right <= size[0]
 
         returned = app.query_one("#notes-sync-comparison-return-0", Button)
         returned.focus()
@@ -399,9 +469,90 @@ async def test_conflict_comparison_is_literal_scrollable_and_return_restores_vie
         )
 
 
-async def test_receipts_and_history_render_actions_labels_and_fallback_at_60x20() -> (
-    None
-):
+async def test_deferred_comparison_focus_rechecks_origin_before_moving(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    comparison = ConflictComparison(
+        "bind-1",
+        "Release note",
+        "notes/release.md",
+        1,
+        None,
+        2,
+        3,
+        1,
+        4,
+        1,
+        "-old\n+new\n",
+        False,
+        False,
+    )
+    snapshot = replace(
+        initial_lasting_sync_snapshot(lasting_available=True),
+        phase="review",
+        review=_conflict_review(),
+    )
+    app = _Host(snapshot)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        canvas = app.query_one(LibraryNotesAddFromFilesCanvas)
+        pending: list[tuple[object, tuple[object, ...]]] = []
+        monkeypatch.setattr(
+            canvas,
+            "call_after_refresh",
+            lambda callback, *args: pending.append((callback, args)),
+        )
+        view = app.query_one("#notes-sync-conflict-view-0", Button)
+        view.focus()
+        await pilot.pause()
+        canvas.sync_state(replace(snapshot, comparison=comparison))
+        assert len(pending) == 1
+        back = app.query_one("#notes-sync-back", Button)
+        back.focus()
+        await pilot.pause()
+
+        callback, args = pending.pop()
+        callback(*args)
+        await pilot.pause()
+
+        assert app.focused is back
+
+
+async def test_post_apply_focus_request_targets_first_remaining_conflict_once() -> None:
+    snapshot = replace(
+        initial_lasting_sync_snapshot(lasting_available=True),
+        phase="review",
+        review=_conflict_review(),
+    )
+    app = _Host(snapshot)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        canvas = app.query_one(LibraryNotesAddFromFilesCanvas)
+        back = app.query_one("#notes-sync-back", Button)
+        back.focus()
+        canvas.sync_state(replace(snapshot, conflict_focus_binding_id="bind-1"))
+        await _wait_for(
+            pilot,
+            lambda: app.focused is app.query_one("#notes-sync-conflict-view-0", Button),
+            message="post-apply focus request did not focus the remaining conflict",
+        )
+
+        back.focus()
+        canvas.sync_state(
+            replace(
+                snapshot,
+                status_line="Normal review refresh.",
+                conflict_focus_binding_id="bind-1",
+            )
+        )
+        await pilot.pause()
+        assert app.focused is back
+
+
+@pytest.mark.parametrize("size", ((60, 20), (120, 36)))
+async def test_receipts_and_history_render_actions_labels_and_fallback_at_60x20(
+    size: tuple[int, int],
+) -> None:
     receipt = LastingSyncReceiptRow(
         "operation-1",
         "Release note · notes/release.md",
@@ -440,9 +591,10 @@ async def test_receipts_and_history_render_actions_labels_and_fallback_at_60x20(
         phase="review",
         review=_conflict_review(),
         receipts=(receipt,),
+        history_available=True,
     )
     app = _Host(review_snapshot)
-    async with app.run_test(size=(60, 20)) as pilot:
+    async with app.run_test(size=size) as pilot:
         await _wait_for(
             pilot,
             lambda: bool(app.query("#notes-sync-receipt-0")),
@@ -468,7 +620,7 @@ async def test_receipts_and_history_render_actions_labels_and_fallback_at_60x20(
         history_open.scroll_visible(immediate=True)
         await pilot.pause()
         assert history_open in app.screen._compositor.visible_widgets
-        assert history_open.region.right <= 60
+        assert history_open.region.right <= size[0]
 
         canvas = app.query_one(LibraryNotesAddFromFilesCanvas)
         canvas.sync_state(
@@ -487,7 +639,7 @@ async def test_receipts_and_history_render_actions_labels_and_fallback_at_60x20(
         next_page.scroll_visible(immediate=True)
         await pilot.pause()
         assert next_page in app.screen._compositor.visible_widgets
-        assert next_page.region.right <= 60
+        assert next_page.region.right <= size[0]
         app.query_one("#notes-sync-history-undo-0", Button).press()
         next_page.press()
         app.query_one("#notes-sync-history-return", Button).press()
@@ -511,6 +663,8 @@ async def test_safe_review_apply_posts_only_visible_reviewed_action_ids() -> Non
                 "bind-1", "safe", "Update a Library note", action_id="act-1"
             ),
         ),
+        can_apply=True,
+        apply_blocker=LastingSyncApplyBlocker.NONE,
     )
     app = _Host(
         replace(
@@ -523,11 +677,7 @@ async def test_safe_review_apply_posts_only_visible_reviewed_action_ids() -> Non
         assert await pilot.click("#notes-sync-apply")
         await pilot.pause()
 
-    next(
-        message
-        for message in app.messages
-        if type(message).__name__ == "ApplyRequested"
-    )
+    assert any(type(message).__name__ == "ApplyRequested" for message in app.messages)
 
 
 async def test_activation_review_posts_distinct_activate_message() -> None:
