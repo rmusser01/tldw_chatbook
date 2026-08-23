@@ -150,10 +150,15 @@ async def test_mounted_page_request_publishes_loading_and_suppresses_duplicate()
     )
     started = asyncio.Event()
     release = asyncio.Event()
-    service_calls: list[int] = []
+    service_calls: list[dict[str, object]] = []
 
-    async def list_conversations(**_kwargs):
-        service_calls.append(1)
+    async def list_conversations(**kwargs):
+        service_calls.append(kwargs)
+        if not (
+            kwargs.get("scope_type") == "workspace"
+            and kwargs.get("workspace_id") == "ws-a"
+        ):
+            return {"items": [], "pagination": {"total": 0}}
         started.set()
         await release.wait()
         return {
@@ -175,9 +180,12 @@ async def test_mounted_page_request_publishes_loading_and_suppresses_duplicate()
             return original_sync()
 
         controller._sync_workspace_context_fn = capture_sync
+        app.local_chat_conversation_service = None
         app.chat_conversation_scope_service = SimpleNamespace(
-            list_conversations=list_conversations
+            list_conversations=list_conversations,
+            local_service=None,
         )
+        controller._invalidate_console_persisted_rows_cache()
         controller.request_workspace_tree_page("ws-a", 0)
         await started.wait()
 
@@ -187,7 +195,13 @@ async def test_mounted_page_request_publishes_loading_and_suppresses_duplicate()
 
         controller.request_workspace_tree_page("ws-a", 0)
         await pilot.pause(0.1)
-        assert len(service_calls) == 1
+        page_calls = [
+            call
+            for call in service_calls
+            if call.get("scope_type") == "workspace"
+            and call.get("workspace_id") == "ws-a"
+        ]
+        assert len(page_calls) == 1
 
         release.set()
         await pilot.pause(0.3)
@@ -197,3 +211,9 @@ async def test_mounted_page_request_publishes_loading_and_suppresses_duplicate()
         ]
         assert final_node.loading is False
         assert [row.conversation_id for row in final_node.conversations] == ["page-row"]
+        assert any(call not in page_calls for call in service_calls)
+        assert controller._console_persisted_rows_cache is not None
+        assert all(
+            row.conversation_id != "page-row"
+            for row in controller._console_persisted_rows_cache[0]
+        )
