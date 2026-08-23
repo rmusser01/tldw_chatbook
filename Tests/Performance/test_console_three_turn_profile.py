@@ -5208,8 +5208,18 @@ def test_remove_target_worktree_real_git_unregisters_absent_exact_target(
     assert set(json.loads(receipt)) == {
         "admin_dev",
         "admin_ino",
+        "target_dev",
+        "target_ino",
         "target_sha256",
     }
+    assert json.loads(receipt)["target_dev"] is None
+    assert json.loads(receipt)["target_ino"] is None
+    assert receipt == (
+        json.dumps(
+            json.loads(receipt), sort_keys=True, separators=(",", ":")
+        ).encode()
+        + b"\n"
+    )
 
     profile._remove_target_worktree(
         repository, run_root, name="candidate"
@@ -5224,9 +5234,18 @@ def test_remove_target_worktree_terminal_tombstone_rejects_new_generation(
     run_root = tmp_path / "run"
     target = run_root / "candidate"
     _add_real_worktree(repository, target, branch="candidate")
+    target_metadata = target.stat()
 
     profile._remove_target_worktree(
         repository, run_root, name="candidate"
+    )
+    marker = repository / ".git" / profile._worktree_admin_marker_name(
+        str(target)
+    )
+    receipt = json.loads((marker / "terminal.json").read_bytes())
+    assert (receipt["target_dev"], receipt["target_ino"]) == (
+        target_metadata.st_dev,
+        target_metadata.st_ino,
     )
     if replacement == "path":
         target.mkdir()
@@ -5249,6 +5268,185 @@ def test_remove_target_worktree_terminal_tombstone_rejects_new_generation(
     assert target.is_dir()
     if replacement == "path":
         assert (target / "sentinel").read_bytes() == b"preserve"
+
+
+def test_remove_target_worktree_pending_receipt_rejects_foreign_quarantine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository = _init_real_worktree_repository(tmp_path)
+    run_root = tmp_path / "run"
+    target = run_root / "candidate"
+    quarantine = run_root / ".candidate-cleanup"
+    detached_original = tmp_path / "detached-original-candidate"
+    _add_real_worktree(repository, target, branch="candidate")
+    original_delete = profile._delete_worktree_admin_marker
+
+    def publish_then_interrupt(*args, **kwargs) -> None:
+        original_delete(*args, **kwargs)
+        raise KeyboardInterrupt("pending receipt checkpoint")
+
+    monkeypatch.setattr(
+        profile, "_delete_worktree_admin_marker", publish_then_interrupt
+    )
+    with pytest.raises(KeyboardInterrupt):
+        profile._remove_target_worktree(
+            repository, run_root, name="candidate"
+        )
+
+    marker = repository / ".git" / profile._worktree_admin_marker_name(
+        str(target)
+    )
+    pending_before = (marker / "pending.json").read_bytes()
+    quarantine.rename(detached_original)
+    quarantine.mkdir()
+    foreign_sentinel = quarantine / "foreign-sentinel"
+    foreign_sentinel.write_bytes(b"preserve")
+    monkeypatch.setattr(
+        profile, "_delete_worktree_admin_marker", original_delete
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="^target_worktree_admin_marker_conflict:candidate$",
+    ):
+        profile._remove_target_worktree(
+            repository, run_root, name="candidate"
+        )
+
+    assert detached_original.is_dir()
+    assert foreign_sentinel.read_bytes() == b"preserve"
+    assert (marker / "pending.json").read_bytes() == pending_before
+    assert not (marker / "terminal.json").exists()
+
+
+@pytest.mark.parametrize("reappeared", ("path", "registration"))
+def test_remove_target_worktree_terminal_rechecks_reappeared_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    reappeared: str,
+) -> None:
+    repository = _init_real_worktree_repository(tmp_path)
+    run_root = tmp_path / "run"
+    target = run_root / "candidate"
+    _add_real_worktree(repository, target, branch="candidate")
+    profile._remove_target_worktree(repository, run_root, name="candidate")
+    original_delete = profile._delete_worktree_admin_marker
+    detached_reappeared = tmp_path / "detached-reappeared-candidate"
+
+    def complete_then_reappear(*args, **kwargs) -> None:
+        original_delete(*args, **kwargs)
+        if reappeared == "path":
+            target.mkdir()
+            (target / "foreign-sentinel").write_bytes(b"preserve")
+        else:
+            subprocess.run(
+                [
+                    "git",
+                    "worktree",
+                    "add",
+                    "-q",
+                    "--detach",
+                    str(target),
+                    "HEAD",
+                ],
+                cwd=repository,
+                check=True,
+            )
+            target.rename(detached_reappeared)
+
+    monkeypatch.setattr(
+        profile, "_delete_worktree_admin_marker", complete_then_reappear
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="^target_worktree_admin_marker_conflict:candidate$",
+    ):
+        profile._remove_target_worktree(
+            repository, run_root, name="candidate"
+        )
+
+    if reappeared == "path":
+        assert (target / "foreign-sentinel").read_bytes() == b"preserve"
+    else:
+        assert detached_reappeared.is_dir()
+        assert str(target) in profile._worktree_registrations(repository)
+
+
+@pytest.mark.parametrize(
+    ("field", "malformed_identity"),
+    (
+        ("target_dev", True),
+        ("target_dev", -1),
+        ("target_dev", "1"),
+        ("target_dev", []),
+        ("target_dev", {}),
+        ("target_dev", None),
+        ("target_ino", True),
+        ("target_ino", -1),
+        ("target_ino", None),
+    ),
+)
+def test_remove_target_worktree_rejects_malformed_target_receipt_identity(
+    tmp_path: Path, field: str, malformed_identity: object
+) -> None:
+    repository = _init_real_worktree_repository(tmp_path)
+    run_root = tmp_path / "run"
+    target = run_root / "candidate"
+    _add_real_worktree(repository, target, branch="candidate")
+    profile._remove_target_worktree(repository, run_root, name="candidate")
+    marker = repository / ".git" / profile._worktree_admin_marker_name(
+        str(target)
+    )
+    receipt_path = marker / "pending.json"
+    receipt = json.loads(receipt_path.read_bytes())
+    receipt[field] = malformed_identity
+    receipt_path.write_text(
+        json.dumps(receipt, sort_keys=True, separators=(",", ":")) + "\n"
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="^target_worktree_admin_marker_conflict:candidate$",
+    ):
+        profile._remove_target_worktree(
+            repository, run_root, name="candidate"
+        )
+
+
+@pytest.mark.parametrize("malformation", ("missing", "unknown", "noncanonical"))
+def test_remove_target_worktree_rejects_malformed_target_receipt_schema(
+    tmp_path: Path, malformation: str
+) -> None:
+    repository = _init_real_worktree_repository(tmp_path)
+    run_root = tmp_path / "run"
+    target = run_root / "candidate"
+    _add_real_worktree(repository, target, branch="candidate")
+    profile._remove_target_worktree(repository, run_root, name="candidate")
+    marker = repository / ".git" / profile._worktree_admin_marker_name(
+        str(target)
+    )
+    receipt_path = marker / "pending.json"
+    receipt = json.loads(receipt_path.read_bytes())
+    if malformation == "missing":
+        del receipt["target_ino"]
+    elif malformation == "unknown":
+        receipt["unknown"] = 1
+    if malformation == "noncanonical":
+        payload = json.dumps(receipt, indent=2) + "\n"
+    else:
+        payload = json.dumps(
+            receipt, sort_keys=True, separators=(",", ":")
+        ) + "\n"
+    receipt_path.write_text(payload)
+
+    with pytest.raises(
+        RuntimeError,
+        match="^target_worktree_admin_marker_conflict:candidate$",
+    ):
+        profile._remove_target_worktree(
+            repository, run_root, name="candidate"
+        )
 
 
 @pytest.mark.parametrize(

@@ -4799,6 +4799,24 @@ def _open_strict_directory(path: Path) -> int:
         raise
 
 
+def _open_identity_bound_directory(
+    path: Path, expected_identity: tuple[int, int], *, error_code: str
+) -> int:
+    try:
+        descriptor = _open_strict_directory(path)
+    except RuntimeError as exc:
+        raise RuntimeError(error_code) from exc
+    try:
+        metadata = os.fstat(descriptor)
+    except OSError as exc:
+        os.close(descriptor)
+        raise RuntimeError(error_code) from exc
+    if (metadata.st_dev, metadata.st_ino) != expected_identity:
+        os.close(descriptor)
+        raise RuntimeError(error_code)
+    return descriptor
+
+
 def _read_regular_file_fd(
     parent_descriptor: int, name: str, *, error_code: str
 ) -> bytes:
@@ -4848,13 +4866,26 @@ def _worktree_admin_marker_name(target: str) -> str:
     return f".campaign-worktree-cleanup-{digest}"
 
 
-def _admin_tombstone_payload(target: str, admin_descriptor: int) -> bytes:
-    metadata = os.fstat(admin_descriptor)
+def _admin_tombstone_payload(
+    target: str,
+    admin_descriptor: int,
+    target_descriptor: int | None,
+) -> bytes:
+    admin_metadata = os.fstat(admin_descriptor)
+    target_metadata = (
+        None if target_descriptor is None else os.fstat(target_descriptor)
+    )
     return (
         json.dumps(
             {
-                "admin_dev": metadata.st_dev,
-                "admin_ino": metadata.st_ino,
+                "admin_dev": admin_metadata.st_dev,
+                "admin_ino": admin_metadata.st_ino,
+                "target_dev": (
+                    None if target_metadata is None else target_metadata.st_dev
+                ),
+                "target_ino": (
+                    None if target_metadata is None else target_metadata.st_ino
+                ),
                 "target_sha256": hashlib.sha256(target.encode()).hexdigest(),
             },
             sort_keys=True,
@@ -4866,7 +4897,7 @@ def _admin_tombstone_payload(target: str, admin_descriptor: int) -> bytes:
 
 def _admin_tombstone_identity(
     marker_descriptor: int, target: str, receipt_name: str
-) -> tuple[int, int]:
+) -> tuple[tuple[int, int], tuple[int, int] | None]:
     payload = _read_regular_file_fd(
         marker_descriptor,
         receipt_name,
@@ -4878,11 +4909,20 @@ def _admin_tombstone_identity(
         raise RuntimeError("target_worktree_admin_marker_conflict") from exc
     if (
         not isinstance(record, dict)
-        or set(record) != {"admin_dev", "admin_ino", "target_sha256"}
+        or set(record)
+        != {
+            "admin_dev",
+            "admin_ino",
+            "target_dev",
+            "target_ino",
+            "target_sha256",
+        }
         or not isinstance(record["admin_dev"], int)
         or isinstance(record["admin_dev"], bool)
+        or record["admin_dev"] < 0
         or not isinstance(record["admin_ino"], int)
         or isinstance(record["admin_ino"], bool)
+        or record["admin_ino"] < 0
         or record["target_sha256"]
         != hashlib.sha256(target.encode()).hexdigest()
         or payload
@@ -4892,7 +4932,21 @@ def _admin_tombstone_identity(
         + b"\n"
     ):
         raise RuntimeError("target_worktree_admin_marker_conflict")
-    return record["admin_dev"], record["admin_ino"]
+    target_identity: tuple[int, int] | None
+    if record["target_dev"] is None and record["target_ino"] is None:
+        target_identity = None
+    elif (
+        isinstance(record["target_dev"], int)
+        and not isinstance(record["target_dev"], bool)
+        and record["target_dev"] >= 0
+        and isinstance(record["target_ino"], int)
+        and not isinstance(record["target_ino"], bool)
+        and record["target_ino"] >= 0
+    ):
+        target_identity = (record["target_dev"], record["target_ino"])
+    else:
+        raise RuntimeError("target_worktree_admin_marker_conflict")
+    return (record["admin_dev"], record["admin_ino"]), target_identity
 
 
 def _publish_admin_tombstone(
@@ -4900,8 +4954,11 @@ def _publish_admin_tombstone(
     marker_descriptor: int,
     target: str,
     admin_descriptor: int,
+    target_descriptor: int | None,
 ) -> None:
-    payload = _admin_tombstone_payload(target, admin_descriptor)
+    payload = _admin_tombstone_payload(
+        target, admin_descriptor, target_descriptor
+    )
     try:
         stage_name = (
             f".{_worktree_admin_marker_name(target)}-receipt-"
@@ -5077,7 +5134,7 @@ def _admin_marker_state(common: Path, target: str) -> str:
                     admin_metadata = os.fstat(admin_descriptor)
                     if _admin_tombstone_identity(
                         marker_descriptor, target, "pending.json"
-                    ) != (
+                    )[0] != (
                         admin_metadata.st_dev,
                         admin_metadata.st_ino,
                     ):
@@ -5243,6 +5300,7 @@ def _delete_worktree_admin_marker(
     target: str,
     *,
     claimed_admin_descriptor: int | None = None,
+    target_descriptor: int | None = None,
     complete: bool = False,
 ) -> None:
     marker_name = _worktree_admin_marker_name(target)
@@ -5275,12 +5333,22 @@ def _delete_worktree_admin_marker(
                             "target_worktree_admin_marker_conflict"
                         )
                 if "pending.json" in entries:
-                    if _admin_tombstone_identity(
+                    admin_identity, target_identity = _admin_tombstone_identity(
                         marker_descriptor, target, "pending.json"
-                    ) != observed_identity:
+                    )
+                    if admin_identity != observed_identity:
                         raise RuntimeError(
                             "target_worktree_admin_marker_conflict"
                         )
+                    if target_descriptor is not None:
+                        target_metadata = os.fstat(target_descriptor)
+                        if target_identity != (
+                            target_metadata.st_dev,
+                            target_metadata.st_ino,
+                        ):
+                            raise RuntimeError(
+                                "target_worktree_admin_marker_conflict"
+                            )
                     if "terminal.json" in entries and (
                         _read_regular_file_fd(
                             marker_descriptor,
@@ -5312,6 +5380,7 @@ def _delete_worktree_admin_marker(
                         marker_descriptor,
                         target,
                         admin_descriptor,
+                        target_descriptor,
                     )
                 _remove_directory_contents_fd(admin_descriptor)
                 if complete:
@@ -5366,7 +5435,7 @@ def _delete_worktree_admin_marker(
                     current_admin = os.fstat(current_admin_descriptor)
                     if _admin_tombstone_identity(
                         current_marker_descriptor, target, "pending.json"
-                    ) != (current_admin.st_dev, current_admin.st_ino):
+                    )[0] != (current_admin.st_dev, current_admin.st_ino):
                         raise RuntimeError(
                             "target_worktree_admin_marker_conflict"
                         )
@@ -5412,6 +5481,34 @@ def _delete_worktree_admin_marker(
         raise RuntimeError("target_worktree_unregister_failed") from exc
     finally:
         os.close(common_descriptor)
+
+
+def _verify_target_worktree_terminal(
+    repository_root: Path,
+    root_descriptor: int,
+    target: str,
+    name: str,
+    *,
+    run_command: Any,
+) -> None:
+    registrations = _worktree_registrations(
+        repository_root, run_command=run_command
+    )
+    target_present = target in registrations
+    for entry_name in (name, f".{name}-cleanup"):
+        try:
+            os.stat(
+                entry_name,
+                dir_fd=root_descriptor,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise RuntimeError("target_worktree_unregister_failed") from exc
+        target_present = True
+    if target_present:
+        raise RuntimeError("target_worktree_admin_marker_conflict")
 
 
 def _remove_target_worktree(
@@ -5498,7 +5595,9 @@ def _remove_target_worktree(
     if not registered and owned_name == name and allow_unregistered_owned:
         root_descriptor: int | None = None
         try:
-            root_descriptor = os.open(root, _directory_open_flags())
+            root_descriptor = _open_identity_bound_directory(
+                root, root_identity, error_code=confinement_error
+            )
             owned_descriptor = os.open(
                 name, _directory_open_flags(), dir_fd=root_descriptor
             )
@@ -5507,11 +5606,9 @@ def _remove_target_worktree(
                 os.close(root_descriptor)
             raise RuntimeError(confinement_error) from exc
         try:
-            observed_root = os.fstat(root_descriptor)
             observed_owned = os.fstat(owned_descriptor)
             if (
-                (observed_root.st_dev, observed_root.st_ino) != root_identity
-                or (observed_owned.st_dev, observed_owned.st_ino)
+                (observed_owned.st_dev, observed_owned.st_ino)
                 != owned_identity
             ):
                 raise RuntimeError(confinement_error)
@@ -5549,14 +5646,30 @@ def _remove_target_worktree(
                     f"target_worktree_admin_marker_conflict:{name}"
                 )
             if owned_name is None:
+                terminal_root_descriptor = _open_identity_bound_directory(
+                    root, root_identity, error_code=confinement_error
+                )
                 try:
                     _delete_worktree_admin_marker(
                         common, target_text, complete=True
                     )
+                    _verify_target_worktree_terminal(
+                        repository_root,
+                        terminal_root_descriptor,
+                        target_text,
+                        name,
+                        run_command=run_command,
+                    )
                 except RuntimeError as exc:
+                    if str(exc) != "target_worktree_admin_marker_conflict":
+                        raise RuntimeError(
+                            f"target_worktree_unregister_failed:{name}"
+                        ) from exc
                     raise RuntimeError(
                         f"target_worktree_admin_marker_conflict:{name}"
                     ) from exc
+                finally:
+                    os.close(terminal_root_descriptor)
                 return
         if marker_state == "empty":
             raise RuntimeError(
@@ -5564,6 +5677,25 @@ def _remove_target_worktree(
             )
         if marker_state == "absent":
             if owned_name is None:
+                terminal_root_descriptor = _open_identity_bound_directory(
+                    root, root_identity, error_code=confinement_error
+                )
+                try:
+                    _verify_target_worktree_terminal(
+                        repository_root,
+                        terminal_root_descriptor,
+                        target_text,
+                        name,
+                        run_command=run_command,
+                    )
+                except RuntimeError as exc:
+                    if str(exc) == "target_worktree_admin_marker_conflict":
+                        raise RuntimeError(
+                            f"target_worktree_admin_marker_conflict:{name}"
+                        ) from exc
+                    raise
+                finally:
+                    os.close(terminal_root_descriptor)
                 return
             if owned_name == name:
                 raise RuntimeError(f"target_worktree_remove_failed:{name}")
@@ -5597,17 +5729,16 @@ def _remove_target_worktree(
                 ) from exc
             raise
     try:
-        root_descriptor = os.open(root, _directory_open_flags())
-    except OSError as exc:
+        root_descriptor = _open_identity_bound_directory(
+            root, root_identity, error_code=confinement_error
+        )
+    except RuntimeError:
         if admin_descriptor is not None:
             os.close(admin_descriptor)
-        raise RuntimeError(confinement_error) from exc
+        raise
     owned_descriptor: int | None = None
     claimed_admin_descriptor: int | None = None
     try:
-        observed_root = os.fstat(root_descriptor)
-        if (observed_root.st_dev, observed_root.st_ino) != root_identity:
-            raise RuntimeError(confinement_error)
         if owned_name is not None:
             try:
                 owned_descriptor = os.open(
@@ -5669,6 +5800,7 @@ def _remove_target_worktree(
                     common,
                     target_text,
                     claimed_admin_descriptor=claimed_admin_descriptor,
+                    target_descriptor=owned_descriptor,
                 )
         except RuntimeError as exc:
             if str(exc) == "target_worktree_admin_marker_conflict":
@@ -5695,20 +5827,13 @@ def _remove_target_worktree(
             _delete_worktree_admin_marker(
                 common, target_text, complete=True
             )
-            final_registrations = _worktree_registrations(
-                repository_root, run_command=run_command
+            _verify_target_worktree_terminal(
+                repository_root,
+                root_descriptor,
+                target_text,
+                name,
+                run_command=run_command,
             )
-            try:
-                os.stat(name, dir_fd=root_descriptor, follow_symlinks=False)
-            except FileNotFoundError:
-                target_reappeared = False
-            else:
-                target_reappeared = True
-            if (
-                target_text in final_registrations
-                or target_reappeared
-            ):
-                raise RuntimeError("target_worktree_admin_marker_conflict")
         except RuntimeError as exc:
             if str(exc) == "target_worktree_admin_marker_conflict":
                 raise RuntimeError(
