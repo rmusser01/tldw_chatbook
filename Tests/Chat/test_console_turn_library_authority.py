@@ -40,6 +40,7 @@ from tldw_chatbook.Chat.console_library_policy import (
 from tldw_chatbook.Chat.console_library_policy_repository import (
     ConsoleLibraryPolicyRepository,
 )
+from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSnapshot
 from tldw_chatbook.Chat.console_turn_context import (
     ConsoleTurnConfigurationSnapshot,
     ConsoleTurnExecutionContext,
@@ -157,6 +158,26 @@ class _SubmittedLibraryService:
         return {"items": [], "total": 0}
 
 
+class _EmptyAutomaticLibraryService:
+    async def search(self, *_args, **_kwargs):
+        return {"results": []}
+
+
+@pytest.fixture(autouse=True)
+def _wire_automatic_library_service(monkeypatch):
+    """Keep authority tests focused while Automatic now owns a real gate."""
+
+    original = ConsoleChatController.__init__
+
+    def init_with_library_service(controller, *args, **kwargs):
+        original(controller, *args, **kwargs)
+        controller.app = SimpleNamespace(
+            library_rag_search_service=_EmptyAutomaticLibraryService()
+        )
+
+    monkeypatch.setattr(ConsoleChatController, "__init__", init_with_library_service)
+
+
 class _DestinationSequenceGateway:
     def __init__(
         self,
@@ -240,6 +261,7 @@ def _execution_configuration(
     direct: bool = True,
     native_tools: bool = True,
     agent_runtime: bool = False,
+    scratch_space: ConsoleScratchSnapshot | None = None,
 ) -> ConsoleTurnConfigurationSnapshot:
     return ConsoleTurnConfigurationSnapshot.capture(
         session_id=session_id,
@@ -248,6 +270,7 @@ def _execution_configuration(
             explicit_model="model-a",
             base_url="https://api.openai.com/v1",
         ),
+        scratch_space=scratch_space,
         tool_configuration={
             "agent_runtime_enabled": agent_runtime,
             "direct_library_tools": direct,
@@ -493,6 +516,7 @@ async def test_second_store_blocked_commit_defeats_stale_allowed_at_submitted_ag
     path = tmp_path / "submitted-agent-authority.sqlite"
     first_db = CharactersRAGDB(path, "submitted-agent-first")
     second_db = None
+    controller = None
     try:
         conversation_id = first_db.add_conversation({"title": "submitted agent"})
         assert conversation_id is not None
@@ -564,7 +588,10 @@ async def test_second_store_blocked_commit_defeats_stale_allowed_at_submitted_ag
             agent_bridge=bridge,
             library_provider_factory=provider_factory,
             turn_context_provider=lambda sid: _execution_configuration(
-                sid, native_tools=False, agent_runtime=True
+                sid,
+                native_tools=False,
+                agent_runtime=True,
+                scratch_space=controller._scratch_spaces.snapshot(sid),
             ),
             rag_capture_provider=capture_rag,
         )
@@ -591,6 +618,8 @@ async def test_second_store_blocked_commit_defeats_stale_allowed_at_submitted_ag
             for message in gateway.messages_seen[1]
         )
     finally:
+        if controller is not None:
+            await controller.shutdown()
         if second_db is not None:
             second_db.close_connection()
         first_db.close_connection()

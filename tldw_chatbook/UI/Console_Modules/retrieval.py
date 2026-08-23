@@ -11,7 +11,6 @@ from typing import Any
 from loguru import logger
 
 from ...Chat.console_chat_store import ConsoleChatSession
-from ...Chat.console_command_grammar import COMMAND_PREFIX
 from ...Chat.console_display_state import (
     ConsoleDisplayRow,
     ConsoleInspectorAction,
@@ -19,10 +18,8 @@ from ...Chat.console_display_state import (
 )
 from ...Chat.console_live_work import ConsoleLiveWorkLaunch
 from ...Chat.console_turn_context import ConsoleTurnExecutionContext
-from ...Chat.console_skill_resolver import MENTION_SIGIL
 from ...Chat.rag_scope import (
     RagScope,
-    SCOPE_EMPTY_NOTICE_TEMPLATE,
     read_conversation_scope,
     write_conversation_scope,
 )
@@ -31,7 +28,7 @@ from ...Chat.scope_picker_listers import (
     build_media_source_lister,
     build_notes_source_lister,
 )
-from ...config import coerce_bool_setting, get_cli_setting, save_setting_to_cli_config
+from ...config import save_setting_to_cli_config
 from ...Event_Handlers.Chat_Events.chat_rag_events import (
     capture_console_staged_evidence_for_chat,
     resolve_effective_scope_for_chat,
@@ -40,7 +37,6 @@ from ...Event_Handlers.Chat_Events.chat_rag_events import (
 from ...Library.library_rag_service import (
     LibraryRagSearchOutcome,
     LibraryRagSearchRequest,
-    RETRIEVAL_FAILED_WHY,
     run_library_rag_search,
     scope_empty_recovery_state,
 )
@@ -59,16 +55,6 @@ logger = logger.bind(module="ConsoleRetrievalController")
 
 CONSOLE_LIBRARY_RAG_RECOVERY_COPY = "Review citations before sending."
 AUTO_RAG_QUERY_MAX_CHARS = 2_000
-AUTO_RAG_TIMEOUT_SECONDS = 5.0
-CONSOLE_AUTO_RAG_INITIALIZING_NOTICE = (
-    "Auto-retrieve skipped: the RAG service is still initializing. "
-    "Message sent without Library evidence."
-)
-CONSOLE_AUTO_RAG_FAILED_NOTICE = (
-    f"Auto-retrieve skipped: {RETRIEVAL_FAILED_WHY}. "
-    "Message sent without Library evidence."
-)
-CONSOLE_AUTO_RAG_SEARCHING_COPY = "Auto-retrieving Library evidence for this message."
 
 
 def source_mentions_rag(source: Any) -> bool:
@@ -94,12 +80,6 @@ def sanitize_console_library_rag_query(value: Any) -> str:
     ):
         return ""
     return query
-
-
-def is_plain_text_send(draft_text: Any) -> bool:
-    """Return whether a draft is plain prose worth retrieving for."""
-    draft = str(draft_text or "").lstrip()
-    return bool(draft) and not draft.startswith((COMMAND_PREFIX, MENTION_SIGIL))
 
 
 def launch_has_rag_source_payload(launch: ConsoleLiveWorkLaunch) -> bool:
@@ -199,18 +179,8 @@ class ConsoleRetrievalController:
         draft: str,
         turn_context: ConsoleTurnExecutionContext | None = None,
     ) -> Any:
-        """Capture staged evidence once, after optional auto-retrieval."""
+        """Capture one explicitly staged manual evidence launch."""
         self._clear_evidence_sent_notice()
-        try:
-            await self._maybe_auto_retrieve_for_send(draft, turn_context=turn_context)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            logger.warning(
-                "Console auto-retrieve raised; the send proceeds "
-                "(exception_category={})",
-                type(exc).__name__,
-            )
         launch = self._consume_pending_launch()
         result = await capture_console_staged_evidence_for_chat(
             self.app_instance,
@@ -688,145 +658,3 @@ class ConsoleRetrievalController:
                 action_label="Resolve Library search setup",
             )
         )
-
-    def _rag_service_still_initializing(self) -> bool:
-        """Return whether the shared RAG runtime has not initialized yet."""
-        try:
-            from ...RAG_Search.semantic_availability import current_app_rag_service
-
-            return current_app_rag_service(self.app_instance) is None
-        except Exception:
-            return False
-
-    def _notify_console_auto_rag_scope_empty(self, outcome: Any) -> None:
-        """Surface the shared effective-scope-empty recovery copy."""
-        recovery = getattr(outcome, "recovery_state", None)
-        message = str(getattr(recovery, "why", "") or "").strip()
-        if not message:
-            message = SCOPE_EMPTY_NOTICE_TEMPLATE.format(cause="unknown")
-        self._notify_console_auto_rag(message)
-
-    def _notify_auto_rag_degraded(self, *, initializing: bool) -> None:
-        """Tell the user a send proceeded without requested evidence."""
-        self._notify_console_auto_rag(
-            CONSOLE_AUTO_RAG_INITIALIZING_NOTICE
-            if initializing
-            else CONSOLE_AUTO_RAG_FAILED_NOTICE
-        )
-
-    def _notify_console_auto_rag(self, message: str) -> None:
-        """Emit a best-effort warning without risking the active send."""
-        try:
-            self.app_instance.notify(message, severity="warning")
-        except Exception:
-            logger.debug(
-                "Console auto-retrieve notification unavailable; "
-                "reason=auto_rag_notification_failure"
-            )
-
-    def _clear_console_auto_rag_placeholder(
-        self, placeholder: ConsoleLiveWorkLaunch
-    ) -> None:
-        """Clear only the in-flight placeholder owned by this retrieval."""
-        if self._pending_launch() is not placeholder:
-            return
-        self._set_pending_launch(None)
-        self._set_pending_auto_open(False)
-        try:
-            self._sync_pending_launch_surfaces()
-        except Exception as exc:
-            logger.warning(
-                "Console surfaces did not refresh after clearing an "
-                "auto-retrieve placeholder (exception_category={})",
-                type(exc).__name__,
-            )
-
-    async def _maybe_auto_retrieve_for_send(
-        self,
-        draft_text: str,
-        turn_context: ConsoleTurnExecutionContext | None = None,
-    ) -> None:
-        """Optionally retrieve evidence before a plain-text send."""
-        auto_retrieve_enabled = (
-            coerce_bool_setting(
-                turn_context.rag_defaults.get("auto_retrieve_on_send", False), False
-            )
-            if turn_context is not None
-            else coerce_bool_setting(
-                get_cli_setting("chat_defaults", "rag_auto_retrieve_on_send", False),
-                False,
-            )
-        )
-        if not auto_retrieve_enabled:
-            return
-        if not is_plain_text_send(draft_text) or self._has_staged_evidence():
-            return
-        query = sanitize_console_library_rag_query(
-            str(draft_text or "")[:AUTO_RAG_QUERY_MAX_CHARS]
-        )
-        if not query:
-            return
-        source_types = (
-            turn_context.rag_defaults.get("source_types", ())
-            if turn_context is not None
-            else self._library_rag_source_scope()
-        )
-        top_k = (
-            int(turn_context.rag_defaults.get("top_k", 0) or 0)
-            if turn_context is not None
-            else self._library_rag_top_k()
-        )
-        request = LibraryRagSearchRequest(
-            query=query,
-            source_types=source_types,
-            mode="rag",
-            top_k=top_k,
-            include_citations=True,
-        )
-        scoped_request, scope_empty = await self._resolve_console_library_rag_scope(
-            request
-        )
-        if scope_empty is not None:
-            self._notify_console_auto_rag_scope_empty(scope_empty)
-            return
-        placeholder = ConsoleLiveWorkLaunch.from_values(
-            source="Library Search/RAG",
-            title="Library Search/RAG retrieval",
-            payload={
-                "query": scoped_request.query,
-                "source_scope": ", ".join(scoped_request.source_types),
-            },
-            status="searching",
-            recovery=CONSOLE_AUTO_RAG_SEARCHING_COPY,
-            action_label="Review evidence in Console",
-        )
-        self._stage_console_library_rag_launch(placeholder)
-        try:
-            async with asyncio.timeout(AUTO_RAG_TIMEOUT_SECONDS):
-                outcome = await run_library_rag_search(
-                    self.app_instance, scoped_request
-                )
-        except asyncio.CancelledError:
-            self._clear_console_auto_rag_placeholder(placeholder)
-            raise
-        except TimeoutError:
-            self._clear_console_auto_rag_placeholder(placeholder)
-            self._notify_auto_rag_degraded(
-                initializing=self._rag_service_still_initializing()
-            )
-            return
-        except Exception as exc:
-            logger.warning(
-                "Console auto-retrieve failed; the send proceeds without "
-                "evidence (exception_category={})",
-                type(exc).__name__,
-            )
-            self._clear_console_auto_rag_placeholder(placeholder)
-            self._notify_auto_rag_degraded(initializing=False)
-            return
-        if not getattr(outcome, "results", ()):
-            self._clear_console_auto_rag_placeholder(placeholder)
-            if str(getattr(outcome, "status", "") or "") in {"failed", "blocked"}:
-                self._notify_auto_rag_degraded(initializing=False)
-            return
-        await self._apply_console_library_rag_search_outcome(scoped_request, outcome)

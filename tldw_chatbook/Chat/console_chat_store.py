@@ -77,6 +77,12 @@ from tldw_chatbook.Chat.console_library_policy import (
 from tldw_chatbook.Chat.console_library_policy_coordinator import (
     ConsoleLibraryPolicyCoordinator,
 )
+from tldw_chatbook.Chat.console_turn_preparation import (
+    ConsolePreparationTransition,
+    ConsoleTurnPreparation,
+    ConsoleTurnPreparationState,
+    apply_preparation_transition,
+)
 from tldw_chatbook.Chat.console_transaction_contribution import (
     ConsoleTransactionContribution,
 )
@@ -832,6 +838,14 @@ class ConsoleChatStore:
         self._active_session_epoch = 0
         self._speech_preference_epoch_sequence = 0
         self._sessions: dict[str, ConsoleChatSession] = {}
+        # Task 13: one app-lifetime, process-memory preparation owner per
+        # session.  This state deliberately belongs to the store rather than
+        # a mounted Console screen so navigation cannot lose or duplicate a
+        # pre-dispatch decision.  All mutations use exact preparation/state
+        # compare-and-set under one lock; the immutable values are safe to
+        # return directly.
+        self._preparation_lock = threading.RLock()
+        self._preparations_by_session: dict[str, ConsoleTurnPreparation] = {}
         #: Derived VIEW = the current active path only (root -> active leaf).
         #: Written ONLY by ``_recompute_active_path`` (single-writer invariant);
         #: every other reader/writer of the tree goes through the maps below.
@@ -1837,6 +1851,17 @@ class ConsoleChatStore:
             The session activated after closing, or ``None`` when no sessions remain.
         """
         self._session_or_raise(session_id)
+        preparation = self.preparation_for_session(session_id)
+        if preparation is not None and preparation.state in {
+            ConsoleTurnPreparationState.PREPARING,
+            ConsoleTurnPreparationState.READY,
+            ConsoleTurnPreparationState.PAUSED,
+        }:
+            self.cancel_preparation(
+                session_id,
+                preparation.preparation_id,
+                expected_state=preparation.state,
+            )
         session_ids = list(self._sessions.keys())
         closed_index = session_ids.index(session_id)
 
@@ -1881,6 +1906,8 @@ class ConsoleChatStore:
         if self.library_policy_coordinator is not None:
             self.library_policy_coordinator.unregister_holder(session_id)
         self._sessions.pop(session_id, None)
+        with self._preparation_lock:
+            self._preparations_by_session.pop(session_id, None)
 
         if self.active_session_id != session_id:
             return self._sessions.get(self.active_session_id or "")
@@ -1898,6 +1925,91 @@ class ConsoleChatStore:
     def sessions(self) -> list[ConsoleChatSession]:
         """Return native Console sessions in creation order."""
         return list(self._sessions.values())
+
+    def begin_preparation(
+        self, preparation: ConsoleTurnPreparation
+    ) -> ConsoleTurnPreparation | None:
+        """Register one live preparation if the session has no live owner."""
+
+        if not isinstance(preparation, ConsoleTurnPreparation):
+            raise TypeError("preparation must be ConsoleTurnPreparation")
+        self._session_or_raise(preparation.session_id)
+        with self._preparation_lock:
+            current = self._preparations_by_session.get(preparation.session_id)
+            if current is not None and current.state not in {
+                ConsoleTurnPreparationState.CANCELLED,
+                ConsoleTurnPreparationState.SETTLED,
+            }:
+                return None
+            self._preparations_by_session[preparation.session_id] = preparation
+            return preparation
+
+    def preparation_for_session(
+        self, session_id: str | None
+    ) -> ConsoleTurnPreparation | None:
+        """Return the immutable preparation currently owned by ``session_id``."""
+
+        if not isinstance(session_id, str) or not session_id:
+            return None
+        with self._preparation_lock:
+            return self._preparations_by_session.get(session_id)
+
+    def compare_and_set_preparation(
+        self,
+        session_id: str,
+        transition: ConsolePreparationTransition,
+    ) -> ConsoleTurnPreparation | None:
+        """Apply one exact preparation transition, returning only a CAS win."""
+
+        if not isinstance(transition, ConsolePreparationTransition):
+            raise TypeError("transition must be ConsolePreparationTransition")
+        with self._preparation_lock:
+            current = self._preparations_by_session.get(session_id)
+            if current is None:
+                return None
+            updated = apply_preparation_transition(current, transition)
+            if updated is current:
+                return None
+            self._preparations_by_session[session_id] = updated
+            return updated
+
+    def cancel_preparation(
+        self,
+        session_id: str,
+        preparation_id: str,
+        *,
+        expected_state: ConsoleTurnPreparationState,
+    ) -> ConsoleTurnPreparation | None:
+        """Cancel one exact precommit owner and restore its transient inputs."""
+
+        transition = ConsolePreparationTransition(
+            preparation_id=preparation_id,
+            expected_state=expected_state,
+            new_state=ConsoleTurnPreparationState.CANCELLED,
+            pause_kind=None,
+            new_attempt_id=None,
+        )
+        with self._preparation_lock:
+            current = self._preparations_by_session.get(session_id)
+            if current is None:
+                return None
+            updated = apply_preparation_transition(current, transition)
+            if updated is current:
+                return None
+            self._preparations_by_session[session_id] = updated
+            session = self._sessions.get(session_id)
+            if session is not None:
+                if current.origin == "manual":
+                    session.draft = current.executed_draft
+                session.title = current.pre_send_title
+                session.persisted_conversation_id = current.pre_send_conversation_id
+            transient_id = current.transient_user_message_id
+            if (
+                transient_id is not None
+                and self._message_session_index.get(transient_id) == session_id
+            ):
+                self.delete_message(transient_id)
+            return updated
 
     def begin_session_library_destination_attempt(
         self,
