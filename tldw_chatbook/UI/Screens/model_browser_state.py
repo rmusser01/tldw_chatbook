@@ -173,7 +173,15 @@ def variant_guidance(
 def filter_variant_guidance(
     rows: Iterable[VariantGuidance], query: str
 ) -> tuple[VariantGuidance, ...]:
-    """Filter variant guidance by filename or recognized quantization."""
+    """Filter variant guidance by filename or recognized quantization.
+
+    Args:
+        rows: Render-ready variants to filter without provider I/O.
+        query: Case-insensitive filename or quantization substring.
+
+    Returns:
+        Matching variants in their original deterministic order.
+    """
     normalized_query = query.strip().casefold()
     rows = tuple(rows)
     if not normalized_query:

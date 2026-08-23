@@ -168,6 +168,22 @@ def test_first_machine_memory_request_starts_one_screen_worker() -> None:
     screen._run_machine_memory_probe.assert_called_once_with(1)
 
 
+def test_active_machine_memory_request_hydrates_without_starting_another_probe() -> (
+    None
+):
+    """A remounted RemoteView must receive retained facts during an active probe."""
+    screen = _machine_screen()
+    screen._machine_memory_snapshot = _machine_snapshot()
+    screen._machine_memory_generation = 1
+    screen._machine_memory_active = True
+    screen._run_machine_memory_probe = MagicMock()
+
+    LLMScreen._request_remote_machine_memory(screen, force=False)
+
+    screen._hydrate_remote_machine_memory.assert_called_once_with()
+    screen._run_machine_memory_probe.assert_not_called()
+
+
 def test_forced_machine_memory_recheck_advances_generation() -> None:
     """Treating a forced recheck as a duplicate would leave stale facts forever."""
     screen = _machine_screen()

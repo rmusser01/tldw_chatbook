@@ -512,6 +512,24 @@ def _bounded_sum(*values: int) -> int:
     return total
 
 
+def ram_working_budget_bytes(total_bytes: int) -> int:
+    """Return physical RAM available after the ADR-080 machine reserve.
+
+    Args:
+        total_bytes: Observed total physical memory in bytes.
+
+    Returns:
+        The non-negative working budget after reserving the greater of 2 GiB
+        or 20 percent of physical memory, rounded upward to a whole MiB.
+
+    Raises:
+        ValueError: If ``total_bytes`` is not a bounded positive integer.
+    """
+    _require_bytes(total_bytes, "total_bytes")
+    reserve = max(2 * GIB, _ceil_percent_mib(total_bytes, 20))
+    return max(0, total_bytes - reserve)
+
+
 def _capacity_state(
     estimated_bytes: int, ram_working_budget_bytes: int, total_physical_bytes: int
 ) -> CapacityState:
@@ -609,7 +627,16 @@ def project_gguf_memory(
     model_bytes: int,
     snapshot: MachineMemorySnapshot,
 ) -> GGUFMemoryProjection:
-    """Project independent 32K and 64K RAM scenarios for one GGUF candidate."""
+    """Project independent 32K and 64K RAM scenarios for one GGUF candidate.
+
+    Args:
+        model_bytes: Exact aggregate byte size of the selected GGUF candidate.
+        snapshot: Bounded machine-memory evidence to compare with the estimates.
+
+    Returns:
+        Paired scenario estimates, or an unknown projection when the inputs do
+        not contain valid observed physical-memory evidence.
+    """
     if (
         type(model_bytes) is not int
         or not 1 <= model_bytes <= MAX_INPUT_BYTES
@@ -623,8 +650,7 @@ def project_gguf_memory(
         runtime = max(GIB, _ceil_percent_mib(model_bytes, 10))
         allowance_32k = max(4 * GIB, _ceil_percent_mib(model_bytes, 25))
         allowance_64k = _bounded_sum(allowance_32k, allowance_32k)
-        reserve = max(2 * GIB, _ceil_percent_mib(snapshot.total_bytes, 20))
-        budget = max(0, snapshot.total_bytes - reserve)
+        budget = ram_working_budget_bytes(snapshot.total_bytes)
         context_32k = _build_estimate(
             context_tokens=CONTEXT_32K,
             model_bytes=model_bytes,
@@ -663,6 +689,16 @@ def project_gguf_memory(
 
 
 def format_gib(value: int) -> str:
-    """Render a bounded byte count as a one-decimal binary GiB string."""
+    """Render a bounded byte count as a one-decimal binary GiB string.
+
+    Args:
+        value: Non-negative byte count within the projection bound.
+
+    Returns:
+        The byte count formatted in binary GiB with one decimal place.
+
+    Raises:
+        ValueError: If ``value`` is not a bounded non-negative integer.
+    """
     _require_bytes(value, "value", allow_zero=True, maximum=MAX_PROJECTED_BYTES)
     return f"{value / GIB:.1f} GiB"

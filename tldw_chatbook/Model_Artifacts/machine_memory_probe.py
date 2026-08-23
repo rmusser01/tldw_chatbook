@@ -170,7 +170,11 @@ def _drm_cards() -> tuple[Path, ...]:
 
 
 def production_probe_sources() -> MachineProbeSources:
-    """Build production sources while keeping all observations injectable."""
+    """Build production sources while keeping all observations injectable.
+
+    Returns:
+        Trusted, bounded platform adapters for the production memory probe.
+    """
 
     return MachineProbeSources(
         platform_name=platform.system,
@@ -575,7 +579,15 @@ def _observe_linux_drm(
 def observe_machine_memory(
     *, sources: MachineProbeSources | None = None
 ) -> MachineMemorySnapshot:
-    """Observe bounded local memory facts without propagating raw errors."""
+    """Observe bounded local memory facts without propagating raw errors.
+
+    Args:
+        sources: Optional injected platform adapters; production adapters are
+            used when omitted.
+
+    Returns:
+        An immutable snapshot containing bounded evidence and fixed reasons.
+    """
 
     active = sources or production_probe_sources()
     try:

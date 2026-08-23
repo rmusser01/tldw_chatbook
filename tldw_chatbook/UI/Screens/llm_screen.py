@@ -584,6 +584,7 @@ class LLMScreen(LabScreen):
     def _request_remote_machine_memory(self, *, force: bool) -> None:
         """Start or hydrate the one process-session machine observation."""
         if self._machine_memory_active and not force:
+            self._hydrate_remote_machine_memory()
             return
         if not force and (
             self._machine_memory_snapshot is not None

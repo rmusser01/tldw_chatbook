@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from tldw_chatbook.Model_Artifacts import machine_memory as machine_memory_module
 from tldw_chatbook.Model_Artifacts.machine_memory import (
     AcceleratorMemoryObservation,
     AcceleratorSource,
@@ -26,6 +27,7 @@ from tldw_chatbook.Model_Artifacts.machine_memory_probe import (
     MachineProbeSources,
     observe_machine_memory,
 )
+from tldw_chatbook.UI.Screens import model_memory_presenter as presenter_module
 from tldw_chatbook.UI.Screens.model_memory_presenter import (
     build_candidate_memory_presentation,
     build_machine_memory_presentation,
@@ -276,6 +278,23 @@ def test_machine_observed_evidence_uses_binary_gib_budget_and_limitations() -> N
     )
     assert presentation.action_label == "Recheck memory"
     assert not presentation.action_disabled
+
+
+def test_machine_headline_uses_the_shared_ram_budget_policy(monkeypatch) -> None:
+    """The machine headline must not duplicate the domain reserve calculation."""
+    assert (
+        presenter_module.ram_working_budget_bytes
+        is machine_memory_module.ram_working_budget_bytes
+    )
+    monkeypatch.setattr(
+        presenter_module,
+        "ram_working_budget_bytes",
+        lambda _total_bytes: 24 * GIB,
+    )
+
+    presentation = presenter_module.build_machine_memory_presentation(_snapshot())
+
+    assert presentation.headline.endswith("24.0 GiB RAM working budget")
 
 
 def test_machine_partial_ram_keeps_capacity_but_omits_volatile_pressure() -> None:

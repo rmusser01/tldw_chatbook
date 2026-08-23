@@ -24,6 +24,7 @@ from tldw_chatbook.Model_Artifacts.machine_memory import (
     SystemMemoryState,
     format_gib,
     project_gguf_memory,
+    ram_working_budget_bytes,
 )
 
 
@@ -463,6 +464,29 @@ def test_current_available_memory_sets_warning_without_changing_capacity() -> No
     assert roomy.current_pressure is CurrentPressure.NONE
     assert only_32k_free.current_pressure is CurrentPressure.NEEDS_MORE_FOR_64K
     assert too_little_free.current_pressure is CurrentPressure.NEEDS_MORE_FOR_BOTH
+
+
+@pytest.mark.parametrize(
+    ("total_bytes", "expected"),
+    [
+        (8 * GIB, 6 * GIB),
+        (32 * GIB, 26_214 * MIB),
+    ],
+)
+def test_ram_working_budget_uses_the_shared_policy(
+    total_bytes: int, expected: int
+) -> None:
+    """The public budget seam must preserve the ADR-080 reserve boundaries."""
+    assert ram_working_budget_bytes(total_bytes) == expected
+
+
+@pytest.mark.parametrize("total_bytes", [False, 0, MAX_INPUT_BYTES + 1])
+def test_ram_working_budget_rejects_invalid_physical_memory(
+    total_bytes: object,
+) -> None:
+    """Invalid capacity evidence must not enter the shared reserve policy."""
+    with pytest.raises(ValueError, match="total_bytes"):
+        ram_working_budget_bytes(total_bytes)  # type: ignore[arg-type]
 
 
 def test_partial_system_memory_keeps_stable_estimates_but_pressure_unknown() -> None:

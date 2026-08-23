@@ -99,6 +99,17 @@ multi-row, no-ellipsis, no-overflow, current-identity checks in both rail states
 This routine boundedness/test-harness correction implements ADR-080 without a
 new architecture decision.
 
+The PR review follow-up validated and addressed all three Qodo findings. A
+non-forced request received during an active probe now hydrates the currently
+mounted RemoteView with retained screen-owned evidence without launching a
+second worker. ADR-080's RAM reserve calculation now has one validated public
+domain helper consumed by both projection and presentation, with regression
+coverage preventing presenter drift. The eight public callables identified by
+the compliance review now document their arguments, returns, and applicable
+errors using the required Google-style sections. These are lifecycle,
+policy-ownership, and documentation corrections within the accepted ADR; no
+new architecture decision was required.
+
 Authoritative targeted evidence (run from the feature worktree):
 
 ```text
@@ -106,10 +117,10 @@ Authoritative targeted evidence (run from the feature worktree):
 1 passed, 1 dependency warning; imports resolved from this worktree
 
 ../../.venv/bin/pytest -q Tests/Model_Artifacts/test_machine_memory.py Tests/Model_Artifacts/test_machine_memory_probe.py Tests/UI/test_model_memory_presenter.py Tests/UI/test_model_remote_view.py
-209 passed, 1 dependency warning
+215 passed, 1 dependency warning
 
 ../../.venv/bin/pytest -q Tests/UI/test_llm_screen_lab_adoption.py -k "machine_memory or memory_clocks or remote_drill_down_install_action or remote_memory_scenarios_survive_recompose or remote_completion"
-14 passed, 126 deselected, 1 dependency warning
+15 passed, 126 deselected, 1 dependency warning
 
 for run_index in 1 2 3 4 5; do ../../.venv/bin/pytest -q Tests/UI/test_llm_screen_lab_adoption.py::test_remote_memory_scenarios_survive_recompose_at_80_columns --tb=short || break; done
 5/5 serial repetitions passed, each with 1 existing dependency warning
@@ -120,11 +131,11 @@ for run_index in 1 2 3 4 5; do ../../.venv/bin/pytest -q Tests/UI/test_llm_scree
 ../../.venv/bin/python tldw_chatbook/css/check_bundle_sync.py
 passed; all five generated CSS artifacts reproduce from source
 
-../../.venv/bin/ruff check tldw_chatbook/Model_Artifacts/machine_memory.py tldw_chatbook/Model_Artifacts/machine_memory_probe.py tldw_chatbook/UI/Screens/model_memory_presenter.py tldw_chatbook/UI/Screens/model_remote_view.py tldw_chatbook/UI/Screens/llm_screen.py Tests/Model_Artifacts/test_machine_memory.py Tests/Model_Artifacts/test_machine_memory_probe.py Tests/UI/test_model_memory_presenter.py Tests/UI/test_model_remote_view.py Tests/UI/test_llm_screen_lab_adoption.py
+../../.venv/bin/ruff check tldw_chatbook/Model_Artifacts/machine_memory.py tldw_chatbook/Model_Artifacts/machine_memory_probe.py tldw_chatbook/UI/Screens/model_memory_presenter.py tldw_chatbook/UI/Screens/model_remote_view.py tldw_chatbook/UI/Screens/llm_screen.py tldw_chatbook/UI/Screens/model_browser_state.py Tests/Model_Artifacts/test_machine_memory.py Tests/Model_Artifacts/test_machine_memory_probe.py Tests/UI/test_model_memory_presenter.py Tests/UI/test_model_remote_view.py Tests/UI/test_llm_screen_lab_adoption.py Tests/UI/test_model_browser_state.py
 passed; All checks passed
 
-../../.venv/bin/ruff format --check tldw_chatbook/Model_Artifacts/machine_memory.py tldw_chatbook/Model_Artifacts/machine_memory_probe.py tldw_chatbook/UI/Screens/model_memory_presenter.py tldw_chatbook/UI/Screens/model_remote_view.py tldw_chatbook/UI/Screens/llm_screen.py Tests/Model_Artifacts/test_machine_memory.py Tests/Model_Artifacts/test_machine_memory_probe.py Tests/UI/test_model_memory_presenter.py Tests/UI/test_model_remote_view.py Tests/UI/test_llm_screen_lab_adoption.py
-passed; 10 files already formatted
+../../.venv/bin/ruff format --check tldw_chatbook/Model_Artifacts/machine_memory.py tldw_chatbook/Model_Artifacts/machine_memory_probe.py tldw_chatbook/UI/Screens/model_memory_presenter.py tldw_chatbook/UI/Screens/model_remote_view.py tldw_chatbook/UI/Screens/llm_screen.py tldw_chatbook/UI/Screens/model_browser_state.py Tests/Model_Artifacts/test_machine_memory.py Tests/Model_Artifacts/test_machine_memory_probe.py Tests/UI/test_model_memory_presenter.py Tests/UI/test_model_remote_view.py Tests/UI/test_llm_screen_lab_adoption.py Tests/UI/test_model_browser_state.py
+passed; 12 files already formatted
 
 ../../.venv/bin/python -m compileall -q tldw_chatbook/Model_Artifacts/machine_memory.py tldw_chatbook/Model_Artifacts/machine_memory_probe.py tldw_chatbook/UI/Screens/model_memory_presenter.py tldw_chatbook/UI/Screens/model_remote_view.py tldw_chatbook/UI/Screens/llm_screen.py
 passed

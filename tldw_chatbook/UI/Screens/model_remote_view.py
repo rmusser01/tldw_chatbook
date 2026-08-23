@@ -196,7 +196,12 @@ class RemoteView(Widget):
         """Request screen-owned local-memory observation or refresh."""
 
         def __init__(self, *, force: bool) -> None:
-            """Create one presentation-only observation intent."""
+            """Create one presentation-only observation intent.
+
+            Args:
+                force: Whether to start a fresh observation instead of only
+                    hydrating retained state.
+            """
             super().__init__()
             self.force = force
 

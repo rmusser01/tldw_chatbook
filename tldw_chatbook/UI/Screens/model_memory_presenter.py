@@ -10,14 +10,13 @@ from ...Model_Artifacts.machine_memory import (
     AcceleratorState,
     CapacityState,
     CurrentPressure,
-    GIB,
-    MIB,
     GGUFMemoryProjection,
     MachineMemorySnapshot,
     MemoryKind,
     ProbeReason,
     SystemMemoryState,
     format_gib,
+    ram_working_budget_bytes,
 )
 
 
@@ -69,7 +68,18 @@ def build_candidate_memory_presentation(
     observed_at_label: str | None = None,
     failure: ProbeReason | None = None,
 ) -> CandidateMemoryPresentation:
-    """Build non-blocking copy for one candidate's paired memory scenarios."""
+    """Build non-blocking copy for one candidate's paired memory scenarios.
+
+    Args:
+        projection: Paired 32K/64K estimates, or None before estimation.
+        snapshot: Optional machine evidence used to explain unavailable states.
+        active: Whether a machine-memory observation is currently running.
+        observed_at_label: Bounded display time for retained evidence.
+        failure: Fixed reason for a failed refresh that retained prior evidence.
+
+    Returns:
+        Immutable candidate-row copy derived only from the supplied facts.
+    """
     if active and projection is None:
         return CandidateMemoryPresentation(
             outcome="Memory scenario: Checking local memory…",
@@ -126,7 +136,17 @@ def build_machine_memory_presentation(
     observed_at_label: str | None = None,
     failure: ProbeReason | None = None,
 ) -> MachineMemoryPresentation:
-    """Build machine evidence, constraints, and refresh state without side effects."""
+    """Build machine evidence, constraints, and refresh state without side effects.
+
+    Args:
+        snapshot: Bounded machine-memory evidence, or None before observation.
+        active: Whether a machine-memory observation is currently running.
+        observed_at_label: Bounded display time for retained evidence.
+        failure: Fixed reason for a failed refresh that retained prior evidence.
+
+    Returns:
+        Immutable copy for the machine-memory evidence panel.
+    """
     action_label = "Checking…" if active else "Recheck memory"
     if snapshot is None:
         return MachineMemoryPresentation(
@@ -167,7 +187,7 @@ def build_machine_memory_presentation(
             failure_line=None,
             accelerator_detail_lines=(),
         )
-    budget = _ram_working_budget_bytes(total)
+    budget = ram_working_budget_bytes(total)
     is_unified = snapshot.memory_kind is MemoryKind.UNIFIED
     memory_label = "unified" if is_unified else "RAM"
     evidence = [_available_memory_copy(snapshot, is_unified=is_unified)]
@@ -253,12 +273,6 @@ def _unavailable_machine_copy(state: SystemMemoryState) -> str:
     if state is SystemMemoryState.UNSUPPORTED:
         return "Machine estimate is not supported on this platform"
     return "Machine estimate unavailable · filename guidance still applies"
-
-
-def _ram_working_budget_bytes(total_bytes: int) -> int:
-    reserve_mib = (total_bytes * 20 + 100 * MIB - 1) // (100 * MIB)
-    reserve = max(2 * GIB, reserve_mib * MIB)
-    return max(0, total_bytes - reserve)
 
 
 def _available_memory_copy(snapshot: MachineMemorySnapshot, *, is_unified: bool) -> str:
