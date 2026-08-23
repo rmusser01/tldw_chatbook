@@ -116,12 +116,14 @@ it left behind — tree, active leaf, drafts, pending attachments and all.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
 from loguru import logger
 
+from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
 from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -464,6 +466,7 @@ class ConsoleRuntime:
         self._provider_gateway: Any | None = None
         self._agent_bridge: Any | None = None
         self._chat_controller: Any | None = None
+        self._scratch_spaces = ConsoleScratchSpaceManager()
         self._persona_buddy_sink = PersonaBuddyConsoleAdapter(
             getattr(app, "persona_buddy_controller", None)
         )
@@ -515,6 +518,11 @@ class ConsoleRuntime:
     def chat_controller(self) -> "ConsoleChatController | None":
         """The built chat controller, or `None`."""
         return self._chat_controller
+
+    @property
+    def scratch_spaces(self) -> ConsoleScratchSpaceManager:
+        """The process-lifetime scratch authority shared by Console visits."""
+        return self._scratch_spaces
 
     @property
     def persona_buddy_sink(self) -> PersonaBuddyConsoleAdapter:
@@ -738,6 +746,7 @@ class ConsoleRuntime:
         )
 
         kwargs.setdefault("buddy_sink", self.persona_buddy_sink)
+        kwargs.setdefault("scratch_spaces", self._scratch_spaces)
         self._chat_controller = ConsoleChatController(**kwargs)
         if self.view is None:
             # task-15860 Task 4: a runtime can be VIEWLESS FROM BIRTH, not
@@ -1000,6 +1009,7 @@ class ConsoleRuntime:
         is exactly the right answer at exit.
         """
         self._disposed = True
+        self._scratch_spaces.tombstone_all()
         self.detach_view(None)
         controller, gateway = self._chat_controller, self._provider_gateway
         self.generation += 1
@@ -1010,6 +1020,12 @@ class ConsoleRuntime:
                 logger.opt(exception=True).warning(
                     "Console runtime: controller shutdown failed at dispose."
                 )
+        try:
+            await asyncio.to_thread(self._scratch_spaces.dispose)
+        except Exception:  # noqa: BLE001 - quit must continue after cleanup failure
+            logger.opt(exception=True).warning(
+                "Console runtime: scratch cleanup failed at dispose."
+            )
         # Controller shutdown begins by terminally fencing the fleet-wake
         # coordinator. Only after every trusted producer is tombstoned may
         # the shared Buddy sink release its remaining owner tokens.

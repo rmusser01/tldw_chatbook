@@ -18,6 +18,7 @@ from tldw_chatbook.Chat.console_chat_models import (
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
 from tldw_chatbook.Chat.console_turn_context import ConsoleTurnExecutionContext
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 
@@ -171,18 +172,20 @@ def test_live_tool_kill_switch_is_not_frozen_into_turn_context():
     assert review_hook is None
 
 
-def test_legacy_session_without_settings_still_uses_own_workspace():
+def test_legacy_session_without_settings_still_uses_own_workspace(tmp_path):
     store = ConsoleChatStore()
     first = store.create_session(workspace_id="workspace-a")
     store.create_session(workspace_id="workspace-b")
     store.set_workspace_context(
         ConsoleWorkspaceContext(active_workspace_id="workspace-b")
     )
+    scratch_spaces = ConsoleScratchSpaceManager(temp_parent=tmp_path)
     controller = ConsoleChatController(
         store=store,
         provider_gateway=_PausedGateway(),
         provider="anthropic",
         model="model-b",
+        scratch_spaces=scratch_spaces,
     )
 
     context = controller.resolve_turn_execution_context(first.id)
@@ -190,9 +193,99 @@ def test_legacy_session_without_settings_still_uses_own_workspace():
     assert context.provider_selection.workspace_context.active_workspace_id == (
         "workspace-a"
     )
+    assert scratch_spaces.dispose()
 
 
-def test_session_builder_captures_roots_rag_tools_and_generation(monkeypatch):
+def test_turn_context_captures_frozen_scratch_snapshot(tmp_path):
+    store = ConsoleChatStore()
+    session = store.create_session(workspace_id="workspace-a")
+    scratch_spaces = ConsoleScratchSpaceManager(temp_parent=tmp_path)
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=_PausedGateway(),
+        scratch_spaces=scratch_spaces,
+    )
+
+    context = controller.resolve_turn_execution_context(session.id)
+
+    assert context.scratch_space == scratch_spaces.snapshot(session.id)
+    assert context.scratch_space.root.is_dir()
+    assert scratch_spaces.dispose()
+
+
+def test_two_live_sessions_for_same_saved_conversation_get_distinct_scratch(
+    tmp_path,
+):
+    store = ConsoleChatStore()
+    first = store.create_session(workspace_id="workspace-a")
+    second = store.create_session(workspace_id="workspace-a")
+    first.persisted_conversation_id = "saved-conversation"
+    second.persisted_conversation_id = "saved-conversation"
+    scratch_spaces = ConsoleScratchSpaceManager(temp_parent=tmp_path)
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=_PausedGateway(),
+        scratch_spaces=scratch_spaces,
+    )
+
+    first_context = controller.resolve_turn_execution_context(first.id)
+    second_context = controller.resolve_turn_execution_context(second.id)
+
+    assert first_context.scratch_space.root != second_context.scratch_space.root
+    assert first_context.scratch_space.token != second_context.scratch_space.token
+    assert scratch_spaces.dispose()
+
+
+def test_fallback_turn_context_does_not_capture_configured_workspace_root(
+    monkeypatch,
+    tmp_path,
+):
+    store = ConsoleChatStore()
+    session = store.create_session(workspace_id="workspace-a")
+    scratch_spaces = ConsoleScratchSpaceManager(temp_parent=tmp_path)
+
+    def setting(section, key, default=None):
+        if section == "console" and key == "workspace_root":
+            return "/configured/root"
+        return default
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.console_chat_controller.get_cli_setting",
+        setting,
+    )
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=_PausedGateway(),
+        scratch_spaces=scratch_spaces,
+    )
+
+    context = controller.resolve_turn_execution_context(session.id)
+
+    assert context.workspace_roots == ()
+    assert "workspace_root" not in context.tool_configuration
+    assert scratch_spaces.dispose()
+
+
+@pytest.mark.asyncio
+async def test_compatibility_controller_disposes_its_owned_scratch_space():
+    store = ConsoleChatStore()
+    session = store.create_session()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=_PausedGateway(),
+    )
+    snapshot = controller.resolve_turn_execution_context(session.id).scratch_space
+
+    await controller.shutdown()
+
+    assert snapshot is not None
+    assert not snapshot.root.exists()
+
+
+def test_session_builder_captures_roots_rag_tools_and_generation(
+    monkeypatch,
+    tmp_path,
+):
     store = ConsoleChatStore()
     settings = _settings(
         "openai",
@@ -237,6 +330,9 @@ def test_session_builder_captures_roots_rag_tools_and_generation(monkeypatch):
     controller._chat_store_accessor = lambda: store
     controller._rag_source_types_accessor = lambda: ["notes", "media"]
     controller._rag_top_k_accessor = lambda: 7
+    scratch_spaces = ConsoleScratchSpaceManager(temp_parent=tmp_path)
+    scratch_snapshot = scratch_spaces.snapshot(session.id)
+    controller._scratch_snapshot_provider = lambda _session_id: scratch_snapshot
 
     context = controller._build_console_turn_execution_context(session.id)
     roots.append(Path("C:/workspace/leak"))
@@ -244,6 +340,7 @@ def test_session_builder_captures_roots_rag_tools_and_generation(monkeypatch):
     app_config["chat_defaults"]["rag_auto_retrieve_on_send"] = "false"
 
     assert context.workspace_roots == (str(Path("C:/workspace/a")),)
+    assert context.scratch_space is scratch_snapshot
     assert context.rag_defaults == {
         "auto_retrieve_on_send": True,
         "source_types": ("notes", "media"),
@@ -252,9 +349,11 @@ def test_session_builder_captures_roots_rag_tools_and_generation(monkeypatch):
     assert context.tool_configuration["agent_runtime_enabled"] is True
     assert context.tool_configuration["native_tool_calls_enabled"] is False
     assert context.tool_configuration["local_tools_enabled"] is True
+    assert "workspace_root" not in context.tool_configuration
     assert context.tool_configuration["direct_library_tools"] is False
     assert context.provider_payload_settings["temperature"] == 0.4
     assert context.provider_payload_settings["max_tokens"] == 777
+    assert scratch_spaces.dispose()
 
 
 @pytest.mark.asyncio

@@ -175,6 +175,7 @@ from ...Chat.console_session_settings import (
     build_console_settings_readiness,
     default_console_session_settings,
 )
+from ...Chat.console_scratch_space import ConsoleScratchSnapshot
 from ...Chat.console_turn_context import ConsoleTurnExecutionContext
 from ...Chat.provider_readiness import provider_config_key
 from ...Character_Chat.visual_identity import (
@@ -544,6 +545,7 @@ class ConsoleSessionController:
         effective_console_provider_model: Callable[[], tuple[Any, Any]],
         provider_readiness_app_config: Callable[[], Any],
         build_provider_selection: Callable[[str], Any],
+        scratch_snapshot_provider: Callable[[str], ConsoleScratchSnapshot],
         rag_source_types_accessor: Callable[[], tuple[str, ...]],
         rag_top_k_accessor: Callable[[], int],
         sync_native_console_chat_ui: Callable[[], Any],
@@ -692,6 +694,7 @@ class ConsoleSessionController:
         self._effective_console_provider_model_fn = effective_console_provider_model
         self._provider_readiness_app_config_fn = provider_readiness_app_config
         self._build_provider_selection_fn = build_provider_selection
+        self._scratch_snapshot_provider = scratch_snapshot_provider
         self._rag_source_types_accessor = rag_source_types_accessor
         self._rag_top_k_accessor = rag_top_k_accessor
         self._sync_native_console_chat_ui_fn = sync_native_console_chat_ui
@@ -1828,6 +1831,7 @@ class ConsoleSessionController:
         return ConsoleTurnExecutionContext.capture(
             session_id=session_id,
             provider_selection=selection,
+            scratch_space=self._scratch_snapshot_provider(session_id),
             session_settings=settings,
             workspace_roots=workspace_roots,
             capabilities={
@@ -1856,9 +1860,6 @@ class ConsoleSessionController:
                     console_config.get("local_tools_enabled", False),
                     False,
                 ),
-                "workspace_root": str(
-                    console_config.get("workspace_root", "") or ""
-                ).strip(),
                 "direct_library_tools": load_direct_library_tools(app_config),
             },
             provider_payload_settings={

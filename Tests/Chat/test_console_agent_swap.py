@@ -15,6 +15,7 @@ from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
 from tldw_chatbook.Chat.citation_repair import CitationRepairContract
 from tldw_chatbook.Chat.citation_trace_models import MarkerNamespace
 from tldw_chatbook.Chat.console_provider_gateway import (
@@ -43,6 +44,35 @@ from Tests.Agents.test_mcp_tool_provider import (
     _catalog_record,
     _tool_dict,
 )
+
+
+def test_close_session_tombstones_scratch_before_store_removal(tmp_path):
+    events: list[str] = []
+
+    class RecordingStore(ConsoleChatStore):
+        def close_session(self, session_id):
+            events.append("store-close")
+            return super().close_session(session_id)
+
+    class RecordingScratchSpaces(ConsoleScratchSpaceManager):
+        def close(self, session_id):
+            events.append("scratch-close")
+            return super().close(session_id)
+
+    store = RecordingStore()
+    session = store.create_session()
+    scratch_spaces = RecordingScratchSpaces(temp_parent=tmp_path)
+    scratch_spaces.snapshot(session.id)
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=_Gateway([]),
+        scratch_spaces=scratch_spaces,
+    )
+
+    controller.close_session(session.id)
+
+    assert events[:2] == ["scratch-close", "store-close"]
+    assert scratch_spaces.wait_for_cleanup(timeout_seconds=2.0)
 
 
 @pytest.fixture(autouse=True)

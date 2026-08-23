@@ -123,6 +123,7 @@ from tldw_chatbook.Chat.console_context_repository import (
     ConsoleContextRepository,
     ConsoleMemoryRecord,
 )
+from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
 from tldw_chatbook.Chat.console_prepared_request import (
     CONTINUATION_OWNER_KEY,
     PreparedConsoleRequest,
@@ -1721,6 +1722,7 @@ class ConsoleChatController:
         ]
         | None = None,
         buddy_sink: "PersonaBuddyConsoleAdapter | None" = None,
+        scratch_spaces: ConsoleScratchSpaceManager | None = None,
     ) -> None:
         self.store = store
         self.provider_gateway = provider_gateway
@@ -1745,6 +1747,8 @@ class ConsoleChatController:
         self.system_prompt = system_prompt
         self._agent_bridge = agent_bridge
         self._buddy_sink = buddy_sink
+        self._owns_scratch_spaces = scratch_spaces is None
+        self._scratch_spaces = scratch_spaces or ConsoleScratchSpaceManager()
         self._agent_runtime_enabled = agent_runtime_enabled
         self._skills_service = skills_service
         self._skill_substitution_enabled = skill_substitution_enabled
@@ -4103,6 +4107,9 @@ class ConsoleChatController:
         Returns:
             The session activated after closing, or ``None`` when no sessions remain.
         """
+        # Revoke file authority before any close action can wake a worker or
+        # remove the owning session from the store.
+        self._scratch_spaces.close(session_id)
         # Queue tombstone MUST precede stop/cancel: cancellation can wake a
         # terminal callback, which must observe that no next claim is legal.
         self.prompt_queue_coordinator.mark_closing(session_id)
@@ -6601,6 +6608,8 @@ class ConsoleChatController:
             self.clear_original_attempt(message_id)
         tasks = dict(self._active_stream_tasks)
         if not tasks:
+            if self._owns_scratch_spaces:
+                await asyncio.to_thread(self._scratch_spaces.dispose)
             return
         current = asyncio.current_task()
         for session_id in tasks:
@@ -6648,6 +6657,8 @@ class ConsoleChatController:
                 self._active_stream_tasks.pop(session_id, None)
                 self._active_assistant_message_ids.pop(session_id, None)
                 self._active_cancel_events.pop(session_id, None)
+        if self._owns_scratch_spaces:
+            await asyncio.to_thread(self._scratch_spaces.dispose)
 
     def begin_shutdown(self) -> None:
         """Tombstone future queue work before any teardown cancellation.
@@ -8631,14 +8642,12 @@ class ConsoleChatController:
 
         selection = self._provider_selection_for_session(session_id)
         model = selection.explicit_model or selection.configured_model
-        workspace_root = str(
-            get_cli_setting("console", "workspace_root", "") or ""
-        ).strip()
         return ConsoleTurnExecutionContext.capture(
             session_id=session_id,
             provider_selection=selection,
+            scratch_space=self._scratch_spaces.snapshot(session_id),
             session_settings=self.store.session_settings(session_id),
-            workspace_roots=(workspace_root,) if workspace_root else (),
+            workspace_roots=(),
             capabilities={
                 "vision": bool(model)
                 and is_vision_capable(selection.provider, model or ""),
@@ -8659,7 +8668,6 @@ class ConsoleChatController:
                     get_cli_setting("console", "local_tools_enabled", False),
                     False,
                 ),
-                "workspace_root": workspace_root,
                 "direct_library_tools": coerce_bool_setting(
                     get_cli_setting("console", "direct_library_tools", True),
                     True,
