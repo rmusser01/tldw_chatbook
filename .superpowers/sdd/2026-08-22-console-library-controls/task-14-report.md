@@ -242,3 +242,54 @@ remains In Progress with all 22 criteria unchecked. Task 15 still owns restart
 hydration/recovery actions, queue restart reconciliation, terminal checkpoint
 settlement/deletion, and Discard; the live terminal seam therefore still leaves
 the durable checkpoint honestly `dispatch_started`.
+
+## Review fix round 3
+
+The full acceptance digest previously preceded the in-flight marker. Because a
+generic contribution fingerprint callback is arbitrary user/runtime code, caller
+1 could block there while caller 2 computed a different body digest, installed
+the first marker, and committed the competing acceptance. Round 3 replaces that
+post-digest fingerprint sentinel with a frozen structured reservation installed
+under the preparation RLock before canonicalization.
+
+The reservation has a unique caller token and owner thread plus the immutable
+preparation/attempt/session, staged conversation/USER/assistant, origin, and queue
+owner tuple. A foreign caller validates that tuple and fails immediately without
+calling the canonicalizer, changing preparation state, touching SQLite, or
+clearing the marker. The owner releases the lock for canonicalization and DB I/O;
+on reacquire it must prove the exact reservation object and unchanged staged
+identity/message owners before atomically installing the full fingerprint. Only
+that reservation owner may clear the marker and pause after canonicalization or
+DB failure. DB failure retains the full fingerprint and staged IDs for Retry;
+completed-cache authentication computes the digest without installing a second
+reservation. The reservation retains identifiers only, never body/evidence/
+prefill/attachment/provider content.
+
+Clean-head Task-14 baseline was 67 passed. The complete round-3 RED collected
+three cases and produced 2 failed/1 control passed: both deterministic caller
+orders let the contender return while caller 1 was blocked inside fingerprint
+construction; canonicalizer failure already cleaned up for Retry. After the fix,
+round 3 passed 3 and combined Task 14 passed 70. Fresh adjacent gates passed 628
+exact Task 13, 100 queue/lifetime, and 126 DB/migration/state tests. Every run had
+only the inherited Requests dependency warning; no full repository sweep ran.
+
+The required mutant moved reservation installation from before to after digest
+construction. Running
+`../../.venv/bin/python -m pytest -q --tb=short --show-capture=no`
+`Tests/Chat/test_console_durable_turn_fix_round3.py::test_pre_fingerprint_reservation_first_caller_owns_body`
+failed both caller-order cases because the contender returned instead of raising
+foreign in-flight. The mutant was restored and the same round-3 file passed 3.
+
+Scoped Ruff passed for the changed production and test files, the new round-3
+test is formatter-clean, the changed Store range matches Ruff formatting while
+the documented pre-existing whole-file drift remains, and `git diff --check`
+passed. Source/privacy review confirms the reservation contains only its opaque
+token, thread identity, and durable owner identifiers; no content-bearing value.
+
+ADR required: no. ADR path:
+`backlog/decisions/079-console-library-conversation-authority.md`. This is a
+bounded correction to ADR-079's existing app-lifetime durable acceptance owner.
+TASK-19900.3 remains In Progress with all 22 criteria unchecked. Task 15 still
+owns restart recovery, queue reconciliation, actions/UI, terminal settlement,
+checkpoint deletion, and Discard; the transitional live checkpoint remains
+honestly `dispatch_started`.

@@ -327,6 +327,22 @@ class _ConsoleStagedDurableOwnerIds:
 
 
 @dataclass(frozen=True, slots=True)
+class _ConsoleDurableCommitReservation:
+    """Unique caller ownership installed before acceptance canonicalization."""
+
+    caller_token: object
+    owner_thread_id: int
+    preparation_id: str
+    attempt_id: str
+    session_id: str
+    conversation_id: str
+    user_message_id: str
+    assistant_message_id: str
+    origin: str
+    queue_entry_id: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class _ConsoleDurableTombstone:
     """Bounded content-free proof that one acceptance owner was retired."""
 
@@ -931,9 +947,7 @@ class ConsoleChatStore:
             str, ConsoleDurablePostcommitEffects
         ] = {}
         self._durable_effects_in_flight: set[tuple[str, str]] = set()
-        self._durable_commit_in_flight: dict[
-            str, ConsoleDurableAcceptanceFingerprint
-        ] = {}
+        self._durable_commit_in_flight: dict[str, _ConsoleDurableCommitReservation] = {}
         self._durable_fingerprint_by_preparation: dict[
             str, ConsoleDurableAcceptanceFingerprint
         ] = {}
@@ -2661,69 +2675,129 @@ class ConsoleChatStore:
 
         if not isinstance(acceptance, ConsoleDurableTurnAcceptance):
             raise TypeError("acceptance must be ConsoleDurableTurnAcceptance")
-        preparation = self.preparation_by_id(acceptance.preparation_id)
-        if preparation is None or preparation.session_id not in self._sessions:
-            raise RuntimeError("Durable preparation is unavailable.")
-        session = self._session_or_raise(preparation.session_id)
-        if preparation.state is ConsoleTurnPreparationState.PAUSED:
-            resumed = self.compare_and_set_preparation(
-                session.id,
-                ConsolePreparationTransition(
-                    preparation_id=preparation.preparation_id,
-                    expected_state=ConsoleTurnPreparationState.PAUSED,
-                    new_state=ConsoleTurnPreparationState.COMMITTING,
-                    pause_kind=None,
-                    new_attempt_id=None,
-                ),
-            )
-            if resumed is None:
-                raise RuntimeError("Durable preparation changed before retry.")
-            preparation = resumed
-        if preparation.state is not ConsoleTurnPreparationState.COMMITTING:
-            raise RuntimeError("Durable preparation is not committing.")
+        reservation: _ConsoleDurableCommitReservation | None = None
         fingerprint: ConsoleDurableAcceptanceFingerprint | None = None
-        owns_in_flight = False
         try:
             with self._preparation_lock:
+                preparation = self._preparations_by_id.get(acceptance.preparation_id)
+                if preparation is None or preparation.session_id not in self._sessions:
+                    raise RuntimeError("Durable preparation is unavailable.")
+                session = self._sessions[preparation.session_id]
+                existing_reservation = self._durable_commit_in_flight.get(
+                    acceptance.preparation_id
+                )
+                if existing_reservation is not None:
+                    staged_identity = self._durable_identity_by_preparation.get(
+                        acceptance.preparation_id
+                    )
+                    staged_owners = self._durable_owner_ids_by_preparation.get(
+                        acceptance.preparation_id
+                    )
+                    if (
+                        existing_reservation.session_id != preparation.session_id
+                        or existing_reservation.attempt_id != acceptance.attempt_id
+                        or existing_reservation.conversation_id
+                        != acceptance.conversation_id
+                        or existing_reservation.user_message_id
+                        != acceptance.user_message_id
+                        or existing_reservation.assistant_message_id
+                        != acceptance.assistant_message_id
+                        or existing_reservation.origin != acceptance.origin
+                        or existing_reservation.queue_entry_id
+                        != acceptance.queue_entry_id
+                        or staged_identity is None
+                        or staged_identity.conversation_id
+                        != existing_reservation.conversation_id
+                        or staged_owners is None
+                        or staged_owners.user_message_id
+                        != existing_reservation.user_message_id
+                        or staged_owners.assistant_message_id
+                        != existing_reservation.assistant_message_id
+                    ):
+                        raise RuntimeError("Durable message owner changed.")
+                    raise RuntimeError(
+                        "Durable acceptance commit is already in flight."
+                    )
                 staged = self._durable_identity_by_preparation.get(
                     acceptance.preparation_id
                 )
-            identity = self.stage_durable_turn_identity(
-                session.id,
-                acceptance.preparation_id,
-                title=staged.title if staged is not None else session.title,
-            )
-            owners = self.stage_durable_turn_owner_ids(
-                session.id,
-                acceptance.preparation_id,
-                user_message_id=acceptance.user_message_id,
-                assistant_message_id=acceptance.assistant_message_id,
-            )
-            if identity.conversation_id != acceptance.conversation_id:
-                raise RuntimeError("Durable acceptance identity changed.")
-            scope_type, workspace_id = self._persistence_scope(session)
-            local_character_id = session.local_character_id()
-            conversation_kwargs: dict[str, object] = {
-                "conversation_title": identity.title,
-                "workspace_id": workspace_id,
-                "scope_type": scope_type,
-                "system_prompt": (
-                    session.settings.system_prompt
-                    if session.settings is not None
-                    else None
-                ),
-                "runtime_backend": session.runtime_backend,
-                "assistant_kind": session.assistant_kind,
-                "assistant_id": session.assistant_id,
-                "assistant_authority_id": session.assistant_authority_id,
-                "character_id": local_character_id,
-                "character_name": (
-                    session.character_name if local_character_id is not None else None
-                ),
-            }
-            if session.speech_preferences != ConsoleSpeechPreferences():
-                conversation_kwargs["speech_preferences"] = session.speech_preferences
-            policy_candidate = self.session_library_policy_candidate(session.id)
+                identity = self.stage_durable_turn_identity(
+                    session.id,
+                    acceptance.preparation_id,
+                    title=staged.title if staged is not None else session.title,
+                )
+                owners = self.stage_durable_turn_owner_ids(
+                    session.id,
+                    acceptance.preparation_id,
+                    user_message_id=acceptance.user_message_id,
+                    assistant_message_id=acceptance.assistant_message_id,
+                )
+                if (
+                    preparation.attempt_id != acceptance.attempt_id
+                    or preparation.origin != acceptance.origin
+                    or preparation.queue_entry_id != acceptance.queue_entry_id
+                    or identity.conversation_id != acceptance.conversation_id
+                ):
+                    raise RuntimeError("Durable acceptance identity changed.")
+                if preparation.state is ConsoleTurnPreparationState.PAUSED:
+                    resumed = self.compare_and_set_preparation(
+                        session.id,
+                        ConsolePreparationTransition(
+                            preparation_id=preparation.preparation_id,
+                            expected_state=ConsoleTurnPreparationState.PAUSED,
+                            new_state=ConsoleTurnPreparationState.COMMITTING,
+                            pause_kind=None,
+                            new_attempt_id=None,
+                        ),
+                    )
+                    if resumed is None:
+                        raise RuntimeError("Durable preparation changed before retry.")
+                    preparation = resumed
+                if preparation.state is not ConsoleTurnPreparationState.COMMITTING:
+                    raise RuntimeError("Durable preparation is not committing.")
+                scope_type, workspace_id = self._persistence_scope(session)
+                local_character_id = session.local_character_id()
+                conversation_kwargs: dict[str, object] = {
+                    "conversation_title": identity.title,
+                    "workspace_id": workspace_id,
+                    "scope_type": scope_type,
+                    "system_prompt": (
+                        session.settings.system_prompt
+                        if session.settings is not None
+                        else None
+                    ),
+                    "runtime_backend": session.runtime_backend,
+                    "assistant_kind": session.assistant_kind,
+                    "assistant_id": session.assistant_id,
+                    "assistant_authority_id": session.assistant_authority_id,
+                    "character_id": local_character_id,
+                    "character_name": (
+                        session.character_name
+                        if local_character_id is not None
+                        else None
+                    ),
+                }
+                if session.speech_preferences != ConsoleSpeechPreferences():
+                    conversation_kwargs["speech_preferences"] = (
+                        session.speech_preferences
+                    )
+                policy_candidate = self.session_library_policy_candidate(session.id)
+                if acceptance.preparation_id not in self._durable_commit_by_preparation:
+                    reservation = _ConsoleDurableCommitReservation(
+                        caller_token=object(),
+                        owner_thread_id=threading.get_ident(),
+                        preparation_id=acceptance.preparation_id,
+                        attempt_id=acceptance.attempt_id,
+                        session_id=session.id,
+                        conversation_id=identity.conversation_id,
+                        user_message_id=owners.user_message_id,
+                        assistant_message_id=owners.assistant_message_id,
+                        origin=acceptance.origin,
+                        queue_entry_id=acceptance.queue_entry_id,
+                    )
+                    self._durable_commit_in_flight[acceptance.preparation_id] = (
+                        reservation
+                    )
             fingerprint = self._durable_acceptance_fingerprint(
                 acceptance,
                 preparation,
@@ -2733,6 +2807,44 @@ class ConsoleChatStore:
                 conversation_kwargs,
             )
             with self._preparation_lock:
+                if reservation is None:
+                    existing_fingerprint = self._durable_fingerprint_by_preparation.get(
+                        acceptance.preparation_id
+                    )
+                    existing_commit = self._durable_commit_by_preparation.get(
+                        acceptance.preparation_id
+                    )
+                    if existing_fingerprint != fingerprint:
+                        raise RuntimeError("Durable acceptance fingerprint changed.")
+                    if existing_commit is None:
+                        raise RuntimeError("Durable acceptance is unavailable.")
+                    return existing_commit
+                if (
+                    self._durable_commit_in_flight.get(acceptance.preparation_id)
+                    is not reservation
+                ):
+                    raise RuntimeError("Durable commit reservation changed.")
+                current_preparation = self._preparations_by_id.get(
+                    acceptance.preparation_id
+                )
+                current_identity = self._durable_identity_by_preparation.get(
+                    acceptance.preparation_id
+                )
+                current_owners = self._durable_owner_ids_by_preparation.get(
+                    acceptance.preparation_id
+                )
+                if (
+                    current_preparation is None
+                    or current_preparation.session_id != reservation.session_id
+                    or current_preparation.attempt_id != reservation.attempt_id
+                    or current_identity is not identity
+                    or current_identity.conversation_id != reservation.conversation_id
+                    or current_owners is not owners
+                    or current_owners.user_message_id != reservation.user_message_id
+                    or current_owners.assistant_message_id
+                    != reservation.assistant_message_id
+                ):
+                    raise RuntimeError("Durable commit reservation owner changed.")
                 retired = self._durable_tombstones.get(acceptance.preparation_id)
                 if retired is not None:
                     if retired.fingerprint != fingerprint:
@@ -2750,16 +2862,10 @@ class ConsoleChatStore:
                     acceptance.preparation_id
                 )
                 if existing_commit is not None:
-                    return existing_commit
-                if acceptance.preparation_id in self._durable_commit_in_flight:
-                    raise RuntimeError(
-                        "Durable acceptance commit is already in flight."
-                    )
+                    raise RuntimeError("Durable commit reservation was superseded.")
                 self._durable_fingerprint_by_preparation[acceptance.preparation_id] = (
                     fingerprint
                 )
-                self._durable_commit_in_flight[acceptance.preparation_id] = fingerprint
-                owns_in_flight = True
             durable_commit = getattr(self.persistence, "commit_durable_turn", None)
             if not callable(durable_commit):
                 raise RuntimeError("Durable Console persistence is unavailable.")
@@ -2768,15 +2874,47 @@ class ConsoleChatStore:
                 policy_candidate=policy_candidate,
                 conversation_kwargs=conversation_kwargs,
             )
-        except Exception:
+            commit = ConsoleDurableTurnCommit(
+                identity=identity,
+                user_message_id=owners.user_message_id,
+                user_message_version=checkpoint.user_message_version,
+                assistant_message_id=owners.assistant_message_id,
+                assistant_message_version=checkpoint.assistant_message_version,
+                checkpoint=checkpoint,
+            )
             with self._preparation_lock:
-                foreign_in_flight = (
-                    not owns_in_flight
-                    and acceptance.preparation_id in self._durable_commit_in_flight
+                if (
+                    self._durable_commit_in_flight.get(acceptance.preparation_id)
+                    is not reservation
+                ):
+                    raise RuntimeError("Durable commit reservation changed.")
+                if (
+                    self._durable_fingerprint_by_preparation.get(
+                        acceptance.preparation_id
+                    )
+                    != fingerprint
+                ):
+                    raise RuntimeError("Durable acceptance fingerprint changed.")
+                self._durable_commit_in_flight.pop(acceptance.preparation_id, None)
+                self._durable_commit_by_preparation[acceptance.preparation_id] = commit
+                self.begin_durable_postcommit_effects(
+                    preparation_id=acceptance.preparation_id,
+                    session_id=session.id,
+                    assistant_message_id=owners.assistant_message_id,
+                    fingerprint=fingerprint,
                 )
-                if owns_in_flight:
+            return commit
+        except Exception:
+            if reservation is None:
+                raise
+            with self._preparation_lock:
+                owns_reservation = (
+                    self._durable_commit_in_flight.get(acceptance.preparation_id)
+                    is reservation
+                )
+                if owns_reservation:
                     self._durable_commit_in_flight.pop(acceptance.preparation_id, None)
-            if foreign_in_flight:
+            if not owns_reservation:
                 raise
             self.compare_and_set_preparation(
                 session.id,
@@ -2793,30 +2931,6 @@ class ConsoleChatStore:
                 preparation_id=preparation.preparation_id,
             ).warning("console_durable_turn_commit_failed")
             raise
-        assert fingerprint is not None
-        commit = ConsoleDurableTurnCommit(
-            identity=identity,
-            user_message_id=acceptance.user_message_id,
-            user_message_version=checkpoint.user_message_version,
-            assistant_message_id=acceptance.assistant_message_id,
-            assistant_message_version=checkpoint.assistant_message_version,
-            checkpoint=checkpoint,
-        )
-        with self._preparation_lock:
-            if (
-                self._durable_fingerprint_by_preparation.get(acceptance.preparation_id)
-                != fingerprint
-            ):
-                raise RuntimeError("Durable acceptance fingerprint changed.")
-            self._durable_commit_in_flight.pop(acceptance.preparation_id, None)
-            self._durable_commit_by_preparation[acceptance.preparation_id] = commit
-            self.begin_durable_postcommit_effects(
-                preparation_id=acceptance.preparation_id,
-                session_id=session.id,
-                assistant_message_id=acceptance.assistant_message_id,
-                fingerprint=fingerprint,
-            )
-        return commit
 
     def begin_durable_postcommit_effects(
         self,
