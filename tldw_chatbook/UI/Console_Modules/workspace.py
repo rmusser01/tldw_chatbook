@@ -2010,6 +2010,7 @@ class ConsoleWorkspaceController:
                 self._console_persisted_rows_refresh_key = None
                 self._sync_console_workspace_context()
             return cached
+        membership_revision = self._canonical_membership_revision
         try:
             result = await self._persisted_console_browser_rows(
                 query,
@@ -2023,6 +2024,14 @@ class ConsoleWorkspaceController:
             refresh_key is not None
             and self._console_persisted_rows_refresh_key != refresh_key
         ):
+            return result
+        if membership_revision != self._canonical_membership_revision:
+            if (
+                refresh_key is not None
+                and self._console_persisted_rows_refresh_key == refresh_key
+            ):
+                self._console_persisted_rows_refresh_key = None
+                self._sync_console_workspace_context()
             return result
         rows, _total, error = result
         if not error:

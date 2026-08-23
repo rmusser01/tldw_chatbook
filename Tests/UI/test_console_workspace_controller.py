@@ -1932,6 +1932,77 @@ async def test_workspace_persisted_cache_refresh_awaits_async_provider():
     assert calls[0]["limit"] == CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT
 
 
+@pytest.mark.asyncio
+async def test_persisted_cache_refresh_before_complete_owner_move_is_stale() -> None:
+    screen = _NoMountScreen()
+    controller = _workspace_controller(
+        screen=screen,
+        app_instance=SimpleNamespace(
+            workspace_registry_service=SimpleNamespace(
+                list_workspaces=lambda: (
+                    SimpleNamespace(
+                        workspace_id="workspace-8", name="Eight", archived=False
+                    ),
+                )
+            )
+        ),
+    )
+    old_owner = _browser_row(
+        "moving", "Old Default owner", workspace_id=DEFAULT_WORKSPACE_ID
+    )
+    controller._workspace_membership_rows[DEFAULT_WORKSPACE_ID] = (old_owner,)
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def stale_rows(_query, current_conversation_id=None):
+        del current_conversation_id
+        started.set()
+        await release.wait()
+        return [old_owner], 1, ""
+
+    controller._persisted_console_browser_rows = stale_rows
+    refresh_key = ("", None, controller._console_persisted_rows_cache_token)
+    controller._console_persisted_rows_refresh_key = refresh_key
+    task = asyncio.create_task(
+        controller._refresh_console_persisted_rows_cache(refresh_key=refresh_key)
+    )
+    await started.wait()
+
+    controller.apply_workspace_membership_snapshot(
+        {DEFAULT_WORKSPACE_ID: (), "workspace-8": ("moving",)},
+        complete=True,
+        workspace_labels={"workspace-8": "Eight"},
+    )
+    release.set()
+    await task
+
+    assert controller._console_persisted_rows_cache is None
+    assert controller._console_persisted_rows_refresh_key is None
+    assert controller._canonical_owner_observations["moving"] == "workspace-8"
+
+    state = controller._with_console_conversation_browser_state(_workspace_state())
+    controller._with_console_conversation_browser_state(_workspace_state())
+    assert state.conversation_browser is not None
+    owners = [
+        *(
+            node.workspace_id
+            for node in state.workspace_tree
+            for row in node.conversations
+            if row.conversation_id == "moving"
+        ),
+        *(
+            "flat"
+            for section in state.conversation_browser.sections
+            for row in section.rows
+            if row.conversation_id == "moving"
+        ),
+    ]
+
+    assert owners == ["workspace-8"]
+    assert len(screen.workers) == 1
+    assert controller._console_persisted_rows_refresh_key == refresh_key
+
+
 def test_workspace_controller_projects_canonical_rows_to_legacy_rows():
     controller = _workspace_controller()
     rich = _rich_row()
