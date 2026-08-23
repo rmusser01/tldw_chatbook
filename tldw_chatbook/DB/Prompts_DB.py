@@ -3745,9 +3745,12 @@ class PromptsDatabase:
         """Searches prompts using FTS.
 
         Args:
-            search_query: Plain user search text. Also used verbatim as the
-                MATCH clause against ``prompts_fts``/``prompt_keywords_fts``
-                when ``fts_match_query`` is not provided.
+            search_query: Plain user search text, matched against
+                ``prompts_fts``/``prompt_keywords_fts`` as a literal phrase
+                (TASK-19558 -- it is quoted with
+                ``Utils.fts5_match_forms.quote_fts5_phrase``, NOT used
+                verbatim as a MATCH clause; FTS5 operators typed into it are
+                inert, and a typed ``"`` no longer raises).
             search_fields: Fields to search; defaults to the standard text
                 fields when ``search_query`` is set.
             page: 1-indexed page number.
@@ -3757,8 +3760,8 @@ class PromptsDatabase:
                 Library keyword search's plural/singular-widened query,
                 see ``library_fts_query.build_fts_match_query``) that
                 overrides the MATCH clause built from ``search_query``.
-                When omitted, ``search_query`` keeps its legacy behavior
-                unchanged.
+                This is the ONLY seam through which a caller may supply
+                FTS5 syntax; it must already be injection-safe.
         """
         start_time = time.time()
 

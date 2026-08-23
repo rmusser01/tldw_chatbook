@@ -2224,7 +2224,9 @@ class MediaDatabase:
         self,
         search_query: Optional[
             str
-        ],  # Main text for FTS/LIKE (can be pre-formatted for exact phrase)
+        ],  # PLAIN user text for FTS/LIKE -- quoted as a literal FTS5
+        # phrase (TASK-19558). A caller-built MATCH expression goes through
+        # `fts_match_query`, never through here.
         search_fields: Optional[List[str]] = None,
         media_types: Optional[List[str]] = None,
         date_range: Optional[Dict[str, datetime]] = None,  # Expects datetime objects
@@ -2253,10 +2255,14 @@ class MediaDatabase:
         items marked as trash or soft-deleted.
 
         Args:
-            search_query (Optional[str]): The primary text string for searching.
-                If `search_fields` include 'title' or 'content', this query is
-                matched against the FTS index. It can be pre-formatted for exact
-                phrases (e.g., "\"exact phrase\""). For 'author' or 'type' in
+            search_query (Optional[str]): The primary PLAIN-TEXT string for
+                searching. If `search_fields` include 'title' or 'content',
+                this query is quoted as a literal FTS5 phrase
+                (`Utils.fts5_match_forms.quote_fts5_phrase`) before it is
+                matched against the FTS index -- TASK-19558; it is no longer
+                accepted pre-formatted, and FTS5 operators typed into it are
+                inert. Supply a real MATCH expression through
+                `fts_match_query` instead. For 'author' or 'type' in
                 `search_fields`, it's used in a LIKE '%query%' match.
             search_fields (Optional[List[str]]): A list of fields to apply the
                 `search_query` against. Valid fields: 'title', 'content' (FTS),
