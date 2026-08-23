@@ -76,6 +76,40 @@ result through targeted automation plus live DeepSeek UAT.
 - Design spec:
   `Docs/superpowers/specs/2026-08-23-console-per-chat-private-scratch-space-design.md`
 
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Add a thread-safe, generation-fenced `ConsoleScratchSpaceManager` with
+   owner-only random directories, leases, tombstones, a single off-loop cleanup
+   worker, and bounded best-effort disposal.
+2. Make `ConsoleRuntime` own the manager, capture one immutable scratch snapshot
+   in each `ConsoleTurnExecutionContext`, tombstone it before session removal,
+   preserve it across ordinary navigation, and dispose it at application exit.
+3. Thread the captured root and lease through built-in and local providers so a
+   Default Chat never falls back to `[console] workspace_root` or cwd, while
+   named Workspace bindings and ADR-069 selected-root guards remain intact.
+4. Propagate the same authority through agent review and dispatch, retained
+   skill-script output, and run-log fallback/readback without persisting paths.
+5. Replace folder-required/disabled copy with private-scratch and optional
+   Workspace-folder guidance, then update the Console, Settings, tool, and
+   developer documentation.
+6. Run the targeted authority/lifecycle/artifact/UI suites and perform live
+   DeepSeek UAT from an isolated mode-0600 config copy, verifying the original
+   configuration hash is unchanged.
+7. Complete task acceptance criteria, implementation notes, ADR links, and Done
+   status only after all targeted and live gates pass.
+
+Detailed red-green steps, exact files, interfaces, commands, and commit points:
+`Docs/superpowers/plans/2026-08-23-console-per-chat-private-scratch-space.md`.
+
+ADR required: yes
+
+ADR path: `backlog/decisions/081-console-per-chat-private-scratch-space.md`
+
+Reason: the plan implements the accepted filesystem-authority, temporary-data
+ownership, provider-boundary, and cross-thread teardown decision.
+<!-- SECTION:PLAN:END -->
+
 ## Baseline Evidence
 
 - Branch base after refreshing all remote heads:

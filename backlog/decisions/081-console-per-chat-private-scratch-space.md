@@ -1,6 +1,6 @@
 # ADR-081: Give every Console chat private temporary scratch space
 
-Status: Proposed
+Status: Accepted
 Date: 2026-08-23
 Related Task: TASK-21161
 

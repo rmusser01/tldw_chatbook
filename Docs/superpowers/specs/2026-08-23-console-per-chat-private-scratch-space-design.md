@@ -1,7 +1,7 @@
 # Console per-chat private scratch space design
 
 Date: 2026-08-23
-Status: Draft for user review
+Status: Approved
 Task: TASK-21161
 ADR: ADR-081
 Baseline: `origin/dev` at `7363592020076c9508fe4a0eee0c1a1679ec7851`
