@@ -776,6 +776,27 @@ class TestTrajectoryTimelineWidget:
             assert timeline._record_columns(off_left, width, timeline.viewport) is None
             assert timeline._record_columns(off_right, width, timeline.viewport) is None
 
+    async def test_instant_event_at_right_endpoint_renders_and_is_hittable(
+        self,
+    ) -> None:
+        endpoint = rec(1, KIND_ASSISTANT, start=10.0, end=10.0)
+        app = TimelineApp()
+        async with app.run_test(size=(80, 24)) as pilot:
+            timeline = app.query_one(TrajectoryTimeline)
+            timeline.set_snapshot(
+                TrajectorySnapshot((TrajectoryTurn("all", (endpoint,)),))
+            )
+            await pilot.pause()
+            timeline._window = (0.0, 10.0)
+            width = timeline._plot_width()
+
+            assert timeline._record_columns(endpoint, width, timeline.viewport) == (
+                width - 1,
+                width - 1,
+            )
+            assert str(timeline.render()).splitlines()[1].endswith("━")
+            assert timeline.record_at(LANE_LABEL_WIDTH + width - 1, 1) is endpoint
+
     async def test_click_empty_space_clears_brush(self) -> None:
         app = TimelineApp()
         async with app.run_test(size=(80, 24)) as pilot:

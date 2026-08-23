@@ -595,7 +595,7 @@ class TrajectoryTimeline(Widget):
         start, end = TimelineModel.interval(record)
         if end < window[0] or start > window[1]:
             return None
-        c0 = int(TimelineModel.fraction(start, window) * width)
+        c0 = min(int(TimelineModel.fraction(start, window) * width), width - 1)
         c1 = max(c0, int(TimelineModel.fraction(end, window) * width))
         if c1 < 0 or c0 >= width:
             return None
