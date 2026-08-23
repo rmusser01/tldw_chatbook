@@ -2656,6 +2656,10 @@ class NotesSyncExecutor:
                 await self._verify_checkpointed_conflict_folders(request)
             if stage in {"copy_verified", "bound_note_updated", "file_reverified"}:
                 await self._verify_conflict_copy_pair(request, checkpoint=False)
+            if stage in {"recovery_admitted", "folders_established", "copy_created"}:
+                note, file = await self._observe(request)
+                if self._classify(request, note, file) != ("original", True):
+                    raise RuntimeError("stale_observation")
             cancelled = False
             if stage == "recovery_admitted":
                 _, cancelled = await self._joined_thread_call(

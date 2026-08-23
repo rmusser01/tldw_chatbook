@@ -893,6 +893,81 @@ async def test_keep_both_restart_refences_owner_before_any_later_effect(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "crash_substage",
+    ("recovery_admitted", "folders_established", "copy_created"),
+)
+@pytest.mark.parametrize("freshness_drift", ("note", "file"))
+async def test_keep_both_restart_refences_reviewed_pair_before_early_artifacts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    crash_substage: str,
+    freshness_drift: str,
+) -> None:
+    if not PosixNotesSyncFilesystem.supports_writes():
+        pytest.skip("guarded POSIX replacement is unavailable")
+    (
+        notes_path,
+        state_path,
+        sync_root,
+        store,
+        database,
+        authority,
+        request,
+    ) = await _prepare_real_keep_both(tmp_path)
+    await _crash_real_keep_both_at_substage(
+        store=store,
+        authority=authority,
+        sync_root=sync_root,
+        request=request,
+        crash_substage=crash_substage,
+        monkeypatch=monkeypatch,
+    )
+    database.close_connection()
+
+    reopened_store = NotesDeviceStateStore(state_path)
+    reopened_database = CharactersRAGDB(notes_path, client_id="freshness-drift")
+    fresh_authority = _BlockingKeepBothAuthority(
+        _real_keep_both_authority(reopened_database),
+        reopened_store,
+        "never",
+    )
+    with PosixNotesSyncFilesystem(sync_root) as fresh_filesystem:
+        executor = NotesSyncExecutor(
+            reopened_store,
+            fresh_authority,
+            fresh_filesystem,
+            recovery_capacity_bytes=65_536,
+        )
+        reconstructed = await executor.reconstruct_request(request.operation_id)
+        if freshness_drift == "note":
+            note = reopened_database.get_note_by_id("note-1")
+            assert note is not None
+            assert reopened_database.update_note(
+                "note-1",
+                {"title": "Title", "content": "changed after reconstruction"},
+                int(note["version"]),
+            )
+        else:
+            (sync_root / "note.md").write_bytes(b"changed after reconstruction")
+        expected_effects = _keep_both_database_effects(reopened_database)
+        expected_binding = reopened_store.get_binding(request.binding_id)
+        result = await executor.resume(reconstructed)
+
+    assert result.state is NotesSyncOperationState.NEEDS_ATTENTION
+    assert result.reason_code == "stale_observation"
+    assert not any(call.startswith("pause:") for call in fresh_authority.calls)
+    assert reopened_store.get_binding(request.binding_id) == expected_binding
+    assert _keep_both_database_effects(reopened_database) == expected_effects
+    recovery = reopened_store.load_operation_recovery(request.operation_id)
+    assert json.loads(recovery.metadata)["conflict_substage"] == crash_substage
+    assert (sync_root / "note.md").read_bytes() == (
+        b"changed after reconstruction" if freshness_drift == "file" else b"file side"
+    )
+    reopened_database.close_connection()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("authority_mutation", ("copy_version", "placement_version"))
 async def test_keep_both_restart_rejects_changed_copy_or_placement_authority(
     tmp_path: Path,
