@@ -362,6 +362,43 @@ async def test_contextual_star_only_posts_for_focused_conversation() -> None:
 
 
 @pytest.mark.asyncio
+async def test_contextual_star_ignores_unmarkable_native_conversation() -> None:
+    tree = ConsoleWorkspaceTree()
+    conversation = WorkspaceTreeConversation(
+        conversation_id="native:session-7",
+        title="Unsaved roleplay",
+        starred=False,
+        updated_sort="",
+        selected=False,
+        run_marker="",
+        star_enabled=False,
+    )
+    tree.sync_projection(
+        (
+            WorkspaceTreeWorkspace(
+                workspace_id="w1",
+                label="One",
+                conversations=(conversation,),
+                next_cursor=None,
+            ),
+        ),
+        expanded_workspace_ids={"w1"},
+    )
+    app = _TreeHarness(tree)
+
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        tree.move_cursor(tree.conversation_nodes["native:session-7"])
+        tree.focus()
+        await pilot.press("s")
+        await pilot.pause()
+
+        assert not any(
+            isinstance(message, WorkspaceTreeStarRequested) for message in app.messages
+        )
+
+
+@pytest.mark.asyncio
 async def test_keyed_sync_preserves_identity_cursor_and_registration_across_move() -> (
     None
 ):

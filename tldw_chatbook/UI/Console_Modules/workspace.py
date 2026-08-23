@@ -901,6 +901,23 @@ class ConsoleWorkspaceController:
             offset += CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT
             if total is None or offset >= total:
                 break
+        native_rows = self._filter_console_browser_rows_for_query(
+            self._native_console_browser_rows(),
+            query,
+        )
+        named_rows = self._merge_console_browser_rows(
+            (
+                row
+                for row in native_rows
+                if row.scope_type == "workspace"
+                and row.workspace_id not in (None, DEFAULT_WORKSPACE_ID)
+            ),
+            named_rows,
+        )
+        if request_key is not None and not self._workspace_search_attempt_is_current(
+            request_key
+        ):
+            return (), None
         return named_rows, len(named_rows)
 
     async def _load_flat_conversation_search_rows(

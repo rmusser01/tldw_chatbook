@@ -383,6 +383,60 @@ async def test_workspace_search_exhausts_every_service_page() -> None:
 
 
 @pytest.mark.asyncio
+async def test_workspace_search_includes_unsaved_native_rows_and_clear_restores_tree() -> (
+    None
+):
+    native_row = ConsoleConversationBrowserInputRow(
+        row_key="native:session-7",
+        conversation_id=None,
+        native_session_id="session-7",
+        title="Needle roleplay",
+        scope_type="workspace",
+        workspace_id="workspace-7",
+        workspace_label="Seven",
+        status="open session",
+        star_enabled=False,
+        source_kind="native",
+    )
+
+    async def list_conversations(**_kwargs):
+        return {"items": [], "total": 0}
+
+    controller = _workspace_controller(
+        app_instance=SimpleNamespace(
+            workspace_registry_service=SimpleNamespace(
+                list_workspaces=lambda: (
+                    SimpleNamespace(
+                        workspace_id="workspace-7", name="Seven", archived=False
+                    ),
+                )
+            ),
+            chat_conversation_scope_service=SimpleNamespace(
+                list_conversations=list_conversations
+            ),
+        )
+    )
+    controller._native_console_browser_rows = lambda _current=None: [native_row]
+
+    await controller.refresh_workspace_tree_search("needle")
+
+    assert [row.row_key for row in controller._workspace_tree_search.rows] == [
+        "native:session-7"
+    ]
+    assert (
+        controller.workspace_tree_projection()[0].conversations[0].conversation_id
+        == "native:session-7"
+    )
+
+    controller.transition_workspace_tree_search("", disabled=False)
+
+    assert controller._workspace_tree_search.rows == ()
+    assert controller._workspace_tree_search.query == ""
+    restored = controller.workspace_tree_projection((native_row,))
+    assert restored[0].conversations[0].conversation_id == "native:session-7"
+
+
+@pytest.mark.asyncio
 async def test_workspace_search_settles_current_key_without_clearing_newer_attempt() -> (
     None
 ):

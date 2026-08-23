@@ -20,6 +20,7 @@ class WorkspaceTreeConversation:
     updated_sort: str
     selected: bool
     run_marker: str
+    star_enabled: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,6 +108,7 @@ def build_workspace_tree_state(
                         updated_sort=str(row.updated_sort or ""),
                         selected=bool(row.selected),
                         run_marker=str(row.run_marker or ""),
+                        star_enabled=bool(row.star_enabled),
                     )
                     for row in sorted(
                         workspace_rows,

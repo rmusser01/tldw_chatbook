@@ -2309,8 +2309,10 @@ class ChatScreen(BaseAppScreen):
         self, event: WorkspaceTreeConversationSelected
     ) -> None:
         event.stop()
-        self._workspace.activate_workspace_id(event.workspace_id)
-        await self._open_console_workspace_conversation(event.conversation_id)
+        await self._open_console_workspace_conversation(
+            event.conversation_id,
+            target_workspace_id=event.workspace_id,
+        )
 
     @on(Select.Changed, "#compact-api-provider")
     def on_console_compact_provider_changed(self, event: Select.Changed) -> None:
@@ -19490,6 +19492,7 @@ class ChatScreen(BaseAppScreen):
         conversation_id: str,
         *,
         row_key: str = "",
+        target_workspace_id: str | None = None,
     ) -> None:
         """Open one saved conversation for both the flat browser and Tree."""
 
@@ -19519,10 +19522,14 @@ class ChatScreen(BaseAppScreen):
                 resumed = await self._workspace._resume_console_workspace_conversation(
                     row_conversation_id,
                     target_scope_type=(
-                        browser_row.scope_type if browser_row is not None else None
+                        browser_row.scope_type
+                        if browser_row is not None
+                        else ("workspace" if target_workspace_id else None)
                     ),
                     target_workspace_id=(
-                        browser_row.workspace_id if browser_row is not None else None
+                        browser_row.workspace_id
+                        if browser_row is not None
+                        else target_workspace_id
                     ),
                 )
             finally:

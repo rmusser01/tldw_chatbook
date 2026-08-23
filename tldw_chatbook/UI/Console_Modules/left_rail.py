@@ -1236,15 +1236,11 @@ class ConsoleLeftRail(Vertical):
                 pass
             else:
                 cursor = tree.cursor_node
-                visibility_changed = workspace_tray.sync_workspace_tree_context(
+                workspace_tray.sync_workspace_tree_context(
                     cursor.data
                     if cursor is not None and cursor is not tree.root
                     else None
                 )
-                if visibility_changed:
-                    self.call_after_refresh(
-                        self._reconcile_workspace_context_action_geometry
-                    )
             try:
                 bounded = self.query_one(
                     "#console-bounded-section-workspace", ConsoleBoundedSection
@@ -1799,20 +1795,7 @@ class ConsoleLeftRail(Vertical):
             )
         except (NoMatches, QueryError):
             return
-        if tray.sync_workspace_tree_context(event.data):
-            self.call_after_refresh(self._reconcile_workspace_context_action_geometry)
-
-    def _reconcile_workspace_context_action_geometry(self) -> None:
-        """Reallocate after the contextual action row's tray fit has settled."""
-
-        try:
-            bounded = self.query_one(
-                "#console-bounded-section-workspace", ConsoleBoundedSection
-            )
-        except (NoMatches, QueryError):
-            return
-        bounded.request_reconcile()
-        self.request_allocation_reconcile()
+        tray.sync_workspace_tree_context(event.data)
 
     def on_workspace_tree_focus_recovery_requested(
         self, event: WorkspaceTreeFocusRecoveryRequested

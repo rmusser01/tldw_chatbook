@@ -346,15 +346,13 @@ _BROWSER_ROW_CHROME_WIDTH = 6
 # Every row button carries a 1-line bottom margin (see the row CSS).
 _ROW_BOTTOM_MARGIN = 1
 # Minimum measured-width change (in cells) that triggers a relabel recompose
-# after the first measurement. The rail body scrollbar is one cell wide
-# (`scrollbar-size: 1 1`), so adding or removing rows -- e.g. collapsing a
-# browser section -- toggles the scrollbar and shifts `content_region.width`
-# by exactly one cell. `scrollbar-gutter: stable` reserves that cell in the
-# real app, but a one-cell change never alters two-line wrapping and must not
-# provoke a recompose regardless: recomposing on it would race an in-progress
-# state-change recompose (observed as a collapse failing to render) and, in
-# any environment where the gutter CSS is absent, oscillate the relabel.
-_RELABEL_MIN_WIDTH_DELTA = 2
+# after the first measurement. The rail body scrollbar is configured one cell
+# wide, but Textual can report a two-cell content-region shift while its frame
+# and scrollbar settle after a child is shown or mounted. Neither shift is a
+# meaningful wrapping change. Recompose only at three cells or more so those
+# transient geometry changes cannot tear down contextual or out-of-band
+# controls; real terminal resizes remain far above this threshold.
+_RELABEL_MIN_WIDTH_DELTA = 3
 
 
 def _conversation_row_render_height(name_line_count: int, subagent_count: int) -> int:
@@ -544,6 +542,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         # The first measurement always relabels (to replace the pre-measure
         # fallback budget); later ones apply the hysteresis threshold.
         self._row_width_measured = False
+        self._workspace_action_fit_generation = 0
         self.styles.height = "auto"
         self.styles.min_height = 0
 
@@ -813,9 +812,10 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
 
         The first measurement always relabels, replacing the pre-measurement
         fallback budget. Afterwards a change is honored only when it moves at
-        least ``_RELABEL_MIN_WIDTH_DELTA`` cells, so a one-cell scrollbar
-        toggle (from rows being added or removed) neither races a concurrent
-        state-change recompose nor oscillates the relabel.
+        least ``_RELABEL_MIN_WIDTH_DELTA`` cells, so the one- or two-cell
+        scrollbar/frame settling shift (from rows being added or removed)
+        neither races a concurrent state-change recompose nor oscillates the
+        relabel.
 
         Args:
             measured: Freshly measured content-region width in cells.
@@ -1312,24 +1312,29 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             )
         except NoMatches:
             return False
-        is_conversation = bool(
-            data is not None
-            and getattr(data, "kind", None) == "conversation"
-            and getattr(data, "workspace_id", None)
-            and getattr(data, "conversation_id", None)
-            and self.state.workspace_marks_available
-        )
+        is_conversation = self._workspace_tree_context_is_markable(data)
         starred = bool(getattr(data, "starred", False)) if is_conversation else False
         visibility_changed = action_row.display != is_conversation
         action_row.display = is_conversation
         if visibility_changed:
-            current_height = int(self.region.height)
-            if current_height > 0:
-                self.styles.height = max(
-                    1,
-                    current_height + (1 if is_conversation else -1),
-                )
+            self._workspace_action_fit_generation += 1
+            generation = self._workspace_action_fit_generation
+            self.styles.height = "auto"
             self.refresh(layout=True)
+
+            def fit_current_action_geometry() -> None:
+                if generation != self._workspace_action_fit_generation:
+                    return
+                self._fit_height_to_content()
+
+                def reconcile_current_action_geometry() -> None:
+                    if generation != self._workspace_action_fit_generation:
+                        return
+                    self._reconcile_workspace_action_owners()
+
+                self.call_after_refresh(reconcile_current_action_geometry)
+
+            self.call_after_refresh(fit_current_action_geometry)
         button.label = "Unstar" if starred else "Star"
         button.disabled = not is_conversation
         button.workspace_id = (
@@ -1340,6 +1345,34 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         )
         button.starred = starred
         return visibility_changed
+
+    def _workspace_tree_context_is_markable(self, data: Any | None) -> bool:
+        """Return whether ``data`` may expose the contextual star action."""
+
+        return bool(
+            data is not None
+            and getattr(data, "kind", None) == "conversation"
+            and getattr(data, "workspace_id", None)
+            and getattr(data, "conversation_id", None)
+            and getattr(data, "star_enabled", False)
+            and self.state.workspace_marks_available
+        )
+
+    def _reconcile_workspace_action_owners(self) -> None:
+        """Reallocate bounded and outer owners after the action-row fit."""
+
+        for ancestor in self.ancestors:
+            ancestor_id = getattr(ancestor, "id", None)
+            if ancestor_id == "console-bounded-section-workspace":
+                request_reconcile = getattr(ancestor, "request_reconcile", None)
+                if callable(request_reconcile):
+                    request_reconcile()
+            elif ancestor_id == "console-left-rail":
+                request_allocation = getattr(
+                    ancestor, "request_allocation_reconcile", None
+                )
+                if callable(request_allocation):
+                    request_allocation()
 
     def _compose_session_context(
         self,

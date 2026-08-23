@@ -316,7 +316,7 @@ async def test_native_tree_restores_persisted_disclosure_and_exposes_pointer_sta
         tree.move_cursor(tree.conversation_nodes["conversation-1"])
         await _settle(pilot)
         star = app.query_one("#console-workspace-tree-star", Button)
-        assert action_row.display is True
+        assert app.query_one("#console-workspace-context-action-row").display is True
         assert bounded.desired_content_lines == hidden_demand + 1
         assert star.disabled is False
         assert str(star.label) == "Star"
@@ -332,8 +332,13 @@ async def test_native_tree_restores_persisted_disclosure_and_exposes_pointer_sta
 
         tree.move_cursor(workspace)
         await _settle(pilot)
-        assert action_row.display is False
-        assert bounded.desired_content_lines == hidden_demand
+        assert app.query_one("#console-workspace-context-action-row").display is False
+        expected_demand = sum(
+            child.virtual_region_with_margin.height
+            for child in bounded._native_content
+            if child.is_mounted and child.display
+        ) + max(0, tree.virtual_size.height)
+        assert bounded.desired_content_lines == expected_demand
 
         tree.set_search_active(True, forced_workspace_ids={"workspace-1"})
         workspace.collapse()
@@ -343,6 +348,64 @@ async def test_native_tree_restores_persisted_disclosure_and_exposes_pointer_sta
         tree.set_search_active(False)
         assert workspace.is_expanded
         assert writes == [frozenset({"workspace-1"})]
+
+
+@pytest.mark.asyncio
+async def test_native_tree_hides_star_for_unmarkable_conversation() -> None:
+    state = _native_workspace_tree_state()
+    conversation = replace(
+        state.workspace_tree[0].conversations[0],
+        conversation_id="native:session-7",
+        star_enabled=False,
+    )
+    state = replace(
+        state,
+        workspace_tree=(
+            replace(state.workspace_tree[0], conversations=(conversation,)),
+        ),
+    )
+    app = _RailHarness(
+        workspace_state=state,
+        workspace_tree_expanded_ids=frozenset({"workspace-1"}),
+    )
+
+    async with app.run_test(size=(60, 30)) as pilot:
+        await _settle(pilot)
+        tree = app.query_one(ConsoleWorkspaceTree)
+        tree.move_cursor(tree.conversation_nodes["native:session-7"])
+        await _settle(pilot)
+
+        action_row = app.query_one("#console-workspace-context-action-row")
+        star = app.query_one("#console-workspace-tree-star", Button)
+        assert action_row.display is False
+        assert star.disabled is True
+
+
+@pytest.mark.asyncio
+async def test_rapid_workspace_context_show_hide_restores_exact_geometry() -> None:
+    app = _RailHarness(
+        workspace_state=_native_workspace_tree_state(),
+        workspace_tree_expanded_ids=frozenset({"workspace-1"}),
+    )
+
+    async with app.run_test(size=(60, 30)) as pilot:
+        await _settle(pilot)
+        tree = app.query_one(ConsoleWorkspaceTree)
+        workspace = tree.workspace_nodes["workspace-1"]
+        tray = app.query_one("#console-workspaces-context")
+        bounded = app.query_one(
+            "#console-bounded-section-workspace", ConsoleBoundedSection
+        )
+        initial_tray_height = int(tray.region.height)
+        initial_demand = bounded.desired_content_lines
+
+        tree.move_cursor(tree.conversation_nodes["conversation-1"])
+        tree.move_cursor(workspace)
+        await _settle(pilot)
+
+        assert app.query_one("#console-workspace-context-action-row").display is False
+        assert int(tray.region.height) == initial_tray_height
+        assert bounded.desired_content_lines == initial_demand
 
 
 @pytest.mark.asyncio

@@ -93,6 +93,7 @@ def test_named_workspace_keeps_unsaved_native_session_by_stable_row_key() -> Non
         scope_type="workspace",
         workspace_id="w1",
         workspace_label="Workspace One",
+        star_enabled=False,
         source_kind="native",
     )
 
@@ -104,6 +105,7 @@ def test_named_workspace_keeps_unsaved_native_session_by_stable_row_key() -> Non
     assert [conversation.conversation_id for conversation in tree[0].conversations] == [
         "native:session-7"
     ]
+    assert tree[0].conversations[0].star_enabled is False
 
 
 def test_tree_sorts_starred_first_then_recency_and_preserves_markers() -> None:

@@ -7118,6 +7118,11 @@ async def test_console_browser_selecting_non_default_workspace_persisted_row_swi
         assert active.workspace_id == "ws-b"
         assert store.workspace_context.active_workspace_id == "ws-b"
         assert session.workspace_id == "ws-b"
+        assert not any(
+            candidate.workspace_id == "ws-b"
+            and candidate.persisted_conversation_id is None
+            for candidate in store.sessions()
+        )
 
 
 @pytest.mark.asyncio

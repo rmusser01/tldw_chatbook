@@ -41,6 +41,7 @@ class WorkspaceTreeNodeData:
     starred: bool = False
     selected: bool = False
     selectable: bool = False
+    star_enabled: bool = False
 
     @classmethod
     def workspace(cls, workspace_id: str, label: str) -> "WorkspaceTreeNodeData":
@@ -61,6 +62,7 @@ class WorkspaceTreeNodeData:
         *,
         starred: bool,
         selected: bool,
+        star_enabled: bool,
     ) -> "WorkspaceTreeNodeData":
         return cls(
             "conversation",
@@ -71,6 +73,7 @@ class WorkspaceTreeNodeData:
             starred=starred,
             selected=selected,
             selectable=True,
+            star_enabled=star_enabled,
         )
 
     @classmethod
@@ -367,6 +370,7 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
                         conversation.title,
                         starred=conversation.starred,
                         selected=conversation.selected,
+                        star_enabled=conversation.star_enabled,
                     )
                     node = self.conversation_nodes.get(conversation.conversation_id)
                     if node is None:
@@ -708,6 +712,7 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
             data is None
             or data.kind != "conversation"
             or not self.star_enabled
+            or not data.star_enabled
             or data.workspace_id is None
             or data.conversation_id is None
         ):
