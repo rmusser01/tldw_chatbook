@@ -153,21 +153,24 @@ numbers:
 | --- | --- |
 | Navigation | 28 / 24 columns |
 | Feed Items | 40 / 32 columns |
-| Reader | `1fr` / 44 columns |
+| Primary centre (Reader or management canvas) | `1fr` / 44 comfort columns |
 | Inspector | 34 / 30 columns |
 | Each grip | 5 fixed columns |
 
-Starting from the preferred layout, the resolver collapses side panes until the sum of Reader,
-grips, and expanded-pane minimums fits. Default responsive collapse priority is Inspector,
-Navigation, then Feed Items. Reader is never a candidate.
+Starting from the preferred layout, the resolver collapses side panes until the sum of the primary
+centre, mounted grips, and expanded-pane minimums fits. On Read, default responsive collapse
+priority is Inspector, Navigation, then Feed Items. On a management tab, Feed Items and its grip
+are absent, so the order is Inspector then Navigation. The Reader or management canvas is never a
+collapse candidate.
 
-Reader's 44 columns are a **comfort threshold**, not a hard CSS minimum. After all three side panes
-are collapsed, a terminal narrower than Reader comfort plus the three fixed grips keeps all grips
-and lets Reader consume the remaining width with `min-width: 0`; no grip disappears and no
-horizontal overflow is introduced. The supported live-verification floor is 60 columns, where the
-three grips consume 15 and Reader receives 45. Below the supported floor the layout remains
-structurally reachable but may truncate article content like the rest of the application; it must
-still avoid a compositor exception or horizontal overflow.
+The centre's 44 columns are a **comfort threshold**, not a hard CSS minimum. After all mounted side
+panes are collapsed, a terminal narrower than centre comfort plus the fixed grips keeps those grips
+and lets the centre consume the remaining width with `min-width: 0`; no grip disappears and no
+horizontal overflow is introduced. The supported live-verification floor is 60 columns: Read has
+three grips consuming 15 and gives Reader 45; management tabs have two grips consuming 10 and give
+their canvas 50. Below the supported floor the centre remains structurally reachable but may
+truncate content like the rest of the application; it must still avoid a compositor exception or
+horizontal overflow.
 
 If the user explicitly opens a responsively hidden pane, that pane becomes the temporary priority
 target at the current width. The preferred state is updated to open and persisted; the effective
@@ -213,16 +216,29 @@ Tree scopes remain All Sources, Unassigned, Watchlist, and Source. Smart-feed an
 produce one normalized `ReaderScope`; selecting either clears the visual selection in the other.
 There is never a separate “smart scope” and “tree scope” active at once.
 
-One shared scope-predicate builder must drive:
+One normalized `ReaderScope` contract exposes two related but distinct projections.
+
+Its **item predicate** drives:
 
 - item listing;
 - unread and Smart Feed counts;
 - mark-all-read;
 - search;
-- refresh eligibility;
 - pending-arrival counting.
 
 This is the guard against a badge saying one number while the list shows a different population.
+
+Its **refresh source universe** drives which sources are checked and never derives eligibility from
+items that already match the item predicate:
+
+- Source refreshes that active, non-paused source.
+- Watchlist refreshes its active, non-paused member sources.
+- Unassigned refreshes active, non-paused unassigned sources.
+- All Sources refreshes all active, non-paused local sources.
+- All Unread, Today, and Starred also refresh all active, non-paused local sources, because an empty
+  Smart Feed must still be able to discover its first matching item.
+
+Search text and the Unread/All display filter never narrow the refresh source universe.
 
 Publication dates are mixed timezone-aware and naive strings. One shared effective-date helper
 parses defensively, treats naive values according to the existing Watchlists convention, falls back
@@ -323,9 +339,10 @@ path running off the UI thread. The UI states that fallback search is active. It
 entire database on the event loop or search only the currently loaded page while implying global
 scope coverage.
 
-Refresh checks active, non-paused sources in the current scope through the existing run pipeline,
-skips sources already running, caps concurrency, and produces one aggregate completion notice.
-It does not create per-source notification noise.
+Refresh checks the normalized scope's refresh source universe through the existing run pipeline,
+skips sources already running, caps concurrency, and produces one aggregate completion notice. It
+does not create per-source notification noise. Smart Feed refresh therefore remains useful when the
+current Smart Feed has zero matching items.
 
 ## State transitions and data flow
 
@@ -424,12 +441,13 @@ split it into the following dependency-ordered, independently verifiable slices:
    resolution, shared Inspector behavior, and versioned layout normalization. This slice delivers
    the requested collapse behavior across all Watchlists tabs without changing item presentation.
 2. **Contextual Feed Items and Reader actions.** Replace the Read `DataTable` with the stable,
-   date-grouped contextual list; add semantic restoration, deterministic snapshot ordering,
-   Star/Unstar, protected-status `m`, Open in browser, and the three-action Reader header. Depends
-   on slice 1's permanent host and state-restoration seams.
+   date-grouped contextual list; add the shared effective-date helper, semantic restoration,
+   deterministic snapshot ordering, Star/Unstar, protected-status `m`, Open in browser, and the
+   three-action Reader header. Depends on slice 1's permanent host and state-restoration seams.
 3. **Smart Feeds and scoped search.** Add normalized Smart Feed scopes/counts, the shared date and
-   predicate contracts, Starred/Today/All Unread navigation, FTS search, and bounded fallback.
-   Depends on slice 2's article list and star writer.
+   predicate contracts, Starred/Today/All Unread navigation, FTS search, and bounded fallback;
+   reuse slice 2's effective-date helper for Today. Depends on slice 2's article list and star
+   writer.
 4. **Scoped refresh and stable-arrival polish.** Add concurrency-limited scope refresh, aggregate
    completion feedback, high-water-mark arrival counting, the new-items affordance, narrow-width
    live polish, and programme-level regression/documentation close-out. Depends on slices 1–3.
@@ -447,13 +465,16 @@ the whole programme.
 - Versioned normalization, including unknown/Reader values and failed atomic writes.
 - Effective layout at width boundaries derived from declared minimums.
 - Responsive priority Inspector → Navigation → Feed Items.
+- Management responsive priority Inspector → Navigation with only two mounted grips.
 - Explicit reopening of each responsively hidden pane.
 - All-grips-collapsed behavior from the 60-column supported floor through sub-floor degradation.
 - Repeated shrink/expand cycles and Article Focus exact restoration.
 
 ### Database and services
 
-- Shared scope predicates make counts, list, search, bulk-read, refresh, and arrival detection agree.
+- Normalized scope projections make item predicates agree across counts/list/search/bulk-read/
+  arrivals while refresh uses the specified source universe.
+- Refresh source-universe tests prove empty Smart Feeds still check every eligible local source.
 - All Unread, Today, Starred, Watchlist, Source, All Sources, and Unassigned semantics.
 - Mixed aware/naive/missing/future publication dates.
 - Star persistence across item re-fetch/upsert.
