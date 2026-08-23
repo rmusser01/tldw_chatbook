@@ -20,9 +20,11 @@ import pytest
 from Tests.UI.test_console_left_rail import make_console_pilot
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_selection_menu import ConsoleSelectionMenu
+from tldw_chatbook.Widgets.Console.console_session_surface import ConsoleSessionSurface
 from tldw_chatbook.Widgets.Console.console_transcript import (
     ConsoleTranscript,
     ConsoleTranscriptMessage,
+    console_transcripts_on_screen,
 )
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
@@ -142,6 +144,47 @@ async def test_active_selection_without_a_menu_is_still_cleared():
 
         assert transcript.selection_manager.state.selection is None
         assert transcript._selection_origin_row is None
+        assert row.get_selection_text() == ""
+
+
+@pytest.mark.asyncio
+async def test_a_recomposed_transcript_replaces_the_old_one_with_no_bookkeeping():
+    """The staleness arm: recompose swaps the transcript, the gate follows.
+
+    A cached transcript reference would go stale exactly here (recompose
+    tears the old widget out and builds a new one). Nothing invalidates
+    anything: the registry is only a candidate set, and attachment is
+    re-derived from the live DOM on every read, so the detached instance
+    drops out and the fresh one is already in.
+    """
+    async with make_console_pilot() as pilot:
+        screen = pilot.app.screen
+        old = screen.query_one("#console-native-transcript", ConsoleTranscript)
+        assert console_transcripts_on_screen(screen) == [old]
+
+        # The session surface owns the transcript surface, which builds the
+        # transcript in its constructor -- recomposing THAT is what swaps the
+        # widget out (the transcript surface re-yields its own instance).
+        session_surface = old.parent.parent if old.parent is not None else None
+        assert isinstance(session_surface, ConsoleSessionSurface)
+        await session_surface.recompose()
+        await pilot.pause()
+
+        new = screen.query_one("#console-native-transcript", ConsoleTranscript)
+        assert new is not old  # the recompose really did swap the widget
+        assert console_transcripts_on_screen(screen) == [new]
+
+        # ...and the dismissal cleans the LIVE transcript, not the corpse.
+        row = await _seed_row(pilot, new)
+        new.selection_manager.begin_drag(row.id, 0)
+        new.selection_manager.extend_drag(row.id, 4)
+        row.set_selection_range(0, 4)
+        new._selection_origin_row = row
+
+        await pilot.click("#console-native-composer")
+        await pilot.pause()
+
+        assert new.selection_manager.state.selection is None
         assert row.get_selection_text() == ""
 
 
