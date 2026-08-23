@@ -31,10 +31,10 @@
   Replace the old Reader/Content toggle and centre-solo assertions in `test_region_layout.py` with tests that pin:
 
   - `COLLAPSIBLE_REGIONS == (LEFT_RAIL, ITEMS, RIGHT_RAIL)`;
-  - `CONTENT` remains in display order but cannot be toggled;
+  - the new strict preferred-layout toggle rejects `CONTENT`;
   - Navigation, Feed Items, and Inspector toggle independently;
-  - preferred state contains no solo or transient fields;
-  - `RegionLayout.toggle(Region.CONTENT)` raises `ValueError`.
+  - the responsive resolver never creates or persists solo/transient state;
+  - the legacy `toggle`/`solo` accessors remain only as transitional compatibility until Task 7.
 
 - [ ] **Step 2: Add failing boundary tests for the effective-layout resolver.**
 
@@ -64,12 +64,17 @@
 
   - keep `Region` values stable for existing factories and persisted strings;
   - define `COLLAPSIBLE_REGIONS`, Read/management mounted-side-pane order, fixed grip width 5, pane minimums 24/32/30, centre comfort 44, and default collapse priorities;
-  - reduce `RegionLayout` to an immutable `collapsed: frozenset[Region]` preferred/effective value;
-  - make `toggle()` reject non-collapsible regions;
+  - add a strict `toggle_preferred()` operation that rejects non-collapsible regions;
   - add `resolve_effective_layout(preferred, *, width, read_mode, article_focus, priority_target) -> RegionLayout`;
   - start from preferred collapses, apply Article Focus first, otherwise collapse expanded mounted panes until the declared sum fits;
   - reorder the collapse candidates so `priority_target` is last, and never collapse `CONTENT` or a management canvas;
   - once every side pane is collapsed, return that layout even below the comfort floor so CSS may give the permanent centre `min-width: 0`.
+
+  Keep the old `solo_region`, `_pre_solo`, `solo()`, `toggle()`, and
+  `collapsed_for_persistence()` members temporarily so the live screen remains importable and
+  composable through Tasks 1–6. Mark them as migration-only in their docstrings; the resolver and
+  store must not create new solo state. Task 7 removes them immediately after migrating the final
+  screen call sites and tests to preferred/effective state.
 
 - [ ] **Step 5: Run the pure tests.**
 
@@ -185,6 +190,8 @@
 **Files:**
 
 - Modify: `tldw_chatbook/UI/Watchlists_Modules/watchlists_workbench.py`
+- Modify: `tldw_chatbook/css/features/_watchlists.tcss`
+- Regenerate: `tldw_chatbook/css/tldw_cli_modular.tcss`
 - Modify: `Tests/Watchlists/test_watchlists_workbench.py`
 - Modify: `Tests/Watchlists/test_watchlists_scoped_rebuilds.py`
 
@@ -214,7 +221,9 @@
   In `watchlists_workbench.py`:
 
   - change the root to `Vertical`: optional `#wl-centre-status` first, then a `Horizontal#wl-workbench-body`;
-  - replace the implicit `hidden` centre-region interpretation with `read_mode: bool` supplied by the screen;
+  - add explicit `read_mode: bool` while temporarily accepting the current `hidden=` constructor/
+    `apply_section_view` keyword as a compatibility adapter (`CONTENT` hidden means management;
+    otherwise Read), because the live screen migrates in Task 7;
   - in Read, always mount the `Region.CONTENT` factory as the flexing centre and conditionally mount Navigation/Feed Items/Inspector bodies around their always-mounted grips;
   - in management, always mount the `Region.ITEMS` factory as the centre canvas with only Navigation and Inspector grips;
   - keep body ids (`#wl-region-<value>`) and factory-based rebuild safety where existing screen/test contracts rely on them;
@@ -222,14 +231,31 @@
   - remove generic collapsed-header/suffix/sole-centre machinery;
   - keep `refresh_region_content`, `refresh_header_content`, and `apply_section_view` incremental—no `recompose=True` regression.
 
+  The compatibility adapter must be covered by a real-screen scoped-rebuild test and removed in
+  Task 7 when the last `hidden=` call sites are replaced. This makes the Task 4 checkpoint runnable
+  rather than leaving the screen and workbench APIs out of sync.
+
+  In the same step, make the minimum structural CSS change required for this DOM to be usable:
+  vertical workbench root, horizontal `#wl-workbench-body`, flexing permanent centre, fixed
+  five-column grips, and the declared pane target/min widths. Remove the old vertical-stack/collapsed-
+  header selectors, regenerate `tldw_cli_modular.tcss`, and run the bundle-sync guard. Task 6 adds
+  exhaustive boundary/compositor coverage and any evidence-driven refinements; it must not be the
+  first commit in which the new DOM can render.
+
 - [ ] **Step 4: Run the focused workbench tests.**
 
-  Run the Step 2 command. Expected: pass except production CSS geometry that Task 6 intentionally updates.
+  Run the Step 2 command plus:
+
+  ```bash
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python tldw_chatbook/css/check_bundle_sync.py
+  ```
+
+  Expected: pass. Do not commit a workbench DOM that still depends on Task 6 to become renderable.
 
 - [ ] **Step 5: Commit the workbench composition.**
 
   ```bash
-  git add tldw_chatbook/UI/Watchlists_Modules/watchlists_workbench.py Tests/Watchlists/test_watchlists_workbench.py Tests/Watchlists/test_watchlists_scoped_rebuilds.py
+  git add tldw_chatbook/UI/Watchlists_Modules/watchlists_workbench.py tldw_chatbook/css/features/_watchlists.tcss tldw_chatbook/css/tldw_cli_modular.tcss Tests/Watchlists/test_watchlists_workbench.py Tests/Watchlists/test_watchlists_scoped_rebuilds.py
   git commit -m "feat(watchlists): anchor Reader in horizontal workbench"
   ```
 
@@ -254,6 +280,8 @@
   - change items expose Full page and Previous snapshot through Inspector and still post the existing snapshot-view request;
   - Reader has no Expand/Restore button because `Z` owns Article Focus;
   - the footer's position and Next unread affordance remain unchanged.
+  - both the keyboard and button Open paths validate first, schedule the actual
+    `webbrowser.open` call on a thread worker, and report a worker failure without disturbing Reader.
 
 - [ ] **Step 2: Run the focused Reader/Inspector tests and confirm they fail.**
 
@@ -270,7 +298,9 @@
   - render Full page/Previous snapshot Inspector buttons only for a selected `content_kind == "change"` item;
   - keep the screen's existing snapshot modal handler but import the message from Inspector;
   - remove the obsolete expand-reader handler and `_sync_reader_expanded_state` calls;
-  - retain the existing shared screen handlers for status, star, open, ingest, and queue so semantics do not fork.
+  - retain the existing shared screen handlers for status, star, open, ingest, and queue so semantics do not fork;
+  - split `_open_item_in_browser` into UI-thread validation/dispatch and a thread worker that calls
+    `webbrowser.open`, then acknowledges failure through `call_from_thread`.
 
 - [ ] **Step 4: Run the focused Reader/Inspector tests.**
 
@@ -378,14 +408,24 @@
 - [ ] **Step 5: Implement screen-owned preferred/effective state.**
 
   - keep `region_layout` as the persisted preferred `RegionLayout` to minimize call-site churn;
-  - add non-persisted `effective_region_layout`, `_article_focus_active`, and `_responsive_priority_target` state;
+  - add non-persisted instance state for the effective layout,
+    `_article_focus_active`, and `_responsive_priority_target` (do not add another class-level
+    reactive default merely to hold derived state);
   - centralize `resolve_effective_layout(...)` in `_recompute_effective_layout`, called from mount, `Resize`, section switches, preferred toggles, and Article Focus changes;
   - pass `read_mode=self.active_section == "items"` and only the effective layout to `WatchlistsWorkbench`/`apply_section_view`;
   - clear the priority target when the full preferred layout fits again or the target is manually collapsed;
-  - implement manual grip action from effective state: open/protect when effectively collapsed, close when effectively open;
+  - implement manual grip action from effective state: capture the grip's requested action before
+    changing Article Focus; if it requested Open, exit focus and keep/open the preferred pane plus
+    its priority target rather than accidentally closing the now-restored pane; if it requested
+    Close, close the preferred pane and clear its priority target;
   - replace `action_solo_region` with `action_article_focus`; bind `Z` to Article Focus and update the binding label;
   - ensure only preferred manual gestures call `_schedule_layout_persist`;
   - hand focus to the relevant grip before an effectively hidden body is removed.
+
+  At the end of this step, remove the Task 1 legacy `solo_region`, `_pre_solo`, `solo()`, permissive
+  `toggle()`, and `collapsed_for_persistence()` compatibility plus Task 4's `hidden=` adapter. Change
+  every remaining screen/workbench/store call site to strict preferred/effective APIs in the same
+  commit, and run an import/compose smoke test before the broader controller suite.
 
 - [ ] **Step 6: Make ordinary preference persistence acknowledge success.**
 
@@ -415,11 +455,19 @@
 
   Open Inspector on Read, visit Sources/Runs/Rules/Notifications/Artifacts/Overview, assert the same preferred Inspector state and correct `<---`/`--->` grip action in each tab, then collapse Inspector on a management tab and assert Read sees it collapsed. Also assert each management centre canvas remains mounted and Feed Items/grip are absent.
 
-- [ ] **Step 2: Add an isolated-config restart test.**
+- [ ] **Step 2: Pin and implement honest Server-backed Read recovery.**
+
+  Add a test that enters Read with `runtime_backend == "server"`, asserts the permanent centre shows
+  the existing local-only explanation plus **Switch to Local**, and spies that no local item, Smart
+  Feed count, search, or refresh query is issued under the Server label. Add Read to the screen's
+  local-only section policy, keep the backend selector truthful/disabled for that state, and route
+  Switch to Local through the normal backend change/load path before mounting local rows.
+
+- [ ] **Step 3: Add an isolated-config restart test.**
 
   Under a temporary `HOME`, `XDG_CONFIG_HOME`, and `TLDW_CONFIG_PATH`, save a non-default preferred combination, construct a fresh screen/app, and assert the same three preferences return while responsive/Article Focus state does not. Assert a legacy `content` collapse is removed and does not return after the versioned write.
 
-- [ ] **Step 3: Update help/footer copy and test it.**
+- [ ] **Step 4: Update help/footer copy and test it.**
 
   In `BINDINGS` and `action_show_help`, advertise only implemented actions:
 
@@ -430,7 +478,7 @@
 
   Do not bind any terminal-convention or global reserved key prohibited by ADR-031.
 
-- [ ] **Step 4: Run the full focused Watchlists/destination shell set.**
+- [ ] **Step 5: Run the full focused Watchlists/destination shell set.**
 
   ```bash
   /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Watchlists Tests/UI/test_destination_shells.py -q
@@ -438,7 +486,7 @@
 
   When an old test fails only because it asserts a retired collapsed header, vertical centre cap, Reader collapse, or solo contract, update it to the approved permanent-centre contract. Do not weaken unrelated Smart Feed, list, mutation, pagination, or snapshot assertions.
 
-- [ ] **Step 5: Commit the cross-tab/help closeout.**
+- [ ] **Step 6: Commit the cross-tab/help closeout.**
 
   ```bash
   git add tldw_chatbook/UI/Screens/watchlists_collections_screen.py Tests/Watchlists Tests/UI/test_destination_shells.py
@@ -486,6 +534,6 @@
 - [ ] **Step 6: Commit documentation/task closeout.**
 
   ```bash
-  git add Docs/superpowers/specs/2026-08-23-watchlists-netnewswire-reader-collapsible-rails-design.md backlog/decisions/042-watchlists-reader-first-ia.md 'backlog/tasks/task-21281 - Make-Watchlists-Reader-permanent-with-independently-collapsible-panes.md'
+  git add Docs/superpowers/specs/2026-08-23-watchlists-netnewswire-reader-collapsible-rails-design.md backlog/decisions/042-watchlists-reader-first-ia.md backlog/docs/lessons-testing-evidence.md backlog/docs/lessons-live-verification.md 'backlog/tasks/task-21281 - Make-Watchlists-Reader-permanent-with-independently-collapsible-panes.md'
   git commit -m "docs(watchlists): close collapsible reader layout task"
   ```

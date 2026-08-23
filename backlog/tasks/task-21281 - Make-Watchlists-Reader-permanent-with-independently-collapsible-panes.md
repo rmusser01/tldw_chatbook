@@ -35,7 +35,9 @@ Replace the Watchlists Read screen's vertically stacked centre with a NetNewsWir
 - [ ] #8 Layout changes preserve selected item, active scope, search/filter/page state, list focus/visible offset, and Reader scroll; scope changes do not auto-select an item.
 - [ ] #9 Production CSS renders target/minimum pane widths and exact five-column grips without horizontal overflow at declared boundaries and the 60-column supported floor.
 - [ ] #10 Reader's always-visible action row contains only Star/Unstar, Mark read/unread, and Open in browser; advanced Ingest and Queue actions remain available through Inspector.
-- [ ] #11 Focused Watchlists/UI tests, CSS bundle integrity, lint/static checks, isolated-profile live keyboard/pointer verification, and self-review pass; documentation, ADR link, task notes, and acceptance criteria are complete.
+- [ ] #11 Open in browser accepts only valid HTTP(S) URLs and performs the operating-system browser call off the Textual UI thread, with honest failure feedback.
+- [ ] #12 Server-backed Read shows the local-only recovery state and Switch to Local without issuing local Reader, Smart Feed, search, or refresh queries under a Server label.
+- [ ] #13 Focused Watchlists/UI tests, CSS bundle integrity, lint/static checks, isolated-profile live keyboard/pointer verification, and self-review pass; documentation, ADR link, task notes, and acceptance criteria are complete.
 <!-- AC:END -->
 
 ## Implementation Plan
