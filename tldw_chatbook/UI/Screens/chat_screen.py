@@ -25,7 +25,6 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
-from textual.color import Color
 from textual.events import (
     Click,
     DescendantBlur,
@@ -57,8 +56,8 @@ from .provider_model_resolution import (
 )
 from .settings_config_models import SettingsCategoryId
 from ..Console_Modules.frame import (
-    CONSOLE_FRAME_BORDER,
     frame_console_region,
+    sync_console_focus_paint,
 )
 from ..Console_Modules.status_row import (
     STATUS_CHIPS_POSITION_ABOVE,
@@ -571,17 +570,8 @@ CONSOLE_COMPACT_HEIGHT_ROWS = 35
 #: TASK-365: trailing affordance marking the clickable rail system-prompt line as
 #: interactive (matches the ▸ the rail uses for its other actionable controls).
 CONSOLE_RAIL_SYSTEM_EDIT_AFFORDANCE = "▸"
-# CONSOLE_FRAME_COLOR / CONSOLE_FRAME_BORDER / CONSOLE_QUIET_FRAME_BORDER now
-# live in `UI.Console_Modules.frame` (wave-1 console decomposition, task 2)
-# alongside `frame_console_region`, which is their only consumer that needs
-# them as a module-level default; imported above for the other call sites in
-# this file that still reference them directly.
-# TASK-359/TASK-20937.3: the F6 rail stop focuses a control inside an
-# inline-framed edge region. CSS :focus-within cannot recolor that divider,
-# so Python repaints only the divider the rail already owns; a class supplies
-# the accompanying non-color control cue without changing geometry.
-CONSOLE_FOCUS_FRAME_COLOR = "#0178D4"
-CONSOLE_FOCUS_FRAME_BORDER = ("solid", CONSOLE_FOCUS_FRAME_COLOR)
+# Frame and focus-border constants live with their rendering helpers in
+# `UI.Console_Modules.frame`; this screen imports only those helpers.
 CONSOLE_START_HERE_COPY = ""
 CONSOLE_ACTION_HINTS_COPY = ""
 CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL = "Set up provider"
@@ -2259,61 +2249,50 @@ class ChatScreen(BaseAppScreen):
             bool(getattr(getattr(event, "input", None), "disabled", False)),
         )
 
-    @on(WorkspaceTreeWorkspaceSelected)
-    def on_workspace_tree_workspace_selected(
-        self, event: WorkspaceTreeWorkspaceSelected
-    ) -> None:
-        event.stop()
-        self._workspace.activate_workspace_id(event.workspace_id)
-
-    @on(WorkspaceTreeExpansionChanged)
-    def on_workspace_tree_expansion_changed(
-        self, event: WorkspaceTreeExpansionChanged
-    ) -> None:
-        event.stop()
-        self._workspace.transition_workspace_tree_expansion(
-            event.workspace_id,
-            expanded=event.expanded,
-        )
-
-    @on(WorkspaceTreeStarRequested)
-    def on_workspace_tree_star_requested(
-        self, event: WorkspaceTreeStarRequested
-    ) -> None:
-        event.stop()
-        self._workspace._toggle_console_conversation_star(
-            event.conversation_id,
-            starred=event.starred,
-            conversation_title="",
-        )
-
-    @on(WorkspaceTreeLoadMoreRequested)
-    def on_workspace_tree_load_more_requested(
-        self, event: WorkspaceTreeLoadMoreRequested
-    ) -> None:
-        event.stop()
-        self._workspace.request_next_workspace_tree_page(event.workspace_id)
-
-    @on(WorkspaceTreeRetryRequested)
-    def on_workspace_tree_retry_requested(
-        self, event: WorkspaceTreeRetryRequested
-    ) -> None:
-        event.stop()
-        self.run_worker(
-            self._workspace.retry_workspace_tree_page(event.workspace_id),
-            group=f"console-workspace-page-{event.workspace_id}",
-            exclusive=False,
-        )
-
     @on(WorkspaceTreeConversationSelected)
-    async def on_workspace_tree_conversation_selected(
-        self, event: WorkspaceTreeConversationSelected
+    @on(WorkspaceTreeRetryRequested)
+    @on(WorkspaceTreeLoadMoreRequested)
+    @on(WorkspaceTreeStarRequested)
+    @on(WorkspaceTreeExpansionChanged)
+    @on(WorkspaceTreeWorkspaceSelected)
+    async def on_workspace_tree_action(
+        self,
+        event: (
+            WorkspaceTreeConversationSelected
+            | WorkspaceTreeRetryRequested
+            | WorkspaceTreeLoadMoreRequested
+            | WorkspaceTreeStarRequested
+            | WorkspaceTreeExpansionChanged
+            | WorkspaceTreeWorkspaceSelected
+        ),
     ) -> None:
         event.stop()
-        await self._open_console_workspace_conversation(
-            event.conversation_id,
-            target_workspace_id=event.workspace_id,
-        )
+        if isinstance(event, WorkspaceTreeWorkspaceSelected):
+            self._workspace.activate_workspace_id(event.workspace_id)
+        elif isinstance(event, WorkspaceTreeExpansionChanged):
+            self._workspace.transition_workspace_tree_expansion(
+                event.workspace_id,
+                expanded=event.expanded,
+            )
+        elif isinstance(event, WorkspaceTreeStarRequested):
+            self._workspace._toggle_console_conversation_star(
+                event.conversation_id,
+                starred=event.starred,
+                conversation_title="",
+            )
+        elif isinstance(event, WorkspaceTreeLoadMoreRequested):
+            self._workspace.request_next_workspace_tree_page(event.workspace_id)
+        elif isinstance(event, WorkspaceTreeRetryRequested):
+            self.run_worker(
+                self._workspace.retry_workspace_tree_page(event.workspace_id),
+                group=f"console-workspace-page-{event.workspace_id}",
+                exclusive=False,
+            )
+        else:
+            await self._workspace.open_console_workspace_conversation(
+                event.conversation_id,
+                target_workspace_id=event.workspace_id,
+            )
 
     @on(Select.Changed, "#compact-api-provider")
     def on_console_compact_provider_changed(self, event: Select.Changed) -> None:
@@ -3809,17 +3788,6 @@ class ChatScreen(BaseAppScreen):
             self._workspace._open_console_workspace_scope_picker(),
             exclusive=True,
             group="console-workspace-scope-open",
-        )
-
-    @on(Button.Pressed, "#console-workspace-search-retry")
-    def on_console_workspace_search_retry(self, event: Button.Pressed) -> None:
-        """Retry only the independent Workspaces search lane."""
-
-        event.stop()
-        self.run_worker(
-            self._workspace.retry_workspace_tree_search(),
-            group="console-workspace-tree-search",
-            exclusive=True,
         )
 
     # Reactive property for sidebar state persistence
@@ -10211,21 +10179,6 @@ class ChatScreen(BaseAppScreen):
         if not isinstance(collapsed_groups, dict):
             browser_config["collapsed_groups"] = {}
         return browser_config
-
-    @work(thread=True)
-    def _persist_console_workspace_tree_expansion_preferences(
-        self, workspace_ids: list[str]
-    ) -> None:
-        """Write native Workspace Tree disclosure preferences off the UI loop."""
-
-        try:
-            save_setting_to_cli_config(
-                "console.conversation_browser",
-                "expanded_workspace_ids",
-                list(workspace_ids),
-            )
-        except Exception as exc:
-            logger.warning("Failed to persist Workspace Tree disclosure: {}", exc)
 
     def _console_conversation_browser_collapse_preferences(self) -> dict[str, bool]:
         """Return persisted grouped browser collapse preferences."""
@@ -17880,8 +17833,11 @@ class ChatScreen(BaseAppScreen):
             if target.display and button.display:
                 button.focus()
 
+    @on(DescendantBlur)
     @on(DescendantFocus)
-    def _paint_console_rail_focus_frame(self, event: DescendantFocus) -> None:
+    def _paint_console_rail_focus_frame(
+        self, event: DescendantFocus | DescendantBlur
+    ) -> None:
         """Paint dimension-stable workbench focus cues.
 
         TASK-20937.3: expanded rails and collapsed handles keep the exact
@@ -17890,65 +17846,10 @@ class ChatScreen(BaseAppScreen):
         the only cue. The transcript owns neither divider; its class marks
         only the stable title row.
         """
-        self._sync_console_focus_paint(event.widget)
-
-    @on(DescendantBlur)
-    def _clear_console_rail_focus_frame(self, _event: DescendantBlur) -> None:
-        """Recompute paint after Textual commits replacement focus."""
-        self._sync_console_focus_paint_from_current()
-
-    def _sync_console_focus_paint_from_current(self) -> None:
-        """Use current focus identity so a stale blur cannot clear a new cue."""
-        self._sync_console_focus_paint(self.app.focused)
-
-    def _sync_console_focus_paint(self, focused: Widget | None) -> None:
-        """Make Console workbench focus paint match ``focused`` exactly."""
-        try:
-            transcript_region = self.query_one("#console-transcript-region")
-        except QueryError:
-            pass
-        else:
-            transcript_region.set_class(
-                self._is_descendant_or_self(focused, transcript_region),
-                "console-transcript-region-focused",
-            )
-        for region_id, accent_edge, control_id in (
-            ("console-left-rail", "right", "console-context-rail-collapse"),
-            (
-                "console-context-rail-handle",
-                "right",
-                "console-context-rail-open",
-            ),
-            ("console-right-rail", "left", "console-inspector-rail-collapse"),
-            (
-                "console-inspector-rail-handle",
-                "left",
-                "console-inspector-rail-open",
-            ),
-        ):
-            try:
-                framed = self.query_one(f"#{region_id}")
-            except QueryError:
-                continue
-            focused_within = self._is_descendant_or_self(focused, framed)
-            framed.set_class(focused_within, "console-edge-region-focused")
-            try:
-                focus_control = framed.query_one(f"#{control_id}", Button)
-            except QueryError:
-                focus_control = None
-            if focus_control is not None:
-                focus_control.styles.text_style = (
-                    "bold underline" if focused_within else "none"
-                )
-            border = (
-                CONSOLE_FOCUS_FRAME_BORDER if focused_within else CONSOLE_FRAME_BORDER
-            )
-            current_kind, current_color = getattr(
-                framed.styles, f"border_{accent_edge}"
-            )
-            if current_kind == border[0] and current_color == Color.parse(border[1]):
-                continue
-            setattr(framed.styles, f"border_{accent_edge}", border)
+        focused = (
+            event.widget if isinstance(event, DescendantFocus) else self.app.focused
+        )
+        sync_console_focus_paint(self, focused)
 
     #: Task 4 fix-round-2 (I3): how long `_recover_stuck_console_send_stash`
     #: waits before treating `_console_pending_send_stash` as abandoned.
@@ -19506,74 +19407,6 @@ class ChatScreen(BaseAppScreen):
             event.allow, event.remember, request_id=event.request_id
         )
 
-    async def _open_console_workspace_conversation(
-        self,
-        conversation_id: str,
-        *,
-        row_key: str = "",
-        target_workspace_id: str | None = None,
-    ) -> None:
-        """Open one saved conversation for both the flat browser and Tree."""
-
-        conversation_id = str(conversation_id or "").strip()
-        browser_row = self._workspace._find_console_browser_row(
-            row_key or conversation_id,
-            conversation_id=conversation_id,
-        )
-        if browser_row is not None:
-            self._workspace._activate_console_workspace_for_browser_row(browser_row)
-            row_conversation_id = str(browser_row.conversation_id or "").strip()
-            session_id = self._session._console_session_id_for_browser_row(browser_row)
-        else:
-            row_conversation_id = conversation_id
-            session_id = self._workspace._console_session_id_for_workspace_conversation(
-                conversation_id
-            )
-        if session_id is None:
-            if not row_conversation_id:
-                self.app_instance.notify(
-                    "This conversation row is no longer available.",
-                    severity="warning",
-                )
-                return
-            self._set_console_conversation_row_loading(row_conversation_id, True)
-            try:
-                resumed = await self._workspace._resume_console_workspace_conversation(
-                    row_conversation_id,
-                    target_scope_type=(
-                        browser_row.scope_type
-                        if browser_row is not None
-                        else ("workspace" if target_workspace_id else None)
-                    ),
-                    target_workspace_id=(
-                        browser_row.workspace_id
-                        if browser_row is not None
-                        else target_workspace_id
-                    ),
-                )
-            finally:
-                self._set_console_conversation_row_loading(row_conversation_id, False)
-            if resumed:
-                await self._workspace._refresh_console_conversation_browser_after_selection()
-                return
-            if resumed is None:
-                return
-            self._mark_console_conversation_row_broken(row_conversation_id)
-            self.app_instance.notify(
-                "This saved conversation could not be loaded - its record is missing.",
-                severity="warning",
-            )
-            return
-        controller = self._ensure_console_chat_controller()
-        if controller.store.active_session_id != session_id:
-            if browser_row is None:
-                self._workspace._set_active_workspace_for_console_session(session_id)
-            controller.switch_session(session_id)
-            await self._sync_native_console_chat_ui()
-            self._sync_console_temporary_chip()
-        self._focus_console_composer_if_needed(force=True)
-        await self._workspace._refresh_console_conversation_browser_after_selection()
-
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """
         Handle button events at the screen level.
@@ -19666,9 +19499,17 @@ class ChatScreen(BaseAppScreen):
             event.stop()
             self._workspace.clear_console_conversation_browser_search()
             return
+        if button_id == "console-workspace-search-retry":
+            event.stop()
+            self.run_worker(
+                self._workspace.retry_workspace_tree_search(),
+                group="console-workspace-tree-search",
+                exclusive=True,
+            )
+            return
         if button_id and button_id.startswith("console-workspace-conversation-"):
             event.stop()
-            await self._open_console_workspace_conversation(
+            await self._workspace.open_console_workspace_conversation(
                 str(getattr(event.button, "conversation_id", "") or ""),
                 row_key=str(getattr(event.button, "row_key", "") or ""),
             )

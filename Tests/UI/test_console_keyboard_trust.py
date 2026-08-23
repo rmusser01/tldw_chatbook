@@ -27,7 +27,7 @@ from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_switcher_state import (
     ConsoleConversationBrowserInputRow,
 )
-from tldw_chatbook.UI.Screens.chat_screen import (
+from tldw_chatbook.UI.Console_Modules.frame import (
     CONSOLE_FOCUS_FRAME_BORDER,
     CONSOLE_FRAME_BORDER,
 )
@@ -105,9 +105,7 @@ async def test_composer_pageup_scrolls_transcript_keyboard_only():
         await console._sync_native_console_chat_ui()
         await pilot.pause()
 
-        transcript = console.query_one(
-            "#console-native-transcript", ConsoleTranscript
-        )
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
         assert transcript.max_scroll_y > 0
         bottom = transcript.scroll_y
 
@@ -236,17 +234,13 @@ async def test_console_shell_drops_header_at_small_height():
         await _wait_for_selector(console, pilot, "#console-shell")
         shell = console.query_one("#console-shell")
 
-        console._adapt_console_shell_to_height(
-            Resize(Size(97, 30), Size(97, 30))
-        )
+        console._adapt_console_shell_to_height(Resize(Size(97, 30), Size(97, 30)))
         await pilot.pause()
         assert shell.has_class("-console-compact"), (
             "small height must drop the header banner to preserve the composer"
         )
 
-        console._adapt_console_shell_to_height(
-            Resize(Size(125, 38), Size(125, 38))
-        )
+        console._adapt_console_shell_to_height(Resize(Size(125, 38), Size(125, 38)))
         await pilot.pause()
         assert not shell.has_class("-console-compact"), (
             "ample height must restore the header banner"

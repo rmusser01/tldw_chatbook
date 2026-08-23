@@ -1,6 +1,6 @@
 """Workspace and conversation-browser ownership for the Console.
 
-`ConsoleWorkspaceController` owns 56 non-DOM methods covering Workspace
+`ConsoleWorkspaceController` owns 57 non-DOM methods covering Workspace
 policy and lifecycle, scope selection, persisted-conversation resume, the
 named-workspace Tree projection, and the flat Default/unassigned browser.
 Workspaces and Conversations own independent search attempts; page generations
@@ -45,6 +45,7 @@ from ...Chat.console_conversation_hydration import (
     load_console_conversation_tree,
 )
 from ...Chat.rag_scope import RagScope
+from ...config import save_setting_to_cli_config
 from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ...Widgets.glyph_fallback import resolve_glyph
 from ...Widgets.Console import (
@@ -88,6 +89,21 @@ if TYPE_CHECKING:
 logger = logger.bind(module="ChatScreen")
 
 CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS = 2.0
+
+
+def persist_console_workspace_tree_expansion_preferences(
+    workspace_ids: list[str],
+) -> None:
+    """Write native Workspace Tree disclosure preferences off the UI loop."""
+
+    try:
+        save_setting_to_cli_config(
+            "console.conversation_browser",
+            "expanded_workspace_ids",
+            list(workspace_ids),
+        )
+    except Exception as exc:
+        logger.warning("Failed to persist Workspace Tree disclosure: {}", exc)
 
 
 class _UnknownMembership:
@@ -161,7 +177,7 @@ class ConsoleWorkspaceController:
     """Own Workspace lifecycle, resume, scope, and conversation browsing.
 
     The controller holds the canonical rich browser state and exposes the
-    legacy Workspace search shape only as a compatibility projection. Its 56
+    legacy Workspace search shape only as a compatibility projection. Its 57
     owned methods use explicit late-bound dependencies for non-Workspace
     services; Textual event binding, focus, and rendering remain on the screen.
     """
@@ -213,6 +229,12 @@ class ConsoleWorkspaceController:
         persist_workspace_tree_expansion_preferences: (
             Callable[[list[str]], None] | None
         ) = None,
+        session_id_for_browser_row: (
+            Callable[[ConsoleConversationBrowserInputRow], str | None] | None
+        ) = None,
+        ensure_chat_controller: Callable[[], Any] | None = None,
+        set_conversation_row_loading: Callable[[str, bool], None] | None = None,
+        mark_conversation_row_broken: Callable[[str], None] | None = None,
     ) -> None:
         """Bind canonical Workspace state and its late-bound dependencies.
 
@@ -264,6 +286,10 @@ class ConsoleWorkspaceController:
             screen_lifecycle_token_accessor: Return the current screen mount identity.
             persist_workspace_tree_expansion_preferences: Persist the exact Tree
                 disclosure set to durable Console configuration.
+            session_id_for_browser_row: Resolve an already-open session for a row.
+            ensure_chat_controller: Resolve or create the native chat controller.
+            set_conversation_row_loading: Paint persisted-row loading state.
+            mark_conversation_row_broken: Mark a missing persisted record.
         """
         self._screen = screen
         self.app_instance = app_instance
@@ -320,6 +346,18 @@ class ConsoleWorkspaceController:
         self._screen_lifecycle_token_accessor = screen_lifecycle_token_accessor
         self._persist_workspace_tree_expansion_preferences = (
             persist_workspace_tree_expansion_preferences
+        )
+        self._session_id_for_browser_row_fn = session_id_for_browser_row or (
+            lambda _row: None
+        )
+        self._ensure_chat_controller_fn = (
+            ensure_chat_controller or current_chat_controller_accessor
+        )
+        self._set_conversation_row_loading_fn = set_conversation_row_loading or (
+            lambda _conversation_id, _loading: None
+        )
+        self._mark_conversation_row_broken_fn = mark_conversation_row_broken or (
+            lambda _conversation_id: None
         )
 
         self._workspace_tree_search = _SearchAttemptState()
@@ -3127,6 +3165,76 @@ class ConsoleWorkspaceController:
         )
         if result.project_skills:
             maybe_offer_project_skills_import(self.app_instance, result.project_skills)
+
+    async def open_console_workspace_conversation(
+        self,
+        conversation_id: str,
+        *,
+        row_key: str = "",
+        target_workspace_id: str | None = None,
+    ) -> None:
+        """Open one saved conversation for both the flat browser and Tree."""
+
+        conversation_id = str(conversation_id or "").strip()
+        browser_row = self._find_console_browser_row(
+            row_key or conversation_id,
+            conversation_id=conversation_id,
+        )
+        if browser_row is not None:
+            self._activate_console_workspace_for_browser_row(browser_row)
+            row_conversation_id = str(browser_row.conversation_id or "").strip()
+            session_id = self._session_id_for_browser_row_fn(browser_row)
+        else:
+            row_conversation_id = conversation_id
+            session_id = self._console_session_id_for_workspace_conversation(
+                conversation_id
+            )
+        if session_id is None:
+            if not row_conversation_id:
+                self.app_instance.notify(
+                    "This conversation row is no longer available.",
+                    severity="warning",
+                )
+                return
+            self._set_conversation_row_loading_fn(row_conversation_id, True)
+            try:
+                resumed = await self._resume_console_workspace_conversation(
+                    row_conversation_id,
+                    target_scope_type=(
+                        browser_row.scope_type
+                        if browser_row is not None
+                        else ("workspace" if target_workspace_id else None)
+                    ),
+                    target_workspace_id=(
+                        browser_row.workspace_id
+                        if browser_row is not None
+                        else target_workspace_id
+                    ),
+                )
+            finally:
+                self._set_conversation_row_loading_fn(row_conversation_id, False)
+            if resumed:
+                await self._refresh_console_conversation_browser_after_selection()
+                return
+            if resumed is None:
+                return
+            self._mark_conversation_row_broken_fn(row_conversation_id)
+            self.app_instance.notify(
+                "This saved conversation could not be loaded - its record is missing.",
+                severity="warning",
+            )
+            return
+        controller = self._ensure_chat_controller_fn()
+        if controller.store.active_session_id != session_id:
+            if browser_row is None:
+                self._set_active_workspace_for_console_session(session_id)
+            controller.switch_session(session_id)
+            sync_result = self._sync_native_console_chat_ui_fn()
+            if inspect.isawaitable(sync_result):
+                await sync_result
+            self._sync_temporary_chip_fn()
+        self._focus_composer_if_needed_fn(force=True)
+        await self._refresh_console_conversation_browser_after_selection()
 
     # -- Workspace RAG-scope picker ------------------------------------------
 

@@ -81,7 +81,10 @@ from .retrieval import ConsoleRetrievalController
 from .session import ConsoleSessionController
 from .skill import ConsoleSkillController
 from .video import ConsoleVideoController
-from .workspace import ConsoleWorkspaceController
+from .workspace import (
+    ConsoleWorkspaceController,
+    persist_console_workspace_tree_expansion_preferences,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from ..Screens.chat_screen import ChatScreen
@@ -459,10 +462,30 @@ def build_console_controllers(
         ),
         screen_lifecycle_token_accessor=lambda: getattr(screen, "_task", screen),
         persist_workspace_tree_expansion_preferences=(
-            lambda workspace_ids: (
-                screen._persist_console_workspace_tree_expansion_preferences(
+            lambda workspace_ids: screen.run_worker(
+                lambda: persist_console_workspace_tree_expansion_preferences(
                     workspace_ids
+                ),
+                thread=True,
+                group="console-workspace-tree-preferences",
+                exclusive=True,
+            )
+        ),
+        session_id_for_browser_row=(
+            lambda row: screen._session._console_session_id_for_browser_row(row)
+        ),
+        ensure_chat_controller=lambda: screen._ensure_console_chat_controller(),
+        set_conversation_row_loading=(
+            lambda conversation_id, loading: (
+                screen._set_console_conversation_row_loading(
+                    conversation_id,
+                    loading,
                 )
+            )
+        ),
+        mark_conversation_row_broken=(
+            lambda conversation_id: screen._mark_console_conversation_row_broken(
+                conversation_id
             )
         ),
     )
