@@ -240,6 +240,12 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         self._frame_was_frozen = True
 
     def compose(self) -> ComposeResult:
+        """Compose the pet surface and its overlaid icon controls.
+
+        Returns:
+            ComposeResult: The frame, fold control, and close control.
+        """
+
         yield Static("", id="persona-buddy-frame")
         collapse = Button(
             "▾", id="persona-buddy-collapse", classes="persona-buddy-control"

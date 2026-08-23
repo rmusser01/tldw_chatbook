@@ -243,7 +243,7 @@
 
 **Files:**
 
-- Modify: `backlog/tasks/task-20938 - Repair-Persona-Buddy-restart-and-frame-sizing.md`
+- Modify: `backlog/tasks/task-20941 - Repair-Persona-Buddy-restart-and-frame-sizing.md`
 - Modify only if this incident adds durable new knowledge: `backlog/docs/lessons-live-verification.md` or `backlog/docs/lessons-testing-evidence.md`
 
 - [ ] **Step 1: Run the complete touched-component gate in a pre-import isolated environment**
@@ -292,7 +292,7 @@
   git diff --name-only origin/dev...HEAD
   ```
 
-  Expected: static checks pass; the file list contains only TASK-20938 planning/closeout plus the two production and two focused test files unless an explicitly documented lesson is warranted.
+  Expected: static checks pass; the file list contains only TASK-20941 planning/closeout plus the two production and two focused test files unless an explicitly documented lesson is warranted.
 
 - [ ] **Step 3: Clone the diagnostic fixture into a disposable UAT root**
 
@@ -357,16 +357,16 @@
 
 - [ ] **Step 8: Record closeout truthfully**
 
-  Update TASK-20938 through Backlog CLI: check all seven ACs only if every scoped gate is green, replace the provisional plan with the final plan link plus deviations, add concise Implementation Notes with RED/GREEN/mutation/static/full-app evidence, and set status `Done`. If the UAT reveals another independent defect, keep this task In Progress or file a separate collision-safe task before claiming completion.
+  Update TASK-20941 through Backlog CLI: check all seven ACs only if every scoped gate is green, replace the provisional plan with the final plan link plus deviations, add concise Implementation Notes with RED/GREEN/mutation/static/full-app evidence, and set status `Done`. If the UAT reveals another independent defect, keep this task In Progress or file a separate collision-safe task before claiming completion.
 
 - [ ] **Step 9: Verify and commit closeout**
 
   ```bash
-  backlog task 20938 --plain
+  backlog task 20941 --plain
   git diff --check
   git add \
-    'backlog/tasks/task-20938 - Repair-Persona-Buddy-restart-and-frame-sizing.md' \
-    Docs/superpowers/plans/2026-08-22-task-20938-persona-buddy-uat-repairs.md
+    'backlog/tasks/task-20941 - Repair-Persona-Buddy-restart-and-frame-sizing.md' \
+    Docs/superpowers/plans/2026-08-22-task-20941-persona-buddy-uat-repairs.md
   git commit -m "docs: complete Persona Buddy UAT repairs"
   git status --short --branch
   ```

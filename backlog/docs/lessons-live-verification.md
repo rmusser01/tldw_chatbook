@@ -1357,7 +1357,7 @@ the header before deciding whether a delta belongs to the task. Restore a
 timestamp-only runtime rebuild to the pre-UAT content; regenerate and commit it
 only when its source modules actually changed.
 
-## A recovery modal can complete while the owning run stays non-terminal (TASK-20938, 2026-08-22)
+## A recovery modal can complete while the owning run stays non-terminal (TASK-20941, 2026-08-22)
 
 **What happened.** Persona Buddy full-app UAT sent a real Console prompt through
 a disposable loopback provider. Console first opened the project-instructions

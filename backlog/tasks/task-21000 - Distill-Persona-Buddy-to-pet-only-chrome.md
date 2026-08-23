@@ -7,7 +7,7 @@ created_date: '2026-08-22 23:31'
 updated_date: '2026-08-22 23:48'
 labels: []
 dependencies:
-  - TASK-20938
+  - TASK-20941
 references:
   - Docs/superpowers/specs/2026-08-22-persona-buddy-pet-only-chrome-design.md
   - >-

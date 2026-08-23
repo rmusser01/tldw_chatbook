@@ -1,5 +1,5 @@
 ---
-id: TASK-20938
+id: TASK-20941
 title: Repair Persona Buddy restart and frame sizing
 status: Done
 assignee: []
@@ -10,11 +10,19 @@ dependencies:
   - TASK-19055
 references:
   - Docs/superpowers/specs/2026-08-22-persona-buddy-uat-repairs-design.md
-  - Docs/superpowers/plans/2026-08-22-task-20938-persona-buddy-uat-repairs.md
+  - Docs/superpowers/plans/2026-08-22-task-20941-persona-buddy-uat-repairs.md
   - >-
     backlog/decisions/074-portable-actor-packs-and-local-persona-visual-runtime.md
 priority: high
 ---
+
+## Renumbering provenance
+
+This task was originally authored as `TASK-20938`. After rebasing onto `dev` on
+2026-08-23, the older hardware-aware GGUF task retained that ID under the
+TASK-19601 owner rule, so this younger Buddy task moved to `TASK-20941`.
+Historical disposable UAT paths containing `task20938` retain their original
+names as evidence captured before the renumber.
 
 ## Description
 
@@ -40,7 +48,7 @@ ADR required: no
 ADR path: `backlog/decisions/074-portable-actor-packs-and-local-persona-visual-runtime.md`
 Reason: ADR-074 already defines Buddy preference persistence, native Textual rendering, exact runtime authority, and verification boundaries; this task repairs two implementation defects without changing those decisions.
 
-Executable plan: [Persona Buddy UAT Repairs Implementation Plan](../../Docs/superpowers/plans/2026-08-22-task-20938-persona-buddy-uat-repairs.md)
+Executable plan: [Persona Buddy UAT Repairs Implementation Plan](../../Docs/superpowers/plans/2026-08-22-task-20941-persona-buddy-uat-repairs.md)
 
 1. Project the effective Buddy table at the existing normalized-config boundary, with real-TOML startup and first-write TDD.
 2. Use the visible frame Static as the exact shared resolution/authority size, with real-CSS crop, resize, and hidden-state TDD.
@@ -88,4 +96,12 @@ value; the current file was preserved rather than guessing at a rollback. The UA
 also exposed the terminal-state recovery lesson recorded in
 `backlog/docs/lessons-live-verification.md`. No ADR change was required because the
 repairs preserve ADR-074's existing ownership and runtime boundaries.
+
+Landing remediation on 2026-08-23 renumbered this task from `TASK-20938` under
+the TASK-19601 older-arrival rule. The latest `dev` also carried a stale
+production-diagnostic inventory: six new FTS/migration/app diagnostics contain
+only fixed operational text, numeric row counts, or the incumbent migration
+DB-path/exception pattern, and one Console diagnostic only moved. No new secret,
+user-content, or URL interpolation was introduced; the reviewed generated
+inventory was refreshed so the required derived-artifact gate reproduces.
 <!-- SECTION:NOTES:END -->
