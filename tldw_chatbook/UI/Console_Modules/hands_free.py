@@ -145,6 +145,12 @@ from ...Chat.reply_sentence_sequencer import SentenceSequencer
 from ...Widgets.Console import ConsoleComposerBar
 
 if TYPE_CHECKING:
+    from ...TTS.profile_types import CharacterRef
+    from ...Widgets.Console.console_control_bar import (
+        ConsoleAutoSpeakChanged,
+        ConsoleAutoSpeakResumeRequested,
+        ConsoleAutoSpeakRetryRequested,
+    )
     from ..Screens.chat_screen import ChatScreen
 
 logger = logger.bind(module="ChatScreen")
@@ -270,6 +276,11 @@ class ConsoleHandsFreeController:
         run_pending_voice_action: Callable[[str | None], Any],
         realtime_session_accessor: Callable[[], Any],
         enter_realtime_loop: Callable[..., None],
+        request_auto_speak_enabled: Callable[[bool], None],
+        request_auto_speak_resume: Callable[[], None],
+        request_auto_speak_retry: Callable[[], None],
+        sync_auto_speak_controls: Callable[[bool, bool, bool], None],
+        sync_hands_free_state: Callable[[bool], None],
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
@@ -333,6 +344,11 @@ class ConsoleHandsFreeController:
                 the realtime engine's own entry point -- called only from
                 the fork (`_enter_console_hands_free_loop`), which picks
                 exactly one engine per loop entry.
+            request_auto_speak_enabled: Late-bound coordinator enable request.
+            request_auto_speak_resume: Late-bound coordinator resume request.
+            request_auto_speak_retry: Late-bound coordinator retry request.
+            sync_auto_speak_controls: Presentation-only auto-speak state edge.
+            sync_hands_free_state: Presentation-only Hands-free state edge.
         """
         self._screen = screen
         self.app_instance = app_instance
@@ -348,6 +364,11 @@ class ConsoleHandsFreeController:
         self._run_pending_voice_action_fn = run_pending_voice_action
         self._realtime_session_accessor = realtime_session_accessor
         self._enter_realtime_loop_fn = enter_realtime_loop
+        self._request_auto_speak_enabled_fn = request_auto_speak_enabled
+        self._request_auto_speak_resume_fn = request_auto_speak_resume
+        self._request_auto_speak_retry_fn = request_auto_speak_retry
+        self._sync_auto_speak_controls_fn = sync_auto_speak_controls
+        self._sync_hands_free_state_fn = sync_hands_free_state
 
         # The pipeline engine's own state, moved verbatim from
         # `ChatScreen.__init__`.
@@ -371,22 +392,77 @@ class ConsoleHandsFreeController:
         self._console_hands_free_vad_degraded = False
 
     def _sync_hands_free_switch(self, active: bool) -> None:
-        """Mirror hands-free session state onto the control bar's Switch.
+        """Mirror hands-free session state through the presentation edge.
 
         task-18911 (fix 2): the Switch is the soft-keyboard-only user's
         entry/exit for the mode; every session lifecycle change repaints it
         so it never disagrees with reality. No-op when the control bar is
         not mounted (pre-mount, mid-teardown).
         """
-        try:
-            from ...Widgets.Console.console_control_bar import ConsoleControlBar
+        self._sync_hands_free_state_fn(active)
 
-            control_bar = self._screen.query_one(
-                "#console-control-bar", ConsoleControlBar
-            )
+    async def _resolve_console_auto_speak_destination(
+        self,
+        assistant_kind: str | None,
+        character_ref: "CharacterRef | None",
+    ) -> Any:
+        """Resolve the same effective TTS authority used by synthesis."""
+        ensure_handler = getattr(self.app_instance, "_ensure_tts_handler", None)
+        if not callable(ensure_handler):
+            return None
+        handler = await ensure_handler()
+        resolver = getattr(handler, "resolve_console_speech_destination", None)
+        if not callable(resolver):
+            return None
+        try:
+            return await resolver(assistant_kind, character_ref)
         except Exception:
-            return
-        control_bar.sync_hands_free_state(active)
+            logger.opt(exception=True).warning(
+                "Failed to resolve the Console auto-speak destination."
+            )
+            return None
+
+    def _sync_console_auto_speak_controls(
+        self,
+        enabled: bool,
+        paused: bool,
+        retry_available: bool = False,
+    ) -> None:
+        """Push authoritative state through the presentation-only edge."""
+        self._sync_auto_speak_controls_fn(enabled, paused, retry_available)
+
+    def on_console_auto_speak_changed(
+        self,
+        event: "ConsoleAutoSpeakChanged",
+    ) -> None:
+        """Request the durable per-conversation auto-speak state.
+
+        Args:
+            event: Change event carrying the requested enabled state.
+        """
+        self._request_auto_speak_enabled_fn(event.enabled)
+
+    def on_console_auto_speak_resume_requested(
+        self,
+        event: "ConsoleAutoSpeakResumeRequested",
+    ) -> None:
+        """Resume future automatic speech after a failure.
+
+        Args:
+            event: Resume request from the Console speech controls.
+        """
+        self._request_auto_speak_resume_fn()
+
+    def on_console_auto_speak_retry_requested(
+        self,
+        event: "ConsoleAutoSpeakRetryRequested",
+    ) -> None:
+        """Retry the failed automatic reply.
+
+        Args:
+            event: Retry request from the Console speech controls.
+        """
+        self._request_auto_speak_retry_fn()
 
     @property
     def is_mounted(self) -> bool:

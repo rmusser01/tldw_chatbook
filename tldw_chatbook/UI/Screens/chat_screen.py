@@ -387,7 +387,6 @@ from ...UI.Workbench import (
 )
 from ...UI.Workbench.focus import WorkbenchFocusRegistry
 from ...state.ui_state import UIState
-from ...TTS.profile_types import CharacterRef
 from ...Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
 from ...Widgets.Chat_Widgets.skill_install_confirm_card import SkillInstallConfirmCard
 from ...Widgets.Chat_Widgets.skill_script_confirm_card import SkillScriptConfirmCard
@@ -17095,61 +17094,39 @@ class ChatScreen(BaseAppScreen):
         self._console_control_bar_sync_scheduled = True
         self.call_after_refresh(self._run_coalesced_control_bar_sync)
 
-    async def _resolve_console_auto_speak_destination(
-        self,
-        assistant_kind: str | None,
-        character_ref: CharacterRef | None,
-    ):
-        """Resolve the same effective TTS authority used by synthesis."""
-        ensure_handler = getattr(self.app_instance, "_ensure_tts_handler", None)
-        if not callable(ensure_handler):
-            return None
-        handler = await ensure_handler()
-        resolver = getattr(handler, "resolve_console_speech_destination", None)
-        if not callable(resolver):
-            return None
-        try:
-            return await resolver(assistant_kind, character_ref)
-        except Exception:
-            return None
-
-    def _sync_console_auto_speak_controls(
-        self,
-        enabled: bool,
-        paused: bool,
-        retry_available: bool = False,
-    ) -> None:
-        """Push authoritative active-conversation state into the control bar."""
-        try:
-            control_bar = self.query_one("#console-control-bar", ConsoleControlBar)
-        except QueryError:
-            return
-        control_bar.sync_auto_speak(
-            enabled=enabled,
-            paused=paused,
-            retry_available=retry_available,
-        )
-
     @on(ConsoleAutoSpeakChanged)
     def on_console_auto_speak_changed(self, event: ConsoleAutoSpeakChanged) -> None:
+        """Delegate a Console auto-speak state change.
+
+        Args:
+            event: Change event carrying the requested enabled state.
+        """
         event.stop()
-        self._console_auto_speak.request_enabled(event.enabled)
+        self._hands_free.on_console_auto_speak_changed(event)
 
     @on(ConsoleAutoSpeakResumeRequested)
     def on_console_auto_speak_resume_requested(
-        self,
-        event: ConsoleAutoSpeakResumeRequested,
+        self, event: ConsoleAutoSpeakResumeRequested
     ) -> None:
+        """Delegate a Console auto-speak resume request.
+
+        Args:
+            event: Resume request from the Console speech controls.
+        """
         event.stop()
-        self._console_auto_speak.request_resume()
+        self._hands_free.on_console_auto_speak_resume_requested(event)
 
     @on(ConsoleAutoSpeakRetryRequested)
     def on_console_auto_speak_retry_requested(
-        self,
-        event: ConsoleAutoSpeakRetryRequested,
+        self, event: ConsoleAutoSpeakRetryRequested
     ) -> None:
+        """Delegate a Console auto-speak retry request.
+
+        Args:
+            event: Retry request from the Console speech controls.
+        """
         event.stop()
-        self._console_auto_speak.request_retry()
+        self._hands_free.on_console_auto_speak_retry_requested(event)
 
     def _run_coalesced_control_bar_sync(self) -> None:
         """Execute one coalesced control-bar sync (task-3010)."""

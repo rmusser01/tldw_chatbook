@@ -632,6 +632,14 @@ def _span(node: ast.AST) -> int:
     return node.end_lineno - node.lineno + 1  # type: ignore[attr-defined]
 
 
+def _executable_span(method: ast.AST) -> int:
+    """Return a method's source span without its optional docstring."""
+    span = _span(method)
+    if ast.get_docstring(method) is not None:
+        span -= _span(method.body[0])
+    return span
+
+
 def _is_property(node: ast.AST) -> bool:
     return any(
         isinstance(decorator, ast.Name) and decorator.id == "property"
@@ -1099,7 +1107,7 @@ def _has_real_delegate_binding(
 
 
 def _assert_no_dom_access(methods: object) -> None:
-    assert not any(_calls_query_one(node) for node in methods)  # type: ignore[arg-type]
+    assert not any(_calls_dom_query(node) for node in methods)  # type: ignore[arg-type]
 
 
 def _assert_skill_dead_tokens_absent(sources: dict[str, str]) -> None:
@@ -1125,7 +1133,7 @@ def _assert_delegate_contract(
 ) -> None:
     assert _has_real_delegate_binding(screen_methods, method_name)
     if complete:
-        assert _span(screen_methods[method_name]) <= 5
+        assert _executable_span(screen_methods[method_name]) <= 5
 
 
 def _assigns_attribute(path: Path, attribute: str) -> bool:
@@ -1261,8 +1269,9 @@ def test_wave6_inventory_matches_the_implementation_base() -> None:
         )
         if complete:
             residue = group.delegates | group.stays
-            assert sum(_span(screen_methods[item]) for item in residue) <= (
-                group.residue_lines
+            assert (
+                sum(_executable_span(screen_methods[item]) for item in residue)
+                <= group.residue_lines
             )
             for method_name in group.delegates:
                 _assert_delegate_contract(screen_methods, method_name, complete=True)
@@ -1296,6 +1305,57 @@ def test_browser_family_has_completed_workspace_ownership() -> None:
     )
     assert not (group.delegates & target_methods.keys())
     assert group.delegates <= screen_methods.keys()
+
+
+@pytest.mark.unit
+def test_auto_speak_family_has_completed_hands_free_ownership() -> None:
+    """Require the two moves and three bounded delegates to have final owners."""
+    group = WAVE6_GROUPS["auto_speak"]
+    target_path = _REPO_ROOT / group.target_path
+    screen_methods = _methods(_SCREEN_PATH, "ChatScreen")
+
+    assert target_path.exists(), "ConsoleHandsFreeController module is missing"
+    target_methods = _methods(target_path, group.target_class)
+    assert not (group.moved & screen_methods.keys()), (
+        "auto-speak methods still owned by ChatScreen: "
+        f"{sorted(group.moved & screen_methods.keys())}"
+    )
+    assert group.moved <= target_methods.keys()
+    assert group.delegates <= screen_methods.keys()
+    assert group.delegates <= target_methods.keys()
+    for name in group.delegates:
+        method = screen_methods[name]
+        _assert_delegate_contract(screen_methods, name, complete=False)
+        docstring = ast.get_docstring(method)
+        assert docstring is not None and "Args:" in docstring
+        docstring_statement, *executable_body = method.body
+        assert isinstance(docstring_statement, ast.Expr)
+        assert isinstance(docstring_statement.value, ast.Constant)
+        assert isinstance(docstring_statement.value.value, str)
+        assert _span(method) - _span(docstring_statement) <= 5
+        assert len(executable_body) == 2
+        stop_statement, delegate_statement = executable_body
+        assert isinstance(stop_statement, ast.Expr)
+        assert isinstance(stop_statement.value, ast.Call)
+        assert isinstance(stop_statement.value.func, ast.Attribute)
+        assert isinstance(stop_statement.value.func.value, ast.Name)
+        assert stop_statement.value.func.value.id == "event"
+        assert stop_statement.value.func.attr == "stop"
+        assert isinstance(delegate_statement, ast.Expr)
+        assert isinstance(delegate_statement.value, ast.Call)
+        assert isinstance(delegate_statement.value.func, ast.Attribute)
+        assert delegate_statement.value.func.attr == name
+        owner = delegate_statement.value.func.value
+        assert isinstance(owner, ast.Attribute)
+        assert isinstance(owner.value, ast.Name)
+        assert owner.value.id == "self"
+        assert owner.attr == group.owner_name
+        target_docstring = ast.get_docstring(target_methods[name])
+        assert target_docstring is not None and "Args:" in target_docstring
+    _assert_no_dom_access(
+        target_methods[name]
+        for name in group.moved | group.delegates | {"_sync_hands_free_switch"}
+    )
 
 
 @pytest.mark.unit
@@ -2690,6 +2750,8 @@ class Sample:
             _assert_delegate_contract(sample_methods, "delegate", complete=True)
         with pytest.raises(AssertionError):
             _assert_no_dom_access(sample_methods.values())
+        with pytest.raises(AssertionError):
+            _assert_no_dom_access([sample_methods["touches_dom_collection"]])
         DELEGATE_BINDINGS["delegate"] = "missing_caller"
         with pytest.raises(AssertionError):
             _assert_delegate_contract(sample_methods, "delegate", complete=False)

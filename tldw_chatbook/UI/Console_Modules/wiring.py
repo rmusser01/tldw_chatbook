@@ -48,6 +48,8 @@ do not reintroduce a re-export in `chat_screen.py` to patch through.
 from collections.abc import Callable
 from typing import Any, TYPE_CHECKING
 
+from textual.css.query import QueryError
+
 from tldw_chatbook.Chat.console_fleet_attention import (
     FLEET_UNSEEN_REVISION_ATTR,
     clear_fleet_unseen_completion,
@@ -57,6 +59,7 @@ from tldw_chatbook.Chat.console_runtime import leave_console_runtime
 from tldw_chatbook.Widgets.Console.console_auto_speak_consent import (
     ConsoleAutoSpeakCoordinator,
 )
+from tldw_chatbook.Widgets.Console.console_control_bar import ConsoleControlBar
 
 from .agent import ConsoleAgentController
 from .character import ConsoleCharacterController
@@ -126,6 +129,33 @@ def _restore_first_chat_focus(screen: Any, token: object | None) -> None:
 
     if screen.is_mounted and getattr(token, "is_mounted", False):
         token.focus()
+
+
+def _sync_auto_speak_presentation(
+    screen: Any,
+    enabled: bool,
+    paused: bool,
+    retry_available: bool,
+) -> None:
+    """Project authoritative auto-speak state onto the mounted control bar."""
+    try:
+        control_bar = screen.query_one("#console-control-bar", ConsoleControlBar)
+    except QueryError:
+        return
+    control_bar.sync_auto_speak(
+        enabled=enabled,
+        paused=paused,
+        retry_available=retry_available,
+    )
+
+
+def _sync_hands_free_presentation(screen: Any, active: bool) -> None:
+    """Project the live Hands-free session state onto the mounted switch."""
+    try:
+        control_bar = screen.query_one("#console-control-bar", ConsoleControlBar)
+    except QueryError:
+        return
+    control_bar.sync_hands_free_state(active)
 
 
 def build_console_controllers(
@@ -897,6 +927,22 @@ def build_console_controllers(
                 capture_live=capture_live
             )
         ),
+        request_auto_speak_enabled=(
+            lambda enabled: screen._console_auto_speak.request_enabled(enabled)
+        ),
+        request_auto_speak_resume=(lambda: screen._console_auto_speak.request_resume()),
+        request_auto_speak_retry=(lambda: screen._console_auto_speak.request_retry()),
+        sync_auto_speak_controls=(
+            lambda enabled, paused, retry_available: _sync_auto_speak_presentation(
+                screen,
+                enabled,
+                paused,
+                retry_available,
+            )
+        ),
+        sync_hands_free_state=(
+            lambda active: _sync_hands_free_presentation(screen, active)
+        ),
     )
     #: The native message-transcript cluster -- serialize/restore,
     #: resume-tree flattening, screen-state rehydration, per-message
@@ -1012,7 +1058,7 @@ def build_console_controllers(
         store_accessor=lambda: screen._ensure_console_chat_store(),
         resolve_destination=(
             lambda assistant_kind, character_ref: (
-                screen._resolve_console_auto_speak_destination(
+                screen._hands_free._resolve_console_auto_speak_destination(
                     assistant_kind,
                     character_ref,
                 )
@@ -1038,7 +1084,7 @@ def build_console_controllers(
             )
         ),
         sync_controls=lambda enabled, paused, retry_available: (
-            screen._sync_console_auto_speak_controls(
+            screen._hands_free._sync_console_auto_speak_controls(
                 enabled,
                 paused,
                 retry_available,
