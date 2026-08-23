@@ -4385,22 +4385,12 @@ class ConsoleChatStore:
             self._activate_session(next(iter(self._sessions)))
 
     def end_app_runtime(self) -> None:
-        """Drop app-lifetime-only temporary recovery during explicit teardown."""
+        """Drop every volatile recovery projection at explicit app teardown."""
 
         with self._preparation_lock:
-            ephemeral_session_ids = tuple(
-                session_id
-                for session_id, recovery in self._dispatch_recoveries_by_session.items()
-                if recovery.kind
-                in {
-                    ConsoleDispatchRecoveryKind.EPHEMERAL_ACCEPTED,
-                    ConsoleDispatchRecoveryKind.EPHEMERAL_DISPATCH_STARTED,
-                }
-            )
-            for session_id in ephemeral_session_ids:
-                self._dispatch_recoveries_by_session.pop(session_id, None)
-                self._dispatch_recovery_message_baselines.pop(session_id, None)
-                self._dispatch_recovery_queue_hydration_pending.discard(session_id)
+            self._dispatch_recoveries_by_session.clear()
+            self._dispatch_recovery_message_baselines.clear()
+            self._dispatch_recovery_queue_hydration_pending.clear()
 
     @staticmethod
     def _set_message_attachments(

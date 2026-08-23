@@ -6943,7 +6943,7 @@ class ConsoleChatController:
                 self._durable_postcommit_continuations.pop(
                     continuation.preparation_id, None
                 )
-                self._release_prepared_evidence(continuation.prepared)
+                self._release_retired_prepared_evidence(continuation)
                 self.store.retire_durable_acceptance(
                     continuation.preparation_id, continuation.fingerprint
                 )

@@ -738,6 +738,164 @@ Governance/evidence:
 - shared progress ledger
 - this report
 
+## Fix round 4/5 — exception-safe close and volatile disposal cleanup
+
+### Review findings and baseline
+
+Round 4 resumed at clean `52ca85e0b8f7673c84342090020aa82fcc656ed3`.
+ADR required: no. ADR path:
+`backlog/decisions/079-console-library-conversation-authority.md`. Reason: this
+round hardens ADR-079's existing app-runtime teardown boundary without changing
+schema, transaction ownership, sync, provider execution, or Task-16 behavior.
+
+The clean round-2/round-3 baseline was:
+
+```text
+../../.venv/bin/python -m pytest -q Tests/Chat/test_console_dispatch_recovery_fix_round2.py Tests/UI/test_console_dispatch_recovery_fix_round2.py Tests/Chat/test_console_dispatch_recovery_fix_round3.py --tb=short --show-capture=no
+30 passed, 1 warning in 7.71s
+```
+
+The complete new production-path matrix was authored before production edits.
+It uses real temporary SQLite, a real accepted identity-publication
+interruption, the exact staged EvidenceBundle lease, `close_session`,
+`ConsoleRuntime.dispose`, and loader reconciliation:
+
+```text
+../../.venv/bin/python -m pytest -q Tests/Chat/test_console_dispatch_recovery_fix_round4.py --tb=short --show-capture=no
+2 failed, 1 passed, 1 warning in 0.85s
+```
+
+The intended failures were: a raising exact evidence release escaped
+`close_session` before cache/preparation/session cleanup; and permanent runtime
+disposal retained an actionable durable recovery projection. The exact-once,
+replacement-preserving normal close control passed. No fixture/setup failure
+was counted as RED.
+
+Self-review strengthened the disposal ratchet with an independently populated
+queued hydration fence and claimed-action message baseline. With only the
+hydration clear removed, it failed at the exact stale-fence assertion:
+
+```text
+../../.venv/bin/python -m pytest -q Tests/Chat/test_console_dispatch_recovery_fix_round4.py -k app_disposal --tb=short --show-capture=no
+1 failed, 2 deselected, 1 warning in 0.47s
+```
+
+### Implementation and contract decisions
+
+- `close_session` now retires a durable continuation through the existing
+  exception-safe evidence retirement seam. A release callback fault scrubs the
+  frozen lease references and cannot skip body/cache, preparation/outcome, or
+  session cleanup. Normal release still targets the original frozen launch
+  exactly once and preserves a replacement staged launch.
+- Permanent `end_app_runtime` now clears all store-owned volatile dispatch
+  recovery projections, claimed-action message baselines, and queued hydration
+  fences, durable and ephemeral alike. SQLite checkpoints are unchanged, so a
+  newly constructed store/loader reconstructs the exact durable recovery on
+  restart. Ordinary navigation remains outside this permanent teardown seam.
+- The changes add no checkpoint mutation, message mutation, provider call,
+  schema, persistence fallback, prompt/evidence logging, or Task-16
+  continuation/tool behavior.
+
+### GREEN and adjacent verification
+
+First GREEN was `3 passed, 1 warning in 0.73s`; the strengthened final round-4
+file was `3 passed, 1 warning in 0.85s`. Fresh post-restoration gates were:
+
+```text
+# Task 15 focus (base, queue, UI, fix rounds 1-4)
+../../.venv/bin/python -m pytest -q --tb=short --show-capture=no Tests/Chat/test_console_dispatch_recovery.py Tests/Chat/test_console_dispatch_queue_recovery.py Tests/UI/test_console_dispatch_recovery.py Tests/Chat/test_console_dispatch_recovery_fix_round1.py Tests/UI/test_console_dispatch_recovery_fix_round1.py Tests/Chat/test_console_dispatch_recovery_fix_round2.py Tests/UI/test_console_dispatch_recovery_fix_round2.py Tests/Chat/test_console_dispatch_recovery_fix_round3.py Tests/Chat/test_console_dispatch_recovery_fix_round4.py
+101 passed, 1 warning in 25.29s
+
+# Task 14 durable acceptance gate
+../../.venv/bin/python -m pytest -q --tb=short --show-capture=no Tests/Chat/test_console_durable_turn_acceptance.py Tests/Chat/test_console_durable_turn_fix_round1.py Tests/Chat/test_console_durable_turn_fix_round2.py Tests/Chat/test_console_durable_turn_fix_round3.py Tests/Chat/test_console_durable_turn_fix_round4.py Tests/Chat/test_console_first_send_atomicity.py
+73 passed, 1 warning in 37.02s
+
+# Exact Task 13 affected gate
+../../.venv/bin/python -m pytest -q --tb=short --show-capture=no Tests/Architecture/test_console_wave6_inventory.py Tests/Chat/test_console_automatic_library_preparation.py Tests/Chat/test_console_chat_controller.py Tests/Chat/test_console_chat_store_library_policy.py Tests/Chat/test_console_prompt_queue_coordinator.py Tests/Chat/test_console_turn_library_authority.py Tests/Chat/test_console_turn_execution_context.py Tests/Chat/test_console_turn_preparation.py Tests/Chat/test_library_preparation.py Tests/UI/test_console_auto_rag_on_send.py Tests/UI/test_console_harness_config_honesty.py Tests/UI/test_console_rag_settings_modal.py Tests/UI/test_console_retrieval_controller.py Tests/UI/test_console_controller_wiring.py Tests/test_config_console_defaults.py
+628 passed, 1 warning in 41.09s
+
+# Queue and mounted UI
+../../.venv/bin/python -m pytest -q --tb=short --show-capture=no Tests/Chat/test_console_prompt_queue_coordinator.py Tests/Chat/test_console_prompt_queue.py Tests/UI/test_console_prompt_queue.py Tests/UI/test_console_prompt_queue_modal.py Tests/UI/test_console_dispatch_recovery.py Tests/UI/test_console_dispatch_recovery_fix_round1.py
+98 passed, 1 warning in 20.18s
+
+# Repository/transaction/model/hydration/state
+../../.venv/bin/python -m pytest -q --tb=short --show-capture=no Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py Tests/Chat/test_console_transaction_contribution.py Tests/Chat/test_console_chat_models.py Tests/Chat/test_console_conversation_hydration.py Tests/CI/test_textual_runtime_contract.py
+126 passed, 1 warning in 23.16s
+
+# App-runtime lifetime companion
+../../.venv/bin/python -m pytest -q --tb=short --show-capture=no Tests/Chat/test_console_runtime_lifetime.py
+14 passed, 1 warning in 2.66s
+```
+
+Every successful pytest command reported only the inherited environment-level
+Requests/urllib3/charset compatibility warning. No full repository suite,
+profile database, app launch, provider network, or push was used.
+
+### Mutation evidence
+
+Each mutant was applied alone and restored immediately:
+
+```text
+# replace close retirement with the raw raising evidence-release call
+../../.venv/bin/python -m pytest -q Tests/Chat/test_console_dispatch_recovery_fix_round4.py -k close_session --tb=short --show-capture=no
+1 failed, 1 passed, 1 deselected, 1 warning in 0.68s
+
+# omit the durable/ephemeral recovery projection clear
+../../.venv/bin/python -m pytest -q Tests/Chat/test_console_dispatch_recovery_fix_round4.py -k app_disposal --tb=short --show-capture=no
+1 failed, 2 deselected, 1 warning in 0.44s
+
+# omit the queued recovery hydration-fence clear
+../../.venv/bin/python -m pytest -q Tests/Chat/test_console_dispatch_recovery_fix_round4.py -k app_disposal --tb=short --show-capture=no
+1 failed, 2 deselected, 1 warning in 0.47s
+```
+
+After restoration, the round-4 file passed all 3 tests and source inspection
+confirmed the hardened release call plus all three volatile clears are present;
+no mutant marker remains.
+
+### Static, privacy, and self-review
+
+```text
+../../.venv/bin/python -m ruff check tldw_chatbook/Chat/console_chat_controller.py tldw_chatbook/Chat/console_chat_store.py Tests/Chat/test_console_dispatch_recovery_fix_round4.py
+All checks passed!
+
+../../.venv/bin/python -m ruff format --check Tests/Chat/test_console_dispatch_recovery_fix_round4.py
+1 file already formatted
+
+git diff --check
+(no output, exit 0)
+
+git diff -U0 -- tldw_chatbook/Chat/console_chat_controller.py tldw_chatbook/Chat/console_chat_store.py | rg '^\\+.*(logger\\.|print\\(|api[_-]?key|authorization|bearer|credential|CREATE (TABLE|INDEX|TRIGGER)|ALTER TABLE|tool[_-]?batch|continuation_active|prompt|request[_-]?body|capture_result)'
+(no output, exit 1)
+```
+
+Whole-file Ruff formatting remains truthfully qualified: clean HEAD already
+fails formatting for both large production files; this round's new test is
+formatted and the two tiny production ranges were inspected as formatter-clean.
+Self-review checked callback exception ordering, exact frozen/replacement
+evidence identity, preparation/outcome/cache/session cardinality, permanent
+versus navigation lifetime, recovery/action/baseline/hydration clearing,
+unchanged SQLite checkpoint bytes, loader rehydration, zero provider calls,
+privacy, and Task-14/16 boundaries. No unresolved round-4 product concern
+remains.
+
+### Files changed in fix round 4
+
+Production:
+
+- `tldw_chatbook/Chat/console_chat_controller.py`
+- `tldw_chatbook/Chat/console_chat_store.py`
+
+Tests:
+
+- `Tests/Chat/test_console_dispatch_recovery_fix_round4.py`
+
+Governance/evidence:
+
+- TASK-19900.3 Implementation Notes (status remains In Progress; 22 unchecked)
+- shared progress ledger
+- this report
+
 ## Fix round 3/5 — bounded teardown and prerequisite-safe Discard
 
 ### Review findings and root cause
