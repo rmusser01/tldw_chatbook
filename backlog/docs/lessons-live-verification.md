@@ -1340,3 +1340,19 @@ to the intended subview and inspect the capture itself. Here the verifier now
 captures New note honestly, sends Escape, and requires `Add from files` before
 recording the Notes-list frames. A parent-surface title proves only that the
 parent mounted; it cannot certify which retained child view is active.
+
+---
+
+## A live app launch can rewrite a tracked generated artifact (TASK-21161, 2026-08-23)
+
+**What happened.** The isolated Console/DeepSeek UAT changed only the generated
+timestamp in tracked `tldw_chatbook/css/tldw_cli_modular.tcss`. No source CSS
+had changed; app startup had rebuilt the consolidated file. Left in the
+working tree, that runtime side effect would have looked like an intentional
+implementation change and polluted the review diff.
+
+**What to do.** Capture `git status --short` before a live app launch and again
+after clean exit. For tracked generated artifacts, compare the body as well as
+the header before deciding whether a delta belongs to the task. Restore a
+timestamp-only runtime rebuild to the pre-UAT content; regenerate and commit it
+only when its source modules actually changed.

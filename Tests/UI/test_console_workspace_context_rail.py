@@ -2206,6 +2206,41 @@ def _find_caret_in_row_with(lines: list[str], label_text: str) -> tuple[int, int
 
 
 @pytest.mark.asyncio
+async def test_narrow_details_rail_paints_full_private_scratch_value() -> None:
+    """The human-visible rail must not reduce the authority value to ``Priva…``."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(180, 55)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-runtime-value")
+        if not console._current_console_rail_state().details_open:
+            console._toggle_console_rail_section("details")
+        await pilot.pause()
+
+        details_section = console.query_one(
+            "#console-bounded-section-details", ConsoleBoundedSection
+        )
+        left_rail = console.query_one("#console-left-rail")
+        runtime_value = console.query_one("#console-workspace-runtime-value")
+        left_rail.activate_section("details")
+        await _wait_for_condition(
+            pilot,
+            lambda: (details_section.allocation or 0) > 1,
+        )
+        details_section.viewport.scroll_to_widget(
+            runtime_value, animate=False, immediate=True
+        )
+        await pilot.pause(0.1)
+
+        rendered_rows = _render_screen_lines(console)
+        assert any(
+            "Local files" in row and "Private scratch" in row
+            for row in rendered_rows
+        ), [row for row in rendered_rows if "Local" in row or "Priva" in row]
+
+
+@pytest.mark.asyncio
 async def test_section_header_caret_is_clickable_at_its_rendered_screen_coordinates() -> (
     None
 ):
@@ -2587,7 +2622,7 @@ async def test_console_workspace_context_exposes_new_conversation_for_default_wo
             console,
             label_selector="#console-workspace-runtime-label",
             value_selector="#console-workspace-runtime-value",
-            label="Local file tools",
+            label="Local files",
             value_contains="Private scratch",
         )
         # TASK-715: unconfigured server features collapse into one line
@@ -2997,7 +3032,7 @@ async def test_console_workspace_context_renders_server_readiness_handoff_and_ac
             console,
             label_selector="#console-workspace-runtime-label",
             value_selector="#console-workspace-runtime-value",
-            label="Local file tools",
+            label="Local files",
             value_contains="Private scratch",
         )
         assert "Handoff" in text

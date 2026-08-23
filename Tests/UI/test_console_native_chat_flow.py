@@ -4337,7 +4337,7 @@ async def test_console_workspace_authority_rows_are_structured_for_scanning():
             _static_plain_text(
                 console.query_one("#console-workspace-runtime-label", Static)
             )
-            == "Local file tools"
+            == "Local files"
         )
         assert "Private scratch" in _static_plain_text(
             console.query_one("#console-workspace-runtime-value", Static)
@@ -7203,7 +7203,7 @@ async def test_console_browser_selecting_default_native_session_uses_private_scr
             _static_plain_text(
                 console.query_one("#console-workspace-runtime-label", Static)
             )
-            == "Local file tools"
+            == "Local files"
         )
         assert "Private scratch" in _static_plain_text(
             console.query_one("#console-workspace-runtime-value", Static)
@@ -7271,7 +7271,7 @@ async def test_console_browser_selecting_default_persisted_row_uses_private_scra
             _static_plain_text(
                 console.query_one("#console-workspace-runtime-label", Static)
             )
-            == "Local file tools"
+            == "Local files"
         )
         assert "Private scratch" in _static_plain_text(
             console.query_one("#console-workspace-runtime-value", Static)
@@ -8795,7 +8795,7 @@ async def test_console_workspace_rail_new_conversation_creates_default_workspace
             _static_plain_text(
                 console.query_one("#console-workspace-runtime-label", Static)
             )
-            == "Local file tools"
+            == "Local files"
         )
         assert "Private scratch" in _static_plain_text(
             console.query_one("#console-workspace-runtime-value", Static)

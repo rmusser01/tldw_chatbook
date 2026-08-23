@@ -410,6 +410,7 @@ class ConsoleWorkspaceStatusPair(Horizontal):
         *,
         label_id: str,
         value_id: str,
+        label_width_floor: int = 13,
         **kwargs: Any,
     ) -> None:
         """Initialize the label/value status row.
@@ -419,6 +420,7 @@ class ConsoleWorkspaceStatusPair(Horizontal):
             value: User-facing row value.
             label_id: Textual widget id for the label cell.
             value_id: Textual widget id for the value cell.
+            label_width_floor: Minimum label-column width in terminal cells.
             **kwargs: Additional keyword arguments passed to ``Horizontal``.
         """
         super().__init__(classes="console-workspace-status-pair", **kwargs)
@@ -426,6 +428,7 @@ class ConsoleWorkspaceStatusPair(Horizontal):
         self.value = value
         self.label_id = label_id
         self.value_id = value_id
+        self.label_width_floor = max(1, int(label_width_floor))
         self.styles.height = "auto"
         self.styles.min_height = 1
 
@@ -441,10 +444,13 @@ class ConsoleWorkspaceStatusPair(Horizontal):
             classes="console-workspace-status-label",
             markup=False,
         )
-        # Keep one gutter cell after the longest current label. Most status
-        # rows retain the original 13-cell column; "Local file tools" needs
-        # 17 so its authority wording remains readable instead of wrapping.
-        label_width = max(13, min(17, cell_len(self.label) + 1))
+        # Keep one gutter cell after the label. Most status rows retain the
+        # original 13-cell floor; a caller may lower it for a deliberately
+        # concise label when the security-relevant value needs the extra cell.
+        label_width = max(
+            self.label_width_floor,
+            min(17, cell_len(self.label) + 1),
+        )
         label_widget.styles.width = label_width
         label_widget.styles.min_width = label_width
         yield label_widget
@@ -456,10 +462,9 @@ class ConsoleWorkspaceStatusPair(Horizontal):
             markup=False,
         )
         value_widget.styles.width = "1fr"
-        # Preserve the established 23-cell combined floor. Ordinary labels
-        # keep the original 10-cell value minimum; the one longer authority
-        # label may shrink its value to 6 cells and use the existing ellipsis
-        # + tooltip behavior instead of widening the whole rail.
+        # Preserve the established 23-cell combined floor. Longer labels may
+        # shrink the value to 6 cells and use the existing ellipsis + tooltip
+        # behavior instead of widening the whole rail.
         value_widget.styles.min_width = max(6, 23 - label_width)
         # TASK-384: at narrow rail widths the value column shrinks to a few cells
         # and a value like "Default" word-wrapped into a "Def / aul / t" letter

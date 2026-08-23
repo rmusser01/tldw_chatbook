@@ -108,11 +108,20 @@ class ConsoleWorkspaceDetailsTray(RecomposeCaptureGuard, Vertical):
             ComposeResult yielding the status-pair widget.
         """
         label, value = self._split_status_row(text, fallback_label)
+        # The Console rail is intentionally narrow. The former 16-cell
+        # "Local file tools" label left too little room for the authority
+        # value and painted "Private scratch" as "Priva…" in live UAT.
+        # Keep the full underlying status copy while using a concise visible
+        # label so the security-relevant value remains readable.
+        compact_runtime_label = label == "Local file tools"
+        if compact_runtime_label:
+            label = "Local files"
         yield ConsoleWorkspaceStatusPair(
             label,
             value,
             label_id=label_id,
             value_id=value_id,
+            label_width_floor=12 if compact_runtime_label else 13,
         )
 
     def _server_features_unconfigured(self) -> bool:
