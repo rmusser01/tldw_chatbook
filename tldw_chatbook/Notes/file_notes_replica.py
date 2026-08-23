@@ -153,7 +153,9 @@ class FileNotesReplica:
 
         Args:
             root: Canonical notes-root identifier.
-            query: Literal text to find in replicated file content.
+            query: User text, matched as ONE quoted literal FTS5 PHRASE
+                (``quote_fts5_phrase``) -- the words must be adjacent and in
+                order, and FTS5 operators in it are inert.
             limit: Maximum number of paths to return.
 
         Returns:

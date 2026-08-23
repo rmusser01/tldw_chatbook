@@ -2230,9 +2230,9 @@ class MediaDatabase:
         self,
         search_query: Optional[
             str
-        ],  # PLAIN user text for FTS/LIKE -- quoted as a literal FTS5
-        # phrase (TASK-19558). A caller-built MATCH expression goes through
-        # `fts_match_query`, never through here.
+        ],  # PLAIN user text for FTS/LIKE -- each token quoted and the
+        # tokens AND-ed (TASK-19558), never a phrase. A caller-built MATCH
+        # expression goes through `fts_match_query`, never through here.
         search_fields: Optional[List[str]] = None,
         media_types: Optional[List[str]] = None,
         date_range: Optional[Dict[str, datetime]] = None,  # Expects datetime objects
@@ -2273,6 +2273,11 @@ class MediaDatabase:
                 reversed" as the pre-TASK-19558 raw bind did. Supply a real
                 MATCH expression through `fts_match_query` instead. For 'author' or 'type' in
                 `search_fields`, it's used in a LIKE '%query%' match.
+                Leading/trailing whitespace is stripped, and a whitespace-only
+                value is treated as no text search at all. Text with no
+                alphanumeric run ("!!!", "-") cannot produce a MATCH
+                expression, so the FTS leg is dropped and the LIKE legs alone
+                answer it -- it is NOT turned into "no rows".
             search_fields (Optional[List[str]]): A list of fields to apply the
                 `search_query` against. Valid fields: 'title', 'content' (FTS),
                 'author', 'type' (LIKE). Defaults to ['title', 'content'] if
@@ -2362,6 +2367,15 @@ class MediaDatabase:
         resolved_offset = (page - 1) * results_per_page if offset is None else offset
         if resolved_offset > sqlite_integer_max:
             raise ValueError("Pagination offset exceeds SQLite's integer range")
+
+        # TASK-19558 review round 2 (Qodo #1): a search box the user typed only
+        # whitespace into is an EMPTY search, not a search for spaces. Stripping
+        # here also stops accidental padding from vetoing rows: the LIKE leg is
+        # AND-ed with the FTS leg further down, so `%  dragon  %` used to
+        # subtract the rows FTS had already matched (measured on dev: `dragon`
+        # -> 1 row, `  dragon  ` -> 0).
+        if isinstance(search_query, str):
+            search_query = search_query.strip() or None
 
         if search_query and not search_fields:
             search_fields = ["title", "content"]  # Default fields for search_query
@@ -2517,14 +2531,9 @@ class MediaDatabase:
 
             # FTS on 'title', 'content'
             if any(f in sanitized_text_search_fields for f in ["title", "content"]):
-                fts_search_active = True
                 effective_fts_query = (
                     fts_match_query if fts_match_query is not None else search_query
                 )
-                if not any(
-                    "media_fts fts" in j_item for j_item in joins
-                ):  # Ensure FTS join is added only once
-                    joins.append("JOIN media_fts fts ON fts.rowid = m.id")
 
                 # SQLite FTS doesn't allow multiple MATCH conditions combined with OR
                 # Instead, we'll use a single MATCH condition with the OR operator inside the FTS query
@@ -2576,18 +2585,49 @@ class MediaDatabase:
                 # Combine all FTS query parts with OR
                 combined_fts_query = " OR ".join(fts_query_parts)
                 if combined_fts_query:
+                    fts_search_active = True
+                    if not any(
+                        "media_fts fts" in j_item for j_item in joins
+                    ):  # Ensure FTS join is added only once
+                        joins.append("JOIN media_fts fts ON fts.rowid = m.id")
                     # Add a single MATCH condition
                     conditions.append("fts.media_fts MATCH ?")
                     params.append(combined_fts_query)
                 else:
-                    # Unsearchable text (task-19558): `None`, punctuation
-                    # only, or containing a NUL -- which SQLite truncates the
-                    # bound parameter at, mid-literal, so no quoting can
-                    # survive it. `MATCH ''` is an FTS5 syntax error, and
-                    # simply DROPPING the condition would widen the result
-                    # set (these conditions are AND-joined), so the leg is
-                    # made explicitly false instead.
-                    conditions.append("0")
+                    # No executable MATCH expression came out of the builder.
+                    # `MATCH ''` is an FTS5 syntax error, so the leg cannot be
+                    # kept -- but WHY it is empty decides what replaces it,
+                    # because the reasons are not the same failure (TASK-19558
+                    # review round 2, Qodo #1: round 1 answered "0" to all of
+                    # them, and since these conditions are AND-joined that
+                    # forced the WHOLE query to zero rows -- a recall
+                    # regression, not a safety property).
+                    #
+                    #  * A caller-owned `fts_match_query` that came out blank
+                    #    means "no rows" by that seam's own contract
+                    #    (`build_and_match_query` returns "" for exactly that),
+                    #    and the title/content LIKE legs are deliberately NOT
+                    #    built in that branch -- so dropping the condition
+                    #    would leave no text filter at all and return
+                    #    EVERYTHING. It stays explicitly false.
+                    #  * A NUL byte truncates the bound parameter inside
+                    #    SQLite, so `%a\x00b%` reaches LIKE as `%a` -- the
+                    #    fallback is not merely useless there, it is WIDER
+                    #    than what was asked for (measured on dev:
+                    #    `dragon\x00lore` returned the `dragon` row). Also
+                    #    explicitly false.
+                    #  * Punctuation-only text ("!!!", "-", "***") simply has
+                    #    no alphanumeric run for FTS5 to index -- but LIKE
+                    #    '%!!!%' expresses the user's intent exactly. The FTS
+                    #    leg (and its JOIN, and relevance ordering) is DROPPED
+                    #    and the LIKE conditions below carry the search.
+                    fts_leg_must_be_false = (
+                        fts_match_query is not None
+                        or not isinstance(search_query, str)
+                        or "\x00" in search_query
+                    )
+                    if fts_leg_must_be_false:
+                        conditions.append("0")
 
                 # Add LIKE search for 'title' and 'content' to ensure partial matches work
                 title_content_like_parts = []
@@ -8052,9 +8092,12 @@ class MediaDatabase:
     def _library_fts_query(cls, raw_query: str) -> Optional[str]:
         """Build a safe FTS5 MATCH query from raw user text.
 
-        Tokens are extracted with a word-character regex and each is
-        double-quoted, so FTS operators in the raw input are inert. Returns
-        None when the input contains no usable tokens.
+        The AND-of-quoted-tokens form, not a phrase: tokens are extracted
+        with a word-character regex, each is double-quoted (so FTS operators
+        in the raw input are inert) and they are space-joined, which is
+        FTS5's implicit AND -- every token must appear, in any order and not
+        necessarily adjacent. Returns None when the input contains no usable
+        tokens.
         """
         tokens = re.findall(r"\w+", raw_query, flags=re.UNICODE)
         if not tokens:

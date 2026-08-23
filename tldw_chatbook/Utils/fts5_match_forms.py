@@ -24,11 +24,26 @@ whose ``__init__`` is empty -- rather than under ``RAG_Search/``, whose
 package ``__init__`` pulls the whole simplified engine (chromadb,
 embeddings) in a try/except.
 
-What is NOT here: the AND forms. The engine's implicit-AND
-(``_escape_fts5_query``) and the Library's OR-of-plural-variants
-(``build_fts_match_query``) are genuinely different constructions with
-different histories, and they are each path's *primary* -- unchanged by
-TASK-17755 and not shared. Only the widening fallback is common.
+**TASK-19558 widened this module's remit, and the sentence that used to
+stand here ("What is NOT here: the AND forms") is now false.** The AND form
+IS here -- ``build_and_match_expression``/``build_and_match_query`` -- along
+with the PHRASE form and the one string-literal escape they all share,
+because that task found six spellings of the escape across the app, two of
+them wrong. What is still each path's own is the Library's
+OR-of-plural-variants widening (``library_fts_query.build_fts_match_query``),
+a genuinely different construction.
+
+The three FORMS this module defines, and the rule for picking one:
+
+* **AND** (``build_and_match_query``) -- every token quoted, space-joined,
+  i.e. FTS5's implicit AND. What a plain-text search box wants, and what a
+  seam that used to bind its query RAW was already doing.
+* **PHRASE** (``build_phrase_match_query``) -- the whole query as one quoted
+  literal; words must be adjacent and in order. Only for seams that already
+  bound a quoted phrase before TASK-19558.
+* **PREFIX** (``quote_fts5_prefix`` / ``build_prefix_match_expression``) --
+  a quoted term with the star OUTSIDE the quotes, for type-ahead pickers and
+  for ``and_then_prefix``'s widening fallback.
 """
 
 from __future__ import annotations

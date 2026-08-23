@@ -7802,9 +7802,9 @@ UPDATE db_schema_version
             fts_match_query: Optional caller-built FTS5 MATCH expression
                 (must already be injection-safe -- build it with
                 ``Utils.fts5_match_forms``). When provided it replaces the
-                whole-phrase quoting of ``search_term``; this is the seam
-                for callers that need prefix matching, e.g. the CCP
-                character picker's ``"term"*``.
+                AND-of-quoted-tokens expression built from ``search_term``;
+                this is the seam for callers that need a different FORM, e.g.
+                the CCP character picker's prefix query ``"term"*``.
 
         Returns:
             A list of dictionaries, each representing a matching character card.
@@ -9945,8 +9945,11 @@ UPDATE db_schema_version
         raw ``title_query`` was); it is now the value that reaches MATCH.
 
         Args:
-            title_query: Plain user-typed title text, matched as a literal
-                phrase. FTS5 operators in it are inert.
+            title_query: Plain user-typed title text. Every token is quoted
+                individually and the tokens are AND-ed
+                (``build_and_match_query``), so all of them must appear but
+                they need not be adjacent -- NOT a phrase. FTS5 operators in
+                it are inert.
             character_id: Optional character ID to filter results.
             limit: Maximum number of results. Defaults to 10.
 
@@ -10006,16 +10009,22 @@ UPDATE db_schema_version
 
         TASK-19558: ``search_query`` used to reach MATCH raw -- so a typed
         ``"`` raised ``OperationalError('unterminated string')`` and a typed
-        column filter was executed. It is now quoted as a literal phrase.
+        column filter was executed. Every token is now quoted individually
+        and the tokens are AND-ed, which is what the raw bind meant too
+        (FTS5 joins bare terms with an implicit AND).
 
         Args:
-            search_query: Plain user-typed content text, matched as a
-                literal phrase. FTS5 operators in it are inert.
+            search_query: Plain user-typed content text. Every token is
+                quoted individually and the tokens are AND-ed
+                (``build_and_match_query``), so all of them must appear but
+                they need not be adjacent -- NOT a phrase. FTS5 operators in
+                it are inert.
             limit: Maximum number of conversations to return. Defaults to 10.
             fts_match_query: Optional caller-built FTS5 MATCH expression
                 (must already be injection-safe -- build it with
                 ``Utils.fts5_match_forms``). When provided it replaces the
-                whole-phrase quoting of ``search_query``. This is the seam
+                AND-of-quoted-tokens expression built from ``search_query``.
+                This is the seam
                 the Library's four-seam keyword search uses, matching what
                 ``search_notes`` and the media/prompts siblings already took
                 (``Library/library_local_rag_search_service._search_conversations``
@@ -12202,8 +12211,11 @@ UPDATE db_schema_version
         raw ``content_query`` was); it is now the value that reaches MATCH.
 
         Args:
-            content_query: Plain user-typed content text, matched as a
-                literal phrase. FTS5 operators in it are inert.
+            content_query: Plain user-typed content text. Every token is
+                quoted individually and the tokens are AND-ed
+                (``build_and_match_query``), so all of them must appear but
+                they need not be adjacent -- NOT a phrase. FTS5 operators in
+                it are inert.
             conversation_id: Optional conversation UUID to filter results.
             limit: Maximum number of results. Defaults to 10.
 
@@ -13089,7 +13101,27 @@ UPDATE db_schema_version
     def search_keyword_collections(
         self, search_term: str, limit: int = 10
     ) -> List[Dict[str, Any]]:
-        """Search keyword collections by name; ``search_term`` is a literal phrase."""
+        """Searches keyword collections by name using FTS.
+
+        Matches against the 'name' field in `keyword_collections_fts`.
+        Returns active collections, ordered by relevance.
+
+        Args:
+            search_term: Plain user-typed collection name. Quoted whole as
+                ONE literal FTS5 phrase (``build_phrase_match_query``), so
+                the words must appear adjacent and in order -- this seam
+                bound a phrase before task-19558 and deliberately still
+                does, unlike the AND-of-tokens seams. FTS5 operators in it
+                are inert.
+            limit: Max number of results. Defaults to 10.
+
+        Returns:
+            A list of matching keyword-collection dictionaries. Empty when
+            ``search_term`` is None, empty, NUL-bearing or punctuation-only.
+
+        Raises:
+            CharactersRAGDBError: For database search errors.
+        """
         match_expression = build_phrase_match_query(search_term)
         if not match_expression:
             return []
@@ -13208,9 +13240,12 @@ UPDATE db_schema_version
     def _library_note_fts_query(cls, raw_query: str) -> Optional[str]:
         """Build a safe FTS5 MATCH query from raw user text.
 
-        Tokens are extracted with a word-character regex and each is
-        double-quoted, so FTS operators in the raw input are inert. Returns
-        None when the input contains no usable tokens.
+        The AND-of-quoted-tokens form, not a phrase: tokens are extracted
+        with a word-character regex, each is double-quoted (so FTS operators
+        in the raw input are inert) and they are space-joined, which is
+        FTS5's implicit AND -- every token must appear, in any order and not
+        necessarily adjacent. Returns None when the input contains no usable
+        tokens.
         """
         tokens = re.findall(r"\w+", raw_query, flags=re.UNICODE)
         if not tokens:
@@ -13487,9 +13522,12 @@ UPDATE db_schema_version
     def _library_conversation_fts_query(cls, raw_query: str) -> Optional[str]:
         """Build a safe FTS5 MATCH query from raw user text.
 
-        Tokens are extracted with a word-character regex and each is
-        double-quoted, so FTS operators in the raw input are inert. Returns
-        None when the input contains no usable tokens.
+        The AND-of-quoted-tokens form, not a phrase: tokens are extracted
+        with a word-character regex, each is double-quoted (so FTS operators
+        in the raw input are inert) and they are space-joined, which is
+        FTS5's implicit AND -- every token must appear, in any order and not
+        necessarily adjacent. Returns None when the input contains no usable
+        tokens.
         """
         tokens = re.findall(r"\w+", raw_query, flags=re.UNICODE)
         if not tokens:

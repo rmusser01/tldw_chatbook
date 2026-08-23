@@ -1090,7 +1090,19 @@ class EvalsDB:
         return tasks
 
     def search_tasks(self, query: str, limit: int = 50) -> List[Dict[str, Any]]:
-        """Search tasks using FTS5."""
+        """Search tasks using FTS5.
+
+        Args:
+            query: Plain user text, matched as ONE quoted literal FTS5
+                PHRASE (``build_phrase_match_query``) -- the words must be
+                adjacent and in order, which is what this seam did before
+                TASK-19558 too. Short or punctuation-bearing queries take
+                the LIKE branch below instead. FTS5 operators are inert.
+            limit: Maximum number of rows to return.
+
+        Returns:
+            The matching task dicts; empty when ``query`` is not searchable.
+        """
         if not isinstance(query, str):
             # task-19558 (E2 sweep): `None` from an unset filter reached the
             # generator below and raised a bare `TypeError`. Pre-dates the
@@ -1319,7 +1331,19 @@ class EvalsDB:
             return cursor.rowcount > 0
 
     def search_datasets(self, query: str, limit: int = 50) -> List[Dict[str, Any]]:
-        """Search datasets using FTS5."""
+        """Search datasets using FTS5.
+
+        Args:
+            query: Plain user text, matched as ONE quoted literal FTS5
+                PHRASE (``build_phrase_match_query``) -- the words must be
+                adjacent and in order, as this seam did before TASK-19558.
+                FTS5 operators in it are inert.
+            limit: Maximum number of rows to return.
+
+        Returns:
+            The matching dataset dicts; empty when ``query`` is not
+            searchable (None, empty, NUL-bearing or punctuation-only).
+        """
         # Escape special characters in FTS5 query by wrapping in quotes.
         # TASK-19558: this wrapping never doubled an embedded `"`, so a
         # dataset search containing one raised OperationalError and one

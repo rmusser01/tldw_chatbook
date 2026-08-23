@@ -7177,3 +7177,47 @@ Two smaller traps from the same sweep, both worth a line:
   never a contract; it was the symptom of the raw bind, written down as if it
   were one. When a fix turns such a test red, read what the test is asserting
   about the USER before assuming the fix is wrong.
+
+## "No rows" is not the safe default for an unparseable query — and an AND-joined false leg poisons the whole WHERE (TASK-19558 review round 2, 2026-08-23)
+
+The round-one fix above had a second half nobody measured. When the new quoting
+could not build a MATCH expression at all — punctuation-only input, whitespace,
+a NUL — `search_media_db` answered `conditions.append("0")`. The conditions are
+`" AND ".join`ed, so that one leg forced the ENTIRE query to zero rows,
+including the LIKE predicates sitting right beside it that could still express
+what the user typed. Measured against the merge-base on a five-row corpus:
+`!!!` → 0 rows (LIKE would have found "Alert!!! urgent dragon"), `-` → 0
+("well-known dashes"), `***` → 0, `""` → 0. The comment above the line even
+argued for it — "simply DROPPING the condition would widen the result set" —
+which is true of a query whose ONLY filter is that leg and false of this one.
+
+Three things this generalises to:
+
+1. **A false predicate is not a no-op, it is a veto over its siblings.** Before
+   writing `1=0` / `"0"` / `AND FALSE` into a conjunction, look at what else is
+   in the conjunction. If any sibling can still answer the question, the leg
+   must be DROPPED, not falsified. Symmetrically, dropping is only safe when a
+   sibling survives — with no other text predicate, dropping returns everything.
+2. **Branch on the REASON the builder returned empty, not on the fact that it
+   did.** Three reasons arrived at the same line and want three answers: a
+   caller-supplied expression that came out blank means "no rows" by that seam's
+   own contract (and its LIKE legs are deliberately not built, so dropping
+   returns the whole table); a NUL means the LIKE fallback is *wider* than what
+   was asked for, because SQLite truncates the bound parameter at the NUL and
+   `%dragon\x00lore%` reaches it as `%dragon` (measured: it returned the dragon
+   row at the merge-base); punctuation-only means LIKE is exactly right. One
+   `if` per reason, each with the measurement in the comment.
+3. **Whitespace-only input is an EMPTY search, and padding is not part of the
+   query.** `"   "` should mean "I typed nothing", not "find me three spaces".
+   The same strip also fixed a pre-existing narrowing nobody had noticed: the
+   LIKE leg is AND-ed with the FTS leg, so `"  dragon  "` matched `MATCH` and
+   was then vetoed by `LIKE '%  dragon  %'` — 1 row for `dragon`, 0 for the
+   padded spelling, on dev.
+
+The evidence shape that catches this class: a before/after table over the
+AWKWARD inputs (`!!!`, `   `, `""`, `-`, `***`, empty, plus a normal control),
+run against the merge-base AND the branch in the same process — `git show
+<merge-base>:path/to/module.py` loaded via `importlib.util.spec_from_file_
+location` under a dotted name inside the real package resolves its relative
+imports fine, so both versions can be seeded and queried side by side without a
+second worktree. Closure probes alone never move on any of those rows.

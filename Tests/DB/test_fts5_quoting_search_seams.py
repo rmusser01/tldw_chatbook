@@ -390,6 +390,130 @@ def test_media_search_short_term_prefix_widening_is_preserved(media_db) -> None:
     assert total == 1 and rows[0]["title"] == "Gorgonzola notes"
 
 
+# ---------------------------------------------------------------------------
+# Media, round 2: an unbuildable MATCH must drop the FTS leg, not the query.
+# ---------------------------------------------------------------------------
+#
+# Round 1 answered `conditions.append("0")` whenever no MATCH expression could
+# be built. The conditions are AND-joined, so that forced the WHOLE query to
+# zero rows -- including the LIKE legs, which can express punctuation-only
+# intent perfectly well. Measured on the corpus below before the fix:
+# `!!!` 0 rows, `-` 0 rows, `***` 0 rows, `""` 0 rows. After: 1 row each.
+#
+# The two cases that must NOT drop the leg are pinned right below them,
+# because "restore recall" and "keep the closure" is the whole trade this
+# round is about.
+
+
+@pytest.fixture()
+def awkward_media(media_db):
+    for index, (title, content) in enumerate(
+        [
+            ("Alert!!! urgent dragon", "dragon lore about wyrms"),
+            ("well-known dashes", "a - b dashed line"),
+            ('The "gold" standard', "stars *** here in content"),
+            ('Quotes "" doubled', "double quote pair"),
+            ("plain document", "nothing special at all"),
+        ]
+    ):
+        media_db.add_media_with_keywords(
+            title=title,
+            media_type="document",
+            content=content,
+            keywords=["kw"],
+            url=f"https://example.invalid/awkward/{index}",
+        )
+    return media_db
+
+
+def _media_titles(database, query, **kwargs):
+    rows, total = database.search_media_db(
+        search_query=query,
+        search_fields=["title", "content"],
+        page=1,
+        results_per_page=50,
+        **kwargs,
+    )
+    assert total == len(rows)
+    return sorted(row["title"] for row in rows)
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("!!!", ["Alert!!! urgent dragon"]),
+        ("-", ["well-known dashes"]),
+        ("***", ['The "gold" standard']),
+        ('""', ['Quotes "" doubled']),
+    ],
+)
+def test_punctuation_only_media_search_falls_back_to_like(
+    awkward_media, query, expected
+) -> None:
+    """The regression: these returned [] because the FTS leg was hard-false."""
+    assert _media_titles(awkward_media, query) == expected
+
+
+def test_whitespace_only_media_search_is_an_empty_search(awkward_media) -> None:
+    """A search box holding only spaces is a search for nothing, not for spaces."""
+    assert len(_media_titles(awkward_media, "   ")) == 5
+    assert len(_media_titles(awkward_media, "")) == 5
+
+
+def test_padded_media_query_no_longer_vetoes_its_own_fts_match(
+    awkward_media,
+) -> None:
+    """The LIKE leg is AND-ed with MATCH, so `%  dragon  %` used to subtract.
+
+    Measured at the merge-base: `dragon` -> 1 row, `  dragon  ` -> 0.
+    """
+    assert _media_titles(awkward_media, "  dragon  ") == ["Alert!!! urgent dragon"]
+
+
+def test_media_nul_byte_stays_hard_false_rather_than_falling_back(
+    awkward_media,
+) -> None:
+    """LIKE is not a safe fallback here: SQLite truncates the bound value.
+
+    `%dragon\\x00lore%` reaches LIKE as `%dragon`, which is WIDER than what
+    was typed -- measured at the merge-base, where it returned the dragon row.
+    """
+    assert _media_titles(awkward_media, "dragon\x00lore") == []
+
+
+def test_media_caller_built_empty_expression_still_means_no_rows(
+    awkward_media,
+) -> None:
+    """`fts_match_query=""` is the "no rows" answer of the shared builders.
+
+    And the title/content LIKE legs are deliberately not built in that
+    branch, so dropping the condition would return EVERY row.
+    """
+    assert _media_titles(awkward_media, "dragon", fts_match_query="") == []
+    assert _media_titles(awkward_media, "dragon", fts_match_query='"dragon"') == [
+        "Alert!!! urgent dragon"
+    ]
+
+
+def test_media_injection_probes_stay_closed_under_the_like_fallback(
+    awkward_media,
+) -> None:
+    """Recall restored without reopening anything: the branch's own probe set."""
+    for query in (
+        "dragon OR zzznomatch",
+        COLUMN_FILTER_INJECTION,
+        ORDINARY_QUOTED,
+        'dragon" OR "lore',
+        "title:dragon",
+        "dragon NEAR lore",
+        "dragon*",
+        "dragon\x00lore",
+    ):
+        assert _media_titles(awkward_media, query) == [], query
+    # ...while the words themselves still answer.
+    assert _media_titles(awkward_media, "dragon lore") == ["Alert!!! urgent dragon"]
+
+
 def test_no_search_seam_leaks_a_raw_operationalerror(db: CharactersRAGDB) -> None:
     """Whatever a seam does with bad input, it is never a bare sqlite error.
 

@@ -13,7 +13,22 @@ try:
     # TASK-19558: this module was the one XML parser in `Subscriptions/`
     # that never adopted defusedxml, while every sibling
     # (`security.py`, `monitoring_engine.py`, the three scrapers) uses this
-    # exact try/except shape. The concrete exposure measured for OPML is
+    # exact try/except shape.
+    #
+    # NOT routed through `Utils/optional_deps.py` -- reviewed and declined
+    # in review round 2 (Qodo #3). `defusedxml` is a CORE dependency
+    # (`pyproject.toml` `[project] dependencies`, annotated "engine xml
+    # security parsing (Q9: core)"), not an extra, and `optional_deps`
+    # names it only inside the `ebook` extra's aggregate availability
+    # check -- it publishes no import accessor for it. All six existing
+    # defusedxml call sites in this app import it directly under exactly
+    # this try/except; routing one of them through `get_safe_import`
+    # (whose users are torch/transformers/aiohttp -- genuinely optional)
+    # would make this the odd one out, not the consistent one. The
+    # `except ImportError` arm is a belt-and-braces fallback for a broken
+    # install, not an optional-feature gate.
+    #
+    # The concrete exposure measured for OPML is
     # ENTITY EXPANSION ("billion laughs"), not XXE: stdlib ElementTree
     # already ignores external entity references, but it happily expands
     # internal ones, so a ~1KB OPML file imported through Watchlists ▸

@@ -446,3 +446,140 @@ passed / 2 failed / 1 collection error**, identical to that set at base.
 Repo-wide `--collect-only -q`: **56,933 collected**, 1 error
 (`test_library_file_notes_workspace.py`, TASK-20972).
 `scripts/preflight.sh`: all green.
+
+## Implementation Notes — review round 2 (Qodo on PR #2006, 2026-08-23)
+
+Qodo returned five findings on the reviewed HEAD `cfc9e2604`. Three were
+fixed, two declined with evidence. (CodeRabbit posted only a "review skipped —
+auto reviews are disabled on non-default base branches" notice; nothing to
+action there.)
+
+**Finding 1 (High, bug) — `search_media_db` forced zero rows. FIXED, and it
+was the same defect class round 1 was convened to fix.** When no MATCH
+expression could be built, the code appended `"0"` to a `" AND ".join`ed
+condition list, so the whole query returned nothing even though the LIKE legs
+beside it could still express the intent. Measured on a five-row corpus, the
+merge-base (`736359202`) and this branch in one process:
+
+| input | dev (merge-base) | branch as reviewed | now |
+|---|---|---|---|
+| `!!!` | RAISE DatabaseError | 0 rows | **1** — "Alert!!! urgent dragon" |
+| `   ` | 0 rows | 0 rows | **5** — whitespace-only = empty search |
+| `""` | 0 rows | 0 rows | **1** — 'Quotes "" doubled' |
+| `-` | RAISE DatabaseError | 0 rows | **1** — "well-known dashes" |
+| `***` | RAISE DatabaseError | 0 rows | **1** — 'The "gold" standard' |
+| `` (empty) | 5 rows | 5 rows | 5 rows |
+| `dragon` (control) | 1 row | 1 row | 1 row |
+| `  dragon  ` (control) | **0 rows** | 0 rows | **1** |
+
+The last row is a pre-existing narrowing the strip incidentally fixes: the
+LIKE leg is AND-ed with the FTS leg, so `%  dragon  %` vetoed the row `MATCH`
+had already found.
+
+The fix branches on WHY the builder returned empty rather than on the fact
+that it did. A caller-owned `fts_match_query` that came out blank stays hard
+false — `""` means "no rows" by the shared builders' contract, and the
+title/content LIKE legs are deliberately not built in that branch, so dropping
+the condition would return the entire table. A NUL stays hard false too: SQLite
+truncates the bound parameter at the NUL, so `%dragon\x00lore%` reaches LIKE as
+`%dragon`, which is WIDER than what was typed (it returned the dragon row at
+the merge-base). Only punctuation-only text drops the leg — along with the FTS
+JOIN and relevance ordering, which are now added inside the same branch that
+adds the MATCH rather than unconditionally.
+
+**The closure was not traded for the recall.** Re-run at `search_media_db`
+after the fix, every probe in this branch's existing set still returns 0 rows:
+`dragon OR zzznomatch`, `alpha" OR title:"Other`, `foo"bar`, `dragon" OR
+"lore`, `title:dragon`, `dragon NEAR lore`, `dragon*`, and `dragon\x00lore`
+— while `dragon lore` still returns its row. Nine new tests in
+`Tests/DB/test_fts5_quoting_search_seams.py` pin all of it, including the
+caller-owned-empty-expression case and the NUL case in both directions.
+
+**Finding 5 (Medium) — docstrings claiming "literal phrase" at AND-form seams.
+FIXED, and swept beyond the three Qodo named.** The sweep was mechanical: an
+AST pass over every production file this branch touches, listing each function
+that calls an `fts5_match_forms` builder, the FORM it actually builds, and
+what its docstring claims. Corrected:
+
+- `ChaChaNotes_DB.search_conversations_by_title` — "literal phrase" → AND (Qodo)
+- `ChaChaNotes_DB.search_conversations_by_content` — three claims, incl. the
+  `fts_match_query` "whole-phrase quoting" line → AND (Qodo)
+- `prompt_scope_service.search_prompts` — "quoted as a literal FTS5 phrase by
+  `PromptsDatabase.search_prompts`" → AND (Qodo)
+- `ChaChaNotes_DB.search_messages_by_content` — "literal phrase" → AND (**not
+  named by Qodo**; same wrong claim, same file)
+- `ChaChaNotes_DB.search_character_cards` — its `fts_match_query` line said the
+  parameter "replaces the whole-phrase quoting of `search_term`" (**not named**)
+- `Client_Media_DB_v2.search_media_db` — the parameter's inline comment said
+  "quoted as a literal FTS5 phrase" while the body builds AND (**not named**)
+- `Utils/fts5_match_forms` module docstring — still said "**What is NOT here:
+  the AND forms**", which TASK-19558 itself made false (**not named**). Replaced
+  with the three forms and the rule for picking one.
+- Four `_library_*_fts_query` helpers (ChaChaNotes ×2, Media, Prompts) —
+  stated the quoting but never the join form; now say AND-of-quoted-tokens.
+- `Prompts_DB.search_prompts_by_text` / `search_prompts_by_content`,
+  `Evals_DB.search_tasks` / `search_datasets`, `file_notes_replica.search` —
+  had no form claim at all; each now names its form (AND, PHRASE, PHRASE).
+
+Verified after the edits by re-running the same AST sweep: no seam whose
+builder is an AND form still says "phrase", and no phrase seam says AND.
+
+**Finding 2 (Medium, rule) — `search_keyword_collections` docstring. FIXED.**
+Full Google-style docstring with Args/Returns/Raises, and it states the form:
+this seam is deliberately a PHRASE (it bound one before the task), unlike its
+AND-form neighbours.
+
+**Finding 3 (Medium, rule) — `defusedxml` bypasses `optional_deps`. DECLINED,
+with evidence.** `defusedxml` is a CORE dependency: `pyproject.toml`
+`[project] dependencies`, annotated `# engine xml security parsing (Q9:
+core)`. `Utils/optional_deps.py` names it only inside the `ebook` extra's
+aggregate availability check and publishes no import accessor for it; its
+`get_safe_import` users are torch / transformers / huggingface_hub / aiohttp,
+all genuinely optional. All six existing defusedxml call sites in the app
+(`Subscriptions/security.py`, `Subscriptions/monitoring_engine.py`,
+`Tools/web_tool_impls.py`, `Web_Scraping/WebSearch_APIs.py`,
+`Chunking/engine/strategies/json_xml.py`,
+`Event_Handlers/Chat_Events/chat_image_events.py`) import it directly under
+exactly this `try/except ImportError` shape. Routing this one through the
+helper would make it the odd one out, not the consistent one. The reasoning is
+recorded at the import site so the next round does not re-raise it.
+
+**Finding 4 (Medium, rule) — `search_character_cards` lacks `transaction()`.
+DECLINED, on a census of its siblings.** Of the 26 read-only search/list
+methods in `ChaChaNotes_DB.py`, 21 call `execute_query()` / `get_connection()`
+with no `transaction()` — including every nearest sibling of this one
+(`search_conversations_by_title`, `search_conversations_by_content`,
+`search_messages_by_content`, `search_notes`, `_search_generic_items_fts`).
+The 5 that do wrap are all PAGED Library seams
+(`search_conversations_page`, `list_library_notes_page`,
+`search_library_notes_page`, `list_library_conversations_page`,
+`search_library_conversations_page`), and they wrap for a stated reason: the
+row page and the exact total must be read from one snapshot. `execute_query`
+is the designed read seam — it documents `commit=False` and joins an outer
+`transaction()` when one exists — and `search_character_cards` is a single
+statement with no cross-statement invariant. This branch did not change its
+transaction shape; wrapping only this one would be inconsistency, not
+compliance.
+
+**Diagnostic inventory: deliberately NOT regenerated.** The rebuild reports
+four drifted rows — `chachanotes_fts_backfill.py` +3 and `app.py` +3 (dev's
+TASK-21100), `ChaChaNotes_DB.py` +3 (same), `Console_Modules/workspace.py`
+same-count-changed-digest (dev's TASK-21118). Read with `--statements`: between
+this branch's inventory commit and the working tree, **zero** diagnostic
+statements changed in any of them, so none of the drift is ours. Regenerating
+would silently absorb dev's unreviewed drift into this PR.
+
+**Test counts (round 2, rebased onto `736359202`).**
+`Tests/DB` + `Tests/ChaChaNotesDB` + `Tests/Utils`: **2415 passed / 1 skipped
+/ 0 failed** (round 1: 2388/1).
+`Tests/Subscriptions` + `Tests/Prompts_DB`: **1178 passed / 1 skipped / 0
+failed** (unchanged).
+`Tests/Media_DB`: **78 passed / 1 failed** —
+`test_reading_progress_reopens_through_versioned_migration`, a DEV red:
+the v5→v6 migration (`ALTER TABLE UnvectorizedMediaChunks ADD COLUMN
+chunk_engine_version`, dev commit `33c1ea0f8`, 2026-08-19) is not idempotent,
+so a test that rewinds `schema_version` to 2 on a database that already has
+the column dies on "duplicate column name". Neither this branch's 3-dot diff
+nor its working tree touches a single line of migration code.
+Repo-wide `--collect-only -q`: **57,069 collected**, 1 error
+(`Tests/UI/test_library_file_notes_workspace.py`, TASK-20972 — known dev red).

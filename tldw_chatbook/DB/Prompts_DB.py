@@ -3291,7 +3291,12 @@ class PromptsDatabase:
 
     @classmethod
     def _library_prompt_fts_query(cls, raw_query: str) -> Optional[str]:
-        """Build a safe FTS5 MATCH query from raw user text (operators inert)."""
+        """Build a safe FTS5 MATCH query from raw user text (operators inert).
+
+        The AND-of-quoted-tokens form, not a phrase: each token is
+        double-quoted and they are space-joined, which is FTS5's implicit
+        AND. Returns None when the input contains no usable tokens.
+        """
         tokens = re.findall(r"\w+", raw_query, flags=re.UNICODE)
         if not tokens:
             return None
@@ -4453,7 +4458,10 @@ class PromptsDatabase:
         Searches in: name, author, details, system_prompt, user_prompt
 
         Args:
-            search_text: The text to search for
+            search_text: Plain user text. Every token is quoted individually
+                and the tokens are AND-ed (``build_and_match_query``), so all
+                of them must appear but they need not be adjacent -- NOT a
+                phrase, and FTS5 operators in it are inert.
             include_deleted: Whether to include soft-deleted prompts
 
         Returns:
