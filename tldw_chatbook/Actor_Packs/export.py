@@ -11,28 +11,25 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from importlib import resources
 from pathlib import Path
-from typing import Any, BinaryIO
+from typing import TYPE_CHECKING, Any, BinaryIO
 
 from tldw_chatbook import __version__
 
 from tldw_chatbook.Character_Chat.local_character_persona_service import (
     LocalCharacterPersonaService,
 )
-from tldw_chatbook.Character_Chat.visual_identity import (
-    compute_pack_content_sha256,
-    load_visual_identity_asset,
-    parse_visual_identity_manifest_json,
-)
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
 from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
-from tldw_chatbook.Persona_Visual.assets import (
-    PersonaVisualAssetError,
-    PersonaVisualAssetMetadata,
-    load_persona_visual_asset,
-)
-from tldw_chatbook.Persona_Visual.repository import (
-    PersonaVisualRepository,
-)
+
+# TASK-21200: ``Persona_Visual.*`` and ``Character_Chat.visual_identity``
+# (module-level ``from PIL import Image``) are imported inside the two capture
+# functions that need them, never at module scope. ``app.py`` imports this module
+# at module scope, so a module-level import here puts PIL and most of
+# Persona_Visual back on the ``import tldw_chatbook.app`` path -- the exact
+# TASK-21103 regression this module re-introduced. Guarded by
+# ``Tests/Packaging/test_persona_buddy_import_closure.py``.
+if TYPE_CHECKING:  # pragma: no cover - typing only, never executed at runtime
+    from tldw_chatbook.Persona_Visual.repository import PersonaVisualRepository
 
 from .contracts import (
     ActorPackValidationError,
@@ -245,6 +242,13 @@ class ActorPackExportService:
     def _capture_persona_visual(
         self, actor_kind: str, actor_id: int | str
     ) -> ActorPackExportSection | None:
+        # Deferred: see the TASK-21200 note at the top of this module.
+        from tldw_chatbook.Persona_Visual.assets import (
+            PersonaVisualAssetError,
+            PersonaVisualAssetMetadata,
+            load_persona_visual_asset,
+        )
+
         if actor_kind != "persona" or self.persona_visual_repository is None:
             return None
         try:
@@ -313,6 +317,13 @@ class ActorPackExportService:
     def _capture_shared_visual(
         self, actor_kind: str, actor_id: int | str
     ) -> ActorPackExportSection | None:
+        # Deferred: see the TASK-21200 note at the top of this module.
+        from tldw_chatbook.Character_Chat.visual_identity import (
+            compute_pack_content_sha256,
+            load_visual_identity_asset,
+            parse_visual_identity_manifest_json,
+        )
+
         if self.visual_identity_repository is None:
             return None
         try:

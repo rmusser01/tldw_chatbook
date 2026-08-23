@@ -7256,3 +7256,56 @@ run against the merge-base AND the branch in the same process — `git show
 location` under a dotted name inside the real package resolves its relative
 imports fine, so both versions can be seeded and queried side by side without a
 second worktree. Closure probes alone never move on any of those rows.
+
+## A lazy package facade protects nothing that consumers import directly, and deferring at the CONSUMER can move the cost instead of removing it (TASK-21200, 2026-08-23)
+
+TASK-21103 removed PIL and `Persona_Visual` from the `import tldw_chatbook.app`
+closure and shipped a guard. Eight hours later the Actor Packs branch merged and
+put them straight back: `app.py` -> `Actor_Packs/__init__` ->
+`Actor_Packs.activation` -> `Persona_Visual.repository` +
+`Character_Chat.visual_identity` (module-level `from PIL import Image`). The
+branch was authored *before* the guard existed and merged *after* it, without a
+rebase, while CI was not enforcing checks — so a trunk invariant that was one
+commit old was silently undone by a branch that predated it. **When you land a
+new invariant, the in-flight branches are the threat, and only enforced CI
+catches them.**
+
+Two fix shapes looked right and were both wrong; the reasoning generalises to
+any import-closure repair.
+
+1. **The house lazy-facade pattern did not apply.** TASK-21103 fixed
+   `Persona_Buddy` with a PEP-562 `__getattr__` on the package `__init__`, so
+   reaching for it here was the obvious move. It would have changed nothing:
+   `app.py` imports `Actor_Packs.activation`/`.export`/`.importer`
+   **directly**, and importing a submodule executes the package init *and* the
+   submodule regardless of how lazy the init is. A facade only helps when the
+   heavy module is reached **through** the package's own re-exports. Check which
+   one your consumers actually write before copying the pattern.
+2. **Deferring at the consumer would have made the guard green while boot stayed
+   slow.** The tempting one-line-region fix was moving app.py's eight
+   `Actor_Packs` imports into `_wire_character_persona_services`, their only
+   caller. But that method runs from `TldwCli.__init__` (app.py:6076), so every
+   real boot would still have paid PIL — the guard measures *module import*, and
+   the user feels *import + construction*. Fixing the three modules at the
+   source removed PIL from both. **Before deferring an import into a function,
+   check when that function runs; if it runs during construction anyway, you
+   have satisfied the test and not the user.**
+
+The evidence shape that settled all of it: a `sys.meta_path` finder that records,
+for each module, the module whose body triggered its import (importlib executes a
+module body in a frame whose `co_name` is `<module>`, so the nearest such frame
+outside the finder is the true importer). Reading `-X importtime` instead is the
+trap it replaces — its indentation nests by *completion* order, and misreading it
+pointed the first diagnosis at the wrong module. That tracer is now installed in
+`Tests/Packaging/test_persona_buddy_import_closure.py` itself, so the guards fail
+with the offending chain printed rather than a list of resident modules; the
+mutation test (re-add one module-level import, watch it go red) printed
+`app -> Actor_Packs -> ...activation -> ...visual_identity -> PIL` verbatim.
+
+Two checks worth copying when you defer imports: read the pre-change public
+surface from `git show HEAD:<file>` (not the edited file) and assert
+`getattr(pkg, name) is <direct submodule import>` for every name — a surface that
+silently shrank cannot pass that; and re-probe import ordering in fresh
+subprocesses (submodule-first, package-first, heavy-dep-first), because
+TASK-21160 shipped a live regression when a lazy facade unmasked a cycle the
+eager init had been front-loading in a safe order.

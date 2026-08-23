@@ -19,16 +19,17 @@ from uuid import uuid4
 from tldw_chatbook.Character_Chat.local_character_persona_service import (
     LocalCharacterPersonaService,
 )
-from tldw_chatbook.Character_Chat.visual_identity import (
-    validate_visual_identity_manifest,
-)
 from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
-from tldw_chatbook.Persona_Visual.repository import PersonaVisualRepository
-from tldw_chatbook.Persona_Visual.validation import (
-    validate_persona_visual_manifest,
-)
 from tldw_chatbook.Utils.private_paths import secure_private_directory
 from tldw_chatbook.Utils.path_validation import validate_path
+
+# TASK-21200: ``Persona_Visual.*`` and ``Character_Chat.visual_identity``
+# (module-level ``from PIL import Image``) are imported inside the two functions
+# that need them, never at module scope. ``app.py`` imports this module at module
+# scope, so a module-level import here puts PIL and most of Persona_Visual back on
+# the ``import tldw_chatbook.app`` path -- the exact TASK-21103 regression this
+# module re-introduced. Guarded by
+# ``Tests/Packaging/test_persona_buddy_import_closure.py``.
 
 from .contracts import (
     MAX_FILES,
@@ -655,6 +656,9 @@ class ActorPackImportService:
     def _visual_authorities(
         self, identity: Any | None
     ) -> tuple[tuple[Any, ...] | None, tuple[Any, ...] | None]:
+        # Deferred: see the TASK-21200 note at the top of this module.
+        from tldw_chatbook.Persona_Visual.repository import PersonaVisualRepository
+
         if identity is None:
             return None, None
         shared_graph = VisualIdentityRepository(
@@ -1090,6 +1094,14 @@ def _validate_sections(
     archive_members: frozenset[str],
     read_member: Callable[[str], bytes],
 ) -> tuple[tuple[str, tuple[_ActorPackSectionAsset, ...]], ...]:
+    # Deferred: see the TASK-21200 note at the top of this module.
+    from tldw_chatbook.Character_Chat.visual_identity import (
+        validate_visual_identity_manifest,
+    )
+    from tldw_chatbook.Persona_Visual.validation import (
+        validate_persona_visual_manifest,
+    )
+
     validated: list[tuple[str, tuple[_ActorPackSectionAsset, ...]]] = []
     for section in sections:
         manifest_bytes = read_member(section.manifest_path)
