@@ -1992,19 +1992,23 @@ _INGEST_HEAVY_TYPES = frozenset({"audio", "video"})
 
 # (task 10, spec §9.1 AC 37/AC-24b) The named template errors the ingest
 # dispatch fails an item on: an unresolvable choice (deleted/renamed) and a
-# stored-invalid body refused by the validator. Aliased with leading
-# underscores to keep them off the module's public surface.
-from tldw_chatbook.Chunking.chunking_interop_library import (  # noqa: E402
-    InvalidTemplateError as _InvalidTemplateError,
-)
-from tldw_chatbook.Chunking.template_runtime import (  # noqa: E402
-    TemplateResolutionError as _TemplateResolutionError,
-)
+# stored-invalid body refused by the validator.
+#
+# (task-21102) Resolved at except-time by the sole consumer (the ingest job
+# dispatch loop) rather than imported at module scope: these two imports were
+# one of the six entry points that executed the full Chunking package
+# (~15k LOC shim + vendored engine) during ``import tldw_chatbook.app``.
+# The lazily imported classes are the SAME objects the raising code
+# (``_ingest_job_options`` -> ``Chunking.template_runtime`` /
+# ``chunking_interop_library``) raises, so the except clause catches exactly
+# what it always caught -- and whenever a template error can actually be in
+# flight, those modules are already resident, making this a sys.modules hit.
+def _template_resolution_errors() -> tuple[type[Exception], ...]:
+    """Return the named template-resolution error types, imported lazily."""
+    from tldw_chatbook.Chunking.chunking_interop_library import InvalidTemplateError
+    from tldw_chatbook.Chunking.template_runtime import TemplateResolutionError
 
-_TEMPLATE_RESOLUTION_ERRORS: tuple[type[Exception], ...] = (
-    _TemplateResolutionError,
-    _InvalidTemplateError,
-)
+    return (TemplateResolutionError, InvalidTemplateError)
 
 _INGEST_LOCAL_STT_PHASE_MESSAGES: dict[WorkerPhase, str] = {
     WorkerPhase.PREPARING: "Preparing import",
@@ -4045,7 +4049,7 @@ class LibraryIngestQueueMixin:
                     permanent=False,
                 )
                 continue
-            except _TEMPLATE_RESOLUTION_ERRORS as exc:
+            except _template_resolution_errors() as exc:
                 # (task 10, AC 37/AC-24b) A template choice that no longer
                 # resolves (or a stored-invalid body) FAILS THIS ITEM with
                 # the named error -- never a silent fallback to plain
