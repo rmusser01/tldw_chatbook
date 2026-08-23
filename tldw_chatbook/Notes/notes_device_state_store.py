@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+import threading
 import time
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
@@ -11,6 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 from weakref import WeakValueDictionary
+
+from loguru import logger
 
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 from tldw_chatbook.Notes import notes_device_state_schema
@@ -419,13 +422,35 @@ class NotesDeviceStateError(RuntimeError):
 
 
 class NotesDeviceStateStore:
-    """Own the sole private connection and transaction seam for notes.sync_state."""
+    """Own the sole private connection and transaction seam for notes.sync_state.
+
+    Connection model (task-21101): each thread that uses the store holds ONE
+    long-lived connection created on first use (``threading.local``), rather
+    than opening a fresh connection per operation. The held connection runs
+    ``journal_mode=WAL`` + ``synchronous=NORMAL`` with ``isolation_level=None``
+    (true autocommit; transactions are the explicit ``BEGIN``/``BEGIN
+    IMMEDIATE`` issued by :meth:`transaction`), and the schema census
+    (``initialize_notes_device_schema``) runs once per connection lifetime --
+    at open -- not per transaction. WAL is only adopted after the census has
+    proven the database is this owner's: a refused foreign database is never
+    modified.
+
+    Thread affinity: the store is reached from the UI thread and from
+    ``asyncio.to_thread`` worker pools. ``check_same_thread=False`` is safe
+    here because thread-local storage guarantees each connection is used only
+    by its creating thread; the one cross-thread touch is :meth:`close`, which
+    sqlite3 permits. Call :meth:`close` only after in-flight operations have
+    quiesced; a closed store transparently re-opens on next use.
+    """
 
     def __init__(self, database_path: str | Path) -> None:
         self._database_path = Path(database_path)
         self._operation_locks: WeakValueDictionary[str, asyncio.Lock] = (
             WeakValueDictionary()
         )
+        self._thread_local = threading.local()
+        self._connections_guard = threading.Lock()
+        self._connections: list[sqlite3.Connection] = []
 
     def __repr__(self) -> str:
         return "NotesDeviceStateStore(<private>)"
@@ -445,38 +470,110 @@ class NotesDeviceStateStore:
         *,
         read_only: bool = False,
         must_exist: bool = False,
+        **connection_options: object,
     ) -> sqlite3.Connection:
         connection = connect_private_sqlite(
             "notes.sync_state",
             self._database_path,
             read_only=read_only,
             must_exist=must_exist,
+            **connection_options,
         )
         connection.execute("PRAGMA foreign_keys = ON")
         return connection
 
+    def _open_schema_ready_connection(self) -> sqlite3.Connection:
+        """Open, census-validate, and WAL-configure one held connection."""
+
+        connection = self._connect(
+            check_same_thread=False,
+            isolation_level=None,
+        )
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                notes_device_state_schema.initialize_notes_device_schema(connection)
+            except BaseException:
+                connection.rollback()
+                raise
+            connection.commit()
+            # journal_mode is persisted in the database file, so WAL is
+            # adopted only AFTER the census proved the database is this
+            # owner's; a refused foreign database must stay byte-identical.
+            # synchronous is per-connection and must be reapplied per open;
+            # NORMAL is app-crash-safe under WAL and drops the per-commit
+            # fsync that made receipt-heavy imports pay FULL's price.
+            connection.execute("PRAGMA journal_mode = WAL")
+            connection.execute("PRAGMA synchronous = NORMAL")
+        except BaseException:
+            connection.close()
+            raise
+        return connection
+
+    def _get_connection(self) -> sqlite3.Connection:
+        connection = getattr(self._thread_local, "connection", None)
+        if connection is not None:
+            return connection
+        connection = self._open_schema_ready_connection()
+        self._thread_local.connection = connection
+        with self._connections_guard:
+            self._connections.append(connection)
+        return connection
+
     @contextmanager
     def transaction(self, *, immediate: bool = False) -> Iterator[sqlite3.Connection]:
-        """Yield one writable connection inside a schema-ready transaction."""
+        """Yield this thread's schema-ready held connection in one transaction."""
 
-        connection = self._connect()
+        connection = self._get_connection()
         try:
             connection.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
-            notes_device_state_schema.initialize_notes_device_schema(connection)
             yield connection
             connection.commit()
-        except Exception:
-            connection.rollback()
+        except BaseException:
+            try:
+                connection.rollback()
+            except Exception as rollback_error:
+                # A rollback can itself fail (e.g. shutdown close()d the
+                # held connection under us); that secondary error must not
+                # mask the original one. Type name only: no private values.
+                logger.debug(
+                    "Notes device store rollback failed after a transaction "
+                    "error: {}",
+                    type(rollback_error).__name__,
+                )
             raise
-        finally:
-            connection.close()
+
+    def close(self) -> None:
+        """Close every held connection; the store re-arms on next use.
+
+        Best-effort and callable from any thread; callers must let in-flight
+        operations quiesce first.
+        """
+
+        with self._connections_guard:
+            connections = tuple(self._connections)
+            self._connections.clear()
+            self._thread_local = threading.local()
+        for connection in connections:
+            try:
+                connection.close()
+            except Exception:
+                continue
 
     def initialize(self) -> None:
         """Atomically initialize or migrate this isolated private owner."""
 
         try:
-            with self.transaction(immediate=True):
-                pass
+            if getattr(self._thread_local, "connection", None) is None:
+                # A fresh connection runs the schema census as it opens.
+                self._get_connection()
+            else:
+                # A repeated initialize() keeps its tamper-detection
+                # contract: re-run the census on the held connection.
+                with self.transaction(immediate=True) as connection:
+                    notes_device_state_schema.initialize_notes_device_schema(
+                        connection
+                    )
         except notes_device_state_schema.NotesDeviceSchemaError as error:
             message = str(error)
             if message.startswith("Unsupported"):

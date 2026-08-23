@@ -975,25 +975,29 @@ class NotesSyncRuntimeOwner:
             if root_id != matching_root_id:
                 await self.abandon_setup(root_id)
         root_id = matching_root_id or str(uuid4())
-        root = NotesSyncRootRecord(
-            root_id=root_id,
-            note_scope_id=setup.note_scope_id,
-            logical_folder_id=None,
-            canonical_path=setup.canonical_path,
-            direction=setup.direction,
-            state=NotesSyncRootState.PENDING,
-        )
-        self._root_paths[root_id] = setup.canonical_path
-        if matching_root_id is None and not await self._ensure_lease(root):
-            self._root_paths.pop(root_id, None)
-            raise RuntimeError("root_lease_unavailable")
+        task = self._register_task(root_id)
         try:
-            plan = await self._review_candidate(root)
-        except Exception:
-            await self._release_setup_authority(root_id)
-            raise
-        self._setup_reviews[root_id] = _SetupReview(setup, plan)
-        return plan
+            root = NotesSyncRootRecord(
+                root_id=root_id,
+                note_scope_id=setup.note_scope_id,
+                logical_folder_id=None,
+                canonical_path=setup.canonical_path,
+                direction=setup.direction,
+                state=NotesSyncRootState.PENDING,
+            )
+            self._root_paths[root_id] = setup.canonical_path
+            if matching_root_id is None and not await self._ensure_lease(root):
+                self._root_paths.pop(root_id, None)
+                raise RuntimeError("root_lease_unavailable")
+            try:
+                plan = await self._review_candidate(root)
+            except Exception:
+                await self._release_setup_authority(root_id)
+                raise
+            self._setup_reviews[root_id] = _SetupReview(setup, plan)
+            return plan
+        finally:
+            self._finish_task(root_id, task)
 
     async def abandon_setup(self, root_id: str) -> None:
         """Release one unpersisted setup review and its provisional lease."""
@@ -1392,20 +1396,24 @@ class NotesSyncRuntimeOwner:
 
     async def pause_root(self, root_id: str) -> NotesSyncControlResult:
         self._require_cutover(root_id)
-        self._closed_roots.add(root_id)
-        self._blocked_roots.add(root_id)
-        await self._settle_root(root_id)
-        await asyncio.to_thread(
-            self._store.transition_root, root_id, NotesSyncRootState.PAUSED
-        )
-        lease = self._leases.pop(root_id, None)
-        self._admissions.pop(root_id, None)
-        if lease is not None and self._coordinator is not None:
+        task = self._register_task(root_id)
+        try:
+            self._closed_roots.add(root_id)
+            self._blocked_roots.add(root_id)
+            await self._settle_root(root_id)
             await asyncio.to_thread(
-                self._coordinator.close_admission, lease, lambda: None
+                self._store.transition_root, root_id, NotesSyncRootState.PAUSED
             )
-        await self._publish(root_id, "paused", "resume_sync")
-        return NotesSyncControlResult(True, "paused", "resume_sync")
+            lease = self._leases.pop(root_id, None)
+            self._admissions.pop(root_id, None)
+            if lease is not None and self._coordinator is not None:
+                await asyncio.to_thread(
+                    self._coordinator.close_admission, lease, lambda: None
+                )
+            await self._publish(root_id, "paused", "resume_sync")
+            return NotesSyncControlResult(True, "paused", "resume_sync")
+        finally:
+            self._finish_task(root_id, task)
 
     async def resolve_cleanup(self, root_id: str, operation_id: str) -> object:
         """Resolve one explicit durable cleanup action under root authority."""
@@ -1444,6 +1452,13 @@ class NotesSyncRuntimeOwner:
 
     async def resume_root(self, root_id: str) -> NotesSyncControlResult:
         self._require_cutover(root_id)
+        task = self._register_task(root_id)
+        try:
+            return await self._resume_root(root_id)
+        finally:
+            self._finish_task(root_id, task)
+
+    async def _resume_root(self, root_id: str) -> NotesSyncControlResult:
         root = await asyncio.to_thread(self._store.get_root, root_id)
         if root.state is not NotesSyncRootState.PAUSED:
             return NotesSyncControlResult(False, "needs_attention", "review_settings")
@@ -1709,6 +1724,19 @@ class NotesSyncRuntimeOwner:
         self._require_cutover(root_id)
         if root_id in self._closed_roots:
             raise RuntimeError("root_admission_closed")
+        return self._register_task(root_id)
+
+    def _register_task(self, root_id: str) -> asyncio.Task[object]:
+        """Make this coroutine's store work visible to settle()/shutdown.
+
+        task-21101 review round: pause_root, resume_root, and review_setup
+        touch the held-connection store but were invisible to settle(), so
+        _shutdown_once could close the store while their pool thread held a
+        checked-out connection. Unlike _admit_task, registration does not
+        gate on _closed_roots -- resume_root must run on a closed root, and
+        pause_root closes its own root as it starts.
+        """
+
         task = asyncio.current_task()
         if task is None:
             raise RuntimeError("runtime_task_required")
@@ -1808,6 +1836,15 @@ class NotesSyncRuntimeOwner:
                     continue
                 self._leases.pop(root_id, None)
                 self._admissions.pop(root_id, None)
+        # Release the store's held per-thread connections (task-21101); the
+        # store transparently re-opens if a later start() needs it again.
+        # getattr-guarded like close_adapter above: tests supply fake stores.
+        close_store = getattr(self._store, "close", None)
+        if callable(close_store):
+            try:
+                await asyncio.to_thread(close_store)
+            except Exception:
+                pass
         if close_failed:
             self._status = "failed"
             self._next_action = "review_settings"
