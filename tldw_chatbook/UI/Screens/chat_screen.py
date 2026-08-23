@@ -43,10 +43,8 @@ from textual.widgets import Button, Static, Select, Collapsible, Input
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
 from ..Navigation.pending_handoff_store import (
-    ConsoleFirstChatIntent,
     ConsoleProviderIntent,
     HandoffChannel,
-    PendingHandoffStore,
 )
 from ..Navigation.screen_state_store import ConsolePromptTargetProjection
 from .chat_screen_state import TaskResumeState
@@ -196,7 +194,6 @@ from ...Chat.console_prefill import (
 from ...Chat.console_generate_image import insert_style_token_into_draft
 from ...Chat.console_side_chat import ConsoleSideChatService, render_prompt
 from ...Chat.console_chat_models import (
-    CONSOLE_GLOBAL_WORKSPACE_ID,
     ConsoleChatMessage,
     ConsoleContextSnapshot,
     ConsoleMessageRole,
@@ -359,9 +356,7 @@ from ...config import (
     get_api_key,
     get_cli_providers_and_models,
     get_cli_setting,
-    get_runtime_config_snapshot,
     load_settings,
-    run_if_runtime_config_generation_current,
     save_setting_to_cli_config,
     save_settings_to_cli_config,
 )
@@ -3771,7 +3766,6 @@ class ChatScreen(BaseAppScreen):
         self._console_status_chips_layout_revision = 0
         self._state_dirty = False
         self._handoff_consumption_in_progress = False
-        self._first_chat_handoff_notified_revision: int | None = None
         self._pending_console_launch_context: Optional[ConsoleLiveWorkLaunch] = None
         self._pending_console_launch_auto_open_inspector = False
         # PR-4/task-1: source count of the evidence the LAST send consumed,
@@ -4638,344 +4632,6 @@ class ChatScreen(BaseAppScreen):
             )
             return False
         self.app_instance.pending_handoffs.acknowledge(claim)
-        return True
-
-    @staticmethod
-    def _first_chat_defaults_match(
-        intent: ConsoleFirstChatIntent,
-        settings: ConsoleSessionSettings,
-    ) -> bool:
-        return (
-            provider_config_key(settings.provider) == intent.provider
-            and str(settings.model or "").strip() == intent.model
-        )
-
-    def _current_first_chat_defaults(
-        self,
-        *,
-        provider: str,
-        model: str,
-        config_revision: int,
-    ) -> ConsoleSessionSettings | None:
-        """Resolve exact current defaults only while the config fence matches."""
-
-        snapshot = get_runtime_config_snapshot()
-        if snapshot.generation != config_revision:
-            return None
-        settings = build_default_console_session_settings(snapshot.values)
-        if (
-            provider_config_key(settings.provider) != provider_config_key(provider)
-            or str(settings.model or "").strip() != str(model or "").strip()
-        ):
-            return None
-        return settings
-
-    def eligible_console_first_chat_session_id(self) -> str | None:
-        """Return an exact untouched target without creating or changing Console."""
-
-        store = self._console_chat_store
-        if store is None:
-            return None
-        active_id = store.active_session_id
-        if active_id is None:
-            return None
-        active = next(
-            (session for session in store.sessions() if session.id == active_id),
-            None,
-        )
-        baseline = active.canonical_settings_baseline if active is not None else None
-        if (
-            baseline is None
-            or active.workspace_id != CONSOLE_GLOBAL_WORKSPACE_ID
-            or not store.is_pristine_session(
-                active_id,
-                expected_settings=baseline,
-            )
-        ):
-            return None
-        return active_id
-
-    def _release_first_chat_claim(self, claim, message: str) -> bool:
-        """Release an exact claim without leaking failure-owned data."""
-
-        handoffs = self.app_instance.pending_handoffs
-        try:
-            claim_is_current = handoffs.is_current_claim(claim)
-        except Exception as exc:  # noqa: BLE001 - lifecycle boundary containment
-            claim_is_current = False
-            self._log_first_chat_handoff_exception("claim-current-check", exc)
-        try:
-            released = handoffs.release(claim)
-        except Exception as exc:  # noqa: BLE001 - keep the channel retryable
-            self._log_first_chat_handoff_exception("claim-release", exc)
-            released = False
-            if isinstance(handoffs, PendingHandoffStore):
-                try:
-                    # Bypass a failing instance wrapper while retaining the
-                    # store's exact-claim and replacement invariants.
-                    released = PendingHandoffStore.release(handoffs, claim)
-                except Exception as fallback_exc:  # noqa: BLE001
-                    self._log_first_chat_handoff_exception(
-                        "claim-release-fallback",
-                        fallback_exc,
-                    )
-        if not released:
-            return False
-        if not claim_is_current:
-            if self._first_chat_handoff_notified_revision == claim.revision:
-                self._first_chat_handoff_notified_revision = None
-            return False
-        if claim.revision != self._first_chat_handoff_notified_revision:
-            self._first_chat_handoff_notified_revision = claim.revision
-            try:
-                self.app_instance.notify(message, severity="warning")
-            except Exception as exc:  # noqa: BLE001 - lifecycle boundary containment
-                self._log_first_chat_handoff_exception("notification", exc)
-        return False
-
-    @staticmethod
-    def _log_first_chat_handoff_exception(category: str, exc: Exception) -> None:
-        """Log only allowlisted failure classification, never exception content."""
-
-        logger.warning(
-            "First-chat handoff operation failed (category={}, error_type={})",
-            category,
-            type(exc).__name__,
-        )
-
-    async def _resync_console_after_first_chat_rollback(
-        self,
-        prior_focused_widget: Widget | None,
-    ) -> None:
-        """Re-render restored Console state, then restore still-mounted focus."""
-
-        if not self.is_mounted:
-            return
-        await self._sync_native_console_chat_ui()
-        if not self.is_mounted:
-            return
-        if prior_focused_widget is not None and prior_focused_widget.is_mounted:
-            prior_focused_widget.focus()
-
-    def _resync_mounted_console_after_first_chat_rollback(
-        self,
-        *,
-        prior_control_provider: str | None,
-        prior_control_model: str | None,
-        prior_focused_widget: Widget | None,
-    ) -> None:
-        """Restore first-chat-owned scalars and every mounted Console projection."""
-
-        self._console_control_provider = prior_control_provider
-        self._console_control_model = prior_control_model
-        if not self.is_mounted:
-            return
-        self._sync_console_chat_core_state()
-        self._sync_console_settings_summary()
-        self._sync_console_control_bar()
-        self.run_worker(
-            self._resync_console_after_first_chat_rollback(prior_focused_widget),
-            group="console-first-chat-rollback",
-            exit_on_error=False,
-        )
-
-    def consume_pending_console_first_chat_intent(self) -> bool:
-        """Activate one exact first-run target without overwriting user state."""
-
-        claim = self.app_instance.pending_handoffs.claim(
-            HandoffChannel.CONSOLE_FIRST_CHAT
-        )
-        if claim is None:
-            return False
-        intent = claim.value
-        if not isinstance(intent, ConsoleFirstChatIntent):
-            return self._release_first_chat_claim(
-                claim,
-                "The first chat could not be opened yet; review provider setup.",
-            )
-        defaults = self._current_first_chat_defaults(
-            provider=intent.provider,
-            model=intent.model,
-            config_revision=intent.config_revision,
-        )
-        if defaults is None:
-            return self._release_first_chat_claim(
-                claim,
-                "Provider settings changed before Console opened. Review setup and try again.",
-            )
-
-        store = self._ensure_console_chat_store()
-        prior_active_id = store.active_session_id
-        prior_control_provider = self._console_control_provider
-        prior_control_model = self._console_control_model
-        prior_focused_widget = self.app.focused if self.is_mounted else None
-        created_target = None
-        refreshed_prior: (
-            tuple[
-                ConsoleSessionSettings,
-                ConsoleSessionSettings,
-                str,
-            ]
-            | None
-        ) = None
-
-        def rollback_mutation() -> None:
-            if created_target is not None:
-                store.rollback_created_pristine_session(
-                    created_target.id,
-                    expected_session=created_target,
-                    expected_settings=defaults,
-                    prior_active_session_id=prior_active_id,
-                )
-            elif refreshed_prior is not None:
-                prior_settings, prior_baseline, prior_updated_at = refreshed_prior
-                store.rollback_pristine_session_refresh(
-                    intent.session_id,
-                    expected_current_settings=defaults,
-                    prior_settings=prior_settings,
-                    prior_canonical_settings=prior_baseline,
-                    prior_updated_at=prior_updated_at,
-                )
-            self._resync_mounted_console_after_first_chat_rollback(
-                prior_control_provider=prior_control_provider,
-                prior_control_model=prior_control_model,
-                prior_focused_widget=prior_focused_widget,
-            )
-
-        def rollback_and_release(message: str) -> bool:
-            try:
-                rollback_mutation()
-            except Exception as exc:  # noqa: BLE001 - lifecycle boundary containment
-                self._log_first_chat_handoff_exception("rollback", exc)
-            return self._release_first_chat_claim(claim, message)
-
-        def fence_matches(*, expected_active_id: str) -> bool:
-            current = self._current_first_chat_defaults(
-                provider=intent.provider,
-                model=intent.model,
-                config_revision=intent.config_revision,
-            )
-            return (
-                current == defaults
-                and store.active_session_id == expected_active_id
-                and self.app_instance.pending_handoffs.is_current_claim(claim)
-            )
-
-        reserves_new_target = (
-            self.app_instance.pending_handoffs.claim_reserves_new_console_session(claim)
-        )
-        target = next(
-            (
-                session
-                for session in store.sessions()
-                if session.id == intent.session_id
-            ),
-            None,
-        )
-        if target is None:
-            if not reserves_new_target:
-                return self._release_first_chat_claim(
-                    claim,
-                    "The intended Console session is no longer available. Review setup and try again.",
-                )
-            try:
-                target = store.create_session(
-                    session_id=intent.session_id,
-                    workspace_id=CONSOLE_GLOBAL_WORKSPACE_ID,
-                    settings=defaults,
-                    canonical_settings_baseline=defaults,
-                    activate=False,
-                )
-            except ValueError:
-                return self._release_first_chat_claim(
-                    claim,
-                    "The intended Console session was claimed before setup finished. It was left unchanged.",
-                )
-            created_target = target
-            if not fence_matches(expected_active_id=prior_active_id):
-                return rollback_and_release(
-                    "Provider settings changed while Console prepared the first chat. It will retry.",
-                )
-            store.switch_session(intent.session_id)
-            if not fence_matches(expected_active_id=intent.session_id):
-                return rollback_and_release(
-                    "Console changed while the first chat was opening. Your sessions were left unchanged.",
-                )
-        else:
-            if reserves_new_target:
-                return self._release_first_chat_claim(
-                    claim,
-                    "The intended Console session was claimed before setup finished. It was left unchanged.",
-                )
-            if store.active_session_id != intent.session_id:
-                return self._release_first_chat_claim(
-                    claim,
-                    "Console changed sessions before setup finished. Your current session was left unchanged.",
-                )
-            baseline = target.canonical_settings_baseline
-            if (
-                baseline is None
-                or target.workspace_id != CONSOLE_GLOBAL_WORKSPACE_ID
-                or not store.is_pristine_session(
-                    intent.session_id,
-                    expected_settings=baseline,
-                )
-            ):
-                return self._release_first_chat_claim(
-                    claim,
-                    "The intended Console session now contains work. It was left unchanged.",
-                )
-            if baseline != defaults:
-                refreshed_prior = (target.settings, baseline, target.updated_at)
-                store.refresh_pristine_session_settings(
-                    intent.session_id,
-                    prior_canonical_settings=baseline,
-                    current_canonical_settings=defaults,
-                )
-                target = next(
-                    session
-                    for session in store.sessions()
-                    if session.id == intent.session_id
-                )
-                if not fence_matches(expected_active_id=intent.session_id):
-                    return rollback_and_release(
-                        "Provider settings changed while Console prepared the first chat. It will retry.",
-                    )
-
-        if (
-            target.settings is None
-            or not self._first_chat_defaults_match(intent, target.settings)
-            or not fence_matches(expected_active_id=intent.session_id)
-        ):
-            return rollback_and_release(
-                "The first chat target no longer matches provider setup. It was left unchanged.",
-            )
-
-        self._console_control_provider = target.settings.provider
-        self._console_control_model = target.settings.model
-        if self.is_mounted:
-            self._sync_console_chat_core_state()
-            self._sync_console_settings_summary()
-            self._sync_console_control_bar()
-        if not fence_matches(expected_active_id=intent.session_id):
-            return rollback_and_release(
-                "Console changed before the first chat finished opening. It will retry.",
-            )
-        try:
-            acknowledged = run_if_runtime_config_generation_current(
-                intent.config_revision,
-                lambda: self.app_instance.pending_handoffs.acknowledge_current(claim),
-            )
-        except Exception as exc:  # noqa: BLE001 - mount/resume must not fail
-            self._log_first_chat_handoff_exception("guarded-acknowledgement", exc)
-            return rollback_and_release(
-                "The first chat could not be acknowledged yet. It will retry.",
-            )
-        if not acknowledged:
-            return rollback_and_release(
-                "The first chat could not be acknowledged yet. It will retry.",
-            )
-        self._first_chat_handoff_notified_revision = None
         return True
 
     def current_console_provider_for_command(self) -> str | None:
@@ -13804,7 +13460,7 @@ class ChatScreen(BaseAppScreen):
         # This handoff is session/config only and does not need mounted DOM.
         # Consume it before ordinary UI restoration can create a competing
         # default session with a different identity.
-        self.consume_pending_console_first_chat_intent()
+        self._session.consume_pending_console_first_chat_intent()
         self._notify_console_fleet_teardown_if_any()
         # PR3a-2 Task 5: claim staged auto-wakes SYNCHRONOUSLY, before any
         # timer or worker below can run the first tab sync -- whose
@@ -19377,7 +19033,7 @@ class ChatScreen(BaseAppScreen):
             logger.opt(exception=True).debug(
                 "Unable to reconcile Console session with registry-active workspace"
             )
-        self.consume_pending_console_first_chat_intent()
+        self._session.consume_pending_console_first_chat_intent()
         # Re-evaluate setup-card/model readiness before touching focus. Some
         # recovery flows (e.g. certain providers' API-key recovery) navigate to
         # the full Settings screen and back rather than completing setup via

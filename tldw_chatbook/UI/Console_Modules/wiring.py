@@ -110,6 +110,24 @@ def _console_screen_is_displayed(screen: Any) -> bool:
         return True
 
 
+def _apply_first_chat_control_selection(
+    screen: Any,
+    provider: Any,
+    model: Any,
+) -> None:
+    """Project one first-chat provider/model selection onto screen controls."""
+
+    screen._console_control_provider = provider
+    screen._console_control_model = model
+
+
+def _restore_first_chat_focus(screen: Any, token: object | None) -> None:
+    """Restore an opaque focus token only while both it and the screen are mounted."""
+
+    if screen.is_mounted and getattr(token, "is_mounted", False):
+        token.focus()
+
+
 def build_console_controllers(
     screen: "ChatScreen",
     *,
@@ -750,6 +768,24 @@ def build_console_controllers(
                     force=True, **kwargs
                 )
             )
+        ),
+        screen_mounted_accessor=lambda: screen.is_mounted,
+        first_chat_presentation_snapshot=(
+            lambda: (
+                screen._console_control_provider,
+                screen._console_control_model,
+                screen.app.focused if screen.is_mounted else None,
+            )
+        ),
+        apply_first_chat_control_selection=(
+            lambda provider, model: _apply_first_chat_control_selection(
+                screen,
+                provider,
+                model,
+            )
+        ),
+        restore_first_chat_focus=(
+            lambda token: _restore_first_chat_focus(screen, token)
         ),
     )
     #: Dictation's own state and lifecycle moved to

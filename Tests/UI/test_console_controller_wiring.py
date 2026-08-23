@@ -32,9 +32,11 @@ break silently:
 """
 
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.UI.test_destination_shells import _build_test_app
 from tldw_chatbook.UI.Console_Modules.agent import ConsoleAgentController
 from tldw_chatbook.UI.Console_Modules.character import ConsoleCharacterController
@@ -186,6 +188,67 @@ def test_fleet_controller_is_constructed_with_late_bound_screen_edges() -> None:
     assert controller._wake_delivering_conversation_id() == "conversation-a"
     assert controller._fleet_has_unsettled_children() is True
     assert wake_calls == [("wire", screen.app_instance), "seed", "retry"]
+
+
+@pytest.mark.asyncio
+async def test_session_first_chat_edges_are_late_bound_and_presentation_only(
+    monkeypatch,
+) -> None:
+    screen = _unmounted_console()
+    controller = screen._session
+    screen._console_control_provider = "late-provider"
+    screen._console_control_model = "late-model"
+    focus_token = MagicMock()
+    focus_token.is_mounted = True
+
+    assert controller._screen_mounted_accessor() is False
+    assert controller._first_chat_presentation_snapshot_fn() == (
+        "late-provider",
+        "late-model",
+        None,
+    )
+    controller._apply_first_chat_control_selection_fn("next-provider", "next-model")
+    assert (screen._console_control_provider, screen._console_control_model) == (
+        "next-provider",
+        "next-model",
+    )
+    controller._restore_first_chat_focus_fn(focus_token)
+    focus_token.focus.assert_not_called()
+
+    host = ConsolidatedCSSApp()
+    async with host.run_test(size=(120, 40)) as pilot:
+        await host.push_screen(screen)
+        await pilot.pause()
+        assert screen.is_attached is True
+        assert controller._screen_mounted_accessor() is True
+
+        mounted_focus_token = screen.query_one("#console-native-composer")
+        focus_spy = MagicMock(wraps=mounted_focus_token.focus)
+        monkeypatch.setattr(mounted_focus_token, "focus", focus_spy)
+        controller._restore_first_chat_focus_fn(mounted_focus_token)
+        focus_spy.assert_called_once_with()
+
+        await host.pop_screen()
+        await pilot.pause()
+        assert screen.is_attached is False
+
+
+@pytest.mark.asyncio
+async def test_session_first_chat_focus_ignores_opaque_token() -> None:
+    screen = _unmounted_console()
+    controller = screen._session
+    opaque_token = SimpleNamespace(focus=MagicMock())
+
+    controller._restore_first_chat_focus_fn(opaque_token)
+    opaque_token.focus.assert_not_called()
+
+    host = ConsolidatedCSSApp()
+    async with host.run_test(size=(120, 40)) as pilot:
+        await host.push_screen(screen)
+        await pilot.pause()
+
+        controller._restore_first_chat_focus_fn(opaque_token)
+        opaque_token.focus.assert_not_called()
 
 
 def test_retrieval_controller_is_constructed_with_late_bound_screen_edges():

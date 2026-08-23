@@ -1260,14 +1260,6 @@ async def test_initial_root_scan_projects_checking_authority_while_actions_are_g
     replica.close()
 
 
-@pytest.mark.parametrize(
-    ("save_state", "save_copy"),
-    (("error", "Save failed"), ("conflict", "Conflict")),
-)
-@pytest.mark.parametrize(
-    ("push_phase", "push_copy", "git_count"),
-    (("idle", "", 0), ("needs_attention", "Push attention", 1)),
-)
 @pytest.mark.asyncio
 async def test_wide_files_task_return_restores_database_browse_receipt() -> None:
     """Files returns to the prior Database row and both independent scroll owners."""
@@ -1365,6 +1357,14 @@ async def test_wide_files_task_return_restores_database_browse_receipt() -> None
     await workspace.shutdown()
 
 
+@pytest.mark.parametrize(
+    ("save_state", "save_copy"),
+    (("error", "Save failed"), ("conflict", "Conflict")),
+)
+@pytest.mark.parametrize(
+    ("push_phase", "push_copy", "git_count"),
+    (("idle", "", 0), ("needs_attention", "Push attention", 1)),
+)
 @pytest.mark.asyncio
 async def test_path_transition_authority_names_file_operation_and_settles(
     tmp_path: Path,
