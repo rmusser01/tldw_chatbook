@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 from math import ceil
 from typing import Literal
 
+from tldw_chatbook.Notes.notes_sync_conflicts import eligible_conflict_reason
 from tldw_chatbook.Notes.notes_sync_models import (
     NotesSyncActionKind,
     validate_notes_sync_digest,
@@ -322,7 +323,7 @@ def set_setup_value(
     if field == "direction" and value not in _DIRECTIONS:
         raise ValueError("unknown direction")
 
-    setup = replace(snapshot.setup, **{field: value})
+    setup = replace(snapshot.setup, **{field: value})  # type: ignore[arg-type]
     missing: list[str] = []
     if not setup.display_name.strip():
         missing.append("display name")
@@ -375,10 +376,23 @@ def build_reconciliation_review(
                 action_id=action.action_id,
             )
         )
+    managed_binding_ids = frozenset(
+        effect.binding_id for effect in plan.managed_placement_effects
+    )
     for attention in plan.attention:
         if attention.kind is ReconciliationAttentionKind.CONFLICT:
             effect = "Both file and note changed"
-            choices = ("Keep file", "Keep note", "Keep both")
+            choices: tuple[str, ...] = ("Keep file", "Keep note", "Keep both")
+            if attention.binding_id is not None and eligible_conflict_reason(
+                attention.reason_code,
+                managed=attention.binding_id in managed_binding_ids,
+            ):
+                effect = (
+                    "Both file and note changed"
+                    if attention.reason_code == "both_sides_changed"
+                    else "This change is outside the root direction"
+                )
+                choices = (*choices, "Skip for now")
         elif attention.kind is ReconciliationAttentionKind.DELETION_REVIEW:
             effect = "One side was deleted"
             choices = (

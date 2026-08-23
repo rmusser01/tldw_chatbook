@@ -100,6 +100,7 @@ def test_review_projects_bounded_safe_attention_skip_and_managed_move_rows() -> 
     assert any("Keep file" in row.choices for row in review.rows)
     assert any("Keep note" in row.choices for row in review.rows)
     assert any("Keep both" in row.choices for row in review.rows)
+    assert any("Skip for now" in row.choices for row in review.rows)
     all_rows = review.rows + build_reconciliation_review(plan, page=2).rows
     assert any("filesystem move" in row.effect.casefold() for row in all_rows)
     assert all("/" not in row.item_id for row in review.rows)
@@ -125,6 +126,106 @@ def test_review_page_is_bounded() -> None:
     assert [row.item_id for row in build_reconciliation_review(plan, page=99).rows] == [
         "b-4"
     ]
+
+
+@pytest.mark.parametrize(
+    ("reason_code", "effect"),
+    [
+        ("both_sides_changed", "Both file and note changed"),
+        (
+            "out_of_direction_change",
+            "This change is outside the root direction",
+        ),
+    ],
+)
+def test_exact_content_conflicts_are_selectable(reason_code: str, effect: str) -> None:
+    plan = ReconciliationPlan(
+        root_id="root-1",
+        observation_token=TOKEN,
+        safe_actions=(),
+        attention=(
+            ReconciliationAttention(
+                ReconciliationAttentionKind.CONFLICT,
+                reason_code,
+                "bind-1",
+            ),
+        ),
+        skips=(),
+        managed_placement_effects=(),
+        deletion_groups=(),
+    )
+
+    row = build_reconciliation_review(plan).rows[0]
+
+    assert row.effect == effect
+    assert row.choices == (
+        "Keep file",
+        "Keep note",
+        "Keep both",
+        "Skip for now",
+    )
+
+
+@pytest.mark.parametrize(
+    "reason_code",
+    [
+        "duplicate_authority",
+        "out_of_direction_create",
+        "out_of_direction_move",
+        "out_of_direction_representation",
+        "ambiguous_identity",
+        "note_implied_filesystem_move",
+    ],
+)
+def test_other_conflicts_are_not_selectable(reason_code: str) -> None:
+    plan = ReconciliationPlan(
+        root_id="root-1",
+        observation_token=TOKEN,
+        safe_actions=(),
+        attention=(
+            ReconciliationAttention(
+                ReconciliationAttentionKind.CONFLICT,
+                reason_code,
+                "bind-1",
+            ),
+        ),
+        skips=(),
+        managed_placement_effects=(),
+        deletion_groups=(),
+    )
+
+    row = build_reconciliation_review(plan).rows[0]
+
+    assert row.effect == "Both file and note changed"
+    assert row.choices == ("Keep file", "Keep note", "Keep both")
+
+
+def test_managed_placement_conflict_is_not_selectable() -> None:
+    plan = ReconciliationPlan(
+        root_id="root-1",
+        observation_token=TOKEN,
+        safe_actions=(),
+        attention=(
+            ReconciliationAttention(
+                ReconciliationAttentionKind.CONFLICT,
+                "both_sides_changed",
+                "bind-1",
+            ),
+        ),
+        skips=(),
+        managed_placement_effects=(
+            ManagedPlacementEffect(
+                ManagedPlacementEffectKind.FILE_MOVE,
+                "bind-1",
+            ),
+        ),
+        deletion_groups=(),
+    )
+
+    conflict_row = build_reconciliation_review(plan).rows[0]
+
+    assert conflict_row.effect == "Both file and note changed"
+    assert conflict_row.choices == ("Keep file", "Keep note", "Keep both")
 
 
 def test_deletion_review_has_bounded_explicit_choices_and_no_global_winner() -> None:
