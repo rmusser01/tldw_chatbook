@@ -198,9 +198,7 @@ def test_variant_guidance_filter_matches_filename_or_quantization_locally() -> N
     )
 
     assert tuple(row.source_index for row in filter_rows(rows, "q8_0")) == (1,)
-    assert tuple(row.source_index for row in filter_rows(rows, "EXPERIMENT")) == (
-        2,
-    )
+    assert tuple(row.source_index for row in filter_rows(rows, "EXPERIMENT")) == (2,)
     assert tuple(row.source_index for row in filter_rows(rows, "  ")) == (0, 1, 2)
 
 
@@ -241,9 +239,13 @@ def test_variant_guidance_sort_orders_are_deterministic() -> None:
         0,
         2,
     )
-    assert tuple(
-        row.source_index for row in sort_rows(rows, "quantization")
-    ) == (2, 0, 3, 1, 4)
+    assert tuple(row.source_index for row in sort_rows(rows, "quantization")) == (
+        2,
+        0,
+        3,
+        1,
+        4,
+    )
 
 
 def test_variant_guidance_sort_rejects_an_unknown_order() -> None:

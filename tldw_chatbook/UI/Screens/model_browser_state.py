@@ -215,9 +215,7 @@ def sort_variant_guidance(
     if order == "size-asc":
         return tuple(sorted(rows, key=lambda row: (row.total_bytes, row.source_index)))
     if order == "size-desc":
-        return tuple(
-            sorted(rows, key=lambda row: (-row.total_bytes, row.source_index))
-        )
+        return tuple(sorted(rows, key=lambda row: (-row.total_bytes, row.source_index)))
     if order == "quantization":
         return tuple(sorted(rows, key=_variant_quantization_sort_key))
     raise ValueError(f"Unsupported variant sort order: {order}")
