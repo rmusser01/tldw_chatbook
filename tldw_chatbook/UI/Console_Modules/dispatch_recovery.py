@@ -60,7 +60,7 @@ def derive_dispatch_recovery_presentation(
 class ConsoleDispatchRecoveryRegion(Widget):
     """Small recovery surface whose repeated in-flight intents are inert."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ConsoleDispatchRecoveryRegion {
         display: none;
         height: auto;

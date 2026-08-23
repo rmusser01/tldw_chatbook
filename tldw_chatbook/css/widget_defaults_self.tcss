@@ -37,6 +37,40 @@
     }
 
 
+/* ===== WIDGET: ConsoleDispatchRecoveryRegion (UI/Console_Modules/dispatch_recovery.py) ===== */
+
+    ConsoleDispatchRecoveryRegion {
+        display: none;
+        height: auto;
+        max-height: 8;
+        padding: 0 1;
+        overflow-y: auto;
+    }
+
+    ConsoleDispatchRecoveryRegion.-visible {
+        display: block;
+    }
+
+    ConsoleDispatchRecoveryRegion Static {
+        height: auto;
+        width: 1fr;
+    }
+
+    ConsoleDispatchRecoveryRegion #console-dispatch-recovery-warning {
+        color: $warning;
+    }
+
+    ConsoleDispatchRecoveryRegion #console-dispatch-recovery-actions {
+        height: 3;
+        width: 1fr;
+    }
+
+    ConsoleDispatchRecoveryRegion Button {
+        min-width: 16;
+        margin-right: 1;
+    }
+
+
 /* ===== WIDGET: ConsolePromptQueueRegion (UI/Console_Modules/prompt_queue.py) ===== */
 
     ConsolePromptQueueRegion {
@@ -3332,22 +3366,3 @@
     WorkspaceCreateModal {
         align: center middle;
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
