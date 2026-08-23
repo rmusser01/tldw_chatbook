@@ -1,21 +1,16 @@
-"""Pure, DB-free derivation of the Console 'expression state' for the reactive
-character avatar (P3d). Reads only the store's in-memory message statuses -- safe
-to call on the 0.2s transcript poll tick.
+"""Pure Console expression precedence for live and historical avatars."""
 
-State machine (from the active session's last assistant message status):
-  pending   -> "thinking"   (created, awaiting first token)
-  streaming -> "speaking"   (tokens flowing)
-  complete  -> "idle"
-  stopped   -> "idle"       (user stop is not an error)
-  failed    -> "error"
-  (no assistant message / no session / react disabled) -> "idle"
-"""
 from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Literal
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 
 EXPRESSION_STATES = ("idle", "thinking", "speaking", "error")
 EXPRESSION_IMAGE_STATES = ("thinking", "speaking", "error")
+
+ExpressionSource = Literal["idle", "operational", "explicit", "historical"]
 
 _STATUS_TO_STATE = {
     "pending": "thinking",
@@ -26,30 +21,94 @@ _STATUS_TO_STATE = {
 }
 
 
-def resolve_console_expression_state(store, active_session_id, *, react_enabled: bool) -> str:
-    """Return the current expression state for the active Console session.
+@dataclass(frozen=True, slots=True)
+class CharacterEmoteHistoryIdentity:
+    """Bounded immutable identity required to restore one final expression."""
 
-    Args:
-        store: the ConsoleChatStore (exposes ``messages_for_session``).
-        active_session_id: the live session id, or None.
-        react_enabled: whether reactive swapping is enabled; when False, always idle.
+    actor_id: int | None
+    pack_id: int | None
+    pack_version_id: int | None
+    expression_key: str | None
+    expression_id: int | None
+    asset_id: int | None
 
-    Returns:
-        One of EXPRESSION_STATES. Never raises (any lookup failure -> "idle").
-    """
+
+@dataclass(frozen=True, slots=True)
+class ConsoleExpressionSelection:
+    """One precedence-resolved avatar request without display overrides."""
+
+    state: str
+    source: ExpressionSource
+    message_id: str | None = None
+    history_identity: CharacterEmoteHistoryIdentity | None = None
+
+
+def resolve_console_expression_selection(
+    store,
+    active_session_id,
+    *,
+    react_enabled: bool,
+    explicit_message_id: str | None = None,
+    explicit_state: str | None = None,
+) -> ConsoleExpressionSelection:
+    """Return the operational, live-explicit, or final historical selection."""
+
+    idle = ConsoleExpressionSelection("idle", "idle")
     if not react_enabled or active_session_id is None or store is None:
-        return "idle"
+        return idle
     try:
         messages = store.messages_for_session(active_session_id)
     except Exception:
-        return "idle"
-    # Scan from the end and stop at the first assistant turn: the active
-    # turn is at/near the tail, so this is O(1) amortized rather than a full
-    # forward walk of the transcript on every 0.2s Console tick. (The
-    # ``messages_for_session`` snapshot above is itself O(n), but that cost is
-    # pre-existing and shared with the controller's own streaming accessor,
-    # and only paid on active-streaming ticks.)
+        return idle
     for message in reversed(messages):
-        if getattr(message, "role", None) is ConsoleMessageRole.ASSISTANT:
-            return _STATUS_TO_STATE.get(getattr(message, "status", "complete"), "idle")
-    return "idle"
+        if getattr(message, "role", None) is not ConsoleMessageRole.ASSISTANT:
+            continue
+        message_id = getattr(message, "id", None)
+        status = getattr(message, "status", "complete")
+        if status == "streaming" and (
+            explicit_state is not None and explicit_message_id == message_id
+        ):
+            return ConsoleExpressionSelection(
+                explicit_state,
+                "explicit",
+                message_id=message_id,
+            )
+        if status == "complete":
+            emote = getattr(getattr(message, "metadata", None), "character_emote", None)
+            mood_label = getattr(emote, "mood_label", None)
+            if isinstance(mood_label, str) and mood_label:
+                return ConsoleExpressionSelection(
+                    mood_label,
+                    "historical",
+                    message_id=message_id,
+                    history_identity=CharacterEmoteHistoryIdentity(
+                        actor_id=getattr(emote, "actor_id", None),
+                        pack_id=getattr(emote, "pack_id", None),
+                        pack_version_id=getattr(emote, "pack_version_id", None),
+                        expression_key=getattr(emote, "expression_key", None),
+                        expression_id=getattr(emote, "expression_id", None),
+                        asset_id=getattr(emote, "asset_id", None),
+                    ),
+                )
+        state = _STATUS_TO_STATE.get(status, "idle")
+        return ConsoleExpressionSelection(
+            state,
+            "idle" if state == "idle" else "operational",
+            message_id=message_id,
+        )
+    return idle
+
+
+def resolve_console_expression_state(
+    store,
+    active_session_id,
+    *,
+    react_enabled: bool,
+) -> str:
+    """Return the legacy state string for callers without live-event context."""
+
+    return resolve_console_expression_selection(
+        store,
+        active_session_id,
+        react_enabled=react_enabled,
+    ).state

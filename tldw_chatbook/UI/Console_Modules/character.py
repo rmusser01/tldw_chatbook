@@ -11,13 +11,19 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import replace
+from functools import partial
 from typing import Any
 
 from loguru import logger
 from rich.markup import escape as escape_markup
 
+from ...Character_Chat.visual_identity import normalize_expression_key
 from ...Chat.console_chat_models import CONSOLE_GLOBAL_WORKSPACE_ID
-from ...Chat.console_expression_state import resolve_console_expression_state
+from ...Chat.console_expression_state import (
+    CharacterEmoteHistoryIdentity,
+    resolve_console_expression_selection,
+    resolve_console_expression_state,
+)
 from ...Chat.console_image_view import (
     resolve_react_character_expressions,
     resolve_show_character_avatar,
@@ -45,6 +51,9 @@ AvatarRequest = tuple[
     bool,
     bool,
     str | None,
+    str,
+    str | None,
+    CharacterEmoteHistoryIdentity | None,
 ]
 
 
@@ -69,6 +78,10 @@ class ConsoleCharacterController:
         actor_scope_accessor: Callable[[], ActorScope | None],
         manual_reaction_key: Callable[[ActorScope], str | None],
         resolve_visual_identity: Callable[[ActorScope, str, str | None], Any | None],
+        resolve_historical_visual_identity: Callable[
+            [ActorScope, CharacterEmoteHistoryIdentity], Any | None
+        ]
+        | None = None,
         ensure_console_image_view: Callable[[], tuple[Any, Any]],
         console_image_default_mode: Callable[[], str | None],
         is_mounted: Callable[[], bool],
@@ -89,6 +102,7 @@ class ConsoleCharacterController:
         self._actor_scope_accessor = actor_scope_accessor
         self._manual_reaction_key = manual_reaction_key
         self._resolve_visual_identity = resolve_visual_identity
+        self._resolve_historical_visual_identity = resolve_historical_visual_identity
         self._ensure_console_image_view = ensure_console_image_view
         self._console_image_default_mode = console_image_default_mode
         self._is_mounted = is_mounted
@@ -97,7 +111,10 @@ class ConsoleCharacterController:
         self._active_character_avatar: dict | None = None
         self._active_character_avatar_name: str | None = None
         self._last_console_avatar_scope: Any | None = None
+        self._last_console_avatar_request_key: Any | None = None
         self._console_expression_spec_cache: dict[tuple[str, ...], dict] = {}
+        self._character_emote_cursor_by_session: dict[str, int] = {}
+        self._character_emote_explicit_by_session: dict[str, tuple[str, str]] = {}
 
     def _live_config(self) -> Mapping[str, Any]:
         return self._app_config_accessor() or {}
@@ -259,8 +276,30 @@ class ConsoleCharacterController:
         actor = self._actor_scope_accessor()
         session_id = getattr(store, "active_session_id", None) if store else None
         react = resolve_react_character_expressions(config)
-        state = resolve_console_expression_state(store, session_id, react_enabled=react)
+        explicit_message_id, explicit_state = (
+            self._character_emote_explicit_by_session.get(session_id, (None, None))
+        )
+        selection = resolve_console_expression_selection(
+            store,
+            session_id,
+            react_enabled=react,
+            explicit_message_id=explicit_message_id,
+            explicit_state=explicit_state,
+        )
+        state = selection.state
+        if selection.source in {"idle", "operational"}:
+            state = resolve_console_expression_state(
+                store, session_id, react_enabled=react
+            )
         manual = self._manual_reaction_key(actor) if actor else None
+        source = selection.source
+        history_identity = selection.history_identity
+        message_id = selection.message_id
+        if manual is not None:
+            state = "idle"
+            source = "manual"
+            history_identity = None
+            message_id = None
         return (
             actor,
             state,
@@ -270,7 +309,44 @@ class ConsoleCharacterController:
             react,
             resolve_show_character_avatar(config),
             self._current_console_rail_character_name(),
+            source,
+            message_id,
+            history_identity,
         )
+
+    async def _consume_character_emote_events(self) -> bool:
+        """Advance the active feed and paint each eligible live beat in order."""
+
+        store = self._chat_store_accessor()
+        session_id = getattr(store, "active_session_id", None) if store else None
+        if store is None or not isinstance(session_id, str) or not session_id:
+            return False
+        cursor = self._character_emote_cursor_by_session.get(session_id, 0)
+        try:
+            events = store.character_emote_events_after(session_id, cursor)
+        except (AttributeError, KeyError, TypeError, ValueError):
+            return False
+        painted = False
+        for event in events:
+            self._character_emote_cursor_by_session[session_id] = event.sequence
+            selection = resolve_console_expression_selection(
+                store,
+                session_id,
+                react_enabled=resolve_react_character_expressions(self._live_config()),
+                explicit_message_id=event.message_id,
+                explicit_state=event.state,
+            )
+            if selection.source != "explicit":
+                continue
+            self._character_emote_explicit_by_session[session_id] = (
+                event.message_id,
+                event.state,
+            )
+            actor = self._actor_scope_accessor()
+            if actor is not None and self._manual_reaction_key(actor) is None:
+                await self._refresh_avatar_request(force=True)
+                painted = True
+        return painted
 
     def _request_is_current(self, request: AvatarRequest) -> bool:
         return self._current_request() == request and self._is_mounted()
@@ -303,11 +379,13 @@ class ConsoleCharacterController:
             and previous_actor[1:] == (actor_kind, actor_id)
         ):
             self._last_console_avatar_scope = None
+            self._last_console_avatar_request_key = None
 
     def invalidate_refresh_scope(self) -> None:
         """Force the next tick to repaint after the rail becomes visible."""
 
         self._last_console_avatar_scope = None
+        self._last_console_avatar_request_key = None
 
     async def _paint(
         self,
@@ -342,24 +420,37 @@ class ConsoleCharacterController:
         force: bool = False,
         invalidate_actor: tuple[str, str] | None = None,
     ) -> None:
-        """Resolve and apply one race-fenced Visual Identity avatar."""
+        """Consume live beats, then resolve one race-fenced avatar request."""
         if invalidate_actor is not None:
             self._invalidate_actor(*invalidate_actor)
             force = True
+
+        painted_live_event = await self._consume_character_emote_events()
+        if painted_live_event:
+            return
+        await self._refresh_avatar_request(force=force)
+
+    async def _refresh_avatar_request(self, *, force: bool = False) -> None:
+        """Resolve and apply the current immutable avatar request."""
 
         if not resolve_show_character_avatar(self._live_config()):
             self._active_character_avatar = None
             self._active_character_avatar_name = None
             self._last_console_avatar_scope = None
+            self._last_console_avatar_request_key = None
             return
 
         request = self._current_request()
         actor_scope, state, manual_key = request[:3]
+        source = request[8]
+        history_identity = request[10]
         scope = (actor_scope, state, manual_key)
-        if not force and scope == self._last_console_avatar_scope:
+        request_key = (*scope, source, history_identity)
+        if not force and request_key == self._last_console_avatar_request_key:
             return
         self._last_console_avatar_scope = scope
-        name = request[-1]
+        self._last_console_avatar_request_key = request_key
+        name = request[7]
         manual_label = (
             manual_key.rsplit(":", 1)[-1].replace("_", " ").replace("-", " ").title()
             if manual_key
@@ -370,16 +461,59 @@ class ConsoleCharacterController:
             await self._paint(request, None, name=name, manual_label=manual_label)
             return
         _session_id, actor_kind, actor_id = actor_scope
-        resolution = await asyncio.to_thread(
-            self._resolve_visual_identity,
-            actor_scope,
-            state,
-            manual_key,
-        )
+        resolution_state = state
+        resolver: Callable[[], Any | None] | None
+        if source == "historical" and history_identity is not None:
+            if self._resolve_historical_visual_identity is None:
+                resolver = None
+            else:
+                resolver = partial(
+                    self._resolve_historical_visual_identity,
+                    actor_scope,
+                    history_identity,
+                )
+        else:
+            if source == "explicit":
+                resolution_state = normalize_expression_key(state) or state
+            resolver = partial(
+                self._resolve_visual_identity,
+                actor_scope,
+                resolution_state,
+                manual_key,
+            )
+        try:
+            resolution = (
+                await asyncio.to_thread(resolver) if resolver is not None else None
+            )
+        except Exception:  # noqa: BLE001 -- the 0.2s sync tick must fail soft.
+            logger.opt(exception=True).debug("avatar: expression resolution failed")
+            resolution = None
         if not self._request_is_current(request):
             return
+        exact_required = source in {"explicit", "historical"}
+        exact_available = (
+            resolution is not None
+            and resolution.image_bytes is not None
+            and (
+                resolution.resolution_source == "history_immutable"
+                if source == "historical"
+                else resolution.asset_id is not None
+                and resolution.resolved_expression_key == resolution_state
+            )
+        )
+        if exact_required and not exact_available:
+            if self._active_character_avatar is not None:
+                return
+            resolution_state = "idle"
+            resolver = partial(
+                self._resolve_visual_identity, actor_scope, resolution_state, None
+            )
+            try:
+                resolution = await asyncio.to_thread(resolver)
+            except Exception:  # noqa: BLE001 -- base portrait fallback is fail-soft.
+                logger.opt(exception=True).debug("avatar: base resolution failed")
+                return
         if resolution is None:
-            await self._paint(request, None, name=name, manual_label=manual_label)
             return
         identity = resolution.cache_identity
         cached = self._console_expression_spec_cache.get(identity)
@@ -410,11 +544,8 @@ class ConsoleCharacterController:
                     return
                 if ok:
                     spec["pil"] = cache.get_pil(key)
-                current = await asyncio.to_thread(
-                    self._resolve_visual_identity,
-                    actor_scope,
-                    state,
-                    manual_key,
+                current = (
+                    await asyncio.to_thread(resolver) if resolver is not None else None
                 )
                 if (
                     not self._request_is_current(request)

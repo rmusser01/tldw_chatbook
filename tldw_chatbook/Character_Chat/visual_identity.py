@@ -512,6 +512,11 @@ def resolve_visual_identity(
         requested_state.strip().lower() if isinstance(requested_state, str) else ""
     )
     requested_key = _OPERATIONAL_EXPRESSION_KEYS.get(requested_state_key)
+    if requested_key is None and (
+        requested_state_key in CANONICAL_EXPRESSION_SLOTS
+        or requested_state_key.startswith(CUSTOM_EXPRESSION_PREFIX)
+    ):
+        requested_key = normalize_expression_key(requested_state_key)
     manual_key = (
         normalize_expression_key(manual_expression_key)
         if manual_expression_key is not None
@@ -858,10 +863,140 @@ def _pack_resolution_category(
         return "pack_manual", "none"
     if requested_key is not None and expression_key == requested_key:
         reason = "manual_unavailable" if manual_key is not None else "none"
-        return "pack_operational", reason
+        source = (
+            "pack_operational"
+            if requested_key in _OPERATIONAL_EXPRESSION_KEYS.values()
+            else "pack_explicit"
+        )
+        return source, reason
     if expression_key == default_key:
         return "pack_default", "requested_unavailable"
     return "pack_neutral", "default_unavailable"
+
+
+def resolve_historical_visual_identity(
+    db: Any,
+    *,
+    actor_id: int,
+    pack_id: int | None,
+    pack_version_id: int | None,
+    expression_key: str | None,
+    expression_id: int | None,
+    asset_id: int | None,
+    user_data_dir: str | Path | None = None,
+) -> VisualIdentityResolution:
+    """Resolve only the exact immutable character asset recorded on a message.
+
+    Historical resolution deliberately ignores the actor's current binding. Missing,
+    inconsistent, or corrupt references return a deterministic content-free
+    placeholder instead of walking current-pack, legacy-image, or portrait fallbacks.
+    """
+
+    actor_id_text = str(actor_id)
+    normalized_key = normalize_expression_key(expression_key or "")
+
+    def unavailable() -> VisualIdentityResolution:
+        return _placeholder_resolution(
+            "character",
+            actor_id_text,
+            normalized_key,
+            None,
+            "history_unavailable",
+        )
+
+    identifiers = (actor_id, pack_id, pack_version_id, asset_id)
+    if (
+        any(
+            isinstance(value, bool) or not isinstance(value, int) or value <= 0
+            for value in identifiers
+        )
+        or normalized_key is None
+        or expression_key != normalized_key
+    ):
+        return unavailable()
+    try:
+        row = db.execute_query(
+            """
+            SELECT p.source_kind AS pack_source_kind,
+                   a.id AS asset_id,
+                   a.expression_key AS asset_expression_key,
+                   a.original_expression_key AS asset_original_expression_key,
+                   a.display_label AS asset_display_label,
+                   a.storage_relpath AS asset_storage_relpath,
+                   a.content_type AS asset_content_type,
+                   a.bytes AS asset_bytes,
+                   a.sha256 AS asset_sha256,
+                   a.width AS asset_width,
+                   a.height AS asset_height,
+                   a.is_animated AS asset_is_animated,
+                   a.frame_count AS asset_frame_count,
+                   a.duration_ms AS asset_duration_ms
+              FROM character_cards c
+              JOIN visual_identity_packs p
+                ON p.id = ? AND p.owner_user_id = 0
+              JOIN visual_identity_pack_versions v
+                ON v.id = ? AND v.pack_id = p.id AND v.owner_user_id = 0
+              JOIN visual_identity_assets a
+                ON a.id = ?
+               AND a.pack_id = p.id
+               AND a.pack_version_id = v.id
+               AND a.owner_user_id = 0
+               AND a.deleted = 0
+               AND a.expression_key = ?
+             WHERE c.id = ? AND c.deleted = 0
+            """,
+            (pack_id, pack_version_id, asset_id, normalized_key, actor_id),
+        ).fetchone()
+        if row is None:
+            return unavailable()
+        candidate = dict(row)
+        asset = _resolution_manifest_asset(candidate)
+        loaded = load_visual_identity_asset(
+            asset,
+            source_kind=str(candidate["pack_source_kind"]),
+            user_data_dir=user_data_dir,
+        )
+        _validate_image_bytes(loaded, decoded_pixels_before=0)
+    except (AttributeError, TypeError, ValueError, OverflowError, sqlite3.Error):
+        logger.warning(
+            "visual_identity_history_resolution_failed actor_id={} pack_id={} "
+            "version_id={} asset_id={} category=history_unavailable",
+            actor_id_text,
+            pack_id,
+            pack_version_id,
+            asset_id,
+        )
+        return unavailable()
+    digest = str(candidate["asset_sha256"])
+    return VisualIdentityResolution(
+        actor_kind="character",
+        actor_id=actor_id_text,
+        requested_expression_key=normalized_key,
+        manual_expression_key=None,
+        resolved_expression_key=normalized_key,
+        pack_id=pack_id,
+        pack_version_id=pack_version_id,
+        asset_id=asset_id,
+        expression_id=expression_id,
+        storage_source=str(candidate["pack_source_kind"]),
+        storage_relpath=str(candidate["asset_storage_relpath"]),
+        content_type=str(candidate["asset_content_type"]),
+        is_animated=bool(candidate["asset_is_animated"]),
+        resolution_source="history_immutable",
+        fallback_reason="none",
+        cache_identity=_resolution_cache_identity(
+            "character",
+            actor_id_text,
+            normalized_key,
+            None,
+            "history_immutable",
+            f"pack_id={pack_id}",
+            f"pack_version_id={pack_version_id}",
+            f"asset_id={asset_id}",
+            f"sha256={digest}",
+        ),
+        image_bytes=loaded.data,
+    )
 
 
 def _placeholder_resolution(

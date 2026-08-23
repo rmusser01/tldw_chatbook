@@ -16,6 +16,7 @@ a full pilot-driven screen.
 
 import asyncio
 import threading
+from dataclasses import replace
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -40,7 +41,12 @@ from tldw_chatbook.Character_Chat.visual_identity import (
     VisualIdentityPublicationResult,
     VisualIdentityResolution,
 )
+from tldw_chatbook.Character_Chat.emote_directives import (
+    CharacterEmoteAssetReference,
+    CharacterEmoteRunSnapshot,
+)
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.UI.Console_Modules.character import ConsoleCharacterController
 from tldw_chatbook.UI.Console_Modules.retrieval import ConsoleRetrievalController
@@ -673,6 +679,216 @@ async def test_avatar_swaps_across_expression_states(
     assert (
         screen._active_character_avatar["resolution_cache_identity"]
         in screen._console_expression_spec_cache
+    )
+
+
+def _arm_live_emotes(screen, character_id: int, *states: str):
+    store = screen._console_chat_controller.store
+    session_id = store.active_session_id
+    assistant = store.append_message(
+        session_id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+    )
+    store.begin_character_emote_capture(
+        assistant.id,
+        CharacterEmoteRunSnapshot(
+            actor_id=character_id,
+            pack_id=11,
+            pack_version_id=13,
+            states=tuple(states),
+            assets=tuple(
+                CharacterEmoteAssetReference(
+                    state=state,
+                    expression_key=(
+                        state if state in {"happy", "sad"} else f"custom:{state}"
+                    ),
+                    asset_id=index,
+                )
+                for index, state in enumerate(states, start=17)
+            ),
+        ),
+    )
+    store.append_stream_chunk(
+        assistant.id,
+        "".join(f"Emote: {state}\n" for state in states),
+    )
+    return store, assistant
+
+
+@pytest.mark.asyncio
+async def test_live_emote_feed_paints_every_event_in_stream_order(
+    console_screen_with_db,
+):
+    _app, screen, db = console_screen_with_db
+    character_id = db.add_character_card({"name": "Ada"})
+    _set_active_console_character(screen, character_id, "Ada")
+    store, assistant = _arm_live_emotes(screen, character_id, "happy", "sad")
+    painted_states: list[str] = []
+
+    def resolve(_scope, state, _manual):
+        return _resolution(
+            character_id,
+            requested=state,
+            manual=None,
+            source="pack_explicit",
+            identity_suffix=f"sha256={state}",
+            image=_avatar_png((20, 30, 40)),
+        )
+
+    async def render(**kwargs):
+        painted_states.append(kwargs["spec"]["state"])
+
+    screen._character._resolve_visual_identity = resolve
+    screen._character._render_character_avatar = render
+
+    await screen._character._refresh_active_character_avatar_if_scope_changed()
+
+    assert painted_states == ["happy", "sad"]
+    events = store.character_emote_events_after(store.active_session_id, 0)
+    assert (
+        screen._character._character_emote_cursor_by_session[store.active_session_id]
+        == events[-1].sequence
+    )
+    assert screen._character._character_emote_explicit_by_session[
+        store.active_session_id
+    ] == (assistant.id, "sad")
+
+
+@pytest.mark.asyncio
+async def test_manual_override_advances_live_emote_feed_without_repainting(
+    console_screen_with_db,
+):
+    _app, screen, db = console_screen_with_db
+    character_id = db.add_character_card({"name": "Ada"})
+    _set_active_console_character(screen, character_id, "Ada")
+    actor_scope = screen._session._current_visual_identity_actor_scope()
+    screen._session._set_manual_reaction(actor_scope, "custom:relief")
+    screen._character._resolve_visual_identity = lambda _scope, state, manual: (
+        _resolution(
+            character_id,
+            requested=state,
+            manual=manual,
+            source="pack_manual",
+            identity_suffix="sha256=manual",
+            image=_avatar_png((60, 70, 80)),
+        )
+    )
+    await screen._character._refresh_active_character_avatar_if_scope_changed()
+    original_identity = screen._active_character_avatar["resolution_cache_identity"]
+    render = AsyncMock()
+    screen._character._render_character_avatar = render
+    store, assistant = _arm_live_emotes(screen, character_id, "happy", "sad")
+
+    await screen._character._refresh_active_character_avatar_if_scope_changed()
+
+    render.assert_not_awaited()
+    assert (
+        screen._active_character_avatar["resolution_cache_identity"]
+        == original_identity
+    )
+    assert screen._character._character_emote_explicit_by_session[
+        store.active_session_id
+    ] == (assistant.id, "sad")
+    assert (
+        screen._character._character_emote_cursor_by_session[store.active_session_id]
+        == store.character_emote_events_after(store.active_session_id, 0)[-1].sequence
+    )
+
+
+@pytest.mark.parametrize("failure", ("missing", "raises"))
+@pytest.mark.asyncio
+async def test_unavailable_live_explicit_asset_retains_current_portrait(
+    console_screen_with_db,
+    failure,
+):
+    _app, screen, db = console_screen_with_db
+    character_id = db.add_character_card({"name": "Ada"})
+    _set_active_console_character(screen, character_id, "Ada")
+
+    def resolve(_scope, state, manual):
+        if state == "custom:smug":
+            if failure == "raises":
+                raise RuntimeError("resolver unavailable")
+            return replace(
+                _resolution(
+                    character_id,
+                    requested=state,
+                    manual=manual,
+                    source="card_portrait",
+                    identity_suffix="sha256=fallback",
+                    image=_avatar_png((90, 90, 90)),
+                ),
+                pack_id=None,
+                pack_version_id=None,
+                asset_id=None,
+            )
+        return _resolution(
+            character_id,
+            requested=state,
+            manual=manual,
+            source="pack_operational",
+            identity_suffix="sha256=base",
+            image=_avatar_png((30, 30, 30)),
+        )
+
+    screen._character._resolve_visual_identity = resolve
+    await screen._character._refresh_active_character_avatar_if_scope_changed()
+    original_identity = screen._active_character_avatar["resolution_cache_identity"]
+    render = AsyncMock()
+    screen._character._render_character_avatar = render
+    _arm_live_emotes(screen, character_id, "smug")
+
+    await screen._character._refresh_active_character_avatar_if_scope_changed()
+
+    render.assert_not_awaited()
+    assert (
+        screen._active_character_avatar["resolution_cache_identity"]
+        == original_identity
+    )
+
+
+@pytest.mark.asyncio
+async def test_completed_history_restores_one_final_identity_without_replaying_beats(
+    console_screen_with_db,
+):
+    _app, screen, db = console_screen_with_db
+    character_id = db.add_character_card({"name": "Ada"})
+    _set_active_console_character(screen, character_id, "Ada")
+    store, assistant = _arm_live_emotes(screen, character_id, "happy", "sad")
+    store.mark_message_complete(assistant.id)
+    history_calls = []
+
+    def resolve_history(_scope, identity):
+        history_calls.append(identity)
+        return _resolution(
+            character_id,
+            requested=identity.expression_key,
+            manual=None,
+            source="history_immutable",
+            identity_suffix=f"asset_id={identity.asset_id}",
+            image=_avatar_png((100, 110, 120)),
+        )
+
+    painted_states: list[str] = []
+
+    async def render(**kwargs):
+        painted_states.append(kwargs["spec"]["state"])
+
+    screen._character._resolve_historical_visual_identity = resolve_history
+    screen._character._resolve_visual_identity = lambda *_args: (_ for _ in ()).throw(
+        AssertionError("history must not walk the current resolver")
+    )
+    screen._character._render_character_avatar = render
+
+    await screen._character._refresh_active_character_avatar_if_scope_changed()
+
+    assert painted_states == ["sad"]
+    assert {identity.expression_key for identity in history_calls} == {"sad"}
+    assert screen._character._character_emote_explicit_by_session == {}
+    assert (
+        screen._character._character_emote_cursor_by_session[store.active_session_id]
+        == store.character_emote_events_after(store.active_session_id, 0)[-1].sequence
     )
 
 
