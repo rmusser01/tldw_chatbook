@@ -11441,9 +11441,17 @@ class TldwCli(
             return
 
         async def navigate_then_schedule_catalog_consent() -> None:
-            await self.handle_screen_navigation(
-                NavigateToScreen(exit_route, screen_context)
-            )
+            try:
+                await self.handle_screen_navigation(
+                    NavigateToScreen(exit_route, screen_context)
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                self._schedule_startup_model_catalog_refresh(
+                    after_setup_completion=True
+                )
+                raise
             self._schedule_startup_model_catalog_refresh(
                 after_setup_completion=True
             )
