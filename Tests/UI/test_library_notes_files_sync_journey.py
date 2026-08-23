@@ -50,12 +50,17 @@ from Tests.UI.test_library_shell import (
     _wait_for_selector,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Actor_Packs.persona_coordinator import (
+    PersonaActorPackCoordinator,
+    PersonaActorPackRecoveryResult,
+)
 from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
 from tldw_chatbook.Notes.note_import_execution_models import (
     ImportExecutionReceipt,
     ImportSessionState,
 )
 from tldw_chatbook.Notes.notes_device_state_store import NotesDeviceStateStore
+from tldw_chatbook.Notes.notes_sync_conflicts import ConflictComparison
 from tldw_chatbook.Notes.notes_sync_models import NotesSyncOperationState
 from tldw_chatbook.Notes.Notes_Library import NotesInteropService
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
@@ -101,6 +106,20 @@ class _JourneyHarness(LibraryHarness):
     """Mount the real Library hierarchy with the exact production CSS stack."""
 
     CSS_PATH = TldwCli.CSS_PATH
+
+
+@pytest.fixture(autouse=True)
+def _isolate_actor_pack_recovery(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep unrelated startup recovery off the Notes journey test database."""
+
+    monkeypatch.setattr(
+        "tldw_chatbook.app.first_profile_created_this_session", lambda: False
+    )
+    monkeypatch.setattr(
+        PersonaActorPackCoordinator,
+        "recover",
+        lambda _self: PersonaActorPackRecoveryResult(0, 0, 0, ()),
+    )
 
 
 def _runtime(*roots: NotesSyncRootRuntimeSnapshot):
@@ -436,6 +455,118 @@ async def test_lasting_setup_keeps_server_unavailable_copy_painted(
 
 
 @pytest.mark.asyncio
+async def test_lasting_conflict_comparison_uses_named_worker_without_stealing_moved_focus() -> (
+    None
+):
+    """A delayed comparison publishes inline but respects newer keyboard focus."""
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    root = NotesSyncRootRuntimeSnapshot("root-1", "needs_attention", "review_changes")
+    plan = ReconciliationPlan(
+        root_id="root-1",
+        observation_token="c" * 64,
+        safe_actions=(),
+        attention=(
+            ReconciliationAttention(
+                ReconciliationAttentionKind.CONFLICT,
+                "both_sides_changed",
+                "bind-1",
+            ),
+        ),
+        skips=(),
+        managed_placement_effects=(),
+        deletion_groups=(),
+    )
+
+    class _ComparisonRuntime:
+        def snapshot(self) -> NotesSyncRuntimeSnapshot:
+            return NotesSyncRuntimeSnapshot("active", "sync_now", (root,))
+
+        async def check_root(self, root_id: str) -> ReconciliationPlan:
+            assert root_id == "root-1"
+            return plan
+
+        async def compare_conflict(
+            self, root_id: str, observation_token: str, binding_id: str
+        ) -> ConflictComparison:
+            assert (root_id, observation_token, binding_id) == (
+                "root-1",
+                "c" * 64,
+                "bind-1",
+            )
+            started.set()
+            await release.wait()
+            return ConflictComparison(
+                binding_id="bind-1",
+                note_title="Release note",
+                relative_path="notes/release.md",
+                note_version=3,
+                note_updated_at=None,
+                file_modified_ns=42,
+                note_character_count=12,
+                note_line_count=2,
+                file_character_count=20,
+                file_line_count=2,
+                diff="--- Note\n+++ File\n-old\n+new\n",
+                input_elided=False,
+                output_elided=False,
+            )
+
+    app = _build_test_app()
+    _seed_conversations(app, [], notes=_two_notes())
+    app.notes_sync_runtime_owner = _ComparisonRuntime()
+    host = _JourneyHarness(app)
+    async with host.run_test(size=(60, 20)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes", Button).press()
+        manage = await _wait_for_selector(
+            screen, pilot, "#library-notes-manage-sync-folders"
+        )
+        manage.press()
+        review = await _wait_for_selector(screen, pilot, "#notes-sync-root-review-0")
+        review.press()
+        view = await _wait_for_selector(screen, pilot, "#notes-sync-conflict-view-0")
+        view.focus()
+        view.press()
+        await asyncio.wait_for(started.wait(), timeout=2)
+        comparison_workers = [
+            worker
+            for worker in screen.workers
+            if worker.group == "library_notes_sync_comparison"
+        ]
+        assert len(comparison_workers) == 1
+
+        moved_focus = screen.query_one("#notes-sync-history-open", Button)
+        moved_focus.focus()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.focused is moved_focus,
+            message="focus did not move away from the originating View button",
+        )
+        release.set()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                bool(screen.query("#notes-sync-comparison-diff-0"))
+                and screen.query_one("#notes-sync-comparison-0").display
+            ),
+            message="named comparison worker did not publish inline",
+        )
+        assert screen.focused is moved_focus
+
+        returned = screen.query_one("#notes-sync-comparison-return-0", Button)
+        returned.scroll_visible(immediate=True)
+        returned.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.focused is view,
+            message="Return did not restore the originating View control",
+        )
+
+
+@pytest.mark.asyncio
 async def test_lasting_review_activation_receipt_and_remount_recovery_journey(
     tmp_path: Path,
 ) -> None:
@@ -583,7 +714,11 @@ async def test_lasting_review_activation_receipt_and_remount_recovery_journey(
             lambda: ("resolve_cleanup", "setup-root", "operation-1") in runtime.calls,
             message="restart recovery did not reach the runtime",
         )
-        assert "Recovery reviewed" in _painted_text(restarted)
+        await _wait_for_condition(
+            pilot,
+            lambda: "Recovery reviewed" in _painted_text(restarted),
+            message="recovery status did not reach the compositor",
+        )
         assert runtime.roots[0].status == "up_to_date"
 
 

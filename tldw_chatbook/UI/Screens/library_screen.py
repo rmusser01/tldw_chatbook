@@ -26604,13 +26604,78 @@ class LibraryScreen(BaseAppScreen):
                 self._library_notes_view = "lasting_roots"
                 _sync_library_canvas(self, "notes")
 
-    @on(LibraryNotesAddFromFilesCanvas.AttentionChoiceRequested)
-    def handle_library_notes_lasting_attention_choice(
-        self, event: LibraryNotesAddFromFilesCanvas.AttentionChoiceRequested
+    @on(LibraryNotesAddFromFilesCanvas.ChoiceRequested)
+    def handle_library_notes_lasting_choice(
+        self, event: LibraryNotesAddFromFilesCanvas.ChoiceRequested
     ) -> None:
         event.stop()
         self._library_notes_sync_controller.stage_attention_choice(
-            event.item_id, event.choice
+            event.binding_id, event.choice
+        )
+
+    @on(LibraryNotesAddFromFilesCanvas.ViewRequested)
+    def handle_library_notes_lasting_comparison(
+        self, event: LibraryNotesAddFromFilesCanvas.ViewRequested
+    ) -> None:
+        """Run the private comparison away from the Textual message pump."""
+
+        event.stop()
+        self.run_worker(
+            self._library_notes_sync_controller.show_conflict_comparison(
+                event.binding_id
+            ),
+            exclusive=True,
+            group="library_notes_sync_comparison",
+        )
+
+    @on(LibraryNotesAddFromFilesCanvas.ReturnRequested)
+    def handle_library_notes_lasting_comparison_return(
+        self, event: LibraryNotesAddFromFilesCanvas.ReturnRequested
+    ) -> None:
+        event.stop()
+        self._library_notes_sync_controller.return_to_conflict_choices()
+
+    @on(LibraryNotesAddFromFilesCanvas.UndoRequested)
+    async def handle_library_notes_lasting_undo(
+        self, event: LibraryNotesAddFromFilesCanvas.UndoRequested
+    ) -> None:
+        event.stop()
+        await self._library_notes_sync_controller.undo_conflict_resolution(
+            event.root_id, event.operation_id
+        )
+
+    @on(LibraryNotesAddFromFilesCanvas.DismissRequested)
+    async def handle_library_notes_lasting_dismiss(
+        self, event: LibraryNotesAddFromFilesCanvas.DismissRequested
+    ) -> None:
+        event.stop()
+        await self._library_notes_sync_controller.dismiss_conflict_receipt(
+            event.root_id, event.operation_id
+        )
+
+    @on(LibraryNotesAddFromFilesCanvas.HistoryRequested)
+    async def handle_library_notes_lasting_history(
+        self, event: LibraryNotesAddFromFilesCanvas.HistoryRequested
+    ) -> None:
+        event.stop()
+        await self._library_notes_sync_controller.show_resolution_history(event.root_id)
+
+    @on(LibraryNotesAddFromFilesCanvas.HistoryPageRequested)
+    async def handle_library_notes_lasting_history_page(
+        self, event: LibraryNotesAddFromFilesCanvas.HistoryPageRequested
+    ) -> None:
+        event.stop()
+        await self._library_notes_sync_controller.show_resolution_history(
+            event.root_id, page=event.page
+        )
+
+    @on(LibraryNotesAddFromFilesCanvas.HistoryReturnRequested)
+    def handle_library_notes_lasting_history_return(
+        self, event: LibraryNotesAddFromFilesCanvas.HistoryReturnRequested
+    ) -> None:
+        event.stop()
+        self._library_notes_sync_controller.set_review_page(
+            self._library_notes_sync_controller.snapshot.review.page
         )
 
     @on(LibraryNotesAddFromFilesCanvas.PageRequested)
@@ -26640,6 +26705,7 @@ class LibraryScreen(BaseAppScreen):
         elif event.action == "migration":
             await controller.check_migration(event.root_id)
         elif event.action == "review":
+            self._library_notes_view = "lasting_add"
             await controller.check_root(event.root_id)
         elif event.action == "pause":
             await controller.pause_root(event.root_id)

@@ -9286,6 +9286,67 @@ LibraryIngestCanvas #library-ingest-latest-batch {
     min-height: 1;
 }
 
+.library-notes-sync-conflict-choices,
+.library-notes-sync-comparison,
+.library-notes-sync-receipt,
+.library-notes-sync-history-row {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 1;
+    overflow: hidden;
+}
+
+.library-notes-sync-comparison,
+.library-notes-sync-receipt,
+.library-notes-sync-history-row {
+    margin: 0 0 1 0;
+    padding: 0 1;
+    background: $surface-darken-1;
+}
+
+.notes-sync-conflict-view,
+.library-notes-sync-attention-actions > .notes-sync-conflict-choice {
+    width: 100%;
+    min-width: 0;
+}
+
+.notes-sync-conflict-choice.is-selected {
+    background: $accent 18%;
+    text-style: bold;
+}
+
+.notes-sync-conflict-selected {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+    color: $text-muted;
+    text-wrap: wrap;
+    text-overflow: clip;
+}
+
+.notes-sync-comparison-diff {
+    width: 100%;
+    min-width: 0;
+    height: 8;
+    min-height: 4;
+    overflow-x: auto;
+    overflow-y: auto;
+}
+
+.notes-sync-receipt-actions,
+.notes-sync-history-actions {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 1;
+}
+
+.notes-sync-receipt-actions > Button,
+.notes-sync-history-actions > Button {
+    min-width: 0;
+}
+
 .library-notes-sync-root-status {
     color: $text-muted;
 }
