@@ -325,10 +325,22 @@ from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 from tldw_chatbook.TTS.profile_repository import TTSProfileRepository
 from tldw_chatbook.TTS.profile_types import ProfileRepositoryState
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
-from tldw_chatbook.TTS.voice_bundle_service import (
-    TTSVoiceBundlePortabilityService,
-)
-from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel import (
+# TASK-21108: `TTS/voice_bundle_service` (1,857 lines) is imported
+# function-locally in `_ensure_tts_voice_bundle_service` -- the only place
+# that constructs it, on first use, long after first paint. The name below is
+# TYPE_CHECKING-only, so every annotation that mentions it must stay a string
+# (app.py has no `from __future__ import annotations`, and PEP 526
+# annotations on attribute targets ARE evaluated at runtime).
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from tldw_chatbook.TTS.voice_bundle_service import (
+        TTSVoiceBundlePortabilityService,
+    )
+# TASK-21108: the payload class only -- importing it from
+# `speech_tts_settings_panel` put that 5,600-line Textual widget module (and
+# its fspicker/lab-status/voice-input subtrees) on the app import path for a
+# frozen dataclass. `speech_tts_panel_types` re-exports into the panel, so
+# this is the same class object the panel and its tests use.
+from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_panel_types import (
     SpeechTTSPanelDraftSnapshot,
 )
 from tldw_chatbook.TTS._async_lifecycle import join_retained_task
@@ -373,11 +385,13 @@ from .Notes.Notes_Library import NotesInteropService
 from .Notes.file_notes_git_service import build_file_notes_session_owner
 from .Notes.note_folder_repository import LocalNoteFolderRepository
 from .Notes.notes_scope_service import NotesScopeService, ScopeType
-from .Notes.notes_sync_legacy import legacy_sync_directory_configured
-from .Notes.notes_sync_runtime import (
-    build_notes_sync_legacy_migrator,
-    build_notes_sync_runtime_owner,
-)
+# TASK-21108: `notes_sync_runtime` (and `notes_sync_legacy`, which the
+# TASK-21112 start gate reads) are imported inside
+# `_construct_notes_sync_runtime_owner`, the single place that needs them, so the
+# lasting-sync chain leaves the app import closure. The name below is
+# TYPE_CHECKING-only: annotations mentioning it must stay strings.
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .Notes.notes_sync_runtime import NotesSyncRuntimeOwner
 from .Notes.server_notes_workspace_service import ServerNotesWorkspaceService
 from .Character_Chat.character_persona_scope_service import CharacterPersonaScopeService
 from .Character_Chat.chat_dictionary_scope_service import ChatDictionaryScopeService
@@ -5762,7 +5776,7 @@ class TldwCli(
         self._audio_cpp_artifact_lease_coordinator: (
             AudioCppArtifactLeaseCoordinator | None
         ) = None
-        self._tts_voice_bundle_service: TTSVoiceBundlePortabilityService | None = None
+        self._tts_voice_bundle_service: "TTSVoiceBundlePortabilityService | None" = None
         self._tts_voice_bundle_service_close_task: asyncio.Task[None] | None = None
         self.acp_runtime_process_manager = ACPRuntimeProcessManager.from_app_config(
             self.app_config
@@ -6017,48 +6031,27 @@ class TldwCli(
             policy_enforcer=self.service_policy_enforcer,
             sync_scope_service=getattr(self, "sync_scope_service", None),
         )
-        notes_sync_state_path = get_notes_sync_state_db_path()
-        notes_sync_migrator = build_notes_sync_legacy_migrator(
-            database_path=notes_sync_state_path,
-            legacy_connection=lambda: self.chachanotes_db.get_connection(),
-            settings=self.app_config,
-            note_scope_id=ScopeType.LOCAL_NOTE.value,
-            file_notes_binding=self.file_notes_session_owner.current_binding,
-            private_paths=(notes_sync_state_path, get_chachanotes_db_path()),
+        # TASK-21108: the lasting-sync runtime is built on FIRST ACCESS, not
+        # here. Its construction is what drags `Notes/notes_sync_runtime` and
+        # (through the TASK-21112 start gate) `Notes/notes_sync_legacy` --
+        # together 15 modules and ~21 ms of import self-time in the
+        # `import tldw_chatbook.app` closure, measured 2026-08-23 -- onto the
+        # boot path for an object nothing reads until
+        # `on_mount` starts it. The property below still accepts assignment,
+        # so a test can substitute a runtime double exactly as before.
+        #
+        # The two collaborators the eager build READ here are captured here
+        # too, so deferring WHEN the owner is built does not also change
+        # WHICH objects it binds. This is not hypothetical: the File Notes
+        # lifecycle tests replace `app.file_notes_session_owner` between
+        # construction and mount, and a build that re-read the attribute at
+        # mount would bind the replacement (and, there, crash on it).
+        self._notes_sync_file_notes_binding = (
+            self.file_notes_session_owner.current_binding
         )
-        notes_sync_watcher_interval, notes_sync_watcher_max_interval = (
-            get_notes_sync_watcher_intervals(self.app_config)
-        )
-        self.notes_sync_runtime_owner = build_notes_sync_runtime_owner(
-            notes_scope_service=self.notes_scope_service,
-            cutover_admitted=True,
-            profile_process_is_sole=self._instance_lock_status.acquired,
-            database_path=notes_sync_state_path,
-            migrate_legacy=notes_sync_migrator,
-            file_notes_binding=self.file_notes_session_owner.current_binding,
-            local_user_id=self.notes_user_id,
-            recovery_capacity_bytes=get_notes_sync_recovery_capacity_bytes(
-                self.app_config
-            ),
-            # TASK-21112 boot gate: start only on actual configuration — the
-            # legacy [notes] sync-directory key (one-time migration path) or
-            # a state DB already on disk. Path.exists() never opens or
-            # creates the database; a zero-profile boot therefore creates no
-            # notes-sync state at all. First-time setup (review_setup)
-            # force-starts the runtime on demand. On Python 3.12
-            # Path.exists() RAISES PermissionError (pathlib no longer
-            # swallows EACCES); on a sandboxed profile that deliberately
-            # rides the gate's fail-open path — one full start attempt,
-            # which is the safe direction and is memoized.
-            start_evidence=(
-                lambda settings=self.app_config, state_path=notes_sync_state_path: (
-                    legacy_sync_directory_configured(settings)
-                    or state_path.exists()
-                )
-            ),
-            watcher_interval_seconds=notes_sync_watcher_interval,
-            watcher_max_interval_seconds=notes_sync_watcher_max_interval,
-        )
+        self._notes_sync_scope_service = self.notes_scope_service
+        self._notes_sync_runtime_owner: "NotesSyncRuntimeOwner | None" = None
+        self._notes_sync_runtime_owner_lock = threading.Lock()
         self._notes_sync_runtime_start_task: asyncio.Task[None] | None = None
         self._notes_sync_runtime_shutdown_task: asyncio.Task[None] | None = None
         # RAG admin trio (server/local/scope) is built lazily on first access
@@ -6105,6 +6098,101 @@ class TldwCli(
 
         # Final memory check
         log_resource_usage()
+
+    def _construct_notes_sync_runtime_owner(self) -> "NotesSyncRuntimeOwner":
+        """Build the application-owned lasting-sync runtime (TASK-21108).
+
+        Named ``_construct_`` rather than the house ``_build_`` prefix on
+        purpose: ``Tests/Notes/test_notes_sync_cutover.py`` fences the cutover
+        keywords by matching call names that END WITH
+        ``build_notes_sync_runtime_owner``, and a ``_build_...`` wrapper would
+        register as a second such call and defeat the fence.
+
+        Moved out of ``__init__`` so `Notes/notes_sync_runtime` and
+        `Notes/notes_sync_legacy` leave the app import closure; the body is
+        the one this app has always run, including the TASK-21112 start gate.
+        Construction performs no I/O: ``NotesDeviceStateStore`` only records
+        the path, and the gate's ``Path.exists()`` neither opens nor creates
+        the database.
+
+        Returns:
+            NotesSyncRuntimeOwner: The unstarted runtime owner.
+        """
+        from .Notes.notes_sync_legacy import (  # noqa: PLC0415
+            legacy_sync_directory_configured,
+        )
+        from .Notes.notes_sync_runtime import (  # noqa: PLC0415
+            build_notes_sync_legacy_migrator,
+            build_notes_sync_runtime_owner,
+        )
+
+        notes_sync_state_path = get_notes_sync_state_db_path()
+        notes_sync_migrator = build_notes_sync_legacy_migrator(
+            database_path=notes_sync_state_path,
+            legacy_connection=lambda: self.chachanotes_db.get_connection(),
+            settings=self.app_config,
+            note_scope_id=ScopeType.LOCAL_NOTE.value,
+            file_notes_binding=self._notes_sync_file_notes_binding,
+            private_paths=(notes_sync_state_path, get_chachanotes_db_path()),
+        )
+        notes_sync_watcher_interval, notes_sync_watcher_max_interval = (
+            get_notes_sync_watcher_intervals(self.app_config)
+        )
+        return build_notes_sync_runtime_owner(
+            notes_scope_service=self._notes_sync_scope_service,
+            cutover_admitted=True,
+            profile_process_is_sole=self._instance_lock_status.acquired,
+            database_path=notes_sync_state_path,
+            migrate_legacy=notes_sync_migrator,
+            file_notes_binding=self._notes_sync_file_notes_binding,
+            local_user_id=self.notes_user_id,
+            recovery_capacity_bytes=get_notes_sync_recovery_capacity_bytes(
+                self.app_config
+            ),
+            # TASK-21112 boot gate: start only on actual configuration — the
+            # legacy [notes] sync-directory key (one-time migration path) or
+            # a state DB already on disk. Path.exists() never opens or
+            # creates the database; a zero-profile boot therefore creates no
+            # notes-sync state at all. First-time setup (review_setup)
+            # force-starts the runtime on demand. On Python 3.12
+            # Path.exists() RAISES PermissionError (pathlib no longer
+            # swallows EACCES); on a sandboxed profile that deliberately
+            # rides the gate's fail-open path — one full start attempt,
+            # which is the safe direction and is memoized.
+            start_evidence=(
+                lambda settings=self.app_config, state_path=notes_sync_state_path: (
+                    legacy_sync_directory_configured(settings)
+                    or state_path.exists()
+                )
+            ),
+            watcher_interval_seconds=notes_sync_watcher_interval,
+            watcher_max_interval_seconds=notes_sync_watcher_max_interval,
+        )
+
+    @property
+    def notes_sync_runtime_owner(self) -> "NotesSyncRuntimeOwner":
+        """The lasting-sync runtime owner, built lazily and cached.
+
+        Built under a lock so a racing first access cannot produce two
+        runtimes over the same state database. ``on_mount`` is the first
+        reader in production.
+
+        Returns:
+            NotesSyncRuntimeOwner: The cached runtime owner.
+        """
+        owner = self._notes_sync_runtime_owner
+        if owner is None:
+            with self._notes_sync_runtime_owner_lock:
+                owner = self._notes_sync_runtime_owner
+                if owner is None:
+                    owner = self._construct_notes_sync_runtime_owner()
+                    self._notes_sync_runtime_owner = owner
+        return owner
+
+    @notes_sync_runtime_owner.setter
+    def notes_sync_runtime_owner(self, owner: "NotesSyncRuntimeOwner") -> None:
+        """Substitute the runtime owner (tests install doubles this way)."""
+        self._notes_sync_runtime_owner = owner
 
     def _build_rag_admin_services(self) -> None:
         """Construct the RAG admin service trio on first access (task-254).
@@ -10453,7 +10541,7 @@ class TldwCli(
 
     async def _ensure_tts_voice_bundle_service(
         self,
-    ) -> TTSVoiceBundlePortabilityService | None:
+    ) -> "TTSVoiceBundlePortabilityService | None":
         """Construct the app-owned portability owner only on first use."""
 
         if getattr(self, "_tts_voice_bundle_service_close_task", None) is not None:
@@ -10463,6 +10551,12 @@ class TldwCli(
             return None
         service = getattr(self, "_tts_voice_bundle_service", None)
         if service is None:
+            # TASK-21108: deferred to this single construction site so the
+            # 1,857-line module stays off the app import path.
+            from tldw_chatbook.TTS.voice_bundle_service import (  # noqa: PLC0415
+                TTSVoiceBundlePortabilityService,
+            )
+
             service = TTSVoiceBundlePortabilityService(
                 get_user_data_dir() / "tts_voice_bundle_portability",
                 self._tts_profile_repository,
@@ -12428,6 +12522,11 @@ class TldwCli(
     async def _shutdown_notes_sync_runtime(self) -> None:
         """Settle the application-owned lasting-sync runtime exactly once."""
 
+        # TASK-21108: a runtime that was never built was never started, so
+        # there is nothing to settle -- and reading the lazy property here
+        # would construct one purely to shut it down.
+        if getattr(self, "_notes_sync_runtime_owner", None) is None:
+            return
         task = getattr(self, "_notes_sync_runtime_shutdown_task", None)
         if task is None:
             task = asyncio.create_task(

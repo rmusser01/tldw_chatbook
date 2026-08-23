@@ -46,8 +46,6 @@ class _FileOwnerProbe:
 def test_app_constructs_exactly_one_cutover_runtime_after_notes_scope_service(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import tldw_chatbook.app as app_module
-
     calls: list[dict[str, object]] = []
     runtime = _RuntimeProbe([])
 
@@ -55,10 +53,19 @@ def test_app_constructs_exactly_one_cutover_runtime_after_notes_scope_service(
         calls.append(kwargs)
         return runtime
 
-    monkeypatch.setattr(app_module, "build_notes_sync_runtime_owner", build)
+    # TASK-21108: the builders are imported function-locally inside
+    # `TldwCli._construct_notes_sync_runtime_owner`, so the substitution has
+    # to land on the defining module; `app_module` no longer holds them.
+    import tldw_chatbook.Notes.notes_sync_runtime as runtime_module
+
+    monkeypatch.setattr(runtime_module, "build_notes_sync_runtime_owner", build)
 
     app = _build_test_app(configured_default="chat")
 
+    # TASK-21108: construction is deferred to first access, not done in
+    # `__init__` -- that deferral is what keeps the 15-module lasting-sync
+    # chain off the app import path.
+    assert calls == []
     assert app.notes_sync_runtime_owner is runtime
     assert len(calls) == 1
     assert calls[0]["notes_scope_service"] is app.notes_scope_service
@@ -75,8 +82,12 @@ async def test_real_mounted_runtime_migrates_then_opens_the_cutover_gate(
     import tldw_chatbook.app as app_module
 
     migrations: list[str] = []
+    # TASK-21108: patch the defining module -- app.py imports this
+    # function-locally now (see _construct_notes_sync_runtime_owner).
+    import tldw_chatbook.Notes.notes_sync_runtime as runtime_module
+
     monkeypatch.setattr(
-        app_module,
+        runtime_module,
         "build_notes_sync_legacy_migrator",
         lambda **_kwargs: lambda: migrations.append("migrated"),
     )
@@ -249,8 +260,12 @@ async def test_legacy_sync_directory_key_still_boots_the_migration_path(
         app_module, "get_notes_sync_state_db_path", lambda: state_path
     )
     migrations: list[str] = []
+    # TASK-21108: patch the defining module -- app.py imports this
+    # function-locally now (see _construct_notes_sync_runtime_owner).
+    import tldw_chatbook.Notes.notes_sync_runtime as runtime_module
+
     monkeypatch.setattr(
-        app_module,
+        runtime_module,
         "build_notes_sync_legacy_migrator",
         lambda **_kwargs: lambda: migrations.append("migrated"),
     )

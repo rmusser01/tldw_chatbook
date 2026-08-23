@@ -7333,3 +7333,40 @@ assert each visible control cell resolves to that control, and exercise activati
 and resize through distinct cells. Add up the cell budget before promising transient
 labels; if controls plus required hit regions cannot fit, define the constrained
 fallback explicitly instead of creating ambiguous overlap priority.
+---
+
+## A deferral changes WHICH objects the build binds, not just WHEN it runs (TASK-21108, 2026-08-23)
+
+**What happened.** TASK-21108 moved `build_notes_sync_runtime_owner(...)` out of
+`TldwCli.__init__` into a lazy `notes_sync_runtime_owner` property so
+`Notes/notes_sync_runtime` + `Notes/notes_sync_legacy` (15 modules) would leave the app
+import closure. The body was moved VERBATIM — same call, same keywords, same start gate.
+Every closure probe was green, the new Packaging guard was green, the Notes and
+`ProductionApp/test_notes_sync_runtime_lifecycle.py` suites were green.
+
+Two `ProductionApp/test_file_notes_session_owner_lifecycle.py` tests went red anyway.
+They replace `app.file_notes_session_owner` with a probe AFTER construction and before
+mount. Under the eager build, `file_notes_binding=self.file_notes_session_owner.
+current_binding` had already been read from the real owner during `__init__`; under the
+lazy build the same line ran at mount and read the PROBE, which has no `current_binding`
+— an `AttributeError` inside `on_mount` that also took the LibraryScreen mount with it,
+so the sibling test failed with the unrelated-looking "production TldwCli did not mount
+LibraryScreen".
+
+**What to do.**
+
+1. When you defer a construction, list every `self.<collaborator>` the moved body READS
+   and decide, per name, whether the new read time is the same answer. Anything that can
+   be reassigned between `__init__` and first access must be captured at the OLD time
+   (`self._notes_sync_file_notes_binding = self.file_notes_session_owner.current_binding`
+   in `__init__`), not re-read in the builder. Deferring *when* is the intended change;
+   deferring *what it binds* is a silent second change riding along.
+2. Import-closure evidence cannot see this class at all. A deferral's test set must
+   include the suites that MUTATE the app object between construction and mount —
+   here `Tests/ProductionApp/`, not just `Tests/Packaging/` and the deferred module's own
+   unit tests.
+3. Related trap from the same task: an AST fence that matches call names with
+   `.endswith("build_notes_sync_runtime_owner")` (`Tests/Notes/test_notes_sync_cutover.py`)
+   counts a `_build_notes_sync_runtime_owner` WRAPPER as a second call and fails its own
+   `len(builds) == 1`. The wrapper was renamed `_construct_...`; if you add a wrapper
+   around a fenced call, check the fence's matching rule before the name.
