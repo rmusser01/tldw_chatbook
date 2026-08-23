@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from functools import total_ordering
 from typing import Iterable, Mapping, Protocol
@@ -726,6 +726,42 @@ def console_conversation_starred_recency_sort_key(
         str(getattr(row, "title", "") or "").casefold(),
         stable_id,
     )
+
+
+def overlay_console_conversation_markers(
+    rows: Iterable[ConsoleConversationBrowserInputRow],
+    *,
+    starred_ids: Iterable[str],
+    selected_conversation_id: str | None,
+    run_markers: Mapping[str, str],
+) -> tuple[ConsoleConversationBrowserInputRow, ...]:
+    """Overlay current keyed markers while retaining every unchanged row object."""
+    starred = {str(conversation_id) for conversation_id in starred_ids}
+    selected_id = str(selected_conversation_id or "").strip()
+    markers = {str(key): str(value or "") for key, value in run_markers.items()}
+    overlaid: list[ConsoleConversationBrowserInputRow] = []
+    for row in rows:
+        conversation_id = str(row.conversation_id or "").strip()
+        if not conversation_id:
+            overlaid.append(row)
+            continue
+        values = (
+            conversation_id in starred,
+            conversation_id == selected_id,
+            markers.get(conversation_id, ""),
+        )
+        if values == (row.starred, row.selected, row.run_marker):
+            overlaid.append(row)
+            continue
+        overlaid.append(
+            replace(
+                row,
+                starred=values[0],
+                selected=values[1],
+                run_marker=values[2],
+            )
+        )
+    return tuple(overlaid)
 
 
 def _sort_starred_rows(

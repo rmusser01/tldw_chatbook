@@ -9,6 +9,7 @@ from tldw_chatbook.Workspaces.conversation_browser_state import (
     build_console_conversation_browser_state,
     console_persisted_row_updated_sort,
     format_console_relative_age,
+    overlay_console_conversation_markers,
 )
 from tldw_chatbook.Workspaces.models import DEFAULT_WORKSPACE_ID
 
@@ -131,6 +132,25 @@ def test_literal_title_and_selected_run_marker_are_preserved() -> None:
     assert row.selected is True
     assert row.run_marker == "◆"
     assert state.selected_summary == title
+
+
+def test_marker_overlay_reuses_unrelated_rows() -> None:
+    target = _row("target", "Target")
+    unrelated = _row("unrelated", "Unrelated")
+
+    rows = overlay_console_conversation_markers(
+        (target, unrelated),
+        starred_ids=("target",),
+        selected_conversation_id="target",
+        run_markers={"target": "◆"},
+    )
+
+    assert (rows[0].starred, rows[0].selected, rows[0].run_marker) == (
+        True,
+        True,
+        "◆",
+    )
+    assert rows[1] is unrelated
 
 
 def test_flat_cap_reports_hidden_rows_and_marker_without_duplicates() -> None:

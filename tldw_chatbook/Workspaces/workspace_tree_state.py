@@ -28,6 +28,10 @@ class WorkspaceTreeWorkspace:
     label: str
     conversations: tuple[WorkspaceTreeConversation, ...]
     next_cursor: int | None
+    loading: bool = False
+    error: str = ""
+    retry_cursor: int | None = None
+    membership_unknown: bool = False
 
 
 def build_workspace_tree_state(
@@ -35,10 +39,18 @@ def build_workspace_tree_state(
     workspaces: Iterable[tuple[str, str]],
     rows: Iterable[ConsoleConversationBrowserInputRow],
     next_cursors: Mapping[str, int | None] | None = None,
+    loading: Mapping[str, bool] | None = None,
+    errors: Mapping[str, str] | None = None,
+    retry_cursors: Mapping[str, int | None] | None = None,
+    membership_unknown: Mapping[str, bool] | None = None,
     query: str = "",
 ) -> tuple[WorkspaceTreeWorkspace, ...]:
     """Build the named-workspace projection without I/O or UI dependencies."""
     cursors = dict(next_cursors or {})
+    loading_by_workspace = dict(loading or {})
+    errors_by_workspace = dict(errors or {})
+    retries_by_workspace = dict(retry_cursors or {})
+    unknown_by_workspace = dict(membership_unknown or {})
     normalized_query = str(query or "").strip().casefold()
     labels: dict[str, str] = {}
     for raw_workspace_id, raw_label in workspaces:
@@ -100,6 +112,10 @@ def build_workspace_tree_state(
                     )
                 ),
                 next_cursor=cursors.get(workspace_id),
+                loading=bool(loading_by_workspace.get(workspace_id, False)),
+                error=str(errors_by_workspace.get(workspace_id, "") or ""),
+                retry_cursor=retries_by_workspace.get(workspace_id),
+                membership_unknown=bool(unknown_by_workspace.get(workspace_id, False)),
             )
         )
     return tuple(projected)

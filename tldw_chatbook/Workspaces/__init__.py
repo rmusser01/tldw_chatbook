@@ -11,6 +11,7 @@ from .conversation_browser_state import (
     build_console_conversation_browser_state,
     console_conversation_starred_recency_sort_key,
     console_persisted_row_updated_sort,
+    overlay_console_conversation_markers,
 )
 from .display_state import (
     CONSOLE_WORKSPACE_CONVERSATION_RESULT_LIMIT,
@@ -91,6 +92,7 @@ __all__ = [
     "build_console_workspace_state",
     "console_persisted_row_updated_sort",
     "console_conversation_starred_recency_sort_key",
+    "overlay_console_conversation_markers",
     "console_workspace_conversation_result_copy",
     "console_workspace_conversation_visible_rows",
     "evaluate_workspace_eligibility",

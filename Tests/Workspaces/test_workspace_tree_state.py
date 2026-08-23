@@ -207,6 +207,32 @@ def test_next_cursor_is_scoped_to_its_workspace() -> None:
     ]
 
 
+def test_page_status_has_frozen_safe_defaults_and_scoped_values() -> None:
+    tree = build_workspace_tree_state(
+        workspaces=(("w1", "One"), ("w2", "Two")),
+        rows=(),
+        loading={"w1": True},
+        errors={"w1": "Literal [error] 错误 🧭"},
+        retry_cursors={"w1": 75},
+        membership_unknown={"w1": True},
+    )
+
+    assert (
+        tree[0].loading,
+        tree[0].error,
+        tree[0].retry_cursor,
+        tree[0].membership_unknown,
+    ) == (True, "Literal [error] 错误 🧭", 75, True)
+    assert (
+        tree[1].loading,
+        tree[1].error,
+        tree[1].retry_cursor,
+        tree[1].membership_unknown,
+    ) == (False, "", None, False)
+    with pytest.raises(FrozenInstanceError):
+        tree[0].loading = False
+
+
 def test_marker_update_reuses_every_unrelated_workspace_projection() -> None:
     tree = build_workspace_tree_state(
         workspaces=(("w1", "One"), ("w2", "Two")),
