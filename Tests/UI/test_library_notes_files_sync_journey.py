@@ -901,6 +901,139 @@ async def test_lasting_review_activation_receipt_and_remount_recovery_journey(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("source", ("setup", "root", "migration"))
+async def test_check_again_routes_to_its_rendered_review_source(
+    tmp_path: Path, source: str
+) -> None:
+    token = "a" * 64
+    root_id = "root-1"
+    folder = tmp_path / source
+    folder.mkdir()
+    root = (
+        NotesSyncRootRuntimeSnapshot(
+            root_id,
+            "paused" if source == "migration" else "needs_attention",
+            "review_migration" if source == "migration" else "review_changes",
+        ),
+    )
+    release_migration = asyncio.Event()
+
+    class _SourceRuntime:
+        def __init__(self) -> None:
+            self.calls: list[tuple[object, ...]] = []
+
+        def snapshot(self) -> NotesSyncRuntimeSnapshot:
+            return NotesSyncRuntimeSnapshot(
+                "active", "sync_now", () if source == "setup" else root
+            )
+
+        @staticmethod
+        def _plan(selected_root: str) -> ReconciliationPlan:
+            return ReconciliationPlan(
+                root_id=selected_root,
+                observation_token=token,
+                safe_actions=(
+                    NotesSyncAction(
+                        "action-1", NotesSyncActionKind.UPDATE_NOTE, "binding-1"
+                    ),
+                ),
+                attention=(),
+                skips=(),
+                managed_placement_effects=(),
+                deletion_groups=(),
+            )
+
+        async def review_setup(self, _setup: object) -> ReconciliationPlan:
+            self.calls.append(("review_setup", "setup-root"))
+            return self._plan("setup-root")
+
+        async def check_root(self, selected_root: str) -> ReconciliationPlan:
+            self.calls.append(("check_root", selected_root))
+            check_count = len([call for call in self.calls if call[0] == "check_root"])
+            if source == "migration" and check_count == 1:
+                await release_migration.wait()
+            return self._plan(selected_root)
+
+        async def conflict_labels(
+            self, _root_id: str, _token: str
+        ) -> tuple[RuntimeConflictLabel, ...]:
+            return ()
+
+        async def conflict_history_available(self, _root_id: str) -> bool:
+            return False
+
+        async def apply_reviewed(self, *_args: object) -> ConflictApplyResult:
+            raise ValueError("stale_review")
+
+        async def activate_root(self, *_args: object) -> NotesSyncControlResult:
+            raise RuntimeError("activation failed")
+
+        async def abandon_setup(self, selected_root: str) -> None:
+            self.calls.append(("abandon_setup", selected_root))
+
+    runtime = _SourceRuntime()
+    app = _build_test_app()
+    _seed_conversations(app, [], notes=_two_notes())
+    app.notes_sync_runtime_owner = runtime
+    host = _JourneyHarness(app)
+    async with host.run_test(size=(60, 20)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-notes-add-from-files")
+        if source == "setup":
+            screen.query_one("#library-notes-add-from-files", Button).press()
+            await _wait_for_selector(screen, pilot, "#notes-add-keep-synced")
+            screen.query_one("#notes-add-keep-synced", Button).press()
+            await _wait_for_selector(screen, pilot, "#notes-sync-display-name")
+            controller = screen._library_notes_sync_controller
+            controller.set_setup("display_name", "Source review")
+            controller.set_setup("folder", str(folder))
+            screen.query_one("#notes-sync-check", Button).press()
+        else:
+            screen.query_one("#library-notes-manage-sync-folders", Button).press()
+            selector = (
+                "#notes-sync-root-migration-0"
+                if source == "migration"
+                else "#notes-sync-root-review-0"
+            )
+            action = await _wait_for_selector(screen, pilot, selector)
+            action.press()
+            if source == "migration":
+                await _wait_for_condition(
+                    pilot,
+                    lambda: any(call[0] == "check_root" for call in runtime.calls),
+                    message="migration review did not reach its awaited check",
+                )
+                opened_before_await = (
+                    screen._library_notes_view == "lasting_add"
+                    and screen._library_notes_lasting_origin == "roots"
+                )
+                release_migration.set()
+                assert opened_before_await
+
+        action_selector = (
+            "#notes-sync-apply" if source == "root" else "#notes-sync-activate"
+        )
+        action = await _wait_for_selector(screen, pilot, action_selector)
+        assert screen._library_notes_sync_controller.snapshot.review.source == source
+        action.press()
+        check_again = await _wait_for_selector(screen, pilot, "#notes-sync-check-again")
+        call_name = "review_setup" if source == "setup" else "check_root"
+        before = len([call for call in runtime.calls if call[0] == call_name])
+        check_again.press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                len([call for call in runtime.calls if call[0] == call_name])
+                == before + 1
+            ),
+            message=f"{source} Check again did not route to {call_name}",
+        )
+        assert screen._library_notes_sync_controller.snapshot.review.source == source
+
+
+@pytest.mark.asyncio
 async def test_lasting_attention_survives_a_fresh_screen_and_prioritizes_review() -> (
     None
 ):

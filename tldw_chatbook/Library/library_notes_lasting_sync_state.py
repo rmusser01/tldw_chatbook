@@ -28,6 +28,7 @@ from tldw_chatbook.Notes.notes_sync_reconciler import (
     ReconciliationSkipKind,
 )
 
+LastingSyncReviewSource = Literal["setup", "root", "migration"]
 LastingSyncPhase = Literal[
     "choose",
     "configure",
@@ -249,6 +250,7 @@ class LastingSyncReview:
     activation: bool = False
     can_apply: bool = False
     apply_blocker: LastingSyncApplyBlocker = LastingSyncApplyBlocker.NOTHING_SELECTED
+    source: LastingSyncReviewSource | None = None
 
     def __post_init__(self) -> None:
         if type(self.root_id) is not str or type(self.observation_token) is not str:
@@ -279,6 +281,10 @@ class LastingSyncReview:
             raise TypeError("review flags must be booleans")
         if type(self.can_apply) is not bool:
             raise TypeError("can_apply must be a boolean")
+        if self.source is not None and type(self.source) is not str:
+            raise TypeError("review source must be an exact string or None")
+        if self.source not in {None, "setup", "root", "migration"}:
+            raise ValueError("review source must be setup, root, migration, or None")
         if type(self.apply_blocker) is not LastingSyncApplyBlocker:
             raise TypeError("apply_blocker must be a LastingSyncApplyBlocker")
         if self.can_apply != (self.apply_blocker is LastingSyncApplyBlocker.NONE):

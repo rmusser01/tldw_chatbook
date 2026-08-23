@@ -20,6 +20,7 @@ from tldw_chatbook.Library.library_notes_lasting_sync_state import (
     LastingSyncApplyBlocker,
     LastingSyncHistoryRow,
     LastingSyncReviewRow,
+    LastingSyncReviewSource,
     LibraryNotesLastingSyncSnapshot,
 )
 from tldw_chatbook.Notes.notes_sync_conflicts import (
@@ -58,11 +59,15 @@ class _ReviewActionButton(Button):
         *,
         review_root_id: str,
         review_observation_token: str,
+        review_source: LastingSyncReviewSource | None = None,
+        rendered_page: int | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(label, **kwargs)
         self.review_root_id = review_root_id
         self.review_observation_token = review_observation_token
+        self.review_source = review_source
+        self.rendered_page = rendered_page
 
 
 class _ConflictChoiceButton(_ReviewActionButton):
@@ -89,7 +94,16 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
         pass
 
     class CheckRequested(Message):
-        pass
+        def __init__(
+            self,
+            root_id: str = "",
+            observation_token: str = "",
+            source: LastingSyncReviewSource | None = None,
+        ) -> None:
+            super().__init__()
+            self.root_id = root_id
+            self.observation_token = observation_token
+            self.source = source
 
     class ApplyRequested(Message):
         def __init__(self, root_id: str, observation_token: str) -> None:
@@ -130,26 +144,46 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             self.binding_id = binding_id
 
     class UndoRequested(Message):
-        def __init__(self, root_id: str, operation_id: str) -> None:
+        def __init__(
+            self,
+            root_id: str,
+            observation_token: str,
+            operation_id: str,
+            page: int | None,
+        ) -> None:
             super().__init__()
             self.root_id = root_id
+            self.observation_token = observation_token
             self.operation_id = operation_id
+            self.page = page
 
     class DismissRequested(Message):
-        def __init__(self, root_id: str, operation_id: str) -> None:
+        def __init__(
+            self, root_id: str, observation_token: str, operation_id: str
+        ) -> None:
             super().__init__()
             self.root_id = root_id
+            self.observation_token = observation_token
             self.operation_id = operation_id
 
     class HistoryRequested(Message):
-        def __init__(self, root_id: str) -> None:
+        def __init__(self, root_id: str, observation_token: str) -> None:
             super().__init__()
             self.root_id = root_id
+            self.observation_token = observation_token
 
     class HistoryPageRequested(Message):
-        def __init__(self, root_id: str, page: int) -> None:
+        def __init__(
+            self,
+            root_id: str,
+            observation_token: str,
+            from_page: int,
+            page: int,
+        ) -> None:
             super().__init__()
             self.root_id = root_id
+            self.observation_token = observation_token
+            self.from_page = from_page
             self.page = page
 
     class HistoryReturnRequested(Message):
@@ -592,16 +626,20 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                 )
                 with Horizontal(classes="ds-toolbar notes-sync-receipt-actions"):
                     if receipt.undo_available:
-                        yield Button(
+                        yield _ReviewActionButton(
                             "Undo",
+                            review_root_id=self.snapshot.review.root_id,
+                            review_observation_token=self.snapshot.review.observation_token,
                             name=receipt.operation_id,
                             id=f"notes-sync-receipt-undo-{index}",
                             classes="library-canvas-action",
                             compact=True,
                         )
                     else:
-                        yield Button(
+                        yield _ReviewActionButton(
                             self._undo_label(receipt.undo_reason, receipt.state),
+                            review_root_id=self.snapshot.review.root_id,
+                            review_observation_token=self.snapshot.review.observation_token,
                             name=receipt.operation_id,
                             id=f"notes-sync-receipt-undo-{index}",
                             classes="library-canvas-action",
@@ -609,8 +647,10 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                             disabled=True,
                             tooltip=receipt.undo_reason or "Undo unavailable",
                         )
-                    yield Button(
+                    yield _ReviewActionButton(
                         "Dismiss",
+                        review_root_id=self.snapshot.review.root_id,
+                        review_observation_token=self.snapshot.review.observation_token,
                         name=receipt.operation_id,
                         id=f"notes-sync-receipt-dismiss-{index}",
                         classes="library-canvas-action",
@@ -660,16 +700,22 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             classes="notes-sync-history-page",
             markup=False,
         )
-        yield Button(
+        yield _ReviewActionButton(
             "Previous",
+            review_root_id=history.root_id,
+            review_observation_token=self.snapshot.review.observation_token,
+            rendered_page=history.page,
             name=history.root_id,
             id="notes-sync-history-previous",
             classes="library-canvas-action",
             compact=True,
             disabled=history.page <= 1,
         )
-        yield Button(
+        yield _ReviewActionButton(
             "Next",
+            review_root_id=history.root_id,
+            review_observation_token=self.snapshot.review.observation_token,
+            rendered_page=history.page,
             name=history.root_id,
             id="notes-sync-history-next",
             classes="library-canvas-action",
@@ -686,6 +732,7 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
     def _compose_history_row(
         self, index: int, row: LastingSyncHistoryRow
     ) -> ComposeResult:
+        history = self.snapshot.history
         with Vertical(
             id=f"notes-sync-history-row-{index}",
             classes="library-notes-sync-history-row",
@@ -697,8 +744,11 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                 markup=False,
             )
             if row.undo_available:
-                yield Button(
+                yield _ReviewActionButton(
                     "Undo",
+                    review_root_id=history.root_id,
+                    review_observation_token=self.snapshot.review.observation_token,
+                    rendered_page=history.page,
                     name=row.operation_id,
                     id=f"notes-sync-history-undo-{index}",
                     classes="library-canvas-action",
@@ -751,8 +801,11 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             )
         elif phase == "review":
             if self.snapshot.review.stale:
-                yield Button(
+                yield _ReviewActionButton(
                     "Check again",
+                    review_root_id=self.snapshot.review.root_id,
+                    review_observation_token=self.snapshot.review.observation_token,
+                    review_source=self.snapshot.review.source,
                     id="notes-sync-check-again",
                     classes="library-canvas-action",
                     compact=True,
@@ -784,12 +837,14 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             root_id = self._root_id()
             if root_id:
                 history_available = self.snapshot.history_available
-                yield Button(
+                yield _ReviewActionButton(
                     (
                         "Resolution history"
                         if history_available
                         else "○ Resolution history"
                     ),
+                    review_root_id=root_id,
+                    review_observation_token=self.snapshot.review.observation_token,
                     name=root_id,
                     id="notes-sync-history-open",
                     classes="library-canvas-action",
@@ -811,12 +866,14 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             root_id = self._root_id()
             if root_id:
                 history_available = self.snapshot.history_available
-                yield Button(
+                yield _ReviewActionButton(
                     (
                         "Resolution history"
                         if history_available
                         else "○ Resolution history"
                     ),
+                    review_root_id=root_id,
+                    review_observation_token=self.snapshot.review.observation_token,
                     name=root_id,
                     id="notes-sync-history-open",
                     classes="library-canvas-action",
@@ -909,6 +966,7 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             and previous_snapshot.review.root_id == snapshot.review.root_id
             and previous_snapshot.review.observation_token
             == snapshot.review.observation_token
+            and previous_snapshot.review.stale == snapshot.review.stale
             and previous_snapshot.review.page == snapshot.review.page
             and tuple(row.item_id for row in previous_snapshot.review.rows)
             == tuple(row.item_id for row in snapshot.review.rows)
@@ -1151,8 +1209,18 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             self.post_message(self.FolderRequested())
         elif button_id.startswith("notes-sync-direction-"):
             self.post_message(self.SetupChanged("direction", event.button.name or ""))
-        elif button_id in {"notes-sync-check", "notes-sync-check-again"}:
+        elif button_id == "notes-sync-check":
             self.post_message(self.CheckRequested())
+        elif button_id == "notes-sync-check-again":
+            if not isinstance(event.button, _ReviewActionButton):
+                return
+            self.post_message(
+                self.CheckRequested(
+                    event.button.review_root_id,
+                    event.button.review_observation_token,
+                    event.button.review_source,
+                )
+            )
         elif button_id == "notes-sync-apply":
             if not isinstance(event.button, _ReviewActionButton):
                 return
@@ -1239,24 +1307,58 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                 self.query_one(f"#notes-sync-conflict-view-{index}", Button)
             )
         elif button_id.startswith("notes-sync-receipt-undo-"):
+            if not isinstance(event.button, _ReviewActionButton):
+                return
             self.post_message(
-                self.UndoRequested(self._root_id(), event.button.name or "")
+                self.UndoRequested(
+                    event.button.review_root_id,
+                    event.button.review_observation_token,
+                    event.button.name or "",
+                    None,
+                )
             )
         elif button_id.startswith("notes-sync-receipt-dismiss-"):
+            if not isinstance(event.button, _ReviewActionButton):
+                return
             self.post_message(
-                self.DismissRequested(self._root_id(), event.button.name or "")
+                self.DismissRequested(
+                    event.button.review_root_id,
+                    event.button.review_observation_token,
+                    event.button.name or "",
+                )
             )
         elif button_id.startswith("notes-sync-history-undo-"):
+            if not isinstance(event.button, _ReviewActionButton):
+                return
             self.post_message(
-                self.UndoRequested(self._root_id(), event.button.name or "")
+                self.UndoRequested(
+                    event.button.review_root_id,
+                    event.button.review_observation_token,
+                    event.button.name or "",
+                    event.button.rendered_page,
+                )
             )
         elif button_id == "notes-sync-history-open":
-            self.post_message(self.HistoryRequested(event.button.name or ""))
+            if not isinstance(event.button, _ReviewActionButton):
+                return
+            self.post_message(
+                self.HistoryRequested(
+                    event.button.review_root_id,
+                    event.button.review_observation_token,
+                )
+            )
         elif button_id in {"notes-sync-history-previous", "notes-sync-history-next"}:
+            if not isinstance(event.button, _ReviewActionButton):
+                return
             delta = -1 if button_id.endswith("previous") else 1
+            if event.button.rendered_page is None:
+                return
             self.post_message(
                 self.HistoryPageRequested(
-                    event.button.name or "", self.snapshot.history.page + delta
+                    event.button.review_root_id,
+                    event.button.review_observation_token,
+                    event.button.rendered_page,
+                    event.button.rendered_page + delta,
                 )
             )
         elif button_id == "notes-sync-history-return":

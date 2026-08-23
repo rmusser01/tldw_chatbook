@@ -137,6 +137,34 @@ def _store(tmp_path: Path, *, marker: bool = True) -> NotesDeviceStateStore:
     return store
 
 
+@pytest.mark.asyncio
+async def test_abandon_setup_ignores_persisted_root_review_authority(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    owner, coordinator, _watcher = _owner(
+        store=store,
+        admitted=True,
+        adapter=_Adapter([_input()]),
+    )
+    await owner.start()
+    try:
+        await owner.check_root("root-1")
+        path_before = owner._root_paths["root-1"]
+        status_before = owner.snapshot().roots
+        events_before = tuple(coordinator.events)
+        assert "root-1" not in owner._setup_reviews
+
+        await owner.abandon_setup("root-1")
+
+        assert owner._root_paths["root-1"] == path_before
+        assert owner.snapshot().roots == status_before
+        assert tuple(coordinator.events) == events_before
+        assert store.get_root("root-1").canonical_path == path_before
+    finally:
+        await owner.shutdown()
+
+
 @dataclass
 class _Lease:
     authoritative: bool = True

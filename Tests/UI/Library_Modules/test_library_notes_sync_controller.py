@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from inspect import signature
+from types import SimpleNamespace
 
 import pytest
 
@@ -1124,13 +1125,15 @@ async def test_receipt_undo_dismiss_and_history_paging_use_fresh_runtime_project
         import_controller=_ImportController(),
     )
 
+    await controller.check_root("root-1")
     await controller.refresh_conflict_receipts("root-1")
     assert controller.snapshot.receipts[0].operation_id == "operation-1"
-    await controller.dismiss_conflict_receipt("root-1", "operation-1")
+    await controller.dismiss_conflict_receipt("root-1", TOKEN, "operation-1")
     assert controller.snapshot.receipts == ()
 
     runtime.receipts = (receipt,)
-    await controller.undo_conflict_resolution("root-1", "operation-1")
+    await controller.refresh_conflict_receipts("root-1")
+    await controller.undo_conflict_resolution("root-1", TOKEN, "operation-1")
     assert controller.snapshot.receipts == ()
     assert ("undo_resolution", "root-1", "operation-1") in runtime.calls
 
@@ -1333,6 +1336,8 @@ async def test_completed_undo_refreshes_open_history_once_and_nonterminal_recove
         import_controller=_ImportController(),
         publish_snapshot=lambda snapshot: statuses.append(snapshot.status_line),
     )
+    await controller.check_root("root-1")
+    await controller.refresh_conflict_receipts("root-1")
     await controller.show_resolution_history("root-1", page=1)
 
     async def completed_undo(
@@ -1354,11 +1359,18 @@ async def test_completed_undo_refreshes_open_history_once_and_nonterminal_recove
 
     runtime.undo_resolution = completed_undo
     statuses.clear()
-    await controller.undo_conflict_resolution("root-1", "operation-1")
+    await controller.undo_conflict_resolution(
+        "root-1", TOKEN, "operation-1", history_page=1
+    )
     assert statuses == ["Undo finished. Check changes before applying again."]
     assert controller.snapshot.phase == "history"
     assert controller.snapshot.history.rows[0].state == "undone"
     assert controller.snapshot.receipts == ()
+
+    runtime.receipts = (_receipt("operation-1", "Note"),)
+    runtime.history[0] = (_history_row("operation-1", "Note"),)
+    await controller.refresh_conflict_receipts("root-1")
+    await controller.show_resolution_history("root-1", page=1)
 
     from tldw_chatbook.Notes.notes_sync_executor import NotesSyncRecoveryChoice
 
@@ -1375,11 +1387,19 @@ async def test_completed_undo_refreshes_open_history_once_and_nonterminal_recove
 
     runtime.undo_resolution = nonterminal_undo
     statuses.clear()
-    await controller.undo_conflict_resolution("root-1", "operation-1")
+    await controller.undo_conflict_resolution(
+        "root-1", TOKEN, "operation-1", history_page=1
+    )
     assert controller.snapshot.phase == "roots"
     assert "recovery needs attention" in controller.snapshot.status_line.casefold()
     assert "Undo finished" not in controller.snapshot.status_line
     assert statuses == [controller.snapshot.status_line]
+
+    runtime.receipts = (_receipt("operation-1", "Note"),)
+    runtime.history[0] = (_history_row("operation-1", "Note"),)
+    await controller.check_root("root-1")
+    await controller.refresh_conflict_receipts("root-1")
+    await controller.show_resolution_history("root-1", page=1)
 
     async def intermediate_undo(
         root_id: str, operation_id: str
@@ -1390,7 +1410,9 @@ async def test_completed_undo_refreshes_open_history_once_and_nonterminal_recove
 
     runtime.undo_resolution = intermediate_undo
     statuses.clear()
-    await controller.undo_conflict_resolution("root-1", "operation-1")
+    await controller.undo_conflict_resolution(
+        "root-1", TOKEN, "operation-1", history_page=1
+    )
     assert controller.snapshot.phase == "roots"
     assert "recovery needs attention" in controller.snapshot.status_line.casefold()
     assert "Undo finished" not in controller.snapshot.status_line
@@ -1407,6 +1429,7 @@ async def test_delayed_completed_undo_cannot_overwrite_newer_history_page() -> N
         import_controller=_ImportController(),
         publish_snapshot=lambda snapshot: statuses.append(snapshot.status_line),
     )
+    await controller.check_root("root-1")
     await controller.refresh_conflict_receipts("root-1")
     await controller.show_resolution_history("root-1", page=1)
     refresh_started = asyncio.Event()
@@ -1436,7 +1459,9 @@ async def test_delayed_completed_undo_cannot_overwrite_newer_history_page() -> N
     runtime.undo_resolution = completed_undo
     runtime.resolution_history = delayed_history
     pending = asyncio.create_task(
-        controller.undo_conflict_resolution("root-1", "operation-1")
+        controller.undo_conflict_resolution(
+            "root-1", TOKEN, "operation-1", history_page=1
+        )
     )
     await refresh_started.wait()
     await controller.show_resolution_history("root-1", page=2)
@@ -1729,7 +1754,7 @@ async def test_same_root_receipt_refresh_does_not_drop_apply_or_undo_result() ->
 
     runtime.undo_resolution = delayed_undo
     pending_undo = asyncio.create_task(
-        controller.undo_conflict_resolution("root-1", "operation-1")
+        controller.undo_conflict_resolution("root-1", TOKEN_2, "operation-1")
     )
     await undo_started.wait()
     await controller.refresh_conflict_receipts("root-1")
@@ -1802,12 +1827,14 @@ async def test_successful_mutations_use_safe_local_fallback_when_receipts_fail()
         import_controller=_ImportController(),
         publish_snapshot=lambda snapshot: statuses.append(snapshot.status_line),
     )
+    await controller.check_root("root-1")
     await controller.refresh_conflict_receipts("root-1")
     await controller.show_resolution_history("root-1")
     history_before_dismiss = controller.snapshot.history
+    controller.return_from_resolution_history()
     runtime.active_conflict_receipts = receipt_failure
     statuses.clear()
-    await controller.dismiss_conflict_receipt("root-1", "operation-1")
+    await controller.dismiss_conflict_receipt("root-1", TOKEN, "operation-1")
     assert controller.snapshot.receipts == ()
     assert controller.snapshot.receipts_unavailable is True
     assert controller.snapshot.history == history_before_dismiss
@@ -1826,7 +1853,9 @@ async def test_successful_mutations_use_safe_local_fallback_when_receipts_fail()
     await controller.refresh_conflict_receipts("root-1")
     runtime.active_conflict_receipts = receipt_failure
     statuses.clear()
-    await controller.undo_conflict_resolution("root-1", "operation-1")
+    await controller.undo_conflict_resolution(
+        "root-1", TOKEN, "operation-1", history_page=1
+    )
     assert controller.snapshot.receipts == ()
     assert controller.snapshot.receipts_unavailable is True
     assert controller.snapshot.history.rows[0].state == "undone"
@@ -2186,7 +2215,7 @@ async def test_undo_invalidates_active_review_but_preserves_receipt_history_cont
     controller.stage_attention_choice("root-1", TOKEN, "bind-1", "Keep file")
     await controller.show_conflict_comparison("root-1", TOKEN, "bind-1")
 
-    await controller.undo_conflict_resolution("root-1", "operation-1")
+    await controller.undo_conflict_resolution("root-1", TOKEN, "operation-1")
 
     assert controller._review_plan is None  # noqa: SLF001 - authority contract
     assert controller._selections == {}  # noqa: SLF001 - token authority contract
@@ -2234,13 +2263,18 @@ async def test_undo_supersedes_pending_same_root_review_work(
         pending = asyncio.create_task(controller.check_root("root-1"))
 
     await started.wait()
-    await controller.undo_conflict_resolution("root-1", "operation-1")
+    await controller.undo_conflict_resolution("root-1", TOKEN, "operation-1")
     undo_snapshot = controller.snapshot
     release.set()
     await pending
 
-    assert controller.snapshot == undo_snapshot
-    assert controller.snapshot.receipts == ()
+    if pending_kind == "check":
+        assert controller.snapshot.phase == "review"
+        assert controller.snapshot.review.observation_token == TOKEN_2
+        assert not any(call[0] == "undo_resolution" for call in runtime.calls)
+    else:
+        assert controller.snapshot == undo_snapshot
+        assert controller.snapshot.receipts == ()
 
 
 async def test_review_actions_reject_detached_review_provenance() -> None:
@@ -2551,3 +2585,153 @@ async def test_history_origin_is_revoked_by_new_review_lifecycle() -> None:
 
     assert controller.snapshot.phase == "review"
     assert controller.snapshot.review.observation_token == TOKEN_2
+
+
+async def test_detached_check_again_cannot_retarget_a_new_review_source() -> None:
+    runtime = _Runtime()
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+    await controller.check_root("root-1")
+    runtime.stale = True
+    await controller.apply_reviewed("root-1", TOKEN)
+    calls_before = tuple(runtime.calls)
+
+    accepted = await controller.recheck_review("root-1", TOKEN, "migration")
+
+    assert accepted is False
+    assert tuple(runtime.calls) == calls_before
+
+
+async def test_migration_review_is_not_abandoned_as_provisional_setup() -> None:
+    runtime = _Runtime()
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+    await controller.check_migration("root-1")
+    controller.return_to_roots()
+    calls_before = tuple(runtime.calls)
+
+    await controller.abandon_setup()
+
+    assert tuple(runtime.calls) == calls_before
+    assert controller.snapshot.phase == "roots"
+
+
+@pytest.mark.parametrize("lifecycle", ("check", "remount"))
+async def test_apply_claim_survives_same_token_review_lifecycle(
+    lifecycle: str,
+) -> None:
+    runtime = _Runtime()
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+    await controller.check_root("root-1")
+    successful_apply = runtime.apply_reviewed
+    started = asyncio.Event()
+    release = asyncio.Event()
+    invocations = 0
+
+    async def delayed_apply(*args: object, **kwargs: object) -> ConflictApplyResult:
+        nonlocal invocations
+        invocations += 1
+        if invocations == 1:
+            started.set()
+            await release.wait()
+        return await successful_apply(*args, **kwargs)
+
+    runtime.apply_reviewed = delayed_apply
+    first = asyncio.create_task(controller.apply_reviewed("root-1", TOKEN))
+    await started.wait()
+    if lifecycle == "remount":
+        controller.invalidate_for_remount()
+    await controller.check_root("root-1")
+    duplicate = asyncio.create_task(controller.apply_reviewed("root-1", TOKEN))
+    await asyncio.sleep(0)
+    observed = invocations
+    release.set()
+    await asyncio.gather(first, duplicate)
+
+    assert observed == 1
+    await controller.apply_reviewed("root-1", TOKEN)
+    assert invocations == 2
+
+
+async def test_detached_receipt_actions_cannot_mutate_a_new_review() -> None:
+    runtime = _Runtime()
+    runtime.receipts = (_receipt("operation-1", "Old root"),)
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+    await controller.check_root("root-1")
+    await controller.refresh_conflict_receipts("root-1")
+    controller._state = replace(controller.snapshot, phase="receipt")
+    runtime.check_plan = _conflict_plan(root_id="root-2", token=TOKEN_2, safe=True)
+    await controller.check_root("root-2")
+    calls_before = tuple(runtime.calls)
+
+    await controller.undo_conflict_resolution(
+        "root-1", TOKEN, "operation-1", history_page=None
+    )
+    await controller.dismiss_conflict_receipt("root-1", TOKEN, "operation-1")
+
+    assert tuple(runtime.calls) == calls_before
+
+
+async def test_stale_history_page_provenance_cannot_advance_current_page() -> None:
+    runtime = _Runtime()
+    runtime.history[0] = (_history_row("operation-1", "Page one"),)
+    runtime.history[100] = (_history_row("operation-2", "Page two"),)
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+    await controller.check_root("root-1")
+    await controller.open_resolution_history("root-1", TOKEN)
+    await controller.page_resolution_history("root-1", TOKEN, 1, 2)
+    calls_before = tuple(runtime.calls)
+
+    accepted = await controller.page_resolution_history("root-1", TOKEN, 1, 2)
+
+    assert accepted is False
+    assert tuple(runtime.calls) == calls_before
+    assert controller.snapshot.history.page == 2
+
+
+@pytest.mark.parametrize(
+    "malformed",
+    (
+        object(),
+        SimpleNamespace(
+            accepted="false",
+            status="up_to_date",
+            next_action="sync_now",
+            applied_count=1,
+        ),
+        SimpleNamespace(
+            accepted=1, status="up_to_date", next_action="sync_now", applied_count=1
+        ),
+    ),
+)
+async def test_activation_rejects_malformed_control_results(malformed: object) -> None:
+    runtime = _Runtime()
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+    await controller.check_migration("root-1")
+
+    async def malformed_activate(*_args: object) -> object:
+        return malformed
+
+    runtime.activate_root = malformed_activate
+    accepted = await controller.activate_root("root-1", TOKEN)
+
+    assert accepted is False
+    assert controller.snapshot.phase == "review"
+    assert controller.snapshot.receipt_line == ""
+    assert "invalid" in controller.snapshot.status_line.casefold()

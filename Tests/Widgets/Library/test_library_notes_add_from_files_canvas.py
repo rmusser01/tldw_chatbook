@@ -857,7 +857,9 @@ async def test_new_token_focus_request_does_not_steal_external_newer_focus(
         assert app.focused is external
 
 
-async def test_new_token_focus_request_rejects_external_origin() -> None:
+async def test_new_token_focus_request_rejects_external_origin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     snapshot = replace(
         initial_lasting_sync_snapshot(lasting_available=True),
         phase="review",
@@ -871,6 +873,17 @@ async def test_new_token_focus_request_rejects_external_origin() -> None:
         external = app.query_one("#external-control", Button)
         external.focus()
         await pilot.pause()
+        completed = False
+        focus_requested_conflict = canvas._focus_requested_conflict
+
+        def completed_focus_request(*args: object) -> None:
+            nonlocal completed
+            focus_requested_conflict(*args)
+            completed = True
+
+        monkeypatch.setattr(
+            canvas, "_focus_requested_conflict", completed_focus_request
+        )
 
         canvas.sync_state(
             replace(
@@ -879,7 +892,20 @@ async def test_new_token_focus_request_rejects_external_origin() -> None:
                 conflict_focus_binding_id="bind-1",
             )
         )
-        await pilot.pause()
+        await _wait_for(
+            pilot,
+            lambda: (
+                completed
+                and canvas.snapshot.review.observation_token == "d" * 64
+                and getattr(
+                    app.query_one("#notes-sync-conflict-view-0", Button),
+                    "review_observation_token",
+                    None,
+                )
+                == "d" * 64
+            ),
+            message="external-origin focus callback did not settle on the new-token DOM",
+        )
 
         assert app.focused is external
 
@@ -895,13 +921,36 @@ async def test_normal_new_token_recompose_does_not_focus_a_conflict() -> None:
     async with app.run_test(size=(60, 20)) as pilot:
         await pilot.pause()
         canvas = app.query_one(LibraryNotesAddFromFilesCanvas)
+        settled = False
+
+        def finish_settle() -> None:
+            nonlocal settled
+            settled = True
+
+        def defer_settle() -> None:
+            canvas.call_after_refresh(finish_settle)
+
         canvas.sync_state(
             replace(
                 snapshot,
                 review=replace(snapshot.review, observation_token="d" * 64),
             )
         )
-        await pilot.pause()
+        canvas.call_after_refresh(defer_settle)
+        await _wait_for(
+            pilot,
+            lambda: (
+                settled
+                and canvas.snapshot.review.observation_token == "d" * 64
+                and getattr(
+                    app.query_one("#notes-sync-conflict-view-0", Button),
+                    "review_observation_token",
+                    None,
+                )
+                == "d" * 64
+            ),
+            message="normal recompose did not settle on the new-token DOM",
+        )
 
         assert app.focused not in tuple(app.query(".notes-sync-conflict-view"))
 
@@ -1008,6 +1057,123 @@ async def test_receipts_and_history_render_actions_labels_and_fallback_at_60x20(
             ),
             message="history paging and Return did not post their typed messages",
         )
+
+
+async def test_queued_receipt_actions_keep_rendered_review_provenance() -> None:
+    receipt = LastingSyncReceiptRow(
+        "operation-1",
+        "Release note · notes/release.md",
+        NotesSyncConflictChoice.KEEP_FILE,
+        "completed",
+        True,
+    )
+    review = LastingSyncReview(
+        root_id="root-1", observation_token="c" * 64, source="root"
+    )
+    snapshot = replace(
+        initial_lasting_sync_snapshot(lasting_available=True),
+        phase="receipt",
+        review=review,
+        receipts=(receipt,),
+    )
+    app = _Host(snapshot)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        canvas = app.query_one(LibraryNotesAddFromFilesCanvas)
+        undo = app.query_one("#notes-sync-receipt-undo-0", Button)
+        dismiss = app.query_one("#notes-sync-receipt-dismiss-0", Button)
+        canvas.sync_state(
+            replace(
+                snapshot,
+                review=replace(review, root_id="root-2", observation_token="d" * 64),
+                receipts=(replace(receipt, operation_id="operation-2"),),
+            )
+        )
+        await pilot.pause()
+        canvas._button_pressed(Button.Pressed(undo))
+        canvas._button_pressed(Button.Pressed(dismiss))
+        await pilot.pause()
+
+    undo_message = next(
+        item for item in app.messages if type(item).__name__ == "UndoRequested"
+    )
+    dismiss_message = next(
+        item for item in app.messages if type(item).__name__ == "DismissRequested"
+    )
+    assert (
+        undo_message.root_id,
+        undo_message.observation_token,
+        undo_message.operation_id,
+        undo_message.page,
+    ) == ("root-1", "c" * 64, "operation-1", None)
+    assert (
+        dismiss_message.root_id,
+        dismiss_message.observation_token,
+        dismiss_message.operation_id,
+    ) == ("root-1", "c" * 64, "operation-1")
+
+
+async def test_queued_history_actions_keep_rendered_page_provenance() -> None:
+    row = LastingSyncHistoryRow(
+        "operation-1",
+        "Release note · notes/release.md",
+        NotesSyncConflictChoice.KEEP_FILE,
+        "completed",
+        "2026-08-22T12:00:00+00:00",
+        "2026-08-22T12:00:00+00:00",
+        True,
+    )
+    review = LastingSyncReview(
+        root_id="root-1", observation_token="c" * 64, source="root"
+    )
+    history = LastingSyncHistory("root-1", (row,), page=1, has_next=True)
+    snapshot = replace(
+        initial_lasting_sync_snapshot(lasting_available=True),
+        phase="history",
+        review=review,
+        history=history,
+    )
+    app = _Host(snapshot)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        canvas = app.query_one(LibraryNotesAddFromFilesCanvas)
+        undo = app.query_one("#notes-sync-history-undo-0", Button)
+        next_page = app.query_one("#notes-sync-history-next", Button)
+        canvas.sync_state(
+            replace(
+                snapshot,
+                review=replace(review, root_id="root-2", observation_token="d" * 64),
+                history=LastingSyncHistory(
+                    "root-2",
+                    (replace(row, operation_id="operation-2"),),
+                    page=2,
+                    has_next=True,
+                ),
+            )
+        )
+        await pilot.pause()
+        canvas._button_pressed(Button.Pressed(undo))
+        canvas._button_pressed(Button.Pressed(next_page))
+        await pilot.pause()
+
+    undo_message = next(
+        item for item in app.messages if type(item).__name__ == "UndoRequested"
+    )
+    page_message = next(
+        item for item in app.messages if type(item).__name__ == "HistoryPageRequested"
+    )
+    assert (
+        undo_message.root_id,
+        undo_message.observation_token,
+        undo_message.operation_id,
+        undo_message.page,
+    ) == ("root-1", "c" * 64, "operation-1", 1)
+    assert (
+        page_message.root_id,
+        page_message.observation_token,
+        page_message.from_page,
+        page_message.page,
+    ) == ("root-1", "c" * 64, 1, 2)
 
 
 async def test_safe_review_apply_posts_only_visible_reviewed_action_ids() -> None:
@@ -1213,7 +1379,13 @@ async def test_long_deletion_choices_stack_and_remain_visible_at_60x20() -> None
 
 
 async def test_stale_review_replaces_apply_with_check_again() -> None:
-    review = LastingSyncReview(stale=True, next_action="Check again")
+    review = LastingSyncReview(
+        root_id="root-1",
+        observation_token="c" * 64,
+        stale=True,
+        next_action="Check again",
+        source="root",
+    )
     app = _Host(
         replace(
             initial_lasting_sync_snapshot(lasting_available=True),
@@ -1225,7 +1397,66 @@ async def test_stale_review_replaces_apply_with_check_again() -> None:
     async with app.run_test(size=(60, 20)) as pilot:
         await pilot.pause()
         assert not app.query("#notes-sync-apply")
-        assert app.query_one("#notes-sync-check-again", Button)
+        check = app.query_one("#notes-sync-check-again", Button)
+        check.press()
+        await pilot.pause()
+
+    message = next(
+        item for item in app.messages if type(item).__name__ == "CheckRequested"
+    )
+    assert (message.root_id, message.observation_token, message.source) == (
+        "root-1",
+        "c" * 64,
+        "root",
+    )
+
+
+@pytest.mark.parametrize("source", ("detached", 1, type("Source", (str,), {})("root")))
+async def test_review_source_rejects_values_outside_the_exact_typed_vocabulary(
+    source: object,
+) -> None:
+    error = TypeError if type(source) is not str else ValueError
+
+    with pytest.raises(error):
+        LastingSyncReview(source=source)  # type: ignore[arg-type]
+
+
+async def test_queued_check_again_keeps_rendered_review_source() -> None:
+    review = LastingSyncReview(
+        root_id="root-1",
+        observation_token="c" * 64,
+        stale=True,
+        next_action="Check again",
+        source="root",
+    )
+    snapshot = replace(
+        initial_lasting_sync_snapshot(lasting_available=True),
+        phase="review",
+        review=review,
+    )
+    app = _Host(snapshot)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        canvas = app.query_one(LibraryNotesAddFromFilesCanvas)
+        original = app.query_one("#notes-sync-check-again", Button)
+        canvas.sync_state(
+            replace(
+                snapshot,
+                review=replace(review, observation_token="d" * 64, source="migration"),
+            )
+        )
+        await pilot.pause()
+        canvas._button_pressed(Button.Pressed(original))
+        await pilot.pause()
+
+    message = next(
+        item for item in app.messages if type(item).__name__ == "CheckRequested"
+    )
+    assert (message.root_id, message.observation_token, message.source) == (
+        "root-1",
+        "c" * 64,
+        "root",
+    )
 
 
 async def test_empty_review_does_not_claim_hidden_scroll_content() -> None:

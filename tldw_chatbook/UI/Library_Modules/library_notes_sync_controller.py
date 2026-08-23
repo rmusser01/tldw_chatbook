@@ -12,6 +12,7 @@ from tldw_chatbook.Library.library_notes_lasting_sync_state import (
     LastingSyncHistory,
     LastingSyncHistoryRow,
     LastingSyncReview,
+    LastingSyncReviewSource,
     LastingSyncReceiptRow,
     LastingSyncRootRow,
     LibraryNotesLastingSyncSnapshot,
@@ -318,6 +319,7 @@ class LibraryNotesSyncController:
                 page=current.page if page is None else page,
                 stale=current.stale if stale is None else stale,
                 activation=current.activation if activation is None else activation,
+                source=current.source,
             ),
         )
 
@@ -328,6 +330,7 @@ class LibraryNotesSyncController:
         page: int = 1,
         stale: bool = False,
         activation: bool = False,
+        source: LastingSyncReviewSource | None = None,
         labels: dict[str, RuntimeConflictLabel] | None = None,
         selections: tuple[ConflictSelection, ...] | None = None,
     ) -> LastingSyncReview:
@@ -343,6 +346,7 @@ class LibraryNotesSyncController:
         )
         return replace(
             review,
+            source=source,
             rows=tuple(
                 replace(
                     row,
@@ -395,6 +399,7 @@ class LibraryNotesSyncController:
         *,
         expected_root_id: str | None,
         epoch: int,
+        source: LastingSyncReviewSource,
         activation: bool = False,
         reset_ephemeral: bool = False,
     ) -> bool | None:
@@ -417,6 +422,9 @@ class LibraryNotesSyncController:
                 history_available=False,
                 conflict_focus_binding_id=None,
             )
+            self._state = replace(
+                self._state, review=replace(self._state.review, source=source)
+            )
             self._review_plan = None
             return False
         if not self._lifecycle_is_current(expected_root_id, epoch):
@@ -434,6 +442,7 @@ class LibraryNotesSyncController:
             review=self._review_projection(
                 plan,
                 activation=activation,
+                source=source,
                 labels=labels,
                 selections=selections,
             ),
@@ -508,7 +517,6 @@ class LibraryNotesSyncController:
     def _advance_lifecycle(self) -> int:
         if self._lifecycle_epoch >= _LIFECYCLE_EPOCH_MAX:
             raise RuntimeError("controller lifecycle epoch exhausted")
-        self._apply_in_flight.clear()
         self._history_origin = None
         self._lifecycle_epoch += 1
         return self._lifecycle_epoch
@@ -704,6 +712,15 @@ class LibraryNotesSyncController:
         self._publish()
 
     async def check_root(self, root_id: str) -> None:
+        await self._check_root(root_id, source="root", activation=False)
+
+    async def _check_root(
+        self,
+        root_id: str,
+        *,
+        source: LastingSyncReviewSource,
+        activation: bool,
+    ) -> None:
         epoch = self._begin_check_lifecycle(root_id)
         self._state = replace(
             self._state, phase="checking", status_line="Checking changes…"
@@ -733,7 +750,11 @@ class LibraryNotesSyncController:
             self._publish()
             return
         installed = await self._install_review(
-            plan, expected_root_id=root_id, epoch=epoch
+            plan,
+            expected_root_id=root_id,
+            epoch=epoch,
+            source=source,
+            activation=activation,
         )
         if installed is None:
             return
@@ -741,7 +762,11 @@ class LibraryNotesSyncController:
             self._state,
             phase="review",
             status_line=(
-                "Review the mutation-free check before applying changes."
+                (
+                    "Review migration before activating this folder."
+                    if source == "migration"
+                    else "Review the mutation-free check before applying changes."
+                )
                 if installed
                 else "Conflict details are unavailable. Check again before applying."
             ),
@@ -790,6 +815,7 @@ class LibraryNotesSyncController:
             plan,
             expected_root_id=None,
             epoch=epoch,
+            source="setup",
             activation=True,
         )
         if installed is None:
@@ -808,29 +834,44 @@ class LibraryNotesSyncController:
     async def check_migration(self, root_id: str) -> None:
         """Build a current activation review for one paused migrated root."""
 
-        expected_epoch = self._lifecycle_epoch + 1
-        await self.check_root(root_id)
+        await self._check_root(root_id, source="migration", activation=True)
+
+    async def recheck_review(
+        self,
+        root_id: str,
+        observation_token: str,
+        source: LastingSyncReviewSource,
+    ) -> bool:
+        """Recheck only the exact stale review that rendered the request."""
+
+        review = self._state.review
         if (
-            self._lifecycle_is_current(root_id, expected_epoch)
-            and self._review_plan is not None
-            and self._state.phase == "review"
-            and self._state.review.root_id == root_id
+            self._state.phase != "review"
+            or not review.stale
+            or review.root_id != root_id
+            or review.observation_token != observation_token
+            or review.source is None
+            or review.source != source
+            or root_id != self._projection_root_id
         ):
-            self._project_review(activation=True)
-            self._state = replace(
-                self._state,
-                status_line="Review migration before activating this folder.",
-            )
-            self._publish()
+            return False
+        if source == "setup":
+            await self.check_setup()
+        elif source == "migration":
+            await self.check_migration(root_id)
+        else:
+            await self.check_root(root_id)
+        return True
 
     async def abandon_setup(self) -> None:
         """Release an unpersisted setup review when the user leaves it."""
 
         root_id = self._state.review.root_id
         activation = self._state.review.activation
+        provisional = self._state.review.source == "setup"
         self._begin_unbound_lifecycle()
         self._review_plan = None
-        if activation and root_id:
+        if provisional and activation and root_id:
             try:
                 await self._runtime.abandon_setup(root_id)
             except Exception:
@@ -879,6 +920,7 @@ class LibraryNotesSyncController:
             or not observation_token
             or review.root_id != root_id
             or review.observation_token != observation_token
+            or review.source is None
             or root_id != self._projection_root_id
             or plan.root_id != root_id
             or plan.observation_token != observation_token
@@ -988,6 +1030,7 @@ class LibraryNotesSyncController:
             result.fresh_plan,
             expected_root_id=root_id,
             epoch=epoch,
+            source=review.source,
             reset_ephemeral=True,
         )
         if installed is None:
@@ -1070,7 +1113,7 @@ class LibraryNotesSyncController:
             self._publish()
             return
         installed = await self._install_review(
-            plan, expected_root_id=root_id, epoch=epoch
+            plan, expected_root_id=root_id, epoch=epoch, source="root"
         )
         if installed is None:
             return
@@ -1373,10 +1416,27 @@ class LibraryNotesSyncController:
         )
         self._publish()
 
-    async def dismiss_conflict_receipt(self, root_id: str, operation_id: str) -> None:
+    def _has_review_provenance(self, root_id: str, observation_token: str) -> bool:
+        review = self._state.review
+        return (
+            root_id == self._projection_root_id
+            and review.root_id == root_id
+            and review.observation_token == observation_token
+            and bool(root_id)
+            and bool(observation_token)
+        )
+
+    async def dismiss_conflict_receipt(
+        self, root_id: str, observation_token: str, operation_id: str
+    ) -> None:
         """Dismiss one process-local receipt and refresh its bounded projection."""
 
-        self._switch_projection_root(root_id)
+        if (
+            self._state.phase not in {"review", "receipt"}
+            or not self._has_review_provenance(root_id, observation_token)
+            or operation_id not in {row.operation_id for row in self._state.receipts}
+        ):
+            return
         epoch = self._lifecycle_epoch
         try:
             self._runtime.dismiss_conflict_receipt(root_id, operation_id)
@@ -1422,15 +1482,36 @@ class LibraryNotesSyncController:
         )
         self._publish()
 
-    async def undo_conflict_resolution(self, root_id: str, operation_id: str) -> None:
+    async def undo_conflict_resolution(
+        self,
+        root_id: str,
+        observation_token: str,
+        operation_id: str,
+        *,
+        history_page: int | None = None,
+    ) -> None:
         """Run one durable linked Undo and refresh the remaining receipts."""
 
+        if not self._has_review_provenance(root_id, observation_token):
+            return
+        if history_page is None:
+            if self._state.phase not in {"review", "receipt"} or operation_id not in {
+                row.operation_id for row in self._state.receipts if row.undo_available
+            }:
+                return
+        elif (
+            self._state.phase != "history"
+            or self._state.history.root_id != root_id
+            or self._state.history.page != history_page
+            or operation_id
+            not in {
+                row.operation_id
+                for row in self._state.history.rows
+                if row.undo_available
+            }
+        ):
+            return
         epoch = self._begin_bound_mutation_lifecycle(root_id)
-        history_page = (
-            self._state.history.page
-            if self._state.phase == "history" and self._state.history.root_id == root_id
-            else None
-        )
         history_generation = (
             self._start_history_request(root_id, history_page)
             if history_page is not None
@@ -1618,6 +1699,40 @@ class LibraryNotesSyncController:
         )
         self._publish()
 
+    async def open_resolution_history(
+        self, root_id: str, observation_token: str
+    ) -> bool:
+        """Open history only from the exact rendered review or receipt."""
+
+        if self._state.phase not in {
+            "review",
+            "receipt",
+        } or not self._has_review_provenance(root_id, observation_token):
+            return False
+        await self.show_resolution_history(root_id)
+        return True
+
+    async def page_resolution_history(
+        self,
+        root_id: str,
+        observation_token: str,
+        from_page: int,
+        page: int,
+    ) -> bool:
+        """Page history only from its exact rendered root, token, and page."""
+
+        history = self._state.history
+        if (
+            self._state.phase != "history"
+            or not self._has_review_provenance(root_id, observation_token)
+            or history.root_id != root_id
+            or history.page != from_page
+            or page not in {from_page - 1, from_page + 1}
+        ):
+            return False
+        await self.show_resolution_history(root_id, page=page)
+        return True
+
     def return_from_resolution_history(self) -> None:
         """Restore the exact review or receipt that opened current history."""
 
@@ -1713,9 +1828,17 @@ class LibraryNotesSyncController:
                 return False
             if not self._lifecycle_is_current(root_id, epoch):
                 return False
-            accepted = bool(getattr(result, "accepted", False))
-            applied_count = getattr(result, "applied_count", 0)
-            recovery = not accepted and getattr(result, "status", "") in {
+            if type(result) is not NotesSyncControlResult:
+                self._state = replace(
+                    self._state,
+                    phase="review",
+                    status_line="Activation returned an invalid result. Check again.",
+                )
+                self._publish()
+                return False
+            accepted = result.accepted
+            applied_count = result.applied_count
+            recovery = not accepted and result.status in {
                 "failed",
                 "partial",
                 "needs_attention",
@@ -1831,7 +1954,15 @@ class LibraryNotesSyncController:
             return False
         if not self._lifecycle_is_current(root_id, epoch):
             return False
-        if getattr(result, "accepted", True) is False:
+        if type(result) is not NotesSyncControlResult:
+            self._state = replace(
+                self._state,
+                phase="roots",
+                status_line="Control returned an invalid result. Check changes again.",
+            )
+            self._publish()
+            return False
+        if result.accepted is False:
             self._state = replace(
                 self._state,
                 phase="roots",

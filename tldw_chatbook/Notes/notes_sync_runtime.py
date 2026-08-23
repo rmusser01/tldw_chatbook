@@ -1666,15 +1666,7 @@ class NotesSyncRuntimeOwner:
         """Release one unpersisted setup review and its provisional lease."""
 
         validate_notes_sync_opaque_id(root_id, field_name="root_id")
-        if not any(
-            root_id in owner
-            for owner in (
-                self._setup_reviews,
-                self._leases,
-                self._admissions,
-                self._root_paths,
-            )
-        ):
+        if root_id not in self._setup_reviews:
             return
         await self._release_setup_authority(root_id)
 
