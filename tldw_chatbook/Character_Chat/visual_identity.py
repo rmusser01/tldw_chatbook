@@ -910,6 +910,14 @@ def resolve_historical_visual_identity(
             isinstance(value, bool) or not isinstance(value, int) or value <= 0
             for value in identifiers
         )
+        or (
+            expression_id is not None
+            and (
+                isinstance(expression_id, bool)
+                or not isinstance(expression_id, int)
+                or expression_id <= 0
+            )
+        )
         or normalized_key is None
         or expression_key != normalized_key
     ):

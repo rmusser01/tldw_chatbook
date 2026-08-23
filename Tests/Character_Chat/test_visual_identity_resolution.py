@@ -286,6 +286,20 @@ def test_history_fails_closed_when_recorded_identity_is_inconsistent(
     assert result.fallback_reason == "history_unavailable"
     assert result.image_bytes is None
 
+    invalid_expression_id = visual_identity.resolve_historical_visual_identity(
+        db,
+        actor_id=character_id,
+        pack_id=activated["pack"]["id"],
+        pack_version_id=activated["version"]["id"],
+        expression_key="happy",
+        expression_id="server-expression-id",
+        asset_id=asset["id"],
+        user_data_dir=user_data_dir,
+    )
+
+    assert invalid_expression_id.resolution_source == "placeholder"
+    assert invalid_expression_id.fallback_reason == "history_unavailable"
+
 
 def test_unknown_manual_falls_through_to_requested_operational(
     db: CharactersRAGDB, user_data_dir: Path
