@@ -16,12 +16,19 @@ keyboard-selection mode state) is still cleared by a click outside.
 from __future__ import annotations
 
 import pytest
+from textual.app import ComposeResult
+from textual.screen import ModalScreen
+from textual.widgets import Static
 
 from Tests.UI.test_console_left_rail import make_console_pilot
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
-from tldw_chatbook.Widgets.Console.console_selection_menu import ConsoleSelectionMenu
+from tldw_chatbook.Widgets.Console.console_selection_menu import (
+    ConsoleSelectionMenu,
+    selection_menus_on_screen,
+)
 from tldw_chatbook.Widgets.Console.console_session_surface import ConsoleSessionSurface
 from tldw_chatbook.Widgets.Console.console_transcript import (
+    _LIVE_TRANSCRIPTS,
     ConsoleTranscript,
     ConsoleTranscriptMessage,
     console_transcripts_on_screen,
@@ -30,6 +37,13 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
 )
+
+
+class _BareModal(ModalScreen[None]):
+    """A modal pushed above the Console, for the screen-scope arm."""
+
+    def compose(self) -> ComposeResult:
+        yield Static("modal body", id="bare-modal-body")
 
 
 def _install_query_counter(screen) -> dict[str, int]:
@@ -173,6 +187,11 @@ async def test_a_recomposed_transcript_replaces_the_old_one_with_no_bookkeeping(
         new = screen.query_one("#console-native-transcript", ConsoleTranscript)
         assert new is not old  # the recompose really did swap the widget
         assert console_transcripts_on_screen(screen) == [new]
+        # The unmount hook pruned the corpse from the candidate set (it is
+        # only an optimization -- the DOM check above is what makes the
+        # result correct -- but an unfired hook is dead code).
+        assert old not in _LIVE_TRANSCRIPTS
+        assert new in _LIVE_TRANSCRIPTS
 
         # ...and the dismissal cleans the LIVE transcript, not the corpse.
         row = await _seed_row(pilot, new)
@@ -189,12 +208,50 @@ async def test_a_recomposed_transcript_replaces_the_old_one_with_no_bookkeeping(
 
 
 @pytest.mark.asyncio
+async def test_the_registries_are_scoped_to_one_screen_not_the_whole_app():
+    """The screen-scope arm (review round 1, MINOR-1).
+
+    ``widget.screen is screen`` is what makes the registries equivalent to
+    the ``screen.query(...)`` calls they replaced rather than "any attached
+    widget anywhere in the app". Relaxing it to ``is not None`` passes every
+    other test in the selection suites -- a modal pushed above the Console
+    is the only shape that separates the two -- so this arm exists to kill
+    that mutant: the Console must not see (or dismiss) a menu living on the
+    modal above it, and the modal must not see the Console's transcript.
+    """
+    async with make_console_pilot() as pilot:
+        console = pilot.app.screen
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+
+        modal = _BareModal()
+        await pilot.app.push_screen(modal)
+        await pilot.pause()
+        menu = ConsoleSelectionMenu(screen_x=2, screen_y=2)
+        await modal.mount(menu)
+        await pilot.pause()
+
+        assert selection_menus_on_screen(modal) == [menu]
+        assert selection_menus_on_screen(console) == []
+        assert console_transcripts_on_screen(console) == [transcript]
+        assert console_transcripts_on_screen(modal) == []
+
+        # ...and the behavioural form: the Console's dismissal pass leaves a
+        # foreign screen's menu mounted, exactly as the old query did.
+        console._dismiss_console_selection_menus_outside_transcript(composer)
+        await pilot.pause()
+        assert menu.is_attached
+
+
+@pytest.mark.asyncio
 async def test_press_inside_the_transcript_still_leaves_the_menu_alone():
     """Control arm: the in-transcript guard is unchanged.
 
     The transcript (and the menu) own their in-area interaction; the screen
     handler must keep its hands off a press whose ancestor chain contains a
-    transcript, gate or no gate.
+    transcript, gate or no gate -- and it must reach that conclusion without
+    scanning either registry (review round 1, MINOR-2: the ancestor walk
+    runs first, so the drag hot path costs what it did on base: nothing).
     """
     async with make_console_pilot() as pilot:
         screen = pilot.app.screen
@@ -203,7 +260,28 @@ async def test_press_inside_the_transcript_still_leaves_the_menu_alone():
         await pilot.pause()
         menu = screen.query_one(ConsoleSelectionMenu)
 
-        screen._dismiss_console_selection_menus_outside_transcript(transcript)
-        await pilot.pause()
+        scans = {"menus": 0, "transcripts": 0}
+        import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
+
+        real_menus = chat_screen_module.selection_menus_on_screen
+        real_transcripts = chat_screen_module.console_transcripts_on_screen
+
+        def counting_menus(target):
+            scans["menus"] += 1
+            return real_menus(target)
+
+        def counting_transcripts(target):
+            scans["transcripts"] += 1
+            return real_transcripts(target)
+
+        chat_screen_module.selection_menus_on_screen = counting_menus
+        chat_screen_module.console_transcripts_on_screen = counting_transcripts
+        try:
+            screen._dismiss_console_selection_menus_outside_transcript(transcript)
+            await pilot.pause()
+        finally:
+            chat_screen_module.selection_menus_on_screen = real_menus
+            chat_screen_module.console_transcripts_on_screen = real_transcripts
 
         assert menu.is_attached
+        assert scans == {"menus": 0, "transcripts": 0}

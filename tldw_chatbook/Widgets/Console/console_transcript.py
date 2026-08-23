@@ -2551,11 +2551,13 @@ def _kb_selection_hint_text(
 
 #: Every constructed, not-yet-collected transcript (TASK-21119).
 #:
-#: Same contract as ``_LIVE_SELECTION_MENUS``: registration in ``__init__``
-#: is synchronous and strictly precedes DOM attachment, so the registry can
-#: never MISS a mounted transcript (the direction that would silently break
-#: the click-outside cleanup); it may over-report, and attachment is always
-#: re-derived from the DOM in ``console_transcripts_on_screen``.
+#: Same contract as ``_LIVE_SELECTION_MENUS``, and now the same two hooks:
+#: registration in ``__init__`` is synchronous and strictly precedes DOM
+#: attachment, so the registry can never MISS a mounted transcript (the
+#: direction that would silently break the click-outside cleanup); it may
+#: over-report, and attachment is always re-derived from the DOM in
+#: ``console_transcripts_on_screen``. ``_on_unmount`` prunes recomposed
+#: transcripts out of the candidate set, which is an optimization only.
 _LIVE_TRANSCRIPTS: "WeakSet[ConsoleTranscript]" = WeakSet()
 
 
@@ -2812,6 +2814,19 @@ class ConsoleTranscript(VerticalScroll):
         # ``Mount`` asynchronously), so the screen's click-outside gate can
         # never miss a transcript that is already in the DOM.
         _LIVE_TRANSCRIPTS.add(self)
+
+    def _on_unmount(self) -> None:
+        """Prune the transcript registry (TASK-21119).
+
+        Best-effort only, exactly like the menu's: correctness never depends
+        on it (``console_transcripts_on_screen`` re-checks attachment, and
+        the weak reference expires on its own), it just keeps the candidate
+        set from carrying every recomposed transcript until the next
+        collection. No ``super()`` call is needed -- Textual dispatches
+        ``_on_unmount`` from every class in the MRO, so ``Widget``'s own
+        teardown still runs.
+        """
+        _LIVE_TRANSCRIPTS.discard(self)
 
     @property
     def has_pending_selection_ui(self) -> bool:

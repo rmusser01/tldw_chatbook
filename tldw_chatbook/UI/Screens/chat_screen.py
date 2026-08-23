@@ -18852,6 +18852,14 @@ class ChatScreen(BaseAppScreen):
         Args:
             target: The clicked widget (``event.widget``/``event.control``).
         """
+        # The ancestor walk stays FIRST (review round 1, MINOR-2): it is the
+        # cheapest exit and it owns the drag hot path -- every press inside a
+        # transcript returns here having touched neither registry.
+        node: object = target
+        while node is not None:
+            if isinstance(node, (ConsoleTranscript, ConsoleSelectionMenu)):
+                return  # the transcript/menu own their in-area interaction
+            node = getattr(node, "parent", None)
         menus = selection_menus_on_screen(self)
         # Only transcripts the cleanup would actually change; on the rest,
         # all three steps below are provable no-ops (see
@@ -18863,11 +18871,6 @@ class ChatScreen(BaseAppScreen):
         ]
         if not menus and not transcripts:
             return  # the common case: no selection UI anywhere on the screen
-        node: object = target
-        while node is not None:
-            if isinstance(node, (ConsoleTranscript, ConsoleSelectionMenu)):
-                return  # the transcript/menu own their in-area interaction
-            node = getattr(node, "parent", None)
         # Menus mount on the screen now; route the dismissal through every
         # transcript's centralized selection-UI cleanup (clears highlight +
         # manager state), then remove any stragglers (e.g. menus mounted by
