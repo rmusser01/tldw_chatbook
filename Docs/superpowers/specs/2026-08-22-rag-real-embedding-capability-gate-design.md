@@ -7,15 +7,21 @@ the real-model performance benchmark into a mocked or vacuous test.
 
 ## Root Cause
 
-Twelve of the thirteen inventory nodes already complete under the repository's
-blocked-network guard. The remaining node,
+The benchmark passes as an isolated control because `Tests/RAG_Search/conftest.py`
+establishes offline environment defaults before Hugging Face evaluates its
+module-level constants. The thirteen-node inventory run exposes the defect:
+earlier RAG collection/imports evaluate those constants first, so the later
+environment defaults cannot change the already-frozen client state.
+
+Twelve inventory nodes then complete normally. The remaining node,
 `TestEmbeddingPerformance.test_real_model_performance`, requests the
 session-scoped `real_transformers_session` fixture before it discovers that the
 real MiniLM model is unavailable. That fixture tries to initialize
 `hf-internal-testing/tiny-bert`, and the benchmark then tries to initialize
 `sentence-transformers/all-MiniLM-L6-v2`. Hugging Face catches and retries the
 guard's `OSError`, so the test body skips while teardown correctly reports the
-swallowed egress attempts.
+swallowed egress attempts. The capability gate fixes this order-dependent path
+without relying on mutable Hugging Face import state.
 
 ## Design
 
@@ -62,16 +68,16 @@ other twelve inventory nodes.
 Use the current failing node as the TDD regression:
 
 1. With `TLDW_RUN_REAL_EMBEDDINGS` and `TLDW_TEST_ALLOW_HF_DOWNLOADS`
-   explicitly absent from the command environment, confirm the benchmark
-   reaches teardown with recorded `huggingface.co` attempts before the
-   capability gate.
-2. Add the minimal gate and confirm the node becomes an explicit capability
-   skip with no guard error.
-3. Run all thirteen exact TASK-19520 inventory nodes together under the default
-   blocked-network guard, again explicitly removing both capability/download
-   environment variables from the command environment. Expected outcome: all
-   thirteen complete without errors—twelve passed, one explicit capability
-   skip—and no guard-reported network attempts.
+   explicitly absent from the command environment, run the benchmark alone as
+   the order-dependence control. Expected: one ordinary model-unavailable skip
+   and no guard error.
+2. Run all thirteen exact TASK-19520 inventory nodes together under the same
+   environment. Expected RED: twelve passed, the benchmark body skipped, and
+   teardown errored with recorded `huggingface.co` attempts (eight in the
+   captured baseline; any nonzero count proves the defect).
+3. Add the minimal gate and rerun the exact thirteen-node command. Expected
+   GREEN: all thirteen complete without errors—twelve passed, one explicit
+   capability skip—and no guard-reported network attempts.
 4. Run Ruff and whitespace checks only for the modified test files and revision
    range.
 
