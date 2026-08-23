@@ -545,7 +545,7 @@ def test_shared_lock_prevents_lost_concurrent_set_and_delete_updates(
     monkeypatch.setattr(
         config_module,
         "load_settings",
-        lambda *, force_reload=False: {},
+        lambda *, force_reload=False, reload_bootstrap=None: {},
     )
 
     def controlled_atomic_write(*args, **kwargs):
