@@ -1615,6 +1615,68 @@ def test_runtime_observation_and_concurrent_cancellation_share_owner_sequence(
     reopened.close()
 
 
+def test_transient_control_capture_recovery_has_unique_owner_sequence(db, monkeypatch):
+    original_insert = db.insert_steps_at_indices
+    failed = False
+
+    def fail_tool_call_once(run_id, indexed_steps):
+        nonlocal failed
+        if not failed and any(
+            step["kind"] == "tool_call" for _index, step in indexed_steps
+        ):
+            failed = True
+            raise RuntimeError("transient control capture failure")
+        return original_insert(run_id, indexed_steps)
+
+    monkeypatch.setattr(db, "insert_steps_at_indices", fail_tool_call_once)
+    service, _chat = make_service(
+        db,
+        [fence("calculator", {"expression": "1+1"}), "safe answer"],
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="control-capture-owner-seq",
+        messages=[{"role": "user", "content": "q"}],
+        config=CFG,
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+
+    path = db.db_path
+    db.close()
+    reopened = AgentRunsDB(path, client_id="control-capture-owner-seq-reload")
+    row = reopened.get_run(run_id)
+    original = next(step for step in row["steps"] if step["kind"] == "tool_call")
+    diagnostic = next(
+        step
+        for step in row["steps"]
+        if step["kind"] == "capture_failed"
+        and f"failed_tool_call_{original['index']}" in step["field_states"]
+    )
+    owner_sequences = [
+        step["owner_seq"]
+        for step in row["steps"]
+        if step["owner_seq"] is not None
+    ]
+    assert diagnostic["owner_seq"] > original["owner_seq"]
+    assert len(owner_sequences) == len(set(owner_sequences))
+    projection_inputs = {
+        "messages": [],
+        "usage_by_id": {},
+        "traj_rows": [],
+        "variant_sets": [],
+        "compaction_records": [],
+        "agent_runs": [row],
+        "agent_steps": [
+            {**step, "run_id": run_id, "conversation_id": row["conversation_id"]}
+            for step in row["steps"]
+        ],
+    }
+    first = derive_trajectory(**projection_inputs)
+    second = derive_trajectory(**projection_inputs)
+    assert first == second
+    reopened.close()
+
+
 def test_terminal_recovery_does_not_duplicate_lifecycle_transition(db):
     service, _ = make_service(db, ["safe answer"])
     run_id, outcome = service.run_turn(

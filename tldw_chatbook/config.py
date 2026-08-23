@@ -784,9 +784,9 @@ MIN_CONSOLE_AGENT_MAX_MODEL_TURNS = 1
 #: room for native multi-call batches, which cost `1 + 2N` steps per turn.
 DEFAULT_CONSOLE_AGENT_MAX_STEPS = 25000
 MIN_CONSOLE_AGENT_MAX_STEPS = 1
-# Mirrored by agent_models.TRACE_STEP_INDEX_BASE; pinned by the Console budget
-# tests without importing Agents here (that would create a config import cycle).
-MAX_CONSOLE_AGENT_MAX_STEPS = 999_999
+# Mirrored by agent_models.MAX_RUN_CONTROL_STEPS; pinned by Console budget tests
+# without importing Agents here (that would create a config import cycle).
+MAX_CONSOLE_AGENT_MAX_STEPS = 199_999
 #: Wall-clock ceiling for ONE agent run (one user message), in seconds.
 #: 86400 = 24h, so a genuinely long-running operation is not cut off. This
 #: is a backstop, not a target: Stop cancels at every step boundary and

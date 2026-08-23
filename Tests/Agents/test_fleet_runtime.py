@@ -3108,6 +3108,7 @@ def test_thread_start_and_persistent_terminal_failure_reconciles_on_reopen(
     db, monkeypatch
 ):
     real_start = threading.Thread.start
+    real_terminal = db.set_terminal_with_step
 
     def fail_fleet_start(self):
         if self.name.startswith("fleet-"):
@@ -3118,7 +3119,7 @@ def test_thread_start_and_persistent_terminal_failure_reconciles_on_reopen(
         row = db.get_run(run_id)
         if row and row["agent_kind"] == "subagent" and status == RUN_ERROR:
             raise RuntimeError("persistent terminal write failure")
-        return False
+        return real_terminal(run_id, status, result, terminal_step)
 
     monkeypatch.setattr(threading.Thread, "start", fail_fleet_start)
     monkeypatch.setattr(db, "set_terminal_with_step", fail_child_terminal)
@@ -3142,7 +3143,7 @@ def test_thread_start_and_persistent_terminal_failure_reconciles_on_reopen(
         for row in db.list_runs("persistent-thread-status-failure")
         if row["agent_kind"] == "subagent"
     )
-    assert child["status"] == "running"
+    assert child["status"] == RUN_ERROR
     assert any(step["kind"] == "capture_failed" for step in child["steps"])
     path = db.db_path
     db.close()
@@ -3151,11 +3152,62 @@ def test_thread_start_and_persistent_terminal_failure_reconciles_on_reopen(
     reopened = AgentRunsDB(path, client_id="persistent-launch-reload")
     repaired = reopened.get_run(child["id"])
     assert repaired["status"] == RUN_ERROR
-    assert repaired["result"] == "Interrupted by app restart"
+    assert repaired["result"] is None
     assert len(
         [step for step in repaired["steps"] if step["kind"] == "capture_failed"]
     ) == 2
     reopened.close()
+
+
+def test_thread_start_refusal_survives_atomic_and_status_fallback_failure(
+    db, monkeypatch
+):
+    real_start = threading.Thread.start
+    real_terminal = db.set_terminal_with_step
+    real_status = db.set_status
+
+    def fail_fleet_start(self):
+        if self.name.startswith("fleet-"):
+            raise RuntimeError("can't start new thread")
+        return real_start(self)
+
+    def fail_child_terminal(run_id, status, result, terminal_step):
+        row = db.get_run(run_id)
+        if row and row["agent_kind"] == "subagent" and status == RUN_ERROR:
+            raise RuntimeError("persistent atomic failure")
+        return real_terminal(run_id, status, result, terminal_step)
+
+    def fail_child_status(run_id, status, result=None):
+        row = db.get_run(run_id)
+        if row and row["agent_kind"] == "subagent" and status == RUN_ERROR:
+            raise RuntimeError("persistent status fallback failure")
+        return real_status(run_id, status, result)
+
+    monkeypatch.setattr(threading.Thread, "start", fail_fleet_start)
+    monkeypatch.setattr(db, "set_terminal_with_step", fail_child_terminal)
+    monkeypatch.setattr(db, "set_status", fail_child_status)
+    service, _chat, coordinator = make_fleet_service(
+        db,
+        [fence(SPAWN_TOOL_NAME, {"task": "doomed"}), "parent completed"],
+        {},
+    )
+
+    _parent_id, outcome = service.run_turn(
+        conversation_id="persistent-all-terminal-failure",
+        messages=[{"role": "user", "content": "delegate"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+    )
+
+    assert outcome.status == RUN_DONE
+    assert coordinator.all_finished()
+    child = next(
+        row
+        for row in db.list_runs("persistent-all-terminal-failure")
+        if row["agent_kind"] == "subagent"
+    )
+    assert child["status"] == "running"
+    assert any(step["kind"] == "capture_failed" for step in child["steps"])
 
 
 def test_a_settled_child_is_settled_before_the_manifest_is_written(

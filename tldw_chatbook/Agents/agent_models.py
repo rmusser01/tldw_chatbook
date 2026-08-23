@@ -62,6 +62,14 @@ STEP_STEERING = "steering"
 TRACE_STEP_INDEX_BASE = 1_000_000
 TRACE_CAPTURE_INDEX_BASE = 2_000_000
 CONTROL_CAPTURE_INDEX_BASE = 3_000_000
+# One control step can emit at most five trace observations (proposed,
+# approval requested, approved/denied, execution started, terminal outcome),
+# plus two one-time context observations per run. Keep the derived final trace
+# index strictly below the capture band; owner_seq, not these indices, carries
+# observation order.
+MAX_RUN_CONTROL_STEPS = (
+    TRACE_CAPTURE_INDEX_BASE - TRACE_STEP_INDEX_BASE - 3
+) // 5
 # Lifecycle stays above every runtime/capture band.
 # keeping lifecycle at 10_000_000+ prevents collisions while owner_seq carries
 # the real observation order independently of this storage identity.
@@ -391,6 +399,13 @@ class RunBudget:
     # wrapper reporting "timed out" for a call that later really executes
     # on its abandoned thread -- see `_call_with_timeout`'s docstring).
     max_tool_call_seconds: float = 300.0
+
+    def __post_init__(self) -> None:
+        if self.max_steps > MAX_RUN_CONTROL_STEPS:
+            raise ValueError(
+                f"max_steps must be <= {MAX_RUN_CONTROL_STEPS} to preserve "
+                "agent trace storage bands"
+            )
 
 
 #: Fleet spec §4: validation caps for user-authored agent definitions.

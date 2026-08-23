@@ -216,6 +216,24 @@ def contains_local_path(value: str) -> bool:
     return False
 
 
+def redact_local_paths(value: str) -> str:
+    """Replace local path tokens while preserving useful surrounding text."""
+    value = re.sub(
+        r"file://[^\s\"'<>]+",
+        "[local path withheld]",
+        value,
+        flags=re.IGNORECASE,
+    )
+    return _LOCAL_PATH_RE.sub(
+        lambda match: (
+            "[local path withheld]"
+            if contains_local_path(match.group(0))
+            else match.group(0)
+        ),
+        value,
+    )
+
+
 @dataclass(frozen=True)
 class TrajectoryRecord:
     """One ledger row: a message event, a nested tool record, or a marker.

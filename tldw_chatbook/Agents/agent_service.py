@@ -32,7 +32,7 @@ from tldw_chatbook.Chat.console_history_budget import (
     provider_continuation_owner_groups,
 )
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
-from tldw_chatbook.Chat.trajectory import contains_local_path
+from tldw_chatbook.Chat.trajectory import contains_local_path, redact_local_paths
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
 from tldw_chatbook.Internal_Prompts.catalog import CATALOG
@@ -827,16 +827,16 @@ _CHAIN_OF_THOUGHT_RE = re.compile(
     r"\bchain(?:[\s_-]+of[\s_-]+thought)\b", re.IGNORECASE
 )
 _THINK_TAG_RE = re.compile(r"<\s*/?\s*think(?:\s[^>]*)?>", re.IGNORECASE)
-_THINK_BLOCK_RE = re.compile(
-    r"<\s*think(?:\s[^>]*)?>.*?<\s*/\s*think\s*>",
-    re.IGNORECASE | re.DOTALL,
-)
+_THINK_OPEN_RE = re.compile(r"<\s*think(?:\s[^>]*)?>", re.IGNORECASE)
+_THINK_CLOSE_RE = re.compile(r"<\s*/\s*think\s*>", re.IGNORECASE)
 _UNQUOTED_REASONING_FIELD_RE = re.compile(
-    r"(?:^\s*|[,{]\s*|\\n\s*|\\?[\"']\s*)(?:-\s*)?"
+    r"(?:^\s*|[,:{]\s*|\\n\s*|\\?[\"']\s*)(?:-\s*)?"
     r"(?:reasoning|reasoning[\s_-]+content|chain[\s_-]+of[\s_-]+thought)"
     r"(?:\\?[\"'])?\s*[:=]",
     re.IGNORECASE | re.MULTILINE,
 )
+
+
 def _contains_hidden_reasoning(content: str) -> bool:
     """Recognize explicit reasoning containers without matching ordinary prose."""
     if (
@@ -849,6 +849,133 @@ def _contains_hidden_reasoning(content: str) -> bool:
 
 
 _DURABLE_SUMMARY_MAX_CHARS = 4_000
+_DURABLE_SUMMARY_MAX_DEPTH = 64
+_REASONING_FIELD_NAMES = frozenset(
+    {"reasoning", "reasoning_content", "chain_of_thought"}
+)
+_LOCAL_PATH_FIELD_NAMES = frozenset(
+    {"path", "file_path", "file", "cwd", "directory"}
+)
+
+
+def _without_think_blocks(content: str) -> tuple[str, bool]:
+    """Withhold think blocks through their close marker, or EOF if unclosed."""
+    parts: list[str] = []
+    cursor = 0
+    altered = False
+    while opening := _THINK_OPEN_RE.search(content, cursor):
+        altered = True
+        parts.append(content[cursor : opening.start()])
+        parts.append("[hidden reasoning withheld]")
+        closing = _THINK_CLOSE_RE.search(content, opening.end())
+        if closing is None:
+            return "".join(parts), True
+        cursor = closing.end()
+    parts.append(content[cursor:])
+    return "".join(parts), altered
+
+
+def _without_reasoning_fields(content: str) -> tuple[str, bool]:
+    """Withhold explicit reasoning fields, including multiline containers."""
+    output: list[str] = []
+    closer: str | None = None
+    altered = False
+    pairs = {"[": "]", "{": "}", "(": ")"}
+    for line in content.splitlines():
+        if closer is not None:
+            if closer and closer in line:
+                suffix = line.split(closer, 1)[1].lstrip(" ,")
+                closer = None
+                if suffix:
+                    output.append(suffix)
+            continue
+        match = _UNQUOTED_REASONING_FIELD_RE.search(line)
+        if match is None:
+            output.append(line)
+            continue
+        altered = True
+        prefix = line[: match.start()].rstrip(" ,{")
+        if prefix:
+            output.append(prefix)
+        output.append("[hidden reasoning withheld]")
+        tail = line[match.end() :].strip()
+        if not tail:
+            closer = ""
+            continue
+        opener = tail[0]
+        if opener in pairs and pairs[opener] not in tail[1:]:
+            closer = pairs[opener]
+        elif tail.startswith(('"""', "'''")) and tail.count(tail[:3]) < 2:
+            closer = tail[:3]
+        elif tail in {"|", ">"}:
+            closer = ""
+    return "\n".join(output), altered
+
+
+def _sanitize_summary_text(content: str) -> tuple[str, bool]:
+    content, think_altered = _without_think_blocks(content)
+    content, reasoning_altered = _without_reasoning_fields(content)
+    lines: list[str] = []
+    withholding_key = False
+    altered = think_altered or reasoning_altered
+    for line in content.splitlines():
+        upper_line = line.upper()
+        if "-----BEGIN " in upper_line and "PRIVATE KEY-----" in upper_line:
+            withholding_key = True
+            altered = True
+            lines.append("[private key withheld]")
+            continue
+        if withholding_key:
+            altered = True
+            if "-----END " in upper_line and "PRIVATE KEY-----" in upper_line:
+                withholding_key = False
+            continue
+        with_paths = redact_local_paths(line)
+        if with_paths != line:
+            altered = True
+        elif contains_local_path(line):
+            with_paths = "[local path withheld]"
+            altered = True
+        redacted = redact_log_line(with_paths, max_length=0)
+        altered = altered or redacted != with_paths
+        lines.append(redacted)
+    return "\n".join(lines).strip(), altered
+
+
+def _sanitize_summary_value(value: Any, depth: int = 0) -> tuple[Any, bool]:
+    """Recursively preserve public structured fields and redact private values."""
+    if depth >= _DURABLE_SUMMARY_MAX_DEPTH:
+        return "[private output withheld]", True
+    if isinstance(value, Mapping):
+        altered = False
+        sanitized: dict[Any, Any] = {}
+        for key, child in value.items():
+            normalized = re.sub(r"[\s-]+", "_", str(key).lower())
+            if normalized in _REASONING_FIELD_NAMES:
+                sanitized[key] = "[hidden reasoning withheld]"
+                altered = True
+            elif normalized in _LOCAL_PATH_FIELD_NAMES and isinstance(child, str):
+                sanitized[key] = "[local path withheld]"
+                altered = True
+            else:
+                sanitized[key], child_altered = _sanitize_summary_value(
+                    child, depth + 1
+                )
+                altered = altered or child_altered
+        return sanitized, altered
+    if isinstance(value, list):
+        altered = False
+        sanitized_items: list[Any] = []
+        for child in value:
+            sanitized_child, child_altered = _sanitize_summary_value(
+                child, depth + 1
+            )
+            sanitized_items.append(sanitized_child)
+            altered = altered or child_altered
+        return sanitized_items, altered
+    if isinstance(value, str):
+        return _sanitize_summary_text(value)
+    return value, False
 
 
 def _safe_bounded_summary(content: str) -> tuple[str, bool]:
@@ -864,29 +991,42 @@ def _safe_bounded_summary(content: str) -> tuple[str, bool]:
     ):
         return content, False
 
-    without_think = _THINK_BLOCK_RE.sub("[hidden reasoning withheld]", content)
-    lines: list[str] = []
-    withholding_key = False
-    for line in without_think.splitlines():
-        upper_line = line.upper()
-        if "-----BEGIN " in upper_line and "PRIVATE KEY-----" in upper_line:
-            withholding_key = True
-            lines.append("[private key withheld]")
-            continue
-        if withholding_key:
-            if "-----END " in upper_line and "PRIVATE KEY-----" in upper_line:
-                withholding_key = False
-            continue
-        if _contains_hidden_reasoning(line):
-            lines.append("[hidden reasoning withheld]")
-        elif contains_local_path(line):
-            lines.append("[local path withheld]")
+    summary: str
+    altered = True
+    stripped = content.strip()
+    if stripped.startswith(("{", "[")):
+        try:
+            structured = json.loads(content)
+        except (
+            json.JSONDecodeError,
+            MemoryError,
+            RecursionError,
+            TypeError,
+            ValueError,
+        ):
+            summary, _ = _sanitize_summary_text(content)
         else:
-            lines.append(redact_log_line(line, max_length=0))
-    summary = "\n".join(lines).strip()
+            file_payload = (
+                isinstance(structured, Mapping)
+                and "content" in structured
+                and any(
+                    re.sub(r"[\s-]+", "_", str(key).lower())
+                    in _LOCAL_PATH_FIELD_NAMES
+                    for key in structured
+                )
+            )
+            structured, structured_altered = _sanitize_summary_value(structured)
+            if file_payload or (
+                contains_local_path(content) and not structured_altered
+            ):
+                summary = "[local path withheld]"
+            else:
+                summary = json.dumps(structured, ensure_ascii=False, sort_keys=True)
+    else:
+        summary, _ = _sanitize_summary_text(content)
     if len(summary) > _DURABLE_SUMMARY_MAX_CHARS:
         summary = redact_log_line(summary, max_length=_DURABLE_SUMMARY_MAX_CHARS)
-    return summary or "[private output withheld]", True
+    return summary or "[private output withheld]", altered
 
 
 def _safe_run_log_content(_record_type: str, content: str) -> tuple[str, bool]:
@@ -2685,13 +2825,25 @@ class AgentService:
             field_states={"payload": "capture_failed", kind: "not_observed"},
             sensitivity="diagnostic",
         )
+        diagnostic_written = False
         try:
             self.db.insert_steps_at_indices(
                 run_id,
                 [(diagnostic.index, _safe_agent_step_record(run_id, diagnostic))],
             )
+            diagnostic_written = True
         except Exception:  # noqa: BLE001 — non-recursive containment
             logger.warning("could not persist atomic terminal diagnostic")
+        if diagnostic_written:
+            try:
+                return self.db.set_status(run_id, status, result)
+            except Exception as exc:  # noqa: BLE001 — refusal remains contained
+                logger.warning(
+                    "could not persist terminal status fallback "
+                    "run_id={} error_type={}",
+                    run_id,
+                    _safe_exception_type(exc),
+                )
         return False
 
     def _service_error_step(self, run_id: str, summary: str) -> AgentStep:
@@ -5068,7 +5220,7 @@ class AgentService:
                     summary=f"Control capture failed: {step.kind}",
                     created_at=step.created_at,
                     status="incomplete",
-                    owner_seq=step.owner_seq,
+                    owner_seq=self._allocate_owner_seq(run_id),
                     parent_event_id=self._latest_durable_event_id(run_id),
                     field_states={
                         "payload": "capture_failed",

@@ -133,6 +133,65 @@ def test_real_model_output_is_private_at_log_and_terminal_db_boundaries(wired):
         assert forbidden not in wake_notice
 
 
+@pytest.mark.parametrize(
+    "private,public_fragments,forbidden",
+    [
+        (
+            "Public prefix\n<think>\nprivate unfinished plan\npublic-looking secret",
+            ("Public prefix", "[hidden reasoning withheld]"),
+            ("private unfinished plan", "public-looking secret"),
+        ),
+        (
+            'Before\nreasoning_content: [\n"private step",\n]\nAfter',
+            ("Before", "After", "[hidden reasoning withheld]"),
+            ("private step",),
+        ),
+        (
+            "Before\n<think>private step</think>\nAfter",
+            ("Before", "After", "[hidden reasoning withheld]"),
+            ("private step", "<think>"),
+        ),
+        (
+            "Implemented /Users/alice/work/app.py and all tests pass",
+            ("Implemented", "[local path withheld]", "and all tests pass"),
+            ("/Users/alice/work/app.py",),
+        ),
+        (
+            '{"status":"done","path":"/Users/alice/work/app.py",'
+            '"tests":"passed"}',
+            ('"status": "done"', '"tests": "passed"', "[local path withheld]"),
+            ("/Users/alice/work/app.py",),
+        ),
+    ],
+)
+def test_private_model_summaries_are_stateful_useful_and_wake_safe(
+    wired, private, public_fragments, forbidden
+):
+    db, registry, root = wired
+    service = AgentService(db, registry, chat_call=chat_call_returning(private))
+    run_id, outcome = service.run_turn(
+        conversation_id="stateful-private-model",
+        messages=[{"role": "user", "content": "hi"}],
+        config=AgentConfig(model="m", system_prompt="s", budget=RunBudget()),
+        api_endpoint="openai",
+    )
+
+    assert outcome.final_text == private
+    durable_result = db.get_run(run_id)["result"]
+    records = read_all(root)
+    assert len(records) == 1
+    decoded = records[0].content
+    wake_notice = compose_wake_notice([db.get_run(run_id)])
+    for fragment in public_fragments:
+        assert fragment in durable_result
+        assert fragment in decoded
+        assert fragment in wake_notice
+    for secret in forbidden:
+        assert secret not in durable_result
+        assert secret not in decoded
+        assert secret not in wake_notice
+
+
 def test_record_numbers_are_unique_across_the_whole_run_tree(wired):
     db, registry, root = wired
     writer = RunLogWriter()
