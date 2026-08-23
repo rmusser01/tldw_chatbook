@@ -33,7 +33,9 @@ is red for an unrelated reason (below) while CI hasn't completed since June.
 
 The filed backlog for this review is **task-21100 – task-21134**. This document is the durable
 evidence record those tasks cite (the backlog CLI drops custom sections, so measurements live
-here).
+here). The burn-down's own follow-ups, filed at close-out on 2026-08-23, are **task-21230 –
+task-21249**; what shipped, and the two findings the implementations proved wrong, are recorded
+in "What the burn-down changed" and "Corrections found during implementation" below.
 
 ---
 
@@ -247,7 +249,10 @@ Severity is stated for constrained hardware (×3–5). "REGRESSION" = absent at 
 - **21116** · library_screen.py still performs whole-screen `refresh(recompose=True)` on
   per-click paths — ~105 statement-level sites (99 `self.`) on a screen that grew 26k→34.8k
   lines; confirmed hot: `_open_library_item_by_id` (rail row / RAG result / media open),
-  `_apply_library_row_toggle`, media-viewer back, skills/prompts import open/cancel, export
+  ~~`_apply_library_row_toggle`~~ (**FALSE POSITIVE — corrected during implementation**;
+  instrumented at the base commit it performs **0 recomposes and 0 widget constructions** per
+  click, because the cited recompose statement sits inside an exception-fallback arm that a
+  normal toggle never reaches), media-viewer back, skills/prompts import open/cancel, export
   open. Continue the 15457 canvas-scoped conversion (`library_canvas_sync` seam, 82 call
   sites) + a ratchet test on the count. PRE-EXISTING pattern, cost-per-event regressed with
   screen growth (9 sites added post-fix are low-frequency admin flows).
@@ -262,10 +267,14 @@ Severity is stated for constrained hardware (×3–5). "REGRESSION" = absent at 
   (repair side-effects move to session-start/workspace-switch); also cache staged-launch
   `EvidenceBundle.from_payload` (re-parsed ≥2× per keystroke during staged launches).
   PRE-EXISTING, partially mitigated by 15452/15465.
-- **21119** · Chat-screen click dismissal walks the whole screen DOM twice
-  (`query(ConsoleTranscript)` + `query(ConsoleSelectionMenu)`) on BOTH MouseDown and Click of
-  every physical press (chat_screen.py:18939-18990). Fix: mounted-menu flag / cached
-  transcript ref, early-return when nothing is mounted. REGRESSION.
+- **21119** · Chat-screen click dismissal walks the whole screen DOM **three times per handler
+  invocation** — `query(ConsoleTranscript)`, `query(ConsoleSelectionMenu)`, and a third inside
+  `_remove_selection_menu`, which runs its own query (chat_screen.py:18939-18990). The handler
+  runs **once or twice per physical press** depending on who swallows the Click: a composer
+  press is 1 invocation = **3 walks**; a rail press is 2 invocations = **6 walks**. Fix:
+  mounted-menu flag / cached transcript ref, early-return when nothing is mounted. REGRESSION.
+  **CORRECTED during implementation** — the original text said "twice … on BOTH MouseDown and
+  Click … (~4 traversals per click)". See "Corrections found during implementation" below.
 - **21120** · Composer per-key residue: `_sync_send_disabled_reason` does an unconditional
   `strip.update(Content(...))` per key (the `reason_changed` gate covers only the ARIA
   announcement — the audit's half-gate pattern, console_composer_bar.py:1582-1607); hidden
@@ -363,6 +372,56 @@ Severity is stated for constrained hardware (×3–5). "REGRESSION" = absent at 
   (`Sync_Interop/notes_mirror.py`, `Widgets/Tamagotchi/tamagotchi_storage.py` never imported,
   Kanban boot connect with no UI, `Third_Party/aider/repomap.py` diskcache with no prod
   caller).
+
+---
+
+## What the burn-down changed (added 2026-08-23 at close-out)
+
+Fifteen merges closed every P0 and P1 in this review. Numbers below are the measurements
+recorded when each PR merged; a cell reads "—" where no before/after number was measured, and
+none has been inferred or estimated here.
+
+| Task | PR / merge | Measured before → after |
+|---|---|---|
+| 21100 first-boot migration wall | #2001 `41a240ccd` | `TldwCli` construction @100k messages **1.248 s → 0.693 s**, with FTS fully off the boot path; backfill made SIGKILL-resumable |
+| 21101 notes device-state store | #1992 `56e2de875` | receipt transaction **92× faster**; statements per read **~60 → 3** |
+| 21102 Chunking import chains | #1994 `d60ebe1d0` | import closure **1831 → 1757** modules; Chunking modules at boot **43 → 0**; warm app import **~811 ms → 731 ms** (7 chains broken; the survey had found 6) |
+| 21103 Persona_Buddy / PIL defer | #2002 `6c0abdba7` | **−80 modules**, **−1.28 s cold import**; 4 independent PIL chains broken (the buddy chain had masked three) |
+| 21104 bs4 boot guard | #1985 `3c3c919fc` | — (outcome: a base install can import the app; new ratchet `Tests/Packaging/test_extras_import_closure.py`) |
+| 21105 lazy feature databases | #2008 `92f9dba52` | boot files opened **35 → 27**; **~90 DDL statements** off boot |
+| 21106 Actor_Packs recovery | #1988 `908b802da` | CSS cliff guard re-armed **green at 47 sources**; nav tests **99 red → 130 passed**; cleared ~286 pre-existing Scheduling/Watchlists reds |
+| 21112 notes-sync gate + watcher backoff | #2009 `30c7e1fe9` | zero-profile boots create **no state file at all**; quiet watcher **60 → 8 scans/min** |
+| 21114 transcript drag-selection | #2007 `898cd8852` | body wraps per drag **151 → 1**; mouse-move handler **32× / 213× faster** |
+| 21115 CSS bundle-ride + ratchet | #2004 `82650cc1f` | modal-heavy session stylesheet sources **70 → 45** (cliff 64; ~19 headroom) — the cliff was confirmed crossed pre-fix; new-class count honestly corrected **34 → 25** |
+| 21117 Inspector right-rail scroll | #2016 `7489a0ec8` | — (pure-scroll path split from the layout reconcile; no before/after number recorded) |
+| 21118 keystroke workspace memo | #2010 `736359202` | registry calls per 20 keys **25 + 25 → 0 + 0**; staged-launch evidence-bundle parses **11 → ≤1** |
+| 21124 `get_cli_setting` fast path | #2005 `8e949873e` | warm reads **100 → 0** lock acquisitions; worst reader stall **18.2 ms → 3.7 ms**; write-path parses **4 → 2** |
+| 21160 config_profiles circular import (hotfix) | #2003 `ae018308b` | — (unmasked by 21102's facade; three edges deferred to use-site) |
+| 21200 restore the 21103 boot-path guard | #2019 `99005884` | — (another session's Actor Packs activation had put PIL and `Persona_Visual` back on the boot path, undoing 21103's win; the guard existed at their merge, CI simply was not enforcing yet) |
+
+Two defects were found and fixed **because of** this work rather than being on its list: a
+latent pre-existing FTS corruption (an unguarded `messages_ad` trigger on a tombstoned hard
+delete, silent doclist poisoning rather than a raise), and `v45_to_v46` missing from every
+packaging list (part of TASK-19860) — both inside 21100.
+
+## Corrections found during implementation (added 2026-08-23 at close-out)
+
+Two statements in the findings above were proved wrong by the implementations they produced.
+They are corrected in place and listed here so the record stays trustworthy rather than
+silently edited.
+
+1. **Finding 21119 undercounted the walks and miscounted the invocations.** The review said the
+   dismissal handler runs "two" full-screen queries and is invoked on both MouseDown and Click
+   of every press (~4 traversals). Measured truth: each handler invocation costs **three**
+   walks — `_remove_selection_menu` runs its own query in addition to the two the review
+   counted — and the handler runs **once or twice per physical press depending on who swallows
+   the Click**. A composer press is 1 invocation = **3 walks**; a rail press is 2 invocations =
+   **6 walks**. The finding's direction and its fix were right; its arithmetic was not.
+2. **Finding 21116 listed `_apply_library_row_toggle` as a hot per-click whole-screen
+   recompose site. It is a false positive.** Instrumented at the base commit,
+   `_apply_library_row_toggle` performs **0 recomposes and 0 widget constructions** per click:
+   the recompose statement the review cited sits inside an **exception-fallback arm** that a
+   normal toggle never reaches. The other sites named in that finding stand.
 
 ---
 
