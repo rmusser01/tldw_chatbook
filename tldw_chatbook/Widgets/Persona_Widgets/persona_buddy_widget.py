@@ -218,6 +218,7 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         self._snapshot: Any = None
         self._painted_visual_identity: object | None = None
         self._accepted_render: _AcceptedRender | None = None
+        self._non_alert_content_boxes: dict[bool, tuple[int, int]] = {}
         self._working_preferences: PersonaBuddyPreferences = (
             controller.current_preferences()
         )
@@ -331,6 +332,10 @@ class PersonaBuddyWidget(Widget, can_focus=True):
                         content_width=content_box[0],
                         content_height=content_box[1],
                     )
+                    if current_snapshot.state not in _ACTIONABLE_ALERTS:
+                        self._non_alert_content_boxes[
+                            bool(current_snapshot.collapsed)
+                        ] = content_box
             self._resolved_authority = authority
             self.refresh_from_controller(schedule_resolution=False)
             current_visual = current_snapshot.visual
@@ -626,20 +631,21 @@ class PersonaBuddyWidget(Widget, can_focus=True):
             height = min(_COMPACT_HEIGHT, max(1, viewport.height))
         else:
             width = min(max(_MIN_WIDTH, geometry.width), viewport.width)
-            accepted = self._accepted_render
+            collapsed = bool(self._snapshot and self._snapshot.collapsed)
+            content_box = self._non_alert_content_boxes.get(collapsed)
             if (
-                accepted is not None
+                content_box is None
                 and self._snapshot is not None
-                and accepted.authority[-2] != self._snapshot.collapsed
+                and self._snapshot.state in _ACTIONABLE_ALERTS
             ):
-                accepted = None
-            if accepted is not None:
+                content_box = (_OPERABLE_WIDTH, _OPERABLE_HEIGHT)
+            if content_box is not None:
                 width = min(
-                    accepted.content_width + _BOUNDARY_SIZE,
+                    content_box[0] + _BOUNDARY_SIZE,
                     viewport.width,
                 )
                 height = min(
-                    accepted.content_height + _BOUNDARY_SIZE,
+                    content_box[1] + _BOUNDARY_SIZE,
                     viewport.height,
                 )
             elif self._snapshot and self._snapshot.collapsed:

@@ -432,25 +432,52 @@ async def test_only_actionable_states_replace_pet_with_fixed_path_free_text(
     )
     app = _BuddyApp(controller)
 
-    async with app.run_test(size=(80, 24)):
+    async with app.run_test(size=(80, 24)) as pilot:
         buddy = app.screen.query_one(PersonaBuddyWidget)
         frame = buddy.query_one("#persona-buddy-frame", Static)
         await _wait_until(lambda: "PET" in _compositor_text(app.screen))
+        await _wait_until(
+            lambda: (
+                buddy._resolution_worker is not None
+                and buddy._resolution_worker.is_finished
+            )
+        )
+        await pilot.pause()
         stable_region = buddy.region
 
         controller.state = state
         controller.state_source = "/private/provider/output"
         controller.state_owner = "assistant-secret-owner"
         controller.visual = replace(
-            controller.visual,
+            _visual_with_frame(
+                controller,
+                label="HIDDEN-ALERT-VISUAL",
+                width=30,
+                height=20,
+            ),
             reason="hostile exception /Users/alice/private.txt",
         )
         controller.generation += 1
         buddy.refresh_from_controller()
+        await _wait_until(
+            lambda: (
+                buddy._accepted_render is not None
+                and "HIDDEN-ALERT-VISUAL"
+                in str(buddy._accepted_render.visual.frames[0].renderable)
+            )
+        )
+        await _wait_until(
+            lambda: (
+                buddy._resolution_worker is not None
+                and buddy._resolution_worker.is_finished
+            )
+        )
+        await pilot.pause()
         await _wait_until(lambda: str(frame.renderable) == label)
         painted = _compositor_text(app.screen)
 
         assert "PET" not in painted
+        assert "HIDDEN-ALERT-VISUAL" not in painted
         assert "/private/provider/output" not in painted
         assert "assistant-secret-owner" not in painted
         assert "hostile exception" not in painted
@@ -465,6 +492,58 @@ async def test_only_actionable_states_replace_pet_with_fixed_path_free_text(
             right = len(row) - len(row.rstrip())
             assert abs(left - right) <= 1
         assert buddy.region == stable_region
+
+
+@pytest.mark.asyncio
+async def test_initial_actionable_mount_uses_minimum_until_non_alert_direct_result():
+    controller = _FakeController(
+        frames=("HIDDEN-INITIAL-ALERT-VISUAL",),
+        frame_sizes=((30, 20),),
+    )
+    controller.state = "offline"
+    app = _BuddyApp(controller)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        await _wait_until(
+            lambda: (
+                buddy._accepted_render is not None
+                and "HIDDEN-INITIAL-ALERT-VISUAL"
+                in str(buddy._accepted_render.visual.frames[0].renderable)
+            )
+        )
+        await _wait_until(
+            lambda: (
+                buddy._resolution_worker is not None
+                and buddy._resolution_worker.is_finished
+            )
+        )
+        await pilot.pause()
+
+        assert buddy.region.size == (12, 6)
+        assert "Offline" in _compositor_text(app.screen)
+        assert "HIDDEN-INITIAL-ALERT-VISUAL" not in _compositor_text(app.screen)
+
+        controller.state = "idle"
+        controller.visual = _visual_with_frame(
+            controller,
+            label="CURRENT",
+            width=14,
+            height=10,
+        )
+        controller.generation += 1
+        buddy.refresh_from_controller()
+        await _wait_until(lambda: "CURRENT" in _compositor_text(app.screen))
+        await _wait_until(
+            lambda: (
+                buddy._resolution_worker is not None
+                and buddy._resolution_worker.is_finished
+            )
+        )
+        await pilot.pause()
+
+        assert buddy.region.size == (16, 7)
+        assert "Offline" not in _compositor_text(app.screen)
 
 
 @pytest.mark.asyncio
