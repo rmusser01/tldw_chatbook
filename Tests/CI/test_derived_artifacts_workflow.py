@@ -26,6 +26,9 @@ CHECKERS = (
     "scripts/check_profile_owned_path_inventory.py",
     "scripts/check_persistent_diagnostic_inventory.py",
     "scripts/check_backlog_task_ids.py",
+    # TASK-20971. VALID_TABLES['chachanotes'] went stale, was repaired, and
+    # went stale again 14.5 hours later; this is its authoring-time half.
+    "scripts/check_schema_table_allowlist.py",
 )
 
 
@@ -69,7 +72,7 @@ def test_every_checker_runs():
 
 
 def test_checker_steps_survive_an_earlier_failure():
-    """One red checker must not hide the other three.
+    """One red checker must not hide the others.
 
     With the default `success()` condition the first failure skips the rest, so
     a burn-down needs one push per checker. `!cancelled()` reports all of the

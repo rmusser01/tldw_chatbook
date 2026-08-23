@@ -12,9 +12,10 @@ name: Derived Artifacts
 #
 # Every check below is stdlib-only and needs no dependency install. Measured on
 # an M-series laptop: bundle-sync 0.86 s, profile-owned-path 10.98 s, diagnostic
-# inventory 20.17 s, backlog ids <0.5 s -- ~33 s of work, ~90 s with checkout
-# and setup-python. That budget is the whole point: it is small enough to run on
-# every PR, which is what makes it usable as a REQUIRED status check.
+# inventory 20.17 s, backlog ids <0.5 s, chachanotes table allowlist 0.10 s --
+# ~33 s of work, ~90 s with checkout and setup-python. That budget is the whole
+# point: it is small enough to run on every PR, which is what makes it usable as
+# a REQUIRED status check.
 
 on:
   pull_request:
@@ -101,3 +102,14 @@ jobs:
           # by the one required status check rather than by a path-filtered
           # workflow nobody is gated on.
           python scripts/check_backlog_task_ids.py
+
+      - name: ChaChaNotes table allowlist covers every migrated table
+        if: ${{ !cancelled() }}
+        run: |
+          # TASK-20971. Statically scans the CREATE TABLE statements in
+          # DB/migrations/chachanotes_*.sql and in ChaChaNotes_DB.py's SQL
+          # string literals, and fails when VALID_TABLES['chachanotes'] does
+          # not list one of them (or lists one nothing creates). Prints the
+          # exact lines to paste. No database is built; runtime is milliseconds,
+          # so this does not move the ~90 s budget this job depends on.
+          python scripts/check_schema_table_allowlist.py
