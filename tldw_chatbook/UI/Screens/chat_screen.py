@@ -443,13 +443,17 @@ from ...Widgets.Console.console_feedback_comment_modal import (
     ConsoleFeedbackCommentModal,
 )
 from ...Widgets.Console.console_review_notes_modal import ConsoleReviewNotesModal
-from ...Widgets.Console.console_transcript import ConsoleReviewNotesRequested
+from ...Widgets.Console.console_transcript import (
+    ConsoleReviewNotesRequested,
+    console_transcripts_on_screen,
+)
 from ...Widgets.Console.console_selection_menu import (
     ConsoleSelectionFeedbackRequested,
     ConsoleSelectionNoteRequested,
     ConsoleSelectionMenu,
     ConsoleSelectionQuoteRequested,
     ConsoleSideChatRequested,
+    selection_menus_on_screen,
 )
 from ...Widgets.Console.console_side_chat_modal import ConsoleSideChatModal
 from ...Widgets.Console import console_project_instructions as project_instruction_ui
@@ -18832,9 +18836,33 @@ class ChatScreen(BaseAppScreen):
         marks them ``_pruning`` synchronously) are skipped so a repeated
         dismissal stays single-shot per menu.
 
+        TASK-21119 (idle cost): this runs on BOTH ``on_mouse_down`` and
+        ``on_click`` of the same physical press, on every press anywhere on
+        the Console -- and it used to open with two full-screen ``query``
+        walks (plus a third inside ``_remove_selection_menu``) on the
+        largest DOM in the app: 6 walks per rail press, 3 per composer
+        press, virtually always to find nothing. Both collections now come
+        from the widgets' own registries (constructor-registered, so they
+        can never miss a mounted node) with attachment re-derived from the
+        live DOM, and the pass returns before any of it when there is
+        nothing to dismiss. "Nothing to dismiss" deliberately covers more
+        than a mounted menu: keyboard-selection mode arms a highlight with
+        no menu, and that highlight must still fold on a click elsewhere.
+
         Args:
             target: The clicked widget (``event.widget``/``event.control``).
         """
+        menus = selection_menus_on_screen(self)
+        # Only transcripts the cleanup would actually change; on the rest,
+        # all three steps below are provable no-ops (see
+        # ``ConsoleTranscript.has_pending_selection_ui``).
+        transcripts = [
+            transcript
+            for transcript in console_transcripts_on_screen(self)
+            if transcript.has_pending_selection_ui
+        ]
+        if not menus and not transcripts:
+            return  # the common case: no selection UI anywhere on the screen
         node: object = target
         while node is not None:
             if isinstance(node, (ConsoleTranscript, ConsoleSelectionMenu)):
@@ -18844,11 +18872,11 @@ class ChatScreen(BaseAppScreen):
         # transcript's centralized selection-UI cleanup (clears highlight +
         # manager state), then remove any stragglers (e.g. menus mounted by
         # harnesses without a transcript ancestor).
-        for transcript in self.query(ConsoleTranscript):
+        for transcript in transcripts:
             transcript._remove_selection_menu()
             transcript.selection_manager.cancel()
             transcript._selection_origin_row = None
-        for menu in self.query(ConsoleSelectionMenu):
+        for menu in menus:
             if not getattr(menu, "_pruning", False):
                 menu.remove()
 
