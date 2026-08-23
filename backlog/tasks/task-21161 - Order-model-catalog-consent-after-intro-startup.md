@@ -4,7 +4,7 @@ title: Order model catalog consent after intro startup
 status: Done
 assignee: []
 created_date: '2026-08-23 15:09'
-updated_date: '2026-08-23 16:47'
+updated_date: '2026-08-23 17:04'
 labels: []
 dependencies: []
 priority: high
@@ -47,4 +47,6 @@ Implemented the startup lifecycle fix so model-catalog consent is scheduled only
 Regression coverage now drives the real splash-enabled Textual screen stack, explicit Deny interaction, project-skills precedence, first-run route sequencing, navigation failure, and cancellation. The original ordering failed with Screen -> ModelCatalogConsentModal -> HomeScreen; the corrected modal suite passes 8/8. Catalog wiring passes 23/23; focused first-run callback/live and focus tests pass. Ruff and git diff --check pass. The complete product-maturity first-run file has one pre-existing navigation-copy timeout at line 552, reproduced identically on base 80e8b50e6; all other tests in that file pass.
 
 ADR required: no. Existing ADR: backlog/decisions/020-automatic-model-catalog-refresh.md. This change preserves that decision and corrects UI lifecycle ordering only. No new dependency, schema, security boundary, or generalized modal coordinator was introduced. No reusable lessons document update was warranted.
+
+PR review follow-up: added the missing async contract-test docstring and replaced the splash regression's short manual Pilot loops/exact default-screen assertion with the repository's bounded `_wait_until` pattern and behavior-level splash/Home ordering assertions. Focused tests and Ruff pass.
 <!-- SECTION:NOTES:END -->

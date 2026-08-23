@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Callable
 from types import MethodType
 from unittest.mock import MagicMock
 
@@ -14,6 +15,39 @@ from textual.screen import Screen
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.UI.Screens.home_screen import HomeScreen
 from tldw_chatbook.UI.Screens.model_catalog_consent import ModelCatalogConsentModal
+
+
+async def _wait_until(
+    pilot,
+    condition: Callable[[], bool],
+    *,
+    context: str,
+    timeout_seconds: float = 10.0,
+    interval_seconds: float = 0.05,
+) -> None:
+    """Wait for an asynchronous Textual test condition.
+
+    Args:
+        pilot: Textual test pilot driving the running app.
+        condition: Zero-argument predicate that returns true when ready.
+        context: Human-readable state included in timeout failures.
+        timeout_seconds: Maximum time to wait before failing.
+        interval_seconds: Delay between event-loop polls.
+
+    Raises:
+        AssertionError: If the condition remains false after the timeout.
+    """
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        if condition():
+            return
+        await pilot.pause()
+        await asyncio.sleep(interval_seconds)
+    if condition():
+        return
+    raise AssertionError(
+        f"condition was not met within {timeout_seconds:.1f}s for {context}"
+    )
 
 
 class _ConsentHost(App):
@@ -98,19 +132,18 @@ async def test_splash_finishes_before_catalog_consent_and_deny_returns_home():
     app._push_model_catalog_consent_modal = MethodType(push_catalog_consent, app)
 
     async with app.run_test(size=(120, 40)) as pilot:
-        deadline = time.monotonic() + 5.0
-        while time.monotonic() < deadline:
+        def startup_ready() -> bool:
             stack = observe_stack()
-            if any(screen is HomeScreen for screen in stack) and any(
+            return any(screen is HomeScreen for screen in stack) and any(
                 screen is ModelCatalogConsentModal for screen in stack
-            ):
-                break
-            await pilot.pause(0.01)
-        else:
-            pytest.fail(
-                "startup did not mount both Home and model-catalog consent; "
-                f"observed={[(active, [item.__name__ for item in stack]) for active, stack in observed]}"
             )
+
+        await _wait_until(
+            pilot,
+            startup_ready,
+            context="startup to mount Home beneath model-catalog consent; "
+            f"observed={[(active, [item.__name__ for item in stack]) for active, stack in observed]}",
+        )
 
         final_stack = tuple(app.screen_stack)
         assert isinstance(final_stack[-2], HomeScreen), (
@@ -127,10 +160,13 @@ async def test_splash_finishes_before_catalog_consent_and_deny_returns_home():
             for index, (_, stack) in enumerate(observed)
             if ModelCatalogConsentModal in stack
         )
+        assert any(active for active, _ in observed[:first_consent]), (
+            f"active splash was not observed before consent: {observed}"
+        )
         assert any(
-            active and stack == (Screen,)
-            for active, stack in observed[:first_consent]
-        ), f"splash/default Screen was not observed before consent: {observed}"
+            HomeScreen in stack and ModelCatalogConsentModal not in stack
+            for _, stack in observed[:first_consent]
+        ), f"Home was not mounted before consent was pushed: {observed}"
         assert not observed[first_consent][0], (
             "consent appeared before the splash completed; "
             f"observed={observed}"
@@ -144,17 +180,16 @@ async def test_splash_finishes_before_catalog_consent_and_deny_returns_home():
         home = final_stack[-2]
         assert await pilot.click("#model-catalog-consent-deny") is True
 
-        deadline = time.monotonic() + 2.0
-        while time.monotonic() < deadline:
+        def deny_dismissed() -> bool:
             observe_stack()
-            if app.screen is home:
-                break
-            await pilot.pause(0.01)
-        else:
-            pytest.fail(
-                "Deny did not dismiss consent back to the same HomeScreen; "
-                f"stack={[type(screen).__name__ for screen in app.screen_stack]}"
-            )
+            return app.screen is home
+
+        await _wait_until(
+            pilot,
+            deny_dismissed,
+            context="Deny to dismiss consent back to the same HomeScreen; "
+            f"stack={[type(screen).__name__ for screen in app.screen_stack]}",
+        )
 
         assert app.screen is home
         assert home.is_mounted

@@ -1601,6 +1601,7 @@ def test_first_run_result_callback_keeps_same_tab_context_navigation():
 
 @pytest.mark.asyncio
 async def test_first_run_result_callback_remounts_same_tab_home_after_completion():
+    """Await Home remount before scheduling the deferred catalog decision."""
     from tldw_chatbook.app import TldwCli
 
     events: list[str] = []
