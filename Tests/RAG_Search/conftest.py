@@ -22,8 +22,11 @@ os.environ.pop("PYTEST_CURRENT_TEST", None)  # Remove pytest env var temporarily
 # TLDW_TEST_ALLOW_HF_DOWNLOADS is the general escape hatch). setdefault so an
 # externally-set value always wins.
 _TRUTHY = {"1", "true", "yes", "on"}
-_ALLOW_HF_DOWNLOADS = (
+_RUN_REAL_EMBEDDINGS = (
     os.environ.get("TLDW_RUN_REAL_EMBEDDINGS", "").strip().lower() in _TRUTHY
+)
+_ALLOW_HF_DOWNLOADS = (
+    _RUN_REAL_EMBEDDINGS
     or os.environ.get("TLDW_TEST_ALLOW_HF_DOWNLOADS", "").strip().lower() in _TRUTHY
 )
 if _ALLOW_HF_DOWNLOADS:
@@ -641,6 +644,15 @@ def performance_monitor():
 requires_embeddings = pytest.mark.skipif(
     not DEPENDENCIES_AVAILABLE.get("embeddings_rag", False),
     reason="Embeddings dependencies not available",
+)
+
+requires_real_embeddings = pytest.mark.skipif(
+    not DEPENDENCIES_AVAILABLE.get("embeddings_rag", False) or not _RUN_REAL_EMBEDDINGS,
+    reason=(
+        "Embeddings dependencies not available"
+        if not DEPENDENCIES_AVAILABLE.get("embeddings_rag", False)
+        else "TLDW_RUN_REAL_EMBEDDINGS is not enabled"
+    ),
 )
 
 requires_chromadb = pytest.mark.skipif(

@@ -17,7 +17,7 @@ from tldw_chatbook.RAG_Search.simplified import (
 )
 
 # Import test utilities from conftest
-from .conftest import requires_embeddings, requires_chromadb
+from .conftest import requires_real_embeddings, requires_chromadb
 
 
 @pytest.mark.performance
@@ -149,7 +149,8 @@ class TestEmbeddingPerformance:
 
             service.close()
 
-    @requires_embeddings
+    @pytest.mark.integration
+    @requires_real_embeddings
     def test_real_model_performance(self, request):
         """Benchmark performance with real embedding model.
 
