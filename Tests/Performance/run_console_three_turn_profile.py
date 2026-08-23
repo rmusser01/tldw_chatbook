@@ -2369,9 +2369,12 @@ def write_acquisition_pin(
     marker = pins / f"{attempt_id}--{verdict}--{raw_sha256}"
     try:
         _mkdir_namespace(marker)
-    except FileExistsError as exc:
-        if read_acquisition_pin(campaign_root, attempt_id) != event:
+    except BaseException as exc:
+        if read_acquisition_pin(campaign_root, attempt_id) == event:
+            return event
+        if isinstance(exc, FileExistsError):
             raise RuntimeError("campaign_acquisition_pin_mismatch") from exc
+        raise
     return event
 
 
@@ -2384,6 +2387,7 @@ def recover_interrupted_attempt(
     _reject_lexical_symlinks(campaign_root, "campaign_root_invalid")
     lock_root = campaign_root / ".campaign-lock"
     recovery_root = campaign_root / ".campaign-recovery"
+    release_root = campaign_root / ".campaign-release"
     ledger = campaign_root / "attempts.jsonl"
     lineage = attempt_lineage(ledger)
     latest = lineage[-1] if lineage else None
@@ -2414,7 +2418,6 @@ def recover_interrupted_attempt(
     ):
         if pinned_event is not None:
             raise RuntimeError("campaign_acquisition_pin_mismatch")
-        release_root = campaign_root / ".campaign-release"
         markers = [
             marker
             for marker in (lock_root, recovery_root, release_root)
@@ -2454,6 +2457,14 @@ def recover_interrupted_attempt(
             marker = recovery_root
         _delete_exact_lock_root(marker, owner)
         return latest
+    if pinned_event is not None and latest == pinned_event and not any(
+        marker.exists() or marker.is_symlink()
+        for marker in (lock_root, recovery_root, release_root)
+    ):
+        marker_error = _campaign_marker_error(campaign_root)
+        if marker_error is not None:
+            raise RuntimeError(marker_error)
+        return pinned_event
     if (recovery_root.exists() or recovery_root.is_symlink()) and (
         lock_root.exists() or lock_root.is_symlink()
     ):
@@ -3448,7 +3459,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
                 )
             except ValueError:
                 parser.error("campaign schedule must be official 30/5 or smoke 1/1")
-        elif parsed.burn_in_blocks:
+        elif parsed.burn_in_blocks and parsed.child_spec is None:
             parser.error("legacy output-root mode requires zero burn-in")
     else:
         if parsed.campaign_root is None:
@@ -6898,19 +6909,29 @@ def run_acquisition_action(args: argparse.Namespace) -> int:
     owned_args = argparse.Namespace(**vars(args))
     owned_args.output_root = attempt.root
     owned_args.attempt_id = attempt.attempt_id
+    intended_pin: dict[str, Any] | None = None
 
     def pin_acquisition(**values: Any) -> dict[str, Any]:
+        nonlocal intended_pin
         verdict = str(values["verdict"])
         schedule = campaign_schedule_contract(
             owned_args.iterations, owned_args.burn_in_blocks
         )
         if (verdict == "smoke") != (schedule["kind"] == "disposable_smoke"):
             raise RuntimeError("campaign_schedule_verdict_mismatch")
+        intended_pin = _validate_attempt_event(
+            {
+                "attempt_id": attempt.attempt_id,
+                "state": "complete_pending_review",
+                "verdict": verdict,
+                "raw_sha256": str(values["raw_sha256"]),
+            }
+        )
         return write_acquisition_pin(
             campaign_root,
             attempt.attempt_id,
-            verdict=verdict,
-            raw_sha256=str(values["raw_sha256"]),
+            verdict=str(intended_pin["verdict"]),
+            raw_sha256=str(intended_pin["raw_sha256"]),
         )
 
     owned_args.acquisition_pin_callback = pin_acquisition
@@ -6937,6 +6958,24 @@ def run_acquisition_action(args: argparse.Namespace) -> int:
             except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
                 primary = RuntimeError("confirmation_derived_artifact_invalid")
                 primary.__cause__ = exc
+        if completed is None:
+            observed_pin = read_acquisition_pin(campaign_root, attempt.attempt_id)
+            if intended_pin is not None:
+                if observed_pin != intended_pin:
+                    raise primary or RuntimeError(
+                        "confirmation_acquisition_pin_mismatch"
+                    )
+                completed = {
+                    "verdict": intended_pin["verdict"],
+                    "raw_sha256": intended_pin["raw_sha256"],
+                }
+                primary = None
+            elif observed_pin is not None:
+                completed = {
+                    "verdict": observed_pin["verdict"],
+                    "raw_sha256": observed_pin["raw_sha256"],
+                }
+                primary = None
         if completed is None:
             if primary is None:
                 primary = RuntimeError("confirmation_acquisition_state_missing")

@@ -1744,6 +1744,38 @@ def test_campaign_recovery_refuses_live_owner_after_durable_terminal(
     assert not (tmp_path / ".campaign-recovery").exists()
 
 
+@pytest.mark.parametrize("verdict", ("pass", "smoke"))
+def test_campaign_recover_is_idempotent_after_pending_attempt_release(
+    tmp_path: Path, verdict: str
+) -> None:
+    attempt = _acquire_attempt(tmp_path)
+    ledger = tmp_path / "attempts.jsonl"
+    pending = profile.write_acquisition_pin(
+        tmp_path,
+        attempt.attempt_id,
+        verdict=verdict,
+        raw_sha256="a" * 64,
+    )
+    profile.complete_attempt_measurement(
+        ledger,
+        attempt.attempt_id,
+        verdict=verdict,
+        raw_sha256="a" * 64,
+    )
+    profile.release_campaign_attempt(tmp_path, attempt)
+    before = ledger.read_bytes()
+
+    assert profile.recover_interrupted_attempt(
+        tmp_path,
+        process_start_probe=lambda _pid: pytest.fail("released owner was probed"),
+    ) == pending
+
+    assert ledger.read_bytes() == before
+    assert not (tmp_path / ".campaign-lock").exists()
+    assert not (tmp_path / ".campaign-recovery").exists()
+    assert not (tmp_path / ".campaign-release").exists()
+
+
 @pytest.mark.parametrize("marker", (".campaign-recovery", ".campaign-release"))
 @pytest.mark.parametrize("empty_marker", (False, True))
 def test_campaign_recovery_finishes_terminal_lock_marker_without_appending(
@@ -3940,6 +3972,86 @@ def test_legacy_output_root_rejects_campaign_burn_in(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
+    ("iterations", "burn_in_blocks"), ((30, 5), (1, 1))
+)
+def test_confirmatory_child_cli_accepts_parent_burn_in(
+    tmp_path: Path, iterations: int, burn_in_blocks: int
+) -> None:
+    child_spec = tmp_path / "child-spec.json"
+
+    arguments = profile.parse_arguments(
+        [
+            "--endpoint",
+            "http://127.0.0.1:9099",
+            "--model",
+            "fixture.gguf",
+            "--output-root",
+            str(tmp_path),
+            "--iterations",
+            str(iterations),
+            "--burn-in-blocks",
+            str(burn_in_blocks),
+            "--child-spec",
+            str(child_spec),
+        ]
+    )
+
+    assert arguments.child_spec == child_spec
+    assert arguments.burn_in_blocks == burn_in_blocks
+
+
+@pytest.mark.parametrize(
+    ("iterations", "burn_in_blocks"), ((30, 5), (1, 1))
+)
+def test_real_confirmatory_child_command_reaches_child_mode_after_parse(
+    tmp_path: Path, iterations: int, burn_in_blocks: int
+) -> None:
+    run_root = tmp_path / "run"
+    target_root = tmp_path / "empty-target"
+    sample_root = run_root / "samples" / "parse-check"
+    raw_path = run_root / "raw.jsonl"
+    run_root.mkdir()
+    target_root.mkdir()
+    args = SimpleNamespace(
+        endpoint="http://127.0.0.1:9099",
+        model="fixture.gguf",
+        iterations=iterations,
+        burn_in_blocks=burn_in_blocks,
+        sample_timeout=5.0,
+    )
+    spec = {
+        "sample_id": "parse-check",
+        "phase": "warmup",
+        "iteration": -1,
+        "arm": "control",
+        "schedule_position": 0,
+        "target_root": str(target_root),
+        "sample_root": str(sample_root),
+        "run_root": str(run_root),
+        "evidence_path": str(raw_path),
+    }
+
+    result = profile._run_parent_child(
+        args,
+        runner=Path(profile.__file__).resolve(),
+        run_root=run_root,
+        raw_path=raw_path,
+        revisions={
+            "control": profile.CONTROL_SHA,
+            "candidate": profile.CANDIDATE_SHA,
+        },
+        target_root=target_root,
+        sample_root=sample_root,
+        spec=spec,
+    )
+
+    assert result.status == "failed"
+    assert result.returncode == 1
+    assert result.last_event is not None
+    assert result.last_event["event"] == "child_failure"
+
+
+@pytest.mark.parametrize(
     ("action", "extra"),
     [
         ("recover", []),
@@ -5676,11 +5788,12 @@ def _completed_parent_artifacts(args: SimpleNamespace) -> None:
     (args.output_root / "real-provider-three-turn.manifest.json").write_text(
         "{}", encoding="utf-8"
     )
-    args.completed_acquisition = {
+    completed = {
         "verdict": "pass",
         "raw_sha256": hashlib.sha256(raw).hexdigest(),
     }
-    args.acquisition_pin_callback(**args.completed_acquisition)
+    args.acquisition_pin_callback(**completed)
+    args.completed_acquisition = completed
 
 
 def test_acquisition_pin_is_atomic_empty_campaign_marker_not_attempt_artifact(
@@ -5709,6 +5822,93 @@ def test_acquisition_pin_is_atomic_empty_campaign_marker_not_attempt_artifact(
     assert list(marker.parent.iterdir()) == [marker]
     assert profile.read_acquisition_pin(campaign, "attempt-0001") == event
     assert list(attempt_root.iterdir()) == []
+
+
+def test_pin_marker_survives_parent_fsync_failure_without_retryable_terminal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    campaign = tmp_path / "campaign"
+    attempt = _acquire_attempt(campaign)
+    monkeypatch.setattr(profile, "acquire_campaign_attempt", lambda _root: attempt)
+    monkeypatch.setattr(
+        profile,
+        "run_parent_mode",
+        lambda args: _completed_parent_artifacts(args) or 0,
+    )
+    pins_root = campaign / "acquisition-pins"
+    real_fsync = profile._fsync_directory
+    injected = False
+
+    def fail_after_marker_mkdir(path: Path) -> None:
+        nonlocal injected
+        if path == pins_root and not injected:
+            injected = True
+            raise OSError("injected pin parent fsync failure")
+        real_fsync(path)
+
+    monkeypatch.setattr(profile, "_fsync_directory", fail_after_marker_mkdir)
+    args = SimpleNamespace(
+        campaign_root=campaign, iterations=30, burn_in_blocks=5
+    )
+
+    assert profile.run_acquisition_action(args) == 0
+
+    assert injected is True
+    pending = profile.read_acquisition_pin(campaign, attempt.attempt_id)
+    assert pending is not None
+    assert profile.attempt_lineage(campaign / "attempts.jsonl")[-1] == pending
+    assert not (campaign / ".campaign-lock").exists()
+    assert profile.recover_interrupted_attempt(
+        campaign,
+        process_start_probe=lambda _pid: pytest.fail("released owner was probed"),
+    ) == pending
+    with pytest.raises(
+        RuntimeError, match="campaign_acquisition_blocked:complete_pending_review"
+    ):
+        profile.require_campaign_acquisition(campaign / "attempts.jsonl")
+
+
+@pytest.mark.parametrize("pin_outcome", ("exact", "absent", "mismatch"))
+def test_pin_callback_failure_never_appends_retryable_terminal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    pin_outcome: str,
+) -> None:
+    campaign = tmp_path / "campaign"
+    attempt = _acquire_attempt(campaign)
+    monkeypatch.setattr(profile, "acquire_campaign_attempt", lambda _root: attempt)
+    monkeypatch.setattr(
+        profile,
+        "run_parent_mode",
+        lambda args: _completed_parent_artifacts(args) or 0,
+    )
+    real_write_pin = profile.write_acquisition_pin
+
+    def fail_pin(*args, **kwargs):
+        if pin_outcome == "exact":
+            real_write_pin(*args, **kwargs)
+        elif pin_outcome == "mismatch":
+            real_write_pin(*args, **{**kwargs, "raw_sha256": "b" * 64})
+        raise OSError("injected pin callback failure")
+
+    monkeypatch.setattr(profile, "write_acquisition_pin", fail_pin)
+    args = SimpleNamespace(
+        campaign_root=campaign, iterations=30, burn_in_blocks=5
+    )
+
+    if pin_outcome == "exact":
+        assert profile.run_acquisition_action(args) == 0
+        pending = profile.read_acquisition_pin(campaign, attempt.attempt_id)
+        assert pending is not None
+        assert profile.attempt_lineage(campaign / "attempts.jsonl")[-1] == pending
+        assert not (campaign / ".campaign-lock").exists()
+    else:
+        with pytest.raises(OSError, match="injected pin callback failure"):
+            profile.run_acquisition_action(args)
+        assert profile.attempt_lineage(campaign / "attempts.jsonl") == (
+            {"attempt_id": attempt.attempt_id, "state": "running"},
+        )
+        assert (campaign / ".campaign-lock").is_dir()
 
 
 @pytest.mark.parametrize("create_namespace", (False, True))
