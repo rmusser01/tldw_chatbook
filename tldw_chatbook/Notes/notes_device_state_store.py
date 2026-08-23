@@ -153,8 +153,8 @@ _CONFLICT_SUBSTAGE_STATES = {
     "binding_updated": NotesSyncOperationState.BINDING_UPDATED,
     "verified": NotesSyncOperationState.VERIFIED,
 }
-_CONFLICT_FOLDER_ID_CAPACITY = 256
-_CONFLICT_FOLDER_VERSION_CAPACITY = 20
+_CONFLICT_OPAQUE_ID_CAPACITY = 256
+_CONFLICT_VERSION_CAPACITY = 20
 
 
 def _now() -> int:
@@ -1424,6 +1424,8 @@ class NotesDeviceStateStore:
         expected_payload_digest: str,
         expected_metadata_length: int,
         folder_authority: tuple[str, int, str, int] | None = None,
+        copy_authority: tuple[str, int] | None = None,
+        placement_authority: tuple[str, int] | None = None,
     ) -> NotesSyncOperationRecord:
         """Advance one exact Keep-both checkpoint without growing recovery."""
 
@@ -1456,12 +1458,38 @@ class NotesDeviceStateStore:
             if any(
                 type(version) is not int
                 or version < 0
-                or len(str(version)) > _CONFLICT_FOLDER_VERSION_CAPACITY
+                or len(str(version)) > _CONFLICT_VERSION_CAPACITY
                 for version in (parent_version, child_version)
             ):
                 raise NotesDeviceStateError("The folder authority is corrupt.")
         elif folder_authority is not None:
             raise NotesDeviceStateError("The folder authority is corrupt.")
+        if expected_substage == "folders_established":
+            if type(copy_authority) is not tuple or len(copy_authority) != 2:
+                raise NotesDeviceStateError("The copy authority is corrupt.")
+            copy_note_id, copy_version = copy_authority
+            validate_notes_sync_opaque_id(copy_note_id, field_name="copy_note_id")
+            if (
+                type(copy_version) is not int
+                or copy_version < 0
+                or len(str(copy_version)) > _CONFLICT_VERSION_CAPACITY
+            ):
+                raise NotesDeviceStateError("The copy authority is corrupt.")
+        elif copy_authority is not None:
+            raise NotesDeviceStateError("The copy authority is corrupt.")
+        if expected_substage == "copy_created":
+            if type(placement_authority) is not tuple or len(placement_authority) != 2:
+                raise NotesDeviceStateError("The placement authority is corrupt.")
+            placement_id, placement_version = placement_authority
+            validate_notes_sync_opaque_id(placement_id, field_name="placement_id")
+            if (
+                type(placement_version) is not int
+                or placement_version < 0
+                or len(str(placement_version)) > _CONFLICT_VERSION_CAPACITY
+            ):
+                raise NotesDeviceStateError("The placement authority is corrupt.")
+        elif placement_authority is not None:
+            raise NotesDeviceStateError("The placement authority is corrupt.")
         expected_current_state = _CONFLICT_SUBSTAGE_STATES[expected_substage]
         if expected_substage == "file_reverified":
             expected_current_state = NotesSyncOperationState.BINDING_UPDATED
@@ -1517,11 +1545,68 @@ class NotesDeviceStateStore:
                     or type(version) is not str
                     or type(version_padding) is not str
                     or folder_id_padding
-                    != " " * (_CONFLICT_FOLDER_ID_CAPACITY - len(folder_id))
+                    != " " * (_CONFLICT_OPAQUE_ID_CAPACITY - len(folder_id))
                     or version_padding
-                    != " " * (_CONFLICT_FOLDER_VERSION_CAPACITY - len(version))
+                    != " " * (_CONFLICT_VERSION_CAPACITY - len(version))
                 ):
                     raise NotesDeviceStateError("The folder authority is corrupt.")
+            copy_version_value = decoded.get("conflict_copy_note_version")
+            copy_version_padding = decoded.get("conflict_copy_note_version_padding")
+            placement_id_value = decoded.get("conflict_placement_membership_id")
+            placement_id_padding = decoded.get(
+                "conflict_placement_membership_id_padding"
+            )
+            placement_version_value = decoded.get("conflict_placement_version")
+            placement_version_padding = decoded.get(
+                "conflict_placement_version_padding"
+            )
+            if (
+                type(copy_version_value) is not str
+                or type(copy_version_padding) is not str
+                or type(placement_id_value) is not str
+                or type(placement_id_padding) is not str
+                or type(placement_version_value) is not str
+                or type(placement_version_padding) is not str
+                or copy_version_padding
+                != " " * (_CONFLICT_VERSION_CAPACITY - len(copy_version_value))
+                or placement_id_padding
+                != " " * (_CONFLICT_OPAQUE_ID_CAPACITY - len(placement_id_value))
+                or placement_version_padding
+                != " " * (_CONFLICT_VERSION_CAPACITY - len(placement_version_value))
+            ):
+                raise NotesDeviceStateError("The effect authority is corrupt.")
+            copy_checkpointed = bool(copy_version_value)
+            placement_checkpointed = bool(
+                placement_id_value and placement_version_value
+            )
+            try:
+                parsed_copy_version = int(copy_version_value or "0")
+                parsed_placement_version = int(placement_version_value or "0")
+                if placement_id_value:
+                    validate_notes_sync_opaque_id(
+                        placement_id_value,
+                        field_name="placement_id",
+                    )
+            except (TypeError, ValueError):
+                raise NotesDeviceStateError(
+                    "The effect authority is corrupt."
+                ) from None
+            if (
+                (copy_version_value and str(parsed_copy_version) != copy_version_value)
+                or parsed_copy_version < 0
+                or (placement_version_value and not placement_id_value)
+                or (placement_id_value and not placement_version_value)
+                or (
+                    placement_version_value
+                    and str(parsed_placement_version) != placement_version_value
+                )
+                or parsed_placement_version < 0
+                or copy_checkpointed
+                != (stage_index >= _CONFLICT_SUBSTAGES.index("copy_created"))
+                or placement_checkpointed
+                != (stage_index >= _CONFLICT_SUBSTAGES.index("placement_created"))
+            ):
+                raise NotesDeviceStateError("The effect authority is corrupt.")
             if folder_authority is not None:
                 for prefix, folder_id, version in (
                     ("conflict_parent", parent_id, parent_version),
@@ -1529,13 +1614,31 @@ class NotesDeviceStateStore:
                 ):
                     decoded[f"{prefix}_actual_folder_id"] = folder_id
                     decoded[f"{prefix}_actual_folder_id_padding"] = " " * (
-                        _CONFLICT_FOLDER_ID_CAPACITY - len(folder_id)
+                        _CONFLICT_OPAQUE_ID_CAPACITY - len(folder_id)
                     )
                     encoded_version = str(version)
                     decoded[f"{prefix}_actual_folder_version"] = encoded_version
                     decoded[f"{prefix}_actual_folder_version_padding"] = " " * (
-                        _CONFLICT_FOLDER_VERSION_CAPACITY - len(encoded_version)
+                        _CONFLICT_VERSION_CAPACITY - len(encoded_version)
                     )
+            if copy_authority is not None:
+                if decoded.get("conflict_copy_note_id") != copy_note_id:
+                    raise NotesDeviceStateError("The copy authority is corrupt.")
+                encoded_version = str(copy_version)
+                decoded["conflict_copy_note_version"] = encoded_version
+                decoded["conflict_copy_note_version_padding"] = " " * (
+                    _CONFLICT_VERSION_CAPACITY - len(encoded_version)
+                )
+            if placement_authority is not None:
+                decoded["conflict_placement_membership_id"] = placement_id
+                decoded["conflict_placement_membership_id_padding"] = " " * (
+                    _CONFLICT_OPAQUE_ID_CAPACITY - len(placement_id)
+                )
+                encoded_version = str(placement_version)
+                decoded["conflict_placement_version"] = encoded_version
+                decoded["conflict_placement_version_padding"] = " " * (
+                    _CONFLICT_VERSION_CAPACITY - len(encoded_version)
+                )
             decoded["conflict_substage"] = next_substage
             decoded["conflict_substage_padding"] = " " * (longest - len(next_substage))
             replacement = json.dumps(
