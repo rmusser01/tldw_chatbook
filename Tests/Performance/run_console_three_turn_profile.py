@@ -931,6 +931,17 @@ def _promote_reviewed_artifacts_locked(
             raise RuntimeError("publication_durability_uncertain") from exc
         ownership_restored = True
         try:
+            if sys.platform == "darwin":
+                for (
+                    _name,
+                    descriptor,
+                    _dev,
+                    _ino,
+                    original_flags,
+                ) in staged_descriptors:
+                    if not original_flags & stat.UF_IMMUTABLE:
+                        os.fsync(descriptor)
+            os.fsync(stage_fd)
             _fsync_directory(destination.parent)
             final_path_metadata = destination.stat(follow_symlinks=False)
         except OSError as exc:

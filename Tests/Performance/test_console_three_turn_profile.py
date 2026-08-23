@@ -5733,6 +5733,104 @@ def test_post_rename_restore_failure_is_stable_and_closes_owned_descriptors(
     assert not (campaign / ".campaign-lock").exists()
 
 
+@pytest.mark.skipif(sys.platform != "darwin", reason="Darwin flag durability only")
+@pytest.mark.parametrize("failure", (None, "leaf", "directory"))
+def test_restored_publication_metadata_is_fsynced_before_parent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str | None,
+) -> None:
+    campaign, attempt, digest, _raw_sha256 = _prepare_review_attempt(tmp_path)
+    receipt = _write_review_receipt(attempt, digest)
+    destination = tmp_path / "published"
+    stage = destination.parent / f".{destination.name}.task-20010-stage"
+    real_atomic = profile._atomic_rename_directory_noreplace
+    real_open = profile.os.open
+    real_close = profile.os.close
+    real_fsync = profile.os.fsync
+    native_completed = False
+    stage_closed = False
+    stage_fd: int | None = None
+    leaf_fds: dict[int, str] = {}
+    opened_paths: dict[int, Path] = {}
+    owned_descriptors: set[int] = set()
+    closed_descriptors: set[int] = set()
+    events: list[str] = []
+
+    def track_open(path, flags, *args, **kwargs):
+        nonlocal stage_fd
+        descriptor = real_open(path, flags, *args, **kwargs)
+        candidate = Path(path)
+        opened_paths[descriptor] = candidate
+        if candidate == stage and stage_fd is None:
+            stage_fd = descriptor
+            owned_descriptors.add(descriptor)
+        elif candidate.parent == stage and candidate.name in TASK5_PUBLISHED_NAMES:
+            if candidate.name not in leaf_fds.values():
+                leaf_fds[descriptor] = candidate.name
+                owned_descriptors.add(descriptor)
+        elif candidate == destination or candidate.parent == destination:
+            owned_descriptors.add(descriptor)
+        return descriptor
+
+    def track_close(descriptor: int) -> None:
+        nonlocal stage_closed
+        if descriptor in owned_descriptors:
+            closed_descriptors.add(descriptor)
+        if descriptor == stage_fd:
+            stage_closed = True
+        real_close(descriptor)
+
+    def mark_native_complete(*args, **kwargs) -> None:
+        nonlocal native_completed
+        real_atomic(*args, **kwargs)
+        native_completed = True
+
+    def inject_metadata_fsync(descriptor: int) -> None:
+        if native_completed and not stage_closed:
+            if descriptor in leaf_fds:
+                events.append(f"leaf:{leaf_fds[descriptor]}")
+                if failure == "leaf":
+                    raise OSError("injected restored leaf fsync failure")
+            elif descriptor == stage_fd:
+                events.append("directory:published")
+                if failure == "directory":
+                    raise OSError("injected restored directory fsync failure")
+            elif opened_paths.get(descriptor) == destination.parent:
+                events.append("directory:parent")
+        real_fsync(descriptor)
+
+    monkeypatch.setattr(profile.os, "open", track_open)
+    monkeypatch.setattr(profile.os, "close", track_close)
+    monkeypatch.setattr(profile.os, "fsync", inject_metadata_fsync)
+    monkeypatch.setattr(
+        profile, "_atomic_rename_directory_noreplace", mark_native_complete
+    )
+
+    if failure is None:
+        profile.promote_reviewed_artifacts(
+            campaign, "attempt-0001", receipt, destination
+        )
+        assert events == [
+            *(f"leaf:{name}" for name in profile.REVIEWED_ARTIFACTS),
+            "leaf:confirmatory-review-receipt.json",
+            "directory:published",
+            "directory:parent",
+        ]
+    else:
+        with pytest.raises(RuntimeError, match="^publication_durability_uncertain$"):
+            profile.promote_reviewed_artifacts(
+                campaign, "attempt-0001", receipt, destination
+            )
+        assert "directory:parent" not in events
+
+    assert destination.is_dir()
+    assert attempt.is_dir()
+    assert owned_descriptors
+    assert owned_descriptors <= closed_descriptors
+    assert not (campaign / ".campaign-lock").exists()
+
+
 def test_windows_promotion_fails_closed_without_directory_durability(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
