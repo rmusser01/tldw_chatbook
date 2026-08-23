@@ -7009,3 +7009,26 @@ source must be verified with a DYNAMIC first mount (post-boot `app.mount(...)` /
 exercises that path. The durable fix here is `css/tie_aware_stylesheet.py`
 (`TieAwareStylesheet`, used by both `TldwCli` and the `ConsolidatedCSSApp` harness),
 pinned born-red-vs-plain-`Stylesheet` in `Tests/UI/test_consolidated_css_harness.py`.
+## An unpaced reader-latency probe hides whole-write stalls at p95 (TASK-21124, 2026-08-23)
+
+**TASK-21124, 2026-08-23.** The fix removed the global config file lock from
+cache-hit reads so a concurrent config write (fsyncs + TOML parses under the
+lock) could no longer stall event-loop-side `get_cli_setting` calls. The
+obvious probe — a reader thread timing 2,000 reads while a writer loops, then
+comparing p50/p95 — showed *identical* percentiles before and after the fix
+(p50 ~5.5 µs both sides), twice: first because the reads finished before the
+writer thread ever reached its first lock acquisition (a fixed read count
+races thread startup), and then, after gating the read loop on writer
+progress, because of distribution shape — an unpaced reader oversamples the
+uncontended gaps, so five whole-write stalls became five huge samples in
+57,000, landing beyond p99.9 and invisible at p95/p99. Yet those few samples
+ARE the defect: one 18 ms block on the event loop is the jank being fixed.
+Printing max and a `>1 ms` stall count made the change legible instantly
+(base: max 18.2 ms; fixed: max 3.7 ms, fsync phase no longer under a
+reader-visible lock). Two rules: (1) for a stall-class defect, gate the test
+on a *mechanism* counter — here, a lock-acquisition count asserted to be
+exactly zero on the warm path, which was also the honest red-first test (100
+acquisitions per 100 reads before the fix) — and keep wall-clock numbers
+informational; (2) when you do report reader latency against a bursty
+contender, report max and a stall count, never percentiles alone, because an
+unpaced sampler weights its own idle loop, not the user's exposure.
