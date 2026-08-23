@@ -1754,6 +1754,157 @@ def test_campaign_recovery_refuses_live_owner_after_durable_terminal(
     assert not (tmp_path / ".campaign-recovery").exists()
 
 
+@pytest.mark.parametrize("state", ("complete_pending_review", "changes_required"))
+@pytest.mark.parametrize(
+    "marker", (".campaign-lock", ".campaign-recovery", ".campaign-release")
+)
+def test_campaign_recovery_releases_dead_maintenance_owner_without_lineage_mutation(
+    tmp_path: Path, state: str, marker: str
+) -> None:
+    attempt = _acquire_attempt(tmp_path)
+    ledger = tmp_path / "attempts.jsonl"
+    profile.complete_attempt_measurement(
+        ledger,
+        attempt.attempt_id,
+        verdict="pass",
+        raw_sha256="a" * 64,
+    )
+    profile.release_campaign_attempt(tmp_path, attempt)
+    if state == "changes_required":
+        profile.append_attempt_state(
+            ledger,
+            {
+                "attempt_id": attempt.attempt_id,
+                "state": "changes_required",
+                "verdict": "pass",
+                "raw_sha256": "a" * 64,
+                "reason_category": "receipt",
+            },
+        )
+    _acquire_lock(tmp_path)
+    if marker != ".campaign-lock":
+        (tmp_path / ".campaign-lock").rename(tmp_path / marker)
+    before = ledger.read_bytes()
+
+    recovered = profile.recover_interrupted_attempt(
+        tmp_path, process_start_probe=lambda _pid: None
+    )
+
+    assert recovered["state"] == state
+    assert ledger.read_bytes() == before
+    assert not any(
+        (tmp_path / name).exists()
+        for name in (".campaign-lock", ".campaign-recovery", ".campaign-release")
+    )
+
+
+@pytest.mark.parametrize("state", ("complete_pending_review", "changes_required"))
+@pytest.mark.parametrize("marker", (".campaign-lock", ".campaign-recovery"))
+def test_campaign_recovery_refuses_live_maintenance_owner(
+    tmp_path: Path, state: str, marker: str
+) -> None:
+    attempt = _acquire_attempt(tmp_path)
+    ledger = tmp_path / "attempts.jsonl"
+    profile.complete_attempt_measurement(
+        ledger,
+        attempt.attempt_id,
+        verdict="pass",
+        raw_sha256="a" * 64,
+    )
+    profile.release_campaign_attempt(tmp_path, attempt)
+    if state == "changes_required":
+        profile.append_attempt_state(
+            ledger,
+            {
+                "attempt_id": attempt.attempt_id,
+                "state": "changes_required",
+                "verdict": "pass",
+                "raw_sha256": "a" * 64,
+                "reason_category": "receipt",
+            },
+        )
+    _acquire_lock(tmp_path)
+    if marker == ".campaign-recovery":
+        (tmp_path / ".campaign-lock").rename(tmp_path / marker)
+    before = ledger.read_bytes()
+
+    with pytest.raises(RuntimeError, match="^campaign_lock_owner_live$"):
+        profile.recover_interrupted_attempt(
+            tmp_path, process_start_probe=lambda _pid: _OWNER_START
+        )
+
+    assert ledger.read_bytes() == before
+    assert (tmp_path / marker).is_dir()
+
+
+@pytest.mark.parametrize("state", ("complete_pending_review", "changes_required"))
+@pytest.mark.parametrize("marker", (".campaign-recovery", ".campaign-release"))
+def test_campaign_recovery_finishes_empty_maintenance_checkpoint_without_probe(
+    tmp_path: Path, state: str, marker: str
+) -> None:
+    attempt = _acquire_attempt(tmp_path)
+    ledger = tmp_path / "attempts.jsonl"
+    profile.complete_attempt_measurement(
+        ledger,
+        attempt.attempt_id,
+        verdict="pass",
+        raw_sha256="a" * 64,
+    )
+    if state == "changes_required":
+        profile.append_attempt_state(
+            ledger,
+            {
+                "attempt_id": attempt.attempt_id,
+                "state": "changes_required",
+                "verdict": "pass",
+                "raw_sha256": "a" * 64,
+                "reason_category": "receipt",
+            },
+        )
+    (tmp_path / ".campaign-lock").rename(tmp_path / marker)
+    (tmp_path / marker / "owner.json").unlink()
+    before = ledger.read_bytes()
+
+    recovered = profile.recover_interrupted_attempt(
+        tmp_path,
+        process_start_probe=lambda _pid: pytest.fail("empty checkpoint was probed"),
+    )
+
+    assert recovered["state"] == state
+    assert ledger.read_bytes() == before
+    assert not (tmp_path / marker).exists()
+
+
+def test_campaign_recovery_rejects_conflicting_maintenance_markers(
+    tmp_path: Path,
+) -> None:
+    attempt = _acquire_attempt(tmp_path)
+    ledger = tmp_path / "attempts.jsonl"
+    profile.complete_attempt_measurement(
+        ledger,
+        attempt.attempt_id,
+        verdict="pass",
+        raw_sha256="a" * 64,
+    )
+    profile.release_campaign_attempt(tmp_path, attempt)
+    _acquire_lock(tmp_path)
+    _write_campaign_owner(
+        tmp_path / ".campaign-recovery",
+        profile.CampaignLockOwner(456, "c" * 64, "d" * 64),
+    )
+    before = ledger.read_bytes()
+
+    with pytest.raises(RuntimeError, match="^campaign_recovery_owner_conflict$"):
+        profile.recover_interrupted_attempt(
+            tmp_path,
+            process_start_probe=lambda _pid: pytest.fail("conflict was probed"),
+        )
+
+    assert ledger.read_bytes() == before
+    assert (tmp_path / ".campaign-lock").is_dir()
+    assert (tmp_path / ".campaign-recovery").is_dir()
+
+
 @pytest.mark.parametrize("verdict", ("pass", "smoke"))
 def test_campaign_recover_is_idempotent_after_pending_attempt_release(
     tmp_path: Path, verdict: str
@@ -2562,7 +2713,7 @@ def test_campaign_acquisition_cannot_slip_through_recovery_takeover(
 
 
 @pytest.mark.parametrize("state", ("complete_pending_review", "changes_required"))
-def test_campaign_recovery_obeys_current_ledger_blocking_state(
+def test_campaign_recovery_releases_dead_owner_after_review_terminal_state(
     tmp_path: Path, state: str
 ) -> None:
     _acquire_attempt(tmp_path)
@@ -2584,15 +2735,14 @@ def test_campaign_recovery_obeys_current_ledger_blocking_state(
             ),
         )
 
-    with pytest.raises(
-        RuntimeError, match=f"campaign_recovery_state_blocked:{state}"
-    ):
-        profile.recover_interrupted_attempt(
-            tmp_path, process_start_probe=lambda _pid: None
-        )
+    before = (tmp_path / "attempts.jsonl").read_bytes()
+    recovered = profile.recover_interrupted_attempt(
+        tmp_path, process_start_probe=lambda _pid: None
+    )
 
-    assert (tmp_path / ".campaign-lock").is_dir()
-    assert profile.attempt_lineage(tmp_path / "attempts.jsonl")[-1]["state"] == state
+    assert recovered["state"] == state
+    assert (tmp_path / "attempts.jsonl").read_bytes() == before
+    assert not (tmp_path / ".campaign-lock").exists()
 
 
 @pytest.mark.parametrize("owner_payload", (None, b"not-json\n", b"{}\n"))
@@ -4391,6 +4541,122 @@ def test_changes_required_preserves_raw_and_blocks_reacquisition(
         profile.require_campaign_acquisition(campaign / "attempts.jsonl")
 
 
+@pytest.mark.parametrize("append_committed", (False, True))
+def test_registered_changes_receipt_reconciles_append_failure_without_duplicate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    append_committed: bool,
+) -> None:
+    campaign, attempt, digest, _raw_sha256 = _prepare_review_attempt(tmp_path)
+    receipt = _write_review_receipt(attempt, digest, decision="changes_required")
+    real_append = profile.append_attempt_state
+
+    def fail_changes_append(ledger: Path, event: dict[str, object]) -> None:
+        if event["state"] == "changes_required":
+            if append_committed:
+                real_append(ledger, event)
+            raise OSError("injected changes append failure")
+        real_append(ledger, event)
+
+    monkeypatch.setattr(profile, "append_attempt_state", fail_changes_append)
+    with pytest.raises(OSError, match="injected changes append failure"):
+        profile.register_review_receipt(campaign, "attempt-0001", receipt)
+
+    assert (attempt / "reviews" / ".registered").is_dir()
+    monkeypatch.setattr(profile, "append_attempt_state", real_append)
+    assert profile.register_review_receipt(
+        campaign, "attempt-0001", receipt
+    )["decision"] == "changes_required"
+    assert [
+        event["state"] for event in profile.attempt_lineage(campaign / "attempts.jsonl")
+    ] == ["running", "complete_pending_review", "changes_required"]
+
+
+def test_registered_rejection_blocks_unchanged_approval_and_promotion_after_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    campaign, attempt, digest, _raw_sha256 = _prepare_review_attempt(tmp_path)
+    rejected = _write_review_receipt(
+        attempt, digest, decision="changes_required", filename="review-001.json"
+    )
+    real_append = profile.append_attempt_state
+
+    def fail_changes_append(ledger: Path, event: dict[str, object]) -> None:
+        if event["state"] == "changes_required":
+            raise OSError("injected changes append failure")
+        real_append(ledger, event)
+
+    monkeypatch.setattr(profile, "append_attempt_state", fail_changes_append)
+    with pytest.raises(OSError, match="injected changes append failure"):
+        profile.register_review_receipt(campaign, "attempt-0001", rejected)
+    monkeypatch.setattr(profile, "append_attempt_state", real_append)
+
+    unchanged = _write_review_receipt(attempt, digest, filename="review-002.json")
+    with pytest.raises(RuntimeError, match="^review_artifact_digest_not_changed$"):
+        profile.register_review_receipt(campaign, "attempt-0001", unchanged)
+    with pytest.raises(RuntimeError, match="^review_artifact_digest_not_changed$"):
+        profile.promote_reviewed_artifacts(
+            campaign, "attempt-0001", unchanged, tmp_path / "published"
+        )
+
+    assert not (tmp_path / "published").exists()
+    assert [
+        event["state"] for event in profile.attempt_lineage(campaign / "attempts.jsonl")
+    ] == ["running", "complete_pending_review", "changes_required"]
+
+    (attempt / "README.md").write_text("# Corrected after crash\n", encoding="utf-8")
+    corrected_digest = profile.canonical_artifact_digest(attempt)
+    corrected = _write_review_receipt(
+        attempt, corrected_digest, filename="review-003.json"
+    )
+    corrected_destination = tmp_path / "published-corrected"
+    profile.promote_reviewed_artifacts(
+        campaign, "attempt-0001", corrected, corrected_destination
+    )
+
+    assert corrected_destination.is_dir()
+    assert [
+        event["state"] for event in profile.attempt_lineage(campaign / "attempts.jsonl")
+    ] == [
+        "running",
+        "complete_pending_review",
+        "changes_required",
+        "complete_pending_review",
+    ]
+
+
+def test_dead_maintenance_lock_after_changes_append_recovers_without_ledger_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    campaign, attempt, digest, _raw_sha256 = _prepare_review_attempt(tmp_path)
+    receipt = _write_review_receipt(attempt, digest, decision="changes_required")
+    real_release = profile.release_campaign_lock
+
+    monkeypatch.setattr(
+        profile,
+        "release_campaign_lock",
+        lambda _root, _owner: (_ for _ in ()).throw(
+            OSError("injected maintenance release crash")
+        ),
+    )
+    with pytest.raises(OSError, match="injected maintenance release crash"):
+        profile.register_review_receipt(campaign, "attempt-0001", receipt)
+    before = (campaign / "attempts.jsonl").read_bytes()
+    assert profile.attempt_lineage(campaign / "attempts.jsonl")[-1]["state"] == (
+        "changes_required"
+    )
+    assert (campaign / ".campaign-lock").is_dir()
+
+    monkeypatch.setattr(profile, "release_campaign_lock", real_release)
+    recovered = profile.recover_interrupted_attempt(
+        campaign, process_start_probe=lambda _pid: None
+    )
+
+    assert recovered["state"] == "changes_required"
+    assert (campaign / "attempts.jsonl").read_bytes() == before
+    assert not (campaign / ".campaign-lock").exists()
+
+
 def test_corrected_derived_artifacts_require_new_digest_and_receipt(
     tmp_path: Path,
 ) -> None:
@@ -4536,8 +4802,9 @@ def test_concurrent_changes_required_registration_has_one_stable_loser(
         finish.set()
         assert winner.result(timeout=5)["decision"] == "changes_required"
 
-    with pytest.raises(RuntimeError, match="^review_receipt_already_registered$"):
-        profile.register_review_receipt(campaign, "attempt-0001", receipt)
+    assert profile.register_review_receipt(
+        campaign, "attempt-0001", receipt
+    )["decision"] == "changes_required"
     assert [
         event["state"] for event in profile.attempt_lineage(campaign / "attempts.jsonl")
     ] == ["running", "complete_pending_review", "changes_required"]

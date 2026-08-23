@@ -460,7 +460,10 @@ def _registered_review_receipts(
             raise RuntimeError("review_receipt_registry_invalid")
         if _sha256_review_file(receipt_path) != digest:
             raise RuntimeError("review_receipt_changed")
-        records.append((name, digest, _read_review_receipt(receipt_path)))
+        receipt = _read_review_receipt(receipt_path)
+        if receipt["attempt_id"] != attempt_root.name:
+            raise RuntimeError("review_receipt_registry_invalid")
+        records.append((name, digest, receipt))
     return tuple(records)
 
 
@@ -519,8 +522,11 @@ def _register_review_receipt_locked(
         (receipt_path.name, receipt_sha256),
     ):
         raise RuntimeError("review_attempt_already_approved")
-    if current_identity_registered and receipt["decision"] == "changes_required":
-        raise RuntimeError("review_receipt_already_registered")
+    rejected_digests = {
+        registered["artifact_set_sha256"]
+        for _name, _identity, registered in registered_receipts
+        if registered["decision"] == "changes_required"
+    }
     hashes = canonical_artifact_hashes(attempt_root)
     digest = hashlib.sha256(
         json.dumps(hashes, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -535,6 +541,11 @@ def _register_review_receipt_locked(
     current = lineage[-1]
     if current["verdict"] not in _MEASURED_VERDICTS:
         raise RuntimeError("review_attempt_verdict_invalid")
+    if any(
+        registered["verdict"] != current["verdict"]
+        for _name, _identity, registered in registered_receipts
+    ):
+        raise RuntimeError("review_receipt_registry_invalid")
     if (
         receipt["attempt_id"] != attempt_id
         or receipt["artifact_set_sha256"] != digest
@@ -542,18 +553,26 @@ def _register_review_receipt_locked(
         or hashes["real-provider-three-turn.raw.jsonl"] != current["raw_sha256"]
     ):
         raise RuntimeError("review_receipt_binding_mismatch")
-    if current["state"] == "changes_required":
-        reviews_root = attempt_root / "reviews"
-        rejected_digests = {
-            prior["artifact_set_sha256"]
-            for path in reviews_root.iterdir()
-            if path != receipt_path
-            and path.is_file()
-            and not path.is_symlink()
-            and (prior := _read_review_receipt(path))["decision"] == "changes_required"
-        }
-        if digest in rejected_digests:
-            raise RuntimeError("review_artifact_digest_not_changed")
+    changes_event = {
+        "attempt_id": attempt_id,
+        "state": "changes_required",
+        "verdict": current["verdict"],
+        "raw_sha256": current["raw_sha256"],
+        "reason_category": "receipt",
+    }
+    if current_identity_registered and receipt["decision"] == "changes_required":
+        if current["state"] == "complete_pending_review":
+            append_attempt_state(campaign_root / "attempts.jsonl", changes_event)
+        return receipt
+    if (
+        rejected_digests
+        and current["state"] == "complete_pending_review"
+        and not approved_receipts
+    ):
+        append_attempt_state(campaign_root / "attempts.jsonl", changes_event)
+        current = changes_event
+    if digest in rejected_digests:
+        raise RuntimeError("review_artifact_digest_not_changed")
     _register_receipt_identity(attempt_root, receipt_path)
     if current["state"] == "changes_required":
         complete_attempt_measurement(
@@ -563,16 +582,7 @@ def _register_review_receipt_locked(
             raw_sha256=current["raw_sha256"],
         )
     if receipt["decision"] == "changes_required":
-        append_attempt_state(
-            campaign_root / "attempts.jsonl",
-            {
-                "attempt_id": attempt_id,
-                "state": "changes_required",
-                "verdict": receipt["verdict"],
-                "raw_sha256": hashes["real-provider-three-turn.raw.jsonl"],
-                "reason_category": "receipt",
-            },
-        )
+        append_attempt_state(campaign_root / "attempts.jsonl", changes_event)
     return receipt
 
 
@@ -3064,6 +3074,50 @@ def recover_interrupted_attempt(
         if marker_error is not None:
             raise RuntimeError(marker_error)
         return pinned_event
+    if (
+        latest is not None
+        and latest["state"] in {"complete_pending_review", "changes_required"}
+        and orphan_id is None
+    ):
+        rollback_root = campaign_root / ".campaign-rollback"
+        markers = [
+            marker
+            for marker in (lock_root, recovery_root, release_root, rollback_root)
+            if marker.exists() or marker.is_symlink()
+        ]
+        if markers:
+            if len(markers) != 1 or markers[0] == rollback_root:
+                raise RuntimeError("campaign_recovery_owner_conflict")
+            marker = markers[0]
+            if marker in {recovery_root, release_root} and (
+                _is_empty_private_directory(marker)
+            ):
+                _rmdir_namespace(marker)
+                return latest
+            if marker == release_root:
+                release_owner = _read_lock_owner(release_root)
+                _delete_exact_lock_root(release_root, release_owner)
+                return latest
+            owner = _read_lock_owner(marker)
+            observed_start = _probe_process_start_identity(
+                process_start_probe, owner.pid, allow_dead=True
+            )
+            if observed_start == owner.process_start_sha256:
+                raise RuntimeError("campaign_lock_owner_live")
+            if marker == lock_root:
+                try:
+                    _rename_namespace(lock_root, recovery_root)
+                except OSError as exc:
+                    raise RuntimeError("campaign_recovery_lost") from exc
+                recovered_owner = _read_lock_owner(recovery_root)
+                if recovered_owner != owner:
+                    _preserve_recovery_rollback(
+                        campaign_root, recovery_root, recovered_owner
+                    )
+                    raise RuntimeError("campaign_lock_owner_mismatch")
+                marker = recovery_root
+            _delete_exact_lock_root(marker, owner)
+            return latest
     if (recovery_root.exists() or recovery_root.is_symlink()) and (
         lock_root.exists() or lock_root.is_symlink()
     ):
