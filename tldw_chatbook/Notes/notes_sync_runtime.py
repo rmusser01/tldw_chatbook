@@ -69,6 +69,7 @@ from tldw_chatbook.Notes.notes_sync_reconciler import (
     ReconciliationAttentionKind,
     ReconciliationInput,
     ReconciliationPlan,
+    _observation_token,
     assert_review_current,
     plan_reconciliation,
 )
@@ -1226,6 +1227,7 @@ class NotesSyncRuntimeOwner:
 
         task = self._admit_task(root_id)
         plan: ReconciliationPlan | None = None
+        observed_token: str | None = None
         try:
             reviewed = self._reviews.get(root_id)
             if reviewed is None or reviewed.observation_token != observation_token:
@@ -1237,6 +1239,7 @@ class NotesSyncRuntimeOwner:
                 raise RuntimeError("sync_root_not_active")
             self._require_authority(root_id, "plan")
             observations = await self._adapter.observe_root(root)
+            observed_token = _observation_token(observations)
             plan = plan_reconciliation(observations)
             self._require_authority(root_id, "plan")
             if observations.root_id != root_id or plan.root_id != root_id:
@@ -1266,10 +1269,10 @@ class NotesSyncRuntimeOwner:
                 binding_id,
             )
         finally:
-            if plan is not None:
+            if observed_token is not None:
                 release = getattr(self._adapter, "release_observation", None)
                 if callable(release):
-                    release(plan.observation_token)
+                    release(observed_token)
             self._finish_task(root_id, task)
 
     async def apply_reviewed(

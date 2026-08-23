@@ -242,7 +242,11 @@ class NotesScopeSyncAuthority:
             or type(version) is not int
         ):
             raise NotesSyncAuthorityError("note_observation_invalid")
-        updated_at = record.get("updated_at")
+        updated_at = (
+            record.get("updated_at")
+            if "updated_at" in record
+            else record.get("last_modified")
+        )
         if updated_at is not None and type(updated_at) is not str:
             raise NotesSyncAuthorityError("note_observation_invalid")
         return NotesSyncNoteSnapshot(

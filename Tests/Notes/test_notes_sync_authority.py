@@ -210,6 +210,39 @@ async def test_private_note_authority_observes_and_replaces_through_scope_servic
 
 
 @pytest.mark.asyncio
+async def test_private_note_authority_maps_production_last_modified_to_updated_at() -> (
+    None
+):
+    local = RecordingLocalNotes()
+    local.record.pop("updated_at")
+    local.record["last_modified"] = "2026-08-22T13:45:00+00:00"
+    authority = NotesScopeSyncAuthority(
+        NotesScopeService(local, NoCallServer()),
+        scope=ScopeType.LOCAL_NOTE,
+        user_id="user-1",
+    )
+
+    observed = await authority.observe("note-1")
+
+    assert observed.updated_at == "2026-08-22T13:45:00+00:00"
+
+
+@pytest.mark.asyncio
+async def test_private_note_authority_prefers_updated_at_over_last_modified() -> None:
+    local = RecordingLocalNotes()
+    local.record["last_modified"] = "2026-08-22T13:45:00+00:00"
+    authority = NotesScopeSyncAuthority(
+        NotesScopeService(local, NoCallServer()),
+        scope=ScopeType.LOCAL_NOTE,
+        user_id="user-1",
+    )
+
+    observed = await authority.observe("note-1")
+
+    assert observed.updated_at == "2026-08-22T12:30:00+00:00"
+
+
+@pytest.mark.asyncio
 async def test_private_note_authority_creates_caller_identified_note_through_service() -> (
     None
 ):

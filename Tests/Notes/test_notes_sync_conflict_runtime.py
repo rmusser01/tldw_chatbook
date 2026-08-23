@@ -42,6 +42,18 @@ pytestmark = pytest.mark.unit
 _A = "a" * 64
 _B = "b" * 64
 _C = "c" * 64
+_PHASE_TIMEOUT = 1.0
+
+
+async def _wait(event: asyncio.Event) -> None:
+    await asyncio.wait_for(event.wait(), _PHASE_TIMEOUT)
+
+
+async def _finish_tasks(*tasks: asyncio.Task[object]) -> tuple[object, ...]:
+    for task in tasks:
+        if not task.done():
+            task.cancel()
+    return tuple(await asyncio.gather(*tasks, return_exceptions=True))
 
 
 def _input(
@@ -255,14 +267,28 @@ async def test_two_reviewed_apply_paths_share_one_root_lock_and_reobserve() -> N
     owner._mutation_locks["root-1"] = lock
 
     first = asyncio.create_task(owner.apply_reviewed("root-1", token, (action_id,)))
-    await adapter.executor.entered.wait()
-    second = asyncio.create_task(owner.apply_reviewed("root-1", token, (action_id,)))
-    await lock.waiting.wait()
-
-    assert adapter.observe_calls == ["root-1"]
-    assert adapter.executor.mutations == 0
-    adapter.executor.release.set()
-    results = await asyncio.gather(first, second, return_exceptions=True)
+    second: asyncio.Task[object] | None = None
+    try:
+        await _wait(adapter.executor.entered)
+        second = asyncio.create_task(
+            owner.apply_reviewed("root-1", token, (action_id,))
+        )
+        await _wait(lock.waiting)
+        assert adapter.observe_calls == ["root-1"]
+        assert adapter.executor.mutations == 0
+        adapter.executor.release.set()
+        results = tuple(
+            await asyncio.wait_for(
+                asyncio.gather(first, second, return_exceptions=True),
+                _PHASE_TIMEOUT,
+            )
+        )
+    finally:
+        adapter.executor.release.set()
+        await _finish_tasks(
+            first,
+            *(() if second is None else (second,)),
+        )
 
     assert adapter.observe_calls == ["root-1", "root-1"]
     assert adapter.executor.mutations == 1
@@ -279,14 +305,28 @@ async def test_automatic_and_reviewed_apply_share_root_lock() -> None:
     owner._mutation_locks["root-1"] = lock
 
     automatic = asyncio.create_task(owner._reconcile(_root(), automatic=True))
-    await adapter.executor.entered.wait()
-    reviewed = asyncio.create_task(owner.apply_reviewed("root-1", token, (action_id,)))
-    await lock.waiting.wait()
-
-    assert adapter.observe_calls == ["root-1"]
-    assert adapter.executor.mutations == 0
-    adapter.executor.release.set()
-    results = await asyncio.gather(automatic, reviewed, return_exceptions=True)
+    reviewed: asyncio.Task[object] | None = None
+    try:
+        await _wait(adapter.executor.entered)
+        reviewed = asyncio.create_task(
+            owner.apply_reviewed("root-1", token, (action_id,))
+        )
+        await _wait(lock.waiting)
+        assert adapter.observe_calls == ["root-1"]
+        assert adapter.executor.mutations == 0
+        adapter.executor.release.set()
+        results = tuple(
+            await asyncio.wait_for(
+                asyncio.gather(automatic, reviewed, return_exceptions=True),
+                _PHASE_TIMEOUT,
+            )
+        )
+    finally:
+        adapter.executor.release.set()
+        await _finish_tasks(
+            automatic,
+            *(() if reviewed is None else (reviewed,)),
+        )
 
     assert adapter.observe_calls == ["root-1", "root-1"]
     assert adapter.executor.mutations == 1
@@ -311,14 +351,28 @@ async def test_startup_recovery_and_reviewed_apply_share_root_lock() -> None:
     recovery = asyncio.create_task(
         owner._resume_incomplete({"root-1": root}, (operation,))
     )
-    await adapter.executor.resume_entered.wait()
-    reviewed = asyncio.create_task(owner.apply_reviewed("root-1", token, (action_id,)))
-    await lock.waiting.wait()
-
-    assert adapter.observe_calls == []
-    assert adapter.executor.mutations == 0
-    adapter.executor.resume_release.set()
-    results = await asyncio.gather(recovery, reviewed, return_exceptions=True)
+    reviewed: asyncio.Task[object] | None = None
+    try:
+        await _wait(adapter.executor.resume_entered)
+        reviewed = asyncio.create_task(
+            owner.apply_reviewed("root-1", token, (action_id,))
+        )
+        await _wait(lock.waiting)
+        assert adapter.observe_calls == []
+        assert adapter.executor.mutations == 0
+        adapter.executor.resume_release.set()
+        results = tuple(
+            await asyncio.wait_for(
+                asyncio.gather(recovery, reviewed, return_exceptions=True),
+                _PHASE_TIMEOUT,
+            )
+        )
+    finally:
+        adapter.executor.resume_release.set()
+        await _finish_tasks(
+            recovery,
+            *(() if reviewed is None else (reviewed,)),
+        )
 
     assert adapter.observe_calls == ["root-1"]
     assert adapter.executor.mutations == 1
@@ -350,16 +404,26 @@ async def test_root_lock_waiter_retains_lock_across_registry_gc() -> None:
             waiter_entered.set()
 
     holding = asyncio.create_task(holder())
-    await holder_entered.wait()
-    waiting = asyncio.create_task(waiter())
-    await waiter_resolved.wait()
-    gc.collect()
-
-    identities.append(id(lock_factory("root-1")))
-    assert len(set(identities)) == 1
-    assert not waiter_entered.is_set()
-    holder_release.set()
-    await asyncio.gather(holding, waiting)
+    waiting: asyncio.Task[object] | None = None
+    try:
+        await _wait(holder_entered)
+        waiting = asyncio.create_task(waiter())
+        await _wait(waiter_resolved)
+        gc.collect()
+        identities.append(id(lock_factory("root-1")))
+        assert len(set(identities)) == 1
+        assert not waiter_entered.is_set()
+        holder_release.set()
+        await asyncio.wait_for(
+            asyncio.gather(holding, waiting),
+            _PHASE_TIMEOUT,
+        )
+    finally:
+        holder_release.set()
+        await _finish_tasks(
+            holding,
+            *(() if waiting is None else (waiting,)),
+        )
 
 
 @pytest.mark.asyncio
@@ -376,8 +440,10 @@ async def test_different_root_locks_proceed_independently() -> None:
                 second_entered.set()
 
         second = asyncio.create_task(enter_second())
-        await second_entered.wait()
-    await second
+        try:
+            await _wait(second_entered)
+        finally:
+            await _finish_tasks(second)
 
 
 @pytest.mark.asyncio
@@ -559,6 +625,30 @@ async def test_comparison_releases_bundle_on_stale_post_observation_authority() 
 
 
 @pytest.mark.asyncio
+async def test_comparison_releases_observation_when_planner_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tldw_chatbook.Notes.notes_sync_runtime as runtime_module
+
+    observed = _input(file_digest=_B, note_digest=_C)
+    token = plan_reconciliation(observed).observation_token
+    adapter = _Adapter(observed)
+    owner = _owner(adapter, _root())
+    _install_review(owner, observed)
+    monkeypatch.setattr(
+        runtime_module,
+        "plan_reconciliation",
+        lambda _value: (_ for _ in ()).throw(RuntimeError("planner_failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="planner_failed"):
+        await owner.compare_conflict("root-1", token, "binding-1")
+
+    assert adapter.released == [token]
+    assert adapter.live_bundles == set()
+
+
+@pytest.mark.asyncio
 async def test_comparison_releases_bundle_when_cancelled() -> None:
     observed = _input(file_digest=_B, note_digest=_C)
     adapter = _Adapter(observed)
@@ -566,11 +656,15 @@ async def test_comparison_releases_bundle_when_cancelled() -> None:
     owner = _owner(adapter, _root())
     token = _install_review(owner, observed)
     task = asyncio.create_task(owner.compare_conflict("root-1", token, "binding-1"))
-    await adapter.comparison_started.wait()
-
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
+    try:
+        await _wait(adapter.comparison_started)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, _PHASE_TIMEOUT)
+    finally:
+        if adapter.comparison_release is not None:
+            adapter.comparison_release.set()
+        await _finish_tasks(task)
 
     assert adapter.released == [token]
     assert adapter.live_bundles == set()
@@ -626,10 +720,25 @@ async def test_comparison_requires_final_token_even_if_plan_claims_equality(
 
     async def observe_with_stale_bundle(_root: object) -> ReconciliationInput:
         adapter.observe_calls.append("root-1")
-        adapter.live_bundles.add(stale_token)
+        adapter.live_bundles.add(reviewed.observation_token)
         return observed
 
+    async def build_equal_plan_comparison(
+        _root: object, _plan: object, binding_id: str
+    ) -> ConflictComparison:
+        return build_conflict_comparison(
+            binding_id=binding_id,
+            title="Private title",
+            relative_path="note.md",
+            note_text="note side\n",
+            file_text="file side\n",
+            note_version=1,
+            note_updated_at=None,
+            file_modified_ns=7,
+        )
+
     adapter.observe_root = observe_with_stale_bundle
+    adapter.build_conflict_comparison = build_equal_plan_comparison
     monkeypatch.setattr(
         runtime_module, "plan_reconciliation", lambda _value: _EqualPlan()
     )
