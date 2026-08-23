@@ -24,7 +24,7 @@
 - Cleanup is ordinary best-effort deletion, not secure erase; no cumulative per-chat disk quota is added in this task.
 - Targeted tests only; do not run the full repository suite without explicit user approval.
 - ADR required: yes.
-- ADR path: `backlog/decisions/081-console-per-chat-private-scratch-space.md`.
+- ADR path: `backlog/decisions/082-console-per-chat-private-scratch-space.md`.
 - Reason: filesystem authority, temporary-data ownership, provider composition, and cross-thread teardown are security and runtime-boundary decisions.
 
 ---
@@ -866,7 +866,7 @@ Compute the original config's SHA-256 again and require an exact match. Delete t
 
 - [ ] **Step 8: Complete Backlog task hygiene only after every gate passes**
 
-Check all nine acceptance criteria, add concise `## Implementation Notes`, include the ADR-081 link and exact verification evidence, then run:
+Check all nine acceptance criteria, add concise `## Implementation Notes`, include the ADR-082 link and exact verification evidence, then run:
 
 ```bash
 backlog task edit 21161 -s Done

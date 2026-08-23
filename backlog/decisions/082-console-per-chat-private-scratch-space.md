@@ -1,4 +1,4 @@
-# ADR-081: Give every Console chat private temporary scratch space
+# ADR-082: Give every Console chat private temporary scratch space
 
 Status: Accepted
 Date: 2026-08-23

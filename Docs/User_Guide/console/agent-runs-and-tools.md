@@ -1749,7 +1749,7 @@ brief described the live workspace root as driven by `[console]
 workspace_root`; that config key is not Console authority. The mounted
 Console derives external roots from the conversation's explicit Workspace
 folder bindings (`Tools/workspace_file_roots.py`'s `folder_binding_roots`),
-and ADR-081 later removed the compatibility controller's config/cwd fallback
+and ADR-082 later removed the compatibility controller's config/cwd fallback
 as well: every Console Chat now starts from private scratch. This page
 describes that current authority source; see
 [Sessions, tabs & workspaces](sessions-tabs-workspaces.md) for where folders

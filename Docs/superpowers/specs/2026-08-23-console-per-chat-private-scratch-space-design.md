@@ -3,7 +3,7 @@
 Date: 2026-08-23
 Status: Approved
 Task: TASK-21161
-ADR: ADR-081
+ADR: ADR-082
 Baseline: `origin/dev` at `7363592020076c9508fe4a0eee0c1a1679ec7851`
 
 ## Summary
@@ -329,7 +329,7 @@ and AGENTS.md's Console tool-authority summary. Explicitly state that
 
 ADR required: yes
 
-ADR path: `backlog/decisions/081-console-per-chat-private-scratch-space.md`
+ADR path: `backlog/decisions/082-console-per-chat-private-scratch-space.md`
 
 Reason: the change establishes filesystem authority, temporary-data ownership,
 provider composition, and teardown behavior across Console, Workspaces, tools,

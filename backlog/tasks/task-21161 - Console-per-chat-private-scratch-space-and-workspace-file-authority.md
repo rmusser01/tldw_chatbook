@@ -93,7 +93,7 @@ Detailed red-green steps, exact files, interfaces, commands, and commit points:
 
 ADR required: yes
 
-ADR path: `backlog/decisions/081-console-per-chat-private-scratch-space.md`
+ADR path: `backlog/decisions/082-console-per-chat-private-scratch-space.md`
 
 Reason: the plan implements the accepted filesystem-authority, temporary-data
 ownership, provider-boundary, and cross-thread teardown decision.
@@ -129,20 +129,29 @@ ownership, provider-boundary, and cross-thread teardown decision.
   Provider-boundary redaction now emits relative scratch-owned paths without
   changing explicit Workspace-path behavior; success, error, and real run-log
   regressions cover the fix.
+- Qodo review found three medium issues. Cleanup warnings no longer log opaque
+  scratch capability tokens; scratch-lease failures now use a distinct,
+  honestly classified authority-unavailable refusal; and every cited public
+  API plus the adjacent scratch lifecycle APIs now has complete Google-style
+  sections. Red-to-green regressions cover both behavioral fixes.
 - A broad UI diagnostic found ten Workspace-create Pilot failures. Untouched
   latest `dev` reproduced all ten because the bare harness omitted the modal's
   production CSS. Loading `WorkspaceCreateModal.BUNDLED_CSS` restored real
   geometry and made the complete modal module pass 23 / 23; the incident is
   recorded in `backlog/docs/lessons-testing-evidence.md`.
-- Final post-rebase verification: 388 targeted authority/lifecycle/provider/
-  artifact tests passed; 56 focused mounted Console/Workspace UI tests passed;
-  Ruff and Python compilation passed for every changed Python file;
-  `git diff --check` and the diff secret-pattern scan were clean. A full
-  repository sweep was not run, per repository policy.
+- Final post-review verification on latest `dev`: 398 targeted authority/
+  lifecycle/provider/artifact tests passed; 137 activity-presentation tests
+  passed; 56 focused mounted Console/Workspace UI tests passed; the backlog
+  filename/frontmatter guard and its 3 tests passed. Ruff and Python
+  compilation passed for every changed Python file; `git diff --check` and the
+  diff secret-pattern scan were clean. A full repository sweep was not run,
+  per repository policy.
 - ADR: implemented and linked
-  `backlog/decisions/081-console-per-chat-private-scratch-space.md`; no further
-  ADR was needed for the review fixes because they directly enforce ADR-081's
-  existing non-persistence boundary. No dependencies, schema, license, or
+  `backlog/decisions/082-console-per-chat-private-scratch-space.md`; no further
+  ADR was needed for the review fixes because they directly enforce ADR-082's
+  existing non-persistence boundary. The record was renumbered from provisional
+  ADR-081 after latest `dev` accepted the MCP prompt-reduction ADR under that
+  number; no open PR claims ADR-082. No dependencies, schema, license, or
   external service contracts changed.
 - Latest `dev` introduced a duplicate `TASK-21161` after this task's earlier
   add commit. Following the repository's older-arrival rule, the later
@@ -153,7 +162,7 @@ ownership, provider-boundary, and cross-thread teardown decision.
 ## Design Records
 
 - ADR required: yes
-- ADR path: `backlog/decisions/081-console-per-chat-private-scratch-space.md`
+- ADR path: `backlog/decisions/082-console-per-chat-private-scratch-space.md`
 - Reason: this task changes filesystem authority, temporary-data ownership,
   cross-thread teardown behavior, and long-lived Console/Workspace semantics.
 - Design spec:
