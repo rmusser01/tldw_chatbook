@@ -119,3 +119,52 @@ database was used.
   intact.
 - No generalizable new incident beyond the existing testing/backlog lessons arose,
   so no lessons document was changed.
+
+## Fix round 1
+
+Independent review found five accepted gaps in the original Task 9 delivery. The
+fix moves destination observation from gateway readiness to the shared real-send
+boundary, binds the live record to the frozen `attempt_id` and actual assistant
+row, and makes every terminal settlement compare the session, attempt, and
+message owner. Store completion clears the matching record before publication;
+the stream wrapper provides idempotent exact-owner cleanup for refusal,
+cancellation, session close, and the missing-placeholder complete-append
+fallback without clearing a newer attempt.
+
+Endpoint parsing now rejects all Unicode `Cc`/`Cf` controls, including DEL, C1,
+zero-width and bidi isolates, before any identity is constructed. `unix` and
+`http+unix` endpoints are on-device only with a concrete valid absolute/encoded
+socket target; empty, malformed, and credential-like targets fail closed to the
+bounded unknown identity. IPv4-mapped IPv6 classification follows the mapped
+IPv4 address while retaining the sanitized stable IPv6 origin identity.
+
+### Fix-round RED and verification
+
+- Reviewer reproduction RED: **22 failed, 27 passed, 495 deselected** across all
+  five findings. The expanded exact-owner/terminal matrix was **37 failed, 27
+  passed, 489 deselected**, with one inherited dependency warning.
+- First GREEN and final focused rerun: **64 passed, 489 deselected**, one inherited
+  warning.
+- Full affected-file compatibility: **553 passed**, one inherited warning.
+- Destination plus full gateway: **318 passed, 2 deselected**, one inherited
+  warning; the two excluded tests reproduce the documented sandbox
+  `PermissionError` on localhost `socket.bind`.
+- Task 8 context/UI/checkpoint compatibility: **94 passed**, one inherited warning.
+- Agent bridge compatibility: **247 passed**, one inherited warning.
+- Scoped Ruff and `git diff --check`: passed. No full suite, push, live profile,
+  or user database was used.
+
+Mutation probes were restored after each run: removing real dispatch observation
+failed **4/4** manual/queued cases; weakening message ownership failed **2/2**
+older-owner cases; restoring ASCII-only control checks failed **5/5** control
+cases; trusting local schemes without targets failed **4/8** local cases; and
+skipping mapped-address classification failed the private mapped-IPv6 control
+(**1 failed, 2 passed**). Negative coverage also proves first-external baseline,
+policy-both-off behavior, provider/API-key independence, bounded credential-free
+identity, replacement safety, session isolation/navigation, subscriber order,
+and direct/agent success/failure/stop/cancel/fallback settlement.
+
+The file list did not expand beyond the original Task 9 implementation report.
+There is no contract deviation, durable policy mutation, persistence/sync change,
+or Task 10 provider gating. `TASK-19900.2` remains In Progress with acceptance
+criteria unchecked.

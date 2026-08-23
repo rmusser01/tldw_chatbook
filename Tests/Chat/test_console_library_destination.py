@@ -38,32 +38,156 @@ def _resolution(
 @pytest.mark.parametrize(
     ("endpoint", "expected_class", "expected_identity"),
     [
-        ("http://localhost:9099/v1", ConsoleEgressClass.ON_DEVICE, "http://localhost:9099"),
+        (
+            "http://localhost:9099/v1",
+            ConsoleEgressClass.ON_DEVICE,
+            "http://localhost:9099",
+        ),
         ("http://localhost:80/v1", ConsoleEgressClass.ON_DEVICE, "http://localhost"),
-        ("http://127.42.7.9:8080", ConsoleEgressClass.ON_DEVICE, "http://127.42.7.9:8080"),
+        (
+            "http://127.42.7.9:8080",
+            ConsoleEgressClass.ON_DEVICE,
+            "http://127.42.7.9:8080",
+        ),
         ("http://[::1]:8080/v1", ConsoleEgressClass.ON_DEVICE, "http://[::1]:8080"),
-        ("unix:///private/tmp/model.sock", ConsoleEgressClass.ON_DEVICE, "unix://local"),
-        ("http+unix://%2Ftmp%2Fmodel.sock/v1", ConsoleEgressClass.ON_DEVICE, "http+unix://local"),
-        ("http://10.20.30.40:8000/v1", ConsoleEgressClass.PRIVATE_NETWORK, "http://10.20.30.40:8000"),
+        (
+            "unix:///private/tmp/model.sock",
+            ConsoleEgressClass.ON_DEVICE,
+            "unix://local",
+        ),
+        (
+            "http+unix://%2Ftmp%2Fmodel.sock/v1",
+            ConsoleEgressClass.ON_DEVICE,
+            "http+unix://local",
+        ),
+        ("unix://", ConsoleEgressClass.UNKNOWN, "external/unknown"),
+        ("http+unix://", ConsoleEgressClass.UNKNOWN, "external/unknown"),
+        ("unix://user:secret@", ConsoleEgressClass.UNKNOWN, "external/unknown"),
+        ("http+unix://user:secret@/v1", ConsoleEgressClass.UNKNOWN, "external/unknown"),
+        (
+            "http://10.20.30.40:8000/v1",
+            ConsoleEgressClass.PRIVATE_NETWORK,
+            "http://10.20.30.40:8000",
+        ),
         ("http://172.16.0.1", ConsoleEgressClass.PRIVATE_NETWORK, "http://172.16.0.1"),
-        ("http://192.168.4.5", ConsoleEgressClass.PRIVATE_NETWORK, "http://192.168.4.5"),
-        ("http://169.254.2.3", ConsoleEgressClass.PRIVATE_NETWORK, "http://169.254.2.3"),
-        ("http://[fe80::1%25en0]:8080/v1", ConsoleEgressClass.PRIVATE_NETWORK, "http://[fe80::1%25en0]:8080"),
-        ("http://[fd12:3456::9]:8080", ConsoleEgressClass.PRIVATE_NETWORK, "http://[fd12:3456::9]:8080"),
-        ("https://8.8.8.8:443/private?q=secret#fragment", ConsoleEgressClass.PUBLIC_NETWORK, "https://8.8.8.8"),
-        ("https://[2606:4700:4700::1111]:443/v1", ConsoleEgressClass.PUBLIC_NETWORK, "https://[2606:4700:4700::1111]"),
-        ("https://api.openai.com/v1", ConsoleEgressClass.PUBLIC_NETWORK, "https://api.openai.com"),
-        ("https://openrouter.ai/api/v1", ConsoleEgressClass.PUBLIC_NETWORK, "https://openrouter.ai"),
-        ("https://models.example.test/v1", ConsoleEgressClass.UNKNOWN, "https://models.example.test"),
+        (
+            "http://192.168.4.5",
+            ConsoleEgressClass.PRIVATE_NETWORK,
+            "http://192.168.4.5",
+        ),
+        (
+            "http://169.254.2.3",
+            ConsoleEgressClass.PRIVATE_NETWORK,
+            "http://169.254.2.3",
+        ),
+        (
+            "http://[fe80::1%25en0]:8080/v1",
+            ConsoleEgressClass.PRIVATE_NETWORK,
+            "http://[fe80::1%25en0]:8080",
+        ),
+        (
+            "http://[fd12:3456::9]:8080",
+            ConsoleEgressClass.PRIVATE_NETWORK,
+            "http://[fd12:3456::9]:8080",
+        ),
+        (
+            "http://[::ffff:127.0.0.1]",
+            ConsoleEgressClass.ON_DEVICE,
+            "http://[::ffff:127.0.0.1]",
+        ),
+        (
+            "http://[::ffff:10.0.0.1]",
+            ConsoleEgressClass.PRIVATE_NETWORK,
+            "http://[::ffff:10.0.0.1]",
+        ),
+        (
+            "https://[::ffff:8.8.8.8]",
+            ConsoleEgressClass.PUBLIC_NETWORK,
+            "https://[::ffff:8.8.8.8]",
+        ),
+        (
+            "https://8.8.8.8:443/private?q=secret#fragment",
+            ConsoleEgressClass.PUBLIC_NETWORK,
+            "https://8.8.8.8",
+        ),
+        (
+            "https://[2606:4700:4700::1111]:443/v1",
+            ConsoleEgressClass.PUBLIC_NETWORK,
+            "https://[2606:4700:4700::1111]",
+        ),
+        (
+            "https://api.openai.com/v1",
+            ConsoleEgressClass.PUBLIC_NETWORK,
+            "https://api.openai.com",
+        ),
+        (
+            "https://openrouter.ai/api/v1",
+            ConsoleEgressClass.PUBLIC_NETWORK,
+            "https://openrouter.ai",
+        ),
+        (
+            "https://models.example.test/v1",
+            ConsoleEgressClass.UNKNOWN,
+            "https://models.example.test",
+        ),
         ("", ConsoleEgressClass.UNKNOWN, "external/unknown"),
         ("http://[::1", ConsoleEgressClass.UNKNOWN, "external/unknown"),
-        ("https://example.test:99999/v1", ConsoleEgressClass.UNKNOWN, "external/unknown"),
+        (
+            "https://example.test:99999/v1",
+            ConsoleEgressClass.UNKNOWN,
+            "external/unknown",
+        ),
         ("https://user:secret@", ConsoleEgressClass.UNKNOWN, "external/unknown"),
-        ("https://user@@api.openai.com/v1", ConsoleEgressClass.UNKNOWN, "external/unknown"),
-        ("https://%ZZ:secret@api.openai.com/v1", ConsoleEgressClass.UNKNOWN, "external/unknown"),
-        ("https://example.test/v1\nsecret", ConsoleEgressClass.UNKNOWN, "external/unknown"),
-        ("https://" + ("a" * 3000) + ".test/v1", ConsoleEgressClass.UNKNOWN, "external/unknown"),
-        ("file:///private/secret/model.gguf", ConsoleEgressClass.UNKNOWN, "external/unknown"),
+        (
+            "https://user@@api.openai.com/v1",
+            ConsoleEgressClass.UNKNOWN,
+            "external/unknown",
+        ),
+        (
+            "https://%ZZ:secret@api.openai.com/v1",
+            ConsoleEgressClass.UNKNOWN,
+            "external/unknown",
+        ),
+        (
+            "https://api.open\u200bai.com/v1",
+            ConsoleEgressClass.UNKNOWN,
+            "external/unknown",
+        ),
+        (
+            "ht\u202etps://api.openai.com/v1",
+            ConsoleEgressClass.UNKNOWN,
+            "external/unknown",
+        ),
+        (
+            "https://user\u2066:secret@api.openai.com/v1",
+            ConsoleEgressClass.UNKNOWN,
+            "external/unknown",
+        ),
+        (
+            "https://api.openai.com\x7f/v1",
+            ConsoleEgressClass.UNKNOWN,
+            "external/unknown",
+        ),
+        (
+            "https://api.open\u009fai.com/v1",
+            ConsoleEgressClass.UNKNOWN,
+            "external/unknown",
+        ),
+        (
+            "https://example.test/v1\nsecret",
+            ConsoleEgressClass.UNKNOWN,
+            "external/unknown",
+        ),
+        (
+            "https://" + ("a" * 3000) + ".test/v1",
+            ConsoleEgressClass.UNKNOWN,
+            "external/unknown",
+        ),
+        (
+            "file:///private/secret/model.gguf",
+            ConsoleEgressClass.UNKNOWN,
+            "external/unknown",
+        ),
     ],
 )
 def test_resolved_destination_classifies_only_provable_endpoint_evidence(
@@ -106,6 +230,20 @@ def test_destination_identity_strips_credentials_paths_queries_and_fragments() -
         "fragment",
     ):
         assert secret not in rendered
+
+
+@pytest.mark.parametrize("control", ["\u200b", "\u202e", "\u2066", "\x7f", "\u009f"])
+def test_destination_identity_rejects_unicode_and_c1_controls_from_all_surfaces(
+    control: str,
+) -> None:
+    destination = resolve_console_destination(
+        _resolution(f"https://user{control}:secret@api.openai.com/v1")
+    )
+
+    assert destination.endpoint_identity == "external/unknown"
+    assert destination.egress_class is ConsoleEgressClass.UNKNOWN
+    assert control not in repr(destination)
+    assert control not in repr(destination.identity_key)
 
 
 @pytest.mark.parametrize(

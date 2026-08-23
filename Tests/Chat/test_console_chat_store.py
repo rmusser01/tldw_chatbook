@@ -12,6 +12,7 @@ from tldw_chatbook.Chat.console_chat_models import (
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 from tldw_chatbook.Chat.console_library_policy import (
+    AUTOMATIC_LIBRARY_SOURCE_TYPES,
     ConsoleAssistantLibraryAccess,
     ConsoleAutoRetrieve,
     ConsoleLibraryPolicyCandidate,
@@ -21,11 +22,10 @@ from tldw_chatbook.Chat.console_library_policy import (
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleEgressClass,
+    ConsoleLibraryItemScopeSnapshot,
+    ConsoleProviderIntent,
     ConsoleResolvedDestination,
-)
-from tldw_chatbook.Chat.console_library_destination import (
-    ConsoleLibraryDestinationRuntimeState,
-    update_console_library_destination_runtime,
+    ConsoleTurnLibraryAuthority,
 )
 from tldw_chatbook.Chat.console_roleplay_identity import (
     resolve_console_message_presentation,
@@ -47,6 +47,75 @@ from tldw_chatbook.Workspaces import DEFAULT_WORKSPACE_ID, LocalWorkspaceRegistr
 
 def _pristine_defaults(*, model: str = "default-model") -> ConsoleSessionSettings:
     return ConsoleSessionSettings(provider="openai", model=model)
+
+
+def _library_authority(
+    attempt_id: str,
+    *,
+    auto_retrieve: ConsoleAutoRetrieve = ConsoleAutoRetrieve.AUTOMATIC,
+    assistant_access: ConsoleAssistantLibraryAccess = (
+        ConsoleAssistantLibraryAccess.BLOCKED
+    ),
+) -> ConsoleTurnLibraryAuthority:
+    return ConsoleTurnLibraryAuthority(
+        policy=ConsoleLibraryPolicySnapshot(
+            auto_retrieve=auto_retrieve,
+            assistant_access=assistant_access,
+            policy_revision=1,
+            source="durable",
+        ),
+        direct_library_tools=True,
+        source_types=AUTOMATIC_LIBRARY_SOURCE_TYPES,
+        scope_snapshot=ConsoleLibraryItemScopeSnapshot((), (), True),
+        provider_intent=ConsoleProviderIntent("openai", "model-a", None),
+        attempt_id=attempt_id,
+    )
+
+
+def _begin_disclosed_library_attempt(
+    store: ConsoleChatStore,
+    session_id: str,
+    *,
+    attempt_id: str = "attempt-active",
+    content: str = "",
+) -> tuple[ConsoleChatMessage, ConsoleResolvedDestination]:
+    local = ConsoleResolvedDestination(
+        provider="llama_cpp",
+        model="model-a",
+        endpoint_identity="http://127.0.0.1:9099",
+        egress_class=ConsoleEgressClass.ON_DEVICE,
+    )
+    external = ConsoleResolvedDestination(
+        provider="openai",
+        model="model-a",
+        endpoint_identity="https://api.openai.com",
+        egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
+    )
+    baseline = store.append_message(
+        session_id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+    )
+    store.begin_session_library_destination_attempt(
+        session_id,
+        _library_authority("attempt-baseline"),
+        local,
+        baseline.id,
+    )
+    store.append_stream_chunk(baseline.id, "baseline")
+    store.mark_message_complete(baseline.id)
+    assistant = store.append_message(
+        session_id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content=content,
+    )
+    store.begin_session_library_destination_attempt(
+        session_id,
+        _library_authority(attempt_id),
+        external,
+        assistant.id,
+    )
+    return assistant, external
 
 
 def _pristine_session(
@@ -208,49 +277,26 @@ def test_assistant_terminal_settlement_clears_runtime_library_disclosure(
 ) -> None:
     store = ConsoleChatStore()
     session = store.create_session()
-    local = ConsoleResolvedDestination(
-        provider="llama_cpp",
-        model="model-a",
-        endpoint_identity="http://127.0.0.1:9099",
-        egress_class=ConsoleEgressClass.ON_DEVICE,
-    )
-    external = ConsoleResolvedDestination(
-        provider="openai",
-        model="model-a",
-        endpoint_identity="https://api.openai.com",
-        egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
-    )
-    runtime = update_console_library_destination_runtime(
-        ConsoleLibraryDestinationRuntimeState(),
-        local,
-        library_data_possible=True,
-    )
-    session.library_destination_runtime = update_console_library_destination_runtime(
-        runtime,
-        external,
-        library_data_possible=True,
+    message, external = _begin_disclosed_library_attempt(
+        store,
+        session.id,
+        content="original" if terminal == "variant_complete" else "",
     )
     assert session.library_destination_runtime.disclosure is not None
+    assert session.library_destination_runtime.owner_attempt_id == "attempt-active"
+    assert session.library_destination_runtime.owner_message_id == message.id
 
     if terminal == "variant_complete":
-        message = store.append_message(
-            session.id,
-            role=ConsoleMessageRole.ASSISTANT,
-            content="original",
-        )
         store.begin_variant_stream(message.id)
         store.append_stream_chunk(message.id, "replacement")
         store.finalize_variant_stream(message.id)
     else:
-        message = store.append_message(
-            session.id,
-            role=ConsoleMessageRole.ASSISTANT,
-            content="",
-        )
         store.append_stream_chunk(message.id, "response")
         getattr(store, f"mark_message_{terminal}")(message.id)
 
     assert session.library_destination_runtime.disclosure is None
+    assert session.library_destination_runtime.owner_attempt_id is None
+    assert session.library_destination_runtime.owner_message_id is None
     assert session.library_destination_runtime.resolved_destination == external
     assert session.library_destination_runtime.last_resolved_identity == (
         external.identity_key
@@ -260,38 +306,10 @@ def test_assistant_terminal_settlement_clears_runtime_library_disclosure(
 def test_completion_subscribers_observe_disclosure_already_settled() -> None:
     store = ConsoleChatStore()
     session = store.create_session()
-    local = ConsoleResolvedDestination(
-        provider="llama_cpp",
-        model="model-a",
-        endpoint_identity="http://127.0.0.1:9099",
-        egress_class=ConsoleEgressClass.ON_DEVICE,
-    )
-    external = ConsoleResolvedDestination(
-        provider="openai",
-        model="model-a",
-        endpoint_identity="https://api.openai.com",
-        egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
-    )
-    state = update_console_library_destination_runtime(
-        ConsoleLibraryDestinationRuntimeState(),
-        local,
-        library_data_possible=True,
-    )
-    session.library_destination_runtime = update_console_library_destination_runtime(
-        state,
-        external,
-        library_data_possible=True,
-    )
+    message, _external = _begin_disclosed_library_attempt(store, session.id)
     observed = []
     store.subscribe_message_completed(
-        lambda _token: observed.append(
-            session.library_destination_runtime.disclosure
-        )
-    )
-    message = store.append_message(
-        session.id,
-        role=ConsoleMessageRole.ASSISTANT,
-        content="",
+        lambda _token: observed.append(session.library_destination_runtime.disclosure)
     )
     store.append_stream_chunk(message.id, "response")
 
@@ -300,60 +318,117 @@ def test_completion_subscribers_observe_disclosure_already_settled() -> None:
     assert observed == [None]
 
 
+def test_older_completed_variant_cannot_settle_a_newer_attempt_disclosure() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session()
+    older = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="older answer",
+    )
+    active, _external = _begin_disclosed_library_attempt(store, session.id)
+    disclosure = session.library_destination_runtime.disclosure
+    assert disclosure is not None
+
+    store.add_variant(older.id, "older alternate")
+
+    assert session.library_destination_runtime.disclosure == disclosure
+    assert session.library_destination_runtime.owner_attempt_id == "attempt-active"
+    assert session.library_destination_runtime.owner_message_id == active.id
+
+
+def test_library_destination_settlement_requires_exact_attempt_and_message_owner() -> (
+    None
+):
+    store = ConsoleChatStore()
+    session = store.create_session()
+    active, _external = _begin_disclosed_library_attempt(store, session.id)
+    disclosure = session.library_destination_runtime.disclosure
+
+    wrong_attempt = store.settle_session_library_destination(
+        session.id,
+        expected_attempt_id="attempt-older",
+        expected_message_id=active.id,
+    )
+    wrong_message = store.settle_session_library_destination(
+        session.id,
+        expected_attempt_id="attempt-active",
+        expected_message_id="older-message",
+    )
+
+    assert wrong_attempt.disclosure == disclosure
+    assert wrong_message.disclosure == disclosure
+    settled = store.settle_session_library_destination(
+        session.id,
+        expected_attempt_id="attempt-active",
+        expected_message_id=active.id,
+    )
+    assert settled.disclosure is None
+    assert settled.owner_attempt_id is None
+    assert settled.owner_message_id is None
+
+
+def test_older_attempt_cleanup_cannot_clear_replacement_destination_owner() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session()
+    older, _external = _begin_disclosed_library_attempt(store, session.id)
+    replacement = store.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+    )
+    private = ConsoleResolvedDestination(
+        provider="custom",
+        model="model-b",
+        endpoint_identity="http://10.0.0.9:8080",
+        egress_class=ConsoleEgressClass.PRIVATE_NETWORK,
+    )
+    store.begin_session_library_destination_attempt(
+        session.id,
+        _library_authority("attempt-replacement"),
+        private,
+        replacement.id,
+    )
+
+    store.settle_session_library_destination(
+        session.id,
+        expected_attempt_id="attempt-active",
+        expected_message_id=older.id,
+    )
+
+    runtime = session.library_destination_runtime
+    assert runtime.disclosure is not None
+    assert runtime.disclosure.resolved_destination == private
+    assert runtime.owner_attempt_id == "attempt-replacement"
+    assert runtime.owner_message_id == replacement.id
+
+
 def test_runtime_library_disclosure_is_isolated_across_session_navigation() -> None:
     store = ConsoleChatStore()
     session_a = store.create_session(title="Session A")
     session_b = store.create_session(title="Session B")
-    local = ConsoleResolvedDestination(
-        provider="llama_cpp",
-        model="model-a",
-        endpoint_identity="http://127.0.0.1:9099",
-        egress_class=ConsoleEgressClass.ON_DEVICE,
+    message_a, _external_a = _begin_disclosed_library_attempt(
+        store,
+        session_a.id,
+        attempt_id="attempt-a",
     )
-    external_a = ConsoleResolvedDestination(
-        provider="openai",
-        model="model-a",
-        endpoint_identity="https://api.openai.com",
-        egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
+    message_b, _external_b = _begin_disclosed_library_attempt(
+        store,
+        session_b.id,
+        attempt_id="attempt-b",
     )
-    external_b = ConsoleResolvedDestination(
-        provider="anthropic",
-        model="model-b",
-        endpoint_identity="https://api.anthropic.com",
-        egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
-    )
-    for session, external in (
-        (session_a, external_a),
-        (session_b, external_b),
-    ):
-        state = update_console_library_destination_runtime(
-            ConsoleLibraryDestinationRuntimeState(),
-            local,
-            library_data_possible=True,
-        )
-        session.library_destination_runtime = (
-            update_console_library_destination_runtime(
-                state,
-                external,
-                library_data_possible=True,
-            )
-        )
 
     store.switch_session(session_b.id)
     store.switch_session(session_a.id)
     assert session_a.library_destination_runtime.disclosure is not None
     assert session_b.library_destination_runtime.disclosure is not None
 
-    message_b = store.append_message(
-        session_b.id,
-        role=ConsoleMessageRole.ASSISTANT,
-        content="",
-    )
     store.append_stream_chunk(message_b.id, "response")
     store.mark_message_complete(message_b.id)
 
     assert store.active_session_id == session_a.id
     assert session_a.library_destination_runtime.disclosure is not None
+    assert session_a.library_destination_runtime.owner_message_id == message_a.id
     assert session_b.library_destination_runtime.disclosure is None
 
 

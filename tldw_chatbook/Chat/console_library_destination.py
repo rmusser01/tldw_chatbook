@@ -6,7 +6,8 @@ from dataclasses import dataclass, replace
 from ipaddress import IPv4Address, IPv6Address, ip_address, ip_network
 from string import hexdigits
 from typing import TYPE_CHECKING
-from urllib.parse import urlsplit, urlunsplit
+from unicodedata import category
+from urllib.parse import SplitResult, unquote, urlsplit, urlunsplit
 
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleEgressClass,
@@ -66,6 +67,8 @@ class ConsoleLibraryDestinationRuntimeState:
     resolved_destination: ConsoleResolvedDestination | None = None
     last_resolved_identity: ConsoleDestinationIdentity | None = None
     disclosure: ConsoleLibraryEgressDisclosure | None = None
+    owner_attempt_id: str | None = None
+    owner_message_id: str | None = None
 
 
 def resolve_console_destination(
@@ -154,9 +157,18 @@ def settle_console_library_destination_runtime(
     """Clear a live disclosure while retaining the last resolved destination."""
     if not isinstance(state, ConsoleLibraryDestinationRuntimeState):
         raise TypeError("state must be ConsoleLibraryDestinationRuntimeState")
-    if state.disclosure is None:
+    if (
+        state.disclosure is None
+        and state.owner_attempt_id is None
+        and state.owner_message_id is None
+    ):
         return state
-    return replace(state, disclosure=None)
+    return replace(
+        state,
+        disclosure=None,
+        owner_attempt_id=None,
+        owner_message_id=None,
+    )
 
 
 def _parse_endpoint_origin(
@@ -168,13 +180,18 @@ def _parse_endpoint_origin(
     if (
         not endpoint
         or len(endpoint) > 2048
-        or any(character.isspace() or ord(character) < 32 for character in endpoint)
+        or any(
+            character.isspace() or category(character) in {"Cc", "Cf"}
+            for character in endpoint
+        )
     ):
         return None
     try:
         parsed = urlsplit(endpoint)
         scheme = parsed.scheme.lower()
         if scheme in _LOCAL_TRANSPORT_SCHEMES:
+            if not _local_transport_target_is_valid(parsed, scheme):
+                return None
             return (scheme, "local", None, None)
         if (
             scheme not in _HTTP_SCHEMES
@@ -197,6 +214,30 @@ def _parse_endpoint_origin(
     return (scheme, hostname, port, parsed_ip)
 
 
+def _local_transport_target_is_valid(parsed: SplitResult, scheme: str) -> bool:
+    """Return whether a local transport URL names a concrete socket target."""
+    if scheme == "unix":
+        return (
+            not parsed.netloc
+            and parsed.path.startswith("/")
+            and parsed.path != "/"
+            and not parsed.query
+            and not parsed.fragment
+        )
+    if scheme != "http+unix":
+        return False
+    encoded_target = parsed.netloc
+    decoded_target = unquote(encoded_target)
+    return (
+        bool(encoded_target)
+        and "@" not in encoded_target
+        and _percent_encoding_is_well_formed(encoded_target)
+        and decoded_target.startswith("/")
+        and decoded_target != "/"
+        and not parsed.fragment
+    )
+
+
 def _userinfo_is_well_formed(netloc: str) -> bool:
     separator_count = netloc.count("@")
     if separator_count == 0:
@@ -206,11 +247,15 @@ def _userinfo_is_well_formed(netloc: str) -> bool:
     userinfo, hostinfo = netloc.rsplit("@", maxsplit=1)
     if not userinfo or not hostinfo:
         return False
-    for index, character in enumerate(userinfo):
+    return _percent_encoding_is_well_formed(userinfo)
+
+
+def _percent_encoding_is_well_formed(value: str) -> bool:
+    for index, character in enumerate(value):
         if character == "%" and (
-            index + 2 >= len(userinfo)
-            or userinfo[index + 1] not in hexdigits
-            or userinfo[index + 2] not in hexdigits
+            index + 2 >= len(value)
+            or value[index + 1] not in hexdigits
+            or value[index + 2] not in hexdigits
         ):
             return False
     return True
@@ -238,17 +283,23 @@ def _classify_origin(
     if hostname == "localhost" or hostname.endswith(".localhost"):
         return ConsoleEgressClass.ON_DEVICE
     if ip is not None:
-        if ip.is_loopback:
+        classified_ip = ip.ipv4_mapped if isinstance(ip, IPv6Address) else None
+        classified_ip = classified_ip or ip
+        if classified_ip.is_loopback:
             return ConsoleEgressClass.ON_DEVICE
-        if ip.is_link_local:
+        if classified_ip.is_link_local:
             return ConsoleEgressClass.PRIVATE_NETWORK
-        if isinstance(ip, IPv4Address) and any(
-            ip in private_network for private_network in _PRIVATE_IPV4_NETWORKS
+        if isinstance(classified_ip, IPv4Address) and any(
+            classified_ip in private_network
+            for private_network in _PRIVATE_IPV4_NETWORKS
         ):
             return ConsoleEgressClass.PRIVATE_NETWORK
-        if isinstance(ip, IPv6Address) and ip in _UNIQUE_LOCAL_IPV6:
+        if (
+            isinstance(classified_ip, IPv6Address)
+            and classified_ip in _UNIQUE_LOCAL_IPV6
+        ):
             return ConsoleEgressClass.PRIVATE_NETWORK
-        if ip.is_global:
+        if classified_ip.is_global:
             return ConsoleEgressClass.PUBLIC_NETWORK
         return ConsoleEgressClass.UNKNOWN
     if (scheme, hostname, port) in _CANONICAL_CLOUD_ORIGINS:

@@ -115,6 +115,63 @@ class _RecordingGateway:
         yield "reply"
 
 
+class _DestinationSequenceGateway:
+    def __init__(
+        self,
+        store: ConsoleChatStore,
+        session_id: str,
+        destinations: list[ConsoleResolvedDestination],
+    ) -> None:
+        self.store = store
+        self.session_id = session_id
+        self.destinations = list(destinations)
+        self.snapshots = []
+        self.starts = [asyncio.Event() for _ in destinations]
+        self.releases = [asyncio.Event() for _ in destinations]
+        self.block_streams = False
+        self._stream_index = 0
+
+    async def resolve_for_send(self, _selection):
+        destination = self.destinations.pop(0)
+        return SimpleNamespace(
+            ready=True,
+            provider=destination.provider,
+            model=destination.model,
+            base_url=destination.endpoint_identity,
+            visible_copy="",
+            resolved_destination=destination,
+        )
+
+    async def stream_chat(self, _resolution, _messages, **_kwargs):
+        index = self._stream_index
+        self._stream_index += 1
+        session = next(
+            item for item in self.store.sessions() if item.id == self.session_id
+        )
+        self.snapshots.append(session.library_destination_runtime)
+        self.starts[index].set()
+        if self.block_streams:
+            await self.releases[index].wait()
+        yield f"reply-{index}"
+
+
+def _local_then_public_destinations() -> list[ConsoleResolvedDestination]:
+    return [
+        ConsoleResolvedDestination(
+            provider="llama_cpp",
+            model="model-a",
+            endpoint_identity="http://127.0.0.1:9099",
+            egress_class=ConsoleEgressClass.ON_DEVICE,
+        ),
+        ConsoleResolvedDestination(
+            provider="openai",
+            model="model-a",
+            endpoint_identity="https://api.openai.com",
+            egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
+        ),
+    ]
+
+
 @pytest.mark.asyncio
 async def test_immediate_capture_follows_admission_and_precedes_gateway(monkeypatch):
     events: list[str] = []
@@ -345,34 +402,29 @@ async def test_running_turn_freezes_selector_scope_provider_and_destination():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("auto_retrieve", "assistant_access", "expects_disclosure"),
+    ("auto_retrieve", "assistant_access"),
     [
         (
             ConsoleAutoRetrieve.AUTOMATIC,
             ConsoleAssistantLibraryAccess.BLOCKED,
-            True,
         ),
         (
             ConsoleAutoRetrieve.NEVER,
             ConsoleAssistantLibraryAccess.ALLOWED,
-            True,
         ),
         (
             ConsoleAutoRetrieve.AUTOMATIC,
             ConsoleAssistantLibraryAccess.ALLOWED,
-            True,
         ),
         (
             ConsoleAutoRetrieve.NEVER,
             ConsoleAssistantLibraryAccess.BLOCKED,
-            False,
         ),
     ],
 )
-async def test_context_resolution_records_policy_independent_runtime_disclosure(
+async def test_context_resolution_does_not_observe_destination_before_dispatch(
     auto_retrieve: ConsoleAutoRetrieve,
     assistant_access: ConsoleAssistantLibraryAccess,
-    expects_disclosure: bool,
 ) -> None:
     events: list[str] = []
     policy = _policy(
@@ -427,10 +479,133 @@ async def test_context_resolution_records_policy_independent_runtime_disclosure(
     )
 
     runtime = session.library_destination_runtime
-    assert runtime.resolved_destination is not None
-    assert runtime.resolved_destination.egress_class is ConsoleEgressClass.PUBLIC_NETWORK
-    assert (runtime.disclosure is not None) is expects_disclosure
+    assert runtime.resolved_destination is None
+    assert runtime.last_resolved_identity is None
+    assert runtime.disclosure is None
+    assert runtime.owner_attempt_id is None
+    assert runtime.owner_message_id is None
     assert session.library_policy_holder.snapshot == holder_before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("auto_retrieve", "assistant_access", "expects_disclosure"),
+    [
+        (
+            ConsoleAutoRetrieve.AUTOMATIC,
+            ConsoleAssistantLibraryAccess.BLOCKED,
+            True,
+        ),
+        (
+            ConsoleAutoRetrieve.NEVER,
+            ConsoleAssistantLibraryAccess.ALLOWED,
+            True,
+        ),
+        (
+            ConsoleAutoRetrieve.NEVER,
+            ConsoleAssistantLibraryAccess.BLOCKED,
+            False,
+        ),
+    ],
+)
+async def test_submit_draft_observes_resolved_destination_at_real_dispatch_boundary(
+    auto_retrieve: ConsoleAutoRetrieve,
+    assistant_access: ConsoleAssistantLibraryAccess,
+    expects_disclosure: bool,
+) -> None:
+    store = ConsoleChatStore()
+    session = store.create_session()
+    store.library_policy_coordinator = _RecordingCoordinator(
+        [],
+        _policy(
+            auto_retrieve=auto_retrieve,
+            assistant_access=assistant_access,
+        ),
+    )
+    gateway = _DestinationSequenceGateway(
+        store,
+        session.id,
+        _local_then_public_destinations(),
+    )
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_runtime_enabled=False,
+    )
+
+    first = await controller.submit_draft("first", session_id=session.id)
+    second = await controller.submit_draft("second", session_id=session.id)
+
+    assert first.accepted is True
+    assert second.accepted is True
+    assert len(gateway.snapshots) == 2
+    assert gateway.snapshots[0].resolved_destination is not None
+    assert (
+        gateway.snapshots[0].resolved_destination.egress_class
+        is ConsoleEgressClass.ON_DEVICE
+    )
+    assert gateway.snapshots[0].disclosure is None
+    assert gateway.snapshots[0].owner_attempt_id is not None
+    assert gateway.snapshots[0].owner_message_id == first.assistant_message_id
+    assert (
+        gateway.snapshots[1].resolved_destination.egress_class
+        is ConsoleEgressClass.PUBLIC_NETWORK
+    )
+    assert (gateway.snapshots[1].disclosure is not None) is expects_disclosure
+    assert gateway.snapshots[1].owner_attempt_id is not None
+    assert gateway.snapshots[1].owner_message_id == second.assistant_message_id
+    assert session.library_destination_runtime.owner_attempt_id is None
+    assert session.library_destination_runtime.owner_message_id is None
+
+
+@pytest.mark.asyncio
+async def test_queued_submit_observes_destination_only_after_dequeue_dispatch() -> None:
+    store = ConsoleChatStore()
+    session = store.create_session()
+    store.library_policy_coordinator = _RecordingCoordinator(
+        [],
+        _policy(
+            auto_retrieve=ConsoleAutoRetrieve.AUTOMATIC,
+            assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+        ),
+    )
+    gateway = _DestinationSequenceGateway(
+        store,
+        session.id,
+        _local_then_public_destinations(),
+    )
+    gateway.block_streams = True
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_runtime_enabled=False,
+    )
+
+    chain = asyncio.create_task(
+        controller.run_prompt_chain("manual", session_id=session.id)
+    )
+    await gateway.starts[0].wait()
+    snapshot = controller.prompt_queue_registry.snapshot(session.id)
+    queued = controller.queue_prompt(
+        session.id,
+        text="queued",
+        expected_revision=snapshot.revision,
+    )
+    assert queued.applied is True
+    assert len(gateway.snapshots) == 1
+    gateway.releases[0].set()
+    await gateway.starts[1].wait()
+
+    assert len(gateway.snapshots) == 2
+    assert gateway.snapshots[1].disclosure is not None
+    assert (
+        gateway.snapshots[1].resolved_destination.egress_class
+        is ConsoleEgressClass.PUBLIC_NETWORK
+    )
+    assert gateway.snapshots[1].owner_attempt_id is not None
+    assert gateway.snapshots[1].owner_message_id is not None
+    gateway.releases[1].set()
+    await chain
 
 
 @pytest.mark.asyncio

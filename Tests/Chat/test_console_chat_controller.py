@@ -42,6 +42,23 @@ from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+    ConsoleEgressClass,
+    ConsoleLibraryItemScopeSnapshot,
+    ConsoleProviderIntent,
+    ConsoleResolvedDestination,
+    ConsoleTurnLibraryAuthority,
+)
+from tldw_chatbook.Chat.console_library_policy import (
+    AUTOMATIC_LIBRARY_SOURCE_TYPES,
+    ConsoleAssistantLibraryAccess,
+    ConsoleAutoRetrieve,
+    ConsoleLibraryPolicySnapshot,
+)
+from tldw_chatbook.Chat.console_turn_context import (
+    ConsoleTurnConfigurationSnapshot,
+    ConsoleTurnExecutionContext,
+)
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
@@ -83,6 +100,80 @@ class StreamingGateway:
     async def stream_chat(self, resolution, messages, **kwargs):
         for chunk in ("hel", "lo"):
             yield chunk
+
+
+def _library_authority(attempt_id: str) -> ConsoleTurnLibraryAuthority:
+    return ConsoleTurnLibraryAuthority(
+        policy=ConsoleLibraryPolicySnapshot(
+            auto_retrieve=ConsoleAutoRetrieve.AUTOMATIC,
+            assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+            policy_revision=1,
+            source="durable",
+        ),
+        direct_library_tools=True,
+        source_types=AUTOMATIC_LIBRARY_SOURCE_TYPES,
+        scope_snapshot=ConsoleLibraryItemScopeSnapshot((), (), True),
+        provider_intent=ConsoleProviderIntent("openai", "model-a", None),
+        attempt_id=attempt_id,
+    )
+
+
+def _begin_controller_disclosure(
+    store: ConsoleChatStore,
+    session_id: str,
+    *,
+    content: str = "",
+) -> tuple[object, ConsoleTurnExecutionContext]:
+    local = ConsoleResolvedDestination(
+        provider="llama_cpp",
+        model="model-a",
+        endpoint_identity="http://127.0.0.1:9099",
+        egress_class=ConsoleEgressClass.ON_DEVICE,
+    )
+    external = ConsoleResolvedDestination(
+        provider="openai",
+        model="model-a",
+        endpoint_identity="https://api.openai.com",
+        egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
+    )
+    baseline = store.append_message(
+        session_id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+    )
+    store.begin_session_library_destination_attempt(
+        session_id,
+        _library_authority("attempt-baseline"),
+        local,
+        baseline.id,
+    )
+    store.append_stream_chunk(baseline.id, "baseline")
+    store.mark_message_complete(baseline.id)
+    placeholder = store.append_message(
+        session_id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content=content,
+    )
+    active_authority = _library_authority("attempt-active")
+    store.begin_session_library_destination_attempt(
+        session_id,
+        active_authority,
+        external,
+        placeholder.id,
+    )
+    context = ConsoleTurnExecutionContext(
+        configuration=ConsoleTurnConfigurationSnapshot.capture(
+            session_id=session_id,
+            provider_selection=ConsoleProviderSelection(
+                provider="openai",
+                explicit_model="model-a",
+            ),
+            tool_configuration={"agent_runtime_enabled": True},
+        ),
+        library_authority=active_authority,
+        resolved_destination=external,
+    )
+    return placeholder, context
 
 
 class RecordingStreamingGateway(StreamingGateway):
@@ -3317,6 +3408,142 @@ async def test_finalize_agent_reply_missing_placeholder_appends_message():
     assert assistant.status == "complete"
     assert result.accepted is True
     assert controller.run_state.status is ConsoleRunStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_stream_wrapper_settles_missing_placeholder_append_fallback(monkeypatch):
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session()
+    placeholder, turn_context = _begin_controller_disclosure(store, session.id)
+    assert session.library_destination_runtime.disclosure is not None
+
+    async def missing_placeholder_inner(**_kwargs):
+        return await controller._finalize_agent_reply(
+            placeholder.id,
+            session.id,
+            RunOutcome(status=RUN_DONE, steps=[], final_text="completed fallback"),
+            variant_mode=False,
+        )
+
+    monkeypatch.setattr(
+        controller,
+        "_stream_assistant_response_inner",
+        missing_placeholder_inner,
+    )
+    monkeypatch.setattr(controller, "_ensure_assistant_placeholder", lambda *_: None)
+    monkeypatch.setattr(controller, "_find_runtime_written_assistant", lambda *_: None)
+
+    result = await controller._stream_assistant_response(
+        resolution=SimpleNamespace(),
+        provider_messages=[],
+        assistant_message_id=placeholder.id,
+        turn_context=turn_context,
+    )
+
+    assert result.accepted is True
+    assert session.library_destination_runtime.disclosure is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "terminal",
+    ["success", "failure", "cancelled", "stopped", "variant_success"],
+)
+async def test_agent_terminal_paths_settle_the_bound_destination_attempt(
+    terminal: str,
+) -> None:
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session()
+    placeholder, _turn_context = _begin_controller_disclosure(
+        store,
+        session.id,
+        content="original" if terminal == "variant_success" else "",
+    )
+    cancel_event = threading.Event()
+    variant_mode = terminal == "variant_success"
+    if variant_mode:
+        store.begin_variant_stream(placeholder.id)
+        store.append_stream_chunk(placeholder.id, "replacement")
+    elif terminal in {"success", "failure"}:
+        store.append_stream_chunk(placeholder.id, "reply")
+    if terminal == "stopped":
+        store.mark_message_stopped(placeholder.id)
+        cancel_event.set()
+    outcome = RunOutcome(
+        status=(
+            RUN_DONE
+            if terminal in {"success", "variant_success", "stopped"}
+            else RUN_CANCELLED
+            if terminal == "cancelled"
+            else RUN_ERROR
+        ),
+        steps=[],
+        final_text=(
+            "replacement"
+            if terminal == "variant_success"
+            else "reply"
+            if terminal == "success"
+            else ""
+        ),
+    )
+
+    result = await controller._finalize_agent_reply(
+        placeholder.id,
+        session.id,
+        outcome,
+        variant_mode=variant_mode,
+        cancel_event=cancel_event,
+    )
+
+    assert result.accepted is True
+    assert session.library_destination_runtime.disclosure is None
+    assert session.library_destination_runtime.owner_attempt_id is None
+    assert session.library_destination_runtime.owner_message_id is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["refused", "cancelled"])
+async def test_stream_wrapper_exactly_settles_predispatch_exit(
+    monkeypatch,
+    outcome: str,
+) -> None:
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    session = store.ensure_session()
+    placeholder, turn_context = _begin_controller_disclosure(store, session.id)
+
+    async def predispatch_exit(**_kwargs):
+        if outcome == "cancelled":
+            raise asyncio.CancelledError
+        return controller._block(session.id, "Provider request was not sent.")
+
+    monkeypatch.setattr(
+        controller,
+        "_stream_assistant_response_inner",
+        predispatch_exit,
+    )
+
+    if outcome == "cancelled":
+        with pytest.raises(asyncio.CancelledError):
+            await controller._stream_assistant_response(
+                resolution=SimpleNamespace(),
+                provider_messages=[],
+                assistant_message_id=placeholder.id,
+                turn_context=turn_context,
+            )
+    else:
+        result = await controller._stream_assistant_response(
+            resolution=SimpleNamespace(),
+            provider_messages=[],
+            assistant_message_id=placeholder.id,
+            turn_context=turn_context,
+        )
+        assert result.accepted is False
+
+    assert session.library_destination_runtime.disclosure is None
+    assert session.library_destination_runtime.owner_attempt_id is None
 
 
 @pytest.mark.asyncio

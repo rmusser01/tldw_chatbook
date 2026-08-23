@@ -8903,11 +8903,6 @@ class ConsoleChatController:
             library_authority,
             resolution,
         )
-        self.store.update_session_library_destination(
-            session_id,
-            turn_context.library_authority,
-            turn_context.resolved_destination,
-        )
         return resolution, turn_context
 
     @staticmethod
@@ -10644,6 +10639,15 @@ class ConsoleChatController:
                 turn_context=turn_context,
             )
         finally:
+            if isinstance(turn_context, ConsoleTurnExecutionContext):
+                try:
+                    self.store.settle_session_library_destination(
+                        turn_context.session_id,
+                        expected_attempt_id=turn_context.library_authority.attempt_id,
+                        expected_message_id=assistant_message_id,
+                    )
+                except KeyError:
+                    pass
             if citation_repair_session is not None:
                 citation_repair_session.clear_governed_state()
 
@@ -10855,6 +10859,12 @@ class ConsoleChatController:
             # Reuse the guarded owner_id resolved above; the note helper
             # swallows a store-close race that happens during the append.
             self._append_history_trimmed_note(owner_id, bound.dropped_count)
+        self.store.begin_session_library_destination_attempt(
+            owner_id,
+            turn_context.library_authority,
+            turn_context.resolved_destination,
+            assistant_message_id,
+        )
         active_task = asyncio.current_task()
         self._active_assistant_message_ids[owner_id] = assistant_message_id
         self._active_stream_tasks[owner_id] = active_task

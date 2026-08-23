@@ -1027,7 +1027,7 @@ class ConsoleChatStore:
         self._message_completion_generations[message_id] = (
             self._message_completion_epoch
         )
-        self.settle_session_library_destination(session_id)
+        self._settle_message_library_destination(session_id, message_id)
         self._publish_message_completed(session_id, message_id)
 
     def message_completion_generation(self, message_id: str) -> int:
@@ -1899,15 +1899,25 @@ class ConsoleChatStore:
         """Return native Console sessions in creation order."""
         return list(self._sessions.values())
 
-    def update_session_library_destination(
+    def begin_session_library_destination_attempt(
         self,
         session_id: str,
         authority: ConsoleTurnLibraryAuthority,
         destination: ConsoleResolvedDestination,
+        assistant_message_id: str,
     ) -> ConsoleLibraryDestinationRuntimeState:
-        """Record one execution destination without changing durable policy."""
+        """Bind one observed destination to its exact live assistant attempt."""
         if not isinstance(authority, ConsoleTurnLibraryAuthority):
             raise TypeError("authority must be ConsoleTurnLibraryAuthority")
+        if not authority.attempt_id:
+            raise ValueError("authority.attempt_id must not be empty")
+        message = self._message_or_raise(assistant_message_id)
+        if self._message_session_index[message.id] != session_id:
+            raise ValueError(
+                "Assistant message must belong to the destination session."
+            )
+        if message.role is not ConsoleMessageRole.ASSISTANT:
+            raise ValueError("Destination attempts must bind to an assistant message.")
         policy = authority.policy
         library_data_possible = (
             policy.auto_retrieve is ConsoleAutoRetrieve.AUTOMATIC
@@ -1921,20 +1931,48 @@ class ConsoleChatStore:
                 library_data_possible=library_data_possible,
             )
         )
+        session.library_destination_runtime = replace(
+            session.library_destination_runtime,
+            owner_attempt_id=authority.attempt_id,
+            owner_message_id=assistant_message_id,
+        )
         return session.library_destination_runtime
 
     def settle_session_library_destination(
         self,
         session_id: str,
+        *,
+        expected_attempt_id: str,
+        expected_message_id: str,
     ) -> ConsoleLibraryDestinationRuntimeState:
-        """Clear a settled send disclosure while retaining destination identity."""
+        """Settle only the exact attempt currently owning live disclosure state."""
         session = self._session_or_raise(session_id)
+        runtime = session.library_destination_runtime
+        if (
+            runtime.owner_attempt_id != expected_attempt_id
+            or runtime.owner_message_id != expected_message_id
+        ):
+            return runtime
         session.library_destination_runtime = (
-            settle_console_library_destination_runtime(
-                session.library_destination_runtime
-            )
+            settle_console_library_destination_runtime(runtime)
         )
         return session.library_destination_runtime
+
+    def _settle_message_library_destination(
+        self,
+        session_id: str,
+        message_id: str,
+    ) -> ConsoleLibraryDestinationRuntimeState:
+        """Settle runtime state only when this terminal row owns the attempt."""
+        session = self._session_or_raise(session_id)
+        runtime = session.library_destination_runtime
+        if runtime.owner_message_id != message_id or runtime.owner_attempt_id is None:
+            return runtime
+        return self.settle_session_library_destination(
+            session_id,
+            expected_attempt_id=runtime.owner_attempt_id,
+            expected_message_id=message_id,
+        )
 
     def set_library_policy_defaults(
         self,
@@ -6142,7 +6180,7 @@ class ConsoleChatStore:
         self._persist_existing_message(message, preserve_provider_continuation=True)
         if message.persisted_message_id is None:
             self._flush_pending_trace_events_to_parent(message)
-        self.settle_session_library_destination(session_id)
+        self._settle_message_library_destination(session_id, message.id)
         return self._snapshot(message)
 
     def mark_message_failed(self, message_id: str) -> ConsoleChatMessage:
@@ -6188,7 +6226,7 @@ class ConsoleChatStore:
         self._persist_existing_message(message, preserve_provider_continuation=True)
         if message.persisted_message_id is None:
             self._flush_pending_trace_events_to_parent(message)
-        self.settle_session_library_destination(session_id)
+        self._settle_message_library_destination(session_id, message.id)
         return self._snapshot(message)
 
     def mark_message_send_blocked(self, message_id: str) -> ConsoleChatMessage:
