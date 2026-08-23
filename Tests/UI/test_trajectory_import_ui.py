@@ -88,10 +88,12 @@ async def test_o_mounts_imported_readonly_screen_with_records(tmp_path) -> None:
         assert "Trace · Shared trace — shared-trace" in title
         state = str(imported.query_one("#trajectory-state", Static).render())
         assert "READ-ONLY SHARED TRACE" in state
-        # The seeded conversation renders: 7 records + 2 turn-header rows.
+        # The seeded v1 conversation plus an inspectable ephemeral import
+        # operation renders: 8 records + 3 turn-header rows.
         table = imported.query_one("#trajectory-table", DataTable)
-        assert table.row_count == 9
+        assert table.row_count == 11
         assert table.get_row_index(_record_key_for_seq(imported, 7)) is not None
+        assert "INTEGRITY NOT PROVIDED (v1)" in state
 
 
 @pytest.mark.asyncio
@@ -116,7 +118,7 @@ async def test_imported_screen_has_no_live_polling(tmp_path) -> None:
         assert len(imported._timers) == len(screen._timers)
         hints = str(imported.query_one("#trajectory-hints", Static).render())
         assert "follow" not in hints  # live-only action never advertised
-        assert "open" in hints  # 1:1 governance: o is advertised
+        assert "import" in hints  # 1:1 governance: o is advertised
 
 
 @pytest.mark.asyncio

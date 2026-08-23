@@ -81,8 +81,9 @@ from tldw_chatbook.Chat.trajectory import (
     TrajectoryTurn,
 )
 from tldw_chatbook.Chat.trajectory_import import (
+    ImportedTrace,
     TrajectoryImportError,
-    load_trajectory_snapshot,
+    load_imported_trace,
 )
 from tldw_chatbook.UI.Widgets.trajectory_timeline import TrajectoryTimeline
 from tldw_chatbook.UI.Widgets.trace_filter_bar import TraceFilterBar, TraceFilterState
@@ -193,7 +194,8 @@ class TrajectoryScreen(ModalScreen[None]):
         Binding("d", "toggle_detail_full", "Full detail"),
         Binding("r", "retry", "Retry"),
         Binding("x", "clear_filters", "Clear filters"),
-        Binding("o", "open_trace", "Open trace"),
+        Binding("w", "export_trace", "Export trace"),
+        Binding("o", "open_trace", "Import trace"),
         Binding("n", "next_match", "Next match"),
         Binding("p", "previous_match", "Previous match"),
         Binding("j", "next_error", "Next error"),
@@ -219,7 +221,8 @@ class TrajectoryScreen(ModalScreen[None]):
         ("d", "full detail"),
         ("r", "retry"),
         ("x", "clear filters"),
-        ("o", "open trace"),
+        ("w", "export trace"),
+        ("o", "import trace"),
         ("n", "next match"),
         ("p", "previous match"),
         ("j", "next error"),
@@ -249,7 +252,9 @@ class TrajectoryScreen(ModalScreen[None]):
         background: $panel;
     }
     #trajectory-state {
-        height: 2;
+        height: auto;
+        min-height: 1;
+        max-height: 4;
         color: $text-muted;
     }
     #trajectory-search {
@@ -305,6 +310,7 @@ class TrajectoryScreen(ModalScreen[None]):
         revision_provider: Callable[[], int] | None = None,
         snapshot_builder: Callable[[], TrajectorySnapshot] | None = None,
         shared_trace: bool = False,
+        imported_trace: ImportedTrace | None = None,
     ) -> None:
         """Store the projection output; all rendering happens on mount.
 
@@ -320,14 +326,20 @@ class TrajectoryScreen(ModalScreen[None]):
                 from current persisted state; run in a worker thread.
             shared_trace: Whether this snapshot came from an imported shared
                 trace and must be visibly presented as read-only.
+            imported_trace: Collaboration manifest/integrity/privacy state for
+                a v2 or retained-v1 shared import.
         """
         super().__init__()
+        if imported_trace is not None:
+            snapshot = self._snapshot_with_import_operation(imported_trace)
+            shared_trace = True
         self._snapshot = snapshot
         self._screen_title = screen_title
         self._conversation_id = conversation_id
         self._revision_provider = revision_provider
         self._snapshot_builder = snapshot_builder
         self._shared_trace = shared_trace
+        self._imported_trace = imported_trace
         self._last_revision: int | None = None
         #: Tail-follow: True while the reader is at the bottom; scrolling
         #: up suspends it, ``f`` re-enables.
@@ -374,6 +386,20 @@ class TrajectoryScreen(ModalScreen[None]):
         self._alive = True
 
     # -- layout -------------------------------------------------------------
+
+    @staticmethod
+    def _snapshot_with_import_operation(
+        imported: ImportedTrace,
+    ) -> TrajectorySnapshot:
+        """Append the ephemeral import operation without persisting it."""
+        turns = list(imported.snapshot.turns)
+        operation = imported.operation_event
+        if turns and turns[-1].turn_id == operation.turn_id:
+            last = turns[-1]
+            turns[-1] = TrajectoryTurn(last.turn_id, tuple(last.records) + (operation,))
+        else:
+            turns.append(TrajectoryTurn(operation.turn_id, (operation,)))
+        return TrajectorySnapshot(tuple(turns))
 
     def compose(self) -> ComposeResult:
         with Vertical(id="trajectory-screen"):
@@ -601,6 +627,24 @@ class TrajectoryScreen(ModalScreen[None]):
         parts: list[str] = []
         if self._shared_trace:
             parts.append("READ-ONLY SHARED TRACE")
+        if self._imported_trace is not None:
+            manifest = self._imported_trace.manifest
+            version = manifest.get("format_version") or manifest.get("schema_version")
+            profile = str(manifest.get("profile") or "unknown").replace("_", " ")
+            parts.append(f"v{version} {profile}")
+            integrity = self._imported_trace.integrity
+            parts.append(
+                "INTEGRITY VERIFIED"
+                if integrity.get("verified")
+                else "INTEGRITY NOT PROVIDED (v1)"
+            )
+            inventory = self._imported_trace.privacy_inventory
+            if inventory:
+                parts.append(
+                    f"privacy {inventory.get('redacted', 0)} redacted / "
+                    f"{inventory.get('omitted', 0)} omitted / "
+                    f"{inventory.get('truncated', 0)} truncated"
+                )
         if self._snapshot_builder is not None:
             parts.extend(("LIVE", "FOLLOWING" if self._follow else "PAUSED"))
             if not self._follow:
@@ -617,7 +661,7 @@ class TrajectoryScreen(ModalScreen[None]):
             if self._snapshot_builder is not None:
                 parts.extend(("EMPTY", "Waiting for first event"))
             else:
-                parts.extend(("EMPTY", "No trace events yet", "o open trace"))
+                parts.extend(("EMPTY", "No trace events yet", "o import trace"))
         if filtering:
             recovery = (
                 "Esc then x clear filters" if search_focused else "x clear filters"
@@ -1157,7 +1201,7 @@ class TrajectoryScreen(ModalScreen[None]):
             ):
                 lines[1] += " · esc clear"
         elif self._detail_full:
-            pairs = [("i", "close"), ("d", "split view")]
+            pairs = [("i", "close"), ("d", "split view"), ("w", "export trace")]
             if self._failure is not None and not self._retry_in_flight:
                 pairs.append(("r", "retry"))
             if filtering:
@@ -1171,13 +1215,14 @@ class TrajectoryScreen(ModalScreen[None]):
                 recovery.append("r retry")
             if filtering:
                 recovery.append("x clear filters")
-            lines = [" · ".join(recovery) if recovery else "o open trace"]
+            lines = [" · ".join(recovery) if recovery else "o import trace"]
         else:
             lines = ["n/p match · j/k err · u/y tool · v/b feedback · a/s child"]
             core = [
                 "enter inspect",
                 "i close" if inspector_open else "i detail",
                 "g filters",
+                "w export trace",
             ]
             contextual = False
             if self._hidden_earlier > 0:
@@ -1193,7 +1238,7 @@ class TrajectoryScreen(ModalScreen[None]):
                 core.append("x clear filters")
                 contextual = True
             if not contextual:
-                core.append("o open trace")
+                core.append("o import trace")
             lines.append(" · ".join(core))
         text = "\n".join(lines)
         try:
@@ -1803,10 +1848,29 @@ class TrajectoryScreen(ModalScreen[None]):
             exclusive=True,
         )
 
-    # -- import (task-16320: open shared traces read-only) ----------------------
+    # -- collaboration export/import ------------------------------------------
+
+    def action_export_trace(self) -> None:
+        """`w`: run privacy preflight and write a portable Trace v2 bundle."""
+        from tldw_chatbook.Widgets.Console.trace_export_dialog import (
+            TraceExportDialog,
+        )
+
+        self.app.push_screen(
+            TraceExportDialog(self._snapshot), self._trace_export_finished
+        )
+
+    def _trace_export_finished(self, written: Path | None) -> None:
+        """Report a completed export; cancellation deliberately says nothing."""
+        if written is not None:
+            self.app.notify(
+                f"Shared Trace written to {written}",
+                title="Trace exported",
+                severity="information",
+            )
 
     async def action_open_trace(self) -> None:
-        """`o`: open a shared trajectory trace file as a read-only view.
+        """`o`: import a shared trajectory trace file as a read-only view.
 
         The picked file is loaded through the pure import seam (never the
         app DB) and pushed as a NEW ``TrajectoryScreen`` with no
@@ -1819,15 +1883,15 @@ class TrajectoryScreen(ModalScreen[None]):
         if path is None:
             return  # picker dismissed: no-op, stay on the current screen
         try:
-            snapshot = load_trajectory_snapshot(path)
+            imported = load_imported_trace(path)
         except TrajectoryImportError as exc:
             self.app.notify(str(exc), title="Import failed", severity="error")
             return
         self.app.push_screen(
             TrajectoryScreen(
-                snapshot,
+                imported.snapshot,
                 screen_title=f"Shared trace — {path.stem}",
-                shared_trace=True,
+                imported_trace=imported,
             )
         )
 
@@ -1841,7 +1905,7 @@ class TrajectoryScreen(ModalScreen[None]):
         from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen
 
         picker = EnhancedFileOpen(
-            title="Open shared trace",
+            title="Import shared trace",
             filters=Filters(
                 ("Trace files", lambda p: p.name.lower().endswith(".json")),
                 ("All Files", lambda p: True),

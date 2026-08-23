@@ -8,6 +8,7 @@ from html import unescape
 from pathlib import Path
 import re
 import threading
+from types import SimpleNamespace
 
 import pytest
 from textual.app import App, ComposeResult
@@ -718,8 +719,23 @@ async def test_open_import_marks_the_pushed_production_screen_read_only_shared(
 
     monkeypatch.setattr(
         trajectory_screen_module,
-        "load_trajectory_snapshot",
-        lambda _path: base_snapshot(),
+        "load_imported_trace",
+        lambda _path: SimpleNamespace(
+            snapshot=base_snapshot(),
+            operation_event=replace(
+                base_snapshot().turns[0].records[-1],
+                seq=3,
+                kind="trace_import",
+                turn_id="trace",
+                event_id="trace-import-test",
+            ),
+            manifest={
+                "format_version": 2,
+                "profile": "redacted_diagnostic",
+            },
+            integrity={"verified": True},
+            privacy_inventory={"redacted": 1, "omitted": 0, "truncated": 0},
+        ),
     )
     app = _TraceHost()
     async with app.run_test(size=(80, 24)) as pilot:
@@ -767,7 +783,7 @@ async def test_empty_ledgers_do_not_advertise_row_only_actions() -> None:
         assert "inspect" not in hints
         assert "collapse" not in hints
         assert "inspector" not in hints
-        assert "o open trace" in hints
+        assert "o import trace" in hints
 
 
 @pytest.mark.asyncio
@@ -989,7 +1005,7 @@ async def test_empty_modes_and_compound_state_truth_are_painted_at_60_columns() 
         painted = _painted_text(app)
         assert "READ-ONLY SHARED TRACE" in painted
         assert "EMPTY" in painted
-        assert "o open trace" in painted
+        assert "o import trace" in painted
 
     async with _mounted(
         empty,
@@ -1002,7 +1018,7 @@ async def test_empty_modes_and_compound_state_truth_are_painted_at_60_columns() 
         assert "FOLLOWING" in state
         assert "EMPTY" in state
         assert "Waiting for first event" in state
-        assert "o open trace" not in state
+        assert "o import trace" not in state
         await pilot.press("i", "enter")
         inspector = screen.query_one("#trajectory-inspector", VerticalScroll)
         assert not inspector.display
