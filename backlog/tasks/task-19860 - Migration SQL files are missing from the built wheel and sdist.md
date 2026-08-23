@@ -174,6 +174,44 @@ two backlog documents cite it by name and the rename buys nothing.
 `Tests/Packaging/test_installed_distribution.py`,
 `backlog/docs/lessons-testing-evidence.md`.
 
+## Reviewer Addendum (independent review, 2026-08-22)
+
+The release-blocker claim holds and was re-verified end to end from scratch: a
+`git archive` export of the branch built an sdist and, from that sdist, a
+wheel; each installed into its own empty venv reached **version 46 read out of
+`db_schema_version`** (130 tables, no `SchemaError`), and at the base commit
+`d60ebe1d0` the same route died at V40→V41 on
+`chachanotes_v40_to_v41_persona_visual.sql`. A *different* mutation from the
+implementer's — dropping `chachanotes_v40_to_v41_persona_visual.sql` from
+`pyproject.toml` plus a `MANIFEST.in` `exclude` — turned **nine** tests red
+naming that file in both artifacts, including
+`test_installed_distribution_migrates_v35_database_to_current[source|sdist]`
+with the real `SchemaError`. Both derivations were probed empty and both fail
+closed. Restored by edit; `git diff` clean.
+
+Two corrections to the last AC, fixed on this branch rather than filed:
+
+1. **The "absent from both artifacts by design" bucket contained live
+   assets.** `Evals/eval_datasets/*.json` is read at runtime by the bundled
+   research eval template and shipped in neither artifact — the same defect
+   class as the migrations, but silent, because the runner probes the path
+   with `Path(...).exists()` instead of opening it.
+2. **The licence list was explicit but incomplete.** `LLM_Calls/LICENSE` and
+   `tldw_api/LICENSE` (Apache-2.0 subtrees this project deliberately
+   re-licenses) shipped in neither artifact while the modules they cover
+   shipped in both. The recorded reason — a fixed obligation per subtree — is
+   true, and is exactly what makes the omission a breach.
+
+Both are now packaged, pinned in `Packaging/check_manifest.py` (dataset by
+glob, licences as literals), and asserted against archive members by two new
+parametrized tests. `tldw_chatbook/DB/migrations/README.md` was also still
+instructing authors to list every migration "by name in all four" lists and
+saying "there is no wildcard"; it now says packaging is nothing to do.
+
+`Tests/Packaging/` **101 passed**; repo-wide `--collect-only` 56,672 with the
+one known dev error (`Tests/UI/test_library_file_notes_workspace.py`,
+TASK-20972).
+
 ## Notes
 
 Rate this as a release blocker rather than a defect: the failure mode is "the

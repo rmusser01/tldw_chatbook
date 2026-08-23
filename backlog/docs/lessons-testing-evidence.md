@@ -6922,3 +6922,29 @@ one real defect (migrations), one deliberate partial
 three deliberately explicit single-file lists (the pinned TTS manifest and the
 vendored `LICENSE` notices). Recording *why* each of those stays enumerated is
 the part that keeps the next person from "helpfully" globbing them.
+
+**Addendum from the independent review: "absent from both artifacts" is not
+evidence of "excluded by design".** The group audit above sorts every group
+into shipped / absent / partial, and the *absent* bucket was read as
+intentional. Two of its members were not. `Evals/eval_datasets/*.json` is read
+at runtime — `Evals/eval_templates/research.py` resolves an absolute path into
+it and passes it to the runner as `dataset_name`, which the runner probes with
+`Path(...).exists()`; absent from the artifact, the bundled research template
+loses its dataset and **nothing raises**, which is exactly why it outlived the
+migrations, whose absence at least produced a `SchemaError`. And
+`LLM_Calls/LICENSE` / `tldw_api/LICENSE` — Apache-2.0 texts for two subtrees
+this project deliberately re-licenses — shipped in neither artifact while the
+modules they cover shipped in both. Note the shape of that second one: the
+reason recorded for keeping licences enumerated ("a fixed legal obligation per
+package, not a growing directory") is *true*, and it is precisely what makes an
+incomplete list a breach rather than an oversight. A stated reason justifies
+the mechanism; it says nothing about whether the list is complete, and both
+have to be checked separately.
+
+So the audit needs a positive probe, not only a grouping: for every non-`.py`
+file under the package, grep the packaged Python for its basename, and treat
+any hit that is missing from the wheel as guilty until explained. That sweep is
+~20 lines, ran in a second over 190 assets and 1,813 modules, and it is what
+surfaced both. Filter the noise by hand — generic names (`README.md`,
+`LICENSE`, `pyproject.toml`, `.DS_Store`) match string literals all over the
+tree — 15 raw hits, 3 real.
