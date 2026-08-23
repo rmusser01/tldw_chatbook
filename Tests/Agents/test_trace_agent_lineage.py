@@ -17,6 +17,7 @@ from tldw_chatbook.Agents.agent_models import (
 )
 from tldw_chatbook.Agents import run_log as run_log_module
 from tldw_chatbook.Agents.run_log_search import load_records
+from tldw_chatbook.Chat.console_fleet_wake import compose_wake_notice
 from tldw_chatbook.Chat.trajectory import derive_trajectory
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
@@ -154,6 +155,69 @@ def test_parallel_children_reload_with_precise_spawn_causes_and_safe_tasks(
             and record.event_id.startswith("agent-step:")
         ]
         assert child_sequences == sorted(child_sequences)
+    reopened.close()
+
+
+def test_parent_terminal_echo_replaces_process_handle_at_every_durable_boundary(
+    db, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
+    coordinator_ref = {}
+
+    def echo_child_handle():
+        handle = coordinator_ref["coordinator"].snapshot()[0]
+        return f"Child {handle.handle_id} completed useful work"
+
+    service, chat, coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "echo-safe child"}),
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            echo_child_handle,
+        ],
+        {"echo-safe child": ["child complete"]},
+    )
+    coordinator_ref["coordinator"] = coordinator
+
+    parent_id, outcome = service.run_turn(
+        conversation_id="terminal-handle-echo",
+        messages=[{"role": "user", "content": "delegate"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+    )
+    handle = coordinator.snapshot()[0]
+    assert len(handle.handle_id) == 32
+    assert handle.handle_id in outcome.final_text
+    assert coordinator.get(handle.handle_id).run_id == handle.run_id
+    first_log_dir = service.run_log_writer.log_dir
+
+    # The same replacement applies when a later parent echoes a handle from
+    # a retained/foreign child rather than one spawned by its own turn.
+    chat.parent_replies.append(echo_child_handle)
+    foreign_parent_id, foreign_outcome = service.run_turn(
+        conversation_id="terminal-handle-echo",
+        messages=[{"role": "user", "content": "report the earlier child"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+    )
+    assert handle.handle_id in foreign_outcome.final_text
+    foreign_log_dir = service.run_log_writer.log_dir
+
+    db_path = db.db_path
+    db.close()
+    reopened = AgentRunsDB(db_path, client_id="terminal-handle-echo-reload")
+    durable_id = f"run:{handle.run_id}"
+    for durable_parent_id, log_dir in (
+        (parent_id, first_log_dir),
+        (foreign_parent_id, foreign_log_dir),
+    ):
+        parent = reopened.get_run(durable_parent_id)
+        wake_notice = compose_wake_notice([parent])
+        logged = "\n".join(record.content for record in load_records(log_dir))
+        for durable_text in (parent["result"], wake_notice, logged):
+            assert "completed useful work" in durable_text
+            assert durable_id in durable_text
+            assert handle.handle_id not in durable_text
     reopened.close()
 
 

@@ -1294,7 +1294,9 @@ unbounded bill.
 3 steps (think, call, result) and the closing reply costs 1, so N turns need
 `3*(N-1)+1` steps. Set steps below that and runs stop on "step budget
 exhausted" well before your turn limit — Settings warns you when the two
-disagree.
+disagree. The runtime-wide maximum is 199,999 steps; that ceiling keeps the
+control, trace, capture-diagnostic, and lifecycle storage-index bands disjoint.
+The other run-budget ceilings are unchanged.
 
 ## Common tasks
 
@@ -1341,8 +1343,9 @@ Enter). Tab-fleet keys (Ctrl+T, Alt+1…9, Ctrl+K) are covered in
   one run: token budget, wall-clock, per-tool-call, model turns, and steps
   (saved as `console.agent_max_total_tokens`,
   `console.agent_max_wall_seconds`, `console.agent_max_tool_call_seconds`,
-  `console.agent_max_model_turns`, `console.agent_max_steps`). No upper
-  bounds. See [Agent run budget](#agent-run-budget--how-long-and-how-expensive-one-reply-may-get)
+  `console.agent_max_model_turns`, `console.agent_max_steps`). Steps have a
+  runtime-wide maximum of 199,999; the other four retain their existing
+  ranges. See [Agent run budget](#agent-run-budget--how-long-and-how-expensive-one-reply-may-get)
   above for why the token budget, not the turn cap, is what stops a long run.
 - **`[agents] run_log_evict_enabled`** in `config.toml` — whether older
   rounds are trimmed out of what gets re-sent to the provider each turn

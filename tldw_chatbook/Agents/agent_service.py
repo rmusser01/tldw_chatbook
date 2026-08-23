@@ -2967,10 +2967,15 @@ class AgentService:
                     )
                 except Exception:  # noqa: BLE001 — non-recursive containment
                     logger.warning("could not persist terminal capture diagnostic")
+        durable_result = _safe_terminal_result(outcome.final_text)
+        if durable_result is not None:
+            durable_result = _replace_process_handles(
+                durable_result, durable_handles or {}
+            )
         self._set_terminal_status(
             run_id,
             outcome.status,
-            result=_safe_terminal_result(outcome.final_text),
+            result=durable_result,
             parent_event_id=terminal_event_id,
             source_event_id=(
                 terminal_event_id
