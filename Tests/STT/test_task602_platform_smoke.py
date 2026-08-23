@@ -5,6 +5,7 @@ import importlib.util
 import io
 import json
 import sys
+import time
 import wave
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -199,6 +200,7 @@ def test_run_smoke_returns_only_bounded_allowlisted_observations(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     smoke = _load_smoke()
+    process_monotonic = time.monotonic
     offline_names = ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "HF_DATASETS_OFFLINE")
     for name in offline_names:
         monkeypatch.delenv(name, raising=False)
@@ -273,7 +275,9 @@ def test_run_smoke_returns_only_bounded_allowlisted_observations(
     monkeypatch.setattr(smoke, "_executor_observations", observe_executor)
     monkeypatch.setattr(smoke, "_bounded_runtime_observations", lambda *_args: runtime)
     monkeypatch.setattr(smoke, "_close_resources", lambda _resources: None)
-    monkeypatch.setattr(smoke.time, "monotonic", iter((0.0, 3.0, 5.0)).__next__)
+    monotonic = iter((0.0, 3.0, 5.0)).__next__
+    monkeypatch.setattr(smoke, "time", SimpleNamespace(monotonic=monotonic))
+    assert time.monotonic is process_monotonic
 
     result = smoke.run_smoke("macos-arm64", tmp_path)
 
