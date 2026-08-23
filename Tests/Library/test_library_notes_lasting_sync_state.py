@@ -6,11 +6,17 @@ from dataclasses import fields, replace
 
 import pytest
 
+from tldw_chatbook.Library import library_notes_lasting_sync_state as lasting_state
 from tldw_chatbook.Library.library_notes_lasting_sync_state import (
     LastingSyncSetup,
     build_reconciliation_review,
     initial_lasting_sync_snapshot,
     set_setup_value,
+)
+from tldw_chatbook.Notes.notes_sync_conflicts import (
+    ConflictComparison,
+    ConflictSelection,
+    NotesSyncConflictChoice,
 )
 from tldw_chatbook.Notes.notes_sync_models import NotesSyncAction, NotesSyncActionKind
 from tldw_chatbook.Notes.notes_sync_reconciler import (
@@ -320,3 +326,145 @@ def test_review_rejects_mutable_choices_boolean_counts_and_unbounded_selection_c
 def test_setup_rejects_unknown_fields_instead_of_growing_policy_surface() -> None:
     with pytest.raises(ValueError, match="unknown setup field"):
         set_setup_value(initial_lasting_sync_snapshot(), "auto_sync_minutes", "5")
+
+
+def test_conflict_review_projects_typed_selection_and_skip_only_apply_blocker() -> None:
+    plan = ReconciliationPlan(
+        root_id="root-1",
+        observation_token=TOKEN,
+        safe_actions=(),
+        attention=(
+            ReconciliationAttention(
+                ReconciliationAttentionKind.CONFLICT,
+                "both_sides_changed",
+                "bind-1",
+            ),
+        ),
+        skips=(),
+        managed_placement_effects=(),
+        deletion_groups=(),
+    )
+
+    unselected = build_reconciliation_review(plan)
+    skipped = build_reconciliation_review(
+        plan,
+        selections=(ConflictSelection("bind-1", NotesSyncConflictChoice.SKIP),),
+    )
+    mutating = build_reconciliation_review(
+        plan,
+        selections=(ConflictSelection("bind-1", NotesSyncConflictChoice.KEEP_FILE),),
+    )
+
+    assert unselected.rows[0].conflict_eligible is True
+    assert unselected.rows[0].selected_choice is None
+    assert unselected.can_apply is False
+    assert unselected.apply_blocker.value == "nothing_selected"
+    assert skipped.rows[0].selected_choice is NotesSyncConflictChoice.SKIP
+    assert skipped.rows[0].selected_label == "Selected: Skip for now"
+    assert skipped.can_apply is False
+    assert skipped.apply_blocker.value == "nothing_selected"
+    assert mutating.rows[0].selected_label == "Selected: Keep file"
+    assert mutating.can_apply is True
+    assert mutating.apply_blocker.value == "none"
+
+
+def test_review_apply_blockers_derive_from_typed_plan_facts() -> None:
+    base = dict(
+        root_id="root-1",
+        observation_token=TOKEN,
+        safe_actions=(
+            NotesSyncAction("act-1", NotesSyncActionKind.UPDATE_NOTE, "bind-safe"),
+        ),
+        attention=(),
+        skips=(),
+        managed_placement_effects=(),
+        deletion_groups=(),
+    )
+    safe = build_reconciliation_review(ReconciliationPlan(**base))
+    deletion = build_reconciliation_review(
+        ReconciliationPlan(
+            **{
+                **base,
+                "attention": (
+                    ReconciliationAttention(
+                        ReconciliationAttentionKind.DELETION_REVIEW,
+                        "file_missing",
+                        "bind-1",
+                    ),
+                ),
+            }
+        )
+    )
+    capability = build_reconciliation_review(
+        ReconciliationPlan(
+            **{
+                **base,
+                "skips": (
+                    ReconciliationSkip(
+                        ReconciliationSkipKind.CAPABILITY,
+                        "write_capability_missing",
+                    ),
+                ),
+            }
+        )
+    )
+
+    assert safe.can_apply is True
+    assert safe.apply_blocker.value == "none"
+    assert deletion.can_apply is False
+    assert deletion.apply_blocker.value == "deletion_review"
+    assert capability.can_apply is False
+    assert capability.apply_blocker.value == "root_or_capability"
+
+
+def test_snapshot_conflict_projection_is_immutable_bounded_and_typed() -> None:
+    assert hasattr(lasting_state, "LastingSyncReceiptRow")
+    assert hasattr(lasting_state, "LastingSyncHistory")
+    receipt_type = lasting_state.LastingSyncReceiptRow
+    history_row_type = lasting_state.LastingSyncHistoryRow
+    history_type = lasting_state.LastingSyncHistory
+    comparison = ConflictComparison(
+        binding_id="bind-1",
+        note_title="Note",
+        relative_path="note.md",
+        note_version=1,
+        note_updated_at=None,
+        file_modified_ns=2,
+        note_character_count=4,
+        note_line_count=1,
+        file_character_count=4,
+        file_line_count=1,
+        diff="",
+        input_elided=False,
+        output_elided=False,
+    )
+    receipt = receipt_type(
+        "operation-1",
+        "Note · note.md",
+        NotesSyncConflictChoice.KEEP_FILE,
+        "completed",
+        True,
+    )
+    history_row = history_row_type(
+        "operation-1",
+        "Note · note.md",
+        NotesSyncConflictChoice.KEEP_FILE,
+        "completed",
+        "2026-08-22T12:00:00+00:00",
+        "2026-08-22T12:00:00+00:00",
+        True,
+    )
+    snapshot = replace(
+        initial_lasting_sync_snapshot(),
+        comparison=comparison,
+        receipts=(receipt,),
+        history=history_type("root-1", (history_row,), 1, False),
+    )
+
+    assert snapshot.comparison is comparison
+    assert snapshot.receipts == (receipt,)
+    assert snapshot.history.rows == (history_row,)
+    with pytest.raises(ValueError, match="bounded"):
+        replace(snapshot, receipts=(receipt,) * 101)
+    with pytest.raises(TypeError, match="history"):
+        replace(snapshot, history=object())

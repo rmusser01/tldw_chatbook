@@ -3,10 +3,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from enum import StrEnum
 from math import ceil
 from typing import Literal
 
-from tldw_chatbook.Notes.notes_sync_conflicts import eligible_conflict_reason
+from tldw_chatbook.Notes.notes_sync_conflicts import (
+    ConflictComparison,
+    ConflictHistoryRow,
+    ConflictReceipt,
+    ConflictSelection,
+    NotesSyncConflictChoice,
+    eligible_conflict_reason,
+)
 from tldw_chatbook.Notes.notes_sync_models import (
     NotesSyncActionKind,
     validate_notes_sync_digest,
@@ -26,13 +34,23 @@ LastingSyncPhase = Literal[
     "review",
     "activating",
     "receipt",
+    "history",
     "roots",
 ]
 
 _DIRECTIONS = frozenset({"bidirectional", "folder_to_notes", "notes_to_folder"})
 _DESTINATIONS = frozenset({"local", "server"})
 _PHASES = frozenset(
-    {"choose", "configure", "checking", "review", "activating", "receipt", "roots"}
+    {
+        "choose",
+        "configure",
+        "checking",
+        "review",
+        "activating",
+        "receipt",
+        "history",
+        "roots",
+    }
 )
 _ROOT_STATUSES = frozenset(
     {
@@ -69,6 +87,27 @@ _ROOT_NEXT_ACTIONS = frozenset(
         "close_other_process_and_restart",
     }
 )
+
+
+class LastingSyncApplyBlocker(StrEnum):
+    """Typed reason the reviewed subset cannot be applied."""
+
+    NONE = "none"
+    NOTHING_SELECTED = "nothing_selected"
+    STALE_REVIEW = "stale_review"
+    ACTIVATION_REVIEW = "activation_review"
+    DELETION_REVIEW = "deletion_review"
+    MANAGED_PLACEMENT = "managed_placement"
+    ROOT_OR_CAPABILITY = "root_or_capability"
+    UNSUPPORTED_ATTENTION = "unsupported_attention"
+
+
+_CHOICE_LABELS = {
+    NotesSyncConflictChoice.KEEP_FILE: "Keep file",
+    NotesSyncConflictChoice.KEEP_NOTE: "Keep note",
+    NotesSyncConflictChoice.KEEP_BOTH: "Keep both",
+    NotesSyncConflictChoice.SKIP: "Skip for now",
+}
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -119,6 +158,9 @@ class LastingSyncReviewRow:
     effect: str
     choices: tuple[str, ...] = ()
     action_id: str | None = None
+    conflict_eligible: bool = False
+    selected_choice: NotesSyncConflictChoice | None = None
+    selected_label: str = ""
 
     def __post_init__(self) -> None:
         if type(self.choices) is not tuple:
@@ -126,6 +168,15 @@ class LastingSyncReviewRow:
         validate_notes_sync_opaque_id(self.item_id, field_name="item_id")
         if self.action_id is not None:
             validate_notes_sync_opaque_id(self.action_id, field_name="action_id")
+        if type(self.conflict_eligible) is not bool:
+            raise TypeError("conflict_eligible must be a boolean")
+        if (
+            self.selected_choice is not None
+            and type(self.selected_choice) is not NotesSyncConflictChoice
+        ):
+            raise TypeError("selected_choice must be a NotesSyncConflictChoice")
+        if self.selected_choice is not None and not self.conflict_eligible:
+            raise ValueError("only eligible conflicts may be selected")
         if any(
             type(value) is not str or not value or len(value) > 160 or "\n" in value
             for value in self.choices
@@ -136,6 +187,13 @@ class LastingSyncReviewRow:
             for value in (self.category, self.effect)
         ):
             raise ValueError("review labels must be bounded single-line text")
+        expected_label = (
+            f"Selected: {_CHOICE_LABELS[self.selected_choice]}"
+            if self.selected_choice is not None
+            else ""
+        )
+        if self.selected_label != expected_label:
+            raise ValueError("selected_label must match selected_choice")
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -154,6 +212,8 @@ class LastingSyncReview:
     stale: bool = False
     next_action: str = "Check changes"
     activation: bool = False
+    can_apply: bool = False
+    apply_blocker: LastingSyncApplyBlocker = LastingSyncApplyBlocker.NOTHING_SELECTED
 
     def __post_init__(self) -> None:
         if self.root_id:
@@ -180,6 +240,12 @@ class LastingSyncReview:
             raise ValueError("review rows must be bounded to one page")
         if type(self.stale) is not bool or type(self.activation) is not bool:
             raise TypeError("review flags must be booleans")
+        if type(self.can_apply) is not bool:
+            raise TypeError("can_apply must be a boolean")
+        if type(self.apply_blocker) is not LastingSyncApplyBlocker:
+            raise TypeError("apply_blocker must be a LastingSyncApplyBlocker")
+        if self.can_apply != (self.apply_blocker is LastingSyncApplyBlocker.NONE):
+            raise ValueError("can_apply must match apply_blocker")
         if (
             type(self.page) is not int
             or type(self.page_count) is not int
@@ -202,6 +268,103 @@ class LastingSyncReview:
             f"safe={self.safe_count}, attention={self.attention_count}, "
             f"skipped={self.skip_count}, managed={self.managed_count}, "
             f"page={self.page}/{self.page_count}, stale={self.stale})"
+        )
+
+
+def _validate_item_label(value: str) -> None:
+    if (
+        type(value) is not str
+        or not value
+        or len(value) > 160
+        or "\n" in value
+        or "\r" in value
+    ):
+        raise ValueError("item_label must be bounded single-line text")
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class LastingSyncReceiptRow:
+    """One fresh bounded at-action receipt."""
+
+    operation_id: str
+    item_label: str
+    choice: NotesSyncConflictChoice
+    state: str
+    undo_available: bool
+    undo_reason: str | None = None
+
+    def __post_init__(self) -> None:
+        ConflictReceipt(
+            self.operation_id,
+            self.choice,
+            self.state,
+            self.undo_available,
+            self.undo_reason,
+        )
+        _validate_item_label(self.item_label)
+
+    def __repr__(self) -> str:
+        return "LastingSyncReceiptRow(<private>)"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class LastingSyncHistoryRow:
+    """One fresh bounded durable resolution-history row."""
+
+    operation_id: str
+    item_label: str
+    choice: NotesSyncConflictChoice
+    state: str
+    completed_at: str | None
+    updated_at: str
+    undo_available: bool
+    undo_reason: str | None = None
+
+    def __post_init__(self) -> None:
+        ConflictHistoryRow(
+            self.operation_id,
+            self.choice,
+            self.state,
+            self.completed_at,
+            self.updated_at,
+            self.undo_available,
+            self.undo_reason,
+        )
+        _validate_item_label(self.item_label)
+
+    def __repr__(self) -> str:
+        return "LastingSyncHistoryRow(<private>)"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class LastingSyncHistory:
+    """One bounded newest-first durable history page."""
+
+    root_id: str = ""
+    rows: tuple[LastingSyncHistoryRow, ...] = ()
+    page: int = 1
+    has_next: bool = False
+    unavailable: bool = False
+
+    def __post_init__(self) -> None:
+        if self.root_id:
+            validate_notes_sync_opaque_id(self.root_id, field_name="root_id")
+        if type(self.rows) is not tuple or any(
+            type(row) is not LastingSyncHistoryRow for row in self.rows
+        ):
+            raise TypeError("history rows must be a tuple of history rows")
+        if len(self.rows) > 100:
+            raise ValueError("history rows must be bounded to one page")
+        if type(self.page) is not int or self.page < 1:
+            raise ValueError("history page must be a positive integer")
+        if type(self.has_next) is not bool or type(self.unavailable) is not bool:
+            raise TypeError("history flags must be booleans")
+
+    def __repr__(self) -> str:
+        return (
+            "LastingSyncHistory("
+            f"rows={len(self.rows)}, page={self.page}, "
+            f"has_next={self.has_next}, unavailable={self.unavailable})"
         )
 
 
@@ -250,6 +413,9 @@ class LibraryNotesLastingSyncSnapshot:
     roots: tuple[LastingSyncRootRow, ...]
     status_line: str
     receipt_line: str = ""
+    comparison: ConflictComparison | None = None
+    receipts: tuple[LastingSyncReceiptRow, ...] = ()
+    history: LastingSyncHistory = LastingSyncHistory()
     root_page: int = 1
     root_page_count: int = 1
 
@@ -267,6 +433,19 @@ class LibraryNotesLastingSyncSnapshot:
             type(root) is not LastingSyncRootRow for root in self.roots
         ):
             raise TypeError("roots must be a tuple of root rows")
+        if (
+            self.comparison is not None
+            and type(self.comparison) is not ConflictComparison
+        ):
+            raise TypeError("comparison must be a ConflictComparison or None")
+        if type(self.receipts) is not tuple or any(
+            type(receipt) is not LastingSyncReceiptRow for receipt in self.receipts
+        ):
+            raise TypeError("receipts must be a tuple of receipt rows")
+        if len(self.receipts) > 100:
+            raise ValueError("receipts must be bounded to one page")
+        if type(self.history) is not LastingSyncHistory:
+            raise TypeError("history must be a LastingSyncHistory")
         if len(self.roots) > 20:
             raise ValueError("roots must be bounded to one page")
         if (
@@ -353,11 +532,23 @@ def build_reconciliation_review(
     plan: ReconciliationPlan,
     *,
     page: int = 1,
+    selections: tuple[ConflictSelection, ...] = (),
+    stale: bool = False,
+    activation: bool = False,
 ) -> LastingSyncReview:
     """Translate a public reconciliation plan into bounded, path-free rows."""
 
     if type(plan) is not ReconciliationPlan:
         raise TypeError("plan must be a ReconciliationPlan")
+    if type(selections) is not tuple or any(
+        type(selection) is not ConflictSelection for selection in selections
+    ):
+        raise TypeError("selections must be a tuple of ConflictSelection")
+    selected_by_id = {
+        selection.binding_id: selection.choice for selection in selections
+    }
+    if len(selected_by_id) != len(selections):
+        raise ValueError("conflict selections must not contain duplicates")
     rows: list[LastingSyncReviewRow] = []
     action_effects = {
         NotesSyncActionKind.CREATE_NOTE: "Create a Library note",
@@ -380,6 +571,7 @@ def build_reconciliation_review(
         effect.binding_id for effect in plan.managed_placement_effects
     )
     for attention in plan.attention:
+        conflict_eligible = False
         if attention.kind is ReconciliationAttentionKind.CONFLICT:
             effect = "Both file and note changed"
             choices: tuple[str, ...] = ("Keep file", "Keep note", "Keep both")
@@ -387,6 +579,7 @@ def build_reconciliation_review(
                 attention.reason_code,
                 managed=attention.binding_id in managed_binding_ids,
             ):
+                conflict_eligible = True
                 effect = (
                     "Both file and note changed"
                     if attention.reason_code == "both_sides_changed"
@@ -409,6 +602,17 @@ def build_reconciliation_review(
                 category="attention",
                 effect=effect,
                 choices=choices,
+                conflict_eligible=conflict_eligible,
+                selected_choice=(
+                    selected_by_id.get(attention.binding_id)
+                    if conflict_eligible
+                    else None
+                ),
+                selected_label=(
+                    f"Selected: {_CHOICE_LABELS[selected_by_id[attention.binding_id]]}"
+                    if conflict_eligible and attention.binding_id in selected_by_id
+                    else ""
+                ),
             )
         )
     for group in plan.deletion_groups:
@@ -456,6 +660,15 @@ def build_reconciliation_review(
     page_count = max(1, ceil(len(rows) / page_size))
     bounded_page = min(max(1, page), page_count)
     start = (bounded_page - 1) * page_size
+    eligible_ids = {row.item_id for row in rows if row.conflict_eligible}
+    if any(binding_id not in eligible_ids for binding_id in selected_by_id):
+        raise ValueError("selection is not an eligible conflict")
+    blocker = _apply_blocker(
+        plan,
+        selections=selections,
+        stale=stale,
+        activation=activation,
+    )
     return LastingSyncReview(
         root_id=plan.root_id,
         observation_token=plan.observation_token,
@@ -467,15 +680,57 @@ def build_reconciliation_review(
         rows=tuple(rows[start : start + page_size]),
         page=bounded_page,
         page_count=page_count,
+        stale=stale,
         next_action=(
             "Resolve attention"
             if plan.attention or plan.deletion_groups
             else "Apply reviewed"
         ),
+        activation=activation,
+        can_apply=blocker is LastingSyncApplyBlocker.NONE,
+        apply_blocker=blocker,
     )
 
 
+def _apply_blocker(
+    plan: ReconciliationPlan,
+    *,
+    selections: tuple[ConflictSelection, ...],
+    stale: bool,
+    activation: bool,
+) -> LastingSyncApplyBlocker:
+    if stale:
+        return LastingSyncApplyBlocker.STALE_REVIEW
+    if activation:
+        return LastingSyncApplyBlocker.ACTIVATION_REVIEW
+    if plan.deletion_groups or any(
+        attention.kind is ReconciliationAttentionKind.DELETION_REVIEW
+        for attention in plan.attention
+    ):
+        return LastingSyncApplyBlocker.DELETION_REVIEW
+    if plan.managed_placement_effects:
+        return LastingSyncApplyBlocker.MANAGED_PLACEMENT
+    if plan.skips:
+        return LastingSyncApplyBlocker.ROOT_OR_CAPABILITY
+    if any(
+        attention.kind is not ReconciliationAttentionKind.CONFLICT
+        or attention.binding_id is None
+        or not eligible_conflict_reason(attention.reason_code, managed=False)
+        for attention in plan.attention
+    ):
+        return LastingSyncApplyBlocker.UNSUPPORTED_ATTENTION
+    if not plan.safe_actions and not any(
+        selection.choice is not NotesSyncConflictChoice.SKIP for selection in selections
+    ):
+        return LastingSyncApplyBlocker.NOTHING_SELECTED
+    return LastingSyncApplyBlocker.NONE
+
+
 __all__ = [
+    "LastingSyncApplyBlocker",
+    "LastingSyncHistory",
+    "LastingSyncHistoryRow",
+    "LastingSyncReceiptRow",
     "LastingSyncReview",
     "LastingSyncReviewRow",
     "LastingSyncRootRow",
