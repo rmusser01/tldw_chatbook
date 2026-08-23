@@ -5226,6 +5226,72 @@ def test_atomic_directory_rename_never_replaces_existing_empty_destination(
     assert list(occupied.iterdir()) == []
 
 
+@pytest.mark.skipif(sys.platform != "darwin", reason="Darwin mode workaround only")
+def test_native_setup_and_mode_restore_double_failure_is_stable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    campaign, attempt, digest, _raw_sha256 = _prepare_review_attempt(tmp_path)
+    receipt = _write_review_receipt(attempt, digest)
+    destination = tmp_path / "published"
+    stage = destination.parent / f".{destination.name}.task-20010-stage"
+    real_open = profile.os.open
+    real_close = profile.os.close
+    real_fchmod = profile.os.fchmod
+    stage_fd: int | None = None
+    stage_fd_closed = False
+    native_symbol_requested = False
+
+    def track_open(path, flags, *args, **kwargs):
+        nonlocal stage_fd
+        descriptor = real_open(path, flags, *args, **kwargs)
+        if Path(path) == stage and stage_fd is None:
+            stage_fd = descriptor
+        return descriptor
+
+    def track_close(descriptor: int) -> None:
+        nonlocal stage_fd_closed
+        if descriptor == stage_fd:
+            stage_fd_closed = True
+        real_close(descriptor)
+
+    def fail_restore(descriptor: int, mode: int) -> None:
+        if (
+            descriptor == stage_fd
+            and native_symbol_requested
+            and mode == 0o555
+        ):
+            raise OSError("injected source mode restore failure")
+        real_fchmod(descriptor, mode)
+
+    class MissingNativeLibrary:
+        def __getattr__(self, name: str):
+            nonlocal native_symbol_requested
+            if name == "renamex_np":
+                native_symbol_requested = True
+            raise AttributeError(name)
+
+    monkeypatch.setattr(profile.os, "open", track_open)
+    monkeypatch.setattr(profile.os, "close", track_close)
+    monkeypatch.setattr(profile.os, "fchmod", fail_restore)
+    monkeypatch.setattr(
+        profile.ctypes,
+        "CDLL",
+        lambda _name, *, use_errno: MissingNativeLibrary(),
+    )
+
+    with pytest.raises(RuntimeError, match="^review_promotion_rename_failed$"):
+        profile.promote_reviewed_artifacts(
+            campaign, "attempt-0001", receipt, destination
+        )
+
+    assert stage_fd is not None and stage_fd_closed
+    assert stage.is_dir()
+    assert stat.S_IMODE(stage.stat().st_mode) == 0o755
+    assert attempt.is_dir()
+    assert not destination.exists()
+    assert not (campaign / ".campaign-lock").exists()
+
+
 def test_promotion_empty_destination_race_preserves_staging_and_attempt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

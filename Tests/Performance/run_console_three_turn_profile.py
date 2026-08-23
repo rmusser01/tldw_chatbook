@@ -691,6 +691,20 @@ def _native_rename_directory_noreplace(
                 source.chmod(original_mode | stat.S_IWUSR)
         except OSError as exc:
             raise RuntimeError("review_promotion_rename_failed") from exc
+
+    def restore_source_mode(*, renamed: bool) -> None:
+        if not darwin_compatibility_unsealed:
+            return
+        try:
+            if source_fd is not None:
+                os.fchmod(source_fd, original_mode)
+            else:
+                owned_path = target if renamed else source
+                if owned_path.exists():
+                    owned_path.chmod(original_mode)
+        except OSError as exc:
+            raise RuntimeError("review_promotion_rename_failed") from exc
+
     try:
         library = ctypes.CDLL(None, use_errno=True)
         if sys.platform == "darwin":
@@ -718,29 +732,14 @@ def _native_rename_directory_noreplace(
         else:
             raise RuntimeError("review_atomic_noreplace_unsupported")
     except AttributeError as exc:
-        if darwin_compatibility_unsealed:
-            if source_fd is not None:
-                os.fchmod(source_fd, original_mode)
-            else:
-                source.chmod(original_mode)
+        restore_source_mode(renamed=False)
         raise RuntimeError("review_atomic_noreplace_unsupported") from exc
     except OSError as exc:
-        if darwin_compatibility_unsealed:
-            if source_fd is not None:
-                os.fchmod(source_fd, original_mode)
-            elif source.exists():
-                source.chmod(original_mode)
+        restore_source_mode(renamed=False)
         raise RuntimeError("review_atomic_noreplace_unsupported") from exc
     error_number = ctypes.get_errno() if result != 0 else 0
     renamed = result == 0
-    if darwin_compatibility_unsealed:
-        try:
-            if source_fd is not None:
-                os.fchmod(source_fd, original_mode)
-            else:
-                (target if renamed else source).chmod(original_mode)
-        except OSError as exc:
-            raise RuntimeError("review_promotion_rename_failed") from exc
+    restore_source_mode(renamed=renamed)
     if not renamed:
         if error_number in {errno.EEXIST, errno.ENOTEMPTY}:
             raise RuntimeError("review_destination_exists")
