@@ -386,8 +386,10 @@ git commit -m "feat(notes): apply reviewed sync conflict choices"
 - Modify: `tldw_chatbook/Notes/notes_sync_authority.py:71-207`
 - Modify: `tldw_chatbook/Notes/notes_device_state_store.py:1013-1210,1613-1655`
 - Modify: `tldw_chatbook/Notes/notes_sync_executor.py`
+- Modify: `tldw_chatbook/Notes/notes_sync_runtime.py:624-690,1330-1420`
 - Modify: `Tests/Notes/test_notes_sync_authority.py`
 - Extend: `Tests/Notes/test_notes_sync_conflict_executor.py`
+- Extend: `Tests/Notes/test_notes_sync_conflict_runtime.py`
 
 - [ ] **Step 1: Write RED authority, direction, and crash-matrix tests**
 
@@ -399,6 +401,7 @@ Test one effect per call, caller-owned IDs, reuse by normalized manual path, act
 ../../.venv/bin/python -m pytest -q \
   Tests/Notes/test_notes_sync_authority.py \
   Tests/Notes/test_notes_sync_conflict_executor.py \
+  Tests/Notes/test_notes_sync_conflict_runtime.py \
   -k 'conflict_copy or keep_both or restart'
 ```
 
@@ -428,6 +431,8 @@ Add one store method that atomically compares operation ID, recovery ID, current
 
 - [ ] **Step 6: Implement Keep-both replay and its occurrence-only direction override**
 
+Extend the existing runtime adapter's conflict request builder to construct the complete private Keep-both request while the observation bundle is live, and remove only the reviewed-apply Keep-both refusal. The same top-level admission/blocker/token/root checks from Task 3 remain exact; automatic reconciliation still never chooses Keep both.
+
 Admission stores all deterministic IDs and exact expected authority. Execute parent folder → child folder → copy note → placement → joint verification → bound note update → file recheck → binding update → final verification. The bound-note update uses the same narrowly validated occurrence-only override contract as a selected Keep file resolution when the root direction would otherwise forbid it; it never changes the root configuration or authorizes any other action. Use the executor's existing joined/shielded mutation pattern for every admitted external effect and its immediately following substage CAS: cancellation is propagated only after that pair reaches a coherent durable checkpoint. On replay, reobserve the prior effect before advancing. Never delete a folder on recovery failure.
 
 - [ ] **Step 7: Run GREEN and mutations**
@@ -440,37 +445,45 @@ Run Step 2. Mutate collision verification to accept different content and confir
 ../../.venv/bin/python -m pytest -q \
   Tests/Notes/test_notes_sync_authority.py \
   Tests/Notes/test_notes_sync_executor.py \
-  Tests/Notes/test_notes_sync_conflict_executor.py
+  Tests/Notes/test_notes_sync_conflict_executor.py \
+  Tests/Notes/test_notes_sync_conflict_runtime.py
 ../../.venv/bin/python -m ruff check \
   tldw_chatbook/Notes/notes_scope_service.py \
   tldw_chatbook/Notes/notes_sync_authority.py \
   tldw_chatbook/Notes/notes_device_state_store.py \
   tldw_chatbook/Notes/notes_sync_executor.py \
+  tldw_chatbook/Notes/notes_sync_runtime.py \
   Tests/Notes/test_notes_sync_authority.py \
   Tests/Notes/test_notes_sync_executor.py \
-  Tests/Notes/test_notes_sync_conflict_executor.py
+  Tests/Notes/test_notes_sync_conflict_executor.py \
+  Tests/Notes/test_notes_sync_conflict_runtime.py
 ../../.venv/bin/python -m ruff format --check \
   tldw_chatbook/Notes/notes_scope_service.py \
   tldw_chatbook/Notes/notes_sync_authority.py \
   tldw_chatbook/Notes/notes_device_state_store.py \
   tldw_chatbook/Notes/notes_sync_executor.py \
+  tldw_chatbook/Notes/notes_sync_runtime.py \
   Tests/Notes/test_notes_sync_authority.py \
   Tests/Notes/test_notes_sync_executor.py \
-  Tests/Notes/test_notes_sync_conflict_executor.py
+  Tests/Notes/test_notes_sync_conflict_executor.py \
+  Tests/Notes/test_notes_sync_conflict_runtime.py
 ../../.venv/bin/python -m mypy --follow-imports=skip \
   tldw_chatbook/Notes/notes_scope_service.py \
   tldw_chatbook/Notes/notes_sync_authority.py \
   tldw_chatbook/Notes/notes_device_state_store.py \
-  tldw_chatbook/Notes/notes_sync_executor.py
+  tldw_chatbook/Notes/notes_sync_executor.py \
+  tldw_chatbook/Notes/notes_sync_runtime.py
 git diff --check
 git add \
   tldw_chatbook/Notes/notes_scope_service.py \
   tldw_chatbook/Notes/notes_sync_authority.py \
   tldw_chatbook/Notes/notes_device_state_store.py \
   tldw_chatbook/Notes/notes_sync_executor.py \
+  tldw_chatbook/Notes/notes_sync_runtime.py \
   Tests/Notes/test_notes_sync_authority.py \
   Tests/Notes/test_notes_sync_executor.py \
-  Tests/Notes/test_notes_sync_conflict_executor.py
+  Tests/Notes/test_notes_sync_conflict_executor.py \
+  Tests/Notes/test_notes_sync_conflict_runtime.py
 git commit -m "feat(notes): preserve both sync conflict versions"
 ```
 
