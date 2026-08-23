@@ -120,6 +120,58 @@ def _atomic_write_json(path: Path, value: dict[str, Any]) -> None:
     _atomic_write_text(path, json.dumps(value, sort_keys=True))
 
 
+def _bounded_utf8_tail(value: str, limit: int = _DIAGNOSTIC_BYTES) -> str:
+    """Retain the diagnostic category and a UTF-8-safe tail within ``limit`` bytes."""
+
+    encoded = value.encode("utf-8", errors="replace")
+    if len(encoded) <= limit:
+        return encoded.decode("utf-8")
+    category, separator, _ = value.partition("\n")
+    prefix = (category + separator).encode("utf-8", errors="replace")
+    if not separator or len(prefix) >= limit:
+        return encoded[:limit].decode("utf-8", errors="ignore")
+    tail = encoded[-(limit - len(prefix)) :].decode("utf-8", errors="ignore")
+    return prefix.decode("utf-8") + tail
+
+
+def _publish_capture_group(
+    staged_captures: Path,
+    capture_output: Path,
+    *,
+    inject_failure: bool = False,
+) -> None:
+    """Publish the managed capture set, rolling back this operation on failure."""
+
+    published: list[Path] = []
+    try:
+        with tempfile.TemporaryDirectory(
+            prefix=".persona-buddy-publish-", dir=capture_output
+        ) as temporary:
+            publication = Path(temporary)
+            for name in _CAPTURE_NAMES:
+                _atomic_write_bytes(
+                    publication / name,
+                    (staged_captures / name).read_bytes(),
+                )
+            for index, name in enumerate(_CAPTURE_NAMES):
+                if inject_failure and index == 2:
+                    raise OSError("persona_buddy_terminal_capture_publish_injected")
+                target = capture_output / name
+                (publication / name).replace(target)
+                published.append(target)
+    except Exception as error:
+        for target in published:
+            target.unlink(missing_ok=True)
+        raise _ProbeChildFailure(
+            category="persona_buddy_terminal_capture_publish",
+            phase="parent:capture",
+            child_return_code=0,
+            diagnostic_tail=(
+                f"{type(error).__name__}: persona_buddy_terminal_capture_publish"
+            ),
+        ) from error
+
+
 def _child(preferences_path: Path, report_path: Path) -> int:
     """Run the production-CSS child application inside the allocated PTY."""
 
@@ -1093,7 +1145,7 @@ def _run_child(
             category=category,
             phase=current_phase,
             child_return_code=int(child_return_code),
-            diagnostic_tail=diagnostic[-_DIAGNOSTIC_BYTES:],
+            diagnostic_tail=_bounded_utf8_tail(diagnostic),
         ) from error
     finally:
         os.close(master)
@@ -1107,6 +1159,7 @@ def _parent(
     *,
     capture_output: Path | None = None,
     inject_child_failure: bool = False,
+    inject_publication_failure: bool = False,
 ) -> int:
     if os.name == "nt":
         print("SKIP persona_buddy_terminal windows_no_posix_pty")
@@ -1194,11 +1247,11 @@ def _parent(
                 "second": second,
             }
             if all(checks.values()) and capture_output is not None:
-                for name in _CAPTURE_NAMES:
-                    _atomic_write_bytes(
-                        capture_output / name,
-                        (staged_captures / name).read_bytes(),
-                    )
+                _publish_capture_group(
+                    staged_captures,
+                    capture_output,
+                    inject_failure=inject_publication_failure,
+                )
             if report_output is not None:
                 _atomic_write_json(report_output, result)
             print(json.dumps(result, sort_keys=True))
@@ -1210,6 +1263,7 @@ def _parent(
         except _ProbeChildFailure as failure:
             diagnostic = failure.diagnostic_tail.replace(str(root), "<REPO_ROOT>")
             diagnostic = diagnostic.replace(temporary, "<TEMP_ROOT>")
+            diagnostic = _bounded_utf8_tail(diagnostic)
             if report_output is not None:
                 artifact = report_output.with_name(
                     f"{report_output.stem}.diagnostic.log"
@@ -1246,6 +1300,9 @@ def main() -> int:
     parser.add_argument("--report", dest="parent_report", type=_validated_cli_path)
     parser.add_argument("--capture-dir", type=_validated_cli_path)
     parser.add_argument("--inject-child-failure", action="store_true")
+    parser.add_argument(
+        "--inject-publication-failure", action="store_true", help=argparse.SUPPRESS
+    )
     arguments = parser.parse_args()
     if arguments.child:
         if arguments.preferences is None or arguments.report is None:
@@ -1253,13 +1310,14 @@ def main() -> int:
         if arguments.inject_child_failure:
             raise RuntimeError("persona_buddy_injected_child_failure")
         return _child(arguments.preferences, arguments.report)
-    if arguments.capture_dir is None and not arguments.inject_child_failure:
+    if arguments.capture_dir is None:
         parser.error("--capture-dir is required")
     try:
         return _parent(
             arguments.parent_report,
             capture_output=arguments.capture_dir,
             inject_child_failure=arguments.inject_child_failure,
+            inject_publication_failure=arguments.inject_publication_failure,
         )
     except RuntimeError as error:
         print(str(error), file=sys.stderr)
