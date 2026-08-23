@@ -4,22 +4,36 @@ import importlib
 import os, subprocess, sys, tomllib
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parents[2]
 ENGINE = REPO / "tldw_chatbook" / "Chunking" / "engine"
 SYNC = REPO / "Helper_Scripts" / "sync_chunking_engine.py"
 PIN = "385afa951922c8a9dc2002c675bb6cad65e4ac23"
 
 # The sync flow documents checking out a local worktree at the pin and running
-# the script with --source (the no-arg path git-clones the ~532 MiB upstream
-# repo and never cleans up its temp dir). Use the local worktree when it is
-# available; otherwise exercise the default GitHub-clone path.
-SOURCE = os.environ.get("TLDW_SERVER_SYNC_SOURCE", "/tmp/tldw_server_sync")
+# the script with --source. TASK-19574: there is deliberately no built-in
+# fallback location any more (the old default, /tmp/tldw_server_sync, is a
+# /private/tmp path -- the standing rule here is never to keep work there,
+# since the macOS cleaner has destroyed a worktree in it three times). Point
+# TLDW_SERVER_SYNC_SOURCE at a local tldw_server worktree checked out at PIN
+# to run test_sync_idempotent_and_rejects_local_edits; when it is unset (or
+# the path is gone), that test SKIPS instead of falling through to
+# sync_chunking_engine.py's no-arg path -- which git-clones the ~1.0 GiB
+# upstream repo per invocation (three times for this one test) and, before
+# this task, never cleaned its temp clone up. This module must never itself
+# trigger that network clone.
+SOURCE = os.environ.get("TLDW_SERVER_SYNC_SOURCE")
 
 
 def _run_sync() -> subprocess.CompletedProcess:
-    cmd = [sys.executable, str(SYNC)]
-    if Path(SOURCE).exists():
-        cmd += ["--source", SOURCE]
+    assert SOURCE and Path(SOURCE).exists(), (
+        "_run_sync() must only be called once the caller has confirmed SOURCE "
+        "exists (see the pytest.skip guard in "
+        "test_sync_idempotent_and_rejects_local_edits) -- it never falls "
+        "through to the script's no-arg network-clone path."
+    )
+    cmd = [sys.executable, str(SYNC), "--source", SOURCE]
     return subprocess.run(cmd, capture_output=True, text=True, cwd=str(REPO))
 
 
@@ -169,6 +183,17 @@ def test_no_server_imports_remain():
 
 
 def test_sync_idempotent_and_rejects_local_edits():
+    if not SOURCE or not Path(SOURCE).exists():
+        pytest.skip(
+            "TLDW_SERVER_SYNC_SOURCE is not set to an existing local "
+            f"tldw_server worktree checked out at pin {PIN}; skipping rather "
+            "than falling through to sync_chunking_engine.py's no-arg "
+            "network-clone path (TASK-19574 -- this test must never itself "
+            "trigger a ~1.0 GiB clone from GitHub). Set up a worktree with, "
+            "e.g.: git -C <tldw_server checkout> worktree add "
+            f"<dest> {PIN} && TLDW_SERVER_SYNC_SOURCE=<dest> pytest "
+            "Tests/Chunking/test_sync_script.py"
+        )
     r1 = _run_sync()
     assert r1.returncode == 0, r1.stderr
     # second run is a no-op

@@ -4,7 +4,7 @@
 Spec §5.2: idempotent, SHA-verifying, loud on local modifications, never
 syncs from an unverified local path.
 """
-import argparse, hashlib, subprocess, sys, tempfile
+import argparse, hashlib, shutil, subprocess, sys, tempfile
 from pathlib import Path
 
 REPO = "https://github.com/rmusser01/tldw_server.git"
@@ -675,75 +675,100 @@ def main() -> int:
                     help="Existing tldw_server worktree already at the pinned SHA")
     args = ap.parse_args()
 
+    # TASK-19574: any temp clone this script creates for the no-arg path is
+    # removed on EVERY exit -- success, a FATAL sys.exit() (SystemExit still
+    # runs `finally`), or an uncaught exception. Before this fix nothing ever
+    # removed it: three leaked ~1.0 GiB clones per test-suite run, 17 found
+    # on one machine in a single day (~17 GiB).
     tmp = None
-    if args.source:
-        worktree = Path(args.source).resolve()
-        verify_clean(worktree)
-    else:
-        tmp = tempfile.mkdtemp(prefix="tldw_server_sync_")
-        worktree = Path(tmp)
-        subprocess.run(["git", "clone", "--no-checkout", REPO, str(worktree)], check=True)
-        subprocess.run(["git", "-C", str(worktree), "checkout", PIN], check=True)
+    try:
+        if args.source:
+            worktree = Path(args.source).resolve()
+            verify_clean(worktree)
+        else:
+            tmp = tempfile.mkdtemp(prefix="tldw_server_sync_")
+            worktree = Path(tmp)
+            subprocess.run(["git", "clone", "--no-checkout", REPO, str(worktree)], check=True)
+            subprocess.run(["git", "-C", str(worktree), "checkout", PIN], check=True)
 
-    # 1. Refuse to overwrite local modifications (loud, spec §5.2). The
-    # canonical vendored state is upstream-at-pin + rewrite + ENGINE_PATCHES,
-    # so anything else in the tree is a local modification.
-    for rel in VENDORED + ["__init__.py"]:
-        dst = TARGET_ROOT / rel
-        if dst.exists():
-            if rel == "__init__.py":
-                continue  # chatbook-authored, never touched by sync
-            expected = patch_vendored_file(rel, rewrite_imports(git_show(worktree, rel)))
-            if dst.read_text() != expected:
-                sys.exit(f"FATAL: local modification to vendored file {rel}; "
-                         f"revert it or move the change to a shim/subclass")
+        # 1. Refuse to overwrite local modifications (loud, spec §5.2). The
+        # canonical vendored state is upstream-at-pin + rewrite + ENGINE_PATCHES,
+        # so anything else in the tree is a local modification.
+        for rel in VENDORED + ["__init__.py"]:
+            dst = TARGET_ROOT / rel
+            if dst.exists():
+                if rel == "__init__.py":
+                    continue  # chatbook-authored, never touched by sync
+                expected = patch_vendored_file(rel, rewrite_imports(git_show(worktree, rel)))
+                if dst.read_text() != expected:
+                    sys.exit(f"FATAL: local modification to vendored file {rel}; "
+                             f"revert it or move the change to a shim/subclass")
 
-    # 2. Copy + rewrite + chatbook-side engine patches
-    for rel in VENDORED:
-        dst = TARGET_ROOT / rel
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        dst.write_text(patch_vendored_file(rel, rewrite_imports(git_show(worktree, rel))))
+        # 2. Copy + rewrite + chatbook-side engine patches. Compute every
+        # output FIRST -- this can still FATAL on a missing patch anchor for a
+        # file step 1 had no prior local copy to diff (e.g. a first-time sync
+        # of a newly-vendored file) -- and only write once every output has
+        # been computed successfully, so a drift failure here can never leave
+        # a partially-rewritten vendored tree on disk.
+        vendored_writes = [
+            (TARGET_ROOT / rel, patch_vendored_file(rel, rewrite_imports(git_show(worktree, rel))))
+            for rel in VENDORED
+        ]
+        for dst, content in vendored_writes:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            dst.write_text(content)
 
-    # 3. Manifest + licence (GPLv3 §4: licence text ships in-subtree)
-    for rel in EXTRA_FILES:
-        dst = TARGET_ROOT / rel
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        dst.write_bytes(
-            subprocess.run(["git", "-C", str(worktree), "show", f"{PIN}:{rel}"],
-                           capture_output=True).stdout)
-    print(f"Synced {len(VENDORED)} files from {REPO} @ {PIN}")
+        # 3. Manifest + licence (GPLv3 §4: licence text ships in-subtree)
+        for rel in EXTRA_FILES:
+            dst = TARGET_ROOT / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            dst.write_bytes(
+                subprocess.run(["git", "-C", str(worktree), "show", f"{PIN}:{rel}"],
+                               capture_output=True).stdout)
+        print(f"Synced {len(VENDORED)} files from {REPO} @ {PIN}")
 
-    # 4. Tests (spec §10.1): port with the same import rewrite + chatbook-side
-    # patches (see TESTS_MODULE_SKIPPED / TEST_PATCHES above) so a re-sync
-    # reproduces the ported tree exactly.
-    r = subprocess.run(
-        ["git", "-C", str(worktree), "ls-tree", "-r", "--name-only", PIN,
-         f"{UPSTREAM_TESTS_ROOT}/"],
-        capture_output=True, text=True)
-    if r.returncode != 0:
-        sys.exit(f"FATAL: could not list upstream tests at {PIN}: {r.stderr}")
-    upstream_tests = sorted(
-        line[len(UPSTREAM_TESTS_ROOT) + 1:]
-        for line in r.stdout.splitlines()
-        if line.startswith(f"{UPSTREAM_TESTS_ROOT}/") and "/test_" in line
-        and line.endswith(".py") and line.split("/")[-1].startswith("test_")
-    )
-    to_port = [t for t in upstream_tests if t.split("/")[-1] not in TESTS_EXCLUDED]
-    for rel in to_port:
-        rel_path = Path(rel)
-        dst_name = TEST_RENAMES.get(rel_path.name, rel_path.name)
-        dst = TARGET_TESTS_ROOT / rel_path.parent / dst_name if rel_path.parent != Path(".") \
-            else TARGET_TESTS_ROOT / dst_name
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        src = subprocess.run(
-            ["git", "-C", str(worktree), "show", f"{PIN}:{UPSTREAM_TESTS_ROOT}/{rel}"],
+        # 4. Tests (spec §10.1): port with the same import rewrite + chatbook-side
+        # patches (see TESTS_MODULE_SKIPPED / TEST_PATCHES above) so a re-sync
+        # reproduces the ported tree exactly. Same validate-then-write split as
+        # step 2: every ported file is read + patched first (may FATAL on a
+        # missing upstream file or patch anchor), and only written once the
+        # full set has been computed.
+        r = subprocess.run(
+            ["git", "-C", str(worktree), "ls-tree", "-r", "--name-only", PIN,
+             f"{UPSTREAM_TESTS_ROOT}/"],
             capture_output=True, text=True)
-        if src.returncode != 0:
-            sys.exit(f"FATAL: {rel} not found at pinned SHA {PIN}: {src.stderr}")
-        dst.write_text(patch_ported_test(rel_path.name, rewrite_imports(src.stdout)))
-    print(f"Ported {len(to_port)} test files into {TARGET_TESTS_ROOT} "
-          f"({len(upstream_tests) - len(to_port)} excluded per spec §10.1)")
-    return 0
+        if r.returncode != 0:
+            sys.exit(f"FATAL: could not list upstream tests at {PIN}: {r.stderr}")
+        upstream_tests = sorted(
+            line[len(UPSTREAM_TESTS_ROOT) + 1:]
+            for line in r.stdout.splitlines()
+            if line.startswith(f"{UPSTREAM_TESTS_ROOT}/") and "/test_" in line
+            and line.endswith(".py") and line.split("/")[-1].startswith("test_")
+        )
+        to_port = [t for t in upstream_tests if t.split("/")[-1] not in TESTS_EXCLUDED]
+        test_writes = []
+        for rel in to_port:
+            rel_path = Path(rel)
+            dst_name = TEST_RENAMES.get(rel_path.name, rel_path.name)
+            dst = TARGET_TESTS_ROOT / rel_path.parent / dst_name if rel_path.parent != Path(".") \
+                else TARGET_TESTS_ROOT / dst_name
+            src = subprocess.run(
+                ["git", "-C", str(worktree), "show", f"{PIN}:{UPSTREAM_TESTS_ROOT}/{rel}"],
+                capture_output=True, text=True)
+            if src.returncode != 0:
+                sys.exit(f"FATAL: {rel} not found at pinned SHA {PIN}: {src.stderr}")
+            test_writes.append(
+                (dst, patch_ported_test(rel_path.name, rewrite_imports(src.stdout)))
+            )
+        for dst, content in test_writes:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            dst.write_text(content)
+        print(f"Ported {len(to_port)} test files into {TARGET_TESTS_ROOT} "
+              f"({len(upstream_tests) - len(to_port)} excluded per spec §10.1)")
+        return 0
+    finally:
+        if tmp is not None:
+            shutil.rmtree(tmp, ignore_errors=True)
 
 
 if __name__ == "__main__":
