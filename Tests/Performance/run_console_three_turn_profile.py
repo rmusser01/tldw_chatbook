@@ -2254,18 +2254,111 @@ def release_campaign_attempt(campaign_root: Path, attempt: CampaignAttempt) -> N
     release_campaign_lock(campaign_root, attempt.owner)
 
 
+def _acquisition_pin_path(campaign_root: Path, attempt_id: str) -> Path:
+    if not _ATTEMPT_ID.fullmatch(attempt_id):
+        raise RuntimeError("campaign_acquisition_pin_invalid")
+    campaign, _ = _strict_owned_directory(
+        campaign_root, parent=None, error_code="campaign_acquisition_pin_invalid"
+    )
+    attempts, _ = _strict_owned_directory(
+        campaign / "attempts",
+        parent=campaign,
+        error_code="campaign_acquisition_pin_invalid",
+    )
+    attempt, _ = _strict_owned_directory(
+        attempts / attempt_id,
+        parent=attempts,
+        error_code="campaign_acquisition_pin_invalid",
+    )
+    return attempt / "acquisition-pin.json"
+
+
+def read_acquisition_pin(
+    campaign_root: Path, attempt_id: str
+) -> dict[str, Any] | None:
+    """Read one canonical raw/verdict pin, or return ``None`` when absent."""
+    path = _acquisition_pin_path(campaign_root, attempt_id)
+    if not path.exists():
+        return None
+    if not path.is_file() or path.is_symlink():
+        raise RuntimeError("campaign_acquisition_pin_invalid")
+    try:
+        payload = path.read_bytes()
+        parsed = json.loads(payload)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("campaign_acquisition_pin_invalid") from exc
+    if not isinstance(parsed, dict):
+        raise RuntimeError("campaign_acquisition_pin_invalid")
+    record = _validate_attempt_event(parsed)
+    if (
+        record.get("attempt_id") != attempt_id
+        or record.get("state") != "complete_pending_review"
+        or payload != (json.dumps(record, sort_keys=True) + "\n").encode("utf-8")
+    ):
+        raise RuntimeError("campaign_acquisition_pin_invalid")
+    return record
+
+
+def write_acquisition_pin(
+    campaign_root: Path,
+    attempt_id: str,
+    *,
+    verdict: str,
+    raw_sha256: str,
+) -> dict[str, Any]:
+    """Atomically pin the first protocol-valid raw hash and measured verdict."""
+    event = _validate_attempt_event(
+        {
+            "attempt_id": attempt_id,
+            "state": "complete_pending_review",
+            "verdict": verdict,
+            "raw_sha256": raw_sha256,
+        }
+    )
+    path = _acquisition_pin_path(campaign_root, attempt_id)
+    existing = read_acquisition_pin(campaign_root, attempt_id)
+    if existing is not None:
+        if existing != event:
+            raise RuntimeError("campaign_acquisition_pin_mismatch")
+        return existing
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=".acquisition-pin-", dir=path.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream.write(json.dumps(event, sort_keys=True) + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        _fsync_directory(path.parent)
+        _rename_namespace(temporary, path)
+    except BaseException:
+        if temporary.exists() and not temporary.is_symlink():
+            _unlink_namespace(temporary)
+        raise
+    return event
+
+
 def recover_interrupted_attempt(
     campaign_root: Path,
     *,
     process_start_probe: Callable[[int], str | None] = process_start_identity,
 ) -> dict[str, Any]:
-    """Atomically own a dead running lock and append only ``failed:interrupted``."""
+    """Recover a dead running attempt to its durable pin or interrupted failure."""
     lock_root = campaign_root / ".campaign-lock"
     recovery_root = campaign_root / ".campaign-recovery"
     ledger = campaign_root / "attempts.jsonl"
     lineage = attempt_lineage(ledger)
     latest = lineage[-1] if lineage else None
     orphan_id = _legacy_orphan_attempt_id(campaign_root, lineage)
+    recovering_attempt_id = orphan_id or (
+        str(latest["attempt_id"]) if latest is not None else None
+    )
+    pinned_event = (
+        read_acquisition_pin(campaign_root, recovering_attempt_id)
+        if recovering_attempt_id is not None
+        else None
+    )
     if (recovery_root.exists() or recovery_root.is_symlink()) and (
         lock_root.exists() or lock_root.is_symlink()
     ):
@@ -2279,6 +2372,13 @@ def recover_interrupted_attempt(
             _delete_exact_lock_root(recovery_root, recovery_owner)
     owner: CampaignLockOwner | None = None
     if recovery_root.exists() or recovery_root.is_symlink():
+        if pinned_event is not None and latest == pinned_event:
+            if _is_empty_private_directory(recovery_root):
+                _rmdir_namespace(recovery_root)
+            else:
+                recovery_owner = _read_lock_owner(recovery_root)
+                _delete_exact_lock_root(recovery_root, recovery_owner)
+            return pinned_event
         if lineage and lineage[-1] == {
             "attempt_id": lineage[-1]["attempt_id"],
             "state": "failed",
@@ -2307,6 +2407,24 @@ def recover_interrupted_attempt(
         if marker_error is not None:
             raise RuntimeError(marker_error)
         owner = _read_lock_owner(lock_root)
+    if pinned_event is not None and latest == pinned_event:
+        observed_start = _probe_process_start_identity(
+            process_start_probe, owner.pid, allow_dead=True
+        )
+        if observed_start == owner.process_start_sha256:
+            raise RuntimeError("campaign_lock_owner_live")
+        try:
+            _rename_namespace(lock_root, recovery_root)
+        except OSError as exc:
+            raise RuntimeError("campaign_recovery_lost") from exc
+        recovered_owner = _read_lock_owner(recovery_root)
+        if recovered_owner != owner:
+            _preserve_recovery_rollback(
+                campaign_root, recovery_root, recovered_owner
+            )
+            raise RuntimeError("campaign_lock_owner_mismatch")
+        _delete_exact_lock_root(recovery_root, owner)
+        return pinned_event
     if latest is not None and latest["state"] != "running" and orphan_id is None:
         if latest["state"] in BLOCKING_ATTEMPT_STATES:
             raise RuntimeError(
@@ -2329,7 +2447,7 @@ def recover_interrupted_attempt(
                 campaign_root, recovery_root, taken_owner
             )
             raise RuntimeError("campaign_lock_owner_mismatch")
-    event = (
+    event = pinned_event or (
         {
             "attempt_id": orphan_id or latest["attempt_id"],
             "state": "failed",
@@ -3568,6 +3686,71 @@ def protocol_preflight_ownership(
     if survivors:
         raise RuntimeError("protocol_preflight_thread_survivor")
     return {"live_threads": 0}
+
+
+def expected_protocol_preflight_behaviors() -> dict[str, str]:
+    """Derive the exact pre-registered behavior fingerprint for every arm."""
+    contracts = {
+        "control": ("legacy", "legacy", True),
+        "disabled": ("candidate", "disabled", False),
+        "enabled": ("candidate", "enabled", True),
+    }
+    return {
+        arm: hashlib.sha256(
+            json.dumps(
+                {
+                    "target_revision_kind": revision_kind,
+                    "review_state": review_state,
+                    "review_ready": review_ready,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        for arm, (revision_kind, review_state, review_ready) in contracts.items()
+    }
+
+
+def validate_protocol_preflight_rows(
+    rows: Sequence[Mapping[str, Any]],
+) -> tuple[str, dict[str, str]]:
+    """Validate one exact, distinct protocol-preflight result per arm."""
+    expected = expected_protocol_preflight_behaviors()
+    expected_kinds = {
+        "control": "legacy",
+        "disabled": "candidate",
+        "enabled": "candidate",
+    }
+    unknown = [row.get("arm") for row in rows if row.get("arm") not in ARMS]
+    if unknown:
+        raise RuntimeError("protocol_preflight_behavior_unknown_arm")
+    by_arm = {arm: [row for row in rows if row.get("arm") == arm] for arm in ARMS}
+    for arm in ARMS:
+        if not by_arm[arm]:
+            raise RuntimeError(f"protocol_preflight_behavior_missing:{arm}")
+        if len(by_arm[arm]) != 1:
+            raise RuntimeError(f"protocol_preflight_behavior_duplicate:{arm}")
+        row = by_arm[arm][0]
+        if (
+            row.get("target_revision_kind") != expected_kinds[arm]
+            or row.get("behavior_sha256") != expected[arm]
+        ):
+            raise RuntimeError(f"protocol_preflight_behavior_mismatch:{arm}")
+        if row.get("final_ownership") != {"live_threads": 0}:
+            raise RuntimeError(f"protocol_preflight_ownership_mismatch:{arm}")
+    corpus_digests = {
+        str(row.get("workspace_content_tree_digest", "")) for row in rows
+    }
+    permission_hashes = {
+        arm: str(by_arm[arm][0].get("tool_definition_sha256", "")) for arm in ARMS
+    }
+    if (
+        len(corpus_digests) != 1
+        or not _SHA256.fullmatch(next(iter(corpus_digests)))
+        or any(not _SHA256.fullmatch(value) for value in permission_hashes.values())
+    ):
+        raise RuntimeError("protocol_preflight_contract_failed")
+    return next(iter(corpus_digests)), permission_hashes
 
 
 def _raise_failures(message: str, failures: Sequence[BaseException]) -> None:
@@ -6319,39 +6502,15 @@ def run_parent_mode(args: argparse.Namespace) -> int:
                     or not isinstance(last, dict)
                     or last.get("event") != "protocol_preflight"
                     or last.get("arm") != arm
-                    or last.get("target_revision_kind")
-                    != ("control" if arm == "control" else "candidate")
-                    or last.get("final_ownership") != {"live_threads": 0}
-                    or not _SHA256.fullmatch(str(last.get("behavior_sha256", "")))
                     or privacy_violations(last)
                 ):
                     raise RuntimeError("protocol_preflight_child_failed")
                 protocol_rows.append(last)
                 remove_successful_sample_root(run_root, sample_root)
 
-            corpus_digests = {
-                str(row.get("workspace_content_tree_digest", ""))
-                for row in protocol_rows
-            }
-            permission_hashes_by_arm = {
-                arm: str(
-                    next(
-                        row.get("tool_definition_sha256", "")
-                        for row in protocol_rows
-                        if row.get("arm") == arm
-                    )
-                )
-                for arm in ARMS
-            }
-            if (
-                len(corpus_digests) != 1
-                or not _SHA256.fullmatch(next(iter(corpus_digests)))
-                or any(
-                    not _SHA256.fullmatch(value)
-                    for value in permission_hashes_by_arm.values()
-                )
-            ):
-                raise RuntimeError("protocol_preflight_contract_failed")
+            corpus_digest, permission_hashes_by_arm = (
+                validate_protocol_preflight_rows(protocol_rows)
+            )
             preflight = preflight_provider(args.endpoint, args.model)
             server_metadata = provider_server_metadata(args.endpoint, args.model)
             runtime = runtime_metadata()
@@ -6361,7 +6520,7 @@ def run_parent_mode(args: argparse.Namespace) -> int:
                 provider_server=server_metadata,
                 runtime=runtime,
                 model_alias=args.model,
-                workspace_content_tree_digest=next(iter(corpus_digests)),
+                workspace_content_tree_digest=corpus_digest,
                 tool_definition_sha256_by_arm=permission_hashes_by_arm,
             )
             mismatches = protocol_mismatches(expected_protocol, observed_protocol)
@@ -6549,6 +6708,10 @@ def run_parent_mode(args: argparse.Namespace) -> int:
     summary["burn_in_contract_status"] = "passed"
     if privacy_violations(manifest) or privacy_violations(summary):
         raise RuntimeError("retained_evidence_privacy_violation")
+    args.completed_acquisition = {
+        "verdict": summary["overall_verdict"],
+        "raw_sha256": _sha256_file(raw_path),
+    }
     _write_json(run_root / "real-provider-three-turn.manifest.json", manifest)
     _write_json(run_root / "real-provider-three-turn.summary.json", summary)
     write_boundary_event(
@@ -6570,47 +6733,32 @@ def run_acquisition_action(args: argparse.Namespace) -> int:
     owned_args.output_root = attempt.root
     owned_args.attempt_id = attempt.attempt_id
     terminal_recorded = False
+    primary: BaseException | None = None
     try:
-        result = run_parent_mode(owned_args)
-        if result != 0:
-            raise RuntimeError("confirmation_acquisition_failed")
+        try:
+            result = run_parent_mode(owned_args)
+            if result != 0:
+                raise RuntimeError("confirmation_acquisition_failed")
+        except BaseException as exc:
+            primary = exc
         raw_path = attempt.root / "real-provider-three-turn.raw.jsonl"
         summary_path = attempt.root / "real-provider-three-turn.summary.json"
         manifest_path = attempt.root / "real-provider-three-turn.manifest.json"
-        try:
-            summary = json.loads(summary_path.read_bytes())
-            manifest = json.loads(manifest_path.read_bytes())
-            verdict = summary["overall_verdict"]
-        except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
-            raise RuntimeError("confirmation_derived_artifact_invalid") from exc
-        raw_sha256 = _sha256_file(raw_path)
-        pending = {
-            "attempt_id": attempt.attempt_id,
-            "state": "complete_pending_review",
-            "verdict": verdict,
-            "raw_sha256": raw_sha256,
-        }
-        manifest["attempt_id"] = attempt.attempt_id
-        manifest["attempt_lineage"] = [
-            *attempt_lineage(campaign_root / "attempts.jsonl"),
-            pending,
-        ]
-        _write_json(manifest_path, manifest)
-        complete_attempt_measurement(
-            campaign_root / "attempts.jsonl",
-            attempt.attempt_id,
-            verdict=verdict,
-            raw_sha256=raw_sha256,
-        )
-        terminal_recorded = True
-        return 0
-    except BaseException as primary:
-        try:
-            lineage = attempt_lineage(campaign_root / "attempts.jsonl")
-            if lineage and lineage[-1] == {
-                "attempt_id": attempt.attempt_id,
-                "state": "running",
-            }:
+        completed = getattr(owned_args, "completed_acquisition", None)
+        if completed is None and primary is None:
+            try:
+                summary = json.loads(summary_path.read_bytes())
+                completed = {
+                    "verdict": summary["overall_verdict"],
+                    "raw_sha256": _sha256_file(raw_path),
+                }
+            except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
+                primary = RuntimeError("confirmation_derived_artifact_invalid")
+                primary.__cause__ = exc
+        if completed is None:
+            if primary is None:
+                primary = RuntimeError("confirmation_acquisition_state_missing")
+            try:
                 append_attempt_state(
                     campaign_root / "attempts.jsonl",
                     {
@@ -6619,13 +6767,45 @@ def run_acquisition_action(args: argparse.Namespace) -> int:
                         "reason_category": "product",
                     },
                 )
-                terminal_recorded = True
-        except BaseException as terminal_failure:
-            raise BaseExceptionGroup(
-                "confirmation_acquisition_and_terminal_state_failed",
-                [primary, terminal_failure],
-            ) from None
-        raise
+            except BaseException as terminal_failure:
+                raise BaseExceptionGroup(
+                    "confirmation_acquisition_and_terminal_state_failed",
+                    [primary, terminal_failure],
+                ) from None
+            terminal_recorded = True
+            raise primary
+        try:
+            verdict = str(completed["verdict"])
+            raw_sha256 = str(completed["raw_sha256"])
+        except (KeyError, TypeError) as exc:
+            raise RuntimeError("confirmation_acquisition_state_invalid") from exc
+        pending = write_acquisition_pin(
+            campaign_root,
+            attempt.attempt_id,
+            verdict=verdict,
+            raw_sha256=raw_sha256,
+        )
+        complete_attempt_measurement(
+            campaign_root / "attempts.jsonl",
+            attempt.attempt_id,
+            verdict=verdict,
+            raw_sha256=raw_sha256,
+        )
+        terminal_recorded = True
+        if primary is not None:
+            raise primary
+        try:
+            manifest = json.loads(manifest_path.read_bytes())
+        except (OSError, TypeError, json.JSONDecodeError) as exc:
+            raise RuntimeError("confirmation_derived_artifact_invalid") from exc
+        manifest["attempt_id"] = attempt.attempt_id
+        manifest["attempt_lineage"] = list(
+            attempt_lineage(campaign_root / "attempts.jsonl")
+        )
+        if manifest["attempt_lineage"][-1] != pending:
+            raise RuntimeError("confirmation_pending_lineage_mismatch")
+        _write_json(manifest_path, manifest)
+        return 0
     finally:
         if terminal_recorded:
             primary = sys.exception()

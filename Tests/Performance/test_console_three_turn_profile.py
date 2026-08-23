@@ -4379,13 +4379,12 @@ def test_confirmatory_parent_preflights_before_samples_and_routes_exact_schedule
     monkeypatch.setattr(
         profile, "load_original_protocol", lambda *_args: expected_protocol
     )
+    summary_inputs: list[list[dict[str, object]]] = []
     statistics = SimpleNamespace(
         validate_sample=lambda _row: (),
         validate_run=lambda _rows, **_kwargs: (),
-        build_summary=lambda rows: {
-            "overall_verdict": "pass",
-            "sample_count": len(rows),
-        },
+        build_summary=lambda rows: summary_inputs.append(list(rows))
+        or {"overall_verdict": "pass", "sample_count": len(rows)},
     )
     monkeypatch.setattr(profile, "load_original_runner", lambda _root: statistics)
     monkeypatch.setattr(
@@ -4400,6 +4399,7 @@ def test_confirmatory_parent_preflights_before_samples_and_routes_exact_schedule
         spec = json.loads(spec_path.read_text(encoding="utf-8"))
         child_specs.append((spec, cwd))
         if spec.get("mode") == "protocol_preflight":
+            expected_behaviors = profile.expected_protocol_preflight_behaviors()
             terminal = {
                 "event": "protocol_preflight",
                 "sample_id": spec["sample_id"],
@@ -4407,11 +4407,11 @@ def test_confirmatory_parent_preflights_before_samples_and_routes_exact_schedule
                 "iteration": spec["iteration"],
                 "arm": spec["arm"],
                 "target_revision_kind": (
-                    "control" if spec["arm"] == "control" else "candidate"
+                    "legacy" if spec["arm"] == "control" else "candidate"
                 ),
                 "workspace_content_tree_digest": "4" * 64,
                 "tool_definition_sha256": ("5" if spec["arm"] == "control" else "6") * 64,
-                "behavior_sha256": "7" * 64,
+                "behavior_sha256": expected_behaviors[str(spec["arm"])],
                 "final_ownership": {"live_threads": 0},
             }
         else:
@@ -4432,6 +4432,17 @@ def test_confirmatory_parent_preflights_before_samples_and_routes_exact_schedule
                 }
             )
         with evidence_path.open("a", encoding="utf-8") as stream:
+            profile.write_boundary_event(
+                stream,
+                {
+                    "event": "child_start",
+                    "sample_id": spec["sample_id"],
+                    "phase": spec["phase"],
+                    "iteration": spec["iteration"],
+                    "arm": spec["arm"],
+                    "schedule_position": spec["schedule_position"],
+                },
+            )
             profile.write_boundary_event(stream, terminal)
         return profile.ChildResult("complete", 0, terminal)
 
@@ -4442,8 +4453,8 @@ def test_confirmatory_parent_preflights_before_samples_and_routes_exact_schedule
         candidate_sha=profile.CANDIDATE_SHA,
         endpoint="http://127.0.0.1:9099",
         model="fixture.gguf",
-        iterations=1,
-        burn_in_blocks=1,
+        iterations=30,
+        burn_in_blocks=5,
         sample_timeout=1.0,
         attempt_id="attempt-0001",
         campaign_root=tmp_path / "campaign",
@@ -4452,7 +4463,19 @@ def test_confirmatory_parent_preflights_before_samples_and_routes_exact_schedule
     assert profile.run_parent_mode(args) == 0
     preflights = [spec for spec, _cwd in child_specs[:3]]
     samples = child_specs[3:]
-    schedule = profile.sample_schedule(1, burn_in_blocks=1)
+    schedule = profile.sample_schedule(30, burn_in_blocks=5)
+    raw_rows = [
+        json.loads(line)
+        for line in (output / "real-provider-three-turn.raw.jsonl")
+        .read_text()
+        .splitlines()
+    ]
+    assert len(samples) == 108
+    assert sum(
+        row["event"] == "child_start" and row["phase"] != "protocol_preflight"
+        for row in raw_rows
+    ) == 108
+    assert sum(row["event"] == "sample" for row in raw_rows) == 108
     assert [spec["mode"] for spec in preflights] == ["protocol_preflight"] * 3
     assert [spec["arm"] for spec in preflights] == list(profile.ARMS)
     assert [spec["schedule_position"] for spec, _cwd in samples] == list(
@@ -4460,7 +4483,7 @@ def test_confirmatory_parent_preflights_before_samples_and_routes_exact_schedule
     )
     assert [cwd for spec, cwd in samples if spec["arm"] == "control"] == [
         roots["control"]
-    ] * 3
+    ] * 36
     assert all(
         cwd == roots["candidate"]
         for spec, cwd in samples
@@ -4470,13 +4493,16 @@ def test_confirmatory_parent_preflights_before_samples_and_routes_exact_schedule
     summary = json.loads(
         (output / "real-provider-three-turn.summary.json").read_text()
     )
-    assert summary["sample_count"] == 6
-    assert summary["excluded_burn_in_sample_count"] == 3
+    assert summary["sample_count"] == 93
+    assert summary["excluded_burn_in_sample_count"] == 15
     assert summary["burn_in_contract_status"] == "passed"
+    assert len(summary_inputs) == 1
+    assert len(summary_inputs[0]) == 93
+    assert not any(row["phase"] == "burn_in" for row in summary_inputs[0])
     manifest = json.loads(
         (output / "real-provider-three-turn.manifest.json").read_text()
     )
-    assert manifest["burn_in_blocks"] == 1
+    assert manifest["burn_in_blocks"] == 5
     assert manifest["protocol_equivalence"]["status"] == "passed"
     assert [row["schedule_position"] for row in manifest["sample_schedule"]] == list(
         range(len(schedule))
@@ -4725,6 +4751,65 @@ def test_protocol_preflight_derives_content_free_fingerprints_and_tears_down(
     assert len(result["behavior_sha256"]) == 64
     assert closed == ["runtime", "adapter"]
     assert not profile.privacy_violations(result)
+
+
+def _exact_protocol_preflight_rows() -> list[dict[str, object]]:
+    expected = profile.expected_protocol_preflight_behaviors()
+    return [
+        {
+            "arm": arm,
+            "target_revision_kind": (
+                "legacy" if arm == "control" else "candidate"
+            ),
+            "behavior_sha256": expected[arm],
+            "workspace_content_tree_digest": "c" * 64,
+            "tool_definition_sha256": f"{index + 1}" * 64,
+            "final_ownership": {"live_threads": 0},
+        }
+        for index, arm in enumerate(profile.ARMS)
+    ]
+
+
+def test_protocol_preflight_behavior_contract_is_exact_and_arm_specific() -> None:
+    expected = profile.expected_protocol_preflight_behaviors()
+
+    assert set(expected) == set(profile.ARMS)
+    assert len(set(expected.values())) == len(profile.ARMS)
+    assert profile.validate_protocol_preflight_rows(
+        _exact_protocol_preflight_rows()
+    ) == (
+        "c" * 64,
+        {arm: f"{index + 1}" * 64 for index, arm in enumerate(profile.ARMS)},
+    )
+
+
+@pytest.mark.parametrize("arm", profile.ARMS)
+def test_protocol_preflight_rejects_each_arm_behavior_mismatch(arm: str) -> None:
+    rows = _exact_protocol_preflight_rows()
+    next(row for row in rows if row["arm"] == arm)["behavior_sha256"] = "f" * 64
+
+    with pytest.raises(
+        RuntimeError, match=f"protocol_preflight_behavior_mismatch:{arm}"
+    ):
+        profile.validate_protocol_preflight_rows(rows)
+
+
+@pytest.mark.parametrize(("mutation", "code"), [
+    ("missing", "protocol_preflight_behavior_missing:disabled"),
+    ("duplicate", "protocol_preflight_behavior_duplicate:disabled"),
+])
+def test_protocol_preflight_rejects_missing_or_duplicate_arm(
+    mutation: str, code: str
+) -> None:
+    rows = _exact_protocol_preflight_rows()
+    disabled = next(row for row in rows if row["arm"] == "disabled")
+    if mutation == "missing":
+        rows.remove(disabled)
+    else:
+        rows.append(dict(disabled))
+
+    with pytest.raises(RuntimeError, match=code):
+        profile.validate_protocol_preflight_rows(rows)
 
 
 def test_protocol_preflight_measures_ownership_only_after_cleanup(tmp_path: Path) -> None:
@@ -5037,6 +5122,10 @@ def test_main_acquisition_owns_attempt_through_pending_review(
     attempt_root.mkdir(parents=True)
     owner = profile.CampaignLockOwner(123, "a" * 64, "b" * 64)
     attempt = profile.CampaignAttempt("attempt-0001", attempt_root, owner)
+    profile.append_attempt_state(
+        campaign / "attempts.jsonl",
+        {"attempt_id": attempt.attempt_id, "state": "running"},
+    )
     calls: list[object] = []
     monkeypatch.setattr(
         profile,
@@ -5056,13 +5145,13 @@ def test_main_acquisition_owns_attempt_through_pending_review(
         return 0
 
     monkeypatch.setattr(profile, "run_parent_mode", parent)
-    monkeypatch.setattr(
-        profile,
-        "complete_attempt_measurement",
-        lambda ledger, attempt_id, **values: calls.append(
-            ("complete", ledger, attempt_id, values)
-        ),
-    )
+    real_complete = profile.complete_attempt_measurement
+
+    def complete(ledger, attempt_id, **values):
+        calls.append(("complete", ledger, attempt_id, values))
+        return real_complete(ledger, attempt_id, **values)
+
+    monkeypatch.setattr(profile, "complete_attempt_measurement", complete)
     monkeypatch.setattr(
         profile,
         "release_campaign_attempt",
@@ -5088,6 +5177,191 @@ def test_main_acquisition_owns_attempt_through_pending_review(
         "verdict": "inconclusive",
         "raw_sha256": hashlib.sha256(b"raw\n").hexdigest(),
     }
+
+
+def test_pre_acquisition_failure_preserves_terminal_append_failure_and_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    campaign = tmp_path / "campaign"
+    attempt = profile.acquire_campaign_attempt(
+        campaign,
+        pid=123,
+        process_start_probe=lambda _pid: "a" * 64,
+        owner_token_factory=lambda: "b" * 64,
+    )
+    monkeypatch.setattr(profile, "acquire_campaign_attempt", lambda _root: attempt)
+    monkeypatch.setattr(
+        profile,
+        "run_parent_mode",
+        lambda _args: (_ for _ in ()).throw(RuntimeError("preflight_failed")),
+    )
+    monkeypatch.setattr(
+        profile,
+        "append_attempt_state",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("terminal_append_failed")
+        ),
+    )
+
+    with pytest.raises(BaseExceptionGroup) as caught:
+        profile.run_acquisition_action(SimpleNamespace(campaign_root=campaign))
+
+    assert str(caught.value) == (
+        "confirmation_acquisition_and_terminal_state_failed (2 sub-exceptions)"
+    )
+    assert [str(error) for error in caught.value.exceptions] == [
+        "preflight_failed",
+        "terminal_append_failed",
+    ]
+    assert profile.attempt_lineage(campaign / "attempts.jsonl")[-1]["state"] == (
+        "running"
+    )
+    assert (campaign / ".campaign-lock").is_dir()
+
+
+def _completed_parent_artifacts(args: SimpleNamespace) -> None:
+    raw = b"protocol-valid-raw\n"
+    (args.output_root / "real-provider-three-turn.raw.jsonl").write_bytes(raw)
+    (args.output_root / "real-provider-three-turn.summary.json").write_text(
+        json.dumps({"overall_verdict": "pass"}), encoding="utf-8"
+    )
+    (args.output_root / "real-provider-three-turn.manifest.json").write_text(
+        "{}", encoding="utf-8"
+    )
+    args.completed_acquisition = {
+        "verdict": "pass",
+        "raw_sha256": hashlib.sha256(raw).hexdigest(),
+    }
+
+
+def test_pending_ledger_failure_keeps_raw_verdict_pin_blocking_and_resumable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    campaign = tmp_path / "campaign"
+    attempt = profile.acquire_campaign_attempt(
+        campaign,
+        pid=123,
+        process_start_probe=lambda _pid: "a" * 64,
+        owner_token_factory=lambda: "b" * 64,
+    )
+    monkeypatch.setattr(profile, "acquire_campaign_attempt", lambda _root: attempt)
+
+    def parent(args):
+        _completed_parent_artifacts(args)
+        return 0
+
+    monkeypatch.setattr(profile, "run_parent_mode", parent)
+    monkeypatch.setattr(
+        profile,
+        "complete_attempt_measurement",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("pending_ledger_write_failed")
+        ),
+    )
+    args = SimpleNamespace(campaign_root=campaign)
+
+    with pytest.raises(RuntimeError, match="pending_ledger_write_failed"):
+        profile.run_acquisition_action(args)
+
+    pin = profile.read_acquisition_pin(campaign, attempt.attempt_id)
+    assert pin == {
+        "attempt_id": attempt.attempt_id,
+        "state": "complete_pending_review",
+        "verdict": "pass",
+        "raw_sha256": hashlib.sha256(b"protocol-valid-raw\n").hexdigest(),
+    }
+    assert profile.attempt_lineage(campaign / "attempts.jsonl")[-1]["state"] == "running"
+    assert (campaign / ".campaign-lock").is_dir()
+    with pytest.raises(RuntimeError, match="campaign_acquisition_blocked:running"):
+        profile.require_campaign_acquisition(campaign / "attempts.jsonl")
+
+    monkeypatch.undo()
+    recovered = profile.recover_interrupted_attempt(
+        campaign, process_start_probe=lambda _pid: None
+    )
+    assert recovered == pin
+    assert profile.attempt_lineage(campaign / "attempts.jsonl")[-1] == pin
+    assert not (campaign / ".campaign-lock").exists()
+    with pytest.raises(
+        RuntimeError, match="campaign_acquisition_blocked:complete_pending_review"
+    ):
+        profile.require_campaign_acquisition(campaign / "attempts.jsonl")
+
+
+def test_post_acquisition_manifest_failure_stays_pending_and_releases_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    campaign = tmp_path / "campaign"
+    attempt = profile.acquire_campaign_attempt(
+        campaign,
+        pid=123,
+        process_start_probe=lambda _pid: "a" * 64,
+        owner_token_factory=lambda: "b" * 64,
+    )
+    monkeypatch.setattr(profile, "acquire_campaign_attempt", lambda _root: attempt)
+
+    def parent(args):
+        _completed_parent_artifacts(args)
+        return 0
+
+    monkeypatch.setattr(profile, "run_parent_mode", parent)
+    monkeypatch.setattr(
+        profile,
+        "_write_json",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("manifest_finalization_failed")
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="manifest_finalization_failed"):
+        profile.run_acquisition_action(SimpleNamespace(campaign_root=campaign))
+
+    lineage = profile.attempt_lineage(campaign / "attempts.jsonl")
+    assert lineage[-1] == profile.read_acquisition_pin(campaign, attempt.attempt_id)
+    assert lineage[-1]["state"] == "complete_pending_review"
+    assert not (campaign / ".campaign-lock").exists()
+    with pytest.raises(
+        RuntimeError, match="campaign_acquisition_blocked:complete_pending_review"
+    ):
+        profile.require_campaign_acquisition(campaign / "attempts.jsonl")
+
+
+def test_recovery_finishes_lock_release_when_pending_append_raised_after_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    campaign = tmp_path / "campaign"
+    attempt = profile.acquire_campaign_attempt(
+        campaign,
+        pid=123,
+        process_start_probe=lambda _pid: "a" * 64,
+        owner_token_factory=lambda: "b" * 64,
+    )
+    monkeypatch.setattr(profile, "acquire_campaign_attempt", lambda _root: attempt)
+
+    def parent(args):
+        _completed_parent_artifacts(args)
+        return 0
+
+    monkeypatch.setattr(profile, "run_parent_mode", parent)
+    real_complete = profile.complete_attempt_measurement
+
+    def complete_then_fail(*args, **kwargs):
+        real_complete(*args, **kwargs)
+        raise RuntimeError("pending_ledger_post_commit_failed")
+
+    monkeypatch.setattr(profile, "complete_attempt_measurement", complete_then_fail)
+
+    with pytest.raises(RuntimeError, match="pending_ledger_post_commit_failed"):
+        profile.run_acquisition_action(SimpleNamespace(campaign_root=campaign))
+
+    pin = profile.read_acquisition_pin(campaign, attempt.attempt_id)
+    assert profile.attempt_lineage(campaign / "attempts.jsonl")[-1] == pin
+    assert (campaign / ".campaign-lock").is_dir()
+    monkeypatch.undo()
+    assert profile.recover_interrupted_attempt(
+        campaign, process_start_probe=lambda _pid: None
+    ) == pin
+    assert not (campaign / ".campaign-lock").exists()
 
 
 def test_recover_action_never_contacts_provider(
