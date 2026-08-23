@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from collections.abc import Mapping
+from datetime import datetime
 
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService, ScopeType
 from tldw_chatbook.Notes.notes_sync_models import (
@@ -30,6 +31,7 @@ class NotesSyncNoteSnapshot:
     content: str
     version: int
     content_digest: str
+    updated_at: str | None = None
 
     def __post_init__(self) -> None:
         validate_notes_sync_opaque_id(
@@ -47,6 +49,18 @@ class NotesSyncNoteSnapshot:
         )
         if self.content_digest != _content_digest(self.content):
             raise ValueError("content_digest must match note content.")
+        if self.updated_at is not None:
+            if (
+                type(self.updated_at) is not str
+                or not self.updated_at
+                or len(self.updated_at) > 64
+                or "\n" in self.updated_at
+            ):
+                raise ValueError("updated_at must be bounded ISO-8601 text.")
+            try:
+                datetime.fromisoformat(self.updated_at.replace("Z", "+00:00"))
+            except ValueError:
+                raise ValueError("updated_at must be bounded ISO-8601 text.") from None
 
     def __repr__(self) -> str:
         return "NotesSyncNoteSnapshot(<private>)"
@@ -228,6 +242,9 @@ class NotesScopeSyncAuthority:
             or type(version) is not int
         ):
             raise NotesSyncAuthorityError("note_observation_invalid")
+        updated_at = record.get("updated_at")
+        if updated_at is not None and type(updated_at) is not str:
+            raise NotesSyncAuthorityError("note_observation_invalid")
         return NotesSyncNoteSnapshot(
             note_scope_id=self._note_scope_id,
             note_id=note_id,
@@ -235,6 +252,7 @@ class NotesScopeSyncAuthority:
             content=content,
             version=version,
             content_digest=_content_digest(content),
+            updated_at=updated_at,
         )
 
 

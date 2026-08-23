@@ -27,6 +27,7 @@ class RecordingLocalNotes:
             "title": "Before",
             "content": "before",
             "version": 4,
+            "updated_at": "2026-08-22T12:30:00+00:00",
             "deleted": 0,
         }
 
@@ -116,6 +117,7 @@ async def test_sync_note_read_and_replace_route_only_through_scope_service() -> 
         "title": "Before",
         "content": "before",
         "version": 4,
+        "updated_at": "2026-08-22T12:30:00+00:00",
         "deleted": 0,
     }
     assert after["version"] == 5
@@ -195,6 +197,7 @@ async def test_private_note_authority_observes_and_replaces_through_scope_servic
     assert before.version == 4
     assert before.title == "Before"
     assert before.content == "before"
+    assert before.updated_at == "2026-08-22T12:30:00+00:00"
     assert (
         before.content_digest
         == "6db7d803e74f1ffa7d8f5adc0bf95b3e15bf4c8373fffadf546227cc6c6742cb"
@@ -264,6 +267,31 @@ def test_private_note_snapshot_validates_and_redacts_all_authority_values() -> N
             content="body",
             version=1,
             content_digest="a" * 64,
+        )
+
+
+def test_private_note_snapshot_updated_at_is_typed_optional_and_validated() -> None:
+    digest = "230d8358dc8e8890b4c58deeb62912ee2f20357ae92a5cc861b98e68fe31acb5"
+    snapshot = NotesSyncNoteSnapshot(
+        note_scope_id="local_note",
+        note_id="note-1",
+        title="Title",
+        content="body",
+        version=1,
+        content_digest=digest,
+        updated_at=None,
+    )
+
+    assert snapshot.updated_at is None
+    with pytest.raises(ValueError, match="updated_at"):
+        NotesSyncNoteSnapshot(
+            note_scope_id="local_note",
+            note_id="note-1",
+            title="Title",
+            content="body",
+            version=1,
+            content_digest=digest,
+            updated_at="not-a-timestamp",
         )
 
 

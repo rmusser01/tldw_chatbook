@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import sqlite3
 import time
+import weakref
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -26,6 +27,11 @@ from tldw_chatbook.Notes.notes_device_state_store import (
     NotesSyncStoreSetting,
 )
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService, ScopeType
+from tldw_chatbook.Notes.notes_sync_conflicts import (
+    ConflictComparison,
+    build_conflict_comparison,
+    eligible_conflict_reason,
+)
 from tldw_chatbook.Notes.notes_sync_authority import (
     NotesScopeSyncAuthority,
     NotesSyncAuthorityError,
@@ -60,6 +66,7 @@ from tldw_chatbook.Notes.notes_sync_legacy import (
 )
 from tldw_chatbook.Notes.notes_sync_reconciler import (
     BindingObservation,
+    ReconciliationAttentionKind,
     ReconciliationInput,
     ReconciliationPlan,
     assert_review_current,
@@ -260,6 +267,13 @@ class _RuntimeAdapter(Protocol):
     async def create_root_folder(self, display_name: str) -> tuple[str, object]: ...
 
     async def rollback_root_folder(self, receipt: object) -> None: ...
+
+    async def build_conflict_comparison(
+        self,
+        root: NotesSyncRootRecord,
+        plan: ReconciliationPlan,
+        binding_id: str,
+    ) -> ConflictComparison: ...
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -594,6 +608,30 @@ class _ProductionRuntimeAdapter:
     def release_observation(self, observation_token: str) -> None:
         self._bundles.pop(observation_token, None)
 
+    async def build_conflict_comparison(
+        self,
+        root: NotesSyncRootRecord,
+        plan: ReconciliationPlan,
+        binding_id: str,
+    ) -> ConflictComparison:
+        """Project one live private binding into a bounded comparison."""
+
+        binding = self._bundles.get(plan.observation_token, {}).get(binding_id)
+        if binding is None or binding.note is None or binding.file is None:
+            raise RuntimeError("private_comparison_authority_missing")
+        if binding.record.root_id != root.root_id:
+            raise RuntimeError("comparison_root_mismatch")
+        return build_conflict_comparison(
+            binding_id=binding_id,
+            title=binding.note.title,
+            relative_path=binding.file.observation.relative_path,
+            note_text=binding.note.content,
+            file_text=binding.file.text,
+            note_version=binding.note.version,
+            note_updated_at=binding.note.updated_at,
+            file_modified_ns=binding.file.reviewed_state.mtime_ns,
+        )
+
     def executor_for(
         self,
         root: NotesSyncRootRecord,
@@ -665,10 +703,22 @@ class NotesSyncRuntimeOwner:
         self._setup_reviews: dict[str, _SetupReview] = {}
         self._root_status: dict[str, NotesSyncRootRuntimeSnapshot] = {}
         self._root_paths: dict[str, str] = {}
+        self._mutation_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
+            weakref.WeakValueDictionary()
+        )
         self._status = "starting"
         self._next_action = "wait"
         self._admission_open = False
         self._closing = False
+
+    def _mutation_lock(self, root_id: str) -> asyncio.Lock:
+        """Return the one live in-process mutation lock for a root."""
+
+        lock = self._mutation_locks.get(root_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._mutation_locks[root_id] = lock
+        return lock
 
     def snapshot(self) -> NotesSyncRuntimeSnapshot:
         """Return the current path-free UI projection."""
@@ -928,6 +978,18 @@ class NotesSyncRuntimeOwner:
         *,
         automatic: bool,
     ) -> ReconciliationPlan:
+        if automatic:
+            lock = self._mutation_lock(root.root_id)
+            async with lock:
+                return await self._reconcile_locked(root, automatic=True)
+        return await self._reconcile_locked(root, automatic=False)
+
+    async def _reconcile_locked(
+        self,
+        root: NotesSyncRootRecord,
+        *,
+        automatic: bool,
+    ) -> ReconciliationPlan:
         lease = self._leases.get(root.root_id)
         if lease is None or not getattr(lease, "authoritative", False):
             raise RuntimeError("root_lease_required")
@@ -953,7 +1015,7 @@ class NotesSyncRuntimeOwner:
             await self._publish(root.root_id, "needs_attention", "review_changes")
             return plan
         if automatic and selected:
-            await self._execute(root, authority, selected)
+            await self._execute_locked(root, authority, selected)
         elif selected:
             await self._publish(root.root_id, "changes_available", "review_changes")
         else:
@@ -1154,6 +1216,62 @@ class NotesSyncRuntimeOwner:
             self._start_watcher()
         return plan
 
+    async def compare_conflict(
+        self,
+        root_id: str,
+        observation_token: str,
+        binding_id: str,
+    ) -> ConflictComparison:
+        """Return one bounded comparison under exact fresh planning authority."""
+
+        task = self._admit_task(root_id)
+        plan: ReconciliationPlan | None = None
+        try:
+            reviewed = self._reviews.get(root_id)
+            if reviewed is None or reviewed.observation_token != observation_token:
+                raise ValueError("stale_review")
+            root = await asyncio.to_thread(self._store.get_root, root_id)
+            if root.root_id != root_id:
+                raise RuntimeError("root_authority_mismatch")
+            if root.state is not NotesSyncRootState.ACTIVE:
+                raise RuntimeError("sync_root_not_active")
+            self._require_authority(root_id, "plan")
+            observations = await self._adapter.observe_root(root)
+            plan = plan_reconciliation(observations)
+            self._require_authority(root_id, "plan")
+            if observations.root_id != root_id or plan.root_id != root_id:
+                raise RuntimeError("root_observation_mismatch")
+            if observations.direction is not root.direction:
+                raise RuntimeError("root_direction_changed")
+            if plan.observation_token != observation_token:
+                raise ValueError("stale_review")
+            if plan != reviewed:
+                raise ValueError("stale_review")
+            managed = {effect.binding_id for effect in plan.managed_placement_effects}
+            matches = tuple(
+                attention
+                for attention in plan.attention
+                if attention.kind is ReconciliationAttentionKind.CONFLICT
+                and attention.binding_id == binding_id
+                and eligible_conflict_reason(
+                    attention.reason_code,
+                    managed=binding_id in managed,
+                )
+            )
+            if len(matches) != 1:
+                raise ValueError("comparison_binding_mismatch")
+            return await self._adapter.build_conflict_comparison(
+                root,
+                plan,
+                binding_id,
+            )
+        finally:
+            if plan is not None:
+                release = getattr(self._adapter, "release_observation", None)
+                if callable(release):
+                    release(plan.observation_token)
+            self._finish_task(root_id, task)
+
     async def apply_reviewed(
         self,
         root_id: str,
@@ -1167,35 +1285,49 @@ class NotesSyncRuntimeOwner:
             reviewed = self._reviews.get(root_id)
             if reviewed is None or reviewed.observation_token != observation_token:
                 raise ValueError("stale_review")
-            root = await asyncio.to_thread(self._store.get_root, root_id)
-            if root.state is not NotesSyncRootState.ACTIVE:
-                await self._publish(root_id, "paused", "resume_sync")
-                raise RuntimeError("sync_root_not_active")
-            authority = await self._fresh_authority(root)
-            assert_review_current(reviewed, authority.observations)
-            if authority.plan != reviewed:
-                raise ValueError("stale_review")
-            blocked = self._blocked_plan_status(authority.plan)
-            if blocked is not None:
-                self._blocked_roots.add(root_id)
-                await self._publish(root_id, *blocked)
-                raise ValueError("review_not_executable")
-            selected_ids = set(action_ids)
-            selected = tuple(
-                action
-                for action in authority.plan.safe_actions
-                if action.action_id in selected_ids
-                and action.kind in _EXECUTABLE_ACTIONS
-            )
-            if len(selected) != len(selected_ids):
-                raise ValueError("reviewed_action_mismatch")
-            if not selected:
-                return ()
-            return await self._execute(root, authority, selected)
+            lock = self._mutation_lock(root_id)
+            async with lock:
+                root = await asyncio.to_thread(self._store.get_root, root_id)
+                if root.root_id != root_id:
+                    raise RuntimeError("root_authority_mismatch")
+                if root.state is not NotesSyncRootState.ACTIVE:
+                    await self._publish(root_id, "paused", "resume_sync")
+                    raise RuntimeError("sync_root_not_active")
+                authority = await self._fresh_authority(root)
+                assert_review_current(reviewed, authority.observations)
+                if authority.plan != reviewed:
+                    raise ValueError("stale_review")
+                blocked = self._blocked_plan_status(authority.plan)
+                if blocked is not None:
+                    self._blocked_roots.add(root_id)
+                    await self._publish(root_id, *blocked)
+                    raise ValueError("review_not_executable")
+                selected_ids = set(action_ids)
+                selected = tuple(
+                    action
+                    for action in authority.plan.safe_actions
+                    if action.action_id in selected_ids
+                    and action.kind in _EXECUTABLE_ACTIONS
+                )
+                if len(selected) != len(selected_ids):
+                    raise ValueError("reviewed_action_mismatch")
+                if not selected:
+                    return ()
+                return await self._execute_locked(root, authority, selected)
         finally:
             self._finish_task(root_id, task)
 
     async def _execute(
+        self,
+        root: NotesSyncRootRecord,
+        authority: _FreshAuthority,
+        actions: tuple[NotesSyncAction, ...],
+    ) -> tuple[object, ...]:
+        lock = self._mutation_lock(root.root_id)
+        async with lock:
+            return await self._execute_locked(root, authority, actions)
+
+    async def _execute_locked(
         self,
         root: NotesSyncRootRecord,
         authority: _FreshAuthority,
@@ -1310,57 +1442,73 @@ class NotesSyncRuntimeOwner:
                 continue
             if not await self._ensure_lease(root):
                 continue
-            if await self._classify_incomplete_block(root, operation):
-                recovery_blocked.add(root.root_id)
-                continue
-            try:
-                self._require_authority(root.root_id, "write")
-                executor = self._adapter.executor_for(
-                    root,
-                    after_stage=lambda _state, root_id=root.root_id: (
-                        self._require_authority(root_id, "write")
-                    ),
-                )
-                request = await executor.reconstruct_request(operation.operation_id)
-                self._require_authority(root.root_id, "write")
-                result = await executor.resume(request)
-                self._require_authority(root.root_id, "write")
-            except Exception:
-                self._blocked_roots.add(root.root_id)
-                await self._publish(
-                    root.root_id,
-                    "failed",
-                    "review_changes",
-                    action_id=operation.operation_id,
-                )
-                recovery_blocked.add(root.root_id)
-                continue
-            if result.state is NotesSyncOperationState.COMPLETED:
-                await self._publish(root.root_id, "up_to_date", "sync_now")
-            elif result.state is NotesSyncOperationState.NEEDS_ATTENTION:
-                self._blocked_roots.add(root.root_id)
-                await self._publish(
-                    root.root_id,
-                    "needs_attention",
-                    "review_changes",
-                    action_id=operation.operation_id,
-                )
-                recovery_blocked.add(root.root_id)
-            else:
-                self._blocked_roots.add(root.root_id)
-                next_action = (
-                    "resolve_cleanup"
-                    if getattr(result, "reason_code", None)
-                    == "replacement_cleanup_pending"
-                    else "review_changes"
-                )
-                await self._publish(
-                    root.root_id,
-                    "partial",
-                    next_action,
-                    action_id=operation.operation_id,
-                )
-                recovery_blocked.add(root.root_id)
+            lock = self._mutation_lock(root.root_id)
+            async with lock:
+                try:
+                    current_root = await asyncio.to_thread(
+                        self._store.get_root,
+                        operation.root_id,
+                    )
+                except Exception:
+                    recovery_blocked.add(operation.root_id)
+                    continue
+                if (
+                    current_root.root_id != operation.root_id
+                    or current_root.state is not NotesSyncRootState.ACTIVE
+                ):
+                    recovery_blocked.add(operation.root_id)
+                    continue
+                if await self._classify_incomplete_block(current_root, operation):
+                    recovery_blocked.add(current_root.root_id)
+                    continue
+                try:
+                    self._require_authority(current_root.root_id, "write")
+                    executor = self._adapter.executor_for(
+                        current_root,
+                        after_stage=lambda _state, root_id=current_root.root_id: (
+                            self._require_authority(root_id, "write")
+                        ),
+                    )
+                    request = await executor.reconstruct_request(operation.operation_id)
+                    self._require_authority(current_root.root_id, "write")
+                    result = await executor.resume(request)
+                    self._require_authority(current_root.root_id, "write")
+                except Exception:
+                    self._blocked_roots.add(current_root.root_id)
+                    await self._publish(
+                        current_root.root_id,
+                        "failed",
+                        "review_changes",
+                        action_id=operation.operation_id,
+                    )
+                    recovery_blocked.add(current_root.root_id)
+                    continue
+                if result.state is NotesSyncOperationState.COMPLETED:
+                    await self._publish(current_root.root_id, "up_to_date", "sync_now")
+                elif result.state is NotesSyncOperationState.NEEDS_ATTENTION:
+                    self._blocked_roots.add(current_root.root_id)
+                    await self._publish(
+                        current_root.root_id,
+                        "needs_attention",
+                        "review_changes",
+                        action_id=operation.operation_id,
+                    )
+                    recovery_blocked.add(current_root.root_id)
+                else:
+                    self._blocked_roots.add(current_root.root_id)
+                    next_action = (
+                        "resolve_cleanup"
+                        if getattr(result, "reason_code", None)
+                        == "replacement_cleanup_pending"
+                        else "review_changes"
+                    )
+                    await self._publish(
+                        current_root.root_id,
+                        "partial",
+                        next_action,
+                        action_id=operation.operation_id,
+                    )
+                    recovery_blocked.add(current_root.root_id)
 
     def schedule_hint(self, root_id: str) -> object | None:
         """Coalesce one watcher hint without granting it mutation authority."""
