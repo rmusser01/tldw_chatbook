@@ -4,12 +4,18 @@
 Spec §5.2: idempotent, SHA-verifying, loud on local modifications, never
 syncs from an unverified local path.
 """
-import argparse, hashlib, subprocess, sys, tempfile
+
+import argparse
+import shutil
+import subprocess
+import sys
+import tempfile
 from pathlib import Path
 
 REPO = "https://github.com/rmusser01/tldw_server.git"
 BRANCH = "dev"
 PIN = "385afa951922c8a9dc2002c675bb6cad65e4ac23"
+CLONE_TIMEOUT_SECONDS = 900
 
 # Phase-1 file set (spec §5.1); excludes #2/#3/#6-deferred modules and
 # upstream's own __init__.py (chatbook-authored instead, §5.1).
@@ -632,22 +638,7 @@ def verify_clean(worktree: Path) -> None:
                  f"checkout the pinned SHA first (git checkout {PIN})")
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--source", default=None,
-                    help="Existing tldw_server worktree already at the pinned SHA")
-    args = ap.parse_args()
-
-    tmp = None
-    if args.source:
-        worktree = Path(args.source).resolve()
-        verify_clean(worktree)
-    else:
-        tmp = tempfile.mkdtemp(prefix="tldw_server_sync_")
-        worktree = Path(tmp)
-        subprocess.run(["git", "clone", "--no-checkout", REPO, str(worktree)], check=True)
-        subprocess.run(["git", "-C", str(worktree), "checkout", PIN], check=True)
-
+def _sync_worktree(worktree: Path) -> int:
     # 1. Refuse to overwrite local modifications (loud, spec §5.2). The
     # canonical vendored state is upstream-at-pin + rewrite + ENGINE_PATCHES,
     # so anything else in the tree is a local modification.
@@ -704,9 +695,46 @@ def main() -> int:
         if src.returncode != 0:
             sys.exit(f"FATAL: {rel} not found at pinned SHA {PIN}: {src.stderr}")
         dst.write_text(patch_ported_test(rel_path.name, rewrite_imports(src.stdout)))
-    print(f"Ported {len(to_port)} test files into {TARGET_TESTS_ROOT} "
-          f"({len(upstream_tests) - len(to_port)} excluded per spec §10.1)")
+    print(
+        f"Ported {len(to_port)} test files into {TARGET_TESTS_ROOT} "
+        f"({len(upstream_tests) - len(to_port)} excluded per spec §10.1)"
+    )
     return 0
+
+
+def _run_with_source(source: str | None) -> int:
+    """Run a sync and remove only a temporary clone created by this call."""
+    if source:
+        worktree = Path(source).expanduser().resolve()
+        verify_clean(worktree)
+        return _sync_worktree(worktree)
+
+    owned_tmp = Path(tempfile.mkdtemp(prefix="tldw_server_sync_"))
+    try:
+        subprocess.run(
+            ["git", "clone", "--no-checkout", REPO, str(owned_tmp)],
+            check=True,
+            timeout=CLONE_TIMEOUT_SECONDS,
+        )
+        subprocess.run(
+            ["git", "-C", str(owned_tmp), "checkout", PIN],
+            check=True,
+            timeout=CLONE_TIMEOUT_SECONDS,
+        )
+        return _sync_worktree(owned_tmp)
+    finally:
+        shutil.rmtree(owned_tmp)
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument(
+        "--source",
+        default=None,
+        help="Existing tldw_server worktree already at the pinned SHA",
+    )
+    args = ap.parse_args()
+    return _run_with_source(args.source)
 
 
 if __name__ == "__main__":
