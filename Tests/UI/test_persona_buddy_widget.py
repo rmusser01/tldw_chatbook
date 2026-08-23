@@ -283,6 +283,13 @@ def _compositor_text(screen: Screen) -> str:
     return "\n".join(strip.text for strip in screen._compositor.render_strips())
 
 
+def _point_is_inside(widget, x: int, y: int) -> bool:
+    return (
+        widget.region.x <= x < widget.region.right
+        and widget.region.y <= y < widget.region.bottom
+    )
+
+
 def _mouse(event_type, *, x: int, y: int, button: int = 1, widget=None):
     return event_type(
         widget,
@@ -335,8 +342,172 @@ async def test_overlay_paints_without_flow_or_fr_budget():
         assert buddy.styles.overlay == "screen"
         assert flow.region.height == 24
         assert app.screen.query_one("#flow-end").region.bottom == 24
-        assert "Persona Buddy" in _compositor_text(app.screen)
+        assert "Persona Buddy" not in _compositor_text(app.screen)
         await _wait_until(lambda: "BUDDY-A" in _compositor_text(app.screen))
+
+
+@pytest.mark.asyncio
+async def test_resting_buddy_contains_pet_and_icons_without_default_words():
+    controller = _FakeController()
+    app = _BuddyApp(controller)
+    async with app.run_test(size=(80, 24)):
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        await _wait_until(lambda: "BUDDY-A" in _compositor_text(app.screen))
+
+        assert [child.id for child in buddy.children] == [
+            "persona-buddy-frame",
+            "persona-buddy-collapse",
+            "persona-buddy-close",
+        ]
+        for removed_id in (
+            "persona-buddy-header",
+            "persona-buddy-drag-handle",
+            "persona-buddy-status",
+            "persona-buddy-hints",
+        ):
+            assert not buddy.query(f"#{removed_id}")
+
+        resting = _compositor_text(app.screen)
+        assert "BUDDY-A" in resting
+        for default_word in (
+            "Persona Buddy",
+            "Drag",
+            "Fold",
+            "Close",
+            "State",
+            "Visual pending",
+            "hjkl move",
+            "HJKL size",
+        ):
+            assert default_word not in resting
+
+
+@pytest.mark.asyncio
+async def test_single_frame_touches_every_inner_content_edge():
+    controller = _SlotSizedFrameController()
+    app = _BuddyApp(controller)
+    async with app.run_test(size=(80, 24)):
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        frame = buddy.query_one("#persona-buddy-frame", Static)
+        await _wait_until(lambda: bool(controller.resolve_sizes))
+        await _wait_until(lambda: "BOTTOM" in _compositor_text(app.screen))
+
+        assert frame.region == buddy.content_region
+        assert frame.content_region == buddy.content_region
+        assert controller.resolve_sizes[-1] == buddy.content_region.size
+        strips = app.screen._compositor.render_strips()
+        painted = [
+            strips[y].text[frame.region.x : frame.region.right]
+            for y in range(frame.region.y, frame.region.bottom)
+        ]
+        source_rows = frame.renderable.plain.splitlines()
+        assert source_rows[0].startswith("TOP")
+        assert source_rows[0].endswith("RIGHT")
+        assert len(source_rows) == frame.content_region.height
+        assert all(len(row) == frame.content_region.width for row in source_rows)
+        assert painted[0].strip()
+        assert painted[-1].startswith("BOTTOM")
+        assert painted[-1].endswith("RIGHT")
+        assert all(row.startswith(("BOTTOM", "L")) for row in painted[1:])
+        assert all(row.endswith(("RIGHT", "R")) for row in painted[1:])
+
+
+@pytest.mark.asyncio
+async def test_icon_controls_have_exact_labels_tooltips_and_hit_regions():
+    controller = _FakeController()
+    app = _BuddyApp(controller)
+    async with app.run_test(size=(80, 24)) as pilot:
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        await _wait_until(lambda: "BUDDY-A" in _compositor_text(app.screen))
+        await pilot.pause()
+        collapse = buddy.query_one("#persona-buddy-collapse", Button)
+        close = buddy.query_one("#persona-buddy-close", Button)
+
+        assert (str(collapse.label), collapse.tooltip) == ("▾", "Fold")
+        assert (str(close.label), close.tooltip) == ("×", "Close")
+        assert collapse.region.width >= 3
+        assert close.region.width >= 3
+        assert collapse.region.y == buddy.content_region.y
+        assert close.region.y == buddy.content_region.y
+        assert collapse.region.x == buddy.content_region.x
+        assert close.region.right == buddy.content_region.right
+        for control in (collapse, close):
+            target, _ = app.screen.get_widget_at(
+                control.region.x + control.region.width // 2,
+                control.region.y + control.region.height // 2,
+            )
+            assert target is control
+
+
+@pytest.mark.asyncio
+async def test_keyboard_focus_exposes_only_exact_action_label():
+    controller = _FakeController()
+    app = _BuddyApp(controller)
+    async with app.run_test(size=(80, 24)) as pilot:
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        await _wait_until(lambda: "BUDDY-A" in _compositor_text(app.screen))
+        collapse = buddy.query_one("#persona-buddy-collapse", Button)
+        close = buddy.query_one("#persona-buddy-close", Button)
+
+        collapse.focus(scroll_visible=False)
+        await pilot.pause()
+        focused = _compositor_text(app.screen)
+        assert "Fold" in focused
+        assert "Close" not in focused
+
+        close.focus(scroll_visible=False)
+        await pilot.pause()
+        focused = _compositor_text(app.screen)
+        assert "Close" in focused
+        assert "Fold" not in focused
+
+        focus_rule = PersonaBuddyWidget.BUNDLED_CSS.split(
+            "PersonaBuddyWidget .persona-buddy-control:focus {", 1
+        )[1].split("}", 1)[0]
+        assert "background: $accent;" in focus_rule
+        assert "text-style: bold underline;" in focus_rule
+        assert "outline: none;" in focus_rule
+        assert "outline: heavy" not in focus_rule
+
+
+@pytest.mark.asyncio
+async def test_pet_surface_drags_but_icon_buttons_do_not():
+    controller = _FakeController(
+        frames=("PET",),
+        frame_sizes=((12, 10),),
+    )
+    app = _BuddyApp(controller)
+    async with app.run_test(size=(80, 24)):
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        frame = buddy.query_one("#persona-buddy-frame", Static)
+        await _wait_until(lambda: "PET" in _compositor_text(app.screen))
+        controls = tuple(buddy.query(Button))
+
+        for control in controls:
+            buddy.on_mouse_down(
+                _mouse(
+                    events.MouseDown,
+                    x=control.region.x + control.region.width // 2,
+                    y=control.region.y + control.region.height // 2,
+                    widget=control,
+                )
+            )
+            assert buddy._interaction is None
+            assert app.mouse_captured is None
+
+        for y in range(frame.region.y, frame.region.bottom):
+            for x in range(frame.region.x, frame.region.right):
+                if any(_point_is_inside(control, x, y) for control in controls):
+                    continue
+                buddy.on_mouse_down(_mouse(events.MouseDown, x=x, y=y, widget=frame))
+                expected_mode = (
+                    "resize"
+                    if x >= buddy.region.right - 2 and y >= buddy.region.bottom - 1
+                    else "drag"
+                )
+                assert buddy._interaction is not None
+                assert buddy._interaction[0] == expected_mode
+                buddy.release_interaction_capture()
 
 
 @pytest.mark.asyncio
@@ -346,7 +517,7 @@ async def test_drag_and_resize_are_viewport_bounded_and_persist_once():
     async with app.run_test(size=(80, 24)):
         buddy = app.screen.query_one(PersonaBuddyWidget)
         await _wait_until(lambda: buddy.region.width == 28)
-        drag_handle = buddy.query_one("#persona-buddy-drag-handle", Static)
+        frame = buddy.query_one("#persona-buddy-frame", Static)
         initial_geometry = buddy._clamped_geometry(controller.preferences.geometry)
         assert initial_geometry.x + initial_geometry.width <= app.size.width
         assert initial_geometry.y + initial_geometry.height <= app.size.height
@@ -354,9 +525,9 @@ async def test_drag_and_resize_are_viewport_bounded_and_persist_once():
         buddy.on_mouse_down(
             _mouse(
                 events.MouseDown,
-                x=drag_handle.region.x + 1,
-                y=drag_handle.region.y + 1,
-                widget=drag_handle,
+                x=frame.region.x + frame.region.width // 2,
+                y=frame.region.y + 1,
+                widget=frame,
             )
         )
         await asyncio.sleep(0)
@@ -396,10 +567,12 @@ async def test_keyboard_move_resize_reset_collapse_close_exact_bindings():
         await pilot.press("H", "J", "K", "L")
         await _wait_until(lambda: len(controller.persisted) >= 8)
         await pilot.press("0")
-        assert buddy.absolute_offset == Offset(72, 18)
+        assert buddy.absolute_offset == Offset(74, 23)
         await pilot.press("c")
         await _wait_until(lambda: controller.preferences.collapsed)
-        await _wait_until(lambda: "Buddy" in _compositor_text(app.screen))
+        await _wait_until(
+            lambda: buddy.query_one("#persona-buddy-collapse", Button).tooltip == "Open"
+        )
         await _wait_until(lambda: buddy.region.height == 3)
         await pilot.press("x")
         await _wait_until(lambda: not controller.preferences.open)
@@ -410,7 +583,7 @@ async def test_keyboard_move_resize_reset_collapse_close_exact_bindings():
 
 
 @pytest.mark.asyncio
-async def test_tiny_viewport_uses_labelled_compact_control():
+async def test_tiny_viewport_uses_icon_compact_control():
     controller = _FakeController(size=(28, 12))
     app = _BuddyApp(controller)
     async with app.run_test(size=(12, 4)):
@@ -418,7 +591,8 @@ async def test_tiny_viewport_uses_labelled_compact_control():
         await _wait_until(lambda: buddy.has_class("persona-buddy-compact"))
         assert buddy.region.width <= 12
         assert buddy.region.height <= 4
-        assert "Buddy" in _compositor_text(app.screen)
+        assert "▾" in _compositor_text(app.screen)
+        assert "Buddy" not in _compositor_text(app.screen)
 
 
 @pytest.mark.asyncio
@@ -426,7 +600,7 @@ async def test_tiny_viewport_uses_labelled_compact_control():
     ("viewport", "compact"),
     [((28, 12), False), ((18, 6), True), ((12, 4), True), ((10, 2), True)],
 )
-async def test_exact_cell_layouts_keep_complete_labelled_controls(
+async def test_exact_cell_layouts_keep_complete_icon_controls(
     viewport: tuple[int, int], compact: bool
 ):
     controller = _FakeController()
@@ -441,7 +615,7 @@ async def test_exact_cell_layouts_keep_complete_labelled_controls(
         text = _compositor_text(app.screen)
         collapse = buddy.query_one("#persona-buddy-collapse", Button)
         close = buddy.query_one("#persona-buddy-close", Button)
-        controls = (collapse, close) if viewport[0] >= 18 else (collapse,)
+        controls = (collapse, close) if viewport[0] >= 14 else (collapse,)
         for control in controls:
             assert control.display
             assert control.region.width >= len(str(control.label))
@@ -453,14 +627,17 @@ async def test_exact_cell_layouts_keep_complete_labelled_controls(
             assert target is control
 
         if compact:
-            assert "Buddy" in text
-            assert close.display is (viewport[0] >= 18)
+            assert "▾" in text
+            assert "Buddy" not in text
+            assert close.display is (viewport[0] >= 14)
             if close.display:
-                assert "Close" in text
+                assert "×" in text
         else:
-            assert "Fold" in text
-            assert "Close" in text
-            assert "hjkl move · HJKL size" in text
+            assert "▾" in text
+            assert "×" in text
+            assert "Fold" not in text
+            assert "Close" not in text
+            assert "hjkl move · HJKL size" not in text
 
 
 @pytest.mark.asyncio
@@ -484,7 +661,7 @@ async def test_compact_keyboard_move_preserves_preferred_size_on_restore(
         assert preferred.y == max(0, start.y - 1)
         await pilot.resize_terminal(28, 12)
         await _wait_until(lambda: not buddy.has_class("persona-buddy-compact"))
-        assert (buddy.region.width, buddy.region.height) == (28, 12)
+        await _wait_until(lambda: buddy.region.size == (26, 7))
 
 
 @pytest.mark.asyncio
@@ -494,13 +671,13 @@ async def test_drag_while_viewport_becomes_compact_preserves_preferred_size():
     async with app.run_test(size=(80, 24)) as pilot:
         buddy = app.screen.query_one(PersonaBuddyWidget)
         await _wait_until(lambda: buddy.region.width == 28)
-        handle = buddy.query_one("#persona-buddy-drag-handle", Static)
+        frame = buddy.query_one("#persona-buddy-frame", Static)
         buddy.on_mouse_down(
             _mouse(
                 events.MouseDown,
-                x=handle.region.x + 1,
-                y=handle.region.y,
-                widget=handle,
+                x=frame.region.x + frame.region.width // 2,
+                y=frame.region.y + 1,
+                widget=frame,
             )
         )
         assert app.mouse_captured is buddy
@@ -515,7 +692,7 @@ async def test_drag_while_viewport_becomes_compact_preserves_preferred_size():
         assert (preferred.width, preferred.height) == (28, 12)
         await pilot.resize_terminal(28, 12)
         await _wait_until(lambda: not buddy.has_class("persona-buddy-compact"))
-        await _wait_until(lambda: (buddy.region.width, buddy.region.height) == (28, 12))
+        await _wait_until(lambda: buddy.region.size == (26, 7))
 
 
 @pytest.mark.asyncio
@@ -536,18 +713,26 @@ async def test_compact_keyboard_resize_intentionally_updates_preferred_size():
 
 
 @pytest.mark.asyncio
-async def test_labelled_buttons_click_without_starting_drag_and_reopen_collapsed():
+async def test_icon_buttons_click_without_starting_drag_and_reopen_collapsed():
     controller = _FakeController()
     app = _BuddyApp(controller)
     async with app.run_test(size=(80, 24)) as pilot:
         buddy = app.screen.query_one(PersonaBuddyWidget)
         await _wait_until(lambda: buddy.region.width == 28)
+        await _wait_until(lambda: "BUDDY-A" in _compositor_text(app.screen))
+        await pilot.pause()
         await pilot.click("#persona-buddy-collapse")
         await _wait_until(lambda: controller.preferences.collapsed)
         assert app.mouse_captured is None
         reopen = buddy.query_one("#persona-buddy-collapse", Button)
-        assert str(reopen.label) == "Open Buddy"
+        assert str(reopen.label) == "Open"
+        assert reopen.tooltip == "Open"
         assert reopen.display
+        collapsed_close = buddy.query_one("#persona-buddy-close", Button)
+        assert (str(collapsed_close.label), collapsed_close.tooltip) == ("×", "Close")
+        assert collapsed_close.display
+        assert reopen.region.x == buddy.content_region.x
+        assert collapsed_close.region.right == buddy.content_region.right
         await pilot.pause(0.25)
         target, _ = app.screen.get_widget_at(
             reopen.region.x + reopen.region.width // 2,
@@ -632,7 +817,7 @@ async def test_accepted_visual_uses_one_maximum_frame_box_without_jitter():
     async with app.run_test(size=(80, 24)):
         buddy = app.screen.query_one(PersonaBuddyWidget)
         await _wait_until(lambda: "SMALL" in _compositor_text(app.screen))
-        await _wait_until(lambda: buddy.region.size == (22, 12))
+        await _wait_until(lambda: buddy.region.size == (14, 7))
 
         accepted = buddy._accepted_render
         assert accepted is not None
@@ -656,25 +841,25 @@ async def test_single_frame_fits_to_content_without_persisting_dimensions():
     app = _BuddyApp(controller)
     async with app.run_test(size=(80, 24)):
         buddy = app.screen.query_one(PersonaBuddyWidget)
-        await _wait_until(lambda: buddy.region.size == (22, 12))
+        await _wait_until(lambda: buddy.region.size == (14, 7))
 
         assert controller.preferences.geometry.width == 28
         assert controller.preferences.geometry.height == 12
         assert controller.preference_writes == []
         assert controller.persisted == []
-        assert controller.resolve_sizes == [(24, 5)]
+        assert controller.resolve_sizes == [(26, 10)]
 
         controller.generation += 1
         buddy.refresh_from_controller()
         await _wait_until(lambda: len(controller.resolve_sizes) == 2)
 
-        assert controller.resolve_sizes[-1] == (24, 5)
+        assert controller.resolve_sizes[-1] == (26, 10)
         assert controller.preference_writes == []
         assert controller.persisted == []
 
 
 @pytest.mark.asyncio
-async def test_undersized_accepted_frame_keeps_labelled_controls_operable():
+async def test_undersized_accepted_frame_keeps_icon_controls_operable():
     controller = _FakeController(
         frames=("FITTED",),
         frame_sizes=((12, 10),),
@@ -683,13 +868,13 @@ async def test_undersized_accepted_frame_keeps_labelled_controls_operable():
     async with app.run_test(size=(80, 24)) as pilot:
         buddy = app.screen.query_one(PersonaBuddyWidget)
         await _wait_until(lambda: "FITTED" in _compositor_text(app.screen))
-        await _wait_until(lambda: buddy.region.width == 22)
+        await _wait_until(lambda: buddy.region.width == 14)
         await pilot.pause()
         collapse = buddy.query_one("#persona-buddy-collapse", Button)
         close = buddy.query_one("#persona-buddy-close", Button)
         frame = buddy.query_one("#persona-buddy-frame", Static)
 
-        assert buddy.region.width == 22
+        assert buddy.region.width == 14
         assert frame.content_region.width == 12
         assert buddy.region.right <= app.size.width
         for control in (collapse, close):
@@ -713,7 +898,7 @@ async def test_empty_direct_visual_uses_operable_fail_soft_box():
         accepted = buddy._accepted_render
         assert accepted is not None
         assert (accepted.content_width, accepted.content_height) == (10, 4)
-        assert buddy.region.size == (22, 11)
+        await _wait_until(lambda: buddy.region.size == (12, 6))
 
 
 @pytest.mark.asyncio
@@ -730,6 +915,7 @@ async def test_invalid_direct_dimensions_cannot_replace_accepted_render(
     async with app.run_test(size=(80, 24)):
         buddy = app.screen.query_one(PersonaBuddyWidget)
         await _wait_until(lambda: "CURRENT" in _compositor_text(app.screen))
+        await _wait_until(lambda: buddy.region.size == (14, 7))
         accepted = buddy._accepted_render
         accepted_region = buddy.region
 
@@ -765,7 +951,7 @@ async def test_accepted_self_fit_does_not_advance_viewport_or_reresolve():
     async with app.run_test(size=(80, 24)) as pilot:
         buddy = app.screen.query_one(PersonaBuddyWidget)
         frame = buddy.query_one("#persona-buddy-frame", Static)
-        await _wait_until(lambda: buddy.region.size == (22, 12))
+        await _wait_until(lambda: buddy.region.size == (14, 7))
         assert frame.content_region.size == (12, 5)
         accepted = buddy._accepted_render
         assert accepted is not None
@@ -773,13 +959,13 @@ async def test_accepted_self_fit_does_not_advance_viewport_or_reresolve():
         await asyncio.sleep(0.25)
 
         assert controller.viewport_updates == [1]
-        assert controller.resolve_sizes == [(24, 5)]
+        assert controller.resolve_sizes == [(26, 10)]
 
         await pilot.resize_terminal(30, 11)
         await _wait_until(lambda: controller.viewport_updates == [1, 2])
         await _wait_until(lambda: len(controller.resolve_sizes) == 2)
 
-        assert controller.resolve_sizes[-1] == (24, 4)
+        assert controller.resolve_sizes[-1] == (26, 9)
 
 
 @pytest.mark.asyncio
@@ -791,7 +977,7 @@ async def test_prior_budget_snapshot_visual_cannot_refit_current_view():
     app = _BuddyApp(controller)
     async with app.run_test(size=(80, 24)):
         buddy = app.screen.query_one(PersonaBuddyWidget)
-        await _wait_until(lambda: buddy.region.size == (22, 11))
+        await _wait_until(lambda: buddy.region.size == (12, 6))
         assert "CURRENT" in _compositor_text(app.screen)
         accepted_region = buddy.region
 
@@ -831,7 +1017,7 @@ async def test_prior_viewport_direct_result_cannot_replace_accepted_render():
     app = _BuddyApp(controller)
     async with app.run_test(size=(80, 24)):
         buddy = app.screen.query_one(PersonaBuddyWidget)
-        await _wait_until(lambda: buddy.region.size == (22, 11))
+        await _wait_until(lambda: buddy.region.size == (12, 6))
         assert "CURRENT" in _compositor_text(app.screen)
         accepted_region = buddy.region
 
@@ -907,7 +1093,7 @@ async def test_resolution_runs_once_until_semantic_authority_changes():
 
 
 @pytest.mark.asyncio
-async def test_resolution_uses_preferred_chrome_budget_not_fitted_window_region():
+async def test_resolution_uses_preferred_pet_budget_not_fitted_window_region():
     controller = _SlotSizedFrameController()
     app = _BuddyApp(controller)
     async with app.run_test(size=(80, 24)):
@@ -915,7 +1101,7 @@ async def test_resolution_uses_preferred_chrome_budget_not_fitted_window_region(
         frame = buddy.query_one("#persona-buddy-frame", Static)
         await _wait_until(lambda: bool(controller.resolve_sizes))
 
-        assert controller.resolve_sizes[-1] == (24, 5)
+        assert controller.resolve_sizes[-1] == (26, 10)
         assert controller.resolve_sizes[-1] == frame.content_region.size
         assert buddy.region.size == (28, 12)
         strips = app.screen._compositor.render_strips()
@@ -924,7 +1110,8 @@ async def test_resolution_uses_preferred_chrome_budget_not_fitted_window_region(
             for y in range(frame.region.y, frame.region.bottom)
         )
         cols, _lines = controller.resolve_sizes[-1]
-        assert ("TOP".ljust(cols - len("RIGHT"), "-") + "RIGHT") in painted_frame
+        source_rows = frame.renderable.plain.splitlines()
+        assert source_rows[0] == "TOP".ljust(cols - len("RIGHT"), "-") + "RIGHT"
         assert ("BOTTOM".ljust(cols - len("RIGHT"), "-") + "RIGHT") in painted_frame
 
 
@@ -944,7 +1131,7 @@ async def test_frame_slot_resize_does_not_feed_resolution_authority():
         buddy.refresh_from_controller()
         await asyncio.sleep(0.2)
 
-        assert controller.resolve_sizes == [(24, 5)]
+        assert controller.resolve_sizes == [(26, 10)]
 
 
 @pytest.mark.asyncio
@@ -1023,9 +1210,9 @@ async def test_capture_is_released_when_widget_unmounts_mid_drag():
         buddy.on_mouse_down(
             _mouse(
                 events.MouseDown,
-                x=buddy.query_one("#persona-buddy-drag-handle", Static).region.x + 1,
-                y=buddy.query_one("#persona-buddy-drag-handle", Static).region.y + 1,
-                widget=buddy.query_one("#persona-buddy-drag-handle", Static),
+                x=buddy.query_one("#persona-buddy-frame", Static).region.center[0],
+                y=buddy.query_one("#persona-buddy-frame", Static).region.y + 1,
+                widget=buddy.query_one("#persona-buddy-frame", Static),
             )
         )
         assert app.mouse_captured is buddy

@@ -13,7 +13,6 @@ from typing import Any
 from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal
 from textual.geometry import Offset
 from textual.timer import Timer
 from textual.worker import Worker
@@ -35,10 +34,6 @@ _FULL_CONTENT_HEIGHT = 8
 _OPERABLE_WIDTH = 10
 _OPERABLE_HEIGHT = 4
 _BOUNDARY_SIZE = 2
-# Task 2 removes these current panel padding and text-row costs.
-_CURRENT_CHROME_HORIZONTAL_OVERHEAD = _BOUNDARY_SIZE + 2
-_CURRENT_CHROME_VERTICAL_OVERHEAD = _BOUNDARY_SIZE + 5
-_CURRENT_CHROME_MIN_WIDTH = _MIN_WIDTH + _CURRENT_CHROME_HORIZONTAL_OVERHEAD
 _DUAL_CONTROL_WIDTH = 14
 _COLLAPSED_HEIGHT = 3
 _COMPACT_HEIGHT = 1
@@ -131,7 +126,7 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         height: 12;
         min-width: 1;
         min-height: 1;
-        padding: 0 1;
+        padding: 0;
         background: $panel;
         color: $text;
         border: round $accent;
@@ -142,50 +137,40 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         outline: heavy $accent;
     }
 
-    PersonaBuddyWidget #persona-buddy-header {
-        width: 100%;
-        height: 3;
-        layout: horizontal;
-        background: $surface;
-    }
-
-    PersonaBuddyWidget #persona-buddy-drag-handle {
-        width: 1fr;
-        height: 3;
-        padding: 1 0 0 1;
-        color: $text;
-        text-style: bold;
-    }
-
     PersonaBuddyWidget .persona-buddy-control {
-        width: auto;
-        min-width: 7;
-        height: 3;
-        padding: 0 1;
+        position: absolute;
+        layer: controls;
+        width: 3;
+        min-width: 3;
+        height: 1;
+        min-height: 1;
+        padding: 0;
         margin: 0;
         border: none;
         background: $surface-darken-1;
         color: $text-muted;
+        content-align: center middle;
+        text-align: center;
     }
 
     PersonaBuddyWidget .persona-buddy-control:focus {
-        outline: heavy $accent;
+        background: $accent;
         color: $text;
+        text-style: bold underline;
+        outline: none;
     }
 
     PersonaBuddyWidget #persona-buddy-frame {
         width: 100%;
-        height: 1fr;
+        height: 100%;
+        padding: 0;
+        layer: pet;
         content-align: center middle;
         color: $text;
     }
 
-    PersonaBuddyWidget #persona-buddy-status,
-    PersonaBuddyWidget #persona-buddy-hints {
-        width: 100%;
-        height: 1;
-        color: $text-muted;
-        text-align: center;
+    PersonaBuddyWidget #persona-buddy-collapse {
+        offset: 0 0;
     }
 
     PersonaBuddyWidget.persona-buddy-collapsed {
@@ -199,35 +184,18 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         border: none;
     }
 
-    PersonaBuddyWidget.persona-buddy-collapsed #persona-buddy-frame,
-    PersonaBuddyWidget.persona-buddy-collapsed #persona-buddy-status,
-    PersonaBuddyWidget.persona-buddy-collapsed #persona-buddy-hints,
-    PersonaBuddyWidget.persona-buddy-collapsed #persona-buddy-close,
-    PersonaBuddyWidget.persona-buddy-collapsed #persona-buddy-drag-handle {
+    PersonaBuddyWidget.persona-buddy-collapsed #persona-buddy-frame {
         display: none;
     }
 
-    PersonaBuddyWidget.persona-buddy-collapsed #persona-buddy-header,
-    PersonaBuddyWidget.persona-buddy-collapsed #persona-buddy-collapse {
-        height: 1;
-        width: 100%;
-        padding: 0;
-        content-align: center middle;
-        text-align: center;
-    }
-
-    PersonaBuddyWidget.persona-buddy-compact #persona-buddy-frame,
-    PersonaBuddyWidget.persona-buddy-compact #persona-buddy-status,
-    PersonaBuddyWidget.persona-buddy-compact #persona-buddy-hints,
-    PersonaBuddyWidget.persona-buddy-compact #persona-buddy-drag-handle {
+    PersonaBuddyWidget.persona-buddy-compact #persona-buddy-frame {
         display: none;
     }
 
-    PersonaBuddyWidget.persona-buddy-compact #persona-buddy-header,
     PersonaBuddyWidget.persona-buddy-compact .persona-buddy-control {
         height: 1;
-        width: 1fr;
-        min-width: 5;
+        width: 3;
+        min-width: 3;
         padding: 0;
         content-align: center middle;
         text-align: center;
@@ -274,23 +242,20 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         self._frame_was_frozen = True
 
     def compose(self) -> ComposeResult:
-        with Horizontal(id="persona-buddy-header"):
-            yield Static("Drag", id="persona-buddy-drag-handle")
-            yield Button(
-                "Fold", id="persona-buddy-collapse", classes="persona-buddy-control"
-            )
-            yield Button(
-                "Close", id="persona-buddy-close", classes="persona-buddy-control"
-            )
-        yield Static("Visual pending", id="persona-buddy-frame")
-        yield Static("State: idle", id="persona-buddy-status")
-        yield Static("hjkl move · HJKL size", id="persona-buddy-hints")
+        yield Static("", id="persona-buddy-frame")
+        collapse = Button(
+            "▾", id="persona-buddy-collapse", classes="persona-buddy-control"
+        )
+        collapse.tooltip = "Fold"
+        yield collapse
+        close = Button("×", id="persona-buddy-close", classes="persona-buddy-control")
+        close.tooltip = "Close"
+        yield close
 
     def on_mount(self) -> None:
         """Start bounded snapshot and frame polling without changing focus."""
 
         self.snapshot_polling_active = True
-        self.border_title = "Persona Buddy"
         self._apply_geometry(self._working_preferences.geometry)
         self.refresh_from_controller(schedule_resolution=False)
         self._poll_timer = self.set_interval(
@@ -335,10 +300,8 @@ class PersonaBuddyWidget(Widget, can_focus=True):
             return None
         viewport = self.screen.size
         geometry = self._working_preferences.geometry
-        cols = min(geometry.width, viewport.width) - _CURRENT_CHROME_HORIZONTAL_OVERHEAD
-        lines = (
-            min(geometry.height, viewport.height) - _CURRENT_CHROME_VERTICAL_OVERHEAD
-        )
+        cols = min(geometry.width, viewport.width) - _BOUNDARY_SIZE
+        lines = min(geometry.height, viewport.height) - _BOUNDARY_SIZE
         if cols < 1 or lines < 1:
             return None
         return cols, lines
@@ -465,6 +428,12 @@ class PersonaBuddyWidget(Widget, can_focus=True):
 
         if not self._is_current_view():
             return
+        self._sync_viewport_generation()
+        self._apply_geometry(self._working_preferences.geometry)
+
+    def _sync_viewport_generation(self) -> None:
+        """Publish terminal-size authority even when fitted bounds stay unchanged."""
+
         screen_size = (self.screen.size.width, self.screen.size.height)
         if screen_size != self._last_screen_size:
             self._last_screen_size = screen_size
@@ -472,13 +441,13 @@ class PersonaBuddyWidget(Widget, can_focus=True):
             if callable(setter):
                 snapshot = self._controller.snapshot()
                 setter(snapshot.viewport_generation + 1)
-        self._apply_geometry(self._working_preferences.geometry)
 
     def refresh_from_controller(self, *, schedule_resolution: bool = True) -> None:
         """Refresh paint/state from an immutable snapshot without touching focus."""
 
         if not self._is_current_view():
             return
+        self._sync_viewport_generation()
         snapshot = self._controller.snapshot()
         self._snapshot = snapshot
         preferences = self._controller.current_preferences()
@@ -499,10 +468,6 @@ class PersonaBuddyWidget(Widget, can_focus=True):
             self._next_frame_at = time.monotonic() + self._frame_duration_seconds()
             self._frame_was_frozen = False
 
-        self.query_one("#persona-buddy-drag-handle", Static).update("Drag")
-        self.query_one("#persona-buddy-status", Static).update(
-            f"State: {snapshot.state.replace('_', ' ')}"
-        )
         self._paint_frame()
         self._sync_frame_timer()
         if schedule_resolution:
@@ -595,8 +560,7 @@ class PersonaBuddyWidget(Widget, can_focus=True):
             self.frame_index = min(self.frame_index, len(frames) - 1)
             target.update(frames[self.frame_index].renderable)
             return
-        reason = getattr(visual, "reason", None)
-        target.update("Visual unavailable" if reason else "Visual pending")
+        target.update("")
 
     def _sync_compact_state(self, collapsed: bool) -> None:
         compact = self._compact_for_geometry(self._working_preferences.geometry)
@@ -610,8 +574,37 @@ class PersonaBuddyWidget(Widget, can_focus=True):
             "persona-buddy-minimal",
         )
         self.set_class(collapsed and not compact, "persona-buddy-collapsed")
+        self._sync_control_presentation(collapsed)
+        self._apply_geometry(self._working_preferences.geometry)
+
+    def _sync_control_presentation(self, collapsed: bool) -> None:
+        """Expose a focused action label without adding resting layout chrome."""
+
         collapse = self.query_one("#persona-buddy-collapse", Button)
-        collapse.label = "Buddy" if compact else ("Open Buddy" if collapsed else "Fold")
+        close = self.query_one("#persona-buddy-close", Button)
+        collapse_action = "Open" if collapsed else "Fold"
+        collapse.tooltip = collapse_action
+        close.tooltip = "Close"
+        collapse.label = (
+            collapse_action
+            if self.app.focused is collapse
+            else ("▴" if collapsed else "▾")
+        )
+        close.label = "Close" if self.app.focused is close else "×"
+
+    def on_descendant_focus(self, _event: events.DescendantFocus) -> None:
+        snapshot = self._snapshot
+        self._sync_control_presentation(bool(snapshot and snapshot.collapsed))
+        self._apply_geometry(self._working_preferences.geometry)
+
+    def on_descendant_blur(self, _event: events.DescendantBlur) -> None:
+        self.call_after_refresh(self._sync_controls_after_blur)
+
+    def _sync_controls_after_blur(self) -> None:
+        if not self.is_attached:
+            return
+        snapshot = self._snapshot
+        self._sync_control_presentation(bool(snapshot and snapshot.collapsed))
         self._apply_geometry(self._working_preferences.geometry)
 
     def _compact_for_geometry(self, geometry: PersonaBuddyGeometry) -> bool:
@@ -640,16 +633,11 @@ class PersonaBuddyWidget(Widget, can_focus=True):
                 height = min(_COLLAPSED_HEIGHT, viewport.height)
             elif self._accepted_render is not None:
                 width = min(
-                    max(
-                        _CURRENT_CHROME_MIN_WIDTH,
-                        self._accepted_render.content_width
-                        + _CURRENT_CHROME_HORIZONTAL_OVERHEAD,
-                    ),
+                    self._accepted_render.content_width + _BOUNDARY_SIZE,
                     viewport.width,
                 )
                 height = min(
-                    self._accepted_render.content_height
-                    + _CURRENT_CHROME_VERTICAL_OVERHEAD,
+                    self._accepted_render.content_height + _BOUNDARY_SIZE,
                     viewport.height,
                 )
             else:
@@ -679,17 +667,21 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         self.styles.height = clamped.height
         self.absolute_offset = Offset(clamped.x, clamped.y)
         frame = self.query_one("#persona-buddy-frame", Static)
-        accepted = self._accepted_render
-        frame.styles.width = (
-            accepted.content_width
-            if accepted is not None
-            and not self.has_class("persona-buddy-compact")
-            and not (self._snapshot and self._snapshot.collapsed)
-            else "100%"
+        frame.styles.width = "100%"
+        frame.styles.height = "100%"
+        collapse = self.query_one("#persona-buddy-collapse", Button)
+        close = self.query_one("#persona-buddy-close", Button)
+        collapse_width = len(str(collapse.label)) + 2
+        close_width = len(str(close.label)) + 2
+        collapse.styles.width = collapse_width
+        close.styles.width = close_width
+        content_width = clamped.width - (
+            0 if self.has_class("persona-buddy-compact") else _BOUNDARY_SIZE
         )
+        close.styles.offset = Offset(max(0, content_width - close_width), 0)
 
     def on_mouse_down(self, event: events.MouseDown) -> None:
-        """Arm header drag or lower-right resize for the real terminal event shape."""
+        """Arm pet-surface drag or lower-right resize for a terminal event."""
 
         if event.button != 1 or not self._is_current_view():
             return
@@ -704,13 +696,12 @@ class PersonaBuddyWidget(Widget, can_focus=True):
                 and button.region.y <= screen_y < button.region.bottom
             ):
                 return
-        handle = self.query_one("#persona-buddy-drag-handle", Static)
-        in_handle = (
-            handle.display
-            and handle.region.x <= screen_x < handle.region.right
-            and handle.region.y <= screen_y < handle.region.bottom
+        content = self.content_region
+        in_content = (
+            content.x <= screen_x < content.right
+            and content.y <= screen_y < content.bottom
         )
-        if not resize and not in_handle:
+        if not resize and not in_content:
             return
         mode = "resize" if resize else "drag"
         preferred = self._working_preferences.geometry
