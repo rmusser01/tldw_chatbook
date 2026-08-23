@@ -128,7 +128,9 @@ def windows_incompatible_paths(*task_dirs: Path) -> dict[str, str]:
     return invalid
 
 
-def duplicate_ids(*task_dirs: Path) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+def duplicate_ids(
+    *task_dirs: Path,
+) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
     """Collect ids claimed by more than one task file, across every bucket given.
 
     Args:
@@ -215,7 +217,9 @@ def main(argv: list[str] | None = None) -> int:
 
     task_dirs = tuple(args.tasks_dirs) if args.tasks_dirs else TASK_DIRS
     if not any(task_dir.is_dir() for task_dir in task_dirs):
-        print(f"::error::no backlog task directory at {', '.join(str(d) for d in task_dirs)}")
+        print(
+            f"::error::no backlog task directory at {', '.join(str(d) for d in task_dirs)}"
+        )
         return 1
 
     filename_dupes, frontmatter_dupes = duplicate_ids(*task_dirs)
