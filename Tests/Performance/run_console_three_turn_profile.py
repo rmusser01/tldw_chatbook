@@ -430,6 +430,40 @@ def _validate_receipt_location(attempt_root: Path, receipt_path: Path) -> None:
     _reject_lexical_symlinks(receipt_path, "review_receipt_location_invalid")
 
 
+def _registered_review_receipts(
+    attempt_root: Path,
+) -> tuple[tuple[str, str, dict[str, Any]], ...]:
+    """Return validated registered receipt identities and privacy-safe records."""
+    registry = attempt_root / "reviews" / ".registered"
+    if not (registry.exists() or registry.is_symlink()):
+        return ()
+    if not registry.is_dir() or registry.is_symlink():
+        raise RuntimeError("review_receipt_registry_invalid")
+    records: list[tuple[str, str, dict[str, Any]]] = []
+    try:
+        entries = tuple(registry.iterdir())
+    except OSError as exc:
+        raise RuntimeError("review_receipt_registry_invalid") from exc
+    for entry in entries:
+        name, separator, digest = entry.name.rpartition("--")
+        receipt_path = attempt_root / "reviews" / name
+        if (
+            not separator
+            or not _REVIEW_FILENAME.fullmatch(name)
+            or not _SHA256.fullmatch(digest)
+            or not entry.is_dir()
+            or entry.is_symlink()
+            or any(entry.iterdir())
+            or not receipt_path.is_file()
+            or receipt_path.is_symlink()
+        ):
+            raise RuntimeError("review_receipt_registry_invalid")
+        if _sha256_review_file(receipt_path) != digest:
+            raise RuntimeError("review_receipt_changed")
+        records.append((name, digest, _read_review_receipt(receipt_path)))
+    return tuple(records)
+
+
 def _register_receipt_identity(attempt_root: Path, receipt_path: Path) -> None:
     """Pin one registered receipt's bytes in a content-free marker."""
     registry = attempt_root / "reviews" / ".registered"
@@ -463,13 +497,30 @@ def _register_receipt_identity(attempt_root: Path, receipt_path: Path) -> None:
         _mkdir_namespace(registry / expected_name)
 
 
-def register_review_receipt(
+def _register_review_receipt_locked(
     campaign_root: Path, attempt_id: str, receipt_path: Path
 ) -> dict[str, Any]:
-    """Bind one review to the current five-file set and campaign lineage."""
+    """Bind one review while the caller holds the canonical campaign lock."""
     attempt_root = _review_attempt_root(campaign_root, attempt_id)
     _validate_receipt_location(attempt_root, receipt_path)
     receipt = _read_review_receipt(receipt_path)
+    receipt_sha256 = _sha256_review_file(receipt_path)
+    registered_receipts = _registered_review_receipts(attempt_root)
+    current_identity_registered = any(
+        receipt_path.name == name and receipt_sha256 == digest
+        for name, digest, _registered in registered_receipts
+    )
+    approved_receipts = tuple(
+        (name, digest)
+        for name, digest, registered in registered_receipts
+        if registered["decision"] == "approved"
+    )
+    if approved_receipts and approved_receipts != (
+        (receipt_path.name, receipt_sha256),
+    ):
+        raise RuntimeError("review_attempt_already_approved")
+    if current_identity_registered and receipt["decision"] == "changes_required":
+        raise RuntimeError("review_receipt_already_registered")
     hashes = canonical_artifact_hashes(attempt_root)
     digest = hashlib.sha256(
         json.dumps(hashes, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -491,7 +542,6 @@ def register_review_receipt(
         or hashes["real-provider-three-turn.raw.jsonl"] != current["raw_sha256"]
     ):
         raise RuntimeError("review_receipt_binding_mismatch")
-    _register_receipt_identity(attempt_root, receipt_path)
     if current["state"] == "changes_required":
         reviews_root = attempt_root / "reviews"
         rejected_digests = {
@@ -504,6 +554,8 @@ def register_review_receipt(
         }
         if digest in rejected_digests:
             raise RuntimeError("review_artifact_digest_not_changed")
+    _register_receipt_identity(attempt_root, receipt_path)
+    if current["state"] == "changes_required":
         complete_attempt_measurement(
             campaign_root / "attempts.jsonl",
             attempt_id,
@@ -524,10 +576,48 @@ def register_review_receipt(
     return receipt
 
 
-def _atomic_rename_directory_noreplace(source: Path, target: Path) -> None:
-    """Atomically rename one sibling directory only when target is absent."""
+def _run_campaign_maintenance_locked(
+    campaign_root: Path, operation: Callable[[], Any]
+) -> Any:
+    """Run one maintenance mutation under the crash-recoverable campaign lock."""
+    owner = acquire_campaign_lock(campaign_root)
+    try:
+        result = operation()
+    except BaseException as primary:
+        try:
+            release_campaign_lock(campaign_root, owner)
+        except BaseException as cleanup:
+            raise BaseExceptionGroup(
+                "campaign_maintenance_and_release_failed", [primary, cleanup]
+            ) from None
+        raise
+    release_campaign_lock(campaign_root, owner)
+    return result
+
+
+def register_review_receipt(
+    campaign_root: Path, attempt_id: str, receipt_path: Path
+) -> dict[str, Any]:
+    """Serialize and bind one review to the artifact set and campaign lineage."""
+    return _run_campaign_maintenance_locked(
+        campaign_root,
+        lambda: _register_review_receipt_locked(
+            campaign_root, attempt_id, receipt_path
+        ),
+    )
+
+
+def _atomic_rename_directory_noreplace(
+    source: Path,
+    target: Path,
+    *,
+    verify: Callable[[], None] | None = None,
+) -> None:
+    """Verify then atomically rename one sibling directory without replacement."""
     if source.parent != target.parent:
         raise RuntimeError("review_atomic_noreplace_invalid")
+    if verify is not None:
+        verify()
     if sys.platform == "win32":
         try:
             os.rename(source, target)
@@ -579,28 +669,30 @@ def _atomic_rename_directory_noreplace(source: Path, target: Path) -> None:
         if error_number in unsupported:
             raise RuntimeError("review_atomic_noreplace_unsupported")
         raise RuntimeError("review_promotion_rename_failed")
-    _fsync_directory(source.parent)
 
 
-def promote_reviewed_artifacts(
+def _promote_reviewed_artifacts_locked(
     campaign_root: Path,
     attempt_id: str,
     receipt_path: Path,
     destination: Path,
 ) -> str:
-    """Copy one approved reviewed set to a sibling and atomically publish it."""
+    """Publish one approved set while holding the canonical campaign lock."""
     if destination.exists() or destination.is_symlink():
         raise RuntimeError("review_destination_exists")
     _reject_lexical_symlinks(destination.parent, "review_destination_invalid")
     if not destination.parent.is_dir() or destination.parent.is_symlink():
         raise RuntimeError("review_destination_invalid")
+    if sys.platform == "win32":
+        # Python cannot provide a durable directory fsync contract on Windows.
+        raise RuntimeError("review_publication_directory_durability_unsupported")
     stage = destination.parent / f".{destination.name}.task-20010-stage"
     if stage.exists() or stage.is_symlink():
         raise RuntimeError("review_promotion_stage_exists")
     receipt = _read_review_receipt(receipt_path)
     if receipt["decision"] != "approved":
         raise RuntimeError("review_receipt_not_approved")
-    receipt = register_review_receipt(campaign_root, attempt_id, receipt_path)
+    receipt = _register_review_receipt_locked(campaign_root, attempt_id, receipt_path)
     attempt_root = _review_attempt_root(campaign_root, attempt_id)
     reviewed_digest = receipt["artifact_set_sha256"]
     source_receipt_sha256 = _sha256_review_file(receipt_path)
@@ -613,21 +705,64 @@ def promote_reviewed_artifacts(
     copied_receipt = stage / "confirmatory-review-receipt.json"
     shutil.copy2(receipt_path, copied_receipt)
 
-    if canonical_artifact_digest(attempt_root) != reviewed_digest:
-        raise RuntimeError("review_promotion_source_changed")
-    if _sha256_review_file(receipt_path) != source_receipt_sha256:
-        raise RuntimeError("review_promotion_source_changed")
-    if canonical_artifact_digest(stage) != reviewed_digest:
-        raise RuntimeError("review_promotion_copy_mismatch")
-    if (
-        _sha256_review_file(copied_receipt) != source_receipt_sha256
-        or _read_review_receipt(copied_receipt) != receipt
-    ):
-        raise RuntimeError("review_promotion_copy_mismatch")
-    if destination.exists() or destination.is_symlink():
-        raise RuntimeError("review_destination_exists")
-    _atomic_rename_directory_noreplace(stage, destination)
+    staged_paths = [stage / name for name in REVIEWED_ARTIFACTS]
+    staged_paths.append(copied_receipt)
+    try:
+        for path in staged_paths:
+            path.chmod(0o444)
+    except OSError as exc:
+        raise RuntimeError("review_promotion_stage_lockdown_failed") from exc
+    # The campaign and stage are private roots. Read-only regular files exclude
+    # cooperative writers; hostile same-UID permission changes are out of scope.
+    try:
+        for path in staged_paths:
+            _fsync_regular_file(path)
+        _fsync_directory(stage)
+    except OSError as exc:
+        raise RuntimeError("review_promotion_stage_fsync_failed") from exc
+
+    def verify_final_binding() -> None:
+        if (
+            canonical_artifact_digest(attempt_root) != reviewed_digest
+            or _sha256_review_file(receipt_path) != source_receipt_sha256
+        ):
+            raise RuntimeError("review_promotion_source_changed")
+        final_receipt = _register_review_receipt_locked(
+            campaign_root, attempt_id, receipt_path
+        )
+        if final_receipt != receipt:
+            raise RuntimeError("review_promotion_source_changed")
+        if canonical_artifact_digest(stage) != reviewed_digest:
+            raise RuntimeError("review_promotion_copy_mismatch")
+        if (
+            _sha256_review_file(copied_receipt) != source_receipt_sha256
+            or _read_review_receipt(copied_receipt) != receipt
+        ):
+            raise RuntimeError("review_promotion_copy_mismatch")
+        if destination.exists() or destination.is_symlink():
+            raise RuntimeError("review_destination_exists")
+
+    _atomic_rename_directory_noreplace(stage, destination, verify=verify_final_binding)
+    try:
+        _fsync_directory(destination.parent)
+    except OSError as exc:
+        raise RuntimeError("publication_durability_uncertain") from exc
     return reviewed_digest
+
+
+def promote_reviewed_artifacts(
+    campaign_root: Path,
+    attempt_id: str,
+    receipt_path: Path,
+    destination: Path,
+) -> str:
+    """Serialize the full verified, durable, atomic publication operation."""
+    return _run_campaign_maintenance_locked(
+        campaign_root,
+        lambda: _promote_reviewed_artifacts_locked(
+            campaign_root, attempt_id, receipt_path, destination
+        ),
+    )
 
 
 def verify_original_evidence(candidate_root: Path) -> dict[str, str]:
@@ -649,8 +784,7 @@ def verify_original_evidence(candidate_root: Path) -> dict[str, str]:
 def load_original_runner(candidate_root: Path) -> Any:
     """Digest-check and isolate the original benchmark statistics module."""
     path = (
-        candidate_root.resolve()
-        / "Tests/Performance/run_console_three_turn_profile.py"
+        candidate_root.resolve() / "Tests/Performance/run_console_three_turn_profile.py"
     )
     if not path.is_file() or path.is_symlink():
         raise RuntimeError("original_runner_missing")
@@ -2095,6 +2229,18 @@ def _fsync_directory(path: Path) -> None:
     flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
     descriptor = os.open(path, flags)
     try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _fsync_regular_file(path: Path) -> None:
+    """Fsync exactly one non-symlink regular file."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise OSError(errno.EINVAL, "not a regular file", path)
         os.fsync(descriptor)
     finally:
         os.close(descriptor)

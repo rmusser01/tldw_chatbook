@@ -11,6 +11,7 @@ import json
 import math
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import textwrap
@@ -4507,6 +4508,142 @@ def test_approved_receipt_allows_only_minor_findings(tmp_path: Path) -> None:
     assert (tmp_path / "published").is_dir()
 
 
+def test_concurrent_changes_required_registration_has_one_stable_loser(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    campaign, attempt, digest, _raw_sha256 = _prepare_review_attempt(tmp_path)
+    receipt = _write_review_receipt(attempt, digest, decision="changes_required")
+    original = profile._register_review_receipt_locked
+    entered = threading.Event()
+    finish = threading.Event()
+
+    def block_first(*args, **kwargs):
+        entered.set()
+        assert finish.wait(timeout=5)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(profile, "_register_review_receipt_locked", block_first)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        winner = executor.submit(
+            profile.register_review_receipt, campaign, "attempt-0001", receipt
+        )
+        assert entered.wait(timeout=5)
+        loser = executor.submit(
+            profile.register_review_receipt, campaign, "attempt-0001", receipt
+        )
+        with pytest.raises(RuntimeError, match="^campaign_lock_held$"):
+            loser.result(timeout=5)
+        finish.set()
+        assert winner.result(timeout=5)["decision"] == "changes_required"
+
+    with pytest.raises(RuntimeError, match="^review_receipt_already_registered$"):
+        profile.register_review_receipt(campaign, "attempt-0001", receipt)
+    assert [
+        event["state"] for event in profile.attempt_lineage(campaign / "attempts.jsonl")
+    ] == ["running", "complete_pending_review", "changes_required"]
+    assert not (campaign / ".campaign-lock").exists()
+
+
+def test_changes_required_winner_serializes_against_promotion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    campaign, attempt, digest, _raw_sha256 = _prepare_review_attempt(tmp_path)
+    approved = _write_review_receipt(attempt, digest, filename="review-001.json")
+    changes = _write_review_receipt(
+        attempt,
+        digest,
+        decision="changes_required",
+        filename="review-002.json",
+    )
+    destination = tmp_path / "published"
+    original = profile._register_review_receipt_locked
+    entered = threading.Event()
+    finish = threading.Event()
+
+    def block_changes(campaign_root, attempt_id, receipt_path):
+        if Path(receipt_path) == changes:
+            entered.set()
+            assert finish.wait(timeout=5)
+        return original(campaign_root, attempt_id, receipt_path)
+
+    monkeypatch.setattr(profile, "_register_review_receipt_locked", block_changes)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        changes_future = executor.submit(
+            profile.register_review_receipt,
+            campaign,
+            "attempt-0001",
+            changes,
+        )
+        assert entered.wait(timeout=5)
+        promotion = executor.submit(
+            profile.promote_reviewed_artifacts,
+            campaign,
+            "attempt-0001",
+            approved,
+            destination,
+        )
+        with pytest.raises(RuntimeError, match="^campaign_lock_held$"):
+            promotion.result(timeout=5)
+        finish.set()
+        changes_future.result(timeout=5)
+
+    assert not destination.exists()
+    assert profile.attempt_lineage(campaign / "attempts.jsonl")[-1]["state"] == (
+        "changes_required"
+    )
+
+
+def test_promotion_winner_blocks_later_changes_required_review(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    campaign, attempt, digest, _raw_sha256 = _prepare_review_attempt(tmp_path)
+    approved = _write_review_receipt(attempt, digest, filename="review-001.json")
+    changes = _write_review_receipt(
+        attempt,
+        digest,
+        decision="changes_required",
+        filename="review-002.json",
+    )
+    destination = tmp_path / "published"
+    real_copy2 = shutil.copy2
+    entered = threading.Event()
+    finish = threading.Event()
+
+    def block_first_copy(source: Path, target: Path) -> Path:
+        if not entered.is_set():
+            entered.set()
+            assert finish.wait(timeout=5)
+        return Path(real_copy2(source, target))
+
+    monkeypatch.setattr(profile.shutil, "copy2", block_first_copy)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        promotion = executor.submit(
+            profile.promote_reviewed_artifacts,
+            campaign,
+            "attempt-0001",
+            approved,
+            destination,
+        )
+        assert entered.wait(timeout=5)
+        changes_future = executor.submit(
+            profile.register_review_receipt,
+            campaign,
+            "attempt-0001",
+            changes,
+        )
+        with pytest.raises(RuntimeError, match="^campaign_lock_held$"):
+            changes_future.result(timeout=5)
+        finish.set()
+        promotion.result(timeout=5)
+
+    assert destination.is_dir()
+    with pytest.raises(RuntimeError, match="^review_attempt_already_approved$"):
+        profile.register_review_receipt(campaign, "attempt-0001", changes)
+    assert profile.attempt_lineage(campaign / "attempts.jsonl")[-1]["state"] == (
+        "complete_pending_review"
+    )
+
+
 @pytest.mark.parametrize("problem", ("missing", "non_approved", "attempt", "digest"))
 def test_promotion_rejects_missing_nonapproved_or_mismatched_receipt(
     tmp_path: Path, problem: str
@@ -4584,9 +4721,9 @@ def test_promotion_empty_destination_race_preserves_staging_and_attempt(
     destination = tmp_path / "published"
     real_rename = profile._atomic_rename_directory_noreplace
 
-    def inject_empty_destination(source: Path, target: Path) -> None:
+    def inject_empty_destination(source: Path, target: Path, **kwargs) -> None:
         target.mkdir()
-        real_rename(source, target)
+        real_rename(source, target, **kwargs)
 
     monkeypatch.setattr(
         profile, "_atomic_rename_directory_noreplace", inject_empty_destination
@@ -4604,6 +4741,155 @@ def test_promotion_empty_destination_race_preserves_staging_and_attempt(
     )
     assert destination.is_dir() and list(destination.iterdir()) == []
     assert attempt.is_dir()
+
+
+def test_promotion_boundary_mutation_fails_final_recheck(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    campaign, attempt, digest, _raw_sha256 = _prepare_review_attempt(tmp_path)
+    receipt = _write_review_receipt(attempt, digest)
+    destination = tmp_path / "published"
+    original = profile._atomic_rename_directory_noreplace
+
+    def mutate_at_boundary(source: Path, target: Path, **kwargs) -> None:
+        staged_readme = source / "README.md"
+        staged_readme.chmod(0o644)
+        staged_readme.write_text("boundary mutation\n", encoding="utf-8")
+        original(source, target, **kwargs)
+
+    monkeypatch.setattr(
+        profile, "_atomic_rename_directory_noreplace", mutate_at_boundary
+    )
+
+    with pytest.raises(RuntimeError, match="^review_promotion_copy_mismatch$"):
+        profile.promote_reviewed_artifacts(
+            campaign, "attempt-0001", receipt, destination
+        )
+
+    stage = destination.parent / f".{destination.name}.task-20010-stage"
+    assert stage.is_dir()
+    assert not destination.exists()
+    assert attempt.is_dir()
+
+
+def test_promotion_seals_and_fsyncs_stage_before_atomic_rename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    campaign, attempt, digest, _raw_sha256 = _prepare_review_attempt(tmp_path)
+    receipt = _write_review_receipt(attempt, digest)
+    destination = tmp_path / "published"
+    stage = destination.parent / f".{destination.name}.task-20010-stage"
+    events: list[str] = []
+    real_file_fsync = profile._fsync_regular_file
+    real_directory_fsync = profile._fsync_directory
+
+    def record_file(path: Path) -> None:
+        assert stat.S_IMODE(path.stat().st_mode) == 0o444
+        events.append(f"file:{path.name}")
+        real_file_fsync(path)
+
+    def record_directory(path: Path) -> None:
+        if path == stage:
+            events.append("directory:stage")
+        elif path == destination.parent and destination.exists():
+            events.append("directory:destination-parent")
+        real_directory_fsync(path)
+
+    monkeypatch.setattr(profile, "_fsync_regular_file", record_file)
+    monkeypatch.setattr(profile, "_fsync_directory", record_directory)
+
+    profile.promote_reviewed_artifacts(campaign, "attempt-0001", receipt, destination)
+
+    assert events == [
+        *(f"file:{name}" for name in profile.REVIEWED_ARTIFACTS),
+        "file:confirmatory-review-receipt.json",
+        "directory:stage",
+        "directory:destination-parent",
+    ]
+    assert all(
+        stat.S_IMODE((destination / name).stat().st_mode) == 0o444
+        for name in REVIEWED_ARTIFACT_NAMES | {"confirmatory-review-receipt.json"}
+    )
+
+
+@pytest.mark.parametrize("failure", ("file", "stage_directory"))
+def test_promotion_pre_rename_fsync_failure_preserves_source_and_stage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    campaign, attempt, digest, _raw_sha256 = _prepare_review_attempt(tmp_path)
+    receipt = _write_review_receipt(attempt, digest)
+    destination = tmp_path / "published"
+    stage = destination.parent / f".{destination.name}.task-20010-stage"
+    real_directory_fsync = profile._fsync_directory
+
+    if failure == "file":
+        monkeypatch.setattr(
+            profile,
+            "_fsync_regular_file",
+            lambda _path: (_ for _ in ()).throw(OSError("injected file fsync")),
+        )
+    else:
+
+        def fail_stage_directory(path: Path) -> None:
+            if path == stage:
+                raise OSError("injected stage directory fsync")
+            real_directory_fsync(path)
+
+        monkeypatch.setattr(profile, "_fsync_directory", fail_stage_directory)
+
+    with pytest.raises(RuntimeError, match="^review_promotion_stage_fsync_failed$"):
+        profile.promote_reviewed_artifacts(
+            campaign, "attempt-0001", receipt, destination
+        )
+
+    assert attempt.is_dir()
+    assert stage.is_dir()
+    assert not destination.exists()
+    assert not (campaign / ".campaign-lock").exists()
+
+
+def test_promotion_parent_fsync_failure_retains_destination_as_uncertain(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    campaign, attempt, digest, _raw_sha256 = _prepare_review_attempt(tmp_path)
+    receipt = _write_review_receipt(attempt, digest)
+    destination = tmp_path / "published"
+    real_directory_fsync = profile._fsync_directory
+
+    def fail_published_parent(path: Path) -> None:
+        if path == destination.parent and destination.exists():
+            raise OSError("injected destination parent fsync")
+        real_directory_fsync(path)
+
+    monkeypatch.setattr(profile, "_fsync_directory", fail_published_parent)
+
+    with pytest.raises(RuntimeError, match="^publication_durability_uncertain$"):
+        profile.promote_reviewed_artifacts(
+            campaign, "attempt-0001", receipt, destination
+        )
+
+    assert destination.is_dir()
+    assert attempt.is_dir()
+    assert not (campaign / ".campaign-lock").exists()
+
+
+def test_windows_promotion_fails_closed_without_directory_durability(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    campaign, attempt, digest, _raw_sha256 = _prepare_review_attempt(tmp_path)
+    receipt = _write_review_receipt(attempt, digest)
+    monkeypatch.setattr(profile.sys, "platform", "win32")
+
+    with pytest.raises(
+        RuntimeError,
+        match="^review_publication_directory_durability_unsupported$",
+    ):
+        profile.promote_reviewed_artifacts(
+            campaign, "attempt-0001", receipt, tmp_path / "published"
+        )
+
+    assert attempt.is_dir()
+    assert not (tmp_path / "published").exists()
 
 
 def test_promotion_rejects_source_changed_after_review(tmp_path: Path) -> None:
