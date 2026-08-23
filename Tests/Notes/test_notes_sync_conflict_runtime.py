@@ -2197,6 +2197,118 @@ async def test_resolution_history_read_failure_is_unavailable_without_leakage() 
     assert "private-binding-id" not in repr(rows)
 
 
+@pytest.mark.parametrize(
+    "undo_state",
+    (
+        NotesSyncOperationState.RECOVERY_ADMITTED,
+        NotesSyncOperationState.FIRST_AUTHORITY_APPLIED,
+        NotesSyncOperationState.SECOND_AUTHORITY_APPLIED,
+        NotesSyncOperationState.BINDING_UPDATED,
+        NotesSyncOperationState.VERIFIED,
+        NotesSyncOperationState.NEEDS_ATTENTION,
+    ),
+)
+@pytest.mark.asyncio
+async def test_resolution_history_incomplete_undo_read_failure_is_unavailable(
+    undo_state: NotesSyncOperationState,
+) -> None:
+    adapter = _Adapter(_input())
+    store = _Store(_root())
+    owner = _owner(adapter, _root(), store=store)
+    operation_id = f"history-{undo_state.value}-operation"
+    store.history = [
+        NotesSyncResolutionHistoryRecord(
+            operation_id=operation_id,
+            binding_id="private-binding-id",
+            kind="resolve_keep_file",
+            state=NotesSyncOperationState.COMPLETED,
+            reason_code=None,
+            completed_at=2,
+            updated_at=3,
+            recovery_expires_at=999,
+            undo_state=undo_state,
+            undo_reason_code="transient_backend_failure",
+        )
+    ]
+    adapter.executor.undo_projection_errors[operation_id] = RuntimeError(
+        "private-binding-id /absolute/private.md backend-secret"
+    )
+
+    rows = await owner.resolution_history("root-1", now=100)
+
+    assert len(rows) == 1
+    assert rows[0].item_label == operation_id[:8]
+    assert rows[0].state == undo_state.value
+    assert rows[0].undo_available is False
+    assert rows[0].undo_reason == "Unavailable"
+    assert "private-binding-id" not in repr(rows)
+    assert "backend-secret" not in repr(rows)
+
+
+@pytest.mark.asyncio
+async def test_resolution_history_fallback_preserves_proven_terminal_statuses() -> None:
+    adapter = _Adapter(_input())
+    store = _Store(_root())
+    owner = _owner(adapter, _root(), store=store)
+    store.history = [
+        NotesSyncResolutionHistoryRecord(
+            operation_id="changed-operation",
+            binding_id="binding-1",
+            kind="resolve_keep_file",
+            state=NotesSyncOperationState.COMPLETED,
+            reason_code=None,
+            completed_at=3,
+            updated_at=4,
+            recovery_expires_at=999,
+            undo_state=NotesSyncOperationState.NEEDS_ATTENTION,
+            undo_reason_code="changed_since_resolution",
+        ),
+        NotesSyncResolutionHistoryRecord(
+            operation_id="expired-operation",
+            binding_id="binding-1",
+            kind="resolve_keep_note",
+            state=NotesSyncOperationState.COMPLETED,
+            reason_code=None,
+            completed_at=2,
+            updated_at=3,
+            recovery_expires_at=99,
+            undo_state=None,
+            undo_reason_code=None,
+        ),
+        NotesSyncResolutionHistoryRecord(
+            operation_id="undone-operation",
+            binding_id="binding-1",
+            kind="resolve_keep_both",
+            state=NotesSyncOperationState.COMPLETED,
+            reason_code=None,
+            completed_at=1,
+            updated_at=2,
+            recovery_expires_at=999,
+            undo_state=NotesSyncOperationState.COMPLETED,
+            undo_reason_code=None,
+        ),
+    ]
+    secret = RuntimeError("private-binding-id /absolute/private.md backend-secret")
+    adapter.executor.undo_projection_errors = {
+        record.operation_id: secret for record in store.history
+    }
+
+    rows = await owner.resolution_history("root-1", now=100)
+
+    assert [row.state for row in rows] == [
+        "needs_attention",
+        "completed",
+        "undone",
+    ]
+    assert [row.undo_reason for row in rows] == [
+        "Changed since resolution",
+        "Undo expired",
+        "Undone",
+    ]
+    assert all("binding-1" not in repr(row) for row in rows)
+    assert all("backend-secret" not in repr(row) for row in rows)
+
+
 @pytest.mark.asyncio
 async def test_undo_resolution_is_root_serialized_refreshes_and_dismisses_receipt() -> (
     None

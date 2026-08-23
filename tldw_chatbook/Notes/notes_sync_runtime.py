@@ -1141,7 +1141,11 @@ class NotesSyncRuntimeOwner:
         if record.undo_state is not None:
             return NotesSyncUndoProjection(
                 False,
-                "Changed since resolution",
+                (
+                    "Changed since resolution"
+                    if record.undo_reason_code == "changed_since_resolution"
+                    else "Unavailable"
+                ),
                 record.undo_state.value,
                 None,
                 None,
