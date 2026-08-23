@@ -383,23 +383,26 @@ git commit -m "feat(notes): apply reviewed sync conflict choices"
 
 **Files:**
 - Modify: `tldw_chatbook/Notes/notes_scope_service.py:317-460,946-1055`
+- Modify: `tldw_chatbook/Notes/note_folder_repository.py:189-210,492-518,717-752` — add one read-only exact manual-membership lookup including deleted rows; no new mutation or SQL owner.
 - Modify: `tldw_chatbook/Notes/notes_sync_authority.py:71-207`
 - Modify: `tldw_chatbook/Notes/notes_device_state_store.py:1013-1210,1613-1655`
 - Modify: `tldw_chatbook/Notes/notes_sync_executor.py`
 - Modify: `tldw_chatbook/Notes/notes_sync_runtime.py:624-690,1330-1420`
 - Modify: `Tests/Notes/test_notes_sync_authority.py`
+- Modify: `Tests/Notes/test_note_folder_repository.py`
 - Extend: `Tests/Notes/test_notes_sync_conflict_executor.py`
 - Extend: `Tests/Notes/test_notes_sync_conflict_runtime.py`
 
 - [ ] **Step 1: Write RED authority, direction, and crash-matrix tests**
 
-Test one effect per call, caller-owned IDs, reuse by normalized manual path, actual reused IDs, owner/kind/path/content/placement mismatch, concurrent create loser verification, and all eight durable boundaries. Parameterize Keep both across `bidirectional`, `folder_to_notes`, and `notes_to_folder`, including `out_of_direction_change`; prove the bound-note update receives a one-occurrence override only when the configured direction would otherwise forbid that exact selected update. At each folder, note, placement, bound-note, file-recheck, binding, and verification boundary, inject cancellation after the external effect begins and prove the durable substage is coherent and replayable before cancellation reaches the caller. Seed recovery capacity immediately below the ceiling and prove every substage transition has zero byte growth and completes without bypassing or rechecking the global ceiling after mutation begins. Every restart test must discard runtime, executor, request, snapshots, and fakes; reconstruct from a reopened store plus fresh authority only.
+Test one effect per call, caller-owned IDs, reuse by normalized manual path, actual reused IDs, owner/kind/path/content/placement mismatch, concurrent create loser verification, and all eight durable boundaries. Repository/authority RED cases must prove: an active exact membership is returned/reused even when older deleted history exists; deleted-only history returns the latest `modified_at DESC, id DESC` row and causes fail-closed with zero mutation; and `include_deleted=False` returns no deleted row. Name these cases with the focused selector, for example `test_conflict_copy_deleted_placement_fails_closed`. Parameterize Keep both across `bidirectional`, `folder_to_notes`, and `notes_to_folder`, including `out_of_direction_change`; prove the bound-note update receives a one-occurrence override only when the configured direction would otherwise forbid that exact selected update. At each folder, note, placement, bound-note, file-recheck, binding, and verification boundary, inject cancellation after the external effect begins and prove the durable substage is coherent and replayable before cancellation reaches the caller. Seed recovery capacity immediately below the ceiling and prove every substage transition has zero byte growth and completes without bypassing or rechecking the global ceiling after mutation begins. Every restart test must discard runtime, executor, request, snapshots, and fakes; reconstruct from a reopened store plus fresh authority only.
 
 - [ ] **Step 2: Run RED**
 
 ```bash
 ../../.venv/bin/python -m pytest -q \
   Tests/Notes/test_notes_sync_authority.py \
+  Tests/Notes/test_note_folder_repository.py \
   Tests/Notes/test_notes_sync_conflict_executor.py \
   Tests/Notes/test_notes_sync_conflict_runtime.py \
   -k 'conflict_copy or keep_both or restart'
@@ -409,7 +412,7 @@ Expected: single-effect folder/note/placement methods and Keep-both request/repl
 
 - [ ] **Step 3: Add local-only service capabilities**
 
-Expose the repository's existing caller-owned `folder_id` only through sync-specific local service methods. Add exact get-by-path/get-by-ID and manual-placement reads. Reject server scopes, deleted rows, sync-managed placement, and owner mismatch with bounded errors. Do not add a second repository or direct SQL call.
+Expose the repository's existing caller-owned `folder_id` only through sync-specific local service methods. Add one read-only repository lookup for the exact `(folder_id, note_id, ownership='manual', owner_id='')` membership with an explicit `include_deleted` option, following the existing `get_folder(..., include_deleted=...)` pattern; it returns the stored row without reviving it. Selection semantics are exact: return the active row first; only when none exists and `include_deleted=True`, return the latest deleted row ordered by `modified_at DESC, id DESC`, matching the existing `attach_manual` revival order and stable tie-break. Route exact get-by-path/get-by-ID and manual-placement reads through the service. A valid active placement may be reused; when only deleted history exists, sync authority fails closed rather than invoking revival. Also reject server scopes, sync-managed placement, and owner mismatch with bounded errors before calling the existing `attach_manual`, whose ordinary revive behavior remains unchanged for non-sync callers. Do not add a second repository, mutation, or SQL owner.
 
 - [ ] **Step 4: Add three authority methods**
 
@@ -444,31 +447,37 @@ Run Step 2. Mutate collision verification to accept different content and confir
 ```bash
 ../../.venv/bin/python -m pytest -q \
   Tests/Notes/test_notes_sync_authority.py \
+  Tests/Notes/test_note_folder_repository.py \
   Tests/Notes/test_notes_sync_executor.py \
   Tests/Notes/test_notes_sync_conflict_executor.py \
   Tests/Notes/test_notes_sync_conflict_runtime.py
 ../../.venv/bin/python -m ruff check \
   tldw_chatbook/Notes/notes_scope_service.py \
+  tldw_chatbook/Notes/note_folder_repository.py \
   tldw_chatbook/Notes/notes_sync_authority.py \
   tldw_chatbook/Notes/notes_device_state_store.py \
   tldw_chatbook/Notes/notes_sync_executor.py \
   tldw_chatbook/Notes/notes_sync_runtime.py \
   Tests/Notes/test_notes_sync_authority.py \
+  Tests/Notes/test_note_folder_repository.py \
   Tests/Notes/test_notes_sync_executor.py \
   Tests/Notes/test_notes_sync_conflict_executor.py \
   Tests/Notes/test_notes_sync_conflict_runtime.py
 ../../.venv/bin/python -m ruff format --check \
   tldw_chatbook/Notes/notes_scope_service.py \
+  tldw_chatbook/Notes/note_folder_repository.py \
   tldw_chatbook/Notes/notes_sync_authority.py \
   tldw_chatbook/Notes/notes_device_state_store.py \
   tldw_chatbook/Notes/notes_sync_executor.py \
   tldw_chatbook/Notes/notes_sync_runtime.py \
   Tests/Notes/test_notes_sync_authority.py \
+  Tests/Notes/test_note_folder_repository.py \
   Tests/Notes/test_notes_sync_executor.py \
   Tests/Notes/test_notes_sync_conflict_executor.py \
   Tests/Notes/test_notes_sync_conflict_runtime.py
 ../../.venv/bin/python -m mypy --follow-imports=skip \
   tldw_chatbook/Notes/notes_scope_service.py \
+  tldw_chatbook/Notes/note_folder_repository.py \
   tldw_chatbook/Notes/notes_sync_authority.py \
   tldw_chatbook/Notes/notes_device_state_store.py \
   tldw_chatbook/Notes/notes_sync_executor.py \
@@ -476,11 +485,13 @@ Run Step 2. Mutate collision verification to accept different content and confir
 git diff --check
 git add \
   tldw_chatbook/Notes/notes_scope_service.py \
+  tldw_chatbook/Notes/note_folder_repository.py \
   tldw_chatbook/Notes/notes_sync_authority.py \
   tldw_chatbook/Notes/notes_device_state_store.py \
   tldw_chatbook/Notes/notes_sync_executor.py \
   tldw_chatbook/Notes/notes_sync_runtime.py \
   Tests/Notes/test_notes_sync_authority.py \
+  Tests/Notes/test_note_folder_repository.py \
   Tests/Notes/test_notes_sync_executor.py \
   Tests/Notes/test_notes_sync_conflict_executor.py \
   Tests/Notes/test_notes_sync_conflict_runtime.py
