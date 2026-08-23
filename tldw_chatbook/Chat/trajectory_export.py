@@ -527,7 +527,13 @@ def _prepare_identities(
             continue
         raw = str(value)
         credential = _credential_text(raw)[1]
-        if profile is TraceExportProfile.FULL_TRACE and not credential:
+        source_state = str(event["field_states"].get(field) or "observed")
+        source_non_observed = source_state in _NON_OBSERVED_STATES
+        if (
+            profile is TraceExportProfile.FULL_TRACE
+            and not credential
+            and not source_non_observed
+        ):
             decisions.append(
                 TraceFieldDecision(
                     str(event["event_id"]), field, "observed", "included", False
@@ -535,21 +541,29 @@ def _prepare_identities(
             )
             continue
         event[field] = aliases[domain][raw]
-        reason = "credential" if credential else "identifier_alias"
+        state = source_state if source_non_observed else "redacted"
+        reason = (
+            f"source_{source_state}"
+            if source_non_observed
+            else "credential"
+            if credential
+            else "identifier_alias"
+        )
         decisions.append(
             TraceFieldDecision(
                 str(event["event_id"]),
                 field,
-                "redacted",
+                state,
                 reason,
                 True,
+                source_state,
             )
         )
         provenance.append(
             {
                 "event_id": str(event["event_id"]),
                 "field": field,
-                "state": "redacted",
+                "state": state,
                 "reason": reason,
             }
         )
@@ -777,12 +791,19 @@ def preflight_trace_export(
                 "Invalid Trace snapshot: every event requires a non-empty event_id"
             )
         event = _record_dict(record)
+        field_provenance: dict[str, dict[str, str]] = {}
         identity_decisions, identity_provenance = _prepare_identities(
             event, profile=selected, aliases=aliases
         )
         decisions.extend(identity_decisions)
+        for decision in identity_decisions:
+            event["field_states"][decision.field] = decision.state
+            field_provenance[decision.field] = {
+                "state": decision.state,
+                "reason": decision.reason,
+                "sensitivity": record.sensitivity or "unspecified",
+            }
         provenance.extend(identity_provenance)
-        field_provenance: dict[str, dict[str, str]] = {}
         event_provenance = list(identity_provenance)
         for field in _MATERIAL_FIELDS:
             governed, decision, nested = _prepare_field(event, field, selected)
@@ -811,9 +832,9 @@ def preflight_trace_export(
                 event_provenance.append(entry)
                 provenance.append(entry)
         for field, state in event["field_states"].items():
-            if state == "observed" or field in field_provenance:
+            if field in field_provenance:
                 continue
-            if state not in _NON_OBSERVED_STATES:
+            if state not in _NON_OBSERVED_STATES | {"observed"}:
                 raise TrajectoryExportError(
                     f"Invalid Trace field state {state!r} for {field!r}"
                 )
@@ -823,14 +844,15 @@ def preflight_trace_export(
                 "reason": reason,
                 "sensitivity": record.sensitivity or "unspecified",
             }
-            entry = {
-                "event_id": str(event["event_id"]),
-                "field": str(field),
-                "state": str(state),
-                "reason": reason,
-            }
-            event_provenance.append(entry)
-            provenance.append(entry)
+            if state != "observed":
+                entry = {
+                    "event_id": str(event["event_id"]),
+                    "field": str(field),
+                    "state": str(state),
+                    "reason": reason,
+                }
+                event_provenance.append(entry)
+                provenance.append(entry)
             _upsert_field_decision(
                 decisions,
                 TraceFieldDecision(
@@ -1052,7 +1074,7 @@ def build_trace_export(
         },
         "variants": [],
         "depth": 0,
-        "field_states": {"payload": "observed", "content_preview": "observed"},
+        "field_states": {},
         "sensitivity": "diagnostic",
         "field_provenance": {},
         "redaction_provenance": [],
@@ -1091,6 +1113,7 @@ def build_trace_export(
         "privacy_decisions": [
             dataclasses.asdict(decision) for decision in preflight.field_decisions
         ],
+        "export_operation_event_id": export_event_id,
         "integrity_notice": "SHA-256 detects corruption; it does not prove authenticity",
     }
     payload: dict[str, Any] = {

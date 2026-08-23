@@ -632,6 +632,7 @@ def test_resigned_bundle_cannot_claim_digest_authenticity() -> None:
 def test_resigned_bundle_rejects_contradictory_privacy_inventory(field: str) -> None:
     payload = _build(_snapshot())
     payload["manifest"]["privacy_inventory"][field] += 100
+    payload["events"][-1]["payload"]["privacy_inventory"][field] += 100
     _resign(payload)
 
     with pytest.raises(
@@ -649,6 +650,54 @@ def test_resigned_bundle_rejects_field_state_provenance_contradiction() -> None:
     with pytest.raises(
         trajectory_import.TrajectoryImportError,
         match="field_provenance.*payload.*field_states",
+    ):
+        trajectory_import.load_imported_trace(payload)
+
+
+def test_resigned_bundle_cannot_strip_the_complete_privacy_basis() -> None:
+    payload = _build(_snapshot())
+    event = payload["events"][0]
+    event["field_states"] = {}
+    event["field_provenance"] = {}
+    event["redaction_provenance"] = []
+    payload["manifest"]["privacy_decisions"] = []
+    payload["manifest"]["redaction_provenance"] = []
+    payload["manifest"]["missing_metadata"] = []
+    payload["manifest"]["privacy_inventory"] = {
+        key: 0 for key in payload["manifest"]["privacy_inventory"]
+    }
+    payload["events"][-1]["payload"]["privacy_inventory"] = dict(
+        payload["manifest"]["privacy_inventory"]
+    )
+    _resign(payload)
+
+    with pytest.raises(
+        trajectory_import.TrajectoryImportError,
+        match="material field_states|privacy_decisions",
+    ):
+        trajectory_import.load_imported_trace(payload)
+
+
+def test_resigned_bundle_requires_exact_decision_field_state_coverage() -> None:
+    payload = _build(_snapshot())
+    payload["manifest"]["privacy_decisions"].pop()
+    _resign(payload)
+
+    with pytest.raises(
+        trajectory_import.TrajectoryImportError,
+        match="privacy_decisions.*exactly match",
+    ):
+        trajectory_import.load_imported_trace(payload)
+
+
+def test_resigned_bundle_narrowly_identifies_export_operation_exception() -> None:
+    payload = _build(_snapshot())
+    payload["manifest"]["export_operation_event_id"] = payload["events"][0]["event_id"]
+    _resign(payload)
+
+    with pytest.raises(
+        trajectory_import.TrajectoryImportError,
+        match="export_operation_event_id",
     ):
         trajectory_import.load_imported_trace(payload)
 
