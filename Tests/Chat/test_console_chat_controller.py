@@ -1,5 +1,6 @@
 import asyncio
 import json
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -21,6 +22,7 @@ from tldw_chatbook.Chat.console_chat_controller import (
     ConsoleChatController,
     build_mcp_review_hook,
 )
+from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderGateway,
     ConsoleProviderResolution,
@@ -41,6 +43,8 @@ from tldw_chatbook.Chat.console_project_instructions import (
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
@@ -88,6 +92,57 @@ class RecordingStreamingGateway(StreamingGateway):
     async def stream_chat(self, resolution, messages, **kwargs):
         self.messages_seen = messages
         yield "ok"
+
+
+class CharacterEmoteStreamingGateway(StreamingGateway):
+    def __init__(self, *chunks: str):
+        self.chunks = chunks
+        self.messages_seen = None
+
+    async def stream_chat(self, resolution, messages, **kwargs):
+        self.messages_seen = messages
+        for chunk in self.chunks:
+            yield chunk
+
+
+def _activate_character_emote_pack(
+    db: CharactersRAGDB,
+    character_id: int,
+) -> dict:
+    assets = []
+    for index, (expression_key, label) in enumerate(
+        (("happy", "Never expose this label"), ("custom:smug", "Nor this one")),
+        start=1,
+    ):
+        assets.append(
+            {
+                "expression_key": expression_key,
+                "original_expression_key": expression_key,
+                "display_label": label,
+                "source_filename": f"asset-{index}.webp",
+                "storage_relpath": f"fixture/asset-{index}.webp",
+                "content_type": "image/webp",
+                "bytes": index,
+                "sha256": f"{index:064x}",
+                "width": 8,
+                "height": 8,
+                "source_context": {"fixture": True},
+                "is_animated": False,
+                "frame_count": 1,
+            }
+        )
+    return VisualIdentityRepository(db).activate_pack(
+        pack={
+            "title": "Controller emote fixture",
+            "default_expression_key": "happy",
+            "source_kind": "manual",
+            "source_context": {"source_id": "controller.emote.fixture"},
+        },
+        manifest={"schema_id": "fixture/v1"},
+        assets=assets,
+        actor_kind="character",
+        actor_id=character_id,
+    )
 
 
 class CapturingGateway(StreamingGateway):
@@ -729,6 +784,217 @@ async def test_submit_draft_preserves_system_prompt_formatting_verbatim():
         {"role": "system", "content": formatted_prompt},
         {"role": "user", "content": "hello"},
     ]
+
+
+@pytest.mark.asyncio
+async def test_character_dispatch_shares_active_pack_prompt_and_capture_snapshot(
+    tmp_path,
+):
+    db = CharactersRAGDB(tmp_path / "controller-emote.db", "controller-emote")
+    try:
+        character_id = int(db.add_character_card({"name": "Emote actor"}))
+        graph = _activate_character_emote_pack(db, character_id)
+        store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        session = store.create_session(
+            settings=ConsoleSessionSettings(
+                provider="llama_cpp",
+                system_prompt="Stay in character.",
+            ),
+            assistant_kind="character",
+            assistant_id=str(character_id),
+            character_id=character_id,
+        )
+        gateway = CharacterEmoteStreamingGateway(
+            "Emote: sm",
+            "ug\nVisible answer",
+        )
+        controller = ConsoleChatController(
+            store=store,
+            provider_gateway=gateway,
+            system_prompt="Stay in character.",
+        )
+
+        result = await controller.submit_draft("hello", session_id=session.id)
+
+        assert result.accepted is True
+        assert gateway.messages_seen[0]["role"] == "system"
+        prompt = gateway.messages_seen[0]["content"]
+        assert prompt.startswith("Stay in character.\n\n")
+        assert "Prefer these available states: smug, happy." in prompt
+        assert "Never expose this label" not in prompt
+        assert "Nor this one" not in prompt
+        assert session.settings.system_prompt == "Stay in character."
+        completed = store.messages_for_session(session.id)[-1]
+        assert completed.content == "Visible answer"
+        assert completed.metadata.character_emote.pack_id == graph["pack"]["id"]
+        assert (
+            completed.metadata.character_emote.pack_version_id
+            == graph["version"]["id"]
+        )
+        assert completed.metadata.character_emote.expression_key == "custom:smug"
+        smug_asset = next(
+            asset for asset in graph["assets"] if asset["expression_key"] == "custom:smug"
+        )
+        assert completed.metadata.character_emote.asset_id == smug_asset["id"]
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_server_character_without_local_pack_still_sanitizes_controls():
+    store = ConsoleChatStore()
+    session = store.create_session(
+        settings=ConsoleSessionSettings(provider="llama_cpp", system_prompt=""),
+        runtime_backend="server",
+        assistant_kind="character",
+        assistant_id="server-character-id",
+        assistant_authority_id="server-profile",
+    )
+    gateway = CharacterEmoteStreamingGateway("Emote: happy\nHello")
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+
+    await controller.submit_draft("hello", session_id=session.id)
+
+    assert gateway.messages_seen[0]["role"] == "system"
+    assert gateway.messages_seen[0]["content"].startswith(
+        "When the character expression should change"
+    )
+    completed = store.messages_for_session(session.id)[-1]
+    assert completed.content == "Hello"
+    assert completed.metadata.character_emote.mood_label == "happy"
+    assert completed.metadata.character_emote.fallback_reason == "no_active_pack"
+
+
+@pytest.mark.asyncio
+async def test_generic_dispatch_does_not_arm_character_emote_protocol():
+    store = ConsoleChatStore()
+    gateway = CharacterEmoteStreamingGateway("Emote: happy\nHello")
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+
+    await controller.submit_draft("hello")
+
+    assert gateway.messages_seen == [{"role": "user", "content": "hello"}]
+    completed = store.messages_for_session(store.active_session_id)[-1]
+    assert completed.content == "Emote: happy\nHello"
+    assert completed.metadata is None
+
+
+@pytest.mark.asyncio
+async def test_character_pack_read_failure_is_content_free_and_fail_soft():
+    class RaisingRepository:
+        def get_active_actor_pack(self, actor_kind, actor_id):
+            raise RuntimeError("secret repository detail")
+
+    store = ConsoleChatStore()
+    session = store.create_session(
+        settings=ConsoleSessionSettings(provider="llama_cpp"),
+        assistant_kind="character",
+        assistant_id="7",
+        character_id=7,
+    )
+    gateway = CharacterEmoteStreamingGateway("Emote: happy\nHello")
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    controller._visual_identity_repository = RaisingRepository()
+
+    result = await controller.submit_draft("hello", session_id=session.id)
+
+    assert result.accepted is True
+    completed = store.messages_for_session(session.id)[-1]
+    assert completed.content == "Hello"
+    assert completed.metadata.character_emote.actor_id == 7
+    assert completed.metadata.character_emote.fallback_reason == "resolver_error"
+
+
+@pytest.mark.asyncio
+async def test_character_retry_without_chunks_preserves_prior_emote_metadata():
+    class FailingCharacterEmoteGateway(StreamingGateway):
+        async def stream_chat(self, resolution, messages, **kwargs):
+            yield "Emote: sad\nPartial"
+            raise RuntimeError("provider failed after one chunk")
+
+    store = ConsoleChatStore()
+    session = store.create_session(
+        settings=ConsoleSessionSettings(provider="llama_cpp"),
+        runtime_backend="server",
+        assistant_kind="character",
+        assistant_id="server-character-id",
+        assistant_authority_id="server-profile",
+    )
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=FailingCharacterEmoteGateway(),
+    )
+    await controller.submit_draft("hello", session_id=session.id)
+    failed = _last_failed_assistant(store, session.id)
+    prior_metadata = failed.metadata
+
+    controller.provider_gateway = EmptyStreamingGateway()
+    await controller.retry_message(failed.id)
+
+    after = store.get_message(failed.id)
+    assert after.content == "Partial"
+    assert after.metadata == prior_metadata
+
+
+@pytest.mark.asyncio
+async def test_character_snapshot_retries_when_actor_changes_during_pack_read():
+    started = threading.Event()
+    release = threading.Event()
+
+    class BlockingRepository:
+        def get_active_actor_pack(self, actor_kind, actor_id):
+            assert actor_kind == "character"
+            if actor_id == 7:
+                started.set()
+                assert release.wait(2)
+                state = "old_state"
+                identity = 70
+            else:
+                state = "new_state"
+                identity = 80
+            return {
+                "pack": {"id": identity},
+                "version": {"id": identity + 1},
+                "assets": [
+                    {
+                        "id": identity + 2,
+                        "expression_key": f"custom:{state}",
+                    }
+                ],
+            }
+
+    store = ConsoleChatStore()
+    session = store.create_session(
+        settings=ConsoleSessionSettings(provider="llama_cpp"),
+        assistant_kind="character",
+        assistant_id="7",
+        character_id=7,
+    )
+    gateway = CharacterEmoteStreamingGateway("Emote: new_state\nHello")
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    controller._visual_identity_repository = BlockingRepository()
+
+    task = asyncio.create_task(controller.submit_draft("hello", session_id=session.id))
+    for _attempt in range(100):
+        if started.is_set():
+            break
+        await asyncio.sleep(0)
+    assert started.is_set()
+    session.assistant_id = "8"
+    session.character_id = 8
+    session.identity_revision += 1
+    release.set()
+
+    result = await task
+
+    assert result.accepted is True
+    prompt = gateway.messages_seen[0]["content"]
+    assert "new_state" in prompt
+    assert "old_state" not in prompt
+    completed = store.messages_for_session(session.id)[-1]
+    assert completed.content == "Hello"
+    assert completed.metadata.character_emote.actor_id == 8
+    assert completed.metadata.character_emote.pack_id == 80
 
 
 @pytest.mark.asyncio

@@ -5456,7 +5456,11 @@ class ConsoleChatStore:
         )
         if capture.fail_closed:
             fallback_reason = "parser_error"
-        elif mood_label is not None and asset is None:
+        elif (
+            mood_label is not None
+            and asset is None
+            and fallback_reason != "resolver_error"
+        ):
             fallback_reason = (
                 "no_active_pack"
                 if capture.snapshot.pack_version_id is None
