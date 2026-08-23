@@ -48,6 +48,19 @@ finishes the reader-first IA and amends this decision as follows:
 - **Existing layout configuration is version-normalized.** Navigation, Feed Items,
   and Inspector choices survive; any persisted Reader/Content collapse is removed.
   The corrected layout and version advance atomically, or the migration retries.
+- **Scope navigation commits with its snapshot.** Moving focus to another Navigation
+  choice does not relabel old rows. The active scope/highlight changes only after its
+  replacement rows load successfully, clears Reader selection, and leaves the empty
+  Reader until the user explicitly activates an item.
+- **Reading snapshots favor bounded, honest stability.** Pages use an
+  effective-date/item-id keyset, an initial item-id high-water mark, and a seen-id
+  guard. Mounted rows stay stable and new insertions wait behind the new-items
+  affordance; unseen rows with publication metadata changed by a background upsert
+  may move or wait for explicit refresh rather than requiring an unbounded
+  materialized snapshot index.
+- **Item mutation dimensions remain independent.** Status and star writes serialize
+  per item but retain separate desired intents, so one action cannot cancel the
+  other. Browser launch is scheme-validated and performed off the UI thread.
 - **The implementation remains Watchlists-local.** It may reuse shared rail
   vocabulary, but an application-wide split-pane framework is deferred until the
   independently proceeding Media Library redesign provides a second proven shape.
