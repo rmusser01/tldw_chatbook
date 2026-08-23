@@ -50,6 +50,12 @@ TASK_3070_9_TASK0_BASE_METHODS = 640
 TASK_3070_9_DEFINITION_LINES = 328
 TASK_3070_9_TASK0_MAX_SCREEN_LINES = 19_667
 TASK_3070_9_TASK0_MAX_METHODS = 632
+TASK_3070_9_FINAL_DELIVERY_BASE = "80248f3e491366804c2a390e869e1004051f49ff"
+TASK_3070_9_FINAL_DELIVERY_BASE_SCREEN_LINES = 20_028
+TASK_3070_9_FINAL_DELIVERY_BASE_METHODS = 640
+TASK_3070_9_FINAL_DELIVERY_DEFINITION_LINES = 328
+TASK_3070_9_FINAL_DELIVERY_MAX_SCREEN_LINES = 19_700
+TASK_3070_9_FINAL_DELIVERY_MAX_METHODS = 632
 TASK_3070_9_FAMILY_SHA256 = (
     "3a2968883c63dc89de430ee72b40444ebd97fb9b36c1dbc8a46e19d063a715ee"
 )
@@ -2061,6 +2067,15 @@ def test_first_chat_task_ratchet_is_earned() -> None:
         _SCREEN_PATH,
     )
     task0_class = _class_node_from_source(task0_source, "ChatScreen", _SCREEN_PATH)
+    final_base_source = _source_at_revision(
+        TASK_3070_9_FINAL_DELIVERY_BASE,
+        _SCREEN_PATH,
+    )
+    final_base_class = _class_node_from_source(
+        final_base_source,
+        "ChatScreen",
+        _SCREEN_PATH,
+    )
     current_source, current_class = _class_node(_SCREEN_PATH, "ChatScreen")
 
     def family_nodes(
@@ -2075,8 +2090,10 @@ def test_first_chat_task_ratchet_is_earned() -> None:
 
     design_family = family_nodes(design_class)
     task0_family = family_nodes(task0_class)
+    final_base_family = family_nodes(final_base_class)
     design_counts = _method_name_counts(design_class)
     task0_counts = _method_name_counts(task0_class)
+    final_base_counts = _method_name_counts(final_base_class)
     current_counts = _method_name_counts(current_class)
     design_normalized = [
         ast.dump(node, include_attributes=False) for node in design_family
@@ -2084,19 +2101,35 @@ def test_first_chat_task_ratchet_is_earned() -> None:
     task0_normalized = [
         ast.dump(node, include_attributes=False) for node in task0_family
     ]
+    final_base_normalized = [
+        ast.dump(node, include_attributes=False) for node in final_base_family
+    ]
     design_digest = hashlib.sha256("\n".join(design_normalized).encode()).hexdigest()
     task0_digest = hashlib.sha256("\n".join(task0_normalized).encode()).hexdigest()
+    final_base_digest = hashlib.sha256(
+        "\n".join(final_base_normalized).encode()
+    ).hexdigest()
 
     assert group.source_revision == POST_IMAGE_IMPLEMENTATION_BASE
     assert group.raw_lines == TASK_3070_9_DEFINITION_LINES
     assert frozenset(TASK_3070_9_FAMILY_NAMES) == group.moved
     assert tuple(node.name for node in design_family) == TASK_3070_9_FAMILY_NAMES
     assert tuple(node.name for node in task0_family) == TASK_3070_9_FAMILY_NAMES
-    assert all(design_counts[name] == task0_counts[name] == 1 for name in group.moved)
+    assert tuple(node.name for node in final_base_family) == TASK_3070_9_FAMILY_NAMES
+    assert all(
+        design_counts[name] == task0_counts[name] == final_base_counts[name] == 1
+        for name in group.moved
+    )
     assert sum(_span(node) for node in design_family) == TASK_3070_9_DEFINITION_LINES
     assert sum(_span(node) for node in task0_family) == TASK_3070_9_DEFINITION_LINES
-    assert design_normalized == task0_normalized
-    assert design_digest == task0_digest == TASK_3070_9_FAMILY_SHA256
+    assert (
+        sum(_span(node) for node in final_base_family)
+        == TASK_3070_9_FINAL_DELIVERY_DEFINITION_LINES
+    )
+    assert design_normalized == task0_normalized == final_base_normalized
+    assert (
+        design_digest == task0_digest == final_base_digest == TASK_3070_9_FAMILY_SHA256
+    )
     assert len(design_source.splitlines()) == TASK_3070_9_TASK0_BASE_SCREEN_LINES
     assert _method_count(design_class) == TASK_3070_9_TASK0_BASE_METHODS
     assert len(task0_source.splitlines()) == TASK_3070_9_TASK0_BASE_SCREEN_LINES
@@ -2107,12 +2140,31 @@ def test_first_chat_task_ratchet_is_earned() -> None:
     assert TASK_3070_9_TASK0_MAX_METHODS == (
         TASK_3070_9_TASK0_BASE_METHODS - len(TASK_3070_9_FAMILY_NAMES)
     )
+    assert (
+        len(final_base_source.splitlines())
+        == TASK_3070_9_FINAL_DELIVERY_BASE_SCREEN_LINES
+    )
+    assert _method_count(final_base_class) == TASK_3070_9_FINAL_DELIVERY_BASE_METHODS
+    assert TASK_3070_9_FINAL_DELIVERY_MAX_SCREEN_LINES == (
+        TASK_3070_9_FINAL_DELIVERY_BASE_SCREEN_LINES
+        - TASK_3070_9_FINAL_DELIVERY_DEFINITION_LINES
+    )
+    assert TASK_3070_9_FINAL_DELIVERY_MAX_METHODS == (
+        TASK_3070_9_FINAL_DELIVERY_BASE_METHODS - len(TASK_3070_9_FAMILY_NAMES)
+    )
+    assert (
+        TASK_3070_9_FINAL_DELIVERY_MAX_SCREEN_LINES - TASK_3070_9_TASK0_MAX_SCREEN_LINES
+        == 33
+    )
+    assert TASK_3070_9_FINAL_DELIVERY_MAX_METHODS == TASK_3070_9_TASK0_MAX_METHODS
     assert not any(current_counts[name] for name in group.moved), (
         "first-chat task methods returned to ChatScreen: "
         f"{sorted(name for name in group.moved if current_counts[name])}"
     )
-    assert len(current_source.splitlines()) <= TASK_3070_9_TASK0_MAX_SCREEN_LINES
-    assert _method_count(current_class) <= TASK_3070_9_TASK0_MAX_METHODS
+    assert (
+        len(current_source.splitlines()) <= TASK_3070_9_FINAL_DELIVERY_MAX_SCREEN_LINES
+    )
+    assert _method_count(current_class) <= TASK_3070_9_FINAL_DELIVERY_MAX_METHODS
 
 
 @pytest.mark.unit
