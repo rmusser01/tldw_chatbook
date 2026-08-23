@@ -25,6 +25,7 @@ from tldw_chatbook.Notes.notes_device_state_store import (
     NotesDeviceStateStore,
     NotesSyncBindingRecord,
     NotesSyncOperationRecord,
+    NotesSyncResolutionHistoryRecord,
     NotesSyncRootRecord,
     NotesSyncStoreSetting,
 )
@@ -59,6 +60,7 @@ from tldw_chatbook.Notes.notes_sync_models import (
     NotesSyncDirection,
     NotesSyncOperationState,
     NotesSyncRootState,
+    normalize_notes_sync_relative_path,
     validate_notes_sync_opaque_id,
 )
 from tldw_chatbook.Notes.notes_sync_executor import (
@@ -68,6 +70,7 @@ from tldw_chatbook.Notes.notes_sync_executor import (
     NotesSyncExecutionResult,
     NotesSyncExecutor,
     NotesSyncKeepBothAuthority,
+    NotesSyncUndoProjection,
 )
 from tldw_chatbook.Notes.notes_sync_filesystem import (
     NotesSyncFileSnapshot,
@@ -104,6 +107,7 @@ _AUTOMATIC_ACTIONS = frozenset(
 _EXECUTABLE_ACTIONS = _AUTOMATIC_ACTIONS
 _SYNC_FILE_EXTENSIONS = frozenset({".md", ".markdown", ".txt"})
 _OBSERVATION_BUNDLE_LIMIT = 8
+_DISPLAY_LABEL_MAX_CHARS = 160
 _DURABLE_BLOCKED_STATUS = MappingProxyType(
     {
         "activation_recovery_required": ("needs_attention", "review_settings"),
@@ -206,6 +210,75 @@ class NotesSyncControlResult:
         _validate_projection(self.status, self.next_action)
         if type(self.applied_count) is not int or not 0 <= self.applied_count <= 1_000:
             raise ValueError("applied_count must be a bounded non-negative integer")
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RuntimeConflictReceipt:
+    """Fresh, bounded display projection for one active receipt."""
+
+    operation_id: str
+    item_label: str
+    choice: NotesSyncConflictChoice
+    state: str
+    undo_available: bool
+    undo_reason: str | None = None
+
+    def __post_init__(self) -> None:
+        ConflictReceipt(
+            self.operation_id,
+            self.choice,
+            self.state,
+            self.undo_available,
+            self.undo_reason,
+        )
+        _validate_item_label(self.item_label)
+
+    def __repr__(self) -> str:
+        return "RuntimeConflictReceipt(<private>)"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RuntimeConflictHistoryRow:
+    """Fresh, bounded display projection for one durable history row."""
+
+    operation_id: str
+    item_label: str
+    choice: NotesSyncConflictChoice
+    state: str
+    completed_at: str | None
+    updated_at: str
+    undo_available: bool
+    undo_reason: str | None = None
+
+    def __post_init__(self) -> None:
+        ConflictHistoryRow(
+            self.operation_id,
+            self.choice,
+            self.state,
+            self.completed_at,
+            self.updated_at,
+            self.undo_available,
+            self.undo_reason,
+        )
+        _validate_item_label(self.item_label)
+
+    def __repr__(self) -> str:
+        return "RuntimeConflictHistoryRow(<private>)"
+
+
+def _validate_item_label(value: str) -> None:
+    if (
+        type(value) is not str
+        or not value
+        or len(value) > _DISPLAY_LABEL_MAX_CHARS
+        or "\n" in value
+        or "\r" in value
+    ):
+        raise ValueError("item_label must be bounded single-line text")
+
+
+def _ignore_operation_stage(_state: NotesSyncOperationState) -> None:
+    return None
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -872,21 +945,46 @@ class NotesSyncRuntimeOwner:
         while len(receipts) > 100:
             receipts.popitem(last=False)
 
-    def active_conflict_receipts(self, root_id: str) -> tuple[ConflictReceipt, ...]:
-        """Return bounded insertion-ordered receipts for this process only."""
+    async def active_conflict_receipts(
+        self, root_id: str
+    ) -> tuple[RuntimeConflictReceipt, ...]:
+        """Return fresh bounded receipts retained by this process."""
 
         validate_notes_sync_opaque_id(root_id, field_name="root_id")
-        return tuple(
-            ConflictReceipt(
-                operation_id,
-                choice,
-                "completed",
-                True,
+        retained = tuple(self._active_receipts.get(root_id, OrderedDict()).items())
+        if not retained:
+            return ()
+        try:
+            root = await asyncio.to_thread(self._store.get_root, root_id)
+            executor = cast(
+                NotesSyncExecutor,
+                self._adapter.executor_for(root, after_stage=_ignore_operation_stage),
             )
-            for operation_id, (_binding_id, choice) in self._active_receipts.get(
-                root_id, OrderedDict()
-            ).items()
-        )
+        except Exception:
+            executor = None
+        projected: list[RuntimeConflictReceipt] = []
+        for operation_id, retained_value in retained:
+            projection = await self._inspect_resolution_undo(
+                executor, root_id, operation_id
+            )
+            current = self._active_receipts.get(root_id)
+            if current is None or current.get(operation_id) != retained_value:
+                continue
+            if projection.state == "undone" or projection.undo_reason == "Undone":
+                current.pop(operation_id, None)
+                continue
+            _binding_id, choice = retained_value
+            projected.append(
+                RuntimeConflictReceipt(
+                    operation_id=operation_id,
+                    item_label=self._resolution_item_label(operation_id, projection),
+                    choice=choice,
+                    state=projection.state,
+                    undo_available=projection.undo_available,
+                    undo_reason=projection.undo_reason,
+                )
+            )
+        return tuple(projected)
 
     def dismiss_conflict_receipt(self, root_id: str, operation_id: str) -> None:
         """Dismiss one process-local receipt without changing durable history."""
@@ -947,8 +1045,8 @@ class NotesSyncRuntimeOwner:
         limit: int = 100,
         offset: int = 0,
         now: int | None = None,
-    ) -> tuple[ConflictHistoryRow, ...]:
-        """Return one bounded durable history page without private labels."""
+    ) -> tuple[RuntimeConflictHistoryRow, ...]:
+        """Return one durable page decorated from fresh private authority."""
 
         current_time = time.time_ns() if now is None else now
         records = await asyncio.to_thread(
@@ -963,41 +1061,125 @@ class NotesSyncRuntimeOwner:
             "resolve_keep_note": NotesSyncConflictChoice.KEEP_NOTE,
             "resolve_keep_both": NotesSyncConflictChoice.KEEP_BOTH,
         }
-        return tuple(
-            ConflictHistoryRow(
-                operation_id=record.operation_id,
-                choice=choices[record.kind],
-                state=("undone" if record.undone else record.state.value),
-                completed_at=(
-                    self._history_timestamp(record.completed_at)
-                    if record.completed_at is not None
-                    else None
-                ),
-                updated_at=self._history_timestamp(record.updated_at),
-                undo_available=(
-                    not record.undone
-                    and record.state is NotesSyncOperationState.COMPLETED
-                    and record.undo_state is None
-                    and record.recovery_expires_at is not None
-                    and record.recovery_expires_at > current_time
-                ),
-                undo_reason=(
-                    "Undone"
-                    if record.undone
-                    else (
-                        "Changed since resolution"
-                        if record.undo_state is not None
-                        else (
-                            "Undo expired"
-                            if record.recovery_expires_at is None
-                            or record.recovery_expires_at <= current_time
-                            else None
-                        )
-                    )
-                ),
+        try:
+            root = await asyncio.to_thread(self._store.get_root, root_id)
+            executor = cast(
+                NotesSyncExecutor,
+                self._adapter.executor_for(root, after_stage=_ignore_operation_stage),
             )
-            for record in records
+        except Exception:
+            executor = None
+        projected: list[RuntimeConflictHistoryRow] = []
+        for record in records:
+            fallback = self._history_fallback_projection(record, current_time)
+            projection = await self._inspect_resolution_undo(
+                executor,
+                root_id,
+                record.operation_id,
+                now=current_time,
+                fallback=fallback,
+            )
+            projected.append(
+                RuntimeConflictHistoryRow(
+                    operation_id=record.operation_id,
+                    item_label=self._resolution_item_label(
+                        record.operation_id, projection
+                    ),
+                    choice=choices[record.kind],
+                    state=projection.state,
+                    completed_at=(
+                        self._history_timestamp(record.completed_at)
+                        if record.completed_at is not None
+                        else None
+                    ),
+                    updated_at=self._history_timestamp(record.updated_at),
+                    undo_available=projection.undo_available,
+                    undo_reason=projection.undo_reason,
+                )
+            )
+        return tuple(projected)
+
+    async def _inspect_resolution_undo(
+        self,
+        executor: NotesSyncExecutor | None,
+        root_id: str,
+        operation_id: str,
+        *,
+        now: int | None = None,
+        fallback: NotesSyncUndoProjection | None = None,
+    ) -> NotesSyncUndoProjection:
+        if executor is not None:
+            try:
+                projection = await executor.inspect_resolution_undo(
+                    root_id, operation_id, now=now
+                )
+                if isinstance(projection, NotesSyncUndoProjection):
+                    return projection
+                return NotesSyncUndoProjection(
+                    projection.undo_available,
+                    projection.undo_reason,
+                    projection.state,
+                    projection.note_title,
+                    projection.relative_path,
+                )
+            except Exception:
+                pass
+        return fallback or NotesSyncUndoProjection(
+            False,
+            "Changed since resolution",
+            "completed",
+            None,
+            None,
         )
+
+    @staticmethod
+    def _history_fallback_projection(
+        record: NotesSyncResolutionHistoryRecord, current_time: int
+    ) -> NotesSyncUndoProjection:
+        if record.undone:
+            return NotesSyncUndoProjection(False, "Undone", "undone", None, None)
+        if record.undo_state is not None:
+            return NotesSyncUndoProjection(
+                False,
+                "Changed since resolution",
+                record.undo_state.value,
+                None,
+                None,
+            )
+        if (
+            record.recovery_expires_at is None
+            or record.recovery_expires_at <= current_time
+        ):
+            return NotesSyncUndoProjection(
+                False, "Undo expired", record.state.value, None, None
+            )
+        return NotesSyncUndoProjection(
+            False,
+            "Changed since resolution",
+            record.state.value,
+            None,
+            None,
+        )
+
+    @staticmethod
+    def _resolution_item_label(
+        operation_id: str, projection: NotesSyncUndoProjection
+    ) -> str:
+        title = (
+            " ".join(projection.note_title.split())
+            if type(projection.note_title) is str
+            else ""
+        )
+        try:
+            relative_path = (
+                normalize_notes_sync_relative_path(projection.relative_path)
+                if projection.relative_path is not None
+                else ""
+            )
+        except (TypeError, ValueError):
+            relative_path = ""
+        label = " — ".join(value for value in (title, relative_path) if value)
+        return label[:_DISPLAY_LABEL_MAX_CHARS] or operation_id[:8]
 
     @staticmethod
     def _history_timestamp(value: int) -> str:
@@ -2625,6 +2807,8 @@ __all__ = [
     "NotesSyncControlResult",
     "NotesSyncRootRuntimeSnapshot",
     "NotesSyncRootSetup",
+    "RuntimeConflictHistoryRow",
+    "RuntimeConflictReceipt",
     "NotesSyncRuntimeOwner",
     "NotesSyncRuntimeSnapshot",
     "build_notes_sync_legacy_migrator",

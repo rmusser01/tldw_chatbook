@@ -11,7 +11,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from tldw_chatbook.Notes.notes_device_state_store import NotesSyncRootRecord
+from tldw_chatbook.Notes.notes_device_state_store import (
+    NotesSyncResolutionHistoryRecord,
+    NotesSyncRootRecord,
+)
 from tldw_chatbook.Notes.notes_sync_conflicts import (
     ConflictApplyResult,
     ConflictComparison,
@@ -128,12 +131,19 @@ def _root(
 class _Store:
     def __init__(self, *roots: NotesSyncRootRecord) -> None:
         self.roots = {root.root_id: root for root in roots}
+        self.history: list[NotesSyncResolutionHistoryRecord] = []
 
     def get_root(self, root_id: str) -> NotesSyncRootRecord:
         return self.roots[root_id]
 
     def update_root_status(self, _root_id: str, _status: str) -> None:
         return None
+
+    def list_resolution_history(
+        self, _root_id: str, *, limit: int, offset: int, now: int
+    ) -> tuple[NotesSyncResolutionHistoryRecord, ...]:
+        del now
+        return tuple(self.history[offset : offset + limit])
 
 
 class _Lease:
@@ -176,6 +186,8 @@ class _Executor:
         self.undo_entered = asyncio.Event()
         self.undo_release = asyncio.Event()
         self.undo_release.set()
+        self.undo_projections: dict[str, SimpleNamespace] = {}
+        self.inspected_undo: list[tuple[str, str, int | None]] = []
 
     async def execute(self, _request: object) -> object:
         self.entered.set()
@@ -221,6 +233,25 @@ class _Executor:
             state=NotesSyncOperationState.COMPLETED,
             recovery_required=False,
             reason_code=None,
+        )
+
+    async def inspect_resolution_undo(
+        self,
+        root_id: str,
+        source_operation_id: str,
+        *,
+        now: int | None = None,
+    ) -> SimpleNamespace:
+        self.inspected_undo.append((root_id, source_operation_id, now))
+        return self.undo_projections.get(
+            source_operation_id,
+            SimpleNamespace(
+                undo_available=True,
+                undo_reason=None,
+                state="completed",
+                note_title="Title",
+                relative_path="note.md",
+            ),
         )
 
 
@@ -436,9 +467,10 @@ def _reviewed_subset_input(
 def _owner(
     adapter: _Adapter,
     *roots: NotesSyncRootRecord,
+    store: _Store | None = None,
 ) -> NotesSyncRuntimeOwner:
     owner = NotesSyncRuntimeOwner(
-        store=_Store(*roots),
+        store=_Store(*roots) if store is None else store,
         migrate_legacy=lambda: None,
         coordinator=object(),
         adapter=adapter,
@@ -1713,7 +1745,8 @@ async def test_apply_requires_final_observation_token_even_if_plan_claims_equali
     assert adapter.live_bundles == set()
 
 
-def test_active_receipts_are_ordered_capped_dismissed_and_superseded() -> None:
+@pytest.mark.asyncio
+async def test_active_receipts_are_ordered_capped_dismissed_and_superseded() -> None:
     owner = _owner(_Adapter(_input()), _root())
     for index in range(101):
         owner._remember_conflict_receipt(
@@ -1723,14 +1756,15 @@ def test_active_receipts_are_ordered_capped_dismissed_and_superseded() -> None:
             NotesSyncConflictChoice.KEEP_FILE,
         )
 
-    receipts = owner.active_conflict_receipts("root-1")
+    receipts = await owner.active_conflict_receipts("root-1")
 
     assert len(receipts) == 100
     assert receipts[0].operation_id == "operation-1"
     assert receipts[-1].operation_id == "operation-100"
     owner.dismiss_conflict_receipt("root-1", "operation-50")
     assert "operation-50" not in {
-        receipt.operation_id for receipt in owner.active_conflict_receipts("root-1")
+        receipt.operation_id
+        for receipt in await owner.active_conflict_receipts("root-1")
     }
     owner._remember_conflict_receipt(
         "root-1",
@@ -1738,10 +1772,159 @@ def test_active_receipts_are_ordered_capped_dismissed_and_superseded() -> None:
         "operation-new",
         NotesSyncConflictChoice.KEEP_NOTE,
     )
-    superseded = owner.active_conflict_receipts("root-1")
+    superseded = await owner.active_conflict_receipts("root-1")
     assert "operation-100" not in {receipt.operation_id for receipt in superseded}
     assert superseded[-1].operation_id == "operation-new"
-    assert _owner(_Adapter(_input()), _root()).active_conflict_receipts("root-1") == ()
+    assert (
+        await _owner(_Adapter(_input()), _root()).active_conflict_receipts("root-1")
+        == ()
+    )
+
+
+@pytest.mark.asyncio
+async def test_active_receipts_use_fresh_bounded_authority_and_remove_undone() -> None:
+    adapter = _Adapter(_input())
+    owner = _owner(adapter, _root())
+    for operation_id in ("available-operation", "fallback-operation", "undone-op"):
+        owner._remember_conflict_receipt(
+            "root-1",
+            f"binding-{operation_id}",
+            operation_id,
+            NotesSyncConflictChoice.KEEP_FILE,
+        )
+    adapter.executor.undo_projections = {
+        "available-operation": SimpleNamespace(
+            undo_available=True,
+            undo_reason=None,
+            state="completed",
+            note_title="  Current\n" + "title " * 80,
+            relative_path="folder/note.md",
+        ),
+        "fallback-operation": SimpleNamespace(
+            undo_available=False,
+            undo_reason="Undo expired",
+            state="completed",
+            note_title=None,
+            relative_path="/private/root/note.md",
+        ),
+        "undone-op": SimpleNamespace(
+            undo_available=False,
+            undo_reason="Undone",
+            state="undone",
+            note_title="Old title",
+            relative_path="note.md",
+        ),
+    }
+
+    receipts = await owner.active_conflict_receipts("root-1")
+
+    assert [row.operation_id for row in receipts] == [
+        "available-operation",
+        "fallback-operation",
+    ]
+    assert receipts[0].item_label.startswith("Current title")
+    assert len(receipts[0].item_label) <= 160
+    assert receipts[0].undo_available is True
+    assert receipts[0].state == "completed"
+    assert receipts[1].item_label == "fallback"
+    assert receipts[1].undo_available is False
+    assert receipts[1].undo_reason == "Undo expired"
+    assert "/private/" not in repr(receipts)
+    assert repr(receipts[0]) == "RuntimeConflictReceipt(<private>)"
+    assert "undone-op" not in owner._active_receipts["root-1"]
+
+
+@pytest.mark.asyncio
+async def test_resolution_history_uses_fresh_status_labels_and_fallback() -> None:
+    adapter = _Adapter(_input())
+    store = _Store(_root())
+    owner = _owner(adapter, _root(), store=store)
+    store.history = [
+        NotesSyncResolutionHistoryRecord(
+            operation_id="changed-operation",
+            binding_id="binding-1",
+            kind="resolve_keep_file",
+            state=NotesSyncOperationState.COMPLETED,
+            reason_code=None,
+            completed_at=3,
+            updated_at=4,
+            recovery_expires_at=999,
+            undo_state=None,
+            undo_reason_code=None,
+        ),
+        NotesSyncResolutionHistoryRecord(
+            operation_id="expired-operation",
+            binding_id="binding-1",
+            kind="resolve_keep_note",
+            state=NotesSyncOperationState.COMPLETED,
+            reason_code=None,
+            completed_at=2,
+            updated_at=3,
+            recovery_expires_at=1,
+            undo_state=None,
+            undo_reason_code=None,
+        ),
+        NotesSyncResolutionHistoryRecord(
+            operation_id="undone-operation",
+            binding_id="binding-1",
+            kind="resolve_keep_both",
+            state=NotesSyncOperationState.COMPLETED,
+            reason_code=None,
+            completed_at=1,
+            updated_at=2,
+            recovery_expires_at=None,
+            undo_state=NotesSyncOperationState.COMPLETED,
+            undo_reason_code=None,
+        ),
+    ]
+    adapter.executor.undo_projections = {
+        "changed-operation": SimpleNamespace(
+            undo_available=False,
+            undo_reason="Changed since resolution",
+            state="needs_attention",
+            note_title="Current title",
+            relative_path="folder/note.md",
+        ),
+        "expired-operation": SimpleNamespace(
+            undo_available=False,
+            undo_reason="Undo expired",
+            state="completed",
+            note_title=None,
+            relative_path=None,
+        ),
+        "undone-operation": SimpleNamespace(
+            undo_available=False,
+            undo_reason="Undone",
+            state="undone",
+            note_title=None,
+            relative_path=None,
+        ),
+    }
+
+    rows = await owner.resolution_history("root-1", now=100)
+
+    assert [row.item_label for row in rows] == [
+        "Current title — folder/note.md",
+        "expired-",
+        "undone-o",
+    ]
+    assert [row.state for row in rows] == [
+        "needs_attention",
+        "completed",
+        "undone",
+    ]
+    assert [row.undo_reason for row in rows] == [
+        "Changed since resolution",
+        "Undo expired",
+        "Undone",
+    ]
+    assert adapter.executor.inspected_undo == [
+        ("root-1", "changed-operation", 100),
+        ("root-1", "expired-operation", 100),
+        ("root-1", "undone-operation", 100),
+    ]
+    assert all("binding-1" not in repr(row) for row in rows)
+    assert repr(rows[0]) == "RuntimeConflictHistoryRow(<private>)"
 
 
 @pytest.mark.asyncio
@@ -1761,7 +1944,7 @@ async def test_undo_resolution_is_root_serialized_refreshes_and_dismisses_receip
 
     assert result.state is NotesSyncOperationState.COMPLETED
     assert adapter.executor.undo_calls == [("root-1", "source-operation")]
-    assert owner.active_conflict_receipts("root-1") == ()
+    assert await owner.active_conflict_receipts("root-1") == ()
     assert adapter.observe_calls == ["root-1"]
     assert owner._reviews["root-1"] == plan_reconciliation(adapter.inputs["root-1"])
 

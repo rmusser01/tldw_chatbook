@@ -1175,6 +1175,8 @@ class NotesDeviceStateStore:
         capacity_bytes: int,
         now: int | None = None,
         retention_ns: int | None = None,
+        required_source_operation_id: str | None = None,
+        required_source_expires_after: int | None = None,
     ) -> NotesSyncRecoveryAdmission:
         """Atomically reserve recovery capacity and persist mutation intent."""
 
@@ -1200,9 +1202,34 @@ class NotesDeviceStateStore:
             type(retention_ns) is not int or retention_ns <= 0
         ):
             raise ValueError("retention_ns must be positive.")
+        if (required_source_operation_id is None) != (
+            required_source_expires_after is None
+        ):
+            raise ValueError("source operation and expiry precondition must be paired.")
+        if required_source_operation_id is not None:
+            validate_notes_sync_opaque_id(
+                required_source_operation_id,
+                field_name="required_source_operation_id",
+            )
+            if (
+                type(required_source_expires_after) is not int
+                or required_source_expires_after <= 0
+            ):
+                raise ValueError("required_source_expires_after must be positive.")
 
         required = len(recovery.payload) + len(recovery.metadata)
         with self.transaction(immediate=True) as connection:
+            if required_source_operation_id is not None:
+                source = connection.execute(
+                    "SELECT recovery.expires_at FROM notes_sync_recovery AS recovery "
+                    "JOIN notes_sync_operations AS operation "
+                    "ON operation.operation_id = recovery.operation_id "
+                    "WHERE recovery.operation_id = ? "
+                    "AND operation.state = 'completed'",
+                    (required_source_operation_id,),
+                ).fetchone()
+                if source is None or source[0] <= required_source_expires_after:
+                    raise NotesDeviceStateError("undo_expired")
             existing_operation = connection.execute(
                 """
                 SELECT root_id, binding_id, kind, state, reason_code,
@@ -1357,6 +1384,78 @@ class NotesDeviceStateStore:
             required_bytes=required,
             available_bytes=available,
         )
+
+    def checkpoint_resolution_post_authority(
+        self,
+        operation_id: str,
+        authority_digest: str,
+        *,
+        expected_metadata_length: int,
+    ) -> None:
+        """Seal one completed resolution's exact post-authority digest."""
+
+        validate_notes_sync_opaque_id(operation_id, field_name="operation_id")
+        validate_notes_sync_digest(authority_digest, field_name="authority_digest")
+        if type(expected_metadata_length) is not int or expected_metadata_length <= 0:
+            raise ValueError("expected_metadata_length must be positive.")
+        with self.transaction(immediate=True) as connection:
+            row = connection.execute(
+                "SELECT operation.kind, operation.state, recovery.metadata "
+                "FROM notes_sync_operations AS operation "
+                "JOIN notes_sync_recovery AS recovery "
+                "ON recovery.operation_id = operation.operation_id "
+                "WHERE operation.operation_id = ?",
+                (operation_id,),
+            ).fetchone()
+            if row is None:
+                raise NotesDeviceStateError("The resolution recovery does not exist.")
+            kind, state, metadata = row
+            if (
+                kind
+                not in {
+                    "resolve_keep_file",
+                    "resolve_keep_note",
+                    "resolve_keep_both",
+                }
+                or state not in {"verified", "completed"}
+                or type(metadata) is not bytes
+                or len(metadata) != expected_metadata_length
+            ):
+                raise NotesDeviceStateError("The resolution recovery is corrupt.")
+            try:
+                decoded = json.loads(metadata.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                raise NotesDeviceStateError(
+                    "The resolution recovery is corrupt."
+                ) from None
+            current = decoded.get("resolution_post_authority_digest")
+            padding = decoded.get("resolution_post_authority_digest_padding")
+            if (
+                type(current) is not str
+                or type(padding) is not str
+                or current not in {"", authority_digest}
+                or padding != " " * (64 - len(current))
+            ):
+                raise NotesDeviceStateError("The resolution authority is corrupt.")
+            if current == authority_digest:
+                return
+            decoded["resolution_post_authority_digest"] = authority_digest
+            decoded["resolution_post_authority_digest_padding"] = ""
+            replacement = json.dumps(
+                decoded,
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+            if len(replacement) != expected_metadata_length:
+                raise NotesDeviceStateError("The resolution recovery length drifted.")
+            changed = connection.execute(
+                "UPDATE notes_sync_recovery SET metadata = ? "
+                "WHERE operation_id = ? AND metadata = ?",
+                (replacement, operation_id, metadata),
+            ).rowcount
+            if changed != 1:
+                raise NotesDeviceStateError("The resolution authority is stale.")
 
     def find_operation(self, operation_id: str) -> NotesSyncOperationRecord | None:
         """Return one operation, distinguishing absence from store failure."""
@@ -1811,6 +1910,7 @@ class NotesDeviceStateStore:
         expected_substage: str,
         next_substage: str,
         expected_metadata_length: int,
+        restored_authority_digest: str | None = None,
     ) -> None:
         """Replace one padded linked-Undo checkpoint without changing capacity."""
 
@@ -1829,6 +1929,15 @@ class NotesDeviceStateStore:
             raise NotesDeviceStateError(
                 "The requested Undo substage transition is not allowed."
             )
+        if expected_substage == "recovery_admitted":
+            if restored_authority_digest is None:
+                raise NotesDeviceStateError("The restored Undo authority is required.")
+            validate_notes_sync_digest(
+                restored_authority_digest,
+                field_name="restored_authority_digest",
+            )
+        elif restored_authority_digest is not None:
+            raise NotesDeviceStateError("The restored Undo authority is unexpected.")
         longest = max(map(len, _UNDO_SUBSTAGES))
         with self.transaction(immediate=True) as connection:
             row = connection.execute(
@@ -1864,6 +1973,19 @@ class NotesDeviceStateStore:
                 != " " * (longest - len(expected_substage))
             ):
                 raise NotesDeviceStateError("The linked Undo substage is corrupt.")
+            restored = decoded.get("restored_authority_digest")
+            restored_padding = decoded.get("restored_authority_digest_padding")
+            if (
+                type(restored) is not str
+                or type(restored_padding) is not str
+                or restored_padding != " " * (64 - len(restored))
+                or (expected_substage == "recovery_admitted" and restored != "")
+                or (expected_substage != "recovery_admitted" and len(restored) != 64)
+            ):
+                raise NotesDeviceStateError("The restored Undo authority is corrupt.")
+            if restored_authority_digest is not None:
+                decoded["restored_authority_digest"] = restored_authority_digest
+                decoded["restored_authority_digest_padding"] = ""
             decoded["undo_substage"] = next_substage
             decoded["undo_substage_padding"] = " " * (longest - len(next_substage))
             replacement = json.dumps(
