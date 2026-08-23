@@ -567,22 +567,39 @@ def test_snapshot_builder_prefilters_citations_and_pages_context_failures():
 
 
 def test_retrieval_failures_are_distinct_and_message_owned():
-    messages = [msg("a1", "assistant", content="x", ts=1), msg("a2", "assistant", content="x", ts=2)]
+    messages = [
+        msg("a1", "assistant", content="x", ts=1),
+        msg("a2", "assistant", content="x", ts=2),
+    ]
 
     class _DB:
-        def get_messages_for_conversation(self, *_args, **_kwargs): return messages
-        def get_trajectory_rows(self, _conversation_id): return []
-        def get_conversation_active_leaf(self, _conversation_id): return None
+        def get_messages_for_conversation(self, *_args, **_kwargs):
+            return messages
+
+        def get_trajectory_rows(self, _conversation_id):
+            return []
+
+        def get_conversation_active_leaf(self, _conversation_id):
+            return None
 
     class _Citations:
-        def active_owner_candidate_message_ids(self, message_ids): return set(message_ids)
-        def get_active_trace_for_current_message(self, *_args): raise RuntimeError("SECRET")
+        def active_owner_candidate_message_ids(self, message_ids):
+            return set(message_ids)
+
+        def get_active_trace_for_current_message(self, *_args):
+            raise RuntimeError("SECRET")
 
     store = SimpleNamespace(
-        persistence=SimpleNamespace(db=_DB(), context_repository=None, citation_repository=_Citations()),
+        persistence=SimpleNamespace(
+            db=_DB(), context_repository=None, citation_repository=_Citations()
+        ),
         variant_sets_for_conversation=lambda _conversation_id: (),
     )
-    records = [r for turn in _build_trajectory_snapshot(store, "conv-1").turns for r in turn.records]
+    records = [
+        r
+        for turn in _build_trajectory_snapshot(store, "conv-1").turns
+        for r in turn.records
+    ]
     failures = [r for r in records if r.kind == "capture_failed"]
 
     assert {record.message_id for record in failures} == {"a1", "a2"}
