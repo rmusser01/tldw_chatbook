@@ -168,8 +168,9 @@ async def test_first_durable_send_commits_owner_then_cas_before_provider_entry(
     assert accepted_hooks == 1
     assert controller.prompt_history.size == 1
     effects = store.durable_postcommit_effects_for(result.preparation_id)
-    assert effects is not None
-    assert effects.completed == frozenset(_POSTCOMMIT_EFFECTS)
+    assert effects is None
+    assert store.durable_content_retention_count() == 0
+    assert store.durable_tombstone_count() == 1
 
 
 @pytest.mark.asyncio
@@ -295,8 +296,8 @@ async def test_provider_entry_failure_keeps_same_dispatch_started_durable_owner(
 
     second = await controller.resume_durable_postcommit(checkpoint["preparation_id"])
 
-    assert second.accepted is True
-    assert second.assistant_message_id == checkpoint["assistant_message_id"]
+    assert second.accepted is False
+    assert "unavailable" in second.visible_copy.lower()
     assert attempts == 1
     assert (
         tuple(

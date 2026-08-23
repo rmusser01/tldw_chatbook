@@ -89,6 +89,7 @@ from tldw_chatbook.Chat.answer_citations import format_evidence_for_cited_answer
 from tldw_chatbook.Chat.console_chat_store import (
     ConsoleChatSession,
     ConsoleChatStore,
+    ConsoleDurableAcceptanceFingerprint,
     ConsoleDurableTurnCommit,
     TerminalCitationFinalizer,
 )
@@ -1704,6 +1705,7 @@ class _DurablePostcommitContinuation:
     """App-lifetime inputs for idempotent postcommit re-entry."""
 
     preparation_id: str
+    fingerprint: ConsoleDurableAcceptanceFingerprint
     session_id: str
     origin: ConsoleSubmissionOrigin
     queue_entry_id: str | None
@@ -4054,6 +4056,8 @@ class ConsoleChatController:
         if removed is not None:
             self._preparation_outcomes.pop(preparation_id, None)
             self._prepared_send_continuations.pop(preparation_id, None)
+            if self.store.durable_turn_commit_for(preparation_id) is None:
+                self.store.discard_uncommitted_durable_preparation(preparation_id)
 
     def _abandon_preparation(self, preparation_id: str) -> None:
         """Cancel and remove one exact preaccept preparation without a wedge."""
@@ -4649,22 +4653,18 @@ class ConsoleChatController:
         # workspace rail shows it immediately after persistence.
         durable_commit = getattr(self.store.persistence, "commit_durable_turn", None)
         durable_turn = bool(
-            callable(durable_commit)
-            and not session.ephemeral
+            not session.ephemeral
             and origin
             in {ConsoleSubmissionOrigin.MANUAL, ConsoleSubmissionOrigin.QUEUED}
         )
-        if (
-            self.store.persistence is not None
-            and getattr(self.store.persistence, "db", None) is not None
-            and not session.ephemeral
-            and origin
-            in {ConsoleSubmissionOrigin.MANUAL, ConsoleSubmissionOrigin.QUEUED}
-            and not callable(durable_commit)
-        ):
-            return self._block(
-                session.id,
+        if durable_turn and not callable(durable_commit):
+            return ConsoleSubmitResult(
+                False,
+                False,
                 "Durable turn acceptance is unavailable; the provider was not called.",
+                session_id=session.id,
+                origin=origin,
+                queue_entry_id=queue_entry_id,
             )
         staged_title = session.title
         if (
@@ -5307,24 +5307,34 @@ class ConsoleChatController:
         preparation_id: str,
         effect_name: str,
         callback: Callable[[], Any],
+        *,
+        fingerprint: ConsoleDurableAcceptanceFingerprint | None = None,
     ) -> Any:
         """Run one preparation-keyed effect and mark it only after success."""
 
-        effects = self.store.durable_postcommit_effects_for(preparation_id)
+        effects = self.store.durable_postcommit_effects_for(
+            preparation_id, fingerprint=fingerprint
+        )
         if effects is None:
             raise RuntimeError("Durable postcommit effects are unavailable.")
         if effect_name in effects.completed:
             return None
-        if not self.store.claim_durable_postcommit_effect(preparation_id, effect_name):
+        if not self.store.claim_durable_postcommit_effect(
+            preparation_id, effect_name, fingerprint=fingerprint
+        ):
             raise RuntimeError("Durable postcommit effect is already in flight.")
         try:
             result = callback()
             if inspect.isawaitable(result):
                 result = await result
         except BaseException:
-            self.store.abandon_durable_postcommit_effect(preparation_id, effect_name)
+            self.store.abandon_durable_postcommit_effect(
+                preparation_id, effect_name, fingerprint=fingerprint
+            )
             raise
-        self.store.complete_durable_postcommit_effect(preparation_id, effect_name)
+        self.store.complete_durable_postcommit_effect(
+            preparation_id, effect_name, fingerprint=fingerprint
+        )
         return result
 
     async def _accept_durable_turn(
@@ -5406,10 +5416,19 @@ class ConsoleChatController:
             reconstructability=ConsoleDispatchReconstructability(
                 attachments_reconstructable=True,
                 evidence_reconstructable=not bool(
-                    preparation_outcome is not None
-                    and preparation_outcome.evidence_bundle is not None
+                    (
+                        preparation_outcome is not None
+                        and preparation_outcome.evidence_bundle is not None
+                    )
+                    or (
+                        prepared_continuation is not None
+                        and (
+                            prepared_continuation.staged_evidence_frozen
+                            or prepared_continuation.staged_evidence is not None
+                        )
+                    )
                 ),
-                prefill_reconstructable=prefill is None,
+                prefill_reconstructable=(prefill is None and not prefill_from_one_shot),
                 opaque_reference=f"opaque:{preparation.preparation_id}",
             ),
             contributions=contributions,
@@ -5427,6 +5446,11 @@ class ConsoleChatController:
                 queue_entry_id=queue_entry_id,
                 preparation_id=preparation.preparation_id,
             )
+        fingerprint = self.store.durable_acceptance_fingerprint_for(
+            preparation.preparation_id
+        )
+        if fingerprint is None:
+            raise RuntimeError("Durable acceptance fingerprint is unavailable.")
         citation_repair_session = (
             ConsoleCitationRepairSession(
                 contract=citation_repair_contract,
@@ -5435,28 +5459,37 @@ class ConsoleChatController:
             if citation_repair_contract is not None
             else None
         )
-        self._durable_postcommit_continuations[preparation.preparation_id] = (
-            _DurablePostcommitContinuation(
-                preparation_id=preparation.preparation_id,
-                session_id=session.id,
-                origin=origin,
-                queue_entry_id=queue_entry_id,
-                clean_draft=preparation.executed_draft,
-                commit=commit,
-                echoed_user_id=echoed_user.id,
-                resolution=resolution,
-                provider_messages=provider_messages,
-                prefill=prefill,
-                prefill_from_one_shot=prefill_from_one_shot,
-                one_shot_prefill_revision=one_shot_prefill_revision,
-                skill_bindings=skill_bindings,
-                skill_bundle_block=skill_bundle_block,
-                citation_repair_session=citation_repair_session,
-                turn_context=turn_context,
-                prepared=prepared_continuation,
-                committed_context_epoch=committed_context_epoch,
-            )
+        continuation = _DurablePostcommitContinuation(
+            preparation_id=preparation.preparation_id,
+            fingerprint=fingerprint,
+            session_id=session.id,
+            origin=origin,
+            queue_entry_id=queue_entry_id,
+            clean_draft=preparation.executed_draft,
+            commit=commit,
+            echoed_user_id=echoed_user.id,
+            resolution=resolution,
+            provider_messages=provider_messages,
+            prefill=prefill,
+            prefill_from_one_shot=prefill_from_one_shot,
+            one_shot_prefill_revision=one_shot_prefill_revision,
+            skill_bindings=skill_bindings,
+            skill_bundle_block=skill_bundle_block,
+            citation_repair_session=citation_repair_session,
+            turn_context=turn_context,
+            prepared=prepared_continuation,
+            committed_context_epoch=committed_context_epoch,
         )
+        with self.store.durable_preparation_lock:
+            self.store.validate_durable_acceptance_fingerprint(fingerprint)
+            existing = self._durable_postcommit_continuations.get(
+                preparation.preparation_id
+            )
+            if existing is not None and existing.fingerprint != fingerprint:
+                raise RuntimeError("Durable continuation owner changed.")
+            self._durable_postcommit_continuations[preparation.preparation_id] = (
+                continuation
+            )
         return await self.resume_durable_postcommit(preparation.preparation_id)
 
     async def resume_durable_postcommit(
@@ -5464,7 +5497,12 @@ class ConsoleChatController:
     ) -> ConsoleSubmitResult:
         """Resume missing postcommit effects without allocating another turn."""
 
-        continuation = self._durable_postcommit_continuations.get(preparation_id)
+        with self.store.durable_preparation_lock:
+            continuation = self._durable_postcommit_continuations.get(preparation_id)
+            if continuation is not None:
+                self.store.validate_durable_acceptance_fingerprint(
+                    continuation.fingerprint
+                )
         if continuation is None:
             return ConsoleSubmitResult(
                 False,
@@ -5473,6 +5511,7 @@ class ConsoleChatController:
                 preparation_id=preparation_id,
             )
         commit = continuation.commit
+        fingerprint = continuation.fingerprint
         session_id = continuation.session_id
         assistant_holder: dict[str, ConsoleChatMessage] = {}
 
@@ -5507,11 +5546,25 @@ class ConsoleChatController:
                 live_session.draft = ""
 
         def queue_acknowledgement() -> None:
+            if continuation.origin is ConsoleSubmissionOrigin.QUEUED:
+                entry_id = continuation.queue_entry_id
+                if entry_id is None or not (
+                    self.prompt_queue_coordinator.acknowledge_durable_acceptance(
+                        session_id,
+                        entry_id=entry_id,
+                        preparation_id=preparation_id,
+                        context_epoch=continuation.committed_context_epoch,
+                    )
+                ):
+                    raise RuntimeError(
+                        "Durable queued acceptance could not settle its exact claim."
+                    )
+                return
             self.prompt_queue_coordinator.turn_accepted(
                 session_id,
                 origin=continuation.origin,
                 context_epoch=continuation.committed_context_epoch,
-                entry_id=continuation.queue_entry_id,
+                entry_id=None,
             )
 
         def project_workspace() -> None:
@@ -5550,7 +5603,9 @@ class ConsoleChatController:
                 )
 
         def transition_checkpoint() -> None:
-            current_commit = self.store.durable_turn_commit_for(preparation_id)
+            current_commit = self.store.durable_turn_commit_for(
+                preparation_id, fingerprint=fingerprint
+            )
             if current_commit is None:
                 raise RuntimeError("Durable acceptance is unavailable.")
             repository = getattr(
@@ -5587,32 +5642,55 @@ class ConsoleChatController:
                 preparation_id,
                 "identity_publication",
                 lambda: self.store.publish_durable_turn_identity(session_id, commit),
+                fingerprint=fingerprint,
             )
             await self._run_durable_postcommit_effect(
-                preparation_id, "durable_owner_publication", publish_owners
+                preparation_id,
+                "durable_owner_publication",
+                publish_owners,
+                fingerprint=fingerprint,
             )
             await self._run_durable_postcommit_effect(
-                preparation_id, "staged_input_clearing", clear_staged_input
+                preparation_id,
+                "staged_input_clearing",
+                clear_staged_input,
+                fingerprint=fingerprint,
             )
             await self._run_durable_postcommit_effect(
                 preparation_id,
                 "workspace_projection",
                 project_workspace,
+                fingerprint=fingerprint,
             )
             await self._run_durable_postcommit_effect(
-                preparation_id, "queue_acknowledgement", queue_acknowledgement
+                preparation_id,
+                "queue_acknowledgement",
+                queue_acknowledgement,
+                fingerprint=fingerprint,
             )
             await self._run_durable_postcommit_effect(
-                preparation_id, "accepted_hook", accepted_hook
+                preparation_id,
+                "accepted_hook",
+                accepted_hook,
+                fingerprint=fingerprint,
             )
             await self._run_durable_postcommit_effect(
-                preparation_id, "prompt_history", prompt_history
+                preparation_id,
+                "prompt_history",
+                prompt_history,
+                fingerprint=fingerprint,
             )
             await self._run_durable_postcommit_effect(
-                preparation_id, "preparation_publication", publish_preparation
+                preparation_id,
+                "preparation_publication",
+                publish_preparation,
+                fingerprint=fingerprint,
             )
             await self._run_durable_postcommit_effect(
-                preparation_id, "checkpoint_transition", transition_checkpoint
+                preparation_id,
+                "checkpoint_transition",
+                transition_checkpoint,
+                fingerprint=fingerprint,
             )
             assistant = assistant_holder.get("assistant")
             if assistant is None:
@@ -5633,11 +5711,14 @@ class ConsoleChatController:
                     turn_context=continuation.turn_context,
                     preparation_id=None,
                 ),
+                fingerprint=fingerprint,
             )
         except BaseException:
             if continuation.origin is ConsoleSubmissionOrigin.QUEUED:
                 self.prompt_queue_coordinator.retain_durable_acceptance(session_id)
-            state = self.store.durable_postcommit_effects_for(preparation_id)
+            state = self.store.durable_postcommit_effects_for(
+                preparation_id, fingerprint=fingerprint
+            )
             provider_started = bool(
                 state is not None and "checkpoint_transition" in state.completed
             )
@@ -5661,6 +5742,12 @@ class ConsoleChatController:
         # live provider path returns or a following queued/manual turn would
         # be refused as if acceptance were still in progress.
         self._settle_accepted_preparation(preparation_id)
+        with self.store.durable_preparation_lock:
+            current = self._durable_postcommit_continuations.get(preparation_id)
+            if current is None or current.fingerprint != fingerprint:
+                raise RuntimeError("Durable continuation owner changed.")
+            self._durable_postcommit_continuations.pop(preparation_id, None)
+            self.store.retire_durable_acceptance(preparation_id, fingerprint)
         if not isinstance(stream_result, ConsoleSubmitResult):
             stream_result = ConsoleSubmitResult(True, True)
         return replace(
@@ -5997,7 +6084,24 @@ class ConsoleChatController:
                 continue
             self._signal_stop(session_id=session_id)
             self._cancel_task_on_owner_loop(submit_task)
+        if preparation is not None:
+            self._preparation_outcomes.pop(preparation.preparation_id, None)
+            self._prepared_send_continuations.pop(preparation.preparation_id, None)
         previous_active_id = self.store.active_session_id
+        with self.store.durable_preparation_lock:
+            durable_continuations = tuple(
+                continuation
+                for continuation in self._durable_postcommit_continuations.values()
+                if continuation.session_id == session_id
+            )
+            for continuation in durable_continuations:
+                self._durable_postcommit_continuations.pop(
+                    continuation.preparation_id, None
+                )
+                self._release_prepared_evidence(continuation.prepared)
+                self.store.retire_durable_acceptance(
+                    continuation.preparation_id, continuation.fingerprint
+                )
         closed = self.store.close_session(session_id)
         self.prompt_queue_coordinator.remove_session(session_id)
         self._clear_project_instruction_delivery(session_id)

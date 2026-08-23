@@ -10,13 +10,14 @@ and applies Task-12 contributions through the restricted shared transaction
 writer.  Conversation identity/title and every session, transcript, queue,
 workspace, hook, and staged-input publication remain outside the transaction.
 
-The store returns one immutable preparation-keyed durable commit and owns an
-app-lifetime postcommit completion ledger.  The controller claims and marks each
+The store returns one immutable preparation-keyed durable commit and owns a
+bounded postcommit completion ledger.  The controller claims and marks each
 effect only after success, resumes missing effects by preparation ID, and crosses
 `accepted -> dispatch_started` before provider entry.  Real durable adapters that
 do not expose this atomic contract now fail closed before provider dispatch;
-`ConsoleChatPersistence` explicitly declares the method.  Narrow db-less test
-fakes retain the pre-existing compatibility path.
+`ConsoleChatPersistence` explicitly declares the method.  There is no db-shape
+heuristic or legacy durable fallback: only explicitly ephemeral sessions may use
+the volatile compatibility path.
 
 Precommit exceptions roll back every row, pause the same preparation as
 Persistence with Retry/Cancel only, retain all staged input, and publish only a
@@ -117,3 +118,47 @@ owns continuation handoff and later projections/history.  Until Task 15 lands,
 successful/failed provider terminal message updates use the existing live path
 while the v45 checkpoint honestly remains `dispatch_started`; this task makes no
 terminal-cleanup or restart-recovery claim.
+
+## Review fix round 1
+
+The review-fix RED was 9 failed/9 passed before production edits. Durable
+eligibility now depends only on session/preparation authority and a callable
+atomic adapter capability; a real SQLite wrapper with `db=None` but no capability
+fails before transcript/provider/checkpoint mutation, while a `db=None` atomic
+wrapper succeeds. Durable test adapters explicitly implement atomic and repository
+contracts; intentionally db-less fixtures explicitly create ephemeral sessions.
+
+One preparation RLock now owns a global preparation-id index, immutable
+acceptance fingerprints, staged identities, commits, effect ledgers, and
+controller continuations. A two-session/two-thread duplicate-id race admits one
+owner, separate concurrent identifiers both proceed, and forged cached-acceptance
+reuse fails closed. Queue acknowledgement uses exact registry settlement keyed by
+session, entry, and preparation; it works after chain teardown, never settles a
+mismatched claim, pauses later entries, and is idempotent only for the exact owner.
+
+Checkpoint reconstructability is conservative for every automatic or explicitly
+staged frozen EvidenceBundle/ConsoleLiveWorkLaunch and every transient prefill;
+the stored projection remains body-free. Successful provider handoff, terminal
+volatile failure, Cancel, and close remove body-bearing recovery state. A bounded
+128-entry body-free fingerprint/effect tombstone is the only retained success
+cache; 1,000 real turns and close/failure/resume probes verify the bound and
+privacy shape. Eviction makes no process-cache exactly-once claim: deterministic
+durable IDs and database uniqueness remain authoritative.
+
+Production fault injection covers identity publication, owner hydration, staged
+input clearing, workspace projection, queue acknowledgement, accepted hook,
+prompt history, preparation publication, checkpoint CAS, and provider entry.
+Every bit remains absent until its real seam succeeds, re-entry uses the same
+durable IDs/checkpoint, and each injected target records two attempts/one success
+while provider entry remains once. The COMMIT case is an actual SQLite `commit()`
+failure: a deferred foreign-key violation is inserted from the outer transaction
+`__exit__` after all writes, proving exact rollback before clean retry.
+
+Fresh verification after restoration: Task-14 battery 46 passed; exact Task-13
+affected gate 628 passed; queue/runtime/UI companions 100 passed; migration,
+schema, generation-state, and persistence companions 126 passed. Each emitted
+only the inherited Requests dependency warning. Seven restored mutants were
+killed: adapter-shape fallback, global-id collision removal, detached queue ack
+success, evidence omission, pre-callback effect completion, success cleanup
+removal, and tombstone-cap removal. Scoped Ruff, formatter, privacy/source scans,
+and `git diff --check` passed. No full repository sweep was run.

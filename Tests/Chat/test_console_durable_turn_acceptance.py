@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from contextlib import contextmanager
 from dataclasses import dataclass
 import json
 from pathlib import Path
@@ -47,7 +46,7 @@ from tldw_chatbook.Chat.library_preparation import (
     LibraryPreparationEvent,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, TransactionContextManager
 
 
 @dataclass
@@ -156,12 +155,7 @@ def _ready_store(
         authority = _authority(source="durable", revision=1)
     else:
         authority = _authority()
-        identity = store.stage_durable_turn_identity(
-            session.id,
-            "preparation-1",
-            title="Atomic hello",
-        )
-        conversation_id = identity.conversation_id
+        conversation_id = ""
     echo = store.append_message(
         session.id,
         role=ConsoleMessageRole.USER,
@@ -189,6 +183,13 @@ def _ready_store(
         ephemeral=False,
     )
     assert store.begin_preparation(preparation) is preparation
+    if not existing:
+        identity = store.stage_durable_turn_identity(
+            session.id,
+            "preparation-1",
+            title="Atomic hello",
+        )
+        conversation_id = identity.conversation_id
     if contribution is None:
         contribution = LibraryPreparationContribution(
             LibraryPreparationEvent(
@@ -314,16 +315,33 @@ def _install_failure(
         table = "message_trajectory_metadata"
         when = " WHEN NEW.event_kind = 'library_preparation'"
     if point == "commit":
-        original = db.transaction
+        connection.execute(
+            "CREATE TABLE task14_commit_fault ("
+            "parent_id TEXT REFERENCES conversations(id) "
+            "DEFERRABLE INITIALLY DEFERRED)"
+        )
+        connection.commit()
+        original_exit = TransactionContextManager.__exit__
 
-        @contextmanager
-        def fail_commit(*, immediate: bool = False):
-            with original(immediate=immediate) as cursor:
-                yield cursor
-                raise RuntimeError("injected commit failure")
+        def fail_actual_sqlite_commit(self, exc_type, exc_val, exc_tb):
+            if exc_type is None and self.is_outermost_transaction:
+                assert self.conn is not None
+                self.conn.execute(
+                    "INSERT INTO task14_commit_fault(parent_id) VALUES (?)",
+                    ("task14-missing-parent",),
+                )
+            return original_exit(self, exc_type, exc_val, exc_tb)
 
-        monkeypatch.setattr(db, "transaction", fail_commit)
-        return lambda: monkeypatch.setattr(db, "transaction", original)
+        monkeypatch.setattr(
+            TransactionContextManager, "__exit__", fail_actual_sqlite_commit
+        )
+
+        def cleanup_commit_fault() -> None:
+            monkeypatch.setattr(TransactionContextManager, "__exit__", original_exit)
+            connection.execute("DROP TABLE task14_commit_fault")
+            connection.commit()
+
+        return cleanup_commit_fault
     connection.execute(
         f"CREATE TEMP TRIGGER {trigger} BEFORE INSERT ON {table}{when} "
         "BEGIN SELECT RAISE(ABORT, 'task14 injected failure'); END"
@@ -354,7 +372,10 @@ def test_every_new_conversation_write_or_commit_failure_rolls_back_exactly_and_r
     before_memory = _memory_snapshot(store, acceptance.preparation_id)
     cleanup = _install_failure(db, service, failure_point, monkeypatch)
 
-    with pytest.raises(Exception, match="injected|task14|could not be committed"):
+    with pytest.raises(
+        Exception,
+        match="injected|task14|could not be committed|Commit failed|FOREIGN KEY",
+    ):
         store.commit_durable_turn(acceptance)
 
     assert _database_snapshot(db) == before_db

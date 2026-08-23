@@ -16,7 +16,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleStagedSource,
     ConsoleWorkspaceContext,
 )
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore as _ConsoleChatStore
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleEgressClass,
@@ -37,6 +37,14 @@ from tldw_chatbook.Chat.console_turn_context import (
     ConsoleTurnExecutionContext,
 )
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
+
+
+class ConsoleChatStore(_ConsoleChatStore):
+    """Test store whose intentionally db-less sessions are explicitly ephemeral."""
+
+    def create_session(self, **kwargs):
+        kwargs.setdefault("ephemeral", self.persistence is None)
+        return super().create_session(**kwargs)
 
 
 class _PausedGateway:
@@ -400,9 +408,7 @@ def test_session_builder_captures_roots_rag_tools_and_generation(
         temperature=0.4,
         max_tokens=777,
         system_prompt="system-a",
-        workspace_context=ConsoleWorkspaceContext(
-            active_workspace_id="workspace-a"
-        ),
+        workspace_context=ConsoleWorkspaceContext(active_workspace_id="workspace-a"),
     )
     app_config = {
         "chat_defaults": {"rag_auto_retrieve_on_send": "true"},
@@ -841,15 +847,11 @@ def test_screen_selection_builder_targets_session_without_switching_view():
     # `_build_console_provider_selection_uncached`; the wrapper under test
     # delegates to the latter through `self`, so the double borrows the real
     # uncached half exactly as the memo-less path binds it in production.
-    fake_screen._build_console_provider_selection_uncached = (
-        lambda session_id=None: ChatScreen._build_console_provider_selection_uncached(
-            fake_screen, session_id
-        )
+    fake_screen._build_console_provider_selection_uncached = lambda session_id=None: (
+        ChatScreen._build_console_provider_selection_uncached(fake_screen, session_id)
     )
 
-    selection = ChatScreen._build_console_provider_selection(
-        fake_screen, first.id
-    )
+    selection = ChatScreen._build_console_provider_selection(fake_screen, first.id)
 
     assert selection.provider == "openai"
     assert selection.explicit_model == "model-a"

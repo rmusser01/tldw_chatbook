@@ -12,6 +12,7 @@ import threading
 import time
 import unicodedata
 import uuid
+from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
@@ -306,6 +307,8 @@ class _SessionQueueState:
 class ConsolePromptQueueRegistry:
     """Synchronous owner of bounded, revisioned per-session prompt queues."""
 
+    DURABLE_ACCEPTANCE_TOMBSTONE_CAP = 256
+
     def __init__(
         self,
         *,
@@ -322,6 +325,9 @@ class ConsolePromptQueueRegistry:
         # historical IDs forever would make this process-memory queue grow
         # with lifetime throughput instead of its bounded active contents.
         self._active_entry_ids: set[str] = set()
+        self._durable_acceptance_tombstones: OrderedDict[tuple[str, str], str] = (
+            OrderedDict()
+        )
         self._next_insertion_order = 0
         self._registry_revision = 0
         self._shutting_down = False
@@ -943,6 +949,68 @@ class ConsolePromptQueueRegistry:
         self._active_entry_ids.discard(state.claimed.prompt.entry_id)
         state.claimed = None
         self._bump(state)
+        return self._result(
+            QueueMutationStatus.APPLIED,
+            session_id,
+            state=state,
+            entry_id=entry_id,
+        )
+
+    def settle_durable_acceptance(
+        self,
+        session_id: str,
+        *,
+        entry_id: str,
+        preparation_id: str,
+    ) -> PromptQueueMutationResult:
+        """Settle an exact committed claim even after its live chain vanished."""
+
+        self._assert_owner_thread()
+        session_id = self._session_id(session_id)
+        if type(entry_id) is not str or not entry_id:
+            raise ValueError("entry_id must be non-empty text")
+        if type(preparation_id) is not str or not preparation_id:
+            raise ValueError("preparation_id must be non-empty text")
+        key = (session_id, entry_id)
+        prior = self._durable_acceptance_tombstones.get(key)
+        state = self._states.get(session_id)
+        if prior is not None:
+            status = (
+                QueueMutationStatus.UNCHANGED
+                if prior == preparation_id
+                else QueueMutationStatus.LOCKED
+            )
+            return self._result(status, session_id, state=state, entry_id=entry_id)
+        if state is None or state.claimed is None:
+            return self._result(
+                QueueMutationStatus.NOT_FOUND,
+                session_id,
+                state=state,
+                entry_id=entry_id,
+            )
+        if state.claimed.prompt.entry_id != entry_id:
+            return self._result(
+                QueueMutationStatus.LOCKED,
+                session_id,
+                state=state,
+                entry_id=entry_id,
+            )
+        self._active_entry_ids.discard(entry_id)
+        state.claimed = None
+        if state.waiting:
+            state.mode = PromptQueueMode.PAUSED
+            state.pause_reason = PromptQueuePauseReason.FAILED
+            state.reservation = PromptQueueReservation.RELEASED
+        else:
+            state.reservation = PromptQueueReservation.RELEASED
+            self._finalize_released_empty_state(state)
+        self._bump(state)
+        self._durable_acceptance_tombstones[key] = preparation_id
+        while (
+            len(self._durable_acceptance_tombstones)
+            > self.DURABLE_ACCEPTANCE_TOMBSTONE_CAP
+        ):
+            self._durable_acceptance_tombstones.popitem(last=False)
         return self._result(
             QueueMutationStatus.APPLIED,
             session_id,

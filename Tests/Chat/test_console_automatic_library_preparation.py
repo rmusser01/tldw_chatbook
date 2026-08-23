@@ -25,7 +25,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleRunStatus,
     ConsoleSubmissionOrigin,
 )
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore as _ConsoleChatStore
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleEgressClass,
     ConsoleLibraryItemScopeSnapshot,
@@ -65,6 +65,14 @@ from tldw_chatbook.UI.Console_Modules.retrieval import ConsoleRetrievalControlle
 from tldw_chatbook.UI.Views.RAGSearch.search_handoff import (
     build_library_rag_evidence_bundle,
 )
+
+
+class ConsoleChatStore(_ConsoleChatStore):
+    """Test store whose intentionally db-less sessions are explicitly ephemeral."""
+
+    def create_session(self, **kwargs):
+        kwargs.setdefault("ephemeral", self.persistence is None)
+        return super().create_session(**kwargs)
 
 
 class _StreamingFence:
@@ -467,7 +475,10 @@ async def _paused_queued_send(*, persistence=None):
     store = ConsoleChatStore(persistence=persistence)
     policy = _PolicyCoordinator(ConsoleAutoRetrieve.NEVER)
     store.library_policy_coordinator = policy
-    session = store.create_session(session_id="session-1")
+    session = store.create_session(
+        session_id="session-1",
+        ephemeral=not callable(getattr(persistence, "commit_durable_turn", None)),
+    )
     gateway = _BlockingFirstFence()
     service = _RagService(error=RuntimeError("queued retrieval failed"))
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
@@ -957,7 +968,7 @@ def test_close_cancels_preparation_through_same_store_path():
     assert store.preparation_for_session("session-1") is None
 
 
-def test_store_close_keeps_accepted_preparation_until_live_turn_settles():
+def test_store_close_drops_accepted_volatile_owner_for_durable_recovery():
     store = ConsoleChatStore()
     store.create_session(session_id="session-1")
     accepted = _preparation(state=ConsoleTurnPreparationState.ACCEPTED)
@@ -965,15 +976,7 @@ def test_store_close_keeps_accepted_preparation_until_live_turn_settles():
 
     store.close_session("session-1")
 
-    assert store.preparation_for_session("session-1") is accepted
-    assert (
-        store.remove_preparation(
-            "session-1",
-            accepted.preparation_id,
-            expected_states=frozenset({ConsoleTurnPreparationState.ACCEPTED}),
-        )
-        is accepted
-    )
+    assert store.preparation_for_session("session-1") is None
 
 
 @pytest.mark.asyncio
@@ -1540,7 +1543,7 @@ async def test_queued_recovery_postaccept_exception_settles_exact_claim_once(
         for row in persistence.created_messages
         if row["sender"] == "user" and row["content"] == "frozen queued"
     ]
-    assert len(queued_users) == 1
+    assert queued_users == []
     live_rows = store.messages_for_session(paused.session_id)
     assert (
         len(
@@ -1861,7 +1864,7 @@ async def test_actual_agent_call_observes_dispatch_started():
 
 
 @pytest.mark.asyncio
-async def test_close_preserves_accepted_owner_until_cancelled_task_finally_settles():
+async def test_close_drops_accepted_owner_before_cancelled_task_finally_settles():
     store = ConsoleChatStore()
     store.library_policy_coordinator = _PolicyCoordinator(ConsoleAutoRetrieve.NEVER)
     gateway = _BlockingFirstFence()
@@ -1876,9 +1879,8 @@ async def test_close_preserves_accepted_owner_until_cancelled_task_finally_settl
 
     assert not task.done()
     live = store.preparation_by_id(preparation.preparation_id)
-    assert live is not None
-    assert live.state is ConsoleTurnPreparationState.DISPATCH_STARTED
-    assert preparation.preparation_id in controller._prepared_send_continuations
+    assert live is None
+    assert preparation.preparation_id not in controller._prepared_send_continuations
 
     await asyncio.gather(task, return_exceptions=True)
     await asyncio.sleep(0)
@@ -2053,7 +2055,7 @@ async def test_shutdown_tracks_committing_submit_before_stream_registration(
         ("preflight", ConsoleTurnPreparationState.ACCEPTED),
     ],
 )
-async def test_close_preserves_submit_owner_until_cancelled_task_finalizer(
+async def test_close_drops_submit_owner_before_cancelled_task_finalizer(
     monkeypatch, boundary, expected_state
 ):
     store = ConsoleChatStore()
@@ -2102,9 +2104,9 @@ async def test_close_preserves_submit_owner_until_cancelled_task_finalizer(
         submit.cancel()
     await asyncio.gather(submit, return_exceptions=True)
     assert cancellation_reached_boundary
-    assert owner_preserved
-    assert continuation_preserved
-    assert contribution_preserved
+    assert not owner_preserved
+    assert not continuation_preserved
+    assert not contribution_preserved
     assert store.preparation_by_id(preparation.preparation_id) is None
     assert controller._preparation_outcomes == {}
     assert controller._prepared_send_continuations == {}
@@ -2989,5 +2991,5 @@ async def test_recovered_queue_acknowledges_postaccept_cancellation_once(
                 if row["sender"] == "user" and row["content"] == "frozen queued"
             ]
         )
-        == 1
+        == 0
     )

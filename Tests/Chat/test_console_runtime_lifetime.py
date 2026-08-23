@@ -30,13 +30,21 @@ import pytest
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
 from tldw_chatbook.Chat.console_chat_models import ConsoleSubmissionOrigin
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore as _ConsoleChatStore
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleEgressClass,
     ConsoleResolvedDestination,
 )
 from tldw_chatbook.Chat.console_prompt_queue import QueueMutationStatus
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+
+
+class ConsoleChatStore(_ConsoleChatStore):
+    """Test store whose intentionally db-less sessions are explicitly ephemeral."""
+
+    def create_session(self, **kwargs):
+        kwargs.setdefault("ephemeral", self.persistence is None)
+        return super().create_session(**kwargs)
 
 
 class _StalledGateway:

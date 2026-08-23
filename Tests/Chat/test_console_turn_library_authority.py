@@ -23,7 +23,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
     ConsoleProviderSelection,
 )
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore as _ConsoleChatStore
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleEgressClass,
     ConsoleResolvedDestination,
@@ -54,6 +54,14 @@ from tldw_chatbook.Chat.provider_continuation import (
 from tldw_chatbook.Chat.console_prompt_queue import PromptQueueReservation
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+
+class ConsoleChatStore(_ConsoleChatStore):
+    """Test store whose intentionally db-less sessions are explicitly ephemeral."""
+
+    def create_session(self, **kwargs):
+        kwargs.setdefault("ephemeral", self.persistence is None)
+        return super().create_session(**kwargs)
 
 
 def _policy(
@@ -395,10 +403,13 @@ async def test_real_execution_capture_defeats_stale_allowed_and_freezes_current_
         conversation_id = first_db.add_conversation({"title": "authority"})
         assert conversation_id is not None
         first_repository = ConsoleLibraryPolicyRepository(first_db)
-        assert first_repository.insert(
-            conversation_id,
-            _allowed_candidate(allowed=True),
-        ).status is ConsoleLibraryPolicyWriteStatus.COMMITTED
+        assert (
+            first_repository.insert(
+                conversation_id,
+                _allowed_candidate(allowed=True),
+            ).status
+            is ConsoleLibraryPolicyWriteStatus.COMMITTED
+        )
 
         store = ConsoleChatStore(persistence=ChatPersistenceService(first_db))
         first_session = store.restore_persisted_session(
@@ -420,11 +431,14 @@ async def test_real_execution_capture_defeats_stale_allowed_and_freezes_current_
 
         second_db = CharactersRAGDB(path, "second-process")
         second_repository = ConsoleLibraryPolicyRepository(second_db)
-        assert second_repository.compare_and_swap(
-            conversation_id,
-            1,
-            _allowed_candidate(allowed=False),
-        ).status is ConsoleLibraryPolicyWriteStatus.COMMITTED
+        assert (
+            second_repository.compare_and_swap(
+                conversation_id,
+                1,
+                _allowed_candidate(allowed=False),
+            ).status
+            is ConsoleLibraryPolicyWriteStatus.COMMITTED
+        )
 
         factory_calls: list[ConsoleTurnExecutionContext] = []
 
@@ -446,11 +460,12 @@ async def test_real_execution_capture_defeats_stale_allowed_and_freezes_current_
             provider_gateway=_RecordingGateway([]),
             library_provider_factory=factory,
         )
-        _resolution, blocked = (
-            await controller._capture_and_resolve_turn_execution_context(
-                first_session.id,
-                _execution_configuration(first_session.id),
-            )
+        (
+            _resolution,
+            blocked,
+        ) = await controller._capture_and_resolve_turn_execution_context(
+            first_session.id,
+            _execution_configuration(first_session.id),
         )
         assert blocked is not None
         assert blocked.library_authority.policy.policy_revision == 2
@@ -463,38 +478,46 @@ async def test_real_execution_capture_defeats_stale_allowed_and_freezes_current_
             second_session.library_policy_holder.snapshot
         )
 
-        assert second_repository.compare_and_swap(
-            conversation_id,
-            2,
-            _allowed_candidate(allowed=True),
-        ).status is ConsoleLibraryPolicyWriteStatus.COMMITTED
-        _resolution, captured = (
-            await controller._capture_and_resolve_turn_execution_context(
-                first_session.id,
-                _execution_configuration(first_session.id, direct=True),
-            )
+        assert (
+            second_repository.compare_and_swap(
+                conversation_id,
+                2,
+                _allowed_candidate(allowed=True),
+            ).status
+            is ConsoleLibraryPolicyWriteStatus.COMMITTED
+        )
+        (
+            _resolution,
+            captured,
+        ) = await controller._capture_and_resolve_turn_execution_context(
+            first_session.id,
+            _execution_configuration(first_session.id, direct=True),
         )
         assert captured is not None
         selected = controller._library_provider_for_context(captured)
         assert selected is not None
         assert captured.library_authority.policy.policy_revision == 3
 
-        assert second_repository.compare_and_swap(
-            conversation_id,
-            3,
-            _allowed_candidate(allowed=False),
-        ).status is ConsoleLibraryPolicyWriteStatus.COMMITTED
+        assert (
+            second_repository.compare_and_swap(
+                conversation_id,
+                3,
+                _allowed_candidate(allowed=False),
+            ).status
+            is ConsoleLibraryPolicyWriteStatus.COMMITTED
+        )
         # A commit after capture cannot mutate the already-running context.
         assert captured.library_authority.policy.assistant_access is (
             ConsoleAssistantLibraryAccess.ALLOWED
         )
         assert controller._library_provider_for_context(captured) is not None
 
-        _resolution, next_turn = (
-            await controller._capture_and_resolve_turn_execution_context(
-                second_session.id,
-                _execution_configuration(second_session.id),
-            )
+        (
+            _resolution,
+            next_turn,
+        ) = await controller._capture_and_resolve_turn_execution_context(
+            second_session.id,
+            _execution_configuration(second_session.id),
         )
         assert next_turn is not None
         assert next_turn.library_authority.policy.policy_revision == 4
@@ -521,10 +544,13 @@ async def test_second_store_blocked_commit_defeats_stale_allowed_at_submitted_ag
         conversation_id = first_db.add_conversation({"title": "submitted agent"})
         assert conversation_id is not None
         first_persistence = ChatPersistenceService(first_db)
-        assert first_persistence.console_library_policy_repository.insert(
-            conversation_id,
-            _allowed_candidate(allowed=True),
-        ).status is ConsoleLibraryPolicyWriteStatus.COMMITTED
+        assert (
+            first_persistence.console_library_policy_repository.insert(
+                conversation_id,
+                _allowed_candidate(allowed=True),
+            ).status
+            is ConsoleLibraryPolicyWriteStatus.COMMITTED
+        )
         first_store = ConsoleChatStore(persistence=first_persistence)
         first_session = first_store.restore_persisted_session(
             title="first process",
@@ -535,9 +561,7 @@ async def test_second_store_blocked_commit_defeats_stale_allowed_at_submitted_ag
         await first_store.hydrate_session_library_policy(first_session.id)
 
         second_db = CharactersRAGDB(path, "submitted-agent-second")
-        second_store = ConsoleChatStore(
-            persistence=ChatPersistenceService(second_db)
-        )
+        second_store = ConsoleChatStore(persistence=ChatPersistenceService(second_db))
         second_session = second_store.restore_persisted_session(
             title="second process",
             workspace_id=None,
@@ -549,9 +573,7 @@ async def test_second_store_blocked_commit_defeats_stale_allowed_at_submitted_ag
             second_session.id,
             _allowed_candidate(allowed=False),
         )
-        committed = await second_store.save_session_library_policy(
-            second_session.id
-        )
+        committed = await second_store.save_session_library_policy(second_session.id)
         assert committed.status is ConsoleLibraryPolicyWriteStatus.COMMITTED
         assert committed.snapshot.policy_revision == 2
         # A separate coordinator cannot publish into the first process holder.
@@ -708,7 +730,9 @@ async def test_running_turn_freezes_selector_scope_provider_and_destination():
         rag_capture_provider=capture_rag,
         agent_runtime_enabled=False,
     )
-    task = asyncio.create_task(controller.submit_draft("question", session_id=session.id))
+    task = asyncio.create_task(
+        controller.submit_draft("question", session_id=session.id)
+    )
     await gateway.resolved.wait()
 
     live.update(
@@ -1201,7 +1225,9 @@ async def test_queued_configuration_and_policy_capture_only_after_dequeue():
 
 
 @pytest.mark.asyncio
-async def test_queued_turn_reads_second_process_policy_only_after_claim(tmp_path) -> None:
+async def test_queued_turn_reads_second_process_policy_only_after_claim(
+    tmp_path,
+) -> None:
     path = tmp_path / "queued-authority.sqlite"
     first_db = CharactersRAGDB(path, "queue-runtime")
     second_db = None
@@ -1209,10 +1235,13 @@ async def test_queued_turn_reads_second_process_policy_only_after_claim(tmp_path
         conversation_id = first_db.add_conversation({"title": "queued"})
         assert conversation_id is not None
         first_repository = ConsoleLibraryPolicyRepository(first_db)
-        assert first_repository.insert(
-            conversation_id,
-            _allowed_candidate(allowed=True),
-        ).status is ConsoleLibraryPolicyWriteStatus.COMMITTED
+        assert (
+            first_repository.insert(
+                conversation_id,
+                _allowed_candidate(allowed=True),
+            ).status
+            is ConsoleLibraryPolicyWriteStatus.COMMITTED
+        )
         store = ConsoleChatStore(persistence=ChatPersistenceService(first_db))
         session = store.restore_persisted_session(
             title="queued",
@@ -1268,11 +1297,14 @@ async def test_queued_turn_reads_second_process_policy_only_after_claim(tmp_path
 
         second_db = CharactersRAGDB(path, "queue-second-process")
         second_repository = ConsoleLibraryPolicyRepository(second_db)
-        assert second_repository.compare_and_swap(
-            conversation_id,
-            1,
-            _allowed_candidate(allowed=False),
-        ).status is ConsoleLibraryPolicyWriteStatus.COMMITTED
+        assert (
+            second_repository.compare_and_swap(
+                conversation_id,
+                1,
+                _allowed_candidate(allowed=False),
+            ).status
+            is ConsoleLibraryPolicyWriteStatus.COMMITTED
+        )
         # Enqueue did not capture policy; only the running first turn exists.
         assert len(observed) == 1
         gateway.releases[0].set()
@@ -1523,9 +1555,7 @@ async def test_continuation_recovery_freshly_finalizes_before_agent_boundary(
             "_run_agent_reply",
             assert_complete_agent_boundary,
         )
-        version = store.get_message(
-            assistant.id
-        ).provider_continuation_message_version
+        version = store.get_message(assistant.id).provider_continuation_message_version
         assert version is not None
 
         assert await controller.recover_provider_continuation(

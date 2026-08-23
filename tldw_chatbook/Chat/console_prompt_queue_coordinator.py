@@ -305,7 +305,9 @@ class ConsolePromptQueueCoordinator:
 
         chain = self._chains.get(session_id)
         if chain is None:
-            return
+            if origin is ConsoleSubmissionOrigin.MANUAL:
+                return
+            raise RuntimeError("accepted queued chain is unavailable")
         if origin is ConsoleSubmissionOrigin.MANUAL:
             snapshot = self.registry.snapshot(session_id)
             result = self.registry.begin_chain(
@@ -325,6 +327,41 @@ class ConsolePromptQueueCoordinator:
                 self._settle_queued_claim(session_id, entry_id)
         chain.accepted_live_turn = True
         self._changed(session_id)
+
+    def acknowledge_durable_acceptance(
+        self,
+        session_id: str,
+        *,
+        entry_id: str,
+        preparation_id: str,
+        context_epoch: int,
+    ) -> bool:
+        """Acknowledge one exact committed queue claim independently of a chain."""
+
+        del context_epoch  # The committed checkpoint, not a live epoch, owns re-entry.
+        chain = self._chains.get(session_id)
+        if chain is not None and chain.current_entry_id not in {None, entry_id}:
+            return False
+        result = self.registry.settle_durable_acceptance(
+            session_id,
+            entry_id=entry_id,
+            preparation_id=preparation_id,
+        )
+        if result.status not in {
+            QueueMutationStatus.APPLIED,
+            QueueMutationStatus.UNCHANGED,
+        }:
+            return False
+        if chain is not None:
+            chain.accepted_live_turn = True
+            if chain.current_entry_id == entry_id:
+                chain.current_entry_id = None
+            self._changed(session_id)
+        if result.status is QueueMutationStatus.APPLIED:
+            callback = self.on_queued_accepted
+            if callback is not None:
+                callback(ConsoleQueuedAcceptanceEvent(session_id, entry_id))
+        return True
 
     def retain_durable_acceptance(self, session_id: str) -> None:
         """Fence a committed queued claim from returning to pending.

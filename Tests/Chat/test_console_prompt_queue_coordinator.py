@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
@@ -14,11 +15,15 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleRunStatus,
     ConsoleSubmissionOrigin,
 )
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore as _ConsoleChatStore
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+    ConsoleDispatchCheckpoint,
+    ConsoleDispatchCheckpointState,
+    ConsoleDispatchResultStatus,
     ConsoleEgressClass,
     ConsoleResolvedDestination,
 )
+from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryPolicySnapshot
 from tldw_chatbook.Chat.console_prompt_queue import (
     PromptQueueMode,
     PromptQueuePauseReason,
@@ -27,6 +32,14 @@ from tldw_chatbook.Chat.console_prompt_queue import (
 from tldw_chatbook.Chat.console_prompt_queue_coordinator import (
     QueueGenerationAuthorization,
 )
+
+
+class ConsoleChatStore(_ConsoleChatStore):
+    """Test store whose intentionally db-less sessions are explicitly ephemeral."""
+
+    def create_session(self, **kwargs):
+        kwargs.setdefault("ephemeral", self.persistence is None)
+        return super().create_session(**kwargs)
 
 
 class SequencedGateway:
@@ -81,6 +94,56 @@ class RecordingPromptHistory:
 class RecordingPersistence:
     def __init__(self) -> None:
         self.created_messages: list[dict] = []
+        self._policy_snapshot = None
+        self.console_library_policy_repository = SimpleNamespace(read=self._read_policy)
+        self.console_dispatch_repository = SimpleNamespace(cas_state=self._cas_state)
+
+    def _read_policy(self, conversation_id):
+        del conversation_id
+        return SimpleNamespace(durable_policy=object(), snapshot=self._policy_snapshot)
+
+    def _cas_state(self, transition):
+        del transition
+        return SimpleNamespace(status=ConsoleDispatchResultStatus.COMMITTED)
+
+    def commit_durable_turn(self, *, acceptance, policy_candidate, conversation_kwargs):
+        del conversation_kwargs
+        self._policy_snapshot = ConsoleLibraryPolicySnapshot(
+            auto_retrieve=policy_candidate.auto_retrieve,
+            assistant_access=policy_candidate.assistant_access,
+            policy_revision=1,
+            source="durable",
+        )
+        self.created_messages.extend(
+            (
+                {
+                    "sender": "user",
+                    "content": acceptance.user_content,
+                    "message_id": acceptance.user_message_id,
+                },
+                {
+                    "sender": "assistant",
+                    "content": "",
+                    "message_id": acceptance.assistant_message_id,
+                },
+            )
+        )
+        return ConsoleDispatchCheckpoint(
+            assistant_message_id=acceptance.assistant_message_id,
+            user_message_id=acceptance.user_message_id,
+            conversation_id=acceptance.conversation_id,
+            preparation_id=acceptance.preparation_id,
+            attempt_id=acceptance.attempt_id,
+            state=ConsoleDispatchCheckpointState.ACCEPTED,
+            checkpoint_revision=1,
+            user_message_version=1,
+            assistant_message_version=1,
+            origin=acceptance.origin,
+            queue_entry_id=acceptance.queue_entry_id,
+            frozen_authority=acceptance.frozen_authority,
+            resolved_destination=acceptance.resolved_destination,
+            reconstructability=acceptance.reconstructability,
+        )
 
     def create_conversation(self, **kwargs):
         return "conversation-1"
@@ -242,7 +305,7 @@ async def test_lifecycle_impact_does_not_describe_paused_queue_as_live_run():
 def test_session_lifecycle_impact_is_revisioned_independently():
     gateway = SequencedGateway()
     controller, _store, session_id = _arm_controller(gateway)
-    other = controller.new_session(title="Other")
+    other = controller.new_session(title="Other", ephemeral=True)
 
     session_before = controller.lifecycle_impact(session_id=session_id)
     fleet_before = controller.lifecycle_impact()
@@ -336,7 +399,7 @@ async def test_intermediate_completions_emit_only_one_final_background_outcome()
     )
     await gateway.started[0].wait()
     _queue(controller, session_id, "two")
-    controller.new_session(title="Viewed elsewhere")
+    controller.new_session(title="Viewed elsewhere", ephemeral=True)
 
     gateway.release[0].set()
     await gateway.started[1].wait()
@@ -524,11 +587,10 @@ async def test_failed_retry_stays_on_queue_owner_after_viewed_session_switch():
     failed = next(
         message
         for message in store.messages_for_session(session_id)
-        if message.role is ConsoleMessageRole.ASSISTANT
-        and message.status == "failed"
+        if message.role is ConsoleMessageRole.ASSISTANT and message.status == "failed"
     )
 
-    viewed = controller.new_session(title="Viewed elsewhere")
+    viewed = controller.new_session(title="Viewed elsewhere", ephemeral=True)
     assert store.active_session_id == viewed.id
     recovery = asyncio.create_task(controller.retry_failed_queue_turn(failed.id))
     await gateway.started[1].wait()
@@ -656,7 +718,7 @@ async def test_paused_queue_gates_unrelated_generation_and_cap_refuses_reacquire
         if message.role is ConsoleMessageRole.USER
     ] == before_users
 
-    other = controller.new_session(title="Occupies only slot")
+    other = controller.new_session(title="Occupies only slot", ephemeral=True)
     controller._set_run_state(
         controller.run_state_for(other.id).__class__(
             ConsoleRunStatus.STREAMING, "Streaming response."
@@ -736,7 +798,7 @@ async def test_two_sessions_keep_independent_chains_and_each_occupies_one_slot()
     store = ConsoleChatStore()
     first = store.ensure_session(title="First")
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
-    second = controller.new_session(title="Second")
+    second = controller.new_session(title="Second", ephemeral=True)
 
     first_task = asyncio.create_task(
         controller.run_prompt_chain("a1", session_id=first.id)
