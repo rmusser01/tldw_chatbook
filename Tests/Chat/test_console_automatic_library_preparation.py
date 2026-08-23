@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import threading
 from types import SimpleNamespace
+import weakref
 
 import pytest
 
@@ -2491,6 +2493,246 @@ async def test_off_thread_begin_shutdown_schedules_owner_loop_cancellation(
         assert controller._active_submit_tasks == {}
     finally:
         loop.set_debug(old_debug)
+
+
+def test_closed_loop_pending_submit_drops_exact_volatile_ownership(monkeypatch):
+    store = ConsoleChatStore()
+    store.library_policy_coordinator = _PolicyCoordinator(ConsoleAutoRetrieve.AUTOMATIC)
+    session = store.create_session(session_id="closed-session")
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=_StreamingFence(),
+    )
+    controller.app = SimpleNamespace(library_rag_search_service=_RagService())
+    held = asyncio.Event()
+
+    async def hold_history(_draft):
+        held.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(controller, "_record_prompt_history", hold_history)
+    closed_loop = asyncio.new_event_loop()
+    loop_errors: list[dict[str, object]] = []
+    closed_loop.set_debug(True)
+    closed_loop.set_exception_handler(
+        lambda _loop, context: loop_errors.append(dict(context))
+    )
+    submit = closed_loop.create_task(
+        controller.submit_draft("unreachable draft", session_id=session.id)
+    )
+    submit_ref = weakref.ref(submit)
+    try:
+        for _ in range(20):
+            closed_loop.run_until_complete(asyncio.sleep(0))
+            if held.is_set():
+                break
+        preparation = store.preparation_for_session(session.id)
+        assert held.is_set()
+        assert preparation is not None
+        assert preparation.state is ConsoleTurnPreparationState.COMMITTING
+        assert controller.preparation_outcome(preparation.preparation_id) is not None
+        assert preparation.preparation_id in controller._prepared_send_continuations
+
+        closed_loop.close()
+        controller.begin_shutdown()
+
+        assert controller._active_submit_tasks == {}
+        assert store.preparation_for_session(session.id) is None
+        assert controller._preparation_outcomes == {}
+        assert controller._prepared_send_continuations == {}
+        assert controller._shutdown_requested.is_set()
+        assert loop_errors == []
+    finally:
+        if not closed_loop.is_closed():
+            closed_loop.close()
+        submit._log_destroy_pending = False
+        submit.get_coro().close()
+        del submit
+        gc.collect()
+
+    assert submit_ref() is None
+    assert loop_errors == []
+
+
+@pytest.mark.asyncio
+async def test_closed_loop_peer_never_blocks_same_session_live_submit_shutdown(
+    monkeypatch,
+):
+    running_loop = asyncio.get_running_loop()
+    store = ConsoleChatStore()
+    store.library_policy_coordinator = _PolicyCoordinator(ConsoleAutoRetrieve.NEVER)
+    session = store.create_session(session_id="shared-session")
+    controller = ConsoleChatController(store=store, provider_gateway=_StreamingFence())
+    held = _CancellationBoundary()
+
+    async def hold_preflight(*, provider_messages, **_kwargs):
+        await held.wait()
+        return provider_messages, None
+
+    monkeypatch.setattr(
+        controller, "_apply_conversation_memory_preflight", hold_preflight
+    )
+    live_submit = asyncio.create_task(
+        controller.submit_draft("live draft", session_id=session.id)
+    )
+    await held.entered.wait()
+    preparation = store.preparation_for_session(session.id)
+    assert preparation is not None
+    assert preparation.state is ConsoleTurnPreparationState.ACCEPTED
+
+    closed_loop = asyncio.new_event_loop()
+    closed_submit = closed_loop.create_task(
+        controller.submit_draft("closed peer", session_id=session.id)
+    )
+    closed_submit_ref = weakref.ref(closed_submit)
+    controller._register_submit_task(closed_submit, session.id)
+    controller._bind_submit_preparation(closed_submit, preparation.preparation_id)
+    closed_loop.close()
+    try:
+        controller.begin_shutdown()
+
+        assert closed_submit not in controller._active_submit_tasks
+        assert live_submit in controller._active_submit_tasks
+        live_preparation = store.preparation_for_session(session.id)
+        assert live_preparation is not None
+        assert live_preparation.preparation_id == preparation.preparation_id
+        assert live_preparation.state is ConsoleTurnPreparationState.ACCEPTED
+        assert controller._owner_loop is running_loop
+        (result,) = await asyncio.gather(live_submit, return_exceptions=True)
+
+        assert isinstance(result, ConsoleSubmitResult)
+        assert result.accepted
+        assert controller.provider_gateway.provider_calls == 0
+        assert store.preparation_for_session(session.id) is None
+        assert controller._active_submit_tasks == {}
+    finally:
+        closed_submit._log_destroy_pending = False
+        closed_submit.get_coro().close()
+        del closed_submit
+        gc.collect()
+
+    assert closed_submit_ref() is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invocation", ["same_thread", "off_thread"])
+async def test_shutdown_callback_failure_rethrows_after_all_task_cleanup(
+    monkeypatch, invocation
+):
+    running_loop = asyncio.get_running_loop()
+    prior_exception_handler = running_loop.get_exception_handler()
+    loop_errors: list[dict[str, object]] = []
+    running_loop.set_exception_handler(
+        lambda _loop, context: loop_errors.append(dict(context))
+    )
+    store = ConsoleChatStore()
+    store.library_policy_coordinator = _PolicyCoordinator(ConsoleAutoRetrieve.NEVER)
+    session = store.create_session(session_id="live-session")
+    closed_session = store.create_session(session_id="closed-session")
+    controller = ConsoleChatController(store=store, provider_gateway=_StreamingFence())
+    held = _CancellationBoundary()
+
+    async def hold_preflight(*, provider_messages, **_kwargs):
+        await held.wait()
+        return provider_messages, None
+
+    monkeypatch.setattr(
+        controller, "_apply_conversation_memory_preflight", hold_preflight
+    )
+    live_submit = asyncio.create_task(
+        controller.run_prompt_chain("live draft", session_id=session.id)
+    )
+    await held.entered.wait()
+    preparation = store.preparation_for_session(session.id)
+    assert preparation is not None
+    assert preparation.state is ConsoleTurnPreparationState.ACCEPTED
+
+    stream_started = asyncio.Event()
+
+    async def hold_stream():
+        stream_started.set()
+        await asyncio.Event().wait()
+
+    stream_task = asyncio.create_task(hold_stream())
+    await stream_started.wait()
+    controller._active_stream_tasks[closed_session.id] = stream_task
+
+    closed_loop = asyncio.new_event_loop()
+    closed_submit = closed_loop.create_task(
+        controller.submit_draft("closed draft", session_id=closed_session.id)
+    )
+    closed_submit_ref = weakref.ref(closed_submit)
+    controller._register_submit_task(closed_submit, closed_session.id)
+    closed_preparation = _preparation(
+        session_id=closed_session.id,
+        preparation_id="closed-preparation",
+        state=ConsoleTurnPreparationState.READY,
+    )
+    assert store.begin_preparation(closed_preparation) is closed_preparation
+    controller._bind_submit_preparation(
+        closed_submit, closed_preparation.preparation_id
+    )
+    controller._preparation_outcomes[closed_preparation.preparation_id] = (
+        ConsolePreparationOutcome(
+            preparation_id=closed_preparation.preparation_id,
+            attempt_id=closed_preparation.attempt_id,
+            state=closed_preparation.state,
+            evidence_bundle=None,
+            contribution=None,
+            error_code=None,
+        )
+    )
+    controller._prepared_send_continuations[closed_preparation.preparation_id] = (
+        object()
+    )  # type: ignore[assignment]
+    closed_loop.close()
+    headless_cancel = threading.Event()
+    controller._headless_visit_cancel = headless_cancel
+    callback_failure = RuntimeError("private presentation failure")
+
+    def fail_activity_callback(_session_id):
+        raise callback_failure
+
+    controller.prompt_queue_coordinator.on_activity_changed = fail_activity_callback
+    try:
+        if invocation == "same_thread":
+            with pytest.raises(RuntimeError) as caught:
+                controller.begin_shutdown()
+            assert caught.value is callback_failure
+        else:
+            await asyncio.to_thread(controller.begin_shutdown)
+            await asyncio.sleep(0)
+        controller.prompt_queue_coordinator.on_activity_changed = None
+        assert controller._shutdown_requested.is_set()
+        assert headless_cancel.is_set()
+        assert closed_submit not in controller._active_submit_tasks
+        submit_result, stream_result = await asyncio.gather(
+            live_submit, stream_task, return_exceptions=True
+        )
+
+        assert isinstance(submit_result, ConsoleSubmitResult)
+        assert submit_result.accepted
+        assert isinstance(stream_result, asyncio.CancelledError)
+        assert controller.provider_gateway.provider_calls == 0
+        assert store.preparation_for_session(session.id) is None
+        assert controller._preparation_outcomes == {}
+        assert controller._prepared_send_continuations == {}
+        assert controller._active_submit_tasks == {}
+        assert loop_errors == []
+    finally:
+        running_loop.set_exception_handler(prior_exception_handler)
+        controller.prompt_queue_coordinator.on_activity_changed = None
+        if not live_submit.done():
+            live_submit.cancel()
+        if not stream_task.done():
+            stream_task.cancel()
+        await asyncio.gather(live_submit, stream_task, return_exceptions=True)
+        closed_submit._log_destroy_pending = False
+        closed_submit.get_coro().close()
+        del closed_submit
+        gc.collect()
+
+    assert closed_submit_ref() is None
 
 
 @pytest.mark.asyncio

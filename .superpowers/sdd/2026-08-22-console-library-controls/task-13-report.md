@@ -242,3 +242,60 @@ pass. ADR required: no. ADR path:
 owns these volatile admission and teardown boundaries. TASK-19900.3 remains In
 Progress with all 22 acceptance criteria unchecked because Task14+ durable
 checkpoint/reconstruction and recovery UI remain out of scope.
+
+## Fix round 5
+
+Closed event-loop submit owners are now detached synchronously under the submit
+registry's RLock without cancellation, scheduling, or awaiting. The registry
+binds each task to its exact preparation identity in the same critical section
+that admits the store preparation. Cleanup legally abandons, rolls back, or
+settles only preparation identities exclusive to unreachable tasks, then drops
+their bounded outcome and continuation sidecars. A live peer sharing the same
+session and preparation remains authoritative; its normal cancellation/finalizer
+path still owns cleanup. Removing the controller's strong registry edge breaks
+the bidirectional ownership cycle; weak-reference collection after explicit safe
+test-coroutine teardown proves the closed task is no longer retained.
+
+Shutdown snapshots submit and stream owners before the queue tombstone. An
+explicit `try/finally` retains a queue or presentation-callback exception while
+preparation abandonment, owner-loop cancellation signals, and headless-round
+cancellation all execute, then the same-thread caller receives the original
+exception. The off-thread
+scheduled callback consumes that exception only after cleanup so asyncio cannot
+log its raw text; live task cancellation remains marshalled to each owner loop.
+
+Pre-edit reproducibility used the exact round-4 gates: 623 passed/1 inherited
+Requests warning for the affected gate and 100 passed/1 inherited warning for
+the companion gate. The first debug RED was 3 expected failures; an added
+off-thread privacy RED failed with the raw callback exception in the loop error
+handler. Final focused debug verification was 4 passed/1 inherited warning with
+no destroyed-pending-task, never-awaited-coroutine, asyncio, or RuntimeError
+warning. The final exact commands were:
+
+```bash
+PYTHONASYNCIODEBUG=1 ../../.venv/bin/python -m pytest Tests/Chat/test_console_automatic_library_preparation.py::test_closed_loop_pending_submit_drops_exact_volatile_ownership Tests/Chat/test_console_automatic_library_preparation.py::test_closed_loop_peer_never_blocks_same_session_live_submit_shutdown Tests/Chat/test_console_automatic_library_preparation.py::test_shutdown_callback_failure_rethrows_after_all_task_cleanup -q
+```
+
+Result: 4 passed/1 inherited warning.
+
+```bash
+../../.venv/bin/python -m pytest Tests/Architecture/test_console_wave6_inventory.py Tests/Chat/test_console_automatic_library_preparation.py Tests/Chat/test_console_chat_controller.py Tests/Chat/test_console_chat_store_library_policy.py Tests/Chat/test_console_prompt_queue_coordinator.py Tests/Chat/test_console_turn_library_authority.py Tests/Chat/test_console_turn_execution_context.py Tests/Chat/test_console_turn_preparation.py Tests/Chat/test_library_preparation.py Tests/UI/test_console_auto_rag_on_send.py Tests/UI/test_console_harness_config_honesty.py Tests/UI/test_console_rag_settings_modal.py Tests/UI/test_console_retrieval_controller.py Tests/UI/test_console_controller_wiring.py Tests/test_config_console_defaults.py -q
+```
+
+Result: 627 passed/1 inherited warning.
+
+```bash
+../../.venv/bin/python -m pytest Tests/Chat/test_console_runtime_lifetime.py Tests/Chat/test_console_prompt_queue.py Tests/Chat/test_console_prompt_queue_coordinator.py Tests/UI/test_console_prompt_queue.py Tests/UI/test_console_prompt_queue_modal.py -q
+```
+
+Result: 100 passed/1 inherited warning. Both required restored mutations were
+killed: skipping closed-loop unregister/cleanup failed at the retained registry,
+and re-raising the queue callback before teardown failed at the unset headless
+cancel signal. Scoped Ruff lint and changed-file formatting pass; the unchanged
+whole `console_chat_store.py` still fails formatting exactly as its HEAD input
+does. Source/privacy scans find no new log or credential sink, and
+`git diff --check` passes. ADR required: no. ADR path:
+`backlog/decisions/079-console-library-conversation-authority.md`; ADR-079 already
+owns volatile preparation and shutdown authority. TASK-19900.3 remains In
+Progress with all 22 acceptance criteria unchecked because Task14+ durability,
+checkpoint reconstruction, and recovery UI remain out of scope.

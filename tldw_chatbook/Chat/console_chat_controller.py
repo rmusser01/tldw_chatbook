@@ -2025,6 +2025,7 @@ class ConsoleChatController:
         # await and ends only after the submit finalizer; Task 14 will add
         # durable recovery/checkpoint semantics.
         self._active_submit_tasks: dict[asyncio.Task, str] = {}
+        self._active_submit_preparations: dict[asyncio.Task, str] = {}
         self._active_submit_tasks_lock = threading.RLock()
         try:
             self._owner_loop: asyncio.AbstractEventLoop | None = (
@@ -4114,7 +4115,8 @@ class ConsoleChatController:
 
         with self._active_submit_tasks_lock:
             self._active_submit_tasks[task] = session_id or ""
-            self._owner_loop = task.get_loop()
+            if self._owner_loop is None or self._owner_loop.is_closed():
+                self._owner_loop = task.get_loop()
 
     def _rebind_submit_task(self, task: asyncio.Task, session_id: str) -> None:
         """Bind a provisional submit owner to its resolved session."""
@@ -4123,11 +4125,34 @@ class ConsoleChatController:
             if task in self._active_submit_tasks:
                 self._active_submit_tasks[task] = session_id
 
+    def _bind_submit_preparation(self, task: asyncio.Task, preparation_id: str) -> None:
+        """Bind one exact volatile preparation to its submit owner."""
+
+        with self._active_submit_tasks_lock:
+            if task in self._active_submit_tasks:
+                self._active_submit_preparations[task] = preparation_id
+
+    def _begin_submit_preparation(
+        self,
+        task: asyncio.Task | None,
+        preparation: ConsoleTurnPreparation,
+    ) -> ConsoleTurnPreparation | None:
+        """Begin and bind one preparation without a shutdown ownership gap."""
+
+        if task is None:
+            return self.store.begin_preparation(preparation)
+        with self._active_submit_tasks_lock:
+            begun = self.store.begin_preparation(preparation)
+            if begun is not None and task in self._active_submit_tasks:
+                self._active_submit_preparations[task] = begun.preparation_id
+            return begun
+
     def _unregister_submit_task(self, task: asyncio.Task) -> None:
         """Remove only the completing submit task's own registry entry."""
 
         with self._active_submit_tasks_lock:
             self._active_submit_tasks.pop(task, None)
+            self._active_submit_preparations.pop(task, None)
 
     def _submit_task_session(self, task: asyncio.Task) -> str:
         """Return the task's latest resolved session binding, if any."""
@@ -4150,6 +4175,58 @@ class ConsoleChatController:
                 for task, owner_session_id in self._active_submit_tasks.items()
                 if owner_session_id == session_id
             )
+
+    def _detach_closed_submit_tasks(self) -> tuple[str, ...]:
+        """Drop closed-loop task owners and return exclusively owned preparations."""
+
+        with self._active_submit_tasks_lock:
+            closed_preparations: list[str] = []
+            for task in tuple(self._active_submit_tasks):
+                if not task.get_loop().is_closed():
+                    continue
+                self._active_submit_tasks.pop(task, None)
+                preparation_id = self._active_submit_preparations.pop(task, None)
+                if preparation_id is not None:
+                    closed_preparations.append(preparation_id)
+            live_preparations = frozenset(self._active_submit_preparations.values())
+        return tuple(
+            preparation_id
+            for preparation_id in dict.fromkeys(closed_preparations)
+            if preparation_id not in live_preparations
+        )
+
+    def _cleanup_unreachable_preparation(self, preparation_id: str) -> None:
+        """Synchronously remove one exact unreachable volatile Task-13 owner."""
+
+        try:
+            preparation = self._preparation_by_id(preparation_id)
+            if preparation is None:
+                return
+            if preparation.state in {
+                ConsoleTurnPreparationState.PREPARING,
+                ConsoleTurnPreparationState.READY,
+                ConsoleTurnPreparationState.PAUSED,
+            }:
+                self._abandon_preparation(preparation_id)
+            elif preparation.state is ConsoleTurnPreparationState.COMMITTING:
+                self._rollback_committing_preparation(preparation_id)
+            elif preparation.state in {
+                ConsoleTurnPreparationState.ACCEPTED,
+                ConsoleTurnPreparationState.DISPATCH_STARTED,
+                ConsoleTurnPreparationState.DISPATCHED,
+            }:
+                self._settle_accepted_preparation(preparation_id)
+            elif preparation.state in {
+                ConsoleTurnPreparationState.CANCELLED,
+                ConsoleTurnPreparationState.SETTLED,
+            }:
+                self._drop_preparation(
+                    preparation_id,
+                    expected_states=frozenset({preparation.state}),
+                )
+        finally:
+            self._preparation_outcomes.pop(preparation_id, None)
+            self._prepared_send_continuations.pop(preparation_id, None)
 
     @staticmethod
     def _cancel_task_on_owner_loop(task: asyncio.Task) -> None:
@@ -4422,6 +4499,10 @@ class ConsoleChatController:
         active_task = asyncio.current_task()
         if active_task is not None:
             self._rebind_submit_task(active_task, session.id)
+            if resumed_preparation is not None:
+                self._bind_submit_preparation(
+                    active_task, resumed_preparation.preparation_id
+                )
         # PR3a-2 Task 5: a wake never touches the user's staged state --
         # pending attachments belong to the USER's next send and must be
         # neither embedded nor cleared by a machine turn.
@@ -4682,7 +4763,7 @@ class ConsoleChatController:
                 one_shot_bypass=False,
                 ephemeral=session.ephemeral,
             )
-            if self.store.begin_preparation(preparation) is None:
+            if self._begin_submit_preparation(active_task, preparation) is None:
                 if echoed_user is not None:
                     self._mark_transient_echo_blocked(echoed_user.id)
                 return ConsoleSubmitResult(
@@ -7968,6 +8049,9 @@ class ConsoleChatController:
         self._visit_open = False
         self._fleet_wake.dispose()
         self._shutdown_requested.set()
+        unreachable_preparations = self._detach_closed_submit_tasks()
+        for preparation_id in unreachable_preparations:
+            self._cleanup_unreachable_preparation(preparation_id)
         try:
             running_loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -7980,7 +8064,9 @@ class ConsoleChatController:
             and not owner_loop.is_closed()
         ):
             try:
-                owner_loop.call_soon_threadsafe(self._finish_begin_shutdown)
+                owner_loop.call_soon_threadsafe(
+                    self._finish_begin_shutdown_from_scheduled_callback
+                )
             except RuntimeError:
                 self._cancel_headless_rounds()
             return
@@ -7989,29 +8075,57 @@ class ConsoleChatController:
             return
         self._finish_begin_shutdown()
 
+    def _finish_begin_shutdown_from_scheduled_callback(self) -> None:
+        """Finish off-thread teardown without exposing callback exception text."""
+
+        try:
+            self._finish_begin_shutdown()
+        except Exception:
+            return
+
     def _finish_begin_shutdown(self) -> None:
         """Run queue/preparation/task teardown on the asyncio owner loop."""
 
-        self.prompt_queue_coordinator.shutdown()
-        for session in tuple(self.store.sessions()):
-            preparation = self.store.preparation_for_session(session.id)
-            if preparation is None or preparation.state not in {
-                ConsoleTurnPreparationState.PREPARING,
-                ConsoleTurnPreparationState.READY,
-                ConsoleTurnPreparationState.PAUSED,
-            }:
-                continue
-            self._abandon_preparation(preparation.preparation_id)
+        submit_tasks = self._submit_tasks_snapshot()
+        stream_tasks = dict(self._active_stream_tasks)
+        queue_failure: BaseException | None = None
+        cleanup_failure: BaseException | None = None
         try:
-            current = asyncio.current_task()
-        except RuntimeError:
-            current = None
-        for task, session_id in self._submit_tasks_snapshot().items():
-            if session_id:
+            self.prompt_queue_coordinator.shutdown()
+        except BaseException as exc:
+            queue_failure = exc
+        finally:
+            for session in tuple(self.store.sessions()):
+                preparation = self.store.preparation_for_session(session.id)
+                if preparation is None or preparation.state not in {
+                    ConsoleTurnPreparationState.PREPARING,
+                    ConsoleTurnPreparationState.READY,
+                    ConsoleTurnPreparationState.PAUSED,
+                }:
+                    continue
+                try:
+                    self._abandon_preparation(preparation.preparation_id)
+                except BaseException as exc:
+                    if cleanup_failure is None:
+                        cleanup_failure = exc
+            try:
+                current = asyncio.current_task()
+            except RuntimeError:
+                current = None
+            for task, session_id in submit_tasks.items():
+                if session_id:
+                    self._signal_stop(session_id=session_id)
+                if task is not current:
+                    self._cancel_task_on_owner_loop(task)
+            for session_id, task in stream_tasks.items():
                 self._signal_stop(session_id=session_id)
-            if task is not current:
-                self._cancel_task_on_owner_loop(task)
-        self._cancel_headless_rounds()
+                if task is not current:
+                    self._cancel_task_on_owner_loop(task)
+            self._cancel_headless_rounds()
+        if queue_failure is not None:
+            raise queue_failure
+        if cleanup_failure is not None:
+            raise cleanup_failure
 
     def _cancel_headless_rounds(self) -> None:
         """Deny every round armed while no Console visit was open.
