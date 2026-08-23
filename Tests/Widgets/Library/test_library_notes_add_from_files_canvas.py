@@ -278,6 +278,11 @@ async def test_conflict_choices_are_keyboard_reachable_and_update_in_place(
         keep_file = app.query_one("#notes-sync-conflict-0-keep-file", Button)
         assert keep_file.name == "bind-1"
         assert not keep_file.disabled
+        assert app.query_one(
+            "#notes-sync-conflict-0-keep-both", Button
+        ).label.plain == (
+            "Keep both — preserve an unbound note copy, then update the bound note."
+        )
         keep_file.focus()
         await pilot.press("enter")
         await _wait_for(
@@ -547,6 +552,108 @@ async def test_post_apply_focus_request_targets_first_remaining_conflict_once() 
         )
         await pilot.pause()
         assert app.focused is back
+
+
+async def test_conflict_focus_request_does_not_steal_newer_focus(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = replace(
+        initial_lasting_sync_snapshot(lasting_available=True),
+        phase="review",
+        review=_conflict_review(),
+    )
+    app = _Host(snapshot)
+
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        canvas = app.query_one(LibraryNotesAddFromFilesCanvas)
+        pending: list[tuple[object, tuple[object, ...]]] = []
+        monkeypatch.setattr(
+            canvas,
+            "call_after_refresh",
+            lambda callback, *args: pending.append((callback, args)),
+        )
+        back = app.query_one("#notes-sync-back", Button)
+        back.focus()
+        canvas.sync_state(replace(snapshot, conflict_focus_binding_id="bind-1"))
+
+        capture, capture_args = pending.pop(0)
+        capture(*capture_args)
+        keep_file = app.query_one("#notes-sync-conflict-0-keep-file", Button)
+        keep_file.focus()
+        await pilot.pause()
+        assert app.focused is keep_file
+        focus, focus_args = pending.pop(0)
+        focus(*focus_args)
+        await pilot.pause()
+
+        assert app.focused is keep_file
+
+
+async def test_initial_mount_honors_fresh_conflict_focus_request() -> None:
+    snapshot = replace(
+        initial_lasting_sync_snapshot(lasting_available=True),
+        phase="review",
+        review=_conflict_review(),
+        conflict_focus_binding_id="bind-1",
+    )
+    app = _Host(snapshot)
+
+    async with app.run_test(size=(60, 20)) as pilot:
+        await _wait_for(
+            pilot,
+            lambda: app.focused is app.query_one("#notes-sync-conflict-view-0", Button),
+            message="initial focus request did not focus its mounted conflict",
+        )
+
+
+async def test_new_token_focus_request_survives_full_review_recompose() -> None:
+    snapshot = replace(
+        initial_lasting_sync_snapshot(lasting_available=True),
+        phase="review",
+        review=_conflict_review(),
+    )
+    app = _Host(snapshot)
+
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        canvas = app.query_one(LibraryNotesAddFromFilesCanvas)
+        app.query_one("#notes-sync-back", Button).focus()
+        next_snapshot = replace(
+            snapshot,
+            review=replace(snapshot.review, observation_token="d" * 64),
+            conflict_focus_binding_id="bind-1",
+        )
+
+        canvas.sync_state(next_snapshot)
+
+        await _wait_for(
+            pilot,
+            lambda: app.focused is app.query_one("#notes-sync-conflict-view-0", Button),
+            message="new-token focus request was lost during full recompose",
+        )
+
+
+async def test_normal_new_token_recompose_does_not_focus_a_conflict() -> None:
+    snapshot = replace(
+        initial_lasting_sync_snapshot(lasting_available=True),
+        phase="review",
+        review=_conflict_review(),
+    )
+    app = _Host(snapshot)
+
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        canvas = app.query_one(LibraryNotesAddFromFilesCanvas)
+        canvas.sync_state(
+            replace(
+                snapshot,
+                review=replace(snapshot.review, observation_token="d" * 64),
+            )
+        )
+        await pilot.pause()
+
+        assert app.focused not in tuple(app.query(".notes-sync-conflict-view"))
 
 
 @pytest.mark.parametrize("size", ((60, 20), (120, 36)))

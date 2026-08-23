@@ -286,6 +286,11 @@ class LibraryNotesSyncController:
         plan = self._review_plan
         if plan is None:
             return ()
+        return self._selections_for_plan(plan)
+
+    def _selections_for_plan(
+        self, plan: ReconciliationPlan
+    ) -> tuple[ConflictSelection, ...]:
         return tuple(
             ConflictSelection(binding_id, choice)
             for (token, binding_id), choice in sorted(self._selections.items())
@@ -320,11 +325,16 @@ class LibraryNotesSyncController:
         page: int = 1,
         stale: bool = False,
         activation: bool = False,
+        labels: dict[str, RuntimeConflictLabel] | None = None,
+        selections: tuple[ConflictSelection, ...] | None = None,
     ) -> LastingSyncReview:
+        projected_labels = self._review_labels if labels is None else labels
         review = build_reconciliation_review(
             plan,
             page=page,
-            selections=self._current_selections(),
+            selections=(
+                self._selections_for_plan(plan) if selections is None else selections
+            ),
             stale=stale,
             activation=activation,
         )
@@ -333,28 +343,25 @@ class LibraryNotesSyncController:
             rows=tuple(
                 replace(
                     row,
-                    conflict_title=self._review_labels[row.item_id].note_title,
-                    conflict_relative_path=self._review_labels[
-                        row.item_id
-                    ].relative_path,
+                    conflict_title=projected_labels[row.item_id].note_title,
+                    conflict_relative_path=projected_labels[row.item_id].relative_path,
                 )
-                if row.conflict_eligible and row.item_id in self._review_labels
+                if row.conflict_eligible and row.item_id in projected_labels
                 else row
                 for row in review.rows
             ),
         )
 
     async def _load_review_facts(
-        self, root_id: str, observation_token: str
+        self, plan: ReconciliationPlan
     ) -> tuple[dict[str, RuntimeConflictLabel], bool]:
-        labels = await self._runtime.conflict_labels(root_id, observation_token)
+        labels = await self._runtime.conflict_labels(
+            plan.root_id, plan.observation_token
+        )
         if type(labels) is not tuple or any(
             type(label) is not RuntimeConflictLabel for label in labels
         ):
             raise RuntimeError("invalid conflict label projection")
-        plan = self._review_plan
-        if plan is None:
-            raise RuntimeError("review authority unavailable")
         managed = {effect.binding_id for effect in plan.managed_placement_effects}
         eligible = {
             attention.binding_id
@@ -370,7 +377,9 @@ class LibraryNotesSyncController:
         if len(projected) != len(labels) or set(projected) != eligible:
             raise RuntimeError("incomplete conflict label projection")
         try:
-            history_available = await self._runtime.conflict_history_available(root_id)
+            history_available = await self._runtime.conflict_history_available(
+                plan.root_id
+            )
             if type(history_available) is not bool:
                 raise RuntimeError("invalid conflict history availability")
         except Exception:
@@ -381,14 +390,18 @@ class LibraryNotesSyncController:
         self,
         plan: ReconciliationPlan,
         *,
+        expected_root_id: str | None,
+        epoch: int,
         activation: bool = False,
-    ) -> bool:
-        self._review_plan = plan
+        reset_ephemeral: bool = False,
+    ) -> bool | None:
         try:
-            labels, history_available = await self._load_review_facts(
-                plan.root_id, plan.observation_token
-            )
+            if expected_root_id is not None and plan.root_id != expected_root_id:
+                raise RuntimeError("review root changed")
+            labels, history_available = await self._load_review_facts(plan)
         except Exception:
+            if not self._lifecycle_is_current(expected_root_id, epoch):
+                return None
             self._review_labels.clear()
             self._state = replace(
                 self._state,
@@ -400,10 +413,24 @@ class LibraryNotesSyncController:
             )
             self._review_plan = None
             return False
+        if not self._lifecycle_is_current(expected_root_id, epoch):
+            return None
+        if expected_root_id is None:
+            self._projection_root_id = plan.root_id
+        if reset_ephemeral:
+            self._selections.clear()
+            self._clear_comparison()
+        selections = self._selections_for_plan(plan)
         self._review_labels = labels
+        self._review_plan = plan
         self._state = replace(
             self._state,
-            review=self._review_projection(plan, activation=activation),
+            review=self._review_projection(
+                plan,
+                activation=activation,
+                labels=labels,
+                selections=selections,
+            ),
             history_available=history_available,
             conflict_focus_binding_id=None,
         )
@@ -697,7 +724,11 @@ class LibraryNotesSyncController:
             )
             self._publish()
             return
-        installed = await self._install_review(plan)
+        installed = await self._install_review(
+            plan, expected_root_id=root_id, epoch=epoch
+        )
+        if installed is None:
+            return
         self._state = replace(
             self._state,
             phase="review",
@@ -747,8 +778,14 @@ class LibraryNotesSyncController:
             )
             self._publish()
             return
-        self._projection_root_id = plan.root_id
-        installed = await self._install_review(plan, activation=True)
+        installed = await self._install_review(
+            plan,
+            expected_root_id=None,
+            epoch=epoch,
+            activation=True,
+        )
+        if installed is None:
+            return
         self._state = replace(
             self._state,
             phase="review",
@@ -921,9 +958,14 @@ class LibraryNotesSyncController:
             self._publish()
             return
 
-        self._selections.clear()
-        self._clear_comparison()
-        installed = await self._install_review(result.fresh_plan)
+        installed = await self._install_review(
+            result.fresh_plan,
+            expected_root_id=root_id,
+            epoch=epoch,
+            reset_ephemeral=True,
+        )
+        if installed is None:
+            return
         if not installed:
             self._state = replace(
                 self._state,
@@ -1001,7 +1043,11 @@ class LibraryNotesSyncController:
             )
             self._publish()
             return
-        installed = await self._install_review(plan)
+        installed = await self._install_review(
+            plan, expected_root_id=root_id, epoch=epoch
+        )
+        if installed is None:
+            return
         self._state = replace(
             self._state,
             phase="review",

@@ -1471,6 +1471,173 @@ async def test_out_of_order_root_checks_and_remounted_error_publish_nothing_stal
     assert len(published) == count
 
 
+@pytest.mark.parametrize("delayed_fact", ("labels", "history"))
+async def test_superseded_review_facts_cannot_clobber_new_root_projection(
+    delayed_fact: str,
+) -> None:
+    runtime = _Runtime()
+    facts_started = asyncio.Event()
+    release_facts = asyncio.Event()
+
+    async def check(root_id: str) -> ReconciliationPlan:
+        return _conflict_plan(
+            root_id=root_id,
+            token=TOKEN if root_id == "root-1" else TOKEN_2,
+        )
+
+    async def labels(root_id: str, token: str) -> tuple[RuntimeConflictLabel, ...]:
+        if root_id == "root-1" and delayed_fact == "labels":
+            facts_started.set()
+            await release_facts.wait()
+        return (RuntimeConflictLabel("bind-1", root_id, f"{token}.md"),)
+
+    async def history_available(root_id: str) -> bool:
+        if root_id == "root-1" and delayed_fact == "history":
+            facts_started.set()
+            await release_facts.wait()
+        return root_id == "root-2"
+
+    runtime.check_root = check
+    runtime.conflict_labels = labels
+    runtime.conflict_history_available = history_available
+    published: list[object] = []
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+        publish_snapshot=published.append,
+    )
+
+    old = asyncio.create_task(controller.check_root("root-1"))
+    await facts_started.wait()
+    await controller.check_root("root-2")
+    expected = controller.snapshot
+    expected_plan = controller._review_plan
+    expected_labels = controller._review_labels.copy()
+    count = len(published)
+
+    release_facts.set()
+    await old
+
+    assert controller.snapshot == expected
+    assert controller._review_plan is expected_plan
+    assert controller._review_labels == expected_labels
+    assert controller._projection_root_id == "root-2"
+    assert len(published) == count
+
+
+async def test_superseded_same_root_review_facts_keep_newer_token() -> None:
+    runtime = _Runtime()
+    labels_started = asyncio.Event()
+    release_labels = asyncio.Event()
+    check_count = 0
+
+    async def check(root_id: str) -> ReconciliationPlan:
+        nonlocal check_count
+        check_count += 1
+        return _conflict_plan(token=TOKEN if check_count == 1 else TOKEN_2)
+
+    async def labels(root_id: str, token: str) -> tuple[RuntimeConflictLabel, ...]:
+        if token == TOKEN:
+            labels_started.set()
+            await release_labels.wait()
+        return (RuntimeConflictLabel("bind-1", token, "note.md"),)
+
+    runtime.check_root = check
+    runtime.conflict_labels = labels
+    controller = LibraryNotesSyncController(
+        runtime=runtime, import_controller=_ImportController()
+    )
+
+    old = asyncio.create_task(controller.check_root("root-1"))
+    await labels_started.wait()
+    await controller.check_root("root-1")
+    expected = controller.snapshot
+    release_labels.set()
+    await old
+
+    assert controller.snapshot == expected
+    assert controller.snapshot.review.observation_token == TOKEN_2
+    assert controller._review_plan is not None
+    assert controller._review_plan.observation_token == TOKEN_2
+
+
+async def test_remount_fences_delayed_review_facts_without_publication() -> None:
+    runtime = _Runtime()
+    runtime.check_plan = _conflict_plan()
+    labels_started = asyncio.Event()
+    release_labels = asyncio.Event()
+
+    async def delayed_labels(
+        root_id: str, token: str
+    ) -> tuple[RuntimeConflictLabel, ...]:
+        labels_started.set()
+        await release_labels.wait()
+        return (RuntimeConflictLabel("bind-1", "Note", "note.md"),)
+
+    runtime.conflict_labels = delayed_labels
+    published: list[object] = []
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+        publish_snapshot=published.append,
+    )
+    pending = asyncio.create_task(controller.check_root("root-1"))
+    await labels_started.wait()
+    controller.invalidate_for_remount()
+    expected = controller.snapshot
+    count = len(published)
+
+    release_labels.set()
+    await pending
+
+    assert controller.snapshot == expected
+    assert controller._projection_root_id is None
+    assert controller._review_plan is None
+    assert controller._review_labels == {}
+    assert len(published) == count
+
+
+async def test_failed_superseded_review_facts_publish_nothing() -> None:
+    runtime = _Runtime()
+    labels_started = asyncio.Event()
+    release_labels = asyncio.Event()
+
+    async def check(root_id: str) -> ReconciliationPlan:
+        return _conflict_plan(
+            root_id=root_id,
+            token=TOKEN if root_id == "root-1" else TOKEN_2,
+        )
+
+    async def labels(root_id: str, token: str) -> tuple[RuntimeConflictLabel, ...]:
+        if root_id == "root-1":
+            labels_started.set()
+            await release_labels.wait()
+            raise RuntimeError("old labels unavailable")
+        return (RuntimeConflictLabel("bind-1", "Current", "current.md"),)
+
+    runtime.check_root = check
+    runtime.conflict_labels = labels
+    published: list[object] = []
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+        publish_snapshot=published.append,
+    )
+    old = asyncio.create_task(controller.check_root("root-1"))
+    await labels_started.wait()
+    await controller.check_root("root-2")
+    expected = controller.snapshot
+    count = len(published)
+
+    release_labels.set()
+    await old
+
+    assert controller.snapshot == expected
+    assert controller._review_plan is not None
+    assert controller._review_plan.root_id == "root-2"
+    assert len(published) == count
+
+
 async def test_same_root_receipt_refresh_does_not_drop_apply_or_undo_result() -> None:
     runtime = _Runtime()
     runtime.check_plan = _conflict_plan()

@@ -13,6 +13,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
+from textual.widget import Widget
 from textual.widgets import Button, Input, Static, TextArea
 
 from tldw_chatbook.Library.library_notes_lasting_sync_state import (
@@ -37,7 +38,7 @@ _CHOICE_SLUGS = {
 _CHOICE_EFFECTS = {
     "Keep file": "update the Library note",
     "Keep note": "replace the folder file",
-    "Keep both": "preserve a note copy, then update the bound note",
+    "Keep both": "preserve an unbound note copy, then update the bound note.",
     "Skip for now": "make no changes",
 }
 _CHOICE_LABELS = {
@@ -133,8 +134,12 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
     ) -> None:
         super().__init__(**kwargs)
         self.snapshot = snapshot
-        self._handled_conflict_focus_binding_id = snapshot.conflict_focus_binding_id
+        self._handled_conflict_focus_request: tuple[str, str, str] | None = None
+        self._scheduled_conflict_focus_request: tuple[str, str, str] | None = None
         self.add_class("library-notes-lasting-sync-canvas")
+
+    def on_mount(self) -> None:
+        self._schedule_conflict_focus_request()
 
     def compose(self) -> ComposeResult:
         yield Static(
@@ -825,6 +830,7 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             self._sync_review(snapshot, previous_snapshot)
             return
         self.refresh(recompose=True)
+        self._schedule_conflict_focus_request()
 
     def _sync_review(
         self,
@@ -896,15 +902,7 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                         view,
                         diff,
                     )
-        focus_binding_id = snapshot.conflict_focus_binding_id
-        if focus_binding_id is None:
-            self._handled_conflict_focus_binding_id = None
-        elif focus_binding_id != self._handled_conflict_focus_binding_id:
-            self._handled_conflict_focus_binding_id = focus_binding_id
-            self.call_after_refresh(
-                self._focus_requested_conflict,
-                focus_binding_id,
-            )
+        self._schedule_conflict_focus_request()
 
     def _focus_published_comparison(
         self,
@@ -930,15 +928,68 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             return
         diff.focus()
 
-    def _focus_requested_conflict(self, binding_id: str) -> None:
-        """Honor one fresh post-apply focus request on the mounted review."""
+    def _current_conflict_focus_request(self) -> tuple[str, str, str] | None:
+        review = self.snapshot.review
+        binding_id = self.snapshot.conflict_focus_binding_id
+        if (
+            self.snapshot.phase != "review"
+            or not review.root_id
+            or not review.observation_token
+            or binding_id is None
+        ):
+            return None
+        return review.root_id, review.observation_token, binding_id
 
-        if not self.is_mounted or self.snapshot.conflict_focus_binding_id != binding_id:
-            return
+    def _requested_conflict_view(self, request: tuple[str, str, str]) -> Button | None:
+        if not self.is_mounted or self._current_conflict_focus_request() != request:
+            return None
+        binding_id = request[2]
+        if not any(
+            row.item_id == binding_id and row.conflict_eligible
+            for row in self.snapshot.review.rows
+        ):
+            return None
         for view in self.query(".notes-sync-conflict-view"):
-            if isinstance(view, Button) and view.name == binding_id:
-                view.focus()
-                return
+            if (
+                isinstance(view, Button)
+                and view.is_mounted
+                and not view.disabled
+                and view.name == binding_id
+            ):
+                return view
+        return None
+
+    def _schedule_conflict_focus_request(self) -> None:
+        request = self._current_conflict_focus_request()
+        if request is None:
+            self._scheduled_conflict_focus_request = None
+            return
+        if request in {
+            self._handled_conflict_focus_request,
+            self._scheduled_conflict_focus_request,
+        }:
+            return
+        self._scheduled_conflict_focus_request = request
+        self.call_after_refresh(self._capture_conflict_focus_provenance, request)
+
+    def _capture_conflict_focus_provenance(self, request: tuple[str, str, str]) -> None:
+        if self._requested_conflict_view(request) is None:
+            return
+        focused = self.screen.focused
+        self.call_after_refresh(self._focus_requested_conflict, request, focused)
+
+    def _focus_requested_conflict(
+        self,
+        request: tuple[str, str, str],
+        focused: Widget | None,
+    ) -> None:
+        """Honor one fresh focus request without stealing newer user focus."""
+
+        view = self._requested_conflict_view(request)
+        if view is None or self.screen.focused is not focused:
+            return
+        view.focus()
+        self._handled_conflict_focus_request = request
 
     def focus_first_safe_control(self) -> None:
         """Focus the first non-destructive control for the current phase."""
