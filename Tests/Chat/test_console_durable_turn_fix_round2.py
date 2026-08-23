@@ -183,7 +183,7 @@ async def test_real_persistence_retry_reuses_exact_staged_message_owners(
             (paused.preparation_id,),
         )
         .fetchone()[0]
-        == 1
+        == 0
     )
     assert store.preparation_for_session("session-1") is None
 

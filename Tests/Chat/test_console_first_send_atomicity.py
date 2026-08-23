@@ -154,18 +154,12 @@ async def test_first_durable_send_commits_owner_then_cas_before_provider_entry(
         ("user", "first durable prompt"),
         ("assistant", "done"),
     ]
-    checkpoint = (
+    assert (
         db.get_connection()
-        .execute(
-            "SELECT state, user_message_id, assistant_message_id "
-            "FROM console_dispatch_checkpoints"
-        )
-        .fetchone()
+        .execute("SELECT COUNT(*) FROM console_dispatch_checkpoints")
+        .fetchone()[0]
+        == 0
     )
-    assert checkpoint is not None
-    assert checkpoint["state"] == "dispatch_started"
-    assert checkpoint["user_message_id"] == result.user_message_id
-    assert checkpoint["assistant_message_id"] == result.assistant_message_id
     assert accepted_hooks == 1
     assert controller.prompt_history.size == 1
     assert store.durable_content_retention_count() == 0
@@ -253,7 +247,7 @@ async def test_postcommit_effect_failure_is_reentered_once_by_preparation_id(
 
 
 @pytest.mark.asyncio
-async def test_provider_entry_failure_keeps_same_dispatch_started_durable_owner(
+async def test_provider_entry_failure_atomically_settles_durable_owner(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -277,16 +271,12 @@ async def test_provider_entry_failure_keeps_same_dispatch_started_durable_owner(
 
     assert first.accepted is True
     assert first.provider_started is True
-    checkpoint = (
+    assert (
         db.get_connection()
-        .execute(
-            "SELECT preparation_id, assistant_message_id, state "
-            "FROM console_dispatch_checkpoints"
-        )
-        .fetchone()
+        .execute("SELECT COUNT(*) FROM console_dispatch_checkpoints")
+        .fetchone()[0]
+        == 0
     )
-    assert checkpoint is not None
-    assert checkpoint["state"] == "dispatch_started"
     row_counts = tuple(
         db.get_connection().execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
         for table in (
@@ -296,7 +286,7 @@ async def test_provider_entry_failure_keeps_same_dispatch_started_durable_owner(
         )
     )
 
-    second = await controller.resume_durable_postcommit(checkpoint["preparation_id"])
+    second = await controller.resume_durable_postcommit(first.preparation_id or "")
 
     assert second.accepted is False
     assert "unavailable" in second.visible_copy.lower()

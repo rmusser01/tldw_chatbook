@@ -43,6 +43,7 @@ from tldw_chatbook.Chat.citation_trace_repository import (
 )
 from tldw_chatbook.Chat.console_chat_models import (
     CONSOLE_GLOBAL_WORKSPACE_ID,
+    CONSOLE_EPHEMERAL_PROMOTION_BLOCK_COPY,
     DEFAULT_CONSOLE_SESSION_TITLE,
     ConsoleActivityPresentation,
     ConsoleChatMessage,
@@ -50,15 +51,24 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageFeedback,
     ConsoleMessageRole,
     ConsoleMessageStatus,
+    ConsoleDispatchRecoveryActionId,
+    ConsoleDispatchRecoveryKind,
+    ConsoleDispatchRecoveryState,
     ConsoleVariant,
     ConsoleVariantSet,
     ConsoleWorkspaceContext,
     GenerationVariantMeta,
     MessageAttachment,
+    console_dispatch_recovery_from_checkpoint,
 )
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+    ConsoleAssistantSettlement,
     ConsoleDispatchCheckpoint,
+    ConsoleDispatchCheckpointState,
+    ConsoleDispatchReconstructability,
+    ConsoleDispatchResultStatus,
+    ConsoleDispatchTransition,
     ConsoleDurableTurnAcceptance,
     ConsoleResolvedDestination,
     ConsoleTurnLibraryAuthority,
@@ -168,6 +178,10 @@ class _CharacterEmoteCapture:
     snapshot: CharacterEmoteRunSnapshot
     events: list[CharacterEmoteEvent] = field(default_factory=list)
     fail_closed: bool = False
+
+
+class ConsoleDispatchSettlementError(RuntimeError):
+    """An owned dispatch terminal could not commit atomically."""
 
 
 def _refuse_roleplay_projection_write(**_kwargs: object) -> bool:
@@ -954,6 +968,13 @@ class ConsoleChatStore:
         self._durable_tombstones: OrderedDict[str, _ConsoleDurableTombstone] = (
             OrderedDict()
         )
+        # Task 15: the app-runtime owner for both reconciled durable recovery
+        # and the no-SQL ephemeral analogue.  Mounted screens only project it.
+        self._dispatch_recoveries_by_session: dict[
+            str, ConsoleDispatchRecoveryState
+        ] = {}
+        self._dispatch_recovery_message_baselines: dict[str, ConsoleChatMessage] = {}
+        self._dispatch_recovery_queue_hydration_pending: set[str] = set()
         #: Derived VIEW = the current active path only (root -> active leaf).
         #: Written ONLY by ``_recompute_active_path`` (single-writer invariant);
         #: every other reader/writer of the tree goes through the maps below.
@@ -1614,6 +1635,10 @@ class ConsoleChatStore:
             activate=activate,
         )
         session.persisted_conversation_id = str(persisted_conversation_id)
+        self._hydrate_dispatch_recovery(
+            session.id,
+            str(persisted_conversation_id),
+        )
         session.library_policy_hydrated = False
         coordinator = self.library_policy_coordinator
         if coordinator is not None:
@@ -1646,6 +1671,465 @@ class ConsoleChatStore:
         self._hydrate_generation_metadata_from_persistence(session.id)
         self._bump_payload_revision(session.id)
         return session
+
+    def _hydrate_dispatch_recovery(
+        self,
+        session_id: str,
+        conversation_id: str,
+    ) -> ConsoleDispatchRecoveryState | None:
+        """Reconcile device-local ownership before any restored queue can wake."""
+
+        repository = getattr(
+            self.persistence,
+            "console_dispatch_repository",
+            None,
+        )
+        reconcile = getattr(repository, "reconcile_for_session", None)
+        if not callable(reconcile):
+            self._dispatch_recoveries_by_session.pop(session_id, None)
+            self._dispatch_recovery_message_baselines.pop(session_id, None)
+            self._dispatch_recovery_queue_hydration_pending.discard(session_id)
+            return None
+        try:
+            recovery = reconcile(conversation_id)
+        except Exception:
+            logger.warning("console_dispatch_recovery_hydration_failed")
+            recovery = ConsoleDispatchRecoveryState(
+                kind=ConsoleDispatchRecoveryKind.QUARANTINED,
+                assistant_message_id="",
+                conversation_id=conversation_id,
+                visible_copy=(
+                    "Dispatch recovery is unavailable because persisted ownership "
+                    "is invalid."
+                ),
+                actions=(),
+                error_code="checkpoint_read_error",
+            )
+        if recovery is None:
+            self._dispatch_recoveries_by_session.pop(session_id, None)
+            self._dispatch_recovery_message_baselines.pop(session_id, None)
+            self._dispatch_recovery_queue_hydration_pending.discard(session_id)
+        else:
+            self._dispatch_recoveries_by_session[session_id] = recovery
+            checkpoint = recovery.checkpoint
+            if (
+                checkpoint is not None
+                and checkpoint.origin == "queued"
+                and checkpoint.queue_entry_id is not None
+            ):
+                self._dispatch_recovery_queue_hydration_pending.add(session_id)
+            else:
+                self._dispatch_recovery_queue_hydration_pending.discard(session_id)
+        return recovery
+
+    def dispatch_recovery_for_session(
+        self, session_id: str | None
+    ) -> ConsoleDispatchRecoveryState | None:
+        """Return one immutable app-runtime recovery owner, if present."""
+
+        if not isinstance(session_id, str) or not session_id:
+            return None
+        with self._preparation_lock:
+            return self._dispatch_recoveries_by_session.get(session_id)
+
+    def dispatch_recovery_needs_queue_hydration(self, session_id: str) -> bool:
+        """Return whether restore published a queued owner not yet projected."""
+
+        with self._preparation_lock:
+            return session_id in self._dispatch_recovery_queue_hydration_pending
+
+    def mark_dispatch_recovery_queue_hydrated(self, session_id: str) -> None:
+        """Acknowledge projection of one restored queued recovery owner."""
+
+        with self._preparation_lock:
+            self._dispatch_recovery_queue_hydration_pending.discard(session_id)
+
+    def publish_durable_dispatch_checkpoint(
+        self,
+        session_id: str,
+        checkpoint: ConsoleDispatchCheckpoint,
+        *,
+        in_flight: bool,
+    ) -> ConsoleDispatchRecoveryState:
+        """Publish the exact committed durable owner into app-runtime state."""
+
+        self._session_or_raise(session_id)
+        recovery = console_dispatch_recovery_from_checkpoint(
+            checkpoint,
+            in_flight=in_flight,
+        )
+        with self._preparation_lock:
+            current = self._dispatch_recoveries_by_session.get(session_id)
+            if current is not None and (
+                current.assistant_message_id != recovery.assistant_message_id
+                or current.conversation_id != recovery.conversation_id
+            ):
+                raise RuntimeError("Durable dispatch recovery owner changed.")
+            if in_flight:
+                message = self._message_or_raise(recovery.assistant_message_id)
+                self._dispatch_recovery_message_baselines[session_id] = self._snapshot(
+                    message
+                )
+            self._dispatch_recoveries_by_session[session_id] = recovery
+        return recovery
+
+    def register_ephemeral_dispatch_recovery(
+        self,
+        session_id: str,
+        *,
+        user_message_id: str,
+        assistant_message_id: str,
+        preparation_id: str,
+        attempt_id: str,
+        checkpoint_state: ConsoleDispatchCheckpointState,
+        origin: str,
+        queue_entry_id: str | None,
+        frozen_authority: ConsoleTurnLibraryAuthority,
+        resolved_destination: ConsoleResolvedDestination,
+        reconstructability: ConsoleDispatchReconstructability,
+    ) -> ConsoleDispatchRecoveryState:
+        """Install the no-SQL analogue of one accepted dispatch checkpoint."""
+
+        session = self._session_or_raise(session_id)
+        if not session.ephemeral:
+            raise RuntimeError("Only a temporary session can own ephemeral recovery.")
+        user = self._message_or_raise(user_message_id)
+        assistant = self._message_or_raise(assistant_message_id)
+        if (
+            self._message_session_index.get(user.id) != session_id
+            or self._message_session_index.get(assistant.id) != session_id
+            or user.role is not ConsoleMessageRole.USER
+            or assistant.role is not ConsoleMessageRole.ASSISTANT
+        ):
+            raise RuntimeError("Ephemeral dispatch owners changed.")
+        checkpoint = ConsoleDispatchCheckpoint(
+            assistant_message_id=assistant_message_id,
+            user_message_id=user_message_id,
+            conversation_id=session_id,
+            preparation_id=preparation_id,
+            attempt_id=attempt_id,
+            state=checkpoint_state,
+            checkpoint_revision=1,
+            user_message_version=1,
+            assistant_message_version=1,
+            origin=origin,
+            queue_entry_id=queue_entry_id,
+            frozen_authority=frozen_authority,
+            resolved_destination=resolved_destination,
+            reconstructability=reconstructability,
+        )
+        recovery = console_dispatch_recovery_from_checkpoint(
+            checkpoint,
+            ephemeral=True,
+        )
+        with self._preparation_lock:
+            current = self._dispatch_recoveries_by_session.get(session_id)
+            if current is not None:
+                if current == recovery:
+                    return current
+                raise RuntimeError("Ephemeral dispatch recovery is already owned.")
+            self._dispatch_recoveries_by_session[session_id] = recovery
+        return recovery
+
+    def claim_dispatch_recovery_action(
+        self,
+        session_id: str,
+        action_id: ConsoleDispatchRecoveryActionId,
+    ) -> ConsoleDispatchRecoveryState | None:
+        """Disable repeated intents and return only one exact action claimant."""
+
+        if not isinstance(action_id, ConsoleDispatchRecoveryActionId):
+            raise TypeError("action_id must be a ConsoleDispatchRecoveryActionId")
+        with self._preparation_lock:
+            current = self._dispatch_recoveries_by_session.get(session_id)
+            if current is None or current.in_flight:
+                return None
+            action = next(
+                (item for item in current.actions if item.action_id is action_id),
+                None,
+            )
+            if action is None or not action.enabled:
+                return None
+            try:
+                message = self._message_or_raise(current.assistant_message_id)
+            except KeyError:
+                return None
+            self._dispatch_recovery_message_baselines[session_id] = self._snapshot(
+                message
+            )
+            updated = current.with_in_flight(True)
+            self._dispatch_recoveries_by_session[session_id] = updated
+            return updated
+
+    def release_dispatch_recovery_action(
+        self,
+        session_id: str,
+        assistant_message_id: str,
+    ) -> bool:
+        """Re-enable one failed in-flight intent without changing ownership."""
+
+        with self._preparation_lock:
+            current = self._dispatch_recoveries_by_session.get(session_id)
+            if current is None or current.assistant_message_id != assistant_message_id:
+                return False
+            if current.in_flight:
+                self._dispatch_recoveries_by_session[session_id] = (
+                    current.with_in_flight(False)
+                )
+            baseline = self._dispatch_recovery_message_baselines.pop(session_id, None)
+        if baseline is not None:
+            try:
+                message = self._message_or_raise(assistant_message_id)
+            except KeyError:
+                return current.in_flight
+            for message_field in fields(message):
+                setattr(
+                    message,
+                    message_field.name,
+                    getattr(baseline, message_field.name),
+                )
+            self._stream_chunks_by_message.pop(message.id, None)
+            self._stream_materialized_counts.pop(message.id, None)
+            self._bump_payload_revision(session_id)
+        return current.in_flight
+
+    def transition_dispatch_recovery_for_retry(
+        self,
+        session_id: str,
+        *,
+        assistant_message_id: str,
+        new_attempt_id: str,
+    ) -> ConsoleDispatchRecoveryState | None:
+        """CAS a claimed owner immediately before its explicit provider retry."""
+
+        with self._preparation_lock:
+            current = self._dispatch_recoveries_by_session.get(session_id)
+            if (
+                current is None
+                or not current.in_flight
+                or current.assistant_message_id != assistant_message_id
+                or current.checkpoint is None
+            ):
+                return None
+            checkpoint = current.checkpoint
+            if current.kind in {
+                ConsoleDispatchRecoveryKind.EPHEMERAL_ACCEPTED,
+                ConsoleDispatchRecoveryKind.EPHEMERAL_DISPATCH_STARTED,
+            }:
+                updated_checkpoint = replace(
+                    checkpoint,
+                    state=ConsoleDispatchCheckpointState.DISPATCH_STARTED,
+                    checkpoint_revision=checkpoint.checkpoint_revision + 1,
+                    assistant_message_version=checkpoint.assistant_message_version + 1,
+                    attempt_id=new_attempt_id,
+                )
+                updated = console_dispatch_recovery_from_checkpoint(
+                    updated_checkpoint,
+                    ephemeral=True,
+                    in_flight=True,
+                )
+                self._dispatch_recoveries_by_session[session_id] = updated
+                return updated
+        repository = getattr(
+            self.persistence,
+            "console_dispatch_repository",
+            None,
+        )
+        if repository is None:
+            return None
+        result = repository.cas_state(
+            ConsoleDispatchTransition(
+                assistant_message_id=checkpoint.assistant_message_id,
+                expected_state=checkpoint.state,
+                expected_checkpoint_revision=checkpoint.checkpoint_revision,
+                expected_user_message_version=checkpoint.user_message_version,
+                expected_assistant_message_version=checkpoint.assistant_message_version,
+                new_state=ConsoleDispatchCheckpointState.DISPATCH_STARTED,
+                new_attempt_id=new_attempt_id,
+            )
+        )
+        if (
+            result.status is not ConsoleDispatchResultStatus.COMMITTED
+            or result.checkpoint is None
+        ):
+            return None
+        updated = console_dispatch_recovery_from_checkpoint(
+            result.checkpoint,
+            in_flight=True,
+        )
+        with self._preparation_lock:
+            if self._dispatch_recoveries_by_session.get(session_id) is not current:
+                raise RuntimeError("Dispatch recovery owner changed after CAS.")
+            self._dispatch_recoveries_by_session[session_id] = updated
+        return updated
+
+    def begin_ephemeral_dispatch(
+        self,
+        session_id: str,
+        *,
+        assistant_message_id: str,
+        new_attempt_id: str,
+    ) -> ConsoleDispatchRecoveryState | None:
+        """Mark a newly accepted ephemeral turn started without UI action gating."""
+
+        with self._preparation_lock:
+            current = self._dispatch_recoveries_by_session.get(session_id)
+            if (
+                current is None
+                or current.in_flight
+                or current.kind is not ConsoleDispatchRecoveryKind.EPHEMERAL_ACCEPTED
+                or current.assistant_message_id != assistant_message_id
+            ):
+                return None
+            try:
+                message = self._message_or_raise(assistant_message_id)
+            except KeyError:
+                return None
+            self._dispatch_recovery_message_baselines[session_id] = self._snapshot(
+                message
+            )
+            self._dispatch_recoveries_by_session[session_id] = current.with_in_flight(
+                True
+            )
+        transitioned = self.transition_dispatch_recovery_for_retry(
+            session_id,
+            assistant_message_id=assistant_message_id,
+            new_attempt_id=new_attempt_id,
+        )
+        if transitioned is None:
+            self.release_dispatch_recovery_action(session_id, assistant_message_id)
+        return transitioned
+
+    def prepare_dispatch_recovery_message(
+        self,
+        session_id: str,
+        assistant_message_id: str,
+    ) -> ConsoleChatMessage:
+        """Reset only the exact existing assistant owner for retry streaming."""
+
+        recovery = self.dispatch_recovery_for_session(session_id)
+        message = self._message_or_raise(assistant_message_id)
+        if (
+            recovery is None
+            or not recovery.in_flight
+            or recovery.assistant_message_id != assistant_message_id
+            or self._message_session_index.get(assistant_message_id) != session_id
+            or message.role is not ConsoleMessageRole.ASSISTANT
+        ):
+            raise RuntimeError("Dispatch retry assistant owner changed.")
+        message.content = ""
+        message.status = "pending"
+        self._stream_chunks_by_message.pop(message.id, None)
+        self._stream_materialized_counts.pop(message.id, None)
+        self._bump_payload_revision(session_id)
+        return self._snapshot(message)
+
+    def settle_dispatch_recovery(
+        self,
+        session_id: str,
+        *,
+        assistant_message_id: str,
+        terminal_state: str,
+        content: str,
+        metadata_json: str | None = None,
+    ) -> bool:
+        """Settle one claimed durable or ephemeral owner without a second write."""
+
+        with self._preparation_lock:
+            current = self._dispatch_recoveries_by_session.get(session_id)
+            if (
+                current is None
+                or not current.in_flight
+                or current.assistant_message_id != assistant_message_id
+                or current.checkpoint is None
+            ):
+                return False
+            checkpoint = current.checkpoint
+            ephemeral = current.kind in {
+                ConsoleDispatchRecoveryKind.EPHEMERAL_ACCEPTED,
+                ConsoleDispatchRecoveryKind.EPHEMERAL_DISPATCH_STARTED,
+            }
+        try:
+            message = self._message_or_raise(assistant_message_id)
+        except KeyError:
+            message = None
+        if not ephemeral:
+            repository = getattr(
+                self.persistence,
+                "console_dispatch_repository",
+                None,
+            )
+            if repository is None:
+                return False
+            try:
+                result = repository.settle_with_assistant(
+                    ConsoleAssistantSettlement(
+                        assistant_message_id=assistant_message_id,
+                        expected_checkpoint_state=checkpoint.state,
+                        expected_checkpoint_revision=checkpoint.checkpoint_revision,
+                        expected_user_message_version=checkpoint.user_message_version,
+                        expected_assistant_message_version=(
+                            checkpoint.assistant_message_version
+                        ),
+                        terminal_state=terminal_state,
+                        content=content,
+                        metadata_json=metadata_json,
+                        usage_json=(
+                            message.usage.to_json()
+                            if message is not None and message.usage is not None
+                            else None
+                        ),
+                    )
+                )
+            except Exception:
+                return False
+            if result.status is not ConsoleDispatchResultStatus.COMMITTED:
+                return False
+        if message is not None:
+            message.content = content
+            message.status = terminal_state
+            self._stream_chunks_by_message.pop(message.id, None)
+            self._stream_materialized_counts.pop(message.id, None)
+            self._bump_payload_revision(session_id)
+        with self._preparation_lock:
+            if self._dispatch_recoveries_by_session.get(session_id) is not current:
+                raise RuntimeError("Dispatch recovery owner changed during settlement.")
+            self._dispatch_recoveries_by_session.pop(session_id, None)
+            self._dispatch_recovery_message_baselines.pop(session_id, None)
+            self._dispatch_recovery_queue_hydration_pending.discard(session_id)
+        return True
+
+    def _settle_owned_dispatch_terminal(
+        self,
+        message: ConsoleChatMessage,
+        terminal_state: str,
+    ) -> bool:
+        """Use the repository settlement instead of a separate content update."""
+
+        session_id = self._message_session_index[message.id]
+        recovery = self.dispatch_recovery_for_session(session_id)
+        if recovery is None or recovery.assistant_message_id != message.id:
+            return False
+        if not recovery.in_flight:
+            raise ConsoleDispatchSettlementError(
+                "Dispatch terminal settlement previously failed."
+            )
+        metadata_json = None
+        if message.video_metadata is not None:
+            metadata_json = message.video_metadata.to_json()
+        elif message.metadata is not None and not message.metadata.is_empty:
+            metadata_json = message.metadata.to_json()
+        if not self.settle_dispatch_recovery(
+            session_id,
+            assistant_message_id=message.id,
+            terminal_state=terminal_state,
+            content=message.content,
+            metadata_json=metadata_json,
+        ):
+            raise ConsoleDispatchSettlementError(
+                "Durable dispatch terminal settlement failed."
+            )
+        return True
 
     def _hydrate_provider_continuations_from_persistence(
         self,
@@ -2010,6 +2494,9 @@ class ConsoleChatStore:
         self._speech_preference_epochs.pop(session_id, None)
         self._character_emote_feed_by_session.pop(session_id, None)
         self._unresolved_promotion_operations.pop(session_id, None)
+        self._dispatch_recoveries_by_session.pop(session_id, None)
+        self._dispatch_recovery_message_baselines.pop(session_id, None)
+        self._dispatch_recovery_queue_hydration_pending.discard(session_id)
         self._pending_workspace_projections.pop(session_id, None)
         if self.library_policy_coordinator is not None:
             self.library_policy_coordinator.unregister_holder(session_id)
@@ -3197,6 +3684,11 @@ class ConsoleChatStore:
         if assistant.role is not ConsoleMessageRole.ASSISTANT:
             raise RuntimeError("Committed assistant owner changed role.")
         assistant.persisted_message_id = commit.assistant_message_id
+        self.publish_durable_dispatch_checkpoint(
+            session_id,
+            commit.checkpoint,
+            in_flight=False,
+        )
         return self._snapshot(user), self._snapshot(assistant)
 
     def publish_committed_identity(
@@ -3683,6 +4175,9 @@ class ConsoleChatStore:
         self._active_leaf_by_session.clear()
         self._context_summary_by_session.clear()
         self._pending_workspace_projections.clear()
+        self._dispatch_recoveries_by_session.clear()
+        self._dispatch_recovery_message_baselines.clear()
+        self._dispatch_recovery_queue_hydration_pending.clear()
 
         messages_by_session = messages_by_session or {}
         for session in restored_sessions:
@@ -7177,6 +7672,19 @@ class ConsoleChatStore:
             or message.id in self._terminal_persistence_deferred_ids
         )
         self.clear_terminal_citation_state(message.id)
+        recovery = self.dispatch_recovery_for_session(session_id)
+        if (
+            recovery is not None
+            and recovery.assistant_message_id == message.id
+            and recovery.in_flight
+        ):
+            message.status = "complete"
+            self._bump_message_speech_revision(message.id)
+            self._bump_payload_revision(session_id)
+            self._settle_failed_retry_context(message, provider_visible=True)
+            self._settle_owned_dispatch_terminal(message, "complete")
+            self._record_message_completed(session_id, message.id)
+            return self._snapshot(message)
         if not terminal_persistence:
             message.status = "complete"
             self._bump_message_speech_revision(message.id)
@@ -7282,9 +7790,12 @@ class ConsoleChatStore:
             message,
             provider_visible=message.status != "failed",
         )
-        self._persist_existing_message(message, preserve_provider_continuation=True)
-        if message.persisted_message_id is None:
-            self._flush_pending_trace_events_to_parent(message)
+        if not self._settle_owned_dispatch_terminal(message, "stopped"):
+            self._persist_existing_message(
+                message, preserve_provider_continuation=True
+            )
+            if message.persisted_message_id is None:
+                self._flush_pending_trace_events_to_parent(message)
         self._settle_message_library_destination(session_id, message.id)
         return self._snapshot(message)
 
@@ -7328,9 +7839,12 @@ class ConsoleChatStore:
             message,
             provider_visible=message.status != "failed",
         )
-        self._persist_existing_message(message, preserve_provider_continuation=True)
-        if message.persisted_message_id is None:
-            self._flush_pending_trace_events_to_parent(message)
+        if not self._settle_owned_dispatch_terminal(message, "failed"):
+            self._persist_existing_message(
+                message, preserve_provider_continuation=True
+            )
+            if message.persisted_message_id is None:
+                self._flush_pending_trace_events_to_parent(message)
         self._settle_message_library_destination(session_id, message.id)
         return self._snapshot(message)
 
@@ -7839,10 +8353,11 @@ class ConsoleChatStore:
             return None
         if self.persistence is None:
             return None
-        if session_id in self._unresolved_promotion_operations:
-            raise RuntimeError(
-                "Finish or discard the pending turn before saving."
-            )
+        if (
+            session_id in self._unresolved_promotion_operations
+            or self.dispatch_recovery_for_session(session_id) is not None
+        ):
+            raise RuntimeError(CONSOLE_EPHEMERAL_PROMOTION_BLOCK_COPY)
 
         atomic_promote = getattr(
             self.persistence,

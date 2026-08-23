@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -20,6 +21,7 @@ from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleDispatchCheckpoint,
     ConsoleDispatchCheckpointState,
     ConsoleDispatchResultStatus,
+    ConsoleDispatchWriteResult,
     ConsoleEgressClass,
     ConsoleResolvedDestination,
 )
@@ -96,15 +98,49 @@ class RecordingPersistence:
         self.created_messages: list[dict] = []
         self._policy_snapshot = None
         self.console_library_policy_repository = SimpleNamespace(read=self._read_policy)
-        self.console_dispatch_repository = SimpleNamespace(cas_state=self._cas_state)
+        self.console_dispatch_repository = self
+        self._checkpoint = None
 
     def _read_policy(self, conversation_id):
         del conversation_id
         return SimpleNamespace(durable_policy=object(), snapshot=self._policy_snapshot)
 
     def _cas_state(self, transition):
-        del transition
-        return SimpleNamespace(status=ConsoleDispatchResultStatus.COMMITTED)
+        checkpoint = self._checkpoint
+        if checkpoint is None:
+            return ConsoleDispatchWriteResult(
+                ConsoleDispatchResultStatus.NOT_FOUND, None, None, None
+            )
+        checkpoint = replace(
+            checkpoint,
+            state=transition.new_state,
+            checkpoint_revision=checkpoint.checkpoint_revision + 1,
+            assistant_message_version=checkpoint.assistant_message_version + 1,
+            attempt_id=transition.new_attempt_id,
+        )
+        self._checkpoint = checkpoint
+        return ConsoleDispatchWriteResult(
+            ConsoleDispatchResultStatus.COMMITTED,
+            checkpoint,
+            checkpoint.assistant_message_version,
+            "fake-payload-hash",
+        )
+
+    cas_state = _cas_state
+
+    def settle_with_assistant(self, settlement):
+        checkpoint = self._checkpoint
+        if checkpoint is None:
+            return ConsoleDispatchWriteResult(
+                ConsoleDispatchResultStatus.NOT_FOUND, None, None, None
+            )
+        self._checkpoint = None
+        return ConsoleDispatchWriteResult(
+            ConsoleDispatchResultStatus.COMMITTED,
+            None,
+            checkpoint.assistant_message_version + 1,
+            "fake-terminal-hash",
+        )
 
     def commit_durable_turn(self, *, acceptance, policy_candidate, conversation_kwargs):
         del conversation_kwargs
@@ -128,7 +164,7 @@ class RecordingPersistence:
                 },
             )
         )
-        return ConsoleDispatchCheckpoint(
+        checkpoint = ConsoleDispatchCheckpoint(
             assistant_message_id=acceptance.assistant_message_id,
             user_message_id=acceptance.user_message_id,
             conversation_id=acceptance.conversation_id,
@@ -144,6 +180,8 @@ class RecordingPersistence:
             resolved_destination=acceptance.resolved_destination,
             reconstructability=acceptance.reconstructability,
         )
+        self._checkpoint = checkpoint
+        return checkpoint
 
     def create_conversation(self, **kwargs):
         return "conversation-1"

@@ -47,6 +47,7 @@ from tldw_chatbook.Chat.attachment_core import (
 from tldw_chatbook.Chat.console_chat_models import (
     CONSOLE_CAP_REFUSAL_TITLE_LIMIT,
     CONSOLE_DEFAULT_MAX_PARALLEL_RUNS,
+    CONSOLE_DISPATCH_DISCARDED_COPY,
     ConsoleChatMessage,
     ConsoleControllerActivity,
     ConsoleLifecycleImpact,
@@ -57,6 +58,8 @@ from tldw_chatbook.Chat.console_chat_models import (
     ProjectInstructionActivationEvent,
     ProjectInstructionPreview,
     ConsoleMessageRole,
+    ConsoleDispatchRecoveryActionId,
+    ConsoleDispatchRecoveryKind,
     ConsoleProviderSelection,
     ConsoleRunMarker,
     ConsoleRunState,
@@ -89,6 +92,7 @@ from tldw_chatbook.Chat.answer_citations import format_evidence_for_cited_answer
 from tldw_chatbook.Chat.console_chat_store import (
     ConsoleChatSession,
     ConsoleChatStore,
+    ConsoleDispatchSettlementError,
     ConsoleDurableAcceptanceFingerprint,
     ConsoleDurableTurnCommit,
     TerminalCitationFinalizer,
@@ -1725,6 +1729,21 @@ class _DurablePostcommitContinuation:
     committed_context_epoch: int
 
 
+@dataclass(frozen=True, slots=True)
+class _DispatchRetryContext:
+    """Freshly revalidated inputs for one explicit recovery retry."""
+
+    resolution: Any
+    authority: ConsoleTurnLibraryAuthority
+    destination: ConsoleResolvedDestination
+    provider_messages: list[dict[str, Any]]
+    turn_context: ConsoleTurnExecutionContext
+
+
+class _DispatchRecoveryRefusal(RuntimeError):
+    """Bounded user-visible refusal raised before recovery provider entry."""
+
+
 @dataclass(frozen=True)
 class ConsoleSubmitResult:
     """Result returned to the composer after a Console submit attempt."""
@@ -2047,6 +2066,8 @@ class ConsoleChatController:
             on_chain_terminal=self._publish_queue_chain_terminal,
             on_activity_changed=self._note_controller_activity_changed,
         )
+        for restored_session in self.store.sessions():
+            self._hydrate_dispatch_recovery_queue(restored_session.id, force=True)
         # Task 3b: PER-SESSION maps, mirroring `_run_states`' own keying --
         # two sessions can each have their own in-flight stream/cancel state
         # without clobbering each other. Written/cleared at the SAME
@@ -2449,7 +2470,40 @@ class ConsoleChatController:
     def activity_for(self, session_id: str) -> ConsoleControllerActivity:
         """Return the single queue-aware activity projection for ``session_id``."""
 
+        if self.store.dispatch_recovery_needs_queue_hydration(session_id):
+            self._hydrate_dispatch_recovery_queue(session_id)
         return self.prompt_queue_coordinator.activity(session_id)
+
+    def _hydrate_dispatch_recovery_queue(
+        self,
+        session_id: str,
+        *,
+        force: bool = False,
+    ) -> bool:
+        """Project queued recovery before any activity consumer can advance it."""
+
+        if not force and not self.store.dispatch_recovery_needs_queue_hydration(
+            session_id
+        ):
+            return False
+        recovery = self.store.dispatch_recovery_for_session(session_id)
+        checkpoint = recovery.checkpoint if recovery is not None else None
+        if (
+            checkpoint is None
+            or checkpoint.origin != "queued"
+            or checkpoint.queue_entry_id is None
+        ):
+            self.store.mark_dispatch_recovery_queue_hydrated(session_id)
+            return False
+        hydrated = self.prompt_queue_coordinator.hydrate_dispatch_recovery(
+            session_id,
+            queue_entry_id=checkpoint.queue_entry_id,
+            preparation_id=checkpoint.preparation_id,
+            checkpoint_state=checkpoint.state,
+        )
+        if hydrated:
+            self.store.mark_dispatch_recovery_queue_hydrated(session_id)
+        return hydrated
 
     def _advance_lifecycle_revision(self, session_id: str) -> None:
         """Advance content-free fleet and owning-session confirmation fences."""
@@ -5230,6 +5284,38 @@ class ConsoleChatController:
                 terminal_citation_finalizer=terminal_citation_finalizer,
                 defer_terminal_persistence=citation_repair_session is not None,
             )
+            if (
+                session.ephemeral
+                and origin
+                in {ConsoleSubmissionOrigin.MANUAL, ConsoleSubmissionOrigin.QUEUED}
+                and preparation is not None
+            ):
+                self.store.register_ephemeral_dispatch_recovery(
+                    session.id,
+                    user_message_id=echoed_user.id,
+                    assistant_message_id=assistant.id,
+                    preparation_id=preparation.preparation_id,
+                    attempt_id=turn_context.library_authority.attempt_id,
+                    checkpoint_state=ConsoleDispatchCheckpointState.ACCEPTED,
+                    origin=origin.value,
+                    queue_entry_id=queue_entry_id,
+                    frozen_authority=turn_context.library_authority,
+                    resolved_destination=turn_context.resolved_destination,
+                    reconstructability=ConsoleDispatchReconstructability(
+                        attachments_reconstructable=True,
+                        evidence_reconstructable=not bool(
+                            prepared_continuation is not None
+                            and (
+                                prepared_continuation.staged_evidence_frozen
+                                or prepared_continuation.staged_evidence is not None
+                            )
+                        ),
+                        prefill_reconstructable=(
+                            prefill is None and not prefill_from_one_shot
+                        ),
+                        opaque_reference=(f"opaque:{preparation.preparation_id}"),
+                    ),
+                )
             if preparation is not None and not self._transition_preparation(
                 preparation.preparation_id,
                 ConsoleTurnPreparationState.COMMITTING,
@@ -5249,6 +5335,21 @@ class ConsoleChatController:
                     and origin is ConsoleSubmissionOrigin.QUEUED
                 ),
             )
+            if (
+                session.ephemeral
+                and self.store.dispatch_recovery_for_session(session.id) is not None
+            ):
+                if (
+                    self.store.begin_ephemeral_dispatch(
+                        session.id,
+                        assistant_message_id=assistant.id,
+                        new_attempt_id=turn_context.library_authority.attempt_id,
+                    )
+                    is None
+                ):
+                    raise RuntimeError(
+                        "Ephemeral dispatch checkpoint changed before provider entry."
+                    )
             stream_result = await self._stream_assistant_response(
                 resolution=resolution,
                 provider_messages=provider_messages,
@@ -5278,6 +5379,13 @@ class ConsoleChatController:
                 self._settle_accepted_preparation(preparation.preparation_id)
             return result
         except BaseException as exc:
+            if isinstance(exc, ConsoleDispatchSettlementError):
+                if assistant is not None:
+                    self.store.release_dispatch_recovery_action(
+                        session.id,
+                        assistant.id,
+                    )
+                raise
             accepted_cancellation = isinstance(exc, asyncio.CancelledError) and (
                 assistant is not None and echoed_user is not None
             )
@@ -5551,6 +5659,29 @@ class ConsoleChatController:
         commit = continuation.commit
         fingerprint = continuation.fingerprint
         session_id = continuation.session_id
+        existing_effects = self.store.durable_postcommit_effects_for(
+            preparation_id,
+            fingerprint=fingerprint,
+        )
+        if (
+            existing_effects is not None
+            and "checkpoint_transition" in existing_effects.completed
+            and "provider_entry" not in existing_effects.completed
+        ):
+            return ConsoleSubmitResult(
+                True,
+                True,
+                "Delivery status is unknown. Use Retry anyway or Discard.",
+                session_id=session_id,
+                user_message_id=commit.user_message_id,
+                assistant_message_id=commit.assistant_message_id,
+                terminal_status=self.run_state_for(session_id).status,
+                origin=continuation.origin,
+                queue_entry_id=continuation.queue_entry_id,
+                committed_context_epoch=continuation.committed_context_epoch,
+                preparation_id=preparation_id,
+                provider_started=True,
+            )
         assistant_holder: dict[str, ConsoleChatMessage] = {}
 
         def publish_owners() -> None:
@@ -5668,6 +5799,13 @@ class ConsoleChatController:
             )
             if result.status is not ConsoleDispatchResultStatus.COMMITTED:
                 raise RuntimeError("Durable dispatch checkpoint transition failed.")
+            if result.checkpoint is None:
+                raise RuntimeError("Durable dispatch checkpoint is unavailable.")
+            self.store.publish_durable_dispatch_checkpoint(
+                session_id,
+                result.checkpoint,
+                in_flight=True,
+            )
             if not self._transition_preparation(
                 preparation_id,
                 ConsoleTurnPreparationState.ACCEPTED,
@@ -5752,6 +5890,10 @@ class ConsoleChatController:
                 fingerprint=fingerprint,
             )
         except BaseException:
+            self.store.release_dispatch_recovery_action(
+                session_id,
+                commit.assistant_message_id,
+            )
             if continuation.origin is ConsoleSubmissionOrigin.QUEUED:
                 self.prompt_queue_coordinator.retain_durable_acceptance(session_id)
             state = self.store.durable_postcommit_effects_for(
@@ -5774,11 +5916,8 @@ class ConsoleChatController:
                 preparation_id=preparation_id,
                 provider_started=provider_started,
             )
-        # Task 14 deliberately leaves the durable checkpoint in
-        # ``dispatch_started`` for Task 15's terminal settlement, but the
-        # Task-13 volatile preparation must still leave the session after the
-        # live provider path returns or a following queued/manual turn would
-        # be refused as if acceptance were still in progress.
+        # Terminal persistence and checkpoint deletion completed atomically
+        # inside the stream finalizer. The volatile preparation can now leave.
         self._settle_accepted_preparation(preparation_id)
         with self.store.durable_preparation_lock:
             current = self._durable_postcommit_continuations.get(preparation_id)
@@ -5799,6 +5938,328 @@ class ConsoleChatController:
             committed_context_epoch=continuation.committed_context_epoch,
             preparation_id=preparation_id,
             provider_started=True,
+        )
+
+    async def _resolve_dispatch_retry_context(
+        self,
+        session_id: str,
+        recovery: Any,
+    ) -> _DispatchRetryContext:
+        """Freshly revalidate frozen authority/destination and rebuild history."""
+
+        checkpoint = recovery.checkpoint
+        if checkpoint is None:
+            raise _DispatchRecoveryRefusal(
+                "Dispatch recovery checkpoint is unavailable."
+            )
+        configuration = self.resolve_turn_configuration_snapshot(session_id)
+        authority = await self._capture_turn_library_authority(
+            session_id,
+            configuration,
+        )
+        resolution = await self.provider_gateway.resolve_for_send(
+            configuration.provider_selection
+        )
+        if not getattr(resolution, "ready", False):
+            raise _DispatchRecoveryRefusal(
+                self._blocked_visible_copy(getattr(resolution, "visible_copy", ""))
+            )
+        destination = self._resolved_destination_for_context(resolution)
+        frozen_authority = checkpoint.frozen_authority
+        if (
+            not self._dispatch_authority_matches(authority, frozen_authority)
+            or destination.identity_key != checkpoint.resolved_destination.identity_key
+        ):
+            raise _DispatchRecoveryRefusal(
+                "The provider destination or Library authority changed. Review it "
+                "before retrying."
+            )
+        turn_context = self._finalize_turn_execution_context(
+            configuration,
+            authority,
+            resolution,
+        )
+        provider_messages = self._provider_messages_for_session(
+            session_id,
+            before_message_id=recovery.assistant_message_id,
+            annotate_ids=True,
+            turn_context=turn_context,
+        )
+        if authority.policy.auto_retrieve is ConsoleAutoRetrieve.AUTOMATIC:
+            user = self.store.get_message(checkpoint.user_message_id)
+            request = LibraryRagSearchRequest(
+                query=user.content,
+                source_types=AUTOMATIC_LIBRARY_SOURCE_TYPES,
+                mode="rag",
+                top_k=5,
+                include_citations=True,
+                scope=self._automatic_scope_for_authority(authority),
+            )
+            service = getattr(self.app, "library_rag_search_service", None)
+            search = getattr(service, "search", None)
+            if not callable(search):
+                raise _DispatchRecoveryRefusal(
+                    "Library retrieval is unavailable for retry."
+                )
+            kwargs: dict[str, object] = {
+                "top_k": request.top_k,
+                "include_citations": request.include_citations,
+            }
+            if request.scope is not None:
+                kwargs["scope"] = request.scope
+            try:
+                async with asyncio.timeout(self._library_preparation_timeout):
+                    raw = search(
+                        request.query,
+                        request.source_types,
+                        request.mode,
+                        **kwargs,
+                    )
+                    if inspect.isawaitable(raw):
+                        raw = await raw
+            except TimeoutError as exc:
+                raise _DispatchRecoveryRefusal(
+                    "Library retrieval timed out during retry."
+                ) from exc
+            result = _outcome_from_service_result(raw)
+            if result.status not in {"ready", "empty"}:
+                raise _DispatchRecoveryRefusal("Library retrieval failed during retry.")
+            rows = tuple(result.results or ())
+            if rows:
+                bundle = build_library_rag_evidence_bundle(
+                    rows,
+                    query=request.query,
+                )
+                provider_messages = self._prepend_evidence_context(
+                    provider_messages,
+                    format_evidence_for_cited_answer(bundle),
+                )
+        return _DispatchRetryContext(
+            resolution=resolution,
+            authority=authority,
+            destination=destination,
+            provider_messages=provider_messages,
+            turn_context=turn_context,
+        )
+
+    @staticmethod
+    def _dispatch_authority_matches(
+        current: ConsoleTurnLibraryAuthority,
+        frozen: ConsoleTurnLibraryAuthority,
+    ) -> bool:
+        """Compare effective authority while tolerating first-save bookkeeping."""
+
+        if current.policy.error_code != frozen.policy.error_code:
+            return False
+        if (
+            frozen.policy.policy_revision is not None
+            and current.policy.policy_revision != frozen.policy.policy_revision
+        ):
+            return False
+        normalized_policy = replace(
+            current.policy,
+            policy_revision=frozen.policy.policy_revision,
+            source=frozen.policy.source,
+        )
+        return (
+            replace(
+                current,
+                policy=normalized_policy,
+                attempt_id=frozen.attempt_id,
+            )
+            == frozen
+        )
+
+    async def retry_dispatch_recovery(
+        self,
+        session_id: str,
+    ) -> ConsoleSubmitResult:
+        """Explicitly retry one accepted/indeterminate owner without new rows."""
+
+        recovery = self.store.dispatch_recovery_for_session(session_id)
+        if recovery is None:
+            return ConsoleSubmitResult(
+                False, False, "No response recovery is available."
+            )
+        action_id = (
+            ConsoleDispatchRecoveryActionId.RETRY_ANYWAY
+            if recovery.kind
+            in {
+                ConsoleDispatchRecoveryKind.DISPATCH_STARTED,
+                ConsoleDispatchRecoveryKind.EPHEMERAL_DISPATCH_STARTED,
+            }
+            else ConsoleDispatchRecoveryActionId.RETRY_RESPONSE
+        )
+        claimed = self.store.claim_dispatch_recovery_action(session_id, action_id)
+        if claimed is None:
+            action = next(
+                (item for item in recovery.actions if item.action_id is action_id),
+                None,
+            )
+            return ConsoleSubmitResult(
+                False,
+                False,
+                action.disabled_reason
+                if action is not None and action.disabled_reason
+                else "That response recovery action is unavailable.",
+            )
+        try:
+            context = await self._resolve_dispatch_retry_context(session_id, claimed)
+            checkpoint = claimed.checkpoint
+            if checkpoint is None:
+                raise _DispatchRecoveryRefusal(
+                    "Dispatch recovery checkpoint is unavailable."
+                )
+            authority = context.authority
+            started = self.store.transition_dispatch_recovery_for_retry(
+                session_id,
+                assistant_message_id=claimed.assistant_message_id,
+                new_attempt_id=authority.attempt_id,
+            )
+            if started is None:
+                raise RuntimeError("Dispatch recovery changed before provider entry.")
+            self.store.prepare_dispatch_recovery_message(
+                session_id,
+                claimed.assistant_message_id,
+            )
+            turn_context = getattr(context, "turn_context", None)
+            if not isinstance(turn_context, ConsoleTurnExecutionContext):
+                turn_context = self._finalize_turn_execution_context(
+                    self.resolve_turn_configuration_snapshot(session_id),
+                    authority,
+                    context.resolution,
+                )
+            result = await self._stream_assistant_response(
+                resolution=context.resolution,
+                provider_messages=context.provider_messages,
+                assistant_message_id=claimed.assistant_message_id,
+                turn_context=turn_context,
+            )
+        except asyncio.CancelledError:
+            self.store.release_dispatch_recovery_action(
+                session_id,
+                claimed.assistant_message_id,
+            )
+            raise
+        except _DispatchRecoveryRefusal as exc:
+            self.store.release_dispatch_recovery_action(
+                session_id,
+                claimed.assistant_message_id,
+            )
+            return ConsoleSubmitResult(False, False, str(exc))
+        except Exception:
+            self.store.release_dispatch_recovery_action(
+                session_id,
+                claimed.assistant_message_id,
+            )
+            visible_copy = "Response recovery failed. Try again or discard."
+            self._set_run_state(
+                ConsoleRunState(ConsoleRunStatus.BLOCKED, visible_copy),
+                session_id=session_id,
+            )
+            return ConsoleSubmitResult(
+                False,
+                False,
+                visible_copy,
+            )
+        self._retire_live_recovery_continuation(claimed)
+        await self._settle_recovered_queue_owner(session_id, claimed, result)
+        return replace(
+            result,
+            session_id=session_id,
+            user_message_id=(
+                claimed.checkpoint.user_message_id if claimed.checkpoint else None
+            ),
+            assistant_message_id=claimed.assistant_message_id,
+            queue_entry_id=claimed.queue_entry_id,
+            preparation_id=claimed.preparation_id,
+            provider_started=True,
+        )
+
+    async def discard_dispatch_recovery(
+        self,
+        session_id: str,
+    ) -> ConsoleSubmitResult:
+        """Atomically discard one exact owner while retaining its USER."""
+
+        claimed = self.store.claim_dispatch_recovery_action(
+            session_id,
+            ConsoleDispatchRecoveryActionId.DISCARD,
+        )
+        if claimed is None:
+            return ConsoleSubmitResult(
+                False,
+                False,
+                "That response recovery action is unavailable.",
+            )
+        if not self.store.settle_dispatch_recovery(
+            session_id,
+            assistant_message_id=claimed.assistant_message_id,
+            terminal_state="discarded",
+            content=CONSOLE_DISPATCH_DISCARDED_COPY,
+        ):
+            self.store.release_dispatch_recovery_action(
+                session_id,
+                claimed.assistant_message_id,
+            )
+            visible_copy = "Response recovery changed. Reload and try again."
+            self._set_run_state(
+                ConsoleRunState(ConsoleRunStatus.BLOCKED, visible_copy),
+                session_id=session_id,
+            )
+            return ConsoleSubmitResult(
+                False,
+                False,
+                visible_copy,
+            )
+        result = ConsoleSubmitResult(
+            True,
+            False,
+            CONSOLE_DISPATCH_DISCARDED_COPY,
+            session_id=session_id,
+            user_message_id=(
+                claimed.checkpoint.user_message_id if claimed.checkpoint else None
+            ),
+            assistant_message_id=claimed.assistant_message_id,
+            terminal_status=ConsoleRunStatus.STOPPED,
+            queue_entry_id=claimed.queue_entry_id,
+            preparation_id=claimed.preparation_id,
+        )
+        self._retire_live_recovery_continuation(claimed)
+        await self._settle_recovered_queue_owner(session_id, claimed, result)
+        return result
+
+    def _retire_live_recovery_continuation(self, recovery: Any) -> None:
+        """Drop app-lifetime acceptance state after explicit settlement."""
+
+        preparation_id = recovery.preparation_id
+        if preparation_id is None:
+            return
+        self._settle_accepted_preparation(preparation_id)
+        with self.store.durable_preparation_lock:
+            continuation = self._durable_postcommit_continuations.pop(
+                preparation_id,
+                None,
+            )
+            if continuation is not None:
+                self.store.retire_durable_acceptance(
+                    preparation_id,
+                    continuation.fingerprint,
+                )
+
+    async def _settle_recovered_queue_owner(
+        self,
+        session_id: str,
+        recovery: Any,
+        result: ConsoleSubmitResult,
+    ) -> None:
+        if recovery.queue_entry_id is None or recovery.preparation_id is None:
+            return
+        await self.prompt_queue_coordinator.settle_dispatch_recovery_and_drain(
+            session_id,
+            queue_entry_id=recovery.queue_entry_id,
+            preparation_id=recovery.preparation_id,
+            terminal_status=result.terminal_status or ConsoleRunStatus.COMPLETED,
         )
 
     def new_session(
@@ -8509,11 +8970,19 @@ class ConsoleChatController:
             return False
         self.prompt_queue_coordinator.pause_for_stop(session_id)
         self._signal_stop(session_id=session_id)
-        self._mark_stream_stopped(
-            assistant_message_id,
-            visible_copy="Response stopped.",
-        )
-        if record_user_stop:
+        settlement_failed = False
+        try:
+            self._mark_stream_stopped(
+                assistant_message_id,
+                visible_copy="Response stopped.",
+            )
+        except ConsoleDispatchSettlementError:
+            settlement_failed = True
+            self.store.release_dispatch_recovery_action(
+                session_id,
+                assistant_message_id,
+            )
+        if record_user_stop and not settlement_failed:
             # TASK-337 AC3: a durable, explicit record — the run-state chip
             # copy is transient and the review found nothing else marked
             # the interruption.
@@ -13782,6 +14251,8 @@ class ConsoleChatController:
                 self._consume_one_shot_prefill(assistant_message_id, one_shot_used)
                 return ConsoleSubmitResult(True, True, stopped.content)
             raise
+        except ConsoleDispatchSettlementError:
+            raise
         except Exception as exc:
             # Provider failures are surfaced as run status plus a transcript
             # system row; they must never be written into assistant message
@@ -14630,6 +15101,8 @@ class ConsoleChatController:
                     stopped,
                 )
                 return ConsoleSubmitResult(True, True, stopped.content)
+            raise
+        except ConsoleDispatchSettlementError:
             raise
         except Exception as exc:
             # Bridge failures can originate OUTSIDE AgentService's own
@@ -15854,6 +16327,19 @@ class ConsoleChatController:
         "complete"), so this must tolerate any terminal status, not just
         "stopped".
         """
+        try:
+            owner_id = self.store.session_id_for_message(assistant_message_id)
+        except KeyError:
+            owner_id = None
+        recovery = self.store.dispatch_recovery_for_session(owner_id)
+        if (
+            recovery is not None
+            and recovery.assistant_message_id == assistant_message_id
+            and not recovery.in_flight
+        ):
+            raise ConsoleDispatchSettlementError(
+                "Dispatch terminal settlement previously failed."
+            )
         if prepare_retry and not retry_prepared:
             stopped = self.store.get_message(assistant_message_id)
         else:
@@ -15867,10 +16353,6 @@ class ConsoleChatController:
         # even once the run finishes, so this is always resolvable unless
         # the session was closed out from under the run (in which case
         # there is nothing left to attribute the STOPPED stamp to).
-        try:
-            owner_id = self.store.session_id_for_message(assistant_message_id)
-        except KeyError:
-            owner_id = None
         self._set_run_state(
             ConsoleRunState(ConsoleRunStatus.STOPPED, visible_copy),
             session_id=owner_id,

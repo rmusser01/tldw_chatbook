@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Literal, Mapping
 from uuid import uuid4
 
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.console_exchange_capture import ExchangeCapture
+    from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+        ConsoleDispatchCheckpoint,
+    )
     from tldw_chatbook.Chat.message_metadata import MessageMetadata
     from tldw_chatbook.Chat.provider_continuation import ProviderContinuationCheckpoint
     from tldw_chatbook.Chat.provider_usage import ProviderUsage
@@ -242,7 +245,9 @@ class ConsoleFleetCompletionTarget:
         object.__setattr__(self, "session_id", self.session_id.strip())
 
 
-ConsoleMessageStatus = Literal["complete", "pending", "streaming", "stopped", "failed"]
+ConsoleMessageStatus = Literal[
+    "complete", "pending", "streaming", "stopped", "failed", "discarded"
+]
 ConsoleMessageFeedback = Literal["up", "down"]
 ConsoleActivityKind = Literal[
     "thinking",
@@ -269,6 +274,239 @@ _CONSOLE_ACTIVITY_KINDS = frozenset(
     }
 )
 _CONSOLE_ACTIVITY_STATUSES = frozenset({"success", "blocked", "failed", "done"})
+
+
+CONSOLE_DISPATCH_UNRECONSTRUCTABLE_REASON = (
+    "Retry response is unavailable because one-shot prefill or transient evidence "
+    "cannot be reconstructed exactly."
+)
+CONSOLE_DISPATCH_IN_FLIGHT_REASON = "Recovery action is already in progress."
+CONSOLE_DISPATCH_DUPLICATE_WARNING = (
+    "Retry anyway may send a duplicate request because delivery status is unknown."
+)
+CONSOLE_DISPATCH_DISCARDED_COPY = "Response discarded."
+CONSOLE_EPHEMERAL_PROMOTION_BLOCK_COPY = (
+    "Finish or discard the pending turn before saving."
+)
+
+
+class ConsoleDispatchRecoveryActionId(str, Enum):
+    """Explicit actions available for a device-local dispatch owner."""
+
+    RETRY_RESPONSE = "retry_response"
+    RETRY_ANYWAY = "retry_anyway"
+    DISCARD = "discard"
+
+
+class ConsoleDispatchRecoveryKind(str, Enum):
+    """Bounded loader and runtime outcomes for one assistant owner."""
+
+    ACCEPTED = "accepted"
+    DISPATCH_STARTED = "dispatch_started"
+    EPHEMERAL_ACCEPTED = "ephemeral_accepted"
+    EPHEMERAL_DISPATCH_STARTED = "ephemeral_dispatch_started"
+    REMOTE_ACCEPTED = "remote_accepted"
+    REMOTE_DISPATCH_STARTED = "remote_dispatch_started"
+    CONTINUATION = "continuation"
+    QUARANTINED = "quarantined"
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleDispatchRecoveryAction:
+    """Literal, UI-neutral action state for dispatch recovery."""
+
+    action_id: ConsoleDispatchRecoveryActionId
+    label: str
+    enabled: bool
+    disabled_reason: str = ""
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.action_id, ConsoleDispatchRecoveryActionId):
+            raise TypeError("action_id must be a ConsoleDispatchRecoveryActionId")
+        if not isinstance(self.label, str) or not self.label:
+            raise ValueError("recovery action label must be non-empty text")
+        if type(self.enabled) is not bool:
+            raise TypeError("recovery action enabled must be a bool")
+        if not isinstance(self.disabled_reason, str):
+            raise TypeError("recovery action disabled_reason must be text")
+        if self.enabled and self.disabled_reason:
+            raise ValueError("enabled recovery actions cannot have a disabled reason")
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleDispatchRecoveryState:
+    """One body-free, app-lifetime recovery projection for an assistant."""
+
+    kind: ConsoleDispatchRecoveryKind
+    assistant_message_id: str
+    conversation_id: str
+    visible_copy: str
+    actions: tuple[ConsoleDispatchRecoveryAction, ...]
+    warning: str = ""
+    error_code: str | None = None
+    checkpoint: "ConsoleDispatchCheckpoint | None" = field(
+        default=None,
+        repr=False,
+    )
+    queue_entry_id: str | None = None
+    preparation_id: str | None = None
+    in_flight: bool = False
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.kind, ConsoleDispatchRecoveryKind):
+            raise TypeError("kind must be a ConsoleDispatchRecoveryKind")
+        if not isinstance(self.assistant_message_id, str):
+            raise TypeError("assistant_message_id must be text")
+        if not isinstance(self.conversation_id, str):
+            raise TypeError("conversation_id must be text")
+        if not isinstance(self.visible_copy, str) or not self.visible_copy:
+            raise ValueError("recovery visible_copy must be non-empty text")
+        if type(self.actions) is not tuple or any(
+            not isinstance(action, ConsoleDispatchRecoveryAction)
+            for action in self.actions
+        ):
+            raise TypeError("actions must contain recovery actions")
+        if not isinstance(self.warning, str):
+            raise TypeError("warning must be text")
+        if type(self.in_flight) is not bool:
+            raise TypeError("in_flight must be a bool")
+        if self.error_code is not None and (
+            not isinstance(self.error_code, str)
+            or not self.error_code
+            or len(self.error_code) > 64
+        ):
+            raise ValueError("recovery error_code is invalid")
+
+    def with_in_flight(self, in_flight: bool) -> "ConsoleDispatchRecoveryState":
+        """Return an exact action-disabled/enabled projection for one intent."""
+
+        if type(in_flight) is not bool:
+            raise TypeError("in_flight must be a bool")
+        if in_flight == self.in_flight:
+            return self
+        actions = tuple(
+            replace(
+                action,
+                enabled=False,
+                disabled_reason=CONSOLE_DISPATCH_IN_FLIGHT_REASON,
+            )
+            for action in self.actions
+        )
+        if not in_flight:
+            truth = getattr(self.checkpoint, "reconstructability", None)
+            reconstructable = bool(
+                truth is not None
+                and truth.attachments_reconstructable
+                and truth.evidence_reconstructable
+                and truth.prefill_reconstructable
+            )
+            actions = _console_dispatch_actions(
+                self.kind,
+                reconstructable=reconstructable,
+                in_flight=False,
+            )
+        return replace(self, actions=actions, in_flight=in_flight)
+
+
+def _console_dispatch_actions(
+    kind: ConsoleDispatchRecoveryKind,
+    *,
+    reconstructable: bool,
+    in_flight: bool,
+) -> tuple[ConsoleDispatchRecoveryAction, ...]:
+    if kind not in {
+        ConsoleDispatchRecoveryKind.ACCEPTED,
+        ConsoleDispatchRecoveryKind.DISPATCH_STARTED,
+        ConsoleDispatchRecoveryKind.EPHEMERAL_ACCEPTED,
+        ConsoleDispatchRecoveryKind.EPHEMERAL_DISPATCH_STARTED,
+    }:
+        return ()
+    started = kind in {
+        ConsoleDispatchRecoveryKind.DISPATCH_STARTED,
+        ConsoleDispatchRecoveryKind.EPHEMERAL_DISPATCH_STARTED,
+    }
+    retry_id = (
+        ConsoleDispatchRecoveryActionId.RETRY_ANYWAY
+        if started
+        else ConsoleDispatchRecoveryActionId.RETRY_RESPONSE
+    )
+    retry_enabled = reconstructable and not in_flight
+    retry_reason = ""
+    if in_flight:
+        retry_reason = CONSOLE_DISPATCH_IN_FLIGHT_REASON
+    elif not reconstructable:
+        retry_reason = CONSOLE_DISPATCH_UNRECONSTRUCTABLE_REASON
+    discard_enabled = not in_flight
+    return (
+        ConsoleDispatchRecoveryAction(
+            retry_id,
+            "Retry anyway" if started else "Retry response",
+            retry_enabled,
+            retry_reason,
+        ),
+        ConsoleDispatchRecoveryAction(
+            ConsoleDispatchRecoveryActionId.DISCARD,
+            "Discard",
+            discard_enabled,
+            "" if discard_enabled else CONSOLE_DISPATCH_IN_FLIGHT_REASON,
+        ),
+    )
+
+
+def console_dispatch_recovery_from_checkpoint(
+    checkpoint: "ConsoleDispatchCheckpoint",
+    *,
+    ephemeral: bool = False,
+    in_flight: bool = False,
+) -> ConsoleDispatchRecoveryState:
+    """Derive exact local actions from one validated dispatch owner."""
+
+    from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+        ConsoleDispatchCheckpoint,
+        ConsoleDispatchCheckpointState,
+    )
+
+    if not isinstance(checkpoint, ConsoleDispatchCheckpoint):
+        raise TypeError("checkpoint must be a ConsoleDispatchCheckpoint")
+    started = checkpoint.state is ConsoleDispatchCheckpointState.DISPATCH_STARTED
+    if ephemeral:
+        kind = (
+            ConsoleDispatchRecoveryKind.EPHEMERAL_DISPATCH_STARTED
+            if started
+            else ConsoleDispatchRecoveryKind.EPHEMERAL_ACCEPTED
+        )
+    else:
+        kind = (
+            ConsoleDispatchRecoveryKind.DISPATCH_STARTED
+            if started
+            else ConsoleDispatchRecoveryKind.ACCEPTED
+        )
+    truth = checkpoint.reconstructability
+    reconstructable = bool(
+        truth.attachments_reconstructable
+        and truth.evidence_reconstructable
+        and truth.prefill_reconstructable
+    )
+    return ConsoleDispatchRecoveryState(
+        kind=kind,
+        assistant_message_id=checkpoint.assistant_message_id,
+        conversation_id=checkpoint.conversation_id,
+        visible_copy=(
+            "Response delivery status is unknown on the source device."
+            if started
+            else "Response accepted; waiting for dispatch."
+        ),
+        warning=CONSOLE_DISPATCH_DUPLICATE_WARNING if started else "",
+        actions=_console_dispatch_actions(
+            kind,
+            reconstructable=reconstructable,
+            in_flight=in_flight,
+        ),
+        checkpoint=checkpoint,
+        queue_entry_id=checkpoint.queue_entry_id,
+        preparation_id=checkpoint.preparation_id,
+        in_flight=in_flight,
+    )
 
 
 @dataclass(frozen=True)

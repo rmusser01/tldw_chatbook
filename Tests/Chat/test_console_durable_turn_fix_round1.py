@@ -110,7 +110,7 @@ async def test_db_none_adapter_with_atomic_capability_uses_durable_path(
         db.get_connection()
         .execute("SELECT COUNT(*) FROM console_dispatch_checkpoints")
         .fetchone()[0]
-        == 1
+        == 0
     )
 
 
@@ -284,9 +284,25 @@ async def test_explicit_frozen_evidence_makes_checkpoint_unreconstructable(
     store = ConsoleChatStore(persistence=ChatPersistenceService(db))
     store.library_policy_coordinator = _PolicyCoordinator(ConsoleAutoRetrieve.NEVER)
     session = store.create_session(session_id="session-1")
+    gateway = _StreamingFence()
+    captured_reconstructability: list[str] = []
+    original_stream = gateway.stream_chat
+
+    async def observe_checkpoint(*args: Any, **kwargs: Any):
+        row = (
+            db.get_connection()
+            .execute("SELECT reconstructability_json FROM console_dispatch_checkpoints")
+            .fetchone()
+        )
+        assert row is not None
+        captured_reconstructability.append(row["reconstructability_json"])
+        async for chunk in original_stream(*args, **kwargs):
+            yield chunk
+
+    monkeypatch.setattr(gateway, "stream_chat", observe_checkpoint)
     controller = ConsoleChatController(
         store=store,
-        provider_gateway=_StreamingFence(),
+        provider_gateway=gateway,
         rag_capture_provider=retrieval._capture_console_staged_rag,
         staged_evidence_provider=lambda _session_id: state["launch"] is not None,
     )
@@ -294,16 +310,17 @@ async def test_explicit_frozen_evidence_makes_checkpoint_unreconstructable(
     result = await controller.submit_draft("explicit evidence", session_id=session.id)
 
     assert result.accepted is True
-    row = (
-        db.get_connection()
-        .execute("SELECT reconstructability_json FROM console_dispatch_checkpoints")
-        .fetchone()
-    )
-    assert row is not None
-    payload = json.loads(row["reconstructability_json"])
+    assert len(captured_reconstructability) == 1
+    payload = json.loads(captured_reconstructability[0])
     assert payload["evidence_reconstructable"] is False
-    assert "private staged title" not in row["reconstructability_json"]
-    assert "query" not in row["reconstructability_json"]
+    assert "private staged title" not in captured_reconstructability[0]
+    assert "query" not in captured_reconstructability[0]
+    assert (
+        db.get_connection()
+        .execute("SELECT COUNT(*) FROM console_dispatch_checkpoints")
+        .fetchone()[0]
+        == 0
+    )
     assert state["released"]
 
 
@@ -518,15 +535,6 @@ async def test_real_postcommit_seam_failure_resumes_same_owner_once(
     )
     assert effects is not None
     assert effect_name not in effects.completed
-    durable_before = tuple(
-        tuple(row)
-        for row in db.get_connection()
-        .execute(
-            "SELECT preparation_id, user_message_id, assistant_message_id "
-            "FROM console_dispatch_checkpoints"
-        )
-        .fetchall()
-    )
     counts_before = tuple(
         db.get_connection().execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
         for table in ("conversations", "messages", "console_dispatch_checkpoints")
@@ -537,25 +545,40 @@ async def test_real_postcommit_seam_failure_resumes_same_owner_once(
     assert second.accepted is True
     assert second.user_message_id == first.user_message_id
     assert second.assistant_message_id == first.assistant_message_id
-    assert counts == {"attempts": 2, "successes": 1}
-    assert gateway.calls == 1
+    if effect_name == "provider_entry":
+        assert "Retry anyway or Discard" in second.visible_copy
+        assert counts == {"attempts": 1, "successes": 0}
+        assert gateway.calls == 0
+        checkpoint = (
+            db.get_connection()
+            .execute("SELECT state FROM console_dispatch_checkpoints")
+            .fetchone()
+        )
+        assert checkpoint is not None
+        assert checkpoint["state"] == "dispatch_started"
+
+        retried = await controller.retry_dispatch_recovery("session-1")
+
+        assert retried.accepted is True
+        assert counts == {"attempts": 2, "successes": 1}
+        assert gateway.calls == 1
+    else:
+        assert counts == {"attempts": 2, "successes": 1}
+        assert gateway.calls == 1
     assert controller._durable_postcommit_continuations == {}
     assert store.durable_content_retention_count() == 0
-    assert tuple(
-        tuple(row)
-        for row in db.get_connection()
-        .execute(
-            "SELECT preparation_id, user_message_id, assistant_message_id, state "
-            "FROM console_dispatch_checkpoints"
-        )
-        .fetchall()
-    ) == tuple((*row, "dispatch_started") for row in durable_before)
+    assert (
+        db.get_connection()
+        .execute("SELECT COUNT(*) FROM console_dispatch_checkpoints")
+        .fetchone()[0]
+        == 0
+    )
     assert (
         tuple(
             db.get_connection().execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-            for table in ("conversations", "messages", "console_dispatch_checkpoints")
+            for table in ("conversations", "messages")
         )
-        == counts_before
+        == counts_before[:2]
     )
 
 

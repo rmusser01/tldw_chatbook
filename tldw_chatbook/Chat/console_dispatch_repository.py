@@ -25,10 +25,16 @@ from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     parse_console_resolved_destination_json,
     parse_console_turn_library_authority_json,
 )
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleDispatchRecoveryKind,
+    ConsoleDispatchRecoveryState,
+    console_dispatch_recovery_from_checkpoint,
+)
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationValidationError,
     dump_provider_continuation_json,
     parse_provider_continuation_json,
+    read_provider_continuation_json,
 )
 from tldw_chatbook.Chat.console_transaction_contribution import (
     _scoped_console_transaction_writer,
@@ -266,14 +272,18 @@ class ConsoleDispatchRepository:
                 None,
             )
         try:
-            rows = self.db.get_connection().execute(
-                _ACTIVE_OWNER_SELECT
-                + _OWNER_SELECT
-                + " JOIN active_path ON active_path.message_id = "
-                "checkpoint.assistant_message_id"
-                " WHERE checkpoint.conversation_id = ?",
-                (conversation_id, conversation_id, conversation_id),
-            ).fetchall()
+            rows = (
+                self.db.get_connection()
+                .execute(
+                    _ACTIVE_OWNER_SELECT
+                    + _OWNER_SELECT
+                    + " JOIN active_path ON active_path.message_id = "
+                    "checkpoint.assistant_message_id"
+                    " WHERE checkpoint.conversation_id = ?",
+                    (conversation_id, conversation_id, conversation_id),
+                )
+                .fetchall()
+            )
         except sqlite3.Error:
             return ConsoleDispatchReadResult(
                 ConsoleDispatchResultStatus.QUARANTINED,
@@ -303,6 +313,286 @@ class ConsoleDispatchRepository:
             checkpoint,
         )
 
+    def reconcile_for_session(
+        self, conversation_id: str
+    ) -> ConsoleDispatchRecoveryState | None:
+        """Reconcile one active dispatch/continuation owner before queue wake.
+
+        The checkpoint table remains device-local.  With no local checkpoint,
+        synchronized ``accepted``/``dispatch_started`` values are therefore
+        inert source-device facts, never replay authority.
+        """
+
+        if type(conversation_id) is not str or not conversation_id.strip():
+            return None
+        try:
+            with self.db.transaction(immediate=True) as cursor:
+                rows = cursor.execute(
+                    _OWNER_SELECT + " WHERE checkpoint.conversation_id = ?",
+                    (conversation_id,),
+                ).fetchall()
+                if len(rows) > 1:
+                    return self._quarantined(
+                        conversation_id,
+                        "",
+                        "duplicate_active_path_owner",
+                    )
+                if rows:
+                    return self._reconcile_checkpoint_row(
+                        cursor,
+                        conversation_id,
+                        rows[0],
+                    )
+                return self._reconcile_checkpoint_free_owner(
+                    cursor,
+                    conversation_id,
+                )
+        except sqlite3.Error:
+            return self._quarantined(
+                conversation_id,
+                "",
+                "checkpoint_reconcile_error",
+            )
+
+    def _reconcile_checkpoint_row(
+        self,
+        cursor: sqlite3.Cursor,
+        conversation_id: str,
+        row: sqlite3.Row,
+    ) -> ConsoleDispatchRecoveryState | None:
+        assistant_id = str(row["assistant_message_id"] or "")
+        if not self._valid_reconcile_pair(row):
+            return self._quarantined(
+                conversation_id,
+                assistant_id,
+                "invalid_checkpoint_owner",
+            )
+        active_ids = self._active_path_ids(cursor, conversation_id)
+        if assistant_id not in active_ids:
+            return self._quarantined(
+                conversation_id,
+                assistant_id,
+                "checkpoint_not_active_path",
+            )
+
+        continuation = read_provider_continuation_json(
+            row["provider_continuation_json"]
+        )
+        if continuation.checkpoint is not None:
+            if continuation.checkpoint.state != "active":
+                return self._quarantined(
+                    conversation_id,
+                    assistant_id,
+                    "invalid_continuation",
+                )
+            next_version = int(row["current_assistant_version"]) + 1
+            now = self.db._get_current_utc_timestamp_iso()
+            updated = cursor.execute(
+                """
+                UPDATE messages
+                   SET assistant_generation_state = 'continuation_active',
+                       version = ?, last_modified = ?, client_id = ?
+                 WHERE id = ? AND conversation_id = ? AND role = 'assistant'
+                   AND assistant_generation_state IS ? AND version = ?
+                   AND deleted = 0 AND provider_continuation_json = ?
+                """,
+                (
+                    next_version,
+                    now,
+                    self.db.client_id,
+                    assistant_id,
+                    conversation_id,
+                    row["assistant_state"],
+                    row["current_assistant_version"],
+                    row["provider_continuation_json"],
+                ),
+            )
+            if updated.rowcount != 1:
+                raise sqlite3.IntegrityError(
+                    "Continuation precedence message CAS failed."
+                )
+            self._delete_exact_checkpoint(cursor, row)
+            return ConsoleDispatchRecoveryState(
+                kind=ConsoleDispatchRecoveryKind.CONTINUATION,
+                assistant_message_id=assistant_id,
+                conversation_id=conversation_id,
+                visible_copy="Response continuation is pending.",
+                actions=(),
+            )
+
+        assistant_state = row["assistant_state"]
+        if assistant_state in {"complete", "stopped", "failed", "discarded"}:
+            self._delete_exact_checkpoint(cursor, row)
+            return None
+        if (
+            row["current_assistant_version"] != row["assistant_message_version"]
+            or assistant_state != row["state"]
+        ):
+            return self._quarantined(
+                conversation_id,
+                assistant_id,
+                "invalid_checkpoint_owner",
+            )
+        checkpoint, error_code = self._checkpoint_from_row(row)
+        if checkpoint is None:
+            return self._quarantined(
+                conversation_id,
+                assistant_id,
+                error_code or "invalid_checkpoint",
+            )
+        return console_dispatch_recovery_from_checkpoint(checkpoint)
+
+    def _reconcile_checkpoint_free_owner(
+        self,
+        cursor: sqlite3.Cursor,
+        conversation_id: str,
+    ) -> ConsoleDispatchRecoveryState | None:
+        row = cursor.execute(
+            """
+            SELECT message.id, message.conversation_id, message.role,
+                   message.deleted, message.assistant_generation_state,
+                   message.provider_continuation_json
+              FROM conversations AS conversation
+              LEFT JOIN messages AS message
+                ON message.id = conversation.active_leaf_message_id
+               AND message.conversation_id = conversation.id
+             WHERE conversation.id = ? AND conversation.deleted = 0
+            """,
+            (conversation_id,),
+        ).fetchone()
+        if row is None or row["id"] is None:
+            return None
+        assistant_id = str(row["id"])
+        if (
+            row["conversation_id"] != conversation_id
+            or row["role"] != "assistant"
+            or row["deleted"] != 0
+        ):
+            return None
+        continuation = read_provider_continuation_json(
+            row["provider_continuation_json"]
+        )
+        if continuation.checkpoint is not None:
+            if continuation.checkpoint.state != "active":
+                return self._quarantined(
+                    conversation_id,
+                    assistant_id,
+                    "invalid_continuation",
+                )
+            return ConsoleDispatchRecoveryState(
+                kind=ConsoleDispatchRecoveryKind.CONTINUATION,
+                assistant_message_id=assistant_id,
+                conversation_id=conversation_id,
+                visible_copy="Response continuation is pending.",
+                actions=(),
+            )
+        state = row["assistant_generation_state"]
+        if state == "continuation_active":
+            return self._quarantined(
+                conversation_id,
+                assistant_id,
+                "orphan_continuation",
+            )
+        if row["provider_continuation_json"] is not None:
+            return self._quarantined(
+                conversation_id,
+                assistant_id,
+                "invalid_continuation",
+            )
+        if state == "accepted":
+            return ConsoleDispatchRecoveryState(
+                kind=ConsoleDispatchRecoveryKind.REMOTE_ACCEPTED,
+                assistant_message_id=assistant_id,
+                conversation_id=conversation_id,
+                visible_copy=(
+                    "Response accepted on another device; waiting for dispatch."
+                ),
+                actions=(),
+            )
+        if state == "dispatch_started":
+            return ConsoleDispatchRecoveryState(
+                kind=ConsoleDispatchRecoveryKind.REMOTE_DISPATCH_STARTED,
+                assistant_message_id=assistant_id,
+                conversation_id=conversation_id,
+                visible_copy=(
+                    "Response delivery status is unknown on the source device."
+                ),
+                actions=(),
+            )
+        return None
+
+    @staticmethod
+    def _valid_reconcile_pair(row: sqlite3.Row) -> bool:
+        return bool(
+            row["conversation_deleted"] == 0
+            and row["user_role"] == "user"
+            and row["assistant_role"] == "assistant"
+            and row["user_conversation_id"] == row["conversation_id"]
+            and row["assistant_conversation_id"] == row["conversation_id"]
+            and row["user_deleted"] == 0
+            and row["assistant_deleted"] == 0
+            and row["current_user_version"] == row["user_message_version"]
+            and ConsoleDispatchRepository._positive_versions(
+                row["checkpoint_revision"],
+                row["user_message_version"],
+                row["assistant_message_version"],
+                row["current_assistant_version"],
+            )
+        )
+
+    @staticmethod
+    def _active_path_ids(
+        cursor: sqlite3.Cursor, conversation_id: str
+    ) -> frozenset[str]:
+        rows = cursor.execute(
+            _ACTIVE_OWNER_SELECT + " SELECT message_id FROM active_path",
+            (conversation_id, conversation_id),
+        ).fetchall()
+        return frozenset(str(row[0]) for row in rows)
+
+    @staticmethod
+    def _delete_exact_checkpoint(cursor: sqlite3.Cursor, row: sqlite3.Row) -> None:
+        deleted = cursor.execute(
+            """
+            DELETE FROM console_dispatch_checkpoints
+             WHERE assistant_message_id = ? AND state = ?
+               AND checkpoint_revision = ? AND user_message_version = ?
+               AND assistant_message_version = ?
+            """,
+            (
+                row["assistant_message_id"],
+                row["state"],
+                row["checkpoint_revision"],
+                row["user_message_version"],
+                row["assistant_message_version"],
+            ),
+        )
+        if deleted.rowcount != 1:
+            raise sqlite3.IntegrityError("Checkpoint reconciliation delete failed.")
+
+    @staticmethod
+    def _quarantined(
+        conversation_id: str,
+        assistant_message_id: str,
+        error_code: str,
+    ) -> ConsoleDispatchRecoveryState:
+        bounded = (
+            error_code
+            if re.fullmatch(r"[a-z][a-z0-9_]{0,63}", error_code or "")
+            else "invalid_checkpoint"
+        )
+        return ConsoleDispatchRecoveryState(
+            kind=ConsoleDispatchRecoveryKind.QUARANTINED,
+            assistant_message_id=assistant_message_id,
+            conversation_id=conversation_id,
+            visible_copy=(
+                "Dispatch recovery is unavailable because persisted ownership "
+                "is invalid."
+            ),
+            actions=(),
+            error_code=bounded,
+        )
+
     def cas_state(
         self, transition: ConsoleDispatchTransition
     ) -> ConsoleDispatchWriteResult:
@@ -310,9 +600,13 @@ class ConsoleDispatchRepository:
         if (
             not isinstance(transition.expected_state, ConsoleDispatchCheckpointState)
             or not isinstance(transition.new_state, ConsoleDispatchCheckpointState)
-            or transition.expected_state is not ConsoleDispatchCheckpointState.ACCEPTED
             or transition.new_state
             is not ConsoleDispatchCheckpointState.DISPATCH_STARTED
+            or transition.expected_state
+            not in {
+                ConsoleDispatchCheckpointState.ACCEPTED,
+                ConsoleDispatchCheckpointState.DISPATCH_STARTED,
+            }
             or not self._positive_versions(
                 transition.expected_checkpoint_revision,
                 transition.expected_user_message_version,
@@ -376,7 +670,9 @@ class ConsoleDispatchRepository:
                 ),
             )
             if updated_checkpoint.rowcount != 1:
-                raise sqlite3.IntegrityError("Checkpoint state CAS lost after owner CAS.")
+                raise sqlite3.IntegrityError(
+                    "Checkpoint state CAS lost after owner CAS."
+                )
             updated_row = self._owner_by_assistant(
                 cursor, transition.assistant_message_id
             )
@@ -430,6 +726,17 @@ class ConsoleDispatchRepository:
                 raise ConsoleDispatchCheckpointValidationError(
                     "Invalid assistant metadata."
                 )
+        if settlement.usage_json is not None:
+            try:
+                usage = json.loads(settlement.usage_json)
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise ConsoleDispatchCheckpointValidationError(
+                    "Invalid assistant usage."
+                ) from exc
+            if type(usage) is not dict:
+                raise ConsoleDispatchCheckpointValidationError(
+                    "Invalid assistant usage."
+                )
         with self.db.transaction(immediate=True) as cursor:
             row = self._owner_by_assistant(cursor, settlement.assistant_message_id)
             if row is None:
@@ -441,7 +748,7 @@ class ConsoleDispatchRepository:
             updated = cursor.execute(
                 """
                 UPDATE messages
-                   SET content = ?, metadata_json = ?,
+                   SET content = ?, metadata_json = ?, usage_json = ?,
                        provider_continuation_json = NULL,
                        assistant_generation_state = ?, version = ?,
                        last_modified = ?, client_id = ?
@@ -451,6 +758,7 @@ class ConsoleDispatchRepository:
                 (
                     settlement.content,
                     settlement.metadata_json,
+                    settlement.usage_json,
                     settlement.terminal_state,
                     next_message_version,
                     now,
@@ -688,8 +996,7 @@ class ConsoleDispatchRepository:
                 or row["user_deleted"] != 0
                 or row["assistant_deleted"] != 0
                 or row["current_user_version"] != row["user_message_version"]
-                or row["current_assistant_version"]
-                != row["assistant_message_version"]
+                or row["current_assistant_version"] != row["assistant_message_version"]
                 or row["assistant_state"] != row["state"]
                 or row["provider_continuation_json"] is not None
                 or not ConsoleDispatchRepository._positive_versions(
@@ -802,8 +1109,7 @@ class ConsoleDispatchRepository:
                 assistant_version=settlement.expected_assistant_message_version,
             )
             and row["state"] == settlement.expected_checkpoint_state.value
-            and row["assistant_state"]
-            == settlement.expected_checkpoint_state.value
+            and row["assistant_state"] == settlement.expected_checkpoint_state.value
         )
 
     @classmethod
@@ -817,13 +1123,14 @@ class ConsoleDispatchRepository:
                 user_version=handoff.expected_user_message_version,
                 assistant_version=handoff.expected_assistant_message_version,
             )
-            and row["state"]
-            == ConsoleDispatchCheckpointState.DISPATCH_STARTED.value
+            and row["state"] == ConsoleDispatchCheckpointState.DISPATCH_STARTED.value
             and row["assistant_state"] == row["state"]
         )
 
     @staticmethod
-    def _write_status(status: ConsoleDispatchResultStatus) -> ConsoleDispatchWriteResult:
+    def _write_status(
+        status: ConsoleDispatchResultStatus,
+    ) -> ConsoleDispatchWriteResult:
         return ConsoleDispatchWriteResult(status, None, None, None)
 
     @staticmethod

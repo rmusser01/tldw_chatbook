@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
@@ -11,6 +12,9 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleQueuedAcceptanceEvent,
     ConsoleRunStatus,
     ConsoleSubmissionOrigin,
+)
+from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+    ConsoleDispatchCheckpointState,
 )
 from tldw_chatbook.Chat.console_prompt_queue import (
     ConsolePromptQueueRegistry,
@@ -68,6 +72,15 @@ class _PromptChain:
     last_terminal_status: ConsoleRunStatus | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _RecoveredQueueOwner:
+    """Body-free exact owner fencing later queued work."""
+
+    queue_entry_id: str
+    preparation_id: str
+    checkpoint_state: ConsoleDispatchCheckpointState
+
+
 class ConsolePromptQueueCoordinator:
     """Own queue admission, accepted claims, drain progression, and recovery."""
 
@@ -108,6 +121,10 @@ class ConsolePromptQueueCoordinator:
         self.on_chain_terminal = on_chain_terminal
         self._chains: dict[str, _PromptChain] = {}
         self._queue_snapshots: dict[str, PromptQueueSnapshot] = {}
+        self._dispatch_recoveries: dict[str, _RecoveredQueueOwner] = {}
+        self._settled_dispatch_recoveries: OrderedDict[tuple[str, str, str], None] = (
+            OrderedDict()
+        )
         self._shutting_down = False
 
     def authorizes(
@@ -162,7 +179,10 @@ class ConsolePromptQueueCoordinator:
             reservation = snapshot.reservation
         chain = self._chains.get(session_id)
         status = self._run_status(session_id)
-        accepted_live = bool(chain and chain.accepted_live_turn)
+        accepted_live = bool(
+            (chain and chain.accepted_live_turn)
+            or session_id in self._dispatch_recoveries
+        )
         preparing = (
             status
             in {
@@ -196,7 +216,113 @@ class ConsolePromptQueueCoordinator:
         if not session_id:
             return False
         snapshot = self.registry.snapshot(session_id)
-        return snapshot.total_count > 0 or snapshot.expected_context_epoch is not None
+        return bool(
+            snapshot.total_count > 0
+            or snapshot.expected_context_epoch is not None
+            or session_id in self._dispatch_recoveries
+        )
+
+    def hydrate_dispatch_recovery(
+        self,
+        session_id: str,
+        *,
+        queue_entry_id: str,
+        preparation_id: str,
+        checkpoint_state: ConsoleDispatchCheckpointState,
+    ) -> bool:
+        """Fence one already-accepted entry before any restored queue wake."""
+
+        if (
+            not session_id
+            or not queue_entry_id
+            or not preparation_id
+            or not isinstance(checkpoint_state, ConsoleDispatchCheckpointState)
+        ):
+            return False
+        owner = _RecoveredQueueOwner(
+            queue_entry_id,
+            preparation_id,
+            checkpoint_state,
+        )
+        current = self._dispatch_recoveries.get(session_id)
+        if current is not None and current != owner:
+            return False
+        self._dispatch_recoveries[session_id] = owner
+        snapshot = self.registry.snapshot(session_id)
+        if snapshot.total_count and snapshot.mode is not PromptQueueMode.PAUSED:
+            paused = self.registry.pause(
+                session_id,
+                reason=PromptQueuePauseReason.FAILED,
+                expected_revision=snapshot.revision,
+            )
+            if paused.status not in {
+                QueueMutationStatus.APPLIED,
+                QueueMutationStatus.UNCHANGED,
+            }:
+                self._dispatch_recoveries.pop(session_id, None)
+                return False
+        self._changed(session_id)
+        return True
+
+    def dispatch_recovery_blocks_queue(self, session_id: str) -> bool:
+        """Return whether a durable owner prevents automatic advancement."""
+
+        return session_id in self._dispatch_recoveries
+
+    def clear_dispatch_recovery(
+        self,
+        session_id: str,
+        *,
+        queue_entry_id: str,
+        preparation_id: str,
+    ) -> bool:
+        """Clear only the exact hydrated queue owner."""
+
+        current = self._dispatch_recoveries.get(session_id)
+        if current is None or (
+            current.queue_entry_id != queue_entry_id
+            or current.preparation_id != preparation_id
+        ):
+            return False
+        self._dispatch_recoveries.pop(session_id, None)
+        self._changed(session_id)
+        return True
+
+    async def settle_dispatch_recovery_and_drain(
+        self,
+        session_id: str,
+        *,
+        queue_entry_id: str,
+        preparation_id: str,
+        terminal_status: ConsoleRunStatus,
+    ) -> PromptQueueMutationResult:
+        """Release one settled owner and advance later work at most once."""
+
+        key = (session_id, queue_entry_id, preparation_id)
+        snapshot = self.registry.snapshot(session_id)
+        if key in self._settled_dispatch_recoveries:
+            return PromptQueueMutationResult(QueueMutationStatus.UNCHANGED, snapshot)
+        if not self.clear_dispatch_recovery(
+            session_id,
+            queue_entry_id=queue_entry_id,
+            preparation_id=preparation_id,
+        ):
+            return PromptQueueMutationResult(
+                QueueMutationStatus.INVALID,
+                snapshot,
+                detail="Dispatch recovery queue owner changed.",
+            )
+        self._settled_dispatch_recoveries[key] = None
+        while len(self._settled_dispatch_recoveries) > 256:
+            self._settled_dispatch_recoveries.popitem(last=False)
+        snapshot = self.registry.snapshot(session_id)
+        if snapshot.total_count == 0:
+            return PromptQueueMutationResult(QueueMutationStatus.UNCHANGED, snapshot)
+        resumed = self.resume(session_id)
+        if not resumed.applied:
+            return resumed
+        await self._drain_waiting(session_id, terminal_status)
+        return resumed
 
     def pause_for_stop(self, session_id: str) -> PromptQueueMutationResult:
         """Release a chain reservation as soon as Stop targets its live turn."""
@@ -612,6 +738,12 @@ class ConsolePromptQueueCoordinator:
         """Reacquire a slot and resume a manually/dispatch-paused queue."""
 
         snapshot = self.registry.snapshot(session_id)
+        if session_id in self._dispatch_recoveries:
+            return PromptQueueMutationResult(
+                QueueMutationStatus.INVALID,
+                snapshot,
+                detail="Finish or discard the pending response first.",
+            )
         if snapshot.mode is not PromptQueueMode.PAUSED:
             return PromptQueueMutationResult(QueueMutationStatus.INVALID, snapshot)
         if self._context_epoch(session_id) != snapshot.expected_context_epoch:

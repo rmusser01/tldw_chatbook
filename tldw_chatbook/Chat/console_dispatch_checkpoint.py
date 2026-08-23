@@ -206,6 +206,7 @@ class ConsoleAssistantSettlement:
     terminal_state: Literal["complete", "stopped", "failed", "discarded"]
     content: str
     metadata_json: str | None
+    usage_json: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
