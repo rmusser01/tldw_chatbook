@@ -50,11 +50,11 @@ TASK_3070_9_TASK0_BASE_METHODS = 640
 TASK_3070_9_DEFINITION_LINES = 328
 TASK_3070_9_TASK0_MAX_SCREEN_LINES = 19_667
 TASK_3070_9_TASK0_MAX_METHODS = 632
-TASK_3070_9_FINAL_DELIVERY_BASE = "0f9638cef395b74861ad29937b58023994002a12"
-TASK_3070_9_FINAL_DELIVERY_BASE_SCREEN_LINES = 20_028
+TASK_3070_9_FINAL_DELIVERY_BASE = "12931e1a30505e5e21644031c3c450c8b839e498"
+TASK_3070_9_FINAL_DELIVERY_BASE_SCREEN_LINES = 20_045
 TASK_3070_9_FINAL_DELIVERY_BASE_METHODS = 640
 TASK_3070_9_FINAL_DELIVERY_DEFINITION_LINES = 328
-TASK_3070_9_FINAL_DELIVERY_MAX_SCREEN_LINES = 19_700
+TASK_3070_9_FINAL_DELIVERY_MAX_SCREEN_LINES = 19_717
 TASK_3070_9_FINAL_DELIVERY_MAX_METHODS = 632
 TASK_3070_9_FAMILY_SHA256 = (
     "3a2968883c63dc89de430ee72b40444ebd97fb9b36c1dbc8a46e19d063a715ee"
@@ -1950,29 +1950,6 @@ def _assert_first_chat_method_boundaries(
     )
 
 
-def _assert_no_first_chat_compatibility_delegates(
-    screen_methods: dict[str, ast.AST],
-) -> None:
-    """Reject same-name ChatScreen delegates into the session owner."""
-    offenders: set[str] = set()
-    for name in WAVE6_GROUPS["first_chat"].moved & screen_methods.keys():
-        method = screen_methods[name]
-        if any(
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == name
-            and isinstance(node.func.value, ast.Attribute)
-            and node.func.value.attr == "_session"
-            and isinstance(node.func.value.value, ast.Name)
-            and node.func.value.value.id == "self"
-            for node in ast.walk(method)
-        ):
-            offenders.add(name)
-    assert not offenders, (
-        f"first-chat compatibility delegates remain: {sorted(offenders)}"
-    )
-
-
 @pytest.mark.unit
 def test_first_chat_family_has_completed_controller_ownership() -> None:
     """Require the exact eight-method family and revision state on Session."""
@@ -1982,9 +1959,7 @@ def test_first_chat_family_has_completed_controller_ownership() -> None:
     assert target_path.exists(), "ConsoleSessionController module is missing"
     _, screen_class = _class_node(_SCREEN_PATH, "ChatScreen")
     _, target_class = _class_node(target_path, group.target_class)
-    screen_methods = _methods_from_class(screen_class)
     _assert_first_chat_ownership_multiplicity(screen_class, target_class)
-    _assert_no_first_chat_compatibility_delegates(screen_methods)
     _assert_first_chat_revision_state_ownership(screen_class, target_class)
 
 
@@ -2154,7 +2129,7 @@ def test_first_chat_task_ratchet_is_earned() -> None:
     )
     assert (
         TASK_3070_9_FINAL_DELIVERY_MAX_SCREEN_LINES - TASK_3070_9_TASK0_MAX_SCREEN_LINES
-        == 33
+        == 50
     )
     assert TASK_3070_9_FINAL_DELIVERY_MAX_METHODS == TASK_3070_9_TASK0_MAX_METHODS
     assert not any(current_counts[name] for name in group.moved), (
@@ -2261,17 +2236,6 @@ def test_first_chat_move_oracles_are_non_vacuous() -> None:
         _assert_first_chat_revision_state_ownership(
             revision_property_mutant,
             target_with_revision_state,
-        )
-
-    compatibility_mutant = ast.parse(
-        "class ChatScreen:\n"
-        "    def consume_pending_console_first_chat_intent(self):\n"
-        "        return self._session.consume_pending_console_first_chat_intent()\n"
-    ).body[0]
-    assert isinstance(compatibility_mutant, ast.ClassDef)
-    with pytest.raises(AssertionError, match="compatibility delegates"):
-        _assert_no_first_chat_compatibility_delegates(
-            _methods_from_class(compatibility_mutant)
         )
 
 

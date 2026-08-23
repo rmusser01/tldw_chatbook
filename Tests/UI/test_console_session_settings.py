@@ -7919,12 +7919,6 @@ def _build_live_config_test_app():
             )
         )
         stack.enter_context(
-            patch(
-                "tldw_chatbook.app.PersonaActorPackCoordinator.recover",
-                return_value=SimpleNamespace(blocked_intent_ids=()),
-            )
-        )
-        stack.enter_context(
             patch.object(
                 TldwCli,
                 "_init_notes_service",

@@ -274,10 +274,6 @@ def _build_test_app(
                 "tldw_chatbook.app.ServerCharacterPersonaService.from_config",
                 return_value=MagicMock(),
             ),
-            patch(
-                "tldw_chatbook.app.PersonaActorPackCoordinator.recover",
-                return_value=SimpleNamespace(blocked_intent_ids=()),
-            ),
             patch.object(
                 TldwCli,
                 "_init_notes_service",
