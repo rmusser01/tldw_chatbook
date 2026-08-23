@@ -61,6 +61,8 @@ def provider_continuation_recovery_state(
             version,
             "ambiguous",
             "A tool may already have run. Resume is blocked to avoid repeating a side effect; discard this interrupted run to continue.",
+            False,
+            message.provider_continuation_actions_enabled,
         )
     if message.provider_continuation_remote:
         impact = (

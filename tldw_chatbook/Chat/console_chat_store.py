@@ -1657,6 +1657,7 @@ class ConsoleChatStore:
         self._restore_speech_preferences(session)
         self._resolve_context_policy_on_resume(session.id)
         restored_nodes = self._hydrate_provider_continuations_from_persistence(
+            session.id,
             persisted_conversation_id,
             list(all_nodes),
             remote_active=remote_active,
@@ -2216,6 +2217,7 @@ class ConsoleChatStore:
 
     def _hydrate_provider_continuations_from_persistence(
         self,
+        session_id: str,
         conversation_id: str,
         nodes: list[ConsoleChatMessage],
         *,
@@ -2225,11 +2227,13 @@ class ConsoleChatStore:
         database = getattr(self.persistence, "db", None) if self.persistence else None
         getter = getattr(database, "get_messages_for_conversation", None)
         if not callable(getter):
+            self._quarantine_continuation_hydration(session_id, conversation_id)
             return nodes
         try:
             rows = getter(conversation_id, limit=100_000)
         except Exception:
             logger.warning("Console continuation restore was unavailable.")
+            self._quarantine_continuation_hydration(session_id, conversation_id)
             return nodes
         by_persisted_id = {
             node.persisted_message_id: node
@@ -2277,6 +2281,36 @@ class ConsoleChatStore:
             )
             node.provider_continuation_actions_enabled = False
         return nodes
+
+    def _quarantine_continuation_hydration(
+        self,
+        session_id: str,
+        conversation_id: str,
+    ) -> None:
+        """Keep an unreadable continuation owner blocking until a fresh restore."""
+
+        with self._preparation_lock:
+            current = self._dispatch_recoveries_by_session.get(session_id)
+            if (
+                current is None
+                or current.kind is not ConsoleDispatchRecoveryKind.CONTINUATION
+            ):
+                return
+            self._dispatch_recoveries_by_session[session_id] = (
+                ConsoleDispatchRecoveryState(
+                    kind=ConsoleDispatchRecoveryKind.QUARANTINED,
+                    assistant_message_id=current.assistant_message_id,
+                    conversation_id=conversation_id,
+                    visible_copy=(
+                        "Continuation recovery is unavailable; reload the "
+                        "conversation."
+                    ),
+                    actions=(),
+                    error_code="continuation_hydration_error",
+                )
+            )
+            self._dispatch_recovery_message_baselines.pop(session_id, None)
+            self._dispatch_recovery_queue_hydration_pending.discard(session_id)
 
     def _normalize_restored_provider_continuation(
         self, session_id: str, conversation_id: str
@@ -9923,6 +9957,64 @@ class ConsoleChatStore:
         if not durability.ready:
             raise RuntimeError(durability.reason)
         message.provider_continuation_warning = None
+
+    def provider_continuation_terminal_message(
+        self,
+        message_id: str,
+        *,
+        expected_content: str,
+    ) -> ConsoleChatMessage | None:
+        """Return an exactly persisted terminal event owner without rewriting it."""
+
+        if type(expected_content) is not str:
+            return None
+        try:
+            message = self._message_or_raise(message_id)
+        except KeyError:
+            return None
+        checkpoint = message.provider_continuation
+        version = message.provider_continuation_message_version
+        session_id = self._message_session_index.get(message.id)
+        if (
+            message.role is not ConsoleMessageRole.ASSISTANT
+            or message.persisted_message_id is None
+            or message.status != "complete"
+            or message.assistant_generation_state != "complete"
+            or message.content != expected_content
+            or checkpoint is None
+            or checkpoint.state != "complete"
+            or not checkpoint.rounds
+            or checkpoint.rounds[-1].assistant_content != expected_content
+            or type(version) is not int
+            or version <= 0
+            or message.provider_continuation_actions_enabled
+            or session_id is None
+            or self.dispatch_recovery_for_session(session_id) is not None
+        ):
+            return None
+        database = getattr(self.persistence, "db", None) if self.persistence else None
+        getter = getattr(database, "get_message_by_id", None)
+        if not callable(getter):
+            return None
+        try:
+            row = getter(message.persisted_message_id)
+        except Exception:
+            return None
+        if not isinstance(row, Mapping):
+            return None
+        durable = read_provider_continuation_json(
+            row.get("provider_continuation_json")
+        )
+        if (
+            row.get("role") != ConsoleMessageRole.ASSISTANT.value
+            or row.get("deleted") != 0
+            or row.get("version") != version
+            or row.get("assistant_generation_state") != "complete"
+            or str(row.get("content") or "") != expected_content
+            or durable.checkpoint != checkpoint
+        ):
+            return None
+        return self._snapshot(message)
 
     @staticmethod
     def _continuation_event_value(

@@ -264,7 +264,7 @@ rg -n 'console_dispatch_checkpoints' tldw_chatbook/Sync_Interop tldw_chatbook/Ch
 rg -n 'assistant_generation_state' tldw_chatbook/Sync_Interop tldw_chatbook/Chatbooks tldw_chatbook/Chat/trajectory_export.py tldw_chatbook/Character_Chat/local_character_persona_service.py | wc -l
 43
 
-git diff -U0 | rg -n '^\\+.*logger.*(content|prompt|evidence|checkpoint|provider_continuation_json|api[_-]?key)'
+git diff -U0 -- '*.py' | rg -n '^\\+.*logger.*(content|prompt|evidence|checkpoint|provider_continuation_json|api[_-]?key)'
 <empty>
 ```
 
@@ -320,6 +320,186 @@ copy remains fixed/bounded. Tests use only generated keys and temporary SQLite.
 - Confirmed all mutants were restored and no full suite/push/network/profile DB
   was used.
 
-No Task16-scoped Important or Critical concern remains. The inherited Requests
-warning, parent-baseline Textual timeout, and whole-large-file formatter
-baseline are qualified above rather than claimed fixed.
+That was the pre-review conclusion. Independent review subsequently identified
+five continuation-recovery and mounted-projection defects; the correction and
+its qualified evidence follow below. The inherited Requests warning,
+parent-baseline Textual timeout, and whole-large-file formatter baseline remain
+qualified rather than claimed fixed.
+
+## Independent review correction
+
+### Verified findings and strict RED
+
+The withdrawn stale-USER-version report was not implemented: exact USER
+version/deleted quarantine remains unchanged. The five final findings were
+reproduced through production repository/store/controller paths, temporary
+SQLite, and mounted Textual widgets before production edits. The live in-flight
+Markdown control was corrected to inspect the enclosing Assistant-turn header,
+which is the actual mounted owner of that copy; it passed at RED and remains a
+precedence control.
+
+```text
+../../.venv/bin/python -m pytest -q --tb=line -p no:logging Tests/Chat/test_console_continuation_review_fixes.py Tests/UI/test_console_continuation_review_fixes.py
+12 failed, 1 passed, 1 warning in 2.81s
+```
+
+The twelve intended failures mapped to:
+
+- three recursive active-path cases: a sole earlier valid continuation was
+  missed, while duplicate and orphan claimants were not quarantined;
+- one continuation-row read failure that removed the neutral recovery owner
+  and allowed submission to fail open;
+- two real full-controller reasoning-only terminal cases, manual and queued,
+  where the Store's atomic `FinalContinuation` settlement was followed by a
+  second controller terminal mutation;
+- five mounted empty-state rows (`accepted`, `dispatch_started`, `complete`,
+  `failed`, and `discarded`) that retained the state but rendered an empty
+  Markdown body; and
+- one ambiguous/executing continuation whose disabled action proof was dropped
+  by the UI-neutral projection.
+
+The original queued test admitted two queued entries. During GREEN it exposed
+the established safety rule that durable queued acceptance pauses later work;
+the ratchet was narrowed to one real claimed queued turn, the exact review
+finding. The terminal-recognition mutant below proves that final ratchet fails
+on the old double-write behavior rather than passing due to its fixture.
+
+### Minimal correction
+
+- Checkpoint-free repository reconciliation now scans the whole recursive
+  active path. It accepts only one valid active continuation, quarantines
+  duplicate/orphan/invalid claims with bounded codes, treats an exact
+  complete-continuation/complete-assistant pair as inert terminal history, and
+  uses the active leaf only for the existing inert remote
+  accepted/dispatch-started fallback.
+- A continuation hydration read failure replaces the transient continuation
+  recovery with the same assistant/conversation identity in a bounded
+  `continuation_hydration_error` quarantine. It has no actions, blocks Send,
+  and survives until a new Store performs an exact successful re-read and
+  normalization.
+- Both plain and Markdown transcript bodies use
+  `render_exported_assistant_content` after the existing live
+  activity/generating handling. Stored content remains unchanged; the mounted
+  literals are bounded and live in-flight copy still wins.
+- The Store can prove an event-settled terminal message only when the in-memory
+  and durable role/deletion/version/state/content/complete-continuation facts
+  agree and no dispatch recovery remains. The controller consumes that exact
+  snapshot before fallback or terminal mutation, so manual and queued
+  reasoning-only completion write once.
+- Ambiguous/executing continuation projection now carries the Store's action
+  proof, keeping mounted Discard disabled when the recovered handle has not
+  been freshly rebound.
+
+Ruling A remains unchanged: local SQLite handoff failure retains dispatch
+recovery, while post-local-commit Sync-v2 failure retains only the committed
+ADR-063 continuation and runs zero tools.
+
+### GREEN and adjacent evidence
+
+First focused GREEN and the fresh post-mutation restoration run were:
+
+```text
+../../.venv/bin/python -m pytest -q --tb=short -p no:logging Tests/Chat/test_console_continuation_review_fixes.py Tests/UI/test_console_continuation_review_fixes.py
+13 passed, 1 warning in 2.86s
+
+../../.venv/bin/python -B -m pytest -q --tb=short --show-capture=no Tests/Chat/test_console_continuation_review_fixes.py Tests/UI/test_console_continuation_review_fixes.py
+13 passed, 1 warning in 2.82s
+```
+
+Fresh targeted companion gates after every mutant was restored:
+
+```text
+# Task16/ADR-063/Task5 plus the new review matrix
+258 passed, 1 warning in 24.05s
+
+# Repository/state
+126 passed, 1 warning in 19.70s
+
+# Task15 recovery
+101 passed, 1 warning in 22.74s
+
+# Task14 durability
+73 passed, 1 warning in 35.92s
+
+# Exact Task13/controller gate
+628 passed, 1 warning in 36.52s
+```
+
+One deliberately broader, non-gating UI companion finished `212 passed, 5
+failed, 1 warning in 234.46s`. All five failures are stale assertions in
+`Tests/UI/test_console_transcript_markdown_widget.py` that query the Markdown
+header inside the answer row. Production has long mounted that header on the
+enclosing Assistant-turn widget; the new passing mounted live control uses that
+actual hierarchy. This correction changes body rendering but no header/turn
+hierarchy, so those five unrelated assertions were not rewritten or claimed
+green.
+
+### Mutation, static, and privacy evidence
+
+Every review mutant was applied alone and restored:
+
+1. Limiting the new scan back to the active leaf failed all three recursive
+   sole/duplicate/orphan ratchets (`3 failed, 3 deselected`).
+2. Removing read-failure quarantine failed the exact blocking/re-read ratchet
+   (`1 failed`).
+3. Returning raw Markdown content instead of the shared state renderer failed
+   all five mounted state variants (`5 failed, 2 deselected`).
+4. Bypassing event-settled terminal recognition failed both real manual and
+   queued full-controller ratchets (`2 failed, 4 deselected`).
+5. Forcing ambiguous actions enabled failed the mounted disabled-action ratchet
+   (`1 failed`).
+6. Self-review found that scanning every sidecar also classified exact
+   complete-continuation/complete-assistant history as invalid recovery. Its
+   production-path ratchet first failed `1 failed, 6 deselected` with bounded
+   `invalid_continuation`; removing the narrow terminal-history rule after the
+   fix killed the same test with `1 failed, 6 deselected`, and the rule was
+   restored.
+
+`rg -n 'MUTATION PROBE'` over the changed production files returned no matches,
+and the fresh 14/258/126/101/73/628 gates ran with restored production. The
+post-self-review two-file focus was `14 passed, 1 warning in 2.87s`; the 258
+gate includes that exact matrix.
+
+```text
+../../.venv/bin/python -m ruff check <changed production and review-test files>
+All checks passed!
+
+../../.venv/bin/python -m ruff format --check Tests/Chat/test_console_continuation_review_fixes.py Tests/UI/test_console_continuation_review_fixes.py
+2 files already formatted
+
+git diff --check
+<empty>
+
+git diff -U0 | rg -n '^\\+.*logger.*(content|prompt|evidence|checkpoint|provider_continuation_json|api[_-]?key)'
+<empty>
+```
+
+Whole-file formatting remains qualified exactly as above: the inherited large
+production modules are not formatter-clean at the approved parent, so no broad
+mechanical rewrite is included. New warning/quarantine text is fixed and
+content-free; no prompt, evidence, reasoning, continuation JSON, tool payload,
+credential, or destination secret was added to logs or UI metadata.
+
+### Review-fix files and self-review
+
+Review-fix files:
+
+- `Tests/Chat/test_console_continuation_review_fixes.py`
+- `Tests/UI/test_console_continuation_review_fixes.py`
+- `tldw_chatbook/Chat/console_dispatch_repository.py`
+- `tldw_chatbook/Chat/console_chat_store.py`
+- `tldw_chatbook/Chat/console_chat_controller.py`
+- `tldw_chatbook/Widgets/Console/console_transcript.py`
+- `tldw_chatbook/UI/Console_Modules/provider_continuation_recovery.py`
+- TASK-19900.3 notes, this report, and the shared progress ledger.
+
+Self-review confirmed exact USER version/deleted quarantine and Task15 atomic
+settlement remain intact; no new schema/table/transaction owner, USER/assistant,
+fallback persistence, tool execution, or Task17 work was added. Recursive
+continuation selection is unique/fail-closed, exact completed private history
+is inert rather than actionable, unreadable hydration stays blocking, terminal
+recognition requires matching durable state, and UI copy is bounded/literal.
+TASK-19900.3 remains In Progress with all 22 criteria unchecked. No
+Task16-scoped Important or Critical concern remains after this correction; only
+the inherited Requests/format baselines and the five stale non-gating UI
+assertions above remain qualified.

@@ -455,58 +455,86 @@ class ConsoleDispatchRepository:
         cursor: sqlite3.Cursor,
         conversation_id: str,
     ) -> ConsoleDispatchRecoveryState | None:
-        row = cursor.execute(
-            """
+        rows = cursor.execute(
+            _ACTIVE_OWNER_SELECT
+            + """
             SELECT message.id, message.conversation_id, message.role,
                    message.deleted, message.assistant_generation_state,
-                   message.provider_continuation_json
-              FROM conversations AS conversation
-              LEFT JOIN messages AS message
-                ON message.id = conversation.active_leaf_message_id
-               AND message.conversation_id = conversation.id
+                   message.provider_continuation_json,
+                   conversation.active_leaf_message_id
+              FROM active_path
+              JOIN messages AS message ON message.id = active_path.message_id
+              JOIN conversations AS conversation
+                ON conversation.id = message.conversation_id
              WHERE conversation.id = ? AND conversation.deleted = 0
             """,
-            (conversation_id,),
-        ).fetchone()
-        if row is None or row["id"] is None:
+            (conversation_id, conversation_id, conversation_id),
+        ).fetchall()
+        if not rows:
             return None
-        assistant_id = str(row["id"])
-        if (
-            row["conversation_id"] != conversation_id
-            or row["role"] != "assistant"
-            or row["deleted"] != 0
-        ):
-            return None
-        continuation = read_provider_continuation_json(
-            row["provider_continuation_json"]
-        )
-        if continuation.checkpoint is not None:
-            if continuation.checkpoint.state != "active":
-                return self._quarantined(
-                    conversation_id,
-                    assistant_id,
-                    "invalid_continuation",
-                )
+        valid_owners: list[sqlite3.Row] = []
+        invalid_owner: tuple[sqlite3.Row, str] | None = None
+        for candidate in rows:
+            if (
+                candidate["conversation_id"] != conversation_id
+                or candidate["role"] != "assistant"
+                or candidate["deleted"] != 0
+            ):
+                continue
+            private_json = candidate["provider_continuation_json"]
+            continuation = read_provider_continuation_json(private_json)
+            if continuation.checkpoint is not None:
+                if continuation.checkpoint.state == "active":
+                    valid_owners.append(candidate)
+                elif (
+                    continuation.checkpoint.state == "complete"
+                    and candidate["assistant_generation_state"] == "complete"
+                ):
+                    continue
+                elif invalid_owner is None:
+                    invalid_owner = (candidate, "invalid_continuation")
+                continue
+            if candidate["assistant_generation_state"] == "continuation_active":
+                if invalid_owner is None:
+                    invalid_owner = (candidate, "orphan_continuation")
+            elif private_json is not None and invalid_owner is None:
+                invalid_owner = (candidate, "invalid_continuation")
+
+        if len(valid_owners) > 1:
+            return self._quarantined(
+                conversation_id,
+                "",
+                "duplicate_active_path_owner",
+            )
+        if invalid_owner is not None:
+            candidate, error_code = invalid_owner
+            return self._quarantined(
+                conversation_id,
+                str(candidate["id"]),
+                error_code,
+            )
+        if valid_owners:
+            owner = valid_owners[0]
             return ConsoleDispatchRecoveryState(
                 kind=ConsoleDispatchRecoveryKind.CONTINUATION,
-                assistant_message_id=assistant_id,
+                assistant_message_id=str(owner["id"]),
                 conversation_id=conversation_id,
                 visible_copy="Response continuation is pending.",
                 actions=(),
             )
+
+        row = next(
+            (
+                candidate
+                for candidate in rows
+                if candidate["id"] == candidate["active_leaf_message_id"]
+            ),
+            None,
+        )
+        if row is None or row["role"] != "assistant" or row["deleted"] != 0:
+            return None
+        assistant_id = str(row["id"])
         state = row["assistant_generation_state"]
-        if state == "continuation_active":
-            return self._quarantined(
-                conversation_id,
-                assistant_id,
-                "orphan_continuation",
-            )
-        if row["provider_continuation_json"] is not None:
-            return self._quarantined(
-                conversation_id,
-                assistant_id,
-                "invalid_continuation",
-            )
         if state == "accepted":
             return ConsoleDispatchRecoveryState(
                 kind=ConsoleDispatchRecoveryKind.REMOTE_ACCEPTED,

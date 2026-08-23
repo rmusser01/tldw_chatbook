@@ -15677,7 +15677,20 @@ class ConsoleChatController:
         The fallback text is streamed into the placeholder so the store's
         existing persistence/validation paths stay unchanged.
         """
-        if not getattr(outcome, "final_text", ""):
+        final_text = getattr(outcome, "final_text", "")
+        settled_reader = getattr(
+            self.store,
+            "provider_continuation_terminal_message",
+            None,
+        )
+        if callable(settled_reader):
+            settled = settled_reader(
+                assistant_message_id,
+                expected_content=final_text,
+            )
+            if settled is not None:
+                return settled
+        if not final_text:
             self.store.clear_terminal_citation_state(assistant_message_id)
             self.store.append_stream_chunk(
                 assistant_message_id,

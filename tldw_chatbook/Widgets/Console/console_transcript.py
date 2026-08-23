@@ -39,6 +39,9 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
     FEEDBACK_ACTIVE_RUN_STATUSES,
 )
+from tldw_chatbook.Chat.assistant_generation_state import (
+    render_exported_assistant_content,
+)
 from tldw_chatbook.Chat.console_turn_grouping import (
     ConsoleAssistantTurn,
     group_console_transcript_messages,
@@ -308,6 +311,11 @@ def _message_body(
         # has no content; show a visible generating state instead of an empty
         # row (local models can take 30-90s to first token).
         return CONSOLE_GENERATING_PLACEHOLDER
+    content = render_exported_assistant_content(
+        role=message.role.value,
+        content=content,
+        state=message.assistant_generation_state,
+    )
     if (
         message.role is not ConsoleMessageRole.USER
         and message.status == "failed"
@@ -946,10 +954,19 @@ def _assistant_markdown_body(
     its header line and feeds the Markdown widget content only.
     """
     if presentation is not None:
-        return presentation.content
-    if message.variants is not None:
-        return message.variants.current.content
-    return message.content
+        content = presentation.content
+    elif message.variants is not None:
+        content = message.variants.current.content
+    else:
+        content = message.content
+    if _row_is_in_flight(message) and not content.strip():
+        # The grouped Markdown header owns healthy live/generating copy.
+        return content
+    return render_exported_assistant_content(
+        role=message.role.value,
+        content=content,
+        state=message.assistant_generation_state,
+    )
 
 
 #: TASK-15456. A line that -- with <=3 leading spaces, per CommonMark's fence
