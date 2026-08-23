@@ -514,6 +514,13 @@ class LoopDeps:
     # positional constructor slots. Unlike ``clock`` (monotonic budgets),
     # this clock supplies UTC audit timestamps.
     wall_clock: Callable[[], datetime] = _utc_now
+    # Optional production-only causal dispatch seams. Appended after every
+    # legacy field so positional LoopDeps callers retain their exact slots.
+    invoke_tool_at_step: Callable[[ToolCall, int], ToolResult] | None = None
+    spawn_at_step: Callable[[str, int, str | None], ToolResult] | None = None
+    send_to_agent_at_step: (
+        Callable[[str, str, int], ToolResult] | None
+    ) = None
 
 
 def _continuation_calls_match(
@@ -1659,7 +1666,7 @@ def run_agent_loop(
                                 ok=False, error="sub-agent budget exhausted"
                             )
                         else:
-                            add(
+                            spawn_step = add(
                                 STEP_SPAWN,
                                 summary=(
                                     f"[{agent_name}] {task}"[:200]
@@ -1669,7 +1676,11 @@ def run_agent_loop(
                                 tool_name=SPAWN_TOOL_NAME,
                                 args=dict(call.args),
                             )
-                            if agent_name:
+                            if deps.spawn_at_step is not None:
+                                result = deps.spawn_at_step(
+                                    task, spawn_step.index, agent_name or None
+                                )
+                            elif agent_name:
                                 result = deps.spawn(task, agent=agent_name)
                             else:
                                 result = deps.spawn(task)
@@ -1726,7 +1737,9 @@ def run_agent_loop(
                     call.name == SEND_TO_AGENT_TOOL_NAME
                     and deps.send_to_agent is not None
                 ):
-                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
+                    steering_step = add(
+                        STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args)
+                    )
                     # Same defensive coercion as wait_agents' `ids` above:
                     # an unreliable local model may send numbers or JSON
                     # nulls. Anything non-string becomes its str() form (a
@@ -1736,10 +1749,14 @@ def run_agent_loop(
                     # unknown-id refusals speak, never a crash here.
                     raw_target = call.args.get("id")
                     raw_message = call.args.get("message")
-                    result = deps.send_to_agent(
-                        "" if raw_target is None else str(raw_target),
-                        "" if raw_message is None else str(raw_message),
-                    )
+                    target = "" if raw_target is None else str(raw_target)
+                    message = "" if raw_message is None else str(raw_message)
+                    if deps.send_to_agent_at_step is not None:
+                        result = deps.send_to_agent_at_step(
+                            target, message, steering_step.index
+                        )
+                    else:
+                        result = deps.send_to_agent(target, message)
                 elif call.name == FIND_TOOLS_NAME:
                     add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
                     entries = deps.find_tools(str(call.args.get("query", "")))
@@ -1862,8 +1879,13 @@ def run_agent_loop(
                     add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
                     result = deps.run_log_slice(dict(call.args))
                 else:
-                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
-                    result = deps.invoke_tool(call)
+                    tool_step = add(
+                        STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args)
+                    )
+                    if deps.invoke_tool_at_step is not None:
+                        result = deps.invoke_tool_at_step(call, tool_step.index)
+                    else:
+                        result = deps.invoke_tool(call)
 
                 tool_outcome = (
                     TOOL_OUTCOME_SUCCESS

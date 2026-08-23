@@ -710,6 +710,28 @@ def _safe_agent_step_record(run_id: str, step: AgentStep) -> dict[str, Any]:
     """Serialize one step without persisting tool payloads or local-only links."""
     record = dataclasses.asdict(step)
     states = dict(step.field_states)
+    if step.summary:
+        summary = step.summary
+        uppered_summary = summary.upper()
+        if (
+            contains_local_path(summary)
+            or _contains_hidden_reasoning(summary)
+            or (
+                "-----BEGIN " in uppered_summary
+                and "PRIVATE KEY-----" in uppered_summary
+            )
+        ):
+            record["summary"] = ""
+            states["summary"] = "omitted"
+        else:
+            safe_summary = redact_log_line(summary, max_length=200)
+            record["summary"] = safe_summary
+            if safe_summary != summary:
+                states["summary"] = (
+                    "redacted"
+                    if REDACTION_MARKER in safe_summary
+                    else "truncated"
+                )
     if step.args is not None:
         record["args"] = None
         states["args"] = "omitted"
@@ -747,7 +769,9 @@ def _safe_agent_step_record(run_id: str, step: AgentStep) -> dict[str, Any]:
                 )
             else:
                 states["result"] = "observed"
-    if step.tool_name and (step.args is not None or step.result):
+    if step.tool_name and (
+        step.result or (step.args is not None and states.get("summary") == "omitted")
+    ):
         record["summary"] = f"{step.tool_name} recorded"
     if step.tool_name:
         record["sensitivity"] = (
@@ -803,6 +827,19 @@ def _safe_run_log_content(record_type: str, content: str) -> tuple[str, bool]:
         return REDACTION_MARKER, True
     sanitized = redact_log_line(content, max_length=0)
     return sanitized, sanitized != content
+
+
+def _safe_agent_task_summary(task: str | None) -> str | None:
+    """Return a bounded durable task label without private task content."""
+    if not task:
+        return None
+    if contains_local_path(task) or _contains_hidden_reasoning(task):
+        return "Sub-agent task withheld for privacy"
+    uppered = task.upper()
+    if "-----BEGIN " in uppered and "PRIVATE KEY-----" in uppered:
+        return "Sub-agent task withheld for privacy"
+    sanitized = redact_log_line(task, max_length=200)
+    return sanitized or "Sub-agent task withheld for privacy"
 
 
 def _default_chat_call():
@@ -2302,6 +2339,7 @@ class AgentService:
         # send_to_agent's continuation branch; None for every other
         # caller (an ordinary run).
         resumed_from_run_id: str | None = None,
+        spawn_event_id: str | None = None,
         on_run_id: Callable[[str], None] | None = None,
         # PR3b Task 1 (fleet steering): the per-child mailbox drain, built
         # by spawn's fleet branch as a closure over THIS child's own
@@ -2361,13 +2399,14 @@ class AgentService:
         run_id = self.db.create_run(
             conversation_id=conversation_id,
             agent_kind=agent_kind,
-            task=task,
+            task=_safe_agent_task_summary(task),
             parent_run_id=parent_run_id,
             budget=dataclasses.asdict(config.budget),
             assistant_message_id=assistant_message_id,
             agent_definition=agent_definition,
             definition_fingerprint=definition_fingerprint,
             resumed_from_run_id=resumed_from_run_id,
+            spawn_event_id=spawn_event_id,
         )
         # PR2a Task 6: a threaded child's run id does not exist until this
         # line, and its spawning parent has long since returned a handle to
@@ -2915,6 +2954,7 @@ class AgentService:
             allowed_tools: tuple[str, ...] | None = None,
             agent: str | None = None,
             inline: bool = False,
+            spawn_step_index: int | None = None,
         ) -> ToolResult:
             nonlocal sub_agent_spawns
             # Task-12 review Finding 2: this closure is THE single spawn
@@ -3102,6 +3142,11 @@ class AgentService:
                 workspace_context_note=config.workspace_context_note,
                 response_reserve_tokens=config.response_reserve_tokens,
             )
+            spawn_event_id = (
+                f"agent-step:{run_id}:{spawn_step_index}"
+                if spawn_step_index is not None
+                else None
+            )
             # C1: snapshot/restore whatever review_state_scope owns (see
             # __init__'s own comment) around the ENTIRE nested run -- the
             # child's own turns must never be able to leave the parent's
@@ -3125,6 +3170,7 @@ class AgentService:
                 agent_kind=AGENT_KIND_SUBAGENT,
                 task=spawn_task,
                 parent_run_id=run_id,
+                spawn_event_id=spawn_event_id,
                 agent_definition=(resolved.name if resolved else None),
                 definition_fingerprint=(
                     compute_definition_fingerprint(resolved) if resolved else None
@@ -3391,7 +3437,9 @@ class AgentService:
                 lines.extend(_line(handle) for handle in others)
             return ToolResult(ok=True, content="\n".join(lines))
 
-        def _resume_retained_child(retained, steer_text: str) -> ToolResult:
+        def _resume_retained_child(
+            retained, steer_text: str, spawn_step_index: int | None
+        ) -> ToolResult:
             """Continuation (PR3b Task 4, spec SS6): a NEW run from a
             retained transcript.
 
@@ -3523,6 +3571,11 @@ class AgentService:
                 agent_kind=AGENT_KIND_SUBAGENT,
                 task=retained.task,
                 parent_run_id=run_id,
+                spawn_event_id=(
+                    f"agent-step:{run_id}:{spawn_step_index}"
+                    if spawn_step_index is not None
+                    else None
+                ),
                 agent_definition=(resolved.name if resolved else None),
                 definition_fingerprint=(
                     compute_definition_fingerprint(resolved) if resolved else None
@@ -3555,7 +3608,9 @@ class AgentService:
                 ),
             )
 
-        def send_to_agent(target_id: str, message: str) -> ToolResult:
+        def send_to_agent(
+            target_id: str, message: str, spawn_step_index: int | None = None
+        ) -> ToolResult:
             """Queue a steering message for a LIVE child (PR3b Task 2).
 
             Spec SS6's supervisor path into Task 1's per-child mailbox.
@@ -3677,7 +3732,7 @@ class AgentService:
             # lookup.
             retained = fleet.get_retained(target_id)
             if retained is not None:
-                return _resume_retained_child(retained, text)
+                return _resume_retained_child(retained, text, spawn_step_index)
             finished = next(
                 (
                     h
@@ -3754,7 +3809,9 @@ class AgentService:
             config, disclosed_names, should_cancel, run_id=run_id
         )
 
-        def invoke_tool(call: ToolCall) -> ToolResult:
+        def invoke_tool(
+            call: ToolCall, trace_step_index: int | None = None
+        ) -> ToolResult:
             if self.skill_runner is not None and self.skill_runner.is_skill_tool(
                 call.name
             ):
@@ -3805,7 +3862,11 @@ class AgentService:
                 return self.skill_runner.run(
                     call.name,
                     str(call.args.get("args", "")),
-                    functools.partial(spawn, inline=True),
+                    functools.partial(
+                        spawn,
+                        inline=True,
+                        spawn_step_index=trace_step_index,
+                    ),
                 )
             return builtin_invoke_tool(call)
 
@@ -4429,6 +4490,14 @@ class AgentService:
             call_model_with_continuation=call_model,
             invoke_tool=invoke_tool,
             spawn=spawn,
+            invoke_tool_at_step=lambda call, step_index: invoke_tool(
+                call, trace_step_index=step_index
+            ),
+            spawn_at_step=lambda task, step_index, agent_name: spawn(
+                task,
+                agent=agent_name,
+                spawn_step_index=step_index,
+            ),
             find_tools=find_tools,
             load_schemas=load_schemas,
             should_cancel=should_cancel,
@@ -4501,6 +4570,13 @@ class AgentService:
             check_agents=check_agents if fleet_active else None,
             # PR3b Task 2: the steering producer, under the same predicate.
             send_to_agent=send_to_agent if fleet_active else None,
+            send_to_agent_at_step=(
+                lambda target, message, step_index: send_to_agent(
+                    target, message, spawn_step_index=step_index
+                )
+            )
+            if fleet_active
+            else None,
             # PR3b Task 1: non-None ONLY for a threaded fleet child (see
             # the parameter's own comment above); the pure loop drains it
             # at its protocol-coherent pre-model-call point.

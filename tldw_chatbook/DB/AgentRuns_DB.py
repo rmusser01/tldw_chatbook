@@ -82,7 +82,7 @@ class AgentRunsDB(BaseDB):
     trail (nothing branches on it at runtime).
     """
 
-    _CURRENT_SCHEMA_VERSION = 13
+    _CURRENT_SCHEMA_VERSION = 14
     _swept_paths: set[str] = set()  # DB files already reconciled this process
 
     #: Liveness-ping gate (mirrors ChaChaNotes/WorkspaceDB, task-261/3011):
@@ -254,7 +254,11 @@ class AgentRunsDB(BaseDB):
                     -- run it resumed from. NULL for every ordinary run.
                     -- Lineage only: parent_run_id still points at the
                     -- RESUMING turn's primary, never at the old run.
-                    resumed_from_run_id TEXT
+                    resumed_from_run_id TEXT,
+                    -- v14 (ADR-080): the stable parent Trace event that
+                    -- caused this run to exist. NULL for primary and
+                    -- legacy runs whose precise cause was not captured.
+                    spawn_event_id TEXT
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_agent_runs_conversation
@@ -474,6 +478,12 @@ class AgentRunsDB(BaseDB):
                 conn.execute(
                     "ALTER TABLE agent_runs ADD COLUMN resumed_from_run_id TEXT"
                 )
+            # v13->v14 (ADR-080): precise spawn causality. NULL is the
+            # honest migration value for every historical run.
+            if "spawn_event_id" not in existing_columns:
+                conn.execute(
+                    "ALTER TABLE agent_runs ADD COLUMN spawn_event_id TEXT"
+                )
             # v3->v4 (TASK-1975): oversize disclosure count on snapshot
             # rows -- same idempotent-ALTER migration mechanism as above.
             snapshot_columns = {
@@ -592,6 +602,10 @@ class AgentRunsDB(BaseDB):
             # the CREATE TABLE comment above for the full rationale.
             conn.execute(
                 "INSERT OR IGNORE INTO schema_version (version) VALUES (13)"
+            )
+            # v14 (ADR-080): agent_runs.spawn_event_id.
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_version (version) VALUES (14)"
             )
 
     def record_change_snapshot(
@@ -1090,7 +1104,7 @@ class AgentRunsDB(BaseDB):
         "id, conversation_id, parent_run_id, agent_kind, task, status, "
         "result, budget, created_at, updated_at, assistant_message_id, "
         "agent_definition, definition_fingerprint, wake_delivered_at, "
-        "resumed_from_run_id"
+        "resumed_from_run_id, spawn_event_id"
     )
 
     def _batch_hydrate_steps(
@@ -1225,6 +1239,7 @@ class AgentRunsDB(BaseDB):
         agent_definition: str | None = None,
         definition_fingerprint: str | None = None,
         resumed_from_run_id: str | None = None,
+        spawn_event_id: str | None = None,
     ) -> str:
         """Create a new run record in ``running`` status.
 
@@ -1249,6 +1264,8 @@ class AgentRunsDB(BaseDB):
             resumed_from_run_id: For a CONTINUATION of a finished
                 sub-agent (fleet PR3b Task 4): the run id this run was
                 seeded from. ``None`` for every ordinary run.
+            spawn_event_id: Stable parent Trace event that caused this run.
+                ``None`` for primary and legacy runs.
 
         Returns:
             The newly created run's id (a hex UUID4).
@@ -1261,8 +1278,8 @@ class AgentRunsDB(BaseDB):
                    (id, conversation_id, parent_run_id, agent_kind, task,
                     status, steps, result, budget, created_at, updated_at,
                     assistant_message_id, agent_definition, definition_fingerprint,
-                    resumed_from_run_id)
-                   VALUES (?, ?, ?, ?, ?, 'running', '[]', NULL, ?, ?, ?, ?, ?, ?, ?)""",
+                    resumed_from_run_id, spawn_event_id)
+                   VALUES (?, ?, ?, ?, ?, 'running', '[]', NULL, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     run_id,
                     conversation_id,
@@ -1276,6 +1293,7 @@ class AgentRunsDB(BaseDB):
                     agent_definition,
                     definition_fingerprint,
                     resumed_from_run_id,
+                    spawn_event_id,
                 ),
             )
         return run_id

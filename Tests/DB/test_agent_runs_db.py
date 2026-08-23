@@ -848,3 +848,57 @@ def test_create_run_resumed_from_run_id_round_trips_and_defaults_none(db):
     # The lineage flows through the list read too (SELECT * row dicts).
     listed = {row["id"]: row for row in db.list_runs("c")}
     assert listed[resumed]["resumed_from_run_id"] == origin
+
+
+def test_pre_v14_db_gains_spawn_event_id_and_opens_twice(tmp_path):
+    path = tmp_path / "legacy_pre_v14.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE schema_version (version INTEGER PRIMARY KEY NOT NULL);
+        INSERT INTO schema_version(version) VALUES
+            (4), (5), (6), (7), (8), (9), (10), (11), (12), (13);
+        CREATE TABLE agent_runs (
+            id TEXT PRIMARY KEY,
+            conversation_id TEXT NOT NULL,
+            parent_run_id TEXT,
+            agent_kind TEXT NOT NULL,
+            task TEXT,
+            status TEXT NOT NULL,
+            steps TEXT NOT NULL DEFAULT '[]',
+            result TEXT,
+            budget TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            assistant_message_id TEXT,
+            agent_definition TEXT,
+            definition_fingerprint TEXT,
+            wake_delivered_at TEXT,
+            resumed_from_run_id TEXT
+        );
+        """
+    )
+    conn.commit()
+    columns_before = {row[1] for row in conn.execute("PRAGMA table_info(agent_runs)")}
+    conn.close()
+    assert "spawn_event_id" not in columns_before
+
+    first = AgentRunsDB(path, client_id="migrate-v14")
+    with first.connection() as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(agent_runs)")}
+        recorded = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
+    assert "spawn_event_id" in columns
+    assert recorded == AgentRunsDB._CURRENT_SCHEMA_VERSION == 14
+    parent = first.create_run(conversation_id="c", agent_kind="primary")
+    child = first.create_run(
+        conversation_id="c",
+        agent_kind="subagent",
+        parent_run_id=parent,
+        spawn_event_id=f"agent-step:{parent}:3",
+    )
+    assert first.get_run(child)["spawn_event_id"] == f"agent-step:{parent}:3"
+    first.close()
+
+    second = AgentRunsDB(path, client_id="reopen-v14")
+    assert second.get_run(child)["spawn_event_id"] == f"agent-step:{parent}:3"
+    second.close()

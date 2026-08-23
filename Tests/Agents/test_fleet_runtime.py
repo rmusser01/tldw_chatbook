@@ -419,6 +419,14 @@ def test_two_children_run_concurrently_and_wait_collects_both(db):
     assert "answer one" in final_payload and "answer two" in final_payload
     assert coordinator.all_finished()
     assert [h.status for h in coordinator.snapshot()] == [RUN_DONE, RUN_DONE]
+    parent = db.get_run(run_id)
+    spawn_events = {
+        f"agent-step:{run_id}:{step['index']}"
+        for step in parent["steps"]
+        if step["kind"] == "spawn"
+    }
+    children = [row for row in db.list_runs("c") if row["agent_kind"] == "subagent"]
+    assert {row["spawn_event_id"] for row in children} == spawn_events
 
 
 def test_parent_and_fleet_child_share_todo_store_for_concurrent_creates(db, tmp_path):
@@ -1331,6 +1339,10 @@ def test_max_live_of_one_keeps_spawn_inline(db, monkeypatch):
     assert spawn_results == ["sub answer: 42"]
     child = next(r for r in db.list_runs("c") if r["agent_kind"] == "subagent")
     assert child["result"] == "sub answer: 42"
+    parent_spawn = next(
+        step for step in db.get_run(run_id)["steps"] if step["kind"] == "spawn"
+    )
+    assert child["spawn_event_id"] == f"agent-step:{run_id}:{parent_spawn['index']}"
 
 
 def test_fleet_tools_are_not_offered_at_max_live_of_one(db, monkeypatch):

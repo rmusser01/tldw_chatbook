@@ -57,6 +57,7 @@ from tldw_chatbook.Chat.provider_continuation import (
     ContinuationRound,
     ProviderContinuationCheckpoint,
 )
+from tldw_chatbook.Chat.trajectory import derive_trajectory
 from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderGateway,
     ConsoleProviderResolution,
@@ -4473,6 +4474,43 @@ def test_skill_tool_call_routes_through_run_scoped_spawn(tmp_path):
         if m.role is ConsoleMessageRole.TOOL
     ]
     assert any("code-review" in row.content for row in tool_rows)
+
+    db_path = db.db_path
+    db.close()
+    reopened = AgentRunsDB(db_path, client_id="trace-skill-reload")
+    runs = reopened.list_runs("conv-skill", include_superseded=True)
+    parent = next(row for row in runs if row["agent_kind"] == "primary")
+    child = next(row for row in runs if row["agent_kind"] == "subagent")
+    causes = [
+        step
+        for step in parent["steps"]
+        if f"agent-step:{parent['id']}:{step['index']}" == child["spawn_event_id"]
+    ]
+    assert len(causes) == 1
+    assert causes[0]["kind"] == STEP_TOOL_CALL
+    assert causes[0]["tool_name"] == "code-review"
+
+    agent_steps = [
+        {**step, "run_id": row["id"], "conversation_id": "conv-skill"}
+        for row in runs
+        for step in row["steps"]
+    ]
+    snapshot = derive_trajectory(
+        messages=[],
+        usage_by_id={},
+        traj_rows=[],
+        variant_sets=[],
+        compaction_records=[],
+        agent_runs=runs,
+        agent_steps=agent_steps,
+    )
+    event_ids = [
+        record.event_id for turn in snapshot.turns for record in turn.records
+    ]
+    assert event_ids.index(child["spawn_event_id"]) < event_ids.index(
+        f"agent-run:{child['id']}"
+    )
+    reopened.close()
 
 
 def test_skill_trust_blocked_refuses_without_spawning(tmp_path):

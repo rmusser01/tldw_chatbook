@@ -821,6 +821,15 @@ def test_send_to_agent_to_a_finished_child_starts_a_resumed_seeded_run(db):
     resumed_row = next(r for r in rows if r["id"] != old_run_id)
     assert resumed_row["resumed_from_run_id"] == old_run_id
     assert resumed_row["parent_run_id"] == run2
+    steering_step = next(
+        step
+        for step in db.get_run(run2)["steps"]
+        if step["kind"] == "tool_call"
+        and step["tool_name"] == SEND_TO_AGENT_TOOL_NAME
+    )
+    assert resumed_row["spawn_event_id"] == (
+        f"agent-step:{run2}:{steering_step['index']}"
+    )
     old_row = next(r for r in rows if r["id"] == old_run_id)
     assert old_row["resumed_from_run_id"] is None
     assert old_row["parent_run_id"] == run1
@@ -1231,8 +1240,6 @@ def test_after_a_restart_the_error_says_the_transcript_is_gone(db):
     """The spec's honest limit: retention is in-memory. A fresh
     coordinator (a restart) cannot resume -- the error says the transcript
     is gone and suggests a fresh spawn, NOT the unknown-id refusal."""
-    holder: dict = {}
-
     service, _chat, coordinator = make_fleet_service(
         db,
         [
