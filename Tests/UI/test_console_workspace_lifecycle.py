@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+from types import SimpleNamespace
+
 import pytest
 from textual.widgets import Button, Input
 
@@ -135,3 +138,62 @@ async def test_default_row_labeled_everyday_chats() -> None:
         assert DEFAULT_WORKSPACE_ID not in {
             node.workspace_id for node in state.workspace_tree
         }
+
+
+@pytest.mark.asyncio
+async def test_mounted_page_request_publishes_loading_and_suppresses_duplicate() -> (
+    None
+):
+    app = _build_test_app()
+    app.workspace_registry_service.create_workspace(
+        workspace_id="ws-a", name="Workspace 1"
+    )
+    started = asyncio.Event()
+    release = asyncio.Event()
+    service_calls: list[int] = []
+
+    async def list_conversations(**_kwargs):
+        service_calls.append(1)
+        started.set()
+        await release.wait()
+        return {
+            "items": [{"id": "page-row", "title": "Page row", "state": "saved"}],
+            "pagination": {"total": 1},
+        }
+
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen_stack[-1]
+        controller = console._workspace
+        published = []
+        original_sync = console._sync_console_workspace_context
+
+        def capture_sync():
+            published.append(controller.workspace_tree_projection())
+            return original_sync()
+
+        controller._sync_workspace_context_fn = capture_sync
+        app.chat_conversation_scope_service = SimpleNamespace(
+            list_conversations=list_conversations
+        )
+        controller.request_workspace_tree_page("ws-a", 0)
+        await started.wait()
+
+        assert published
+        loading_node = {node.workspace_id: node for node in published[-1]}["ws-a"]
+        assert loading_node.loading is True
+
+        controller.request_workspace_tree_page("ws-a", 0)
+        await pilot.pause(0.1)
+        assert len(service_calls) == 1
+
+        release.set()
+        await pilot.pause(0.3)
+        final_state = controller._build_console_workspace_context_state()
+        final_node = {node.workspace_id: node for node in final_state.workspace_tree}[
+            "ws-a"
+        ]
+        assert final_node.loading is False
+        assert [row.conversation_id for row in final_node.conversations] == ["page-row"]

@@ -136,13 +136,14 @@ def test_literal_title_and_selected_run_marker_are_preserved() -> None:
 
 def test_marker_overlay_reuses_unrelated_rows() -> None:
     target = _row("target", "Target")
-    unrelated = _row("unrelated", "Unrelated")
+    cleared = _row("cleared", "Cleared", run_marker="✗")
+    unrelated = _row("unrelated", "Unrelated", run_marker="✓")
 
     rows = overlay_console_conversation_markers(
-        (target, unrelated),
+        (target, cleared, unrelated),
         starred_ids=("target",),
         selected_conversation_id="target",
-        run_markers={"target": "◆"},
+        run_markers={"target": "◆", "cleared": ""},
     )
 
     assert (rows[0].starred, rows[0].selected, rows[0].run_marker) == (
@@ -150,7 +151,8 @@ def test_marker_overlay_reuses_unrelated_rows() -> None:
         True,
         "◆",
     )
-    assert rows[1] is unrelated
+    assert rows[1].run_marker == ""
+    assert rows[2] is unrelated
 
 
 def test_flat_cap_reports_hidden_rows_and_marker_without_duplicates() -> None:

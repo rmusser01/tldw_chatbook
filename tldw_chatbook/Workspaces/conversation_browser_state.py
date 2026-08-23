@@ -748,7 +748,11 @@ def overlay_console_conversation_markers(
         values = (
             conversation_id in starred,
             conversation_id == selected_id,
-            markers.get(conversation_id, ""),
+            (
+                markers[conversation_id]
+                if conversation_id in markers
+                else row.run_marker
+            ),
         )
         if values == (row.starred, row.selected, row.run_marker):
             overlaid.append(row)

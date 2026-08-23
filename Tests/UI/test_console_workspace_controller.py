@@ -22,11 +22,16 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
 from textual.widgets import Input
 
+from tldw_chatbook.Chat.console_chat_models import (
+    CONSOLE_RUN_MARKER_GLYPHS,
+    ConsoleRunMarker,
+)
 from Tests.UI.background_signals import (
     await_background_task,
     wait_for_background_signal,
@@ -37,6 +42,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from tldw_chatbook.UI.Console_Modules.workspace import ConsoleWorkspaceController
+from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph
 from tldw_chatbook.Workspaces import (
     CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
     DEFAULT_WORKSPACE_ID,
@@ -618,36 +624,64 @@ async def test_page_completion_with_unknown_membership_preserves_settled_retry()
 
 
 @pytest.mark.asyncio
-async def test_overlapping_same_cursor_page_commits_once_by_conversation_id() -> None:
+async def test_page_completion_from_prior_screen_lifecycle_is_discarded_and_settled() -> (
+    None
+):
+    identities = {"owner": object(), "lifecycle": object()}
+    syncs: list[str] = []
+    controller = _workspace_controller(
+        app_instance=SimpleNamespace(
+            workspace_registry_service=_membership_registry("settled", "late")
+        ),
+        workspace_tree_owner_accessor=lambda: identities["owner"],
+        screen_lifecycle_token_accessor=lambda: identities["lifecycle"],
+        sync_workspace_context=lambda: syncs.append("sync"),
+    )
+    settled = _browser_row("settled", "Settled")
+    attempt = controller._new_workspace_page_state(rows=(settled,), next_cursor=75)
+    attempt.membership_token = ("late", "settled")
+    controller._workspace_page_attempts["workspace-7"] = attempt
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def fetch(_workspace_id, _cursor):
+        started.set()
+        await release.wait()
+        return (_browser_row("late", "Old lifecycle"),), None
+
+    controller._fetch_workspace_tree_page = fetch
+    page = asyncio.create_task(controller.load_workspace_tree_page("workspace-7", 75))
+    await started.wait()
+    identities["lifecycle"] = object()
+    release.set()
+    await page
+
+    assert [row.conversation_id for row in attempt.rows] == ["settled"]
+    assert attempt.loading is False
+    assert syncs
+
+
+@pytest.mark.asyncio
+async def test_repeated_same_cursor_pages_materialize_conversation_id_once() -> None:
     controller = _workspace_controller(
         app_instance=SimpleNamespace(
             workspace_registry_service=_membership_registry("same")
         )
     )
-    releases = [asyncio.Event(), asyncio.Event()]
-    started = [asyncio.Event(), asyncio.Event()]
     calls = 0
 
     async def fetch(_workspace_id, _cursor):
         nonlocal calls
         index = calls
         calls += 1
-        started[index].set()
-        await releases[index].wait()
         return (_browser_row("same", f"attempt-{index}"),), None
 
     controller._fetch_workspace_tree_page = fetch
-    first = asyncio.create_task(controller.load_workspace_tree_page("workspace-7", 75))
-    await started[0].wait()
-    second = asyncio.create_task(controller.load_workspace_tree_page("workspace-7", 75))
-    await started[1].wait()
-    releases[1].set()
-    await second
-    releases[0].set()
-    await first
+    await controller.load_workspace_tree_page("workspace-7", 75)
+    await controller.load_workspace_tree_page("workspace-7", 75)
 
     rows = controller._workspace_page_attempts["workspace-7"].rows
-    assert [(row.conversation_id, row.title) for row in rows] == [("same", "attempt-1")]
+    assert [(row.conversation_id, row.title) for row in rows] == [("same", "attempt-0")]
 
 
 @pytest.mark.asyncio
@@ -1098,6 +1132,56 @@ def test_production_state_build_uses_canonical_membership_without_fanout() -> No
     assert controller._workspace_page_attempts["workspace-49"] is untouched
 
 
+def test_production_publish_reconciles_fresh_default_owner_before_both_projections() -> (
+    None
+):
+    membership_calls: list[str] = []
+    registry = SimpleNamespace(
+        list_workspaces=lambda: (
+            SimpleNamespace(workspace_id="workspace-7", name="Seven", archived=False),
+            SimpleNamespace(
+                workspace_id=DEFAULT_WORKSPACE_ID, name="Default", archived=False
+            ),
+        ),
+        list_workspace_conversations=lambda workspace_id: (
+            membership_calls.append(workspace_id) or ()
+        ),
+    )
+    controller = _workspace_controller(
+        app_instance=SimpleNamespace(workspace_registry_service=registry)
+    )
+    stale_named = _browser_row("moving", "Stale named owner")
+    attempt = controller._new_workspace_page_state(rows=(stale_named,), next_cursor=75)
+    attempt.membership_token = ("moving",)
+    controller._workspace_page_attempts["workspace-7"] = attempt
+    fresh_default = _browser_row(
+        "moving",
+        "Fresh Default owner",
+        workspace_id=DEFAULT_WORKSPACE_ID,
+    )
+    controller._console_conversation_browser_rows = (fresh_default,)
+
+    state = controller._with_console_conversation_browser_state(_workspace_state())
+    assert state.conversation_browser is not None
+    owners = [
+        *(
+            node.workspace_id
+            for node in state.workspace_tree
+            for row in node.conversations
+            if row.conversation_id == "moving"
+        ),
+        *(
+            "flat"
+            for section in state.conversation_browser.sections
+            for row in section.rows
+            if row.conversation_id == "moving"
+        ),
+    ]
+
+    assert owners == ["flat"]
+    assert membership_calls == []
+
+
 def test_active_workspace_search_overlays_current_star_selection_and_run_marker() -> (
     None
 ):
@@ -1133,6 +1217,92 @@ def test_active_workspace_search_overlays_current_star_selection_and_run_marker(
     assert (row.starred, row.selected, bool(row.run_marker)) == (True, True, True)
     assert controller._workspace_tree_search.rows == (stale,)
     assert membership_calls == []
+
+
+def test_active_workspace_search_overlays_full_native_marker_truth_without_queries() -> (
+    None
+):
+    service_calls: list[str] = []
+    marker_by_session = {
+        "session-running": ConsoleRunMarker.RUNNING,
+        "session-approval": ConsoleRunMarker.NEEDS_APPROVAL,
+        "session-clear": ConsoleRunMarker.NONE,
+    }
+    sessions = tuple(
+        SimpleNamespace(id=session_id, persisted_conversation_id=conversation_id)
+        for session_id, conversation_id in (
+            ("session-running", "running"),
+            ("session-approval", "approval"),
+            ("session-clear", "cleared"),
+        )
+    )
+    chat_controller = SimpleNamespace(
+        run_marker_for=lambda session_id: marker_by_session[session_id]
+    )
+
+    def marker_with_unseen(controller, session, unseen_ids):
+        marker = controller.run_marker_for(session.id)
+        if (
+            marker is ConsoleRunMarker.NONE
+            and session.persisted_conversation_id in unseen_ids
+        ):
+            return ConsoleRunMarker.SUBAGENT_UNSEEN
+        return marker
+
+    controller = _workspace_controller(
+        app_instance=SimpleNamespace(
+            workspace_registry_service=SimpleNamespace(
+                list_workspaces=lambda: (
+                    SimpleNamespace(
+                        workspace_id="workspace-7", name="Seven", archived=False
+                    ),
+                ),
+                list_workspace_conversations=lambda workspace_id: (
+                    service_calls.append(workspace_id) or ()
+                ),
+            ),
+            conversation_local_marks_service=SimpleNamespace(
+                list_marked_conversation_ids=lambda: ("running",)
+            ),
+        ),
+        current_chat_store_accessor=lambda: SimpleNamespace(sessions=lambda: sessions),
+        current_chat_controller_accessor=lambda: chat_controller,
+        current_conversation_id_accessor=lambda: "running",
+        fleet_unseen_ids_accessor=lambda: frozenset({"unseen"}),
+        run_marker_with_unseen=marker_with_unseen,
+    )
+    rows = (
+        _browser_row("running", "Running"),
+        _browser_row("approval", "Approval"),
+        replace(_browser_row("cleared", "Cleared"), run_marker="✗"),
+        _browser_row("unseen", "Unseen"),
+        replace(_browser_row("missing", "Missing"), run_marker="✓"),
+    )
+    controller._workspace_tree_search.query = "seven"
+    controller._workspace_tree_search.rows = rows
+
+    projected = {
+        row.conversation_id: row
+        for node in controller.workspace_tree_projection()
+        for row in node.conversations
+    }
+
+    assert projected["running"].run_marker == resolve_glyph(
+        CONSOLE_RUN_MARKER_GLYPHS[ConsoleRunMarker.RUNNING]
+    )
+    assert projected["approval"].run_marker == resolve_glyph(
+        CONSOLE_RUN_MARKER_GLYPHS[ConsoleRunMarker.NEEDS_APPROVAL]
+    )
+    assert projected["cleared"].run_marker == ""
+    assert projected["unseen"].run_marker == resolve_glyph(
+        CONSOLE_RUN_MARKER_GLYPHS[ConsoleRunMarker.SUBAGENT_UNSEEN]
+    )
+    assert projected["missing"].run_marker == "✓"
+    assert (projected["running"].starred, projected["running"].selected) == (
+        True,
+        True,
+    )
+    assert service_calls == []
 
 
 def test_active_flat_search_overlays_current_star_selection_and_run_marker() -> None:
