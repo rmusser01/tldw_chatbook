@@ -502,7 +502,9 @@ def test_main_reports_duplicate_ids_and_windows_paths_together(
     assert "Keep punctuation in task content" in report
 
 
-def test_main_reports_windows_paths_without_duplicate_ids(tmp_path, capsys, monkeypatch):
+def test_main_reports_windows_paths_without_duplicate_ids(
+    tmp_path, capsys, monkeypatch
+):
     task = tmp_path / "task-7 - Safe.md"
     task.write_text("id: TASK-7\n", encoding="utf-8")
     offending = tmp_path / "task-8 - Synthetic.md"
