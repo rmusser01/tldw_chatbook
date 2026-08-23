@@ -8437,6 +8437,107 @@ class LibraryScreen(BaseAppScreen):
         self._apply_library_notes_footer_context()
         return LibraryEntryReconcileResult.APPLIED
 
+    async def _apply_library_open_item_surface(
+        self, build: Callable[[], Widget]
+    ) -> None:
+        """Project one just-selected Library surface without a screen recompose.
+
+        task-21116: the per-click "open this item / open this canvas" sites
+        (Search/RAG result opens, media row opens, section "Export…"
+        actions, media-viewer exits) used to end in a whole-screen
+        ``self.refresh(recompose=True)`` -- a remove/remount of the nav
+        bar, footer, rail, and canvas on the largest screen in the app.
+        This seam routes them through the same strict canvas-child
+        replacement the entry lifecycle already uses
+        (``_replace_library_canvas_child``): the rail and header are
+        synchronized in place and only the canvas host's child is
+        replaced. It also re-registers the footer shortcut set, which
+        ``compose_content`` would otherwise refresh on the retired
+        whole-screen recompose.
+
+        The caller must have fully applied the destination state (row id,
+        views, selected ids) BEFORE calling: the replacement seam derives
+        its shell state and supersede guards from the live screen state.
+
+        Args:
+            build: Zero-argument builder for the destination canvas child.
+                Called lazily so a failure falls back to the legacy
+                whole-screen recompose instead of raising.
+
+        Returns:
+            None.
+        """
+        if not self.is_mounted:
+            # Parity with the retired unconditional refresh: an unmounted
+            # screen simply records the recompose request for mount time.
+            self.refresh(recompose=True)
+            return
+        self._register_footer_shortcuts()
+        generation = self._library_snapshot_state_generation
+        route_key = self._library_entry_route_key()
+        try:
+            result = await self._replace_library_canvas_child(
+                build(),
+                generation=generation,
+                route_key=route_key,
+            )
+        except Exception:
+            logger.debug(
+                "Targeted Library open-surface projection failed.", exc_info=True
+            )
+            result = LibraryEntryReconcileResult.FAILED
+        if result is LibraryEntryReconcileResult.FAILED:
+            self.refresh(recompose=True)
+        # SUPERSEDED is deliberately NOT a fallback: the generation/route
+        # moved mid-await, so a newer navigation owns the canvas and will
+        # paint (or already painted) its own surface -- rebuilding the
+        # whole screen here is exactly the transitioning-surface stomp
+        # lessons-testing-evidence.md records for TASK-15706.
+
+    async def _apply_library_media_active_surface(self) -> None:
+        """Swap the canvas child to the current media list/loading/viewer.
+
+        Shared completion seam for the media open click and the media
+        detail worker (task-21116). Skips entirely when the media surface
+        no longer owns the route -- the fetched detail is retained state,
+        and rebuilding an unrelated mounted surface is the TASK-15706
+        transition stomp.
+
+        Returns:
+            None.
+        """
+        if self._library_selected_row_id != LIBRARY_ROW_BROWSE_MEDIA:
+            return
+        await self._apply_library_open_item_surface(
+            self._build_library_media_active_child
+        )
+
+    async def _apply_library_media_list_return(
+        self,
+        media_return: tuple[str, tuple[int, int] | None] | None,
+    ) -> None:
+        """Project the viewer-to-list return and arm the list entry focus.
+
+        Args:
+            media_return: The exited viewer's origin row id and list scroll
+                offset, captured by ``_open_library_media_viewer``.
+
+        Returns:
+            None.
+        """
+        if (
+            self._library_selected_row_id != LIBRARY_ROW_BROWSE_MEDIA
+            or self._library_media_view != "list"
+        ):
+            return
+        await self._apply_library_media_active_surface()
+        # Armed AFTER the list canvas is mounted: the arm's immediate
+        # ``call_after_refresh`` attempt has no ordering against a
+        # canvas-child mount (only against whole-screen recomposes), and
+        # unlike the retired whole-screen path, ``compose_content`` no
+        # longer runs to re-request a still-armed focus.
+        self._arm_library_list_entry_focus(media_return=media_return)
+
     async def _reconcile_library_entry_state(
         self, generation: int, route_key: tuple[object, ...]
     ) -> LibraryEntryReconcileResult:
@@ -13006,7 +13107,8 @@ class LibraryScreen(BaseAppScreen):
                         return LibraryEntryReconcileResult.SUPERSEDED
                     self.refresh(recompose=True)
                     return LibraryEntryReconcileResult.APPLIED
-                self.refresh(recompose=True)
+                # task-21116: targeted media-surface projection (list view).
+                await self._apply_library_media_active_surface()
             return None
         resolved_service_media_id = self._library_media_backing_id(media_id)
         try:
@@ -13093,7 +13195,16 @@ class LibraryScreen(BaseAppScreen):
         return None
 
     def _recompose_library_media_detail_if_unrendered(self) -> None:
-        """Recompose unless a compose already rendered the current media detail."""
+        """Project the media surface unless a compose already rendered the
+        current media detail.
+
+        task-21116: the projection is the targeted media canvas-child swap
+        (``_apply_library_media_active_surface``), not the retired
+        whole-screen recompose -- and it skips entirely when the media
+        surface no longer owns the route (the TASK-15706 rule: an async
+        completion must not rebuild a surface that is transitioning away;
+        the fetched detail stays cached for the next media entry).
+        """
         if not self.is_mounted:
             return
         if (
@@ -13102,7 +13213,7 @@ class LibraryScreen(BaseAppScreen):
             and self._library_media_composed_detail is self._library_media_detail
         ):
             return
-        self.refresh(recompose=True)
+        self.call_next(self._apply_library_media_active_surface)
 
     async def _fetch_library_media_highlights(
         self, media_id: str
@@ -13480,7 +13591,14 @@ class LibraryScreen(BaseAppScreen):
         self._library_export_origin_row_id = self._library_selected_row_id
         self._library_selected_row_id = LIBRARY_ROW_INGEST_EXPORT
         self._reset_library_export_transient_state(scope)
-        self.refresh(recompose=True)
+        # task-21116: rail selection + canvas-child swap only, never a
+        # whole-screen rebuild for a per-click section "Export…" action.
+        await self._apply_library_open_item_surface(
+            lambda: LibraryExportCanvas(
+                self._build_library_export_state(),
+                id="library-export-canvas",
+            )
+        )
         self._start_library_export_counts_worker()
 
     def _library_export_is_server_mode(self) -> bool:
@@ -18480,7 +18598,10 @@ class LibraryScreen(BaseAppScreen):
                 exclusive=True,
                 group="library_media_detail",
             )
-        self.refresh(recompose=True)
+        # task-21116: list -> viewer/loading is a canvas-child swap;
+        # scheduled because this shared seam is synchronous while the
+        # replacement awaits its unmount/mount.
+        self.call_next(self._apply_library_media_active_surface)
 
     def _library_media_backing_id(self, media_id: str) -> int | str:
         """Resolve a canonical list identity to the positive local backing id."""
@@ -19056,7 +19177,16 @@ class LibraryScreen(BaseAppScreen):
         self._library_skills_import_open = True
         self._library_skills_import_path = ""
         self._library_skills_import_status = ""
-        self.refresh(recompose=True)
+        # task-21116: only the skills canvas gains its Import row -- a
+        # canvas-scoped sync, with the caret parked in the just-opened
+        # path field (the pressed opener is recomposed away; without a
+        # follow-up DOM focus strands outside the canvas, the 15457
+        # stranded-focus finding).
+        _sync_library_canvas(
+            self,
+            "skills",
+            then=lambda: self._focus_library_control("#library-skills-import-path"),
+        )
 
     @on(Button.Pressed, "#library-skills-import-cancel")
     def handle_library_skills_import_cancel(self, event: Button.Pressed) -> None:
@@ -19071,7 +19201,13 @@ class LibraryScreen(BaseAppScreen):
         self._library_skills_import_path = ""
         self._library_skills_import_status = ""
         self._library_skills_import_review_name = ""
-        self.refresh(recompose=True)
+        # task-21116: canvas-scoped close; focus returns to the Import…
+        # opener the row folds back into.
+        _sync_library_canvas(
+            self,
+            "skills",
+            then=lambda: self._focus_library_control("#library-skills-import"),
+        )
 
     @on(Button.Pressed, "#library-skills-import-browse")
     def handle_library_skills_import_browse(self, event: Button.Pressed) -> None:
@@ -21991,7 +22127,13 @@ class LibraryScreen(BaseAppScreen):
         self._library_prompts_import_open = True
         self._library_prompts_import_path = ""
         self._library_prompts_import_status = ""
-        self.refresh(recompose=True)
+        # task-21116: canvas-scoped open (see the skills twin for the
+        # focus-follow-up rationale).
+        _sync_library_canvas(
+            self,
+            "prompts",
+            then=lambda: self._focus_library_control("#library-prompts-import-path"),
+        )
 
     @on(Button.Pressed, "#library-prompts-import-cancel")
     def handle_library_prompts_import_cancel(self, event: Button.Pressed) -> None:
@@ -22007,7 +22149,13 @@ class LibraryScreen(BaseAppScreen):
         self._library_prompts_import_open = False
         self._library_prompts_import_path = ""
         self._library_prompts_import_status = ""
-        self.refresh(recompose=True)
+        # task-21116: canvas-scoped close; focus returns to the Import…
+        # opener the row folds back into.
+        _sync_library_canvas(
+            self,
+            "prompts",
+            then=lambda: self._focus_library_control("#library-prompts-import"),
+        )
 
     @on(Button.Pressed, "#library-prompts-import-browse")
     def handle_library_prompts_import_browse(self, event: Button.Pressed) -> None:
@@ -30847,12 +30995,15 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_content_match_index = 0
         self._library_media_content_mode = "raw"
         self._load_library_media_list_if_needed()
-        self.refresh(recompose=True)
-        # task-2856 AC1: every "back to list" exit re-focuses the list's
-        # first row so Up/Down/Enter work immediately.
+        # task-21116: the exit is a canvas-child swap (viewer -> list), not
+        # a whole-screen rebuild. Scheduled via ``call_next`` because this
+        # seam is synchronous (Button handler + Escape action) while the
+        # child replacement awaits its unmount/mount; the task-2856 AC1
+        # entry-focus arm rides the same continuation so its immediate
+        # attempt runs against the MOUNTED list rows.
         media_return = self._library_media_viewer_return
         self._library_media_viewer_return = None
-        self._arm_library_list_entry_focus(media_return=media_return)
+        self.call_next(self._apply_library_media_list_return, media_return)
 
     def action_library_media_viewer_back(self) -> None:
         """Escape: step back ONE level in the media viewer (task-2856 AC2).
@@ -30883,15 +31034,15 @@ class LibraryScreen(BaseAppScreen):
             return
         if self._library_media_editing:
             self._library_media_editing = False
-            self.refresh(recompose=True)
+            self._sync_library_media_viewer_or_recompose()
             return
         if self._library_media_confirming_delete:
             self._library_media_confirming_delete = False
-            self.refresh(recompose=True)
+            self._sync_library_media_viewer_or_recompose()
             return
         if self._library_media_editing_analysis:
             self._library_media_editing_analysis = False
-            self.refresh(recompose=True)
+            self._sync_library_media_viewer_or_recompose()
             return
         self._exit_library_media_viewer()
 
@@ -31516,30 +31667,82 @@ class LibraryScreen(BaseAppScreen):
         return viewer
 
     def _sync_library_media_viewer_state(self, viewer: LibraryMediaViewer) -> bool:
-        """Re-read every viewer compose input after its mount await."""
+        """Re-read every viewer compose input after its mount await.
+
+        task-21116: skips the viewer-scoped recompose when every compose
+        input is unchanged from what the mounted viewer already rendered.
+        The strict replacement seam re-syncs a freshly built viewer to
+        catch state that changed while its mount awaited the message pump
+        -- but in the common case nothing changed, and the unconditional
+        ``viewer.refresh(recompose=True)`` re-mounted a brand-new
+        ``Markdown`` body whose mount re-parses the full document (the
+        exact double-parse task-15458 pinned for the open path).
+        ``LibraryMediaViewerState`` is a frozen dataclass, so the
+        comparison is structural.
+        """
         if (
             self._library_media_view != "viewer"
             or not isinstance(self._library_media_detail, Mapping)
         ):
             return False
-        viewer.viewer = build_library_media_viewer_state(
+        viewer_state = build_library_media_viewer_state(
             self._library_media_detail,
             arrival_note=str(
                 getattr(viewer, "_library_entry_arrival_note", "") or ""
             ),
         )
-        viewer.editing = self._library_media_editing
-        viewer.confirming_delete = self._library_media_confirming_delete
-        viewer.highlights = tuple(
+        highlights = tuple(
             build_library_media_highlight_rows(self._library_media_highlights)
         )
-        viewer.editing_analysis = self._library_media_editing_analysis
-        viewer.content_query = self._library_media_content_query
-        viewer.content_match_index = self._library_media_content_match_index
-        viewer.content_mode = self._library_media_content_mode
-        viewer.refresh(recompose=True)
+        unchanged = (
+            viewer.viewer == viewer_state
+            and viewer.editing == self._library_media_editing
+            and viewer.confirming_delete == self._library_media_confirming_delete
+            and tuple(viewer.highlights) == highlights
+            and viewer.editing_analysis == self._library_media_editing_analysis
+            and viewer.content_query == self._library_media_content_query
+            and viewer.content_match_index
+            == self._library_media_content_match_index
+            and viewer.content_mode == self._library_media_content_mode
+        )
+        if not unchanged:
+            viewer.viewer = viewer_state
+            viewer.editing = self._library_media_editing
+            viewer.confirming_delete = self._library_media_confirming_delete
+            viewer.highlights = highlights
+            viewer.editing_analysis = self._library_media_editing_analysis
+            viewer.content_query = self._library_media_content_query
+            viewer.content_match_index = self._library_media_content_match_index
+            viewer.content_mode = self._library_media_content_mode
+            viewer.refresh(recompose=True)
         self.call_after_refresh(self._sync_library_media_viewer_mutation_gate)
         return True
+
+    def _sync_library_media_viewer_or_recompose(self) -> None:
+        """Viewer-scoped recompose for an in-viewer sub-state flip.
+
+        task-21116: Escape's edit/delete-confirm/analysis Cancel branches
+        flip one viewer flag; only the mounted ``LibraryMediaViewer``'s
+        children change, so route the rebuild through the viewer itself
+        instead of tearing down the whole screen. Mirrors
+        ``_sync_library_canvas``'s mouse-capture release -- this path
+        bypasses ``BaseAppScreen.refresh`` and its guard, and the viewer
+        mounts ``Input``/``TextArea`` children whose removal mid-capture
+        would otherwise strand ``App.mouse_captured`` on a dead widget.
+        Any failure (viewer unmounted because a transition raced) falls
+        back to the legacy whole-screen recompose.
+        """
+        if self.is_running:
+            try:
+                self.app.capture_mouse(None)
+            except Exception:
+                logger.debug(
+                    "Mouse-capture release before media viewer sync skipped.",
+                    exc_info=True,
+                )
+        viewer = self._mounted_library_media_viewer()
+        if viewer is None or not self._sync_library_media_viewer_state(viewer):
+            self.refresh(recompose=True)
 
     def _sync_library_media_viewer_mutation_gate(self) -> None:
         """Disable a still-mounted edit Save while its write is unsettled."""
@@ -33242,7 +33445,14 @@ class LibraryScreen(BaseAppScreen):
             )
             if entry_origin:
                 return LibraryEntryReconcileResult.APPLIED
-            self.refresh(recompose=True)
+            # task-21116: per-click open routes through the same targeted
+            # canvas-child replacement the entry lifecycle uses.
+            await self._apply_library_open_item_surface(
+                lambda: LibraryPromptsListCanvas(
+                    **self._library_prompts_canvas_kwargs(),
+                    id="library-prompts-canvas",
+                )
+            )
             return None
 
         if source_type == "media":
@@ -33290,7 +33500,11 @@ class LibraryScreen(BaseAppScreen):
             )
             if entry_origin:
                 return LibraryEntryReconcileResult.APPLIED
-            self.refresh(recompose=True)
+            # task-21116: per-click open routes through the same targeted
+            # canvas-child replacement the entry lifecycle uses.
+            await self._apply_library_open_item_surface(
+                self._build_library_media_active_child
+            )
             return None
 
         if source_type == "notes":
@@ -33334,7 +33548,16 @@ class LibraryScreen(BaseAppScreen):
             self._begin_library_note_load(record_id, entry_origin=entry_origin)
             if entry_origin:
                 return LibraryEntryReconcileResult.APPLIED
-            self.refresh(recompose=True)
+            # task-21116: per-click open routes through the same targeted
+            # canvas-child replacement the entry lifecycle uses
+            # (``_begin_library_note_load`` has already applied the full
+            # editor-loading state this builder composes from).
+            await self._apply_library_open_item_surface(
+                lambda: LibraryNotesCanvas(
+                    **self._library_notes_canvas_kwargs(),
+                    id="library-notes-canvas",
+                )
+            )
             return None
 
         locator_intent = ("conversations", record_id)
