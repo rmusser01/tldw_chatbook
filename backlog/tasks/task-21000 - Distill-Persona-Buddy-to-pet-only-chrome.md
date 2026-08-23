@@ -46,6 +46,16 @@ Replaced the labelled floating panel with a fitted pet-owned surface: one immuta
 
 Fold/Open and Close are overlaid native buttons with exact tooltips and keyboard actions. The pet surface remains draggable, and compact Close is disjoint from a reserved lower-right resize grip. Final review exposed that expanded focus words, two three-cell controls, and that grip cannot coexist in ten columns; the approved spec and AC #2 now make the existing 10x4 threshold explicit: normal/folded focus exposes action words, while the below-minimum fallback retains focused glyphs plus the incumbent bold/underline treatment, tooltips, and keyboard activation. The incident is recorded in `backlog/docs/lessons-testing-evidence.md`.
 
-Verification on final implementation head `5058bc610` passed the seven-file real-CSS/Pilot, app-mount, resolution, architecture, live-PTY, CSS-sync, and consolidation gate: 187 passed with only inherited requests-version and `audioop` warnings. Scoped Ruff, format, compile, privacy, CSS, and diff checks passed; the one permitted Impeccable detector returned exact `[]`; final cumulative review reported no Critical, Important, or Minor findings. Born-RED/mutation work covered default text, direct fit authority, stale accepted frames, alerts, folded authority, hit regions, compact focus, and disjoint Close/resize behavior.
+Verification passed the seven-file real-CSS/Pilot, app-mount, resolution,
+architecture, live-PTY, CSS-sync, and consolidation gate: 189 passed with only
+inherited requests-version and `audioop` warnings. Scoped Ruff, format, compile,
+privacy, CSS, and diff checks passed; the one permitted Impeccable detector
+returned exact `[]`; final cumulative review reported no Critical, Important, or
+Minor findings. Born-RED/mutation work covered default text, direct fit authority,
+stale accepted frames, alerts, folded authority, hit regions, compact focus, and
+disjoint Close/resize behavior. The final `dev` rebase also exposed a test race
+between a deliberate child-frame resize and the widget's periodic geometry reset;
+the test now stops that unrelated poll timer before asserting the resize authority
+contract and passes repeated isolated runs.
 
 Final sanitized PTY evidence is under `/private/tmp/persona-buddy-task21000-final.SD0M3a` with every report check true and normal/alert/folded/constrained ANSI, SVG, and PNG artifacts. Actual full-application UAT ran in a maximized 212x63 MacBook Terminal from a copied disposable profile; the accepted screenshot is `/private/tmp/task21000-fullscreen.yHOVZF/fullscreen-terminal-window.png`, and its disposable process was stopped. Human screenshot UAT was accepted. No new ADR was required: the implementation follows the approved design and existing ADR-074 ownership, rendering, persistence, and authority boundaries.

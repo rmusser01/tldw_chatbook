@@ -1930,6 +1930,9 @@ async def test_frame_slot_resize_does_not_feed_resolution_authority():
         buddy = app.screen.query_one(PersonaBuddyWidget)
         frame = buddy.query_one("#persona-buddy-frame", Static)
         await _wait_until(lambda: len(controller.resolve_sizes) == 1)
+        assert buddy._poll_timer is not None
+        buddy._poll_timer.stop()
+        await pilot.pause()
         original = frame.content_region.size
         frame.styles.height = max(1, original.height - 1)
         await pilot.pause()

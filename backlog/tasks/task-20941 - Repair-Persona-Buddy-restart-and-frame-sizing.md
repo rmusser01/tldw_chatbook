@@ -104,4 +104,10 @@ only fixed operational text, numeric row counts, or the incumbent migration
 DB-path/exception pattern, and one Console diagnostic only moved. No new secret,
 user-content, or URL interpolation was introduced; the reviewed generated
 inventory was refreshed so the required derived-artifact gate reproduces.
+
+The final rebase onto `dev` exposed a Workbench test that sampled the worker
+manager before the posted Buddy action had reached its handler. The test now
+yields after posting each action before waiting for workers, making the persisted
+close and failed-show rollback assertions deterministic. The final recovery gate
+passes all 66 tests.
 <!-- SECTION:NOTES:END -->
