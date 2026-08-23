@@ -747,15 +747,15 @@ def test_invoke_ask_callback_approve_session_persists_and_short_circuits_next_ca
 
     # A later call with no stamp and NO callback still executes: the
     # service's own is_session_approved() short-circuits the "ask" gate.
-    # Finding I1: this fresh-path execution records decision="approved"
-    # (a live session approval), NOT "allowed" (a persistent server
-    # default) -- the two are different entries in the decision
-    # vocabulary and must not collapse together.
+    # The first call records the human approval. Later executions covered
+    # by that cached grant stay distinct so they cannot look like repeated
+    # permission prompts to the recommendation analyzer.
     provider._approval_callback = None
     result2 = provider.invoke(tool_id, {})
     assert result2.ok is True
     assert len(service.execute_calls) == 2
-    assert service.execute_calls[1][4] == "approved"
+    assert service.execute_calls[0][4] == "approved"
+    assert service.execute_calls[1][4] == "approved-session"
 
 
 def test_invoke_ask_callback_always_allow_sets_tool_state_with_live_hub_tool(
@@ -946,6 +946,28 @@ def test_invoke_stamped_approve_once_applies_to_every_same_name_call_this_turn(
     # Both calls left an "approved" audit record via execute_hub_tool's
     # own decision arg -- no denied/re-gated record for the second call.
     assert [c[4] for c in service.execute_calls] == ["approved", "approved"]
+
+
+def test_invoke_stamped_approve_session_counts_one_prompt_for_same_name_calls(
+    running_loop,
+):
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
+    provider = MCPToolProvider(service=service, main_loop=running_loop)
+    _compose(provider)
+    tool_id = provider.list_catalog()[0].id
+    provider.apply_batch_decisions(RUN, {tool_id: "approve_session"})
+
+    result1 = provider.invoke(tool_id, {"query": "first"})
+    result2 = provider.invoke(tool_id, {"query": "second"})
+
+    assert result1.ok is True
+    assert result2.ok is True
+    assert [call[4] for call in service.execute_calls] == [
+        "approved",
+        "approved-session",
+    ]
 
 
 # ---------------------------------------------------------------------------

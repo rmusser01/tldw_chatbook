@@ -105,7 +105,8 @@ def build_record(
         arguments: Call arguments used only for their keys.
         registered_argument_names: Schema-approved argument names.
         result: Result used only for its type and top-level size.
-        decision: Permission decision ("allowed" for user-initiated tests).
+        decision: Permission decision (for example, "allowed", "approved",
+            or "approved-session").
 
     Returns:
         A frozen metadata-only ExecutionRecord safe to persist.

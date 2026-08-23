@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import time
+from collections.abc import Mapping
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,13 +15,23 @@ from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
 from .execution_log import MCPExecutionLog, build_record
-from .hub_tool_catalog import HubTool
+from .hub_tool_catalog import (
+    HubTool,
+    builtin_tools_from_inventory,
+    local_tools_from_record,
+)
 from .local_control_service import MCPGovernanceDenied
 from .local_runtime_delegate import (
     PERMISSION_STATE_UNRESOLVED_CLAUSE,
     RAW_TOOL_CALL_REFUSED_MESSAGE,
     RawToolCallRefusedError,
     capitalize_first,
+)
+from .permission_prompt_reducer import (
+    DEFAULT_MIN_APPROVED_COUNT,
+    PermissionPromptRecommendation,
+    PermissionPromptReport,
+    build_permission_prompt_report,
 )
 from .permission_store import (
     EffectiveToolState,
@@ -2342,8 +2353,8 @@ class UnifiedMCPControlPlaneService:
                 log (e.g. ``"test"`` for the Hub UI, ``"agent"`` for the
                 chat bridge).
             decision: The permission decision under which the call ran
-                (e.g. ``"allowed"``, ``"approved"``), recorded on the
-                execution log.
+                (e.g. ``"allowed"``, ``"approved"``, or
+                ``"approved-session"``), recorded on the execution log.
             timeout_seconds: Per-call timeout override; defaults to
                 :meth:`_tool_call_timeout` (``[mcp]
                 tool_call_timeout_seconds``) when omitted.
@@ -2561,6 +2572,139 @@ class UnifiedMCPControlPlaneService:
             timeout_seconds=self._lifecycle_timeout(),
             registered_argument_names=registered_argument_names,
         )
+
+    # ---- Local MCP prompt-reduction recommendations -----------------------
+    # This is intentionally local/MCP-only (ADR-081): no shell command
+    # analysis, no telemetry, no model-based auto-approval.
+
+    async def _local_prompt_reduction_tools(self) -> list[HubTool]:
+        """Collect live local and built-in tools for prompt analysis."""
+        tools: list[HubTool] = []
+        try:
+            records = await self.local_external_catalog()
+        except Exception as exc:
+            logger.warning(
+                "MCP prompt-reduction local catalog read failed "
+                "(exception_type={})",
+                type(exc).__name__,
+            )
+            records = []
+        if isinstance(records, list):
+            for record in records:
+                if isinstance(record, Mapping):
+                    tools.extend(local_tools_from_record(dict(record)))
+
+        local_service = getattr(self, "local_service", None)
+        get_inventory = getattr(local_service, "get_inventory", None)
+        if callable(get_inventory):
+            try:
+                inventory = get_inventory()
+            except Exception as exc:
+                logger.warning(
+                    "MCP prompt-reduction built-in inventory read failed "
+                    "(exception_type={})",
+                    type(exc).__name__,
+                )
+                inventory = None
+            if isinstance(inventory, Mapping):
+                tools.extend(builtin_tools_from_inventory(dict(inventory)))
+        return tools
+
+    def _recent_execution_records(self, limit: int) -> list[dict[str, Any]]:
+        """Read recent MCP execution records defensively."""
+        try:
+            log = self.execution_log
+        except Exception as exc:
+            logger.warning(
+                "MCP prompt-reduction execution log access failed "
+                "(exception_type={})",
+                type(exc).__name__,
+            )
+            return []
+        if log is None:
+            return []
+        try:
+            return log.read_recent(limit)
+        except Exception as exc:
+            logger.warning(
+                "MCP prompt-reduction execution log read failed "
+                "(exception_type={})",
+                type(exc).__name__,
+            )
+            return []
+
+    async def _permission_prompt_recommendation_snapshot(
+        self,
+        *,
+        min_approved_count: int,
+        limit: int,
+    ) -> tuple[PermissionPromptReport, dict[tuple[str, str], HubTool]]:
+        """Build a report and tool lookup from one live catalog snapshot."""
+        records = self._recent_execution_records(limit)
+        tools = await self._local_prompt_reduction_tools()
+        states = self.effective_tool_states(tools)
+        report = build_permission_prompt_report(
+            records,
+            tools,
+            states,
+            min_approved_count=min_approved_count,
+        )
+        return report, {(tool.server_key, tool.name): tool for tool in tools}
+
+    async def permission_prompt_recommendations(
+        self,
+        *,
+        min_approved_count: int = DEFAULT_MIN_APPROVED_COUNT,
+        limit: int = 200,
+    ) -> PermissionPromptReport:
+        """Return local MCP permission prompt-reduction recommendations."""
+        report, _tools = await self._permission_prompt_recommendation_snapshot(
+            min_approved_count=min_approved_count,
+            limit=limit,
+        )
+        return report
+
+    async def apply_permission_prompt_recommendation(
+        self,
+        server_key: str,
+        tool_name: str,
+        *,
+        min_approved_count: int = DEFAULT_MIN_APPROVED_COUNT,
+    ) -> PermissionPromptRecommendation:
+        """Persist a currently recommended tool-level allow.
+
+        Raises:
+            KeyError: If the requested server and tool pair is not a current
+                prompt-reduction recommendation.
+        """
+        normalized_key = str(server_key or "").strip()
+        normalized_tool = str(tool_name or "").strip()
+        report, tools_by_key = await self._permission_prompt_recommendation_snapshot(
+            min_approved_count=min_approved_count,
+            limit=200,
+        )
+        recommendation = next(
+            (
+                item
+                for item in report.recommendations
+                if item.server_key == normalized_key
+                and item.tool_name == normalized_tool
+            ),
+            None,
+        )
+        if recommendation is None:
+            raise KeyError(
+                "No prompt-reduction recommendation for "
+                f"{normalized_key}/{normalized_tool}"
+            )
+
+        tool = tools_by_key.get((normalized_key, normalized_tool))
+        if tool is None:
+            raise KeyError(
+                f"No live MCP tool found for {normalized_key}/{normalized_tool}"
+            )
+        self.set_tool_state(normalized_key, normalized_tool, "allow", tool=tool)
+        return recommendation
 
     @staticmethod
     def _normalize_batch_requests(requests: list[Any]) -> list[dict[str, Any]]:

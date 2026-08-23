@@ -72,7 +72,7 @@ def _finding_field(finding: Mapping[str, Any], key: str) -> str:
 
 # Decision vocabulary (spec-verbatim, task-7-brief.md): the permission
 # decision under which one execution-log entry ran or stopped.
-# "allowed"/"approved" reached the tool (`execute_hub_tool()`/
+# "allowed"/"approved"/"approved-session" reached the tool (`execute_hub_tool()`/
 # `test_hub_tool()`, unified_control_plane_service.py); "denied"/
 # "denied-timeout" never did (`record_tool_decision()`, the Phase 5 agent
 # bridge's approval flow -- mcp_tool_provider.py); "downgraded" is a system
@@ -82,6 +82,7 @@ def _finding_field(finding: Mapping[str, Any], key: str) -> str:
 _DECISION_OPTIONS: list[tuple[str, str]] = [
     ("Allowed", "allowed"),
     ("Approved", "approved"),
+    ("Approved (session)", "approved-session"),
     ("Denied", "denied"),
     ("Denied (timeout)", "denied-timeout"),
     ("Denied (no decision)", "denied-unresolved"),
@@ -245,7 +246,7 @@ def _outcome_text(entry: dict[str, Any]) -> str:
     attempted, timed run (mirrors `MCPInspector.show_tool_result()`'s own
     `blocked` status-line branch). "downgraded" is a system audit note, not
     a call outcome -- distinct copy so it doesn't read as a failed
-    execution. Everything else (allowed/approved) reflects the real `ok`
+    execution. Everything else (allowed/approved/approved-session) reflects the real `ok`
     outcome of an attempted call.
     """
     decision = str(entry.get("decision") or "")

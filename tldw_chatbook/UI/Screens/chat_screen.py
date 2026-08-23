@@ -156,6 +156,8 @@ from ...Event_Handlers.Chat_Events.chat_events_console_dictionaries import (
 # unpersisted sessions, `EffectiveScope` state.
 from ...Chat.rag_scope import RagScope
 from ...Chat.console_command_grammar import (
+    FEWER_PERMISSION_PROMPTS_COMMAND_HANDLER_ID,
+    FEWER_PERMISSION_PROMPTS_COMMAND_NAME,
     GENERATE_IMAGE_COMMAND_HANDLER_ID,
     GENERATE_IMAGE_COMMAND_NAME,
     GENERATE_VIDEO_COMMAND_HANDLER_ID,
@@ -181,6 +183,7 @@ from ...Chat.console_command_grammar import (
     ConsoleCommandRegistry,
     default_console_registry,
 )
+from ...MCP.permission_prompt_reducer import format_permission_prompt_report
 from ...Chat.console_prefill import (
     ACTION_CLEAR,
     ACTION_ERROR,
@@ -16012,6 +16015,9 @@ class ChatScreen(BaseAppScreen):
         PROMPT_COMMAND_NAME: PROMPT_COMMAND_HANDLER_ID,
         SYSTEM_COMMAND_NAME: SYSTEM_COMMAND_HANDLER_ID,
         SKILLS_COMMAND_NAME: SKILLS_COMMAND_HANDLER_ID,
+        FEWER_PERMISSION_PROMPTS_COMMAND_NAME: (
+            FEWER_PERMISSION_PROMPTS_COMMAND_HANDLER_ID
+        ),
         PREFILL_COMMAND_NAME: PREFILL_COMMAND_HANDLER_ID,
         GENERATE_IMAGE_COMMAND_NAME: GENERATE_IMAGE_COMMAND_HANDLER_ID,
         GENERATE_VIDEO_COMMAND_NAME: GENERATE_VIDEO_COMMAND_HANDLER_ID,
@@ -16068,6 +16074,9 @@ class ChatScreen(BaseAppScreen):
             "insert-prompt": self._console_command_insert_prompt,
             "apply-system": self._console_command_apply_system,
             SKILLS_COMMAND_HANDLER_ID: self._console_command_skills,
+            FEWER_PERMISSION_PROMPTS_COMMAND_HANDLER_ID: (
+                self._console_command_fewer_permission_prompts
+            ),
             PREFILL_COMMAND_HANDLER_ID: self._console_command_prefill,
             GENERATE_IMAGE_COMMAND_HANDLER_ID: self._console_command_generate_image,
             GENERATE_VIDEO_COMMAND_HANDLER_ID: self._console_command_generate_video,
@@ -16614,6 +16623,35 @@ class ChatScreen(BaseAppScreen):
 
     async def _console_command_skills(self, parse: CommandParse) -> None:
         await self._skill._console_command_skills(parse)
+
+    async def _console_command_fewer_permission_prompts(
+        self, parse: CommandParse
+    ) -> None:
+        """Render local MCP prompt-reduction recommendations."""
+        del parse
+        self._clear_console_composer_draft()
+        service = getattr(self.app_instance, "unified_mcp_service", None)
+        loader = getattr(service, "permission_prompt_recommendations", None)
+        if not callable(loader):
+            await self._append_native_console_system_message(
+                "MCP prompt recommendations unavailable - MCP service is not ready."
+            )
+            return
+        try:
+            report = await loader()
+        except Exception as exc:  # noqa: BLE001 -- render recovery, never send command
+            logger.warning(
+                "MCP prompt recommendations command failed "
+                "(exception_type={})",
+                type(exc).__name__,
+            )
+            await self._append_native_console_system_message(
+                "MCP prompt recommendations unavailable - local analysis failed."
+            )
+            return
+        await self._append_native_console_system_message(
+            format_permission_prompt_report(report)
+        )
 
     @on(Input.Changed, "#console-command-input")
     def _on_console_composer_draft_changed(self, event: Input.Changed) -> None:

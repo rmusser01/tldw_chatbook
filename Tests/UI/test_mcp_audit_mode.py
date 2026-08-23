@@ -505,6 +505,7 @@ async def test_select_options_cover_full_decision_and_initiator_vocabulary():
         assert decision_values == {
             "allowed",
             "approved",
+            "approved-session",
             "denied",
             "denied-timeout",
             # TASK-294: an unresolved verdict is audited as its own decision
