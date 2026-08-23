@@ -437,6 +437,38 @@ async def test_workspace_resize_preserves_visible_contextual_star() -> None:
 
 
 @pytest.mark.asyncio
+async def test_workspace_context_change_survives_transient_relabel_controls() -> None:
+    app = _RailHarness(
+        workspace_state=_native_workspace_tree_state(),
+        workspace_tree_expanded_ids=frozenset({"workspace-1"}),
+    )
+
+    async with app.run_test(size=(70, 30)) as pilot:
+        await _settle(pilot)
+        tree = app.query_one(ConsoleWorkspaceTree)
+        tree.move_cursor(tree.conversation_nodes["conversation-1"])
+        await _settle(pilot)
+
+        tray = app.query_one("#console-workspaces-context")
+        assert tray._workspace_tree_context_data.conversation_id == "conversation-1"
+
+        # Width relabeling temporarily removes the action controls. Deliver
+        # the cursor's new workspace context in that window, then let compose
+        # rebuild from the cached truth.
+        await app.query_one("#console-workspace-context-action-row").remove()
+        workspace = tree.workspace_nodes["workspace-1"]
+        assert tray.sync_workspace_tree_context(workspace.data) is False
+        tray.refresh(recompose=True)
+        await _settle(pilot)
+
+        assert tray._workspace_tree_context_data is None
+        assert app.query_one("#console-workspace-context-action-row").display is False
+        star = app.query_one("#console-workspace-tree-star", Button)
+        assert star.disabled is True
+        assert star.conversation_id is None
+
+
+@pytest.mark.asyncio
 async def test_native_tree_requests_page_zero_for_initial_persisted_expansion() -> None:
     app = _RailHarness(
         workspace_state=_native_workspace_tree_state(),

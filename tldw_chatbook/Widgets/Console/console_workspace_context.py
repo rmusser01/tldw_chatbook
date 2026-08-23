@@ -1348,6 +1348,12 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
     def sync_workspace_tree_context(self, data: Any | None) -> bool:
         """Update the compact Tree action and report a visibility change."""
 
+        is_conversation = self._workspace_tree_context_is_markable(data)
+        starred = bool(getattr(data, "starred", False)) if is_conversation else False
+        # A width relabel removes these controls before recomposing them. Keep
+        # the latest cursor truth even in that transient NoMatches window so
+        # compose cannot rebuild Star for the conversation the cursor left.
+        self._workspace_tree_context_data = data if is_conversation else None
         try:
             button = self.query_one("#console-workspace-tree-star", Button)
             action_row = self.query_one(
@@ -1355,10 +1361,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             )
         except NoMatches:
             return False
-        is_conversation = self._workspace_tree_context_is_markable(data)
-        starred = bool(getattr(data, "starred", False)) if is_conversation else False
         visibility_changed = action_row.display != is_conversation
-        self._workspace_tree_context_data = data if is_conversation else None
         action_row.display = is_conversation
         if visibility_changed:
             self._workspace_action_fit_generation += 1
