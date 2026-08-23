@@ -1174,7 +1174,7 @@ async def test_terminal_refresh_with_fresh_safe_actions_remains_reviewable() -> 
 
     assert result.conflicts_resolved == 1
     assert result.unresolved_conflicts == 0
-    assert result.attention_remains is True
+    assert result.attention_remains is False
     assert result.partial is False
     assert result.needs_recovery is False
     assert result.fresh_plan is not None and any(

@@ -1509,7 +1509,7 @@ class NotesSyncRuntimeOwner:
                         for action in fresh_plan.safe_actions
                         if action.kind in _EXECUTABLE_ACTIONS
                     )
-                    attention_remains = blocked is not None or bool(fresh_safe_actions)
+                    attention_remains = blocked is not None
                     if blocked is not None:
                         self._blocked_roots.add(root_id)
                         await self._publish(root_id, *blocked)
