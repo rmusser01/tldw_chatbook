@@ -79,6 +79,7 @@ from tldw_chatbook.Agents.agent_models import (
     STEP_TOOL_CALL,
     STEP_TOOL_RESULT,
     AgentStep,
+    AgentDefinition,
     RunOutcome,
     SkillFileBindings,
     ToolCatalogEntry,
@@ -7063,6 +7064,121 @@ def test_run_reply_rebuilds_registry_when_a_library_provider_is_present(
     assert len(compose_calls) == 1
     assert compose_calls[0]["library_provider"] is provider
     assert compose_calls[0]["library_authority"] is authority
+
+
+def test_blocked_followup_run_cannot_reuse_library_schema_registry_or_callable(
+    tmp_path,
+):
+    """One bridge instance must rebuild away every trace of prior authority."""
+    gateway = _ChunkGateway(
+        [
+            [_fence("find_tools", {"query": "library_list_notes"})],
+            [_fence("load_tools", {"ids": ["library:library_list_notes"]})],
+            [_fence("library_list_notes", {"limit": 1})],
+            ["allowed final"],
+            [_fence("library_list_notes", {"limit": 1})],
+            ["blocked final"],
+        ]
+    )
+    bridge, _db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
+    from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
+
+    service = _BridgeLibraryService()
+    provider, authority = _authenticated_library_provider(LibraryToolProvider(service))
+
+    allowed = _run(
+        bridge,
+        store,
+        session,
+        aid,
+        library_provider=provider,
+        library_authority=authority,
+    )
+    blocked_aid = _second_turn_message(store, session)
+    blocked = _run(bridge, store, session, blocked_aid)
+
+    assert allowed.status == "done"
+    assert blocked.status == "done"
+    assert service.invoke_calls == [("library_list_notes", {"limit": 1})], (
+        [(step.kind, step.tool_name, step.result) for step in allowed.steps],
+        [
+            [schema["function"]["name"] for schema in (batch or ())]
+            for batch in gateway.tools_seen
+        ],
+    )
+    assert "library_list_notes" in repr(gateway.messages_seen[2])
+    assert "library_list_notes" not in repr(gateway.messages_seen[4])
+    assert any(
+        step.tool_name == "library_list_notes"
+        and "not permitted" in step.result.lower()
+        for step in blocked.steps
+    )
+
+
+def test_parent_and_child_share_one_library_provider_and_child_can_only_narrow(
+    tmp_path,
+    monkeypatch,
+):
+    """Production bridge inheritance reuses authority and intersects named scope."""
+    monkeypatch.setattr(
+        agent_service,
+        "_setting",
+        lambda key, default: (
+            1 if key == agent_service.MAX_LIVE_SUBAGENTS_KEY else default
+        ),
+    )
+    gateway = _ChunkGateway(
+        [
+            [_fence("find_tools", {"query": "library_list_notes"})],
+            [_fence("load_tools", {"ids": ["library:library_list_notes"]})],
+            [_fence("library_list_notes", {"limit": 1})],
+            [_fence("spawn_subagent", {"task": "inspect", "agent": "narrow"})],
+            [_fence("find_tools", {"query": "library_get_note"})],
+            [_fence("load_tools", {"ids": ["library:library_get_note"]})],
+            [_fence("library_get_note", {"note_id": "note-1"})],
+            [_fence("library_list_notes", {"limit": 2})],
+            ["child final"],
+            ["parent final"],
+        ]
+    )
+    bridge, db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
+    db.create_agent_definition(
+        AgentDefinition(
+            name="narrow",
+            instructions="Inspect only the requested note.",
+            tool_allowlist=("library_get_note", "library_future_write"),
+        )
+    )
+    from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
+
+    service = _BridgeLibraryService()
+    provider, authority = _authenticated_library_provider(LibraryToolProvider(service))
+
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        aid,
+        library_provider=provider,
+        library_authority=authority,
+    )
+
+    assert outcome.status == "done"
+    assert service.invoke_calls == [
+        ("library_list_notes", {"limit": 1}),
+        ("library_get_note", {"note_id": "note-1"}),
+    ]
+    child_request = repr(gateway.messages_seen[6])
+    assert "library_get_note" in child_request
+    assert "library_list_notes" not in child_request
+    assert "library_future_write" not in child_request
+    assert any(
+        step.get("tool_name") == "library_list_notes"
+        and "not permitted" in str(step.get("result", "")).lower()
+        for row in db.list_runs("conv-1")
+        if row["agent_kind"] == "subagent"
+        for step in row["steps"]
+    )
 
 
 # -- PR2b Task 1: ConsoleAgentBridge.fleet_snapshot ----------------------

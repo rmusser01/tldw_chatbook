@@ -31,6 +31,10 @@ from tldw_chatbook.Chat.console_library_policy import (
     ConsoleAutoRetrieve,
     ConsoleLibraryPolicyCandidate,
     ConsoleLibraryPolicySnapshot,
+    ConsoleLibraryPolicyWriteStatus,
+)
+from tldw_chatbook.Chat.console_library_policy_repository import (
+    ConsoleLibraryPolicyRepository,
 )
 from tldw_chatbook.Chat.console_turn_context import (
     ConsoleTurnConfigurationSnapshot,
@@ -155,7 +159,14 @@ class _DestinationSequenceGateway:
         yield f"reply-{index}"
 
 
-def _local_then_public_destinations() -> list[ConsoleResolvedDestination]:
+def _local_then_destination(
+    egress_class: ConsoleEgressClass,
+) -> list[ConsoleResolvedDestination]:
+    external_identity = {
+        ConsoleEgressClass.PRIVATE_NETWORK: "http://10.20.30.40:8000",
+        ConsoleEgressClass.PUBLIC_NETWORK: "https://api.openai.com",
+        ConsoleEgressClass.UNKNOWN: "external/unknown",
+    }[egress_class]
     return [
         ConsoleResolvedDestination(
             provider="llama_cpp",
@@ -166,10 +177,42 @@ def _local_then_public_destinations() -> list[ConsoleResolvedDestination]:
         ConsoleResolvedDestination(
             provider="openai",
             model="model-a",
-            endpoint_identity="https://api.openai.com",
-            egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
+            endpoint_identity=external_identity,
+            egress_class=egress_class,
         ),
     ]
+
+
+def _allowed_candidate(*, allowed: bool) -> ConsoleLibraryPolicyCandidate:
+    return ConsoleLibraryPolicyCandidate(
+        auto_retrieve=(
+            ConsoleAutoRetrieve.AUTOMATIC if allowed else ConsoleAutoRetrieve.NEVER
+        ),
+        assistant_access=(
+            ConsoleAssistantLibraryAccess.ALLOWED
+            if allowed
+            else ConsoleAssistantLibraryAccess.BLOCKED
+        ),
+    )
+
+
+def _execution_configuration(
+    session_id: str,
+    *,
+    direct: bool = True,
+) -> ConsoleTurnConfigurationSnapshot:
+    return ConsoleTurnConfigurationSnapshot.capture(
+        session_id=session_id,
+        provider_selection=ConsoleProviderSelection(
+            provider="openai",
+            explicit_model="model-a",
+            base_url="https://api.openai.com/v1",
+        ),
+        tool_configuration={
+            "agent_runtime_enabled": False,
+            "direct_library_tools": direct,
+        },
+    )
 
 
 @pytest.mark.asyncio
@@ -274,6 +317,131 @@ async def test_unavailable_fresh_read_defeats_cached_allowed_holder():
     assert authority.policy.assistant_access is ConsoleAssistantLibraryAccess.BLOCKED
     assert authority.policy.source == "unavailable"
     assert authority.policy.error_code == "policy_read_error"
+
+
+@pytest.mark.asyncio
+async def test_real_execution_capture_defeats_stale_allowed_and_freezes_current_turn(
+    tmp_path,
+) -> None:
+    """Two live holders cannot bypass a second-process durable policy commit."""
+    path = tmp_path / "integrated-authority.sqlite"
+    first_db = CharactersRAGDB(path, "runtime-coordinator")
+    second_db = None
+    try:
+        conversation_id = first_db.add_conversation({"title": "authority"})
+        assert conversation_id is not None
+        first_repository = ConsoleLibraryPolicyRepository(first_db)
+        assert first_repository.insert(
+            conversation_id,
+            _allowed_candidate(allowed=True),
+        ).status is ConsoleLibraryPolicyWriteStatus.COMMITTED
+
+        store = ConsoleChatStore(persistence=ChatPersistenceService(first_db))
+        first_session = store.restore_persisted_session(
+            title="first",
+            workspace_id=None,
+            persisted_conversation_id=conversation_id,
+            all_nodes=(),
+        )
+        second_session = store.restore_persisted_session(
+            title="second",
+            workspace_id=None,
+            persisted_conversation_id=conversation_id,
+            all_nodes=(),
+        )
+        await store.hydrate_session_library_policy(first_session.id)
+        await store.hydrate_session_library_policy(second_session.id)
+        assert first_session.library_policy_holder.snapshot.policy_revision == 1
+        assert second_session.library_policy_holder.snapshot.policy_revision == 1
+
+        second_db = CharactersRAGDB(path, "second-process")
+        second_repository = ConsoleLibraryPolicyRepository(second_db)
+        assert second_repository.compare_and_swap(
+            conversation_id,
+            1,
+            _allowed_candidate(allowed=False),
+        ).status is ConsoleLibraryPolicyWriteStatus.COMMITTED
+
+        factory_calls: list[ConsoleTurnExecutionContext] = []
+
+        def factory(context: ConsoleTurnExecutionContext):
+            from tldw_chatbook.Agents.library_rag_tool_provider import (
+                LibraryRagToolProvider,
+            )
+            from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
+
+            factory_calls.append(context)
+            return (
+                LibraryToolProvider(SimpleNamespace(invoke=lambda *_args: {}))
+                if context.library_authority.direct_library_tools
+                else LibraryRagToolProvider(None)
+            )
+
+        controller = ConsoleChatController(
+            store=store,
+            provider_gateway=_RecordingGateway([]),
+            library_provider_factory=factory,
+        )
+        _resolution, blocked = (
+            await controller._capture_and_resolve_turn_execution_context(
+                first_session.id,
+                _execution_configuration(first_session.id),
+            )
+        )
+        assert blocked is not None
+        assert blocked.library_authority.policy.policy_revision == 2
+        assert blocked.library_authority.policy.assistant_access is (
+            ConsoleAssistantLibraryAccess.BLOCKED
+        )
+        assert controller._library_provider_for_context(blocked) is None
+        assert factory_calls == []
+        assert first_session.library_policy_holder.snapshot == (
+            second_session.library_policy_holder.snapshot
+        )
+
+        assert second_repository.compare_and_swap(
+            conversation_id,
+            2,
+            _allowed_candidate(allowed=True),
+        ).status is ConsoleLibraryPolicyWriteStatus.COMMITTED
+        _resolution, captured = (
+            await controller._capture_and_resolve_turn_execution_context(
+                first_session.id,
+                _execution_configuration(first_session.id, direct=True),
+            )
+        )
+        assert captured is not None
+        selected = controller._library_provider_for_context(captured)
+        assert selected is not None
+        assert captured.library_authority.policy.policy_revision == 3
+
+        assert second_repository.compare_and_swap(
+            conversation_id,
+            3,
+            _allowed_candidate(allowed=False),
+        ).status is ConsoleLibraryPolicyWriteStatus.COMMITTED
+        # A commit after capture cannot mutate the already-running context.
+        assert captured.library_authority.policy.assistant_access is (
+            ConsoleAssistantLibraryAccess.ALLOWED
+        )
+        assert controller._library_provider_for_context(captured) is not None
+
+        _resolution, next_turn = (
+            await controller._capture_and_resolve_turn_execution_context(
+                second_session.id,
+                _execution_configuration(second_session.id),
+            )
+        )
+        assert next_turn is not None
+        assert next_turn.library_authority.policy.policy_revision == 4
+        assert next_turn.library_authority.policy.assistant_access is (
+            ConsoleAssistantLibraryAccess.BLOCKED
+        )
+        assert controller._library_provider_for_context(next_turn) is None
+    finally:
+        if second_db is not None:
+            second_db.close_connection()
+        first_db.close_connection()
 
 
 @pytest.mark.asyncio
@@ -502,16 +670,30 @@ async def test_context_resolution_does_not_observe_destination_before_dispatch(
             True,
         ),
         (
+            ConsoleAutoRetrieve.AUTOMATIC,
+            ConsoleAssistantLibraryAccess.ALLOWED,
+            True,
+        ),
+        (
             ConsoleAutoRetrieve.NEVER,
             ConsoleAssistantLibraryAccess.BLOCKED,
             False,
         ),
     ],
 )
+@pytest.mark.parametrize(
+    "external_class",
+    [
+        ConsoleEgressClass.PRIVATE_NETWORK,
+        ConsoleEgressClass.PUBLIC_NETWORK,
+        ConsoleEgressClass.UNKNOWN,
+    ],
+)
 async def test_submit_draft_observes_resolved_destination_at_real_dispatch_boundary(
     auto_retrieve: ConsoleAutoRetrieve,
     assistant_access: ConsoleAssistantLibraryAccess,
     expects_disclosure: bool,
+    external_class: ConsoleEgressClass,
 ) -> None:
     store = ConsoleChatStore()
     session = store.create_session()
@@ -522,10 +704,11 @@ async def test_submit_draft_observes_resolved_destination_at_real_dispatch_bound
             assistant_access=assistant_access,
         ),
     )
+    holder_before = session.library_policy_holder.snapshot
     gateway = _DestinationSequenceGateway(
         store,
         session.id,
-        _local_then_public_destinations(),
+        _local_then_destination(external_class),
     )
     controller = ConsoleChatController(
         store=store,
@@ -547,15 +730,18 @@ async def test_submit_draft_observes_resolved_destination_at_real_dispatch_bound
     assert gateway.snapshots[0].disclosure is None
     assert gateway.snapshots[0].owner_attempt_id is not None
     assert gateway.snapshots[0].owner_message_id == first.assistant_message_id
-    assert (
-        gateway.snapshots[1].resolved_destination.egress_class
-        is ConsoleEgressClass.PUBLIC_NETWORK
-    )
+    assert gateway.snapshots[1].resolved_destination.egress_class is external_class
+    if external_class is ConsoleEgressClass.UNKNOWN:
+        assert gateway.snapshots[1].resolved_destination.endpoint_identity == (
+            "external/unknown"
+        )
+        assert "on-device" not in repr(gateway.snapshots[1]).lower()
     assert (gateway.snapshots[1].disclosure is not None) is expects_disclosure
     assert gateway.snapshots[1].owner_attempt_id is not None
     assert gateway.snapshots[1].owner_message_id == second.assistant_message_id
     assert session.library_destination_runtime.owner_attempt_id is None
     assert session.library_destination_runtime.owner_message_id is None
+    assert session.library_policy_holder.snapshot == holder_before
 
 
 @pytest.mark.asyncio
@@ -572,7 +758,7 @@ async def test_queued_submit_observes_destination_only_after_dequeue_dispatch() 
     gateway = _DestinationSequenceGateway(
         store,
         session.id,
-        _local_then_public_destinations(),
+        _local_then_destination(ConsoleEgressClass.PUBLIC_NETWORK),
     )
     gateway.block_streams = True
     controller = ConsoleChatController(
@@ -672,6 +858,97 @@ async def test_queued_configuration_and_policy_capture_only_after_dequeue():
     assert len(coordinator.calls) == before_queue + 1
     gateway.releases[1].set()
     await chain
+
+
+@pytest.mark.asyncio
+async def test_queued_turn_reads_second_process_policy_only_after_claim(tmp_path) -> None:
+    path = tmp_path / "queued-authority.sqlite"
+    first_db = CharactersRAGDB(path, "queue-runtime")
+    second_db = None
+    try:
+        conversation_id = first_db.add_conversation({"title": "queued"})
+        assert conversation_id is not None
+        first_repository = ConsoleLibraryPolicyRepository(first_db)
+        assert first_repository.insert(
+            conversation_id,
+            _allowed_candidate(allowed=True),
+        ).status is ConsoleLibraryPolicyWriteStatus.COMMITTED
+        store = ConsoleChatStore(persistence=ChatPersistenceService(first_db))
+        session = store.restore_persisted_session(
+            title="queued",
+            workspace_id=None,
+            persisted_conversation_id=conversation_id,
+            all_nodes=(),
+        )
+        await store.hydrate_session_library_policy(session.id)
+
+        class QueueGateway(_RecordingGateway):
+            def __init__(self):
+                super().__init__([])
+                self.starts = [asyncio.Event(), asyncio.Event()]
+                self.releases = [asyncio.Event(), asyncio.Event()]
+
+            async def stream_chat(self, _resolution, _messages, **_kwargs):
+                index = self.stream_calls
+                self.stream_calls += 1
+                self.starts[index].set()
+                await self.releases[index].wait()
+                yield f"reply-{index}"
+
+        observed: list[ConsoleTurnExecutionContext] = []
+
+        async def capture_rag(_draft, turn_context=None, **_kwargs):
+            assert isinstance(turn_context, ConsoleTurnExecutionContext)
+            observed.append(turn_context)
+            return SimpleNamespace(context=None)
+
+        gateway = QueueGateway()
+        controller = ConsoleChatController(
+            store=store,
+            provider_gateway=gateway,
+            turn_context_provider=lambda sid: _execution_configuration(sid),
+            rag_capture_provider=capture_rag,
+            agent_runtime_enabled=False,
+        )
+        chain = asyncio.create_task(
+            controller.run_prompt_chain("manual", session_id=session.id)
+        )
+        await gateway.starts[0].wait()
+        assert len(observed) == 1
+        assert observed[0].library_authority.policy.assistant_access is (
+            ConsoleAssistantLibraryAccess.ALLOWED
+        )
+        queue_snapshot = controller.prompt_queue_registry.snapshot(session.id)
+        queued = controller.queue_prompt(
+            session.id,
+            text="queued",
+            expected_revision=queue_snapshot.revision,
+        )
+        assert queued.applied is True
+
+        second_db = CharactersRAGDB(path, "queue-second-process")
+        second_repository = ConsoleLibraryPolicyRepository(second_db)
+        assert second_repository.compare_and_swap(
+            conversation_id,
+            1,
+            _allowed_candidate(allowed=False),
+        ).status is ConsoleLibraryPolicyWriteStatus.COMMITTED
+        # Enqueue did not capture policy; only the running first turn exists.
+        assert len(observed) == 1
+        gateway.releases[0].set()
+        await gateway.starts[1].wait()
+
+        assert len(observed) == 2
+        assert observed[1].library_authority.policy.policy_revision == 2
+        assert observed[1].library_authority.policy.assistant_access is (
+            ConsoleAssistantLibraryAccess.BLOCKED
+        )
+        gateway.releases[1].set()
+        await chain
+    finally:
+        if second_db is not None:
+            second_db.close_connection()
+        first_db.close_connection()
 
 
 @pytest.mark.asyncio
