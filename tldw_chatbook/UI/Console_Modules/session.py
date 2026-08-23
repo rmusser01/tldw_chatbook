@@ -965,7 +965,12 @@ class ConsoleSessionController:
         return settings
 
     def eligible_console_first_chat_session_id(self) -> str | None:
-        """Return an exact untouched target without creating or changing Console."""
+        """Return an exact untouched target without changing Console.
+
+        Returns:
+            str | None: The eligible active session ID, or ``None`` when the
+                active session is not a pristine global Console target.
+        """
 
         store = self._console_chat_store
         if store is None:
@@ -1075,7 +1080,12 @@ class ConsoleSessionController:
         )
 
     def consume_pending_console_first_chat_intent(self) -> bool:
-        """Activate one exact first-run target without overwriting user state."""
+        """Activate one exact first-run target without overwriting user state.
+
+        Returns:
+            bool: ``True`` only when the pending intent is applied and
+                acknowledged; otherwise ``False``.
+        """
 
         claim = self.app_instance.pending_handoffs.claim(
             HandoffChannel.CONSOLE_FIRST_CHAT

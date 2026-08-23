@@ -942,9 +942,13 @@ async def test_official_voice_refreshes_after_configured_environment_key_added(
 @pytest.mark.parametrize(
     "app_config",
     [
-        {"openai_api": {"api_key": "sk-saved"}},
-        {"API": {"openai_api_key": "sk-saved"}},
-        {"COMPREHENSIVE_CONFIG_RAW": {"API": {"openai_api_key": "sk-saved"}}},
+        {"openai_api": {"api_key": "synthetic-test-credential"}},
+        {"API": {"openai_api_key": "synthetic-test-credential"}},
+        {
+            "COMPREHENSIVE_CONFIG_RAW": {
+                "API": {"openai_api_key": "synthetic-test-credential"}
+            }
+        },
     ],
 )
 @pytest.mark.asyncio
@@ -970,7 +974,7 @@ async def test_official_voice_recognizes_existing_settings_credential_locations(
 
         assert step.query_one("#setup-voice-test", Button).disabled is False
         assert step.query_one("#setup-voice-add-key", Button).display is False
-        assert "sk-saved" not in repr(step.get_step_data())
+        assert "synthetic-test-credential" not in repr(step.get_step_data())
 
 
 @pytest.mark.asyncio
