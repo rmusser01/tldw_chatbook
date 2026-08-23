@@ -157,6 +157,89 @@ def test_parallel_children_reload_with_precise_spawn_causes_and_safe_tasks(
     reopened.close()
 
 
+@pytest.mark.parametrize(
+    ("failed_kind", "successor_kind"),
+    [
+        ("agent_run_reserved", "agent_run_created"),
+        ("agent_run_created", "agent_run_started"),
+    ],
+)
+def test_fleet_create_capture_failure_chains_to_actual_diagnostic(
+    db, monkeypatch, failed_kind, successor_kind
+):
+    original_insert = db.insert_steps_at_indices
+    failed = False
+
+    def fail_lifecycle_once(run_id, indexed_steps):
+        nonlocal failed
+        is_child = db.get_run(run_id)["agent_kind"] == "subagent"
+        if (
+            not failed
+            and is_child
+            and any(
+                step["kind"] == failed_kind
+                for _index, step in indexed_steps
+            )
+        ):
+            failed = True
+            raise RuntimeError("simulated fleet lifecycle failure")
+        return original_insert(run_id, indexed_steps)
+
+    monkeypatch.setattr(db, "insert_steps_at_indices", fail_lifecycle_once)
+    service, _chat, _coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "inspect"}),
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "parent done",
+        ],
+        {"inspect": ["child done"]},
+    )
+    _parent_id, outcome = service.run_turn(
+        conversation_id=f"fleet-capture-failure-{failed_kind}",
+        messages=[{"role": "user", "content": "delegate"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_DONE
+    child_id = next(
+        row["id"]
+        for row in db.list_runs(f"fleet-capture-failure-{failed_kind}")
+        if row["agent_kind"] == "subagent"
+    )
+
+    path = db.db_path
+    db.close()
+    reopened = AgentRunsDB(path, client_id="fleet-failure-reload")
+    row = reopened.get_run(child_id)
+    assert row["status"] == RUN_DONE
+    steps = row["steps"]
+    diagnostics = [step for step in steps if step["kind"] == "capture_failed"]
+    assert len(diagnostics) == 1
+    diagnostic = diagnostics[0]
+    lifecycle_kinds = [
+        step["kind"] for step in steps if step["kind"].startswith("agent_run_")
+    ]
+    assert len(lifecycle_kinds) == len(set(lifecycle_kinds))
+    successor = next(step for step in steps if step["kind"] == successor_kind)
+    diagnostic_id = f"agent-step:{child_id}:{diagnostic['index']}"
+    assert diagnostic["field_states"][failed_kind] == "not_observed"
+    assert successor["parent_event_id"] == diagnostic_id
+    assert not any(step["kind"] == failed_kind for step in steps)
+    rows = reopened.list_runs(
+        f"fleet-capture-failure-{failed_kind}", include_superseded=True
+    )
+    event_ids = {
+        f"agent-step:{candidate['id']}:{step['index']}"
+        for candidate in rows
+        for step in candidate["steps"]
+    } | {f"agent-run:{candidate['id']}" for candidate in rows}
+    for step in steps:
+        assert step["parent_event_id"] in event_ids
+        assert step["source_event_id"] is None or step["source_event_id"] in event_ids
+    reopened.close()
+
+
 def test_failed_child_and_completed_primary_project_after_reload(db):
     def explode():
         raise RuntimeError("provider exploded with api_key=sk-private-error")

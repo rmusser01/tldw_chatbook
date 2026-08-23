@@ -1423,36 +1423,63 @@ def test_supersede_marks_old_tree_before_new_run(db):
     reopened.close()
 
 
-def test_agent_lifecycle_capture_failure_is_contained_and_diagnosed(db, monkeypatch):
+@pytest.mark.parametrize(
+    "failed_kind",
+    ["agent_run_created", "agent_run_started", "agent_run_completed"],
+)
+def test_agent_lifecycle_capture_failure_uses_actual_diagnostic_cause_after_reload(
+    db, monkeypatch, failed_kind
+):
     original_insert = db.insert_steps_at_indices
     failed = False
 
-    def fail_created_once(run_id, indexed_steps):
+    def fail_lifecycle_once(run_id, indexed_steps):
         nonlocal failed
-        if not failed and any(index == 10_000_001 for index, _step in indexed_steps):
+        if not failed and any(
+            step["kind"] == failed_kind for _index, step in indexed_steps
+        ):
             failed = True
             raise RuntimeError("simulated lifecycle storage failure")
         return original_insert(run_id, indexed_steps)
 
-    monkeypatch.setattr(db, "insert_steps_at_indices", fail_created_once)
+    monkeypatch.setattr(db, "insert_steps_at_indices", fail_lifecycle_once)
     service, _ = make_service(db, ["safe answer"])
     run_id, outcome = service.run_turn(
-        conversation_id="capture-failure",
+        conversation_id=f"capture-failure-{failed_kind}",
         messages=[{"role": "user", "content": "q"}],
         config=CFG,
         api_endpoint="llama_cpp",
     )
 
     assert outcome.status == RUN_DONE
-    steps = db.get_run(run_id)["steps"]
-    diagnostic = next(step for step in steps if step["kind"] == "capture_failed")
+    path = db.db_path
+    db.close()
+    reopened = AgentRunsDB(path, client_id="lifecycle-failure-reload")
+    row = reopened.get_run(run_id)
+    assert row["status"] == RUN_DONE
+    steps = row["steps"]
+    diagnostics = [step for step in steps if step["kind"] == "capture_failed"]
+    assert len(diagnostics) == 1
+    diagnostic = diagnostics[0]
+    lifecycle_kinds = [
+        step["kind"] for step in steps if step["kind"].startswith("agent_run_")
+    ]
+    assert len(lifecycle_kinds) == len(set(lifecycle_kinds))
+    assert failed_kind not in [step["kind"] for step in steps]
+    assert diagnostic["field_states"][failed_kind] == "not_observed"
     event_ids = {
         f"agent-step:{run_id}:{step['index']}" for step in steps
     } | {f"agent-run:{run_id}"}
-    assert diagnostic["parent_event_id"] in event_ids
-    assert diagnostic["source_event_id"] is None
-    assert any(step["kind"] == "agent_run_started" for step in steps)
-    assert any(step["kind"] == "agent_run_completed" for step in steps)
+    for step in steps:
+        assert step["parent_event_id"] in event_ids
+        assert step["source_event_id"] is None or step["source_event_id"] in event_ids
+    if failed_kind == "agent_run_created":
+        started = next(step for step in steps if step["kind"] == "agent_run_started")
+        assert started["parent_event_id"] == (
+            f"agent-step:{run_id}:{diagnostic['index']}"
+        )
+    assert len([step for step in steps if step["kind"] == failed_kind]) == 0
+    reopened.close()
 
 
 def test_terminal_recovery_does_not_duplicate_lifecycle_transition(db):

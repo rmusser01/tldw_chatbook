@@ -2401,15 +2401,21 @@ class AgentService:
         owner_seq: int | None = None,
         parent_event_id: str | None = None,
         source_event_id: str | None = None,
-    ) -> int:
-        """Persist one idempotent, payload-free agent lifecycle observation."""
+    ) -> tuple[int, str]:
+        """Persist one lifecycle observation and return its actual durable cause."""
         index = _LIFECYCLE_INDEX[kind]
+        event_id = f"agent-step:{run_id}:{index}"
         try:
             existing = self.db.get_run(run_id)["steps"]
             found = next((step for step in existing if step["index"] == index), None)
             if found is not None:
                 prior = found.get("owner_seq")
-                return (int(prior) + 1) if prior is not None else self._next_owner_seq(run_id)
+                next_seq = (
+                    int(prior) + 1
+                    if prior is not None
+                    else self._next_owner_seq(run_id)
+                )
+                return next_seq, event_id
         except Exception:  # noqa: BLE001 — insertion below owns diagnostics
             pass
         sequence = self._next_owner_seq(run_id) if owner_seq is None else owner_seq
@@ -2440,12 +2446,12 @@ class AgentService:
             diagnostic = AgentStep(
                 index=AGENT_LIFECYCLE_INDEX_BASE + 100 + (index % 100),
                 kind="capture_failed",
-                summary="Agent lifecycle capture failed",
+                summary=f"Agent lifecycle capture failed: {kind}",
                 created_at=step.created_at,
                 status="incomplete",
                 owner_seq=sequence,
                 parent_event_id=self._latest_durable_event_id(run_id),
-                field_states={"payload": "capture_failed"},
+                field_states={"payload": "capture_failed", kind: "not_observed"},
                 sensitivity="diagnostic",
             )
             try:
@@ -2458,9 +2464,11 @@ class AgentService:
                         )
                     ],
                 )
+                return sequence + 1, f"agent-step:{run_id}:{diagnostic.index}"
             except Exception:  # noqa: BLE001 — non-recursive containment
                 logger.warning("could not persist agent lifecycle diagnostic")
-        return sequence + 1
+                return sequence + 1, self._latest_durable_event_id(run_id)
+        return sequence + 1, event_id
 
     def _record_terminal_lifecycle(
         self,
@@ -2477,11 +2485,12 @@ class AgentService:
             RUN_ERROR: STEP_AGENT_RUN_FAILED,
             RUN_STUCK: STEP_AGENT_RUN_FAILED,
         }.get(status, STEP_AGENT_RUN_FAILED)
+        actual_parent = parent_event_id or self._latest_durable_event_id(run_id)
         self._append_run_lifecycle(
             run_id,
             kind,
             status,
-            parent_event_id=parent_event_id,
+            parent_event_id=actual_parent,
             source_event_id=source_event_id,
         )
 
@@ -2720,27 +2729,29 @@ class AgentService:
                 spawn_event_id=spawn_event_id,
             )
             lifecycle_owner_seq = 0
+            lifecycle_event_id = spawn_event_id or f"agent-run:{run_id}"
             if agent_kind == AGENT_KIND_SUBAGENT:
-                lifecycle_owner_seq = self._append_run_lifecycle(
+                lifecycle_owner_seq, lifecycle_event_id = self._append_run_lifecycle(
                     run_id,
                     STEP_AGENT_RUN_RESERVED,
                     "reserved",
                     owner_seq=lifecycle_owner_seq,
-                    parent_event_id=spawn_event_id,
+                    parent_event_id=lifecycle_event_id,
                 )
-            lifecycle_owner_seq = self._append_run_lifecycle(
+            lifecycle_owner_seq, lifecycle_event_id = self._append_run_lifecycle(
                 run_id,
                 STEP_AGENT_RUN_CREATED,
                 "created",
                 owner_seq=lifecycle_owner_seq,
-                parent_event_id=spawn_event_id,
+                parent_event_id=lifecycle_event_id,
             )
             if resumed_from_run_id:
-                lifecycle_owner_seq = self._append_run_lifecycle(
+                lifecycle_owner_seq, lifecycle_event_id = self._append_run_lifecycle(
                     run_id,
                     STEP_AGENT_RUN_RESUMED,
                     "resumed",
                     owner_seq=lifecycle_owner_seq,
+                    parent_event_id=lifecycle_event_id,
                     source_event_id=f"agent-run:{resumed_from_run_id}",
                 )
         else:
@@ -2750,6 +2761,7 @@ class AgentService:
                 if lifecycle_owner_seq_start is not None
                 else self._next_owner_seq(run_id)
             )
+            lifecycle_event_id = self._latest_durable_event_id(run_id)
         # PR2a Task 6: a threaded child's run id does not exist until this
         # line, and its spawning parent has long since returned a handle to
         # the model. This hook is how the id gets back to the coordinator
@@ -3104,34 +3116,28 @@ class AgentService:
                 return None, ToolResult(
                     ok=False, error="could not create durable sub-agent run"
                 )
-            owner_seq = self._append_run_lifecycle(
+            owner_seq, lifecycle_event_id = self._append_run_lifecycle(
                 child_run_id,
                 STEP_AGENT_RUN_RESERVED,
                 "reserved",
                 owner_seq=0,
                 parent_event_id=child_kwargs.get("spawn_event_id"),
             )
-            owner_seq = self._append_run_lifecycle(
+            owner_seq, lifecycle_event_id = self._append_run_lifecycle(
                 child_run_id,
                 STEP_AGENT_RUN_CREATED,
                 "created",
                 owner_seq=owner_seq,
-                parent_event_id=(
-                    f"agent-step:{child_run_id}:"
-                    f"{_LIFECYCLE_INDEX[STEP_AGENT_RUN_RESERVED]}"
-                ),
+                parent_event_id=lifecycle_event_id,
             )
             resumed_from = child_kwargs.get("resumed_from_run_id")
             if resumed_from:
-                owner_seq = self._append_run_lifecycle(
+                owner_seq, lifecycle_event_id = self._append_run_lifecycle(
                     child_run_id,
                     STEP_AGENT_RUN_RESUMED,
                     "resumed",
                     owner_seq=owner_seq,
-                    parent_event_id=(
-                        f"agent-step:{child_run_id}:"
-                        f"{_LIFECYCLE_INDEX[STEP_AGENT_RUN_CREATED]}"
-                    ),
+                    parent_event_id=lifecycle_event_id,
                     source_event_id=f"agent-run:{resumed_from}",
                 )
             child_kwargs["precreated_run_id"] = child_run_id
@@ -5039,16 +5045,12 @@ class AgentService:
         if self.persist_provider_continuation is not None:
             deps.persist_provider_continuation = self.persist_provider_continuation
         deps.expand_provider_continuation = self.expand_provider_continuation
-        lifecycle_owner_seq = self._append_run_lifecycle(
+        lifecycle_owner_seq, lifecycle_event_id = self._append_run_lifecycle(
             run_id,
             STEP_AGENT_RUN_STARTED,
             "started",
             owner_seq=lifecycle_owner_seq,
-            parent_event_id=(
-                f"agent-step:{run_id}:{_LIFECYCLE_INDEX[STEP_AGENT_RUN_RESUMED]}"
-                if resumed_from_run_id
-                else f"agent-step:{run_id}:{_LIFECYCLE_INDEX[STEP_AGENT_RUN_CREATED]}"
-            ),
+            parent_event_id=lifecycle_event_id,
         )
         deps.owner_seq_start = lifecycle_owner_seq
         try:
