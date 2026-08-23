@@ -44,6 +44,8 @@ class NotesSyncConflictChoice(StrEnum):
 def eligible_conflict_reason(reason_code: str, *, managed: bool) -> bool:
     """Return whether one un-managed reason supports inline resolution."""
 
+    if type(managed) is not bool:
+        raise TypeError("managed must be a boolean")
     return reason_code in ELIGIBLE_CONFLICT_REASONS and not managed
 
 

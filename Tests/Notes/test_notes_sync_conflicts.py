@@ -72,6 +72,17 @@ def test_only_bound_content_change_reasons_are_selectable() -> None:
     assert not eligible_conflict_reason("both_sides_changed", managed=True)
 
 
+@pytest.mark.parametrize("managed", [0, None])
+def test_conflict_eligibility_rejects_untyped_management_flags(
+    managed: object,
+) -> None:
+    with pytest.raises(TypeError, match="managed must be a boolean"):
+        eligible_conflict_reason(
+            "both_sides_changed",
+            managed=managed,  # type: ignore[arg-type]
+        )
+
+
 def test_conflict_ids_are_canonical_deterministic_and_domain_separated() -> None:
     expected_parent = hashlib.sha256(b"conflict_copies_folder_v1\0scope-1").hexdigest()
     expected_child = hashlib.sha256(
