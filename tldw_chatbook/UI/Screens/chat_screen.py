@@ -400,6 +400,7 @@ from ...Widgets.Console import (
     ConsoleComposerUndoHistory,
     ConsoleDraftStash,
     ConsoleControlBar,
+    ConsoleSpeechControls,
     ConsoleRailHandle,
     ConsoleRetrievalScopeRow,
     ConsoleRunInspector,
@@ -413,11 +414,12 @@ from ...Widgets.Console import (
     ConsoleWorkspaceContextTray,
 )
 from ...Widgets.Console.console_control_bar import (
-    ConsoleHandsFreeToggleRequested,
-    ConsoleAutoSpeakChanged,
     ConsoleAutoSpeakRetryRequested,
     ConsoleAutoSpeakResumeRequested,
-    CONSOLE_CONTROL_BAR_HEIGHT,
+)
+from ...Widgets.Console.console_speech_controls import (
+    ConsoleAutoSpeakChanged,
+    ConsoleHandsFreeToggleRequested,
 )
 from ...Widgets.Console.console_settings_modal import ConsoleSettingsResult
 from ...Widgets.Console.console_turn_file_card import ConsoleTurnFileCard
@@ -689,7 +691,11 @@ CONSOLE_FOCUS_TARGETS_BY_PANE = {
 #: (display:none rails/handles) drop out of Textual's focus chain on their
 #: own, so no explicit hidden-pane handling is needed here.
 CONSOLE_TAB_REGIONS: tuple[tuple[str, ...], ...] = (
-    ("console-control-bar", "console-native-composer"),
+    (
+        "console-workbench-header",
+        "console-control-bar",
+        "console-native-composer",
+    ),
     ("console-context-rail-handle", "console-left-rail"),
     ("console-transcript-region", "console-status-chips"),
     ("console-inspector-rail-handle", "console-right-rail"),
@@ -700,6 +706,7 @@ CONSOLE_TAB_REGIONS: tuple[tuple[str, ...], ...] = (
 #: one of them continues the pane cycle from that pane instead of restarting
 #: at the first pane ("focus not in a pane" -> visible[0]).
 CONSOLE_FOCUS_PANE_FOR_WIDGET = {
+    "console-workbench-header": "console-native-composer",
     "console-control-bar": "console-native-composer",
     "console-status-chips": "console-transcript-surface",
     "console-context-rail-handle": "console-left-rail",
@@ -13012,6 +13019,7 @@ class ChatScreen(BaseAppScreen):
             # statics below remain mounted but hidden for contract tests.
             yield DestinationHeader(
                 workbench_state.header,
+                before_status=ConsoleSpeechControls(id="console-speech-controls"),
                 id="console-workbench-header",
                 classes="workbench-header console-header-inline",
             )
@@ -13061,16 +13069,13 @@ class ChatScreen(BaseAppScreen):
                 id="console-mode-bar",
                 classes="ds-panel",
             )
-            yield self._compact_console_workbench_widget(
-                ConsoleControlBar(
-                    control_state,
-                    self.app_instance,
-                    actions=workbench_state.actions,
-                    on_sidebar_toggle_requested=self._open_console_settings,
-                    id="console-control-bar",
-                    classes="console-control-bar",
-                ),
-                height=CONSOLE_CONTROL_BAR_HEIGHT,
+            yield ConsoleControlBar(
+                control_state,
+                self.app_instance,
+                actions=workbench_state.actions,
+                on_sidebar_toggle_requested=self._open_console_settings,
+                id="console-control-bar",
+                classes="console-control-bar",
             )
             workspace_grid = self._frame_console_region(
                 Horizontal(
@@ -17273,9 +17278,6 @@ class ChatScreen(BaseAppScreen):
             )
         except QueryError:
             pass
-        # TASK-2154.1 (LY-10): the header (and its status badge) is hidden in
-        # compact-height mode, so keep the control-bar marker mirroring it.
-        self._sync_console_compact_status_marker()
         try:
             self.query_one("#console-workbench-mode-strip", ModeStrip).sync_modes(
                 workbench_state.modes
@@ -17688,60 +17690,7 @@ class ChatScreen(BaseAppScreen):
             return
         compact = event.size.height < CONSOLE_COMPACT_HEIGHT_ROWS
         shell.set_class(compact, "-console-compact")
-        # TASK-2154.1 (LY-10): the compact class just hid/showed the header
-        # badge, so the control-bar stand-in must follow immediately instead
-        # of waiting for the next workbench sync.
-        self._sync_console_compact_status_marker()
         self._request_console_context_allocation_reconcile()
-
-    def _sync_console_compact_status_marker(self) -> None:
-        """Mirror the header status badge into the control bar when compact.
-
-        TASK-2154.1 (LY-10): below CONSOLE_COMPACT_HEIGHT_ROWS the
-        `-console-compact` rule hides #console-workbench-header -- including
-        the Ready/Running/Blocked badge, the only persistent status identity.
-        #console-compact-status-marker (first child of the always-visible
-        control-bar action row) shows the same label and `status-*` class
-        for exactly as long as the header is hidden. Visibility is driven
-        from Python (not CSS) so harness apps without the full stylesheet
-        behave identically.
-        """
-        try:
-            shell = self.query_one("#console-shell")
-            marker = self.query_one("#console-compact-status-marker", Static)
-        except QueryError:
-            return
-        if not shell.has_class("-console-compact"):
-            if marker.display:
-                marker.styles.display = "none"
-                marker.display = False
-            marker._console_compact_status_applied = None
-            return
-        try:
-            header = self.query_one("#console-workbench-header", DestinationHeader)
-            badge = header.query_one("#workbench-header-status", Static)
-        except QueryError:
-            return
-        status = header.state.status
-        badge_text = getattr(badge.renderable, "plain", str(badge.renderable))
-        applied = getattr(marker, "_console_compact_status_applied", None)
-        if applied == (status, badge_text, True):
-            return
-        marker.update(badge_text)
-        marker.tooltip = f"Console status: {badge_text}" if badge_text else None
-        for candidate in (
-            "ready",
-            "running",
-            "blocked",
-            "error",
-            "paused",
-            "empty",
-            "loading",
-        ):
-            marker.set_class(candidate == status, f"status-{candidate}")
-        marker.styles.display = "block"
-        marker.display = True
-        marker._console_compact_status_applied = (status, badge_text, True)
 
     @on(Resize)
     def _adapt_console_workspace_to_width(self, event: Resize) -> None:

@@ -1,6 +1,5 @@
 """Focus mode (task-18812, ADR-071) — config, CLI, and behavior tests."""
 
-import io
 from types import SimpleNamespace
 
 import pytest
@@ -9,6 +8,12 @@ from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 from Tests.UI.test_destination_shells import _build_test_app
 
 from tldw_chatbook.Constants import TAB_CHAT, TAB_HOME
+from tldw_chatbook.UI.Navigation.main_navigation import (
+    MainNavigationBar,
+    NavigateToScreen,
+)
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 
 
 class TestFocusCliAndConfig:
@@ -85,9 +90,7 @@ class TestInitialRouteResolution:
         request is recorded for the wizard's completion, not discarded."""
         from tldw_chatbook.app import TldwCli
 
-        stub = self._stub(
-            _cli_focus_override=True, app_config={"_first_run": True}
-        )
+        stub = self._stub(_cli_focus_override=True, app_config={"_first_run": True})
         assert TldwCli._resolve_initial_shell_route(stub) == TAB_HOME
         assert stub.focus_mode is False
         assert stub._deferred_focus_request is True
@@ -98,8 +101,7 @@ class TestInitialRouteResolution:
         stub = self._stub(_cli_focus_override=True)
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(
-                "tldw_chatbook.UI.Wizards.first_run_setup_state"
-                ".setup_recovery_action",
+                "tldw_chatbook.UI.Wizards.first_run_setup_state.setup_recovery_action",
                 lambda cfg, env: "offer",
             )
             assert TldwCli._resolve_initial_shell_route(stub) == TAB_HOME
@@ -112,14 +114,6 @@ class TestInitialRouteResolution:
         stub = self._stub(app_config={"_first_run": True})
         assert TldwCli._resolve_initial_shell_route(stub) == TAB_HOME
         assert stub._deferred_focus_request is False
-
-
-from tldw_chatbook.UI.Navigation.main_navigation import (
-    MainNavigationBar,
-    NavigateToScreen,
-)
-from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 
 
 class FocusConsoleHarness(ConsolidatedCSSApp):
@@ -146,9 +140,7 @@ def _make_app_instance(focus: bool):
     return app_instance
 
 
-#: Tall enough that `-console-compact` (height < 35 rows, TASK-346) never
-#: engages — at run_test's 80x24 default it hides the workbench header
-#: regardless of focus mode, masking the rules under test.
+#: Representative desktop size for checking the focus-mode chrome contract.
 _FOCUS_TERMINAL_SIZE = (120, 40)
 
 
@@ -162,6 +154,7 @@ class TestFocusChromeSuppression:
             assert screen.query_one(MainNavigationBar).display is False
             header = screen.query_one("#console-workbench-header")
             assert header.display is False
+            assert screen.query_one("#console-speech-controls").parent is header
             # One-line status bar is KEPT (owner decision, ADR-071).
             footer = screen.query_one("#screen-footer-status", AppFooterStatus)
             assert footer.display is not False
@@ -215,9 +208,7 @@ class TestAppToggleAndNavigationExit:
     def test_ctrl_shift_f_binding_registered(self):
         from tldw_chatbook.app import TldwCli
 
-        assert any(
-            binding.key == "ctrl+shift+f" for binding in TldwCli.BINDINGS
-        )
+        assert any(binding.key == "ctrl+shift+f" for binding in TldwCli.BINDINGS)
 
     def test_set_focus_mode_applies_to_console_screen(self):
         from tldw_chatbook.app import TldwCli
@@ -342,8 +333,11 @@ class TestDeferredFocusRestore:
         app_instance = _build_test_app()
         app_instance._deferred_focus_request = True
         app_instance._handle_first_run_wizard_result(
-            {"completed": False, "exit_route": "settings",
-             "exit_context": {"category": "providers-models"}}
+            {
+                "completed": False,
+                "exit_route": "settings",
+                "exit_context": {"category": "providers-models"},
+            }
         )
         # Focus is Console-only; leaving to Settings consumes the request
         # without applying it.
@@ -377,9 +371,7 @@ class TestNavigationVetoKeepsFocus:
 
             screen.flush_pending_work = _veto_flush
             app_instance._initial_screen_pushed = True
-            await app_instance.handle_screen_navigation(
-                NavigateToScreen("settings")
-            )
+            await app_instance.handle_screen_navigation(NavigateToScreen("settings"))
             await pilot.pause(0.3)
 
             # Navigation aborted: the Console is still resident and focus

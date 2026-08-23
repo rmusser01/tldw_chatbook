@@ -60,6 +60,9 @@ from tldw_chatbook.Widgets.Console.console_auto_speak_consent import (
     ConsoleAutoSpeakCoordinator,
 )
 from tldw_chatbook.Widgets.Console.console_control_bar import ConsoleControlBar
+from tldw_chatbook.Widgets.Console.console_speech_controls import (
+    ConsoleSpeechControls,
+)
 
 from .agent import ConsoleAgentController
 from .character import ConsoleCharacterController
@@ -137,7 +140,15 @@ def _sync_auto_speak_presentation(
     paused: bool,
     retry_available: bool,
 ) -> None:
-    """Project authoritative auto-speak state onto the mounted control bar."""
+    """Project authoritative auto-speak state onto mounted controls."""
+    try:
+        speech_controls = screen.query_one(
+            "#console-speech-controls", ConsoleSpeechControls
+        )
+    except QueryError:
+        speech_controls = None
+    if speech_controls is not None:
+        speech_controls.sync_auto_speak(enabled=enabled, paused=paused)
     try:
         control_bar = screen.query_one("#console-control-bar", ConsoleControlBar)
     except QueryError:
@@ -152,10 +163,12 @@ def _sync_auto_speak_presentation(
 def _sync_hands_free_presentation(screen: Any, active: bool) -> None:
     """Project the live Hands-free session state onto the mounted switch."""
     try:
-        control_bar = screen.query_one("#console-control-bar", ConsoleControlBar)
+        speech_controls = screen.query_one(
+            "#console-speech-controls", ConsoleSpeechControls
+        )
     except QueryError:
         return
-    control_bar.sync_hands_free_state(active)
+    speech_controls.sync_hands_free_state(active)
 
 
 def build_console_controllers(
