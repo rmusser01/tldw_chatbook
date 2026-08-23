@@ -761,7 +761,7 @@ class RailHarness(App[None]):
             agent_drilldown_active=False,
             agent_full_log_available=False,
             show_character_section=True,
-            character_avatar_widget_builder=lambda: Static("avatar"),
+            character_avatar_widget_builder=lambda _box=None: Static("avatar"),
             character_avatar_name="Samira",
             manual_reaction_label=self._manual_label,
         )
@@ -781,15 +781,18 @@ async def test_character_rail_shows_reaction_action_and_visible_manual_state(
 ) -> None:
     app = RailHarness(manual_label)
 
-    async with app.run_test(size=(100, 40)) as pilot:
+    async with app.run_test(size=(100, 42)) as pilot:
+        await pilot.pause()
+        outer = app.screen.query_one("#console-left-rail-body", VerticalScroll)
+        outer.scroll_end(animate=False)
         await pilot.pause()
         button = app.screen.query_one("#console-character-reaction-open", Button)
-        button.scroll_visible(animate=False)
+        button.scroll_visible(animate=False, force=True)
         await pilot.pause()
         state = app.screen.query_one("#console-character-reaction-state", Static)
         assert str(state.renderable) == expected
         assert str(button.label) == "Reaction…"
-        await pilot.click(button)
+        assert await pilot.click(button)
         await pilot.pause()
 
     assert app.requests == 1

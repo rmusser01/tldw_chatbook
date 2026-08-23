@@ -75,6 +75,7 @@ from ..Console_Modules.status_row import (
 # body actually uses. Tests that steer a controller patch it on the module
 # that defines it (`..Console_Modules.dictation` and friends) rather than
 # through this module's namespace -- see task-3023, which repointed them.
+from ..Console_Modules.character_avatar_layout import fit_character_avatar_cell_box
 from ..Console_Modules.dictation import (
     ConsoleDictationEvent,
     ConsoleDictationLimitSignal,
@@ -9853,22 +9854,19 @@ class ChatScreen(BaseAppScreen):
         if not is_current():
             return
         try:
-            holder = self.query_one("#console-character-avatar", Container)
-        except QueryError:
+            left_rail = self.query_one("#console-left-rail", ConsoleLeftRail)
+        except (NoMatches, QueryError):
             return  # section not composed (config off / not mounted)
         try:
             if not is_current():
                 return
-            await holder.remove_children()
-            if not is_current():
-                return
-            avatar_widget = self._build_character_avatar_widget(spec)
-            if not is_current():
-                return
-            await holder.mount(avatar_widget)
-            if not is_current():
-                if avatar_widget.parent is holder:
-                    await avatar_widget.remove()
+            left_rail.invalidate_character_avatar_geometry()
+            fitted_box = left_rail.character_avatar_box
+            replaced = await left_rail.replace_character_avatar_widget(
+                lambda: self._build_character_avatar_widget(spec, box=fitted_box),
+                is_current=is_current,
+            )
+            if not replaced or not is_current():
                 return
             try:
                 name_widget = self.query_one("#console-character-name", Static)
@@ -9951,7 +9949,12 @@ class ChatScreen(BaseAppScreen):
         except Exception:
             return 0
 
-    def _build_character_avatar_widget(self, spec: dict | None) -> Widget:
+    def _build_character_avatar_widget(
+        self,
+        spec: dict | None,
+        *,
+        box: tuple[int, int] | None = None,
+    ) -> Widget:
         """Build a fresh avatar widget from the cached spec (data, not a widget).
 
         `spec` is `{character_id, name, mode, pil, pixels}` (T3 fills it via
@@ -9981,6 +9984,18 @@ class ChatScreen(BaseAppScreen):
             placeholder = Static(hint, id="console-character-avatar-empty")
             placeholder.styles.width = "auto"
             return placeholder
+        if box == (0, 0):
+            hidden = Static("", id="console-character-avatar-image")
+            hidden.styles.width = 0
+            hidden.styles.height = 0
+            hidden.styles.display = "none"
+            return hidden
+        resolved_box = box or character_avatar_box(
+            self._character_avatar_available_cols()
+        )
+        image = spec.get("pil")
+        if image is not None:
+            resolved_box = fit_character_avatar_cell_box(image, *resolved_box)
         if spec.get("mode") == "graphics" and spec.get("pil") is not None:
             try:
                 from textual_image.widget import Image as _GraphicsImage
@@ -9995,9 +10010,7 @@ class ChatScreen(BaseAppScreen):
                 # tick before that settles can ask the renderer to scale
                 # into a transient 0-width/height region, which PIL's
                 # resize() raises on.
-                box_cols, box_lines = character_avatar_box(
-                    self._character_avatar_available_cols()
-                )
+                box_cols, box_lines = resolved_box
                 w, h = fit_image_cell_size(
                     spec["pil"].width,
                     spec["pil"].height,
@@ -10010,9 +10023,7 @@ class ChatScreen(BaseAppScreen):
             except Exception:
                 logger.opt(exception=True).debug("avatar: graphics mount failed")
         try:
-            box_cols, box_lines = character_avatar_box(
-                self._character_avatar_available_cols()
-            )
+            box_cols, box_lines = resolved_box
             from ...Utils.mosaic_render import explicit_cell_size
 
             pixels = spec.get("pixels")
@@ -13229,9 +13240,9 @@ class ChatScreen(BaseAppScreen):
                     getattr(getattr(self, "app_instance", None), "app_config", {}) or {}
                 )
                 # `character_avatar_widget_builder` hands `ConsoleLeftRail` a
-                # zero-arg callable, not a pre-built widget: the rail's own
+                # box-aware callable, not a pre-built widget: the rail's own
                 # `compose()` calls it, so a future recompose always mounts a
-                # fresh avatar widget built from the CURRENT
+                # fresh, currently fitted avatar widget built from the CURRENT
                 # `self._active_character_avatar` rather than re-yielding a
                 # stale instance `_render_character_avatar_into_section` may
                 # already have removed from the DOM (final review finding 1).
@@ -13242,12 +13253,28 @@ class ChatScreen(BaseAppScreen):
                 # method or a snapshotted spec, which would freeze today's
                 # value instead.
                 character_avatar_widget_builder = None
+                character_avatar_fit_box = None
                 character_avatar_name = ""
                 if show_character_section:
 
-                    def character_avatar_widget_builder():
+                    def character_avatar_widget_builder(box=None):
                         return self._build_character_avatar_widget(
-                            self._active_character_avatar
+                            self._active_character_avatar,
+                            box=box,
+                        )
+
+                    def character_avatar_fit_box(
+                        available_cols: int,
+                        available_lines: int,
+                    ) -> tuple[int, int] | None:
+                        spec = self._active_character_avatar or {}
+                        image = spec.get("pil")
+                        if image is None:
+                            return None
+                        return fit_character_avatar_cell_box(
+                            image,
+                            available_cols,
+                            available_lines,
                         )
 
                     character_avatar_name = (
@@ -13279,6 +13306,7 @@ class ChatScreen(BaseAppScreen):
                     show_character_section=show_character_section,
                     character_avatar_widget_builder=character_avatar_widget_builder,
                     character_avatar_name=character_avatar_name,
+                    character_avatar_fit_box=character_avatar_fit_box,
                     workspace_tree_expanded_ids=(
                         self._workspace.workspace_tree_expansion_preferences()
                     ),

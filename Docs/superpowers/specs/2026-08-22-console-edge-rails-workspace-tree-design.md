@@ -314,8 +314,9 @@ layout spacing between them. Its image:
 
 - preserves the complete source image;
 - preserves its aspect ratio;
-- scales to the largest size that fits the available rail width and the rows
-  remaining after the mounted non-image controls are measured;
+- scales down only when needed to fit the available rail width and the rows
+  remaining after the mounted non-image controls are measured, and never
+  enlarges a smaller source merely to consume the available box;
 - is centered in unused horizontal or vertical space; and
 - is never cropped or stretched.
 
@@ -328,9 +329,9 @@ control geometry changes; it must not assume a hard-coded control-row count.
 
 Image fitting uses a bounded, equality-guarded two-phase settle. First measure
 the mounted non-image controls and stable content width. Then compute one
-contained cell size from `35 - measured_non_image_rows`, update or remount the
-image only when that size changed, and permit at most one follow-up section/rail
-reconciliation for the resulting geometry. Scrollbar appearance or
+scale-down-only contained cell size from `35 - measured_non_image_rows`, update
+or remount the image only when that size changed, and permit at most one
+follow-up section/rail reconciliation for the resulting geometry. Scrollbar appearance or
 disappearance must settle to the same size on the next pass rather than
 oscillating. Both terminal-graphics and mosaic fallback paths reuse the
 existing image-fit/contain utilities; no parallel aspect-ratio algorithm is

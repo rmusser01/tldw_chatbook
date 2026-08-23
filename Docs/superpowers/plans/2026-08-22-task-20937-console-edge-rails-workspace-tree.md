@@ -636,6 +636,8 @@ git commit -m "feat(console): add workspace conversation Tree"
 
 - Modify: `tldw_chatbook/UI/Screens/chat_screen.py`
 - Modify: `tldw_chatbook/UI/Console_Modules/left_rail.py`
+- Create: `tldw_chatbook/UI/Console_Modules/character_avatar_layout.py`
+- Modify: `tldw_chatbook/Utils/mosaic_render.py`
 - Modify: `tldw_chatbook/UI/Console_Modules/character.py` only if it already owns the relevant state seam
 - Modify: `tldw_chatbook/css/components/_agentic_terminal.tcss`
 - Modify: `tldw_chatbook/css/tldw_cli_modular.tcss` (generated)
@@ -644,15 +646,15 @@ git commit -m "feat(console): add workspace conversation Tree"
 - Modify: `Tests/UI/test_console_rail_reconciliation.py`
 - Modify: `backlog/tasks/task-20937.5 - Fit-Character-content-within-a-stable-35-row-section.md`
 
-- [ ] **Step 1: Start TASK-20937.5 and write exact geometry REDs**
+- [x] **Step 1: Start TASK-20937.5 and write exact geometry REDs**
 
-Use production hierarchy/CSS and portrait, landscape, square, very large, missing, corrupt, and unsupported inputs. Assert image + name + reaction state + action + margins are contained by the initial 35-row viewport; valid image aspect ratio is preserved in terminal-cell geometry and controls are visible without initial scroll.
+Use production hierarchy/CSS and portrait, landscape, square, very small, very large, missing, corrupt, and unsupported inputs. Assert image + name + reaction state + action + margins are contained by the initial 35-row viewport; valid image aspect ratio is preserved in terminal-cell geometry, smaller sources are not enlarged merely to consume the available box, and controls are visible without initial scroll.
 
-- [ ] **Step 2: Add settle/deletion-sensitive REDs**
+- [x] **Step 2: Add settle/deletion-sensitive REDs**
 
 Change width, control wrapping, image, and scrollbar conditions. Count computed box changes, image replacements, local reconciles, and outer reconciles. Require one box update and at most one follow-up; disabling the post-measure fit must fail the 35-row containment test, while forcing unconditional rebuild must fail the loop/count test.
 
-- [ ] **Step 3: Run RED**
+- [x] **Step 3: Run RED**
 
 ```bash
 ../../.venv/bin/python -B -m pytest \
@@ -661,15 +663,15 @@ Change width, control wrapping, image, and scrollbar conditions. Count computed 
   Tests/UI/test_console_rail_reconciliation.py -q
 ```
 
-- [ ] **Step 4: Implement measured contain fitting**
+- [x] **Step 4: Implement measured contain fitting**
 
-Retain `character_avatar_box` only as the width/fallback helper needed elsewhere. At the mounted Character owner, measure non-image rows and stable content width, then calculate available rows as `max(0, 35 - controls_with_margins)`. When available rows or content width is zero, omit/hide the image and preserve the controls/recovery copy without calling `fit_image_cell_size`, `scale_image_for_cell_box`, or `mosaic_from_image`. Otherwise call the existing fit helpers with `fit="contain"`. Store the last `(source_identity, width, available_rows, fitted_box)` signature and update only on inequality.
+Retain `character_avatar_box` only as the width/fallback helper needed elsewhere. At the mounted Character owner, measure non-image rows and stable content width, then calculate available rows as `max(0, 35 - controls_with_margins)`. When available rows or content width is zero, omit/hide the image and preserve the controls/recovery copy without calling `fit_image_cell_size`, `scale_image_for_cell_box`, or `mosaic_from_image`. Otherwise derive a scale-down-only destination box from the source's intrinsic terminal-cell footprint, then call the existing fit helpers with `fit="contain"`. Store the last `(source_identity, width, available_rows, fitted_box)` signature and update only on inequality.
 
-- [ ] **Step 5: Bound reconciliation**
+- [x] **Step 5: Bound reconciliation**
 
 Schedule one post-refresh measurement after relevant mutation. If the fitted box changes, update/remount the image and allow one ordinary local-to-outer reconcile. The follow-up observes equality and stops. Never use a timer, sleep, or unbounded fixed-point retry.
 
-- [ ] **Step 6: Run GREEN, rebuild CSS, and commit**
+- [x] **Step 6: Run GREEN, rebuild CSS, and commit**
 
 Run Step 3 plus `Tests/UI/test_console_left_rail.py` and `Tests/UI/test_css_build_integrity.py`. Mutation-check crop/stretch and unconditional rebuild. Run scoped static/diff checks and commit:
 

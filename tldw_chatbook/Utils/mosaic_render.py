@@ -123,6 +123,49 @@ def explicit_cell_size(renderable: object) -> tuple[int, int] | None:
     return max(len(line) for line in lines), len(lines)
 
 
+def _mosaic_contain_grid_size(
+    pixel_width: int,
+    pixel_height: int,
+    box_cols: int,
+    box_lines: int,
+) -> tuple[int, int]:
+    """Return the contain path's sampled subpixel grid."""
+
+    source_width = max(1, int(pixel_width))
+    source_height = max(1, int(pixel_height))
+    box_width = max(1, int(box_cols))
+    box_height = max(1, int(box_lines))
+    scale = min(box_width / source_width, box_height * 2 / source_height)
+    grid_width = min(
+        max(2, round(source_width * scale * 2)),
+        box_width * 2,
+    )
+    grid_height = min(
+        max(1, round(source_height * scale)),
+        box_height * 2,
+    )
+    return grid_width, grid_height
+
+
+def mosaic_contain_cell_size(
+    pixel_width: int,
+    pixel_height: int,
+    box_cols: int,
+    box_lines: int,
+) -> tuple[int, int]:
+    """Return the exact cell grid produced by the mosaic contain path."""
+
+    if box_cols <= 0 or box_lines <= 0:
+        return 0, 0
+    grid_width, grid_height = _mosaic_contain_grid_size(
+        pixel_width,
+        pixel_height,
+        box_cols,
+        box_lines,
+    )
+    return (grid_width + 1) // 2, (grid_height + 1) // 2
+
+
 def mosaic_from_image(
     image: "PILImage.Image",
     box_cols: int,
@@ -176,9 +219,12 @@ def mosaic_from_image(
         top = (grid_h - box_h * 2) // 2
         source = source.crop((left, top, left + box_w * 2, top + box_h * 2))
     else:
-        scale = min(box_w / src_w, box_h * 2 / src_h)
-        grid_w = min(max(2, round(src_w * scale * 2)), box_w * 2)
-        grid_h = min(max(1, round(src_h * scale)), box_h * 2)
+        grid_w, grid_h = _mosaic_contain_grid_size(
+            src_w,
+            src_h,
+            box_w,
+            box_h,
+        )
         source = source.resize((grid_w, grid_h), PILImage.Resampling.LANCZOS)
     width, height = source.size
     cell_cols = max(1, (width + 1) // 2)

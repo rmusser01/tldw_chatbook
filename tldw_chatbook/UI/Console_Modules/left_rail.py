@@ -41,6 +41,7 @@ message rather than matched by id prefix in the screen's
 
 from __future__ import annotations
 
+import asyncio
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -94,6 +95,10 @@ from .rail_section_layout import (
 
 OUTER_SECTION_SCROLL_HINT = "▼ more sections — scroll"
 
+CharacterAvatarBox = tuple[int, int]
+CharacterAvatarWidgetBuilder = Callable[[CharacterAvatarBox | None], Widget]
+CharacterAvatarFitBox = Callable[[int, int], CharacterAvatarBox | None]
+
 
 @dataclass(frozen=True, slots=True)
 class ContextSectionDescriptor:
@@ -131,6 +136,10 @@ class _ContextOuterBody(VerticalScroll):
         self._owner = owner
 
     def on_resize(self) -> None:
+        self._owner.note_character_avatar_viewport_size(
+            self.content_size.width,
+            self.content_size.height,
+        )
         self._owner.request_allocation_reconcile()
 
     def watch_scroll_y(self, old_value: float, new_value: float) -> None:
@@ -225,8 +234,9 @@ class ConsoleLeftRail(Vertical):
         agent_steering_state: ConsoleAgentSteeringState | None = None,
         agent_cancel_all_visible: bool = False,
         show_character_section: bool,
-        character_avatar_widget_builder: Callable[[], Widget] | None,
+        character_avatar_widget_builder: CharacterAvatarWidgetBuilder | None,
         character_avatar_name: str,
+        character_avatar_fit_box: CharacterAvatarFitBox | None = None,
         workspace_tree_expanded_ids: frozenset[str] | None = None,
         workspace_tree_expansion_preferences_changed: (
             Callable[[frozenset[str]], None] | None
@@ -282,9 +292,10 @@ class ConsoleLeftRail(Vertical):
             show_character_section: Whether the Character section is
                 composed at all (config-gated; matches
                 ``resolve_show_character_avatar``).
-            character_avatar_widget_builder: Zero-arg callable that builds
-                the avatar widget, when ``show_character_section`` is True
-                (``None`` otherwise). The screen still owns
+            character_avatar_widget_builder: Callable that builds the avatar
+                widget for an optional fitted cell box, when
+                ``show_character_section`` is True (``None`` otherwise). The
+                screen still owns
                 ``_build_character_avatar_widget`` and the spec it reads
                 (``self._active_character_avatar``); only the CALL is
                 deferred to this rail's own ``compose()``. A builder, not a
@@ -302,6 +313,10 @@ class ConsoleLeftRail(Vertical):
                 from the CURRENT ``self._active_character_avatar`` instead.
             character_avatar_name: Character name label text, when
                 ``show_character_section`` is True.
+            character_avatar_fit_box: Late-binding source-aware contain fitter.
+                It receives the mounted body's measured image budget and returns
+                the scale-down-only cell box, ``(0, 0)`` when no image rows
+                remain, or ``None`` when no valid image is available.
             manual_reaction_label: Active session-local manual reaction label,
                 or ``None`` while operational reactions remain automatic.
             kwargs: Forwarded to ``Vertical``.
@@ -327,6 +342,16 @@ class ConsoleLeftRail(Vertical):
         self._show_character_section = show_character_section
         self._character_avatar_widget_builder = character_avatar_widget_builder
         self._character_avatar_name = character_avatar_name
+        self._character_avatar_fit_box = character_avatar_fit_box
+        self._character_avatar_box: CharacterAvatarBox | None = None
+        self._character_avatar_fit_generation = 0
+        self._character_avatar_geometry_epoch = 0
+        self._character_avatar_viewport_size: tuple[int, int] | None = None
+        self._character_avatar_fit_signature: tuple[int, int, int] | None = None
+        self._character_avatar_fit_result: CharacterAvatarBox | None = None
+        self._character_avatar_followup_pending = False
+        self._character_avatar_suppressed_epoch: int | None = None
+        self._character_avatar_mount_lock = asyncio.Lock()
         self._workspace_tree_expanded_ids = workspace_tree_expanded_ids
         self._workspace_tree_expansion_preferences_changed = (
             workspace_tree_expansion_preferences_changed
@@ -347,6 +372,29 @@ class ConsoleLeftRail(Vertical):
         self._pointer_activation_waits_for_button = False
         self._pointer_activation_target: Widget | None = None
         self._pointer_activation_generation = 0
+
+    @property
+    def character_avatar_box(self) -> CharacterAvatarBox | None:
+        """Latest equality-guarded fitted image box, if a valid image exists."""
+
+        return self._character_avatar_box
+
+    def invalidate_character_avatar_geometry(self) -> None:
+        """Start a new source/viewport epoch for the Character contain fit."""
+
+        self._character_avatar_geometry_epoch += 1
+        self._character_avatar_fit_signature = None
+        self._character_avatar_followup_pending = False
+        self._character_avatar_suppressed_epoch = None
+
+    def note_character_avatar_viewport_size(self, width: int, height: int) -> None:
+        """Start a geometry epoch only for a genuinely new outer viewport."""
+
+        viewport_size = (max(0, int(width)), max(0, int(height)))
+        if viewport_size == self._character_avatar_viewport_size:
+            return
+        self._character_avatar_viewport_size = viewport_size
+        self.invalidate_character_avatar_geometry()
 
     @staticmethod
     def _section_header(
@@ -885,6 +933,7 @@ class ConsoleLeftRail(Vertical):
         """Snapshot committed complete sections and reconcile the outer owner."""
 
         try:
+            self._reconcile_character_avatar_geometry()
             descriptors = self._mounted_descriptors()
             if not descriptors:
                 return
@@ -971,6 +1020,127 @@ class ConsoleLeftRail(Vertical):
             return
         finally:
             self._allocation_reconcile_scheduled = False
+
+    def _reconcile_character_avatar_geometry(self) -> None:
+        """Measure controls and schedule one unequal Character image replacement."""
+
+        builder = self._character_avatar_widget_builder
+        fitter = self._character_avatar_fit_box
+        if builder is None or fitter is None:
+            return
+        try:
+            body = self.query_one("#console-rail-section-body-character", Vertical)
+            frame = self.query_one("#console-character-avatar-frame", Horizontal)
+            holder = self.query_one("#console-character-avatar", ClickableAvatarBox)
+        except (NoMatches, QueryError):
+            return
+        if not body.display or not body.is_mounted or not holder.is_mounted:
+            return
+
+        complete_rows = max(0, body.virtual_region_with_margin.height)
+        image_rows = max(0, frame.virtual_region_with_margin.height)
+        measured_non_image_rows = max(0, complete_rows - image_rows)
+        available_rows = max(0, 35 - measured_non_image_rows)
+        available_cols = max(0, body.content_region.width)
+        is_followup = self._character_avatar_followup_pending
+        self._character_avatar_followup_pending = False
+        fit_signature = (
+            self._character_avatar_geometry_epoch,
+            available_cols,
+            available_rows,
+        )
+        if fit_signature == self._character_avatar_fit_signature:
+            target_box = self._character_avatar_fit_result
+        else:
+            target_box = fitter(available_cols, available_rows)
+            self._character_avatar_fit_signature = fit_signature
+            self._character_avatar_fit_result = target_box
+        if target_box == self._character_avatar_box:
+            return
+        if is_followup:
+            # A replacement gets one local-to-outer settle pass. If scrollbar
+            # feedback changes the measured box again, wait for a real source
+            # or viewport epoch instead of entering a fixed-point loop.
+            self._character_avatar_suppressed_epoch = (
+                self._character_avatar_geometry_epoch
+            )
+            return
+        if (
+            self._character_avatar_suppressed_epoch
+            == self._character_avatar_geometry_epoch
+        ):
+            return
+
+        self._character_avatar_box = target_box
+        self._character_avatar_fit_generation += 1
+        generation = self._character_avatar_fit_generation
+        self.run_worker(
+            self._replace_character_avatar_for_geometry(generation, target_box),
+            group="console-character-avatar-fit",
+            exclusive=True,
+        )
+
+    async def _replace_character_avatar_for_geometry(
+        self,
+        generation: int,
+        target_box: CharacterAvatarBox | None,
+    ) -> None:
+        """Apply one still-current fitted box and request its sole follow-up."""
+
+        builder = self._character_avatar_widget_builder
+        if builder is None:
+            return
+
+        def is_current() -> bool:
+            return bool(
+                generation == self._character_avatar_fit_generation and self.is_mounted
+            )
+
+        replaced = await self.replace_character_avatar_widget(
+            lambda: builder(target_box),
+            is_current=is_current,
+        )
+        if not replaced:
+            return
+        if generation != self._character_avatar_fit_generation:
+            return
+        self._character_avatar_followup_pending = True
+        try:
+            bounded = self.query_one(
+                "#console-bounded-section-character", ConsoleBoundedSection
+            )
+        except (NoMatches, QueryError):
+            return
+        bounded.request_reconcile()
+        self.request_allocation_reconcile()
+
+    async def replace_character_avatar_widget(
+        self,
+        widget_builder: Callable[[], Widget],
+        *,
+        is_current: Callable[[], bool],
+    ) -> bool:
+        """Serialize one freshness-fenced replacement of the avatar child."""
+
+        async with self._character_avatar_mount_lock:
+            if not is_current() or not self.is_mounted:
+                return False
+            try:
+                holder = self.query_one("#console-character-avatar", ClickableAvatarBox)
+            except (NoMatches, QueryError):
+                return False
+            await holder.remove_children()
+            if not is_current() or not holder.is_mounted:
+                return False
+            widget = widget_builder()
+            if not is_current():
+                return False
+            await holder.mount(widget)
+            if is_current():
+                return True
+            if widget.parent is holder:
+                await widget.remove()
+            return False
 
     def _snapshot_outer_viewport_height(self) -> int:
         """Return the no-hint Context viewport height for counterfactual policy."""
@@ -1655,7 +1825,11 @@ class ConsoleLeftRail(Vertical):
                 )
                 avatar_children = ()
                 if self._character_avatar_widget_builder is not None:
-                    avatar_children = (self._character_avatar_widget_builder(),)
+                    avatar_children = (
+                        self._character_avatar_widget_builder(
+                            self._character_avatar_box
+                        ),
+                    )
                 avatar_holder = ClickableAvatarBox(
                     *avatar_children,
                     id="console-character-avatar",
@@ -1663,6 +1837,13 @@ class ConsoleLeftRail(Vertical):
                 # task-1661: hug the image instead of claiming the rail.
                 avatar_holder.styles.width = "auto"
                 avatar_holder.styles.height = "auto"
+                avatar_frame = Horizontal(
+                    avatar_holder,
+                    id="console-character-avatar-frame",
+                )
+                avatar_frame.styles.width = "100%"
+                avatar_frame.styles.height = "auto"
+                avatar_frame.styles.align_horizontal = "center"
                 character_name = Static(
                     self._character_avatar_name,
                     id="console-character-name",
@@ -1689,7 +1870,7 @@ class ConsoleLeftRail(Vertical):
                 character_body = self._section_body(
                     "character",
                     rail_state.character_open,
-                    avatar_holder,
+                    avatar_frame,
                     character_name,
                     reaction_state,
                     reaction_button,
@@ -1835,7 +2016,8 @@ class ConsoleLeftRail(Vertical):
     def apply_section_open(self, section_id: str, section_open: bool) -> None:
         """Sync one section's body display and header glyph to an open state.
 
-        Moved verbatim from ``ChatScreen._apply_console_rail_section_open``.
+        Preserves the extracted screen behavior while hiding the bounded owner
+        with its body so native local-scroll state survives collapse/reopen.
 
         Args:
             section_id: The section's id (e.g. ``"session"``), used to
@@ -1850,10 +2032,19 @@ class ConsoleLeftRail(Vertical):
                 f"#console-rail-section-header-{section_id}",
                 DestinationRailSectionHeader,
             )
+            bounded = self.query_one(
+                f"#console-bounded-section-{section_id}", ConsoleBoundedSection
+            )
         except (NoMatches, QueryError):
             return
         body.styles.display = "block" if section_open else "none"
+        # Hide the same bounded owner along with its body. Its reconcile path
+        # deliberately preserves scroll state while hidden, so reopening can
+        # clamp the prior local offset against the newly measured geometry.
+        bounded.styles.display = "block" if section_open else "none"
         header.sync_open(section_open)
         if not section_open and self._active_section_id == section_id:
             self.recover_section_focus(section_id)
+        elif section_open:
+            bounded.request_reconcile()
         self.request_allocation_reconcile()

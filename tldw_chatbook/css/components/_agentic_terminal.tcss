@@ -3600,6 +3600,14 @@ with stray left-edge border fragments), and padding 0 1 so the full
     margin-bottom: 1;
 }
 
+#console-character-avatar-frame {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 0;
+    align: center middle;
+}
+
 /* Shared direct-section body. The owner applies the measured content-row
    allocation inline; no CSS ceiling may override a smaller Context grant. */
 ConsoleBoundedSection {
