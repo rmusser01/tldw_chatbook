@@ -10685,9 +10685,10 @@ UPDATE db_schema_version
                         id, conversation_id, parent_message_id, sender, content,
                         image_data, image_mime_type, timestamp, ranking,
                         last_modified, client_id, version, deleted, role,
-                        usage_json, metadata_json, provider_continuation_json
+                        usage_json, metadata_json, provider_continuation_json,
+                        assistant_generation_state
                     ) VALUES (?, ?, ?, 'assistant', ?, NULL, NULL, ?, NULL,
-                              ?, ?, 1, 0, 'assistant', NULL, NULL, ?)
+                              ?, ?, 1, 0, 'assistant', NULL, NULL, ?, ?)
                     """,
                     (
                         message_id,
@@ -10698,6 +10699,11 @@ UPDATE db_schema_version
                         now,
                         self.client_id,
                         canonical,
+                        (
+                            "continuation_active"
+                            if checkpoint.state == "active"
+                            else "complete"
+                        ),
                     ),
                 )
             return message_id
@@ -10724,6 +10730,7 @@ UPDATE db_schema_version
         provider_continuation_json: str | None,
         content: str | None = None,
         deleted: bool | None = None,
+        assistant_generation_state: str | None = None,
     ) -> bool:
         """Atomically replace one assistant owner's whole private checkpoint."""
         if type(message_id) is not str or not message_id.strip():
@@ -10740,6 +10747,14 @@ UPDATE db_schema_version
             checkpoint, canonical = _validated_provider_continuation(
                 provider_continuation_json
             )
+        if assistant_generation_state is not None and assistant_generation_state not in {
+            "continuation_active",
+            "complete",
+            "stopped",
+            "failed",
+            "discarded",
+        }:
+            raise InputError("Invalid assistant generation state.")
 
         try:
             # IMMEDIATE: hot messages writer; see add_message's scoping comment.
@@ -10747,6 +10762,7 @@ UPDATE db_schema_version
                 current = conn.execute(
                     """
                     SELECT role, content, image_data, deleted, version,
+                           assistant_generation_state,
                            EXISTS (
                                SELECT 1
                                  FROM message_attachments AS attachment
@@ -10790,12 +10806,20 @@ UPDATE db_schema_version
                     next_deleted = required_deleted
                 else:
                     next_deleted = current["deleted"] if deleted is None else deleted
+                next_state = assistant_generation_state
+                if next_state is None and checkpoint is not None:
+                    next_state = (
+                        "continuation_active"
+                        if checkpoint.state == "active"
+                        else "complete"
+                    )
 
                 now = self._get_current_utc_timestamp_iso()
                 cursor = conn.execute(
                     """
                     UPDATE messages
                        SET provider_continuation_json = ?, content = ?, deleted = ?,
+                           assistant_generation_state = ?,
                            last_modified = ?, version = ?, client_id = ?
                      WHERE id = ? AND version = ?
                     """,
@@ -10803,6 +10827,7 @@ UPDATE db_schema_version
                         canonical,
                         next_content,
                         int(next_deleted),
+                        next_state,
                         now,
                         expected_message_version + 1,
                         self.client_id,

@@ -745,11 +745,38 @@ class ConsoleDispatchRepository:
                 raise ConsoleDispatchCheckpointValidationError(
                     "Invalid assistant usage."
                 )
+        terminal_continuation = None
+        canonical_continuation = None
+        if settlement.provider_continuation_json is not None:
+            try:
+                terminal_continuation = parse_provider_continuation_json(
+                    settlement.provider_continuation_json
+                )
+                canonical_continuation = dump_provider_continuation_json(
+                    terminal_continuation
+                )
+            except ContinuationValidationError as exc:
+                raise ConsoleDispatchCheckpointValidationError(
+                    "Invalid terminal continuation."
+                ) from exc
+            if (
+                settlement.terminal_state != "complete"
+                or terminal_continuation.state != "complete"
+                or terminal_continuation.rounds[-1].assistant_content
+                != settlement.content
+            ):
+                raise ConsoleDispatchCheckpointValidationError(
+                    "Invalid terminal continuation."
+                )
         with self.db.transaction(immediate=True) as cursor:
             row = self._owner_by_assistant(cursor, settlement.assistant_message_id)
             if row is None:
                 return self._write_status(ConsoleDispatchResultStatus.NOT_FOUND)
             if not self._matches_settlement(row, settlement):
+                return self._write_status(ConsoleDispatchResultStatus.CONFLICT)
+            if terminal_continuation is not None and not self._continuation_matches_destination(
+                row, terminal_continuation
+            ):
                 return self._write_status(ConsoleDispatchResultStatus.CONFLICT)
             next_message_version = settlement.expected_assistant_message_version + 1
             now = self.db._get_current_utc_timestamp_iso()
@@ -757,7 +784,7 @@ class ConsoleDispatchRepository:
                 """
                 UPDATE messages
                    SET content = ?, metadata_json = ?, usage_json = ?,
-                       provider_continuation_json = NULL,
+                       provider_continuation_json = ?,
                        assistant_generation_state = ?, version = ?,
                        last_modified = ?, client_id = ?
                  WHERE id = ? AND conversation_id = ? AND role = 'assistant'
@@ -767,6 +794,7 @@ class ConsoleDispatchRepository:
                     settlement.content,
                     settlement.metadata_json,
                     settlement.usage_json,
+                    canonical_continuation,
                     settlement.terminal_state,
                     next_message_version,
                     now,
@@ -805,6 +833,7 @@ class ConsoleDispatchRepository:
                 self._message_payload_hash(
                     content=settlement.content,
                     state=settlement.terminal_state,
+                    provider_continuation_json=canonical_continuation,
                 ),
             )
 
@@ -838,6 +867,8 @@ class ConsoleDispatchRepository:
             if row is None:
                 return self._write_status(ConsoleDispatchResultStatus.NOT_FOUND)
             if not self._matches_handoff(row, handoff):
+                return self._write_status(ConsoleDispatchResultStatus.CONFLICT)
+            if not self._continuation_matches_destination(row, continuation):
                 return self._write_status(ConsoleDispatchResultStatus.CONFLICT)
             expected_state = row["state"]
             next_message_version = handoff.expected_assistant_message_version + 1
@@ -894,6 +925,159 @@ class ConsoleDispatchRepository:
                     provider_continuation_json=canonical,
                 ),
             )
+
+    def normalize_provider_continuation_owner(
+        self,
+        *,
+        conversation_id: str,
+        assistant_message_id: str,
+        expected_message_version: int,
+        expected_state: str | None,
+        provider_continuation_json: str,
+    ) -> ConsoleDispatchWriteResult:
+        """CAS one checkpoint-free legacy owner to continuation_active."""
+        if (
+            not self._valid_identifier(conversation_id)
+            or not self._valid_identifier(assistant_message_id)
+            or not self._positive_versions(expected_message_version)
+        ):
+            raise ConsoleDispatchCheckpointValidationError(
+                "Invalid continuation normalization."
+            )
+        try:
+            continuation = parse_provider_continuation_json(
+                provider_continuation_json
+            )
+            canonical = dump_provider_continuation_json(continuation)
+        except ContinuationValidationError as exc:
+            raise ConsoleDispatchCheckpointValidationError(
+                "Invalid continuation normalization."
+            ) from exc
+        if continuation.state != "active" or canonical is None:
+            raise ConsoleDispatchCheckpointValidationError(
+                "Invalid continuation normalization."
+            )
+        with self.db.transaction(immediate=True) as cursor:
+            active_ids = self._active_path_ids(cursor, conversation_id)
+            if assistant_message_id not in active_ids:
+                return self._write_status(ConsoleDispatchResultStatus.CONFLICT)
+            row = cursor.execute(
+                """
+                SELECT id, conversation_id, role, deleted, version,
+                       assistant_generation_state, provider_continuation_json,
+                       content
+                  FROM messages
+                 WHERE id = ?
+                """,
+                (assistant_message_id,),
+            ).fetchone()
+            if (
+                row is None
+                or row["conversation_id"] != conversation_id
+                or row["role"] != "assistant"
+                or row["deleted"] != 0
+                or row["version"] != expected_message_version
+                or row["assistant_generation_state"] != expected_state
+                or row["provider_continuation_json"] != canonical
+            ):
+                return self._write_status(ConsoleDispatchResultStatus.CONFLICT)
+            next_version = expected_message_version + 1
+            now = self.db._get_current_utc_timestamp_iso()
+            updated = cursor.execute(
+                """
+                UPDATE messages
+                   SET assistant_generation_state = 'continuation_active',
+                       version = ?, last_modified = ?, client_id = ?
+                 WHERE id = ? AND conversation_id = ? AND role = 'assistant'
+                   AND deleted = 0 AND version = ?
+                   AND assistant_generation_state IS ?
+                   AND provider_continuation_json = ?
+                """,
+                (
+                    next_version,
+                    now,
+                    self.db.client_id,
+                    assistant_message_id,
+                    conversation_id,
+                    expected_message_version,
+                    expected_state,
+                    canonical,
+                ),
+            )
+            if updated.rowcount != 1:
+                return self._write_status(ConsoleDispatchResultStatus.CONFLICT)
+            return ConsoleDispatchWriteResult(
+                ConsoleDispatchResultStatus.COMMITTED,
+                None,
+                next_version,
+                self._message_payload_hash(
+                    content=str(row["content"] or ""),
+                    state="continuation_active",
+                    provider_continuation_json=canonical,
+                ),
+            )
+
+    def provider_continuation_owner_snapshot(
+        self, *, conversation_id: str, assistant_message_id: str
+    ) -> Mapping[str, object] | None:
+        """Freshly read one valid active-path ADR-063 owner for CAS recovery."""
+        try:
+            with self.db.transaction() as cursor:
+                if assistant_message_id not in self._active_path_ids(
+                    cursor, conversation_id
+                ):
+                    return None
+                row = cursor.execute(
+                    """
+                    SELECT id, conversation_id, role, deleted, version,
+                           assistant_generation_state, provider_continuation_json,
+                           content
+                      FROM messages
+                     WHERE id = ?
+                    """,
+                    (assistant_message_id,),
+                ).fetchone()
+                if (
+                    row is None
+                    or row["conversation_id"] != conversation_id
+                    or row["role"] != "assistant"
+                    or row["deleted"] != 0
+                    or type(row["version"]) is not int
+                ):
+                    return None
+                safe = read_provider_continuation_json(
+                    row["provider_continuation_json"]
+                )
+                if safe.checkpoint is None or safe.checkpoint.state != "active":
+                    return None
+                canonical = dump_provider_continuation_json(safe.checkpoint)
+                if canonical is None:
+                    return None
+                return {
+                    "checkpoint": safe.checkpoint,
+                    "canonical": canonical,
+                    "state": row["assistant_generation_state"],
+                    "version": int(row["version"]),
+                    "content": str(row["content"] or ""),
+                }
+        except sqlite3.Error:
+            return None
+
+    @staticmethod
+    def _continuation_matches_destination(
+        row: sqlite3.Row, continuation: object
+    ) -> bool:
+        try:
+            destination = parse_console_resolved_destination_json(
+                row["resolved_destination_json"]
+            )
+            return bool(
+                continuation.provider == destination.provider
+                and continuation.model == destination.model
+                and continuation.api_base_url == destination.endpoint_identity
+            )
+        except (AttributeError, ConsoleDispatchCheckpointValidationError):
+            return False
 
     @staticmethod
     def _validate_acceptance(acceptance: ConsoleDurableTurnAcceptance) -> None:

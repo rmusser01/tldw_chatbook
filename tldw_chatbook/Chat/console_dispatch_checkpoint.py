@@ -207,6 +207,7 @@ class ConsoleAssistantSettlement:
     content: str
     metadata_json: str | None
     usage_json: str | None = None
+    provider_continuation_json: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

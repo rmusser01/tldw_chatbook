@@ -39,6 +39,7 @@ from tldw_chatbook.Chat.provider_continuation import (  # noqa: E402
     read_provider_continuation_json,
 )
 from tldw_chatbook.Chat.assistant_generation_state import (  # noqa: E402
+    assistant_state_allows_provider_history,
     normalize_assistant_generation_state,
     render_exported_assistant_content,
 )
@@ -1098,6 +1099,20 @@ def process_db_messages_to_ui_history(
     for msg_data in db_messages:
         sender = msg_data.get("sender")
         content = msg_data.get("content", "")  # DB content should not be None
+
+        if sender == char_sender_identifier:
+            continuation_read = read_provider_continuation_json(
+                msg_data.get("provider_continuation_json")
+            )
+            if not assistant_state_allows_provider_history(
+                state=msg_data.get("assistant_generation_state"),
+                has_valid_continuation=(
+                    continuation_read.checkpoint is not None
+                    and continuation_read.checkpoint.state == "active"
+                ),
+                content=content,
+            ):
+                continue
 
         # Replace placeholders in the content from DB
         processed_content = replace_placeholders(

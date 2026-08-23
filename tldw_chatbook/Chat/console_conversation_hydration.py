@@ -194,7 +194,13 @@ def console_messages_from_conversation_tree(
         )
         raw_id = node.get("id")
         node_persisted_id = str(raw_id) if raw_id is not None else None
-        kept = bool(content) or image_data is not None
+        generation_state = node.get("assistant_generation_state")
+        kept = (
+            bool(content)
+            or image_data is not None
+            or generation_state is not None
+            or node.get("provider_continuation_json") is not None
+        )
         if kept:
             # The tree only carries the legacy position-0 columns; positions
             # >= 1 (multi-attachment table rows) are batch-fetched below,
@@ -223,6 +229,11 @@ def console_messages_from_conversation_tree(
                     attachments=attachments,
                     usage=usage,
                     metadata=metadata,
+                    assistant_generation_state=(
+                        str(generation_state)
+                        if generation_state is not None
+                        else None
+                    ),
                     video_metadata=video_metadata,
                 )
             )

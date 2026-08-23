@@ -27,6 +27,37 @@ _UNRESOLVED_IMPORTED_STATE_COPY = {
 }
 
 
+def assistant_state_allows_provider_history(
+    *, state: object, has_valid_continuation: bool, content: object
+) -> bool:
+    """Return whether one assistant owner belongs in ordinary provider history.
+
+    Valid active ADR-063 continuation owners are projected only through their
+    private, provider-specific sidecar. Closed or unresolved blank owners never
+    create an empty provider message.
+    """
+    if has_valid_continuation:
+        return False
+    rendered = content if isinstance(content, str) else str(content or "")
+    if not rendered:
+        return False
+    try:
+        normalized = (
+            state
+            if isinstance(state, AssistantGenerationState)
+            else None
+            if state is None
+            else AssistantGenerationState(str(state))
+        )
+    except ValueError:
+        return False
+    return normalized in {
+        None,
+        AssistantGenerationState.COMPLETE,
+        AssistantGenerationState.STOPPED,
+    }
+
+
 def normalize_assistant_generation_state(
     *, role: object, raw_state: object, has_valid_active_continuation: bool
 ) -> AssistantGenerationState | None:
@@ -69,9 +100,17 @@ def render_exported_assistant_content(
     if pending is not None:
         return pending
     try:
-        normalized = AssistantGenerationState(str(state))
+        normalized = (
+            state
+            if isinstance(state, AssistantGenerationState)
+            else AssistantGenerationState(str(state))
+        )
     except ValueError:
         return rendered
     if normalized is AssistantGenerationState.COMPLETE:
         return "No response was generated."
+    if normalized is AssistantGenerationState.FAILED:
+        return "Response failed."
+    if normalized is AssistantGenerationState.DISCARDED:
+        return "Response discarded."
     return rendered

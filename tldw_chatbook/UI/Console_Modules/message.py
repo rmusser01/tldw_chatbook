@@ -635,6 +635,9 @@ class ConsoleMessageController:
             "turn_id": message.turn_id,
             "status": message.status,
             "persisted_message_id": message.persisted_message_id,
+            "assistant_generation_state": getattr(
+                message, "assistant_generation_state", None
+            ),
             "feedback": message.feedback,
             "variants": cls._serialize_console_variants(message.variants),
             "image_mime_type": getattr(message, "image_mime_type", None),
@@ -734,6 +737,11 @@ class ConsoleMessageController:
             persisted_message_id=(
                 str(payload["persisted_message_id"])
                 if payload.get("persisted_message_id") is not None
+                else None
+            ),
+            assistant_generation_state=(
+                str(payload["assistant_generation_state"])
+                if payload.get("assistant_generation_state") is not None
                 else None
             ),
             variants=cls._restore_console_variants(payload.get("variants")),

@@ -27,6 +27,7 @@ class ProviderContinuationRecoveryState:
     mode: str
     impact: str
     replay_available: bool = False
+    actions_enabled: bool = True
 
 
 def provider_continuation_recovery_state(
@@ -78,6 +79,7 @@ def provider_continuation_recovery_state(
             "remote",
             message.provider_continuation_warning or impact,
             replay_available,
+            message.provider_continuation_actions_enabled,
         )
     impact = (
         "The provider paused while tools may not have finished. Resume after reviewing "
@@ -94,6 +96,7 @@ def provider_continuation_recovery_state(
         "local",
         message.provider_continuation_warning or impact,
         replay_available,
+        message.provider_continuation_actions_enabled,
     )
 
 
@@ -197,9 +200,13 @@ class ProviderContinuationRecoveryCallout(Vertical):
         resume.display = state.mode == "local"
         take_over.display = state.mode == "remote"
         discard.display = state.mode != "notice"
-        resume.disabled = self._busy or not state.replay_available
-        take_over.disabled = self._busy or not state.replay_available
-        discard.disabled = self._busy
+        resume.disabled = (
+            self._busy or not state.actions_enabled or not state.replay_available
+        )
+        take_over.disabled = (
+            self._busy or not state.actions_enabled or not state.replay_available
+        )
+        discard.disabled = self._busy or not state.actions_enabled
 
     @on(Button.Pressed)
     def _handle_action(self, event: Button.Pressed) -> None:
@@ -210,7 +217,7 @@ class ProviderContinuationRecoveryCallout(Vertical):
         }
         action = action_by_id.get(event.button.id or "")
         state = self.recovery_state
-        if action is None or self._busy or state is None:
+        if action is None or self._busy or state is None or not state.actions_enabled:
             return
         event.stop()
         self._busy = True

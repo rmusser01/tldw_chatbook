@@ -64,6 +64,7 @@ from tldw_chatbook.Chat.console_chat_models import (
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleAssistantSettlement,
+    ConsoleContinuationHandoff,
     ConsoleDispatchCheckpoint,
     ConsoleDispatchCheckpointState,
     ConsoleDispatchReconstructability,
@@ -1665,6 +1666,9 @@ class ConsoleChatStore:
             restored_nodes,
             active_leaf_persisted_id=active_leaf_persisted_id,
         )
+        self._normalize_restored_provider_continuation(
+            session.id, str(persisted_conversation_id)
+        )
         self._reconcile_restored_chat_sync_intents(
             session.id, str(persisted_conversation_id)
         )
@@ -2100,6 +2104,8 @@ class ConsoleChatStore:
         terminal_state: str,
         content: str,
         metadata_json: str | None = None,
+        provider_continuation_json: str | None = None,
+        provider_continuation: ProviderContinuationCheckpoint | None = None,
     ) -> bool:
         """Settle one claimed durable or ephemeral owner without a second write."""
 
@@ -2121,6 +2127,7 @@ class ConsoleChatStore:
             message = self._message_or_raise(assistant_message_id)
         except KeyError:
             message = None
+        committed_message_version: int | None = None
         if not ephemeral:
             repository = getattr(
                 self.persistence,
@@ -2147,15 +2154,23 @@ class ConsoleChatStore:
                             if message is not None and message.usage is not None
                             else None
                         ),
+                        provider_continuation_json=provider_continuation_json,
                     )
                 )
             except Exception:
                 return False
             if result.status is not ConsoleDispatchResultStatus.COMMITTED:
                 return False
+            committed_message_version = result.committed_message_version
         if message is not None:
             message.content = content
             message.status = terminal_state
+            message.assistant_generation_state = terminal_state
+            message.provider_continuation = provider_continuation
+            message.provider_continuation_message_version = (
+                committed_message_version
+            )
+            message.provider_continuation_actions_enabled = False
             self._stream_chunks_by_message.pop(message.id, None)
             self._stream_materialized_counts.pop(message.id, None)
             self._bump_payload_revision(session_id)
@@ -2257,7 +2272,126 @@ class ConsoleChatStore:
             node.provider_continuation_message_version = (
                 version if type(version) is int else None
             )
+            node.assistant_generation_state = row.get(
+                "assistant_generation_state"
+            )
+            node.provider_continuation_actions_enabled = False
         return nodes
+
+    def _normalize_restored_provider_continuation(
+        self, session_id: str, conversation_id: str
+    ) -> None:
+        """Normalize and rebind one restored active ADR-063 owner before actions."""
+        recovery = self.dispatch_recovery_for_session(session_id)
+        if recovery is None or recovery.kind is not ConsoleDispatchRecoveryKind.CONTINUATION:
+            return
+        message = self._nodes_by_session.get(session_id, {}).get(
+            recovery.assistant_message_id
+        )
+        repository = getattr(
+            self.persistence, "console_dispatch_repository", None
+        )
+        snapshot_reader = getattr(
+            repository, "provider_continuation_owner_snapshot", None
+        )
+        normalizer = getattr(
+            repository, "normalize_provider_continuation_owner", None
+        )
+        if (
+            message is None
+            or message.provider_continuation is None
+            or message.provider_continuation.state != "active"
+            or not callable(snapshot_reader)
+            or not callable(normalizer)
+        ):
+            if message is not None:
+                message.provider_continuation_actions_enabled = False
+                message.provider_continuation_message_version = None
+            with self._preparation_lock:
+                current = self._dispatch_recoveries_by_session.get(session_id)
+                if current is recovery:
+                    self._dispatch_recoveries_by_session.pop(session_id, None)
+                    self._dispatch_recovery_message_baselines.pop(session_id, None)
+                    self._dispatch_recovery_queue_hydration_pending.discard(
+                        session_id
+                    )
+            return
+        original = message.provider_continuation
+        original_json = dump_provider_continuation_json(original)
+        try:
+            for _attempt in range(2):
+                observed = snapshot_reader(
+                    conversation_id=conversation_id,
+                    assistant_message_id=message.persisted_message_id or message.id,
+                )
+                if (
+                    not isinstance(observed, Mapping)
+                    or observed.get("checkpoint") != original
+                    or observed.get("canonical") != original_json
+                    or type(observed.get("version")) is not int
+                ):
+                    message.provider_continuation_actions_enabled = False
+                    message.provider_continuation_message_version = None
+                    message.provider_continuation_warning = (
+                        "Continuation changed during restore; reload before recovery."
+                    )
+                    return
+                observed_version = int(observed["version"])
+                observed_state = observed.get("state")
+                if observed_state == "continuation_active":
+                    message.assistant_generation_state = "continuation_active"
+                    message.provider_continuation_message_version = observed_version
+                    message.provider_continuation_actions_enabled = True
+                    return
+                try:
+                    result = normalizer(
+                        conversation_id=conversation_id,
+                        assistant_message_id=(
+                            message.persisted_message_id or message.id
+                        ),
+                        expected_message_version=observed_version,
+                        expected_state=observed_state,
+                        provider_continuation_json=original_json,
+                    )
+                except Exception:
+                    fresh = snapshot_reader(
+                        conversation_id=conversation_id,
+                        assistant_message_id=(
+                            message.persisted_message_id or message.id
+                        ),
+                    )
+                    if (
+                        isinstance(fresh, Mapping)
+                        and fresh.get("checkpoint") == original
+                        and fresh.get("canonical") == original_json
+                        and fresh.get("version") == observed_version
+                        and fresh.get("state") == observed_state
+                    ):
+                        message.provider_continuation_message_version = observed_version
+                        message.provider_continuation_actions_enabled = True
+                        message.provider_continuation_warning = (
+                            "Continuation normalization was rolled back; the exact "
+                            "durable owner was confirmed."
+                        )
+                    return
+                if (
+                    result.status is ConsoleDispatchResultStatus.COMMITTED
+                    and type(result.committed_message_version) is int
+                ):
+                    message.assistant_generation_state = "continuation_active"
+                    message.provider_continuation_message_version = (
+                        result.committed_message_version
+                    )
+                    message.provider_continuation_actions_enabled = True
+                    message.provider_continuation_warning = None
+                    return
+        finally:
+            with self._preparation_lock:
+                current = self._dispatch_recoveries_by_session.get(session_id)
+                if current is recovery:
+                    self._dispatch_recoveries_by_session.pop(session_id, None)
+                    self._dispatch_recovery_message_baselines.pop(session_id, None)
+                    self._dispatch_recovery_queue_hydration_pending.discard(session_id)
 
     def _reconcile_restored_chat_sync_intents(
         self, session_id: str, conversation_id: str
@@ -6554,11 +6688,14 @@ class ConsoleChatStore:
             message_id=persisted_id,
             expected_message_version=expected_message_version,
             provider_continuation_json=None,
+            assistant_generation_state="discarded",
         )
         message.provider_continuation = None
         message.provider_continuation_message_version = expected_message_version + 1
         message.provider_continuation_remote = False
         message.provider_continuation_warning = None
+        message.provider_continuation_actions_enabled = False
+        message.assistant_generation_state = "discarded"
         if message.content or message.attachments or message.image_data is not None:
             self._refresh_and_project_provider_continuation(message)
             self._bump_payload_revision(session_id)
@@ -9432,6 +9569,8 @@ class ConsoleChatStore:
         message.provider_continuation_message_version = int(row["version"])
         message.provider_continuation_remote = False
         message.provider_continuation_warning = safe.warning
+        message.assistant_generation_state = row.get("assistant_generation_state")
+        message.provider_continuation_actions_enabled = safe.checkpoint is not None
 
         producer = self.sync_v2_chat_producer
         profile_id = self.sync_v2_server_profile_id
@@ -9439,6 +9578,9 @@ class ConsoleChatStore:
         if profile_id is None or not callable(reconcile):
             return
         payload: dict[str, Any] = {
+            "assistant_generation_state": row.get(
+                "assistant_generation_state"
+            ),
             "content": str(row.get("content") or ""),
             "role": message.role.value,
         }
@@ -9614,6 +9756,96 @@ class ConsoleChatStore:
         if private_json is None:
             raise RuntimeError("Durable continuation state is unavailable.")
 
+        session_id = self._message_session_index[message.id]
+        dispatch_recovery = self.dispatch_recovery_for_session(session_id)
+        if (
+            dispatch_recovery is not None
+            and dispatch_recovery.assistant_message_id == message.id
+            and dispatch_recovery.checkpoint is not None
+        ):
+            dispatch_checkpoint = dispatch_recovery.checkpoint
+            if isinstance(event, ToolBatchReady):
+                repository = getattr(
+                    persistence, "console_dispatch_repository", None
+                )
+                handoff = getattr(
+                    repository, "handoff_to_provider_continuation", None
+                )
+                if not callable(handoff):
+                    self.mark_dispatch_recovery_needed(session_id, message.id)
+                    raise RuntimeError(
+                        "Provider continuation handoff is unavailable."
+                    )
+                try:
+                    result = handoff(
+                        ConsoleContinuationHandoff(
+                            assistant_message_id=message.persisted_message_id
+                            or message.id,
+                            expected_checkpoint_revision=(
+                                dispatch_checkpoint.checkpoint_revision
+                            ),
+                            expected_user_message_version=(
+                                dispatch_checkpoint.user_message_version
+                            ),
+                            expected_assistant_message_version=(
+                                dispatch_checkpoint.assistant_message_version
+                            ),
+                            provider_continuation_json=private_json,
+                        )
+                    )
+                except Exception as exc:
+                    self.mark_dispatch_recovery_needed(session_id, message.id)
+                    raise RuntimeError(
+                        "Provider continuation handoff failed."
+                    ) from exc
+                if (
+                    result.status is not ConsoleDispatchResultStatus.COMMITTED
+                    or type(result.committed_message_version) is not int
+                    or type(result.committed_payload_hash) is not str
+                ):
+                    self.mark_dispatch_recovery_needed(session_id, message.id)
+                    raise RuntimeError(
+                        "Provider continuation handoff conflicted; reload and retry."
+                    )
+                message.provider_continuation = checkpoint
+                message.provider_continuation_message_version = (
+                    result.committed_message_version
+                )
+                message.provider_continuation_remote = False
+                message.provider_continuation_actions_enabled = True
+                message.assistant_generation_state = "continuation_active"
+                message.content = content
+                with self._preparation_lock:
+                    self._dispatch_recoveries_by_session.pop(session_id, None)
+                    self._dispatch_recovery_message_baselines.pop(session_id, None)
+                    self._dispatch_recovery_queue_hydration_pending.discard(
+                        session_id
+                    )
+                durability = self.ensure_provider_continuation_durable(
+                    message_id=message.persisted_message_id or message.id,
+                    message_version=result.committed_message_version,
+                    payload_hash=result.committed_payload_hash,
+                )
+                if not durability.ready:
+                    message.provider_continuation_warning = durability.reason
+                    raise RuntimeError(durability.reason)
+                message.provider_continuation_warning = None
+                return
+            if isinstance(event, FinalContinuation):
+                if not self.settle_dispatch_recovery(
+                    session_id,
+                    assistant_message_id=message.id,
+                    terminal_state="complete",
+                    content=content,
+                    provider_continuation_json=private_json,
+                    provider_continuation=checkpoint,
+                ):
+                    self.mark_dispatch_recovery_needed(session_id, message.id)
+                    raise RuntimeError(
+                        "Provider continuation terminal settlement failed."
+                    )
+                return
+
         message_version: int | None
         if message.persisted_message_id is None:
             if not isinstance(event, (ToolBatchReady, FinalContinuation)) or (
@@ -9659,14 +9891,24 @@ class ConsoleChatStore:
                 expected_message_version=message_version,
                 provider_continuation_json=private_json,
                 content=content,
+                assistant_generation_state=(
+                    "continuation_active"
+                    if checkpoint.state == "active"
+                    else "complete"
+                ),
             )
             message_version += 1
 
         message.provider_continuation = checkpoint
         message.provider_continuation_message_version = message_version
         message.provider_continuation_remote = False
+        message.provider_continuation_actions_enabled = True
+        message.assistant_generation_state = (
+            "continuation_active" if checkpoint.state == "active" else "complete"
+        )
         message.content = content
         payload = {
+            "assistant_generation_state": message.assistant_generation_state,
             "content": content,
             "provider_continuation_json": private_json,
             "role": ConsoleMessageRole.ASSISTANT.value,

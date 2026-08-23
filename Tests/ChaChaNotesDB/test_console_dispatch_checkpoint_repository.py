@@ -258,6 +258,27 @@ def _active_continuation_json() -> str:
     return canonical
 
 
+def _continuation_acceptance(conversation_id: str) -> ConsoleDurableTurnAcceptance:
+    acceptance = _acceptance(conversation_id)
+    return replace(
+        acceptance,
+        frozen_authority=replace(
+            acceptance.frozen_authority,
+            provider_intent=ConsoleProviderIntent(
+                provider="deepseek",
+                model="deepseek-v4-flash",
+                endpoint="https://api.deepseek.com/v1",
+            ),
+        ),
+        resolved_destination=ConsoleResolvedDestination(
+            provider="deepseek",
+            model="deepseek-v4-flash",
+            endpoint_identity="https://api.deepseek.com/v1",
+            egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
+        ),
+    )
+
+
 def test_checkpoint_codecs_pin_exact_json_keys_types_and_order() -> None:
     authority_json = dump_console_turn_library_authority_json(_authority())
     destination_json = dump_console_resolved_destination_json(_destination())
@@ -428,7 +449,8 @@ def test_insert_and_read_validate_roles_conversation_versions_and_state(
 ) -> None:
     db, conversation_id = _db_and_conversation(tmp_path / "ownership.sqlite")
     repository = ConsoleDispatchRepository(db)
-    inserted = _insert(db, repository, _acceptance(conversation_id))
+    acceptance = _acceptance(conversation_id)
+    inserted = _insert(db, repository, acceptance)
 
     assert inserted.state is ConsoleDispatchCheckpointState.ACCEPTED
     assert inserted.checkpoint_revision == 1
@@ -620,7 +642,7 @@ def test_soft_deleted_conversation_cannot_recover_or_mutate_dispatch_ownership(
         tmp_path / f"deleted-{operation}.sqlite"
     )
     repository = ConsoleDispatchRepository(db)
-    inserted = _insert(db, repository, _acceptance(conversation_id))
+    inserted = _insert(db, repository, _continuation_acceptance(conversation_id))
     owner = (
         _start_dispatch(repository, inserted) if operation == "handoff" else inserted
     )
@@ -1048,7 +1070,7 @@ def test_continuation_handoff_failure_rolls_back_both_owners(
         tmp_path / f"handoff-{boundary}.sqlite"
     )
     repository = ConsoleDispatchRepository(db)
-    inserted = _insert(db, repository, _acceptance(conversation_id))
+    inserted = _insert(db, repository, _continuation_acceptance(conversation_id))
     started = _start_dispatch(repository, inserted)
     connection = db.get_connection()
     table = "messages" if boundary == "continuation_write" else "console_dispatch_checkpoints"
@@ -1087,7 +1109,7 @@ def test_continuation_handoff_rejects_an_owner_that_has_not_started_dispatch(
 ) -> None:
     db, conversation_id = _db_and_conversation(tmp_path / "handoff-accepted.sqlite")
     repository = ConsoleDispatchRepository(db)
-    inserted = _insert(db, repository, _acceptance(conversation_id))
+    inserted = _insert(db, repository, _continuation_acceptance(conversation_id))
 
     result = repository.handoff_to_provider_continuation(
         ConsoleContinuationHandoff(
@@ -1108,7 +1130,7 @@ def test_continuation_handoff_atomically_transfers_ownership_and_sync_intent(
 ) -> None:
     db, conversation_id = _db_and_conversation(tmp_path / "handoff.sqlite")
     repository = ConsoleDispatchRepository(db)
-    inserted = _insert(db, repository, _acceptance(conversation_id))
+    inserted = _insert(db, repository, _continuation_acceptance(conversation_id))
     _start_dispatch(repository, inserted)
     continuation_json = _active_continuation_json()
 

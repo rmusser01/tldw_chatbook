@@ -928,6 +928,10 @@ class ConsoleChatMessage:
     provider_continuation_warning: str | None = None
     provider_continuation_remote: bool = False
     provider_continuation_message_version: int | None = None
+    # Portable closed lifecycle state.  Continuation actions stay separately
+    # gated until a restored owner has a committed, freshly rebound version.
+    assistant_generation_state: str | None = None
+    provider_continuation_actions_enabled: bool = True
     # task-3401.4: structured facts about a generated VIDEO (slug name,
     # prompt/backend/seed/shape) -- the tombstone card's payload after the
     # ephemeral bytes are gone (ADR-044). Persisted as a namespaced key in

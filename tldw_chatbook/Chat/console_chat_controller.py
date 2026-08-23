@@ -132,6 +132,9 @@ from tldw_chatbook.Chat.console_context_repository import (
     ConsoleContextRepository,
     ConsoleMemoryRecord,
 )
+from tldw_chatbook.Chat.assistant_generation_state import (
+    assistant_state_allows_provider_history,
+)
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleDispatchCheckpointState,
     ConsoleDispatchReconstructability,
@@ -3523,6 +3526,7 @@ class ConsoleChatController:
         if (
             current is None
             or current.id != message_id
+            or not current.provider_continuation_actions_enabled
             or current.provider_continuation_message_version != expected_message_version
             or current.persisted_message_id is None
         ):
@@ -16575,6 +16579,21 @@ class ConsoleChatController:
                 continue
             if message.role is ConsoleMessageRole.USER:
                 seen_user = True
+            if (
+                message.role is ConsoleMessageRole.ASSISTANT
+                and not assistant_state_allows_provider_history(
+                    state=message.assistant_generation_state,
+                    has_valid_continuation=(
+                        isinstance(
+                            message.provider_continuation,
+                            ProviderContinuationCheckpoint,
+                        )
+                        and message.provider_continuation.state == "active"
+                    ),
+                    content=message.content,
+                )
+            ):
+                continue
             base_text = (
                 message.variants.current.content
                 if use_variant_content and message.variants is not None
