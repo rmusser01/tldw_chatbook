@@ -456,6 +456,98 @@ def test_fs_grep_spec_read_only_with_mode_enum(tmp_path):
     assert p.hub_tool_for("fs_grep").tags == ()  # read-only: no risk tags
 
 
+# -- TASK-19558: why the read-only local tools carry no "reads" tag -----------
+#
+# The holistic review asked whether `fs_read`/`fs_list`/`fs_glob`/`fs_grep`/
+# `web_*`/`watchlists_*` should carry ("reads",) like their in-process
+# builtin equivalents (`Tools/file_operation_tools.py`), on the premise that
+# "untagged tools are not floored to ask". These three tests demonstrate --
+# rather than assert -- why the answer is no, so the question is settled
+# with a mechanism instead of being re-asked every review.
+
+
+def test_the_reads_tag_would_floor_nothing_on_the_local_resolver(tmp_path):
+    """`("reads",)` is inert for a local tool: the resolver never reads it.
+
+    Local tools are resolved by `resolve_effective_state` (the MCP
+    resolver, wired in `console_chat_controller` via
+    `UnifiedControlPlaneService.gate_tool_test`), whose floor set is
+    `HIGH_RISK_TAGS = {"mutates", "process"}`. `"reads"` lives in
+    `BUILTIN_HIGH_RISK_TAGS`, which only `resolve_builtin_state` consults,
+    and that function serves the `agent:builtin` server key -- never
+    `local:__local__`. So adding the tag would produce a marking that reads
+    as protection in review and provides none: the exact shape TASK-19558
+    removed from `ChaChaNotes_DB`'s `safe_search_term` dead stores.
+    """
+    from dataclasses import replace
+
+    from tldw_chatbook.MCP.permission_store import (
+        BUILTIN_HIGH_RISK_TAGS,
+        HIGH_RISK_TAGS,
+        resolve_effective_state,
+    )
+    from tldw_chatbook.Agents.local_tool_provider import LOCAL_SERVER_KEY
+
+    assert "reads" not in HIGH_RISK_TAGS
+    assert "reads" in BUILTIN_HIGH_RISK_TAGS
+
+    payload = {
+        "profiles": {
+            "default": {
+                "global_default": "ask",
+                "servers": {LOCAL_SERVER_KEY: {"default": "allow"}},
+            }
+        }
+    }
+    p = make_provider(root=tmp_path)
+    untagged = p.hub_tool_for("fs_read")
+    tagged = replace(untagged, tags=("reads",))
+
+    assert resolve_effective_state(payload, untagged).state == "allow"
+    # Same verdict with the tag applied -- i.e. the tag changes nothing.
+    assert resolve_effective_state(payload, tagged).state == "allow"
+    # ...while a tag the resolver DOES consult floors the same inherited allow.
+    assert (
+        resolve_effective_state(payload, replace(untagged, tags=("mutates",))).state
+        == "ask"
+    )
+
+
+def test_mutating_local_tools_are_floored_because_that_tag_is_consulted(tmp_path):
+    """The contrast: `("mutates",)` is applied where it is load-bearing."""
+    from tldw_chatbook.MCP.permission_store import resolve_effective_state
+    from tldw_chatbook.Agents.local_tool_provider import LOCAL_SERVER_KEY
+
+    payload = {
+        "profiles": {
+            "default": {
+                "global_default": "ask",
+                "servers": {LOCAL_SERVER_KEY: {"default": "allow"}},
+            }
+        }
+    }
+    p = make_provider(root=tmp_path)
+    for name in ("fs_write", "fs_edit", "fs_patch"):
+        hub = p.hub_tool_for(name)
+        assert hub.tags == ("mutates",), name
+        resolved = resolve_effective_state(payload, hub)
+        assert resolved.state == "ask" and resolved.risk_floored, name
+
+
+def test_local_tools_default_to_ask_without_an_explicit_server_allow(tmp_path):
+    """The floor debate only matters after a user has opted out of asking.
+
+    A fresh permission store has no `local:__local__` entry, so every local
+    tool -- tagged or not -- inherits `global_default` = "ask" and already
+    raises an approval card per call.
+    """
+    from tldw_chatbook.MCP.permission_store import resolve_effective_state
+
+    p = make_provider(root=tmp_path)
+    for name in ("fs_read", "fs_list", "fs_glob", "fs_grep"):
+        assert resolve_effective_state({}, p.hub_tool_for(name)).state == "ask", name
+
+
 # -- git_* read-only tool specs (phase 3b-ii, ADR-033) -------------------------
 #
 # ADR-033 binding: the git_* set is read-only over a fixed, allowlisted argv

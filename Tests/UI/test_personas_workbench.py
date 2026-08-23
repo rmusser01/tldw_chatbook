@@ -3556,13 +3556,23 @@ class TestImportExport:
 
 
 class _FtsStubDB:
-    """Captures the MATCH term handed to search_character_cards."""
+    """Captures the MATCH term handed to search_character_cards.
+
+    TASK-19558: `search_character_cards` used to compute a `safe_search_term`
+    and bind the RAW one, so a caller-built prefix expression reached MATCH
+    only through the plain-text parameter. The plain-text parameter now
+    quotes what it is given, and a caller-built expression travels through
+    `fts_match_query` -- which is what `calls` records here, so these tests
+    still assert on the expression SQLite actually sees.
+    """
 
     def __init__(self):
         self.calls: list[tuple[str, int]] = []
+        self.plain_terms: list[str] = []
 
-    def search_character_cards(self, search_term, limit=10):
-        self.calls.append((search_term, limit))
+    def search_character_cards(self, search_term, limit=10, fts_match_query=None):
+        self.plain_terms.append(search_term)
+        self.calls.append((fts_match_query, limit))
         return [{"id": 1, "name": "Match"}]
 
 
@@ -3581,6 +3591,8 @@ class TestFtsTermSafety:
         results = character_handler_module.search_characters_fts("sam")
         assert [term for term, _ in stub_db.calls] == ['"sam"*']
         assert results and results[0]["name"] == "Match"
+        # The raw term still travels alongside, for the error message only.
+        assert stub_db.plain_terms == ["sam"]
 
     async def test_apostrophe_term_is_safe(self, stub_db):
         character_handler_module.search_characters_fts("O'Brien")

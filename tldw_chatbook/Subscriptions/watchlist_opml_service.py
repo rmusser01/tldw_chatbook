@@ -1,7 +1,35 @@
 from __future__ import annotations
 
+# Stdlib ElementTree is imported for document BUILDING only (`export`
+# below): `Element`/`SubElement` have no defusedxml counterparts, and
+# serializing a tree we constructed ourselves has no attacker-controlled
+# input. Every PARSE of foreign text goes through `_safe_fromstring`.
 import xml.etree.ElementTree as ET
 from typing import Any
+
+from loguru import logger
+
+try:
+    # TASK-19558: this module was the one XML parser in `Subscriptions/`
+    # that never adopted defusedxml, while every sibling
+    # (`security.py`, `monitoring_engine.py`, the three scrapers) uses this
+    # exact try/except shape. The concrete exposure measured for OPML is
+    # ENTITY EXPANSION ("billion laughs"), not XXE: stdlib ElementTree
+    # already ignores external entity references, but it happily expands
+    # internal ones, so a ~1KB OPML file imported through Watchlists ▸
+    # Import OPML expands to gigabytes inside the parser. defusedxml
+    # raises `EntitiesForbidden` on the DTD instead.
+    from defusedxml.ElementTree import fromstring as _safe_fromstring
+
+    DEFUSEDXML_AVAILABLE = True
+except ImportError:  # pragma: no cover - defusedxml is a core dependency
+    from xml.etree.ElementTree import fromstring as _safe_fromstring
+
+    DEFUSEDXML_AVAILABLE = False
+    logger.warning(
+        "defusedxml not available, using standard xml.etree for OPML import. "
+        "Install defusedxml for better security."
+    )
 
 
 class WatchlistOpmlService:
@@ -29,8 +57,12 @@ class WatchlistOpmlService:
 
         Raises:
             xml.etree.ElementTree.ParseError: If ``xml_text`` is malformed.
+            defusedxml.common.EntitiesForbidden: If ``xml_text`` declares
+                internal entities (the billion-laughs shape). Subclasses
+                ``ValueError``; the caller's handler treats it the same way
+                it treats a malformed document.
         """
-        root = ET.fromstring(xml_text)
+        root = _safe_fromstring(xml_text)
         items: list[dict[str, Any]] = []
 
         def walk(element: ET.Element, folder: "str | None") -> None:

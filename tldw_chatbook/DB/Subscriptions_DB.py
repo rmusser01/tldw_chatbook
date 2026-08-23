@@ -42,6 +42,7 @@ from .base_db import BaseDB
 from .sql_validation import validate_identifier
 from ..config import get_cli_setting
 from ..Metrics.metrics_logger import log_counter, log_histogram
+from ..Utils.fts5_match_forms import quote_fts5_token
 
 
 #: Fallback `auto_pause_threshold` when the config value is missing or
@@ -2423,7 +2424,7 @@ class SubscriptionsDB(BaseDB):
         Library's plural/singular widening is deliberately NOT copied: a
         reader scanning for a feed's own words wants exactly those words.
         """
-        return '"' + term.replace('"', '""') + '"'
+        return quote_fts5_token(term)
 
     #: The list-page projection shared by `get_new_items` and its
     #: `_search_items_rows` search half (TASK-15464). Deliberately NOT

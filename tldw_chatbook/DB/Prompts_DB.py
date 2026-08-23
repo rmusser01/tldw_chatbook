@@ -52,6 +52,7 @@ from .sql_logging import preview_params
 from .private_sqlite import backup_connection_to_private, connect_private_sqlite
 from ..Metrics.metrics_logger import log_counter, log_histogram
 from tldw_chatbook.Utils.private_paths import PrivatePathError, lexical_path
+from tldw_chatbook.Utils.fts5_match_forms import quote_fts5_phrase, quote_fts5_token
 #
 ########################################################################################################################
 #
@@ -3292,7 +3293,7 @@ class PromptsDatabase:
         if not tokens:
             return None
         tokens = tokens[: cls._LIBRARY_PROMPT_FTS_TOKEN_LIMIT]
-        return " ".join(f'"{token}"' for token in tokens)
+        return " ".join(quote_fts5_token(token) for token in tokens)
 
     def _library_keywords_for_prompts(
         self, conn: sqlite3.Connection, prompt_ids: List[int]
@@ -3802,10 +3803,14 @@ class PromptsDatabase:
                 "system_prompt",
                 "user_prompt",
             }
-            # Forward the caller-built MATCH expression only when provided
-            # so existing callers/test fakes without the parameter keep the
-            # legacy raw-`search_query` MATCH behavior unchanged.
-            effective_match_query = fts_match_query if fts_match_query else search_query
+            # Forward the caller-built MATCH expression when provided;
+            # otherwise quote the user's text as a literal phrase.
+            # TASK-19558: the else-branch used to bind `search_query` RAW,
+            # so a typed `"` raised OperationalError('unterminated string')
+            # and a typed column filter/`OR` executed as FTS5 syntax.
+            effective_match_query = (
+                fts_match_query if fts_match_query else quote_fts5_phrase(search_query)
+            )
 
             # Search in prompt text fields
             if any(field in text_search_fields for field in search_fields):
@@ -4440,9 +4445,11 @@ class PromptsDatabase:
 
         try:
             # Use FTS to find matching prompt IDs
+            # TASK-19558: `search_text` is plain user text; quote it as a
+            # literal phrase rather than binding it as an FTS5 expression.
             cursor = self.execute_query(
                 "SELECT rowid FROM prompts_fts WHERE prompts_fts MATCH ?",
-                (search_text,),
+                (quote_fts5_phrase(search_text),),
             )
             matching_ids = [row["rowid"] for row in cursor.fetchall()]
 

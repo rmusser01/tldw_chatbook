@@ -42,6 +42,8 @@ __all__ = [
     "fts5_query_tokens",
     "fts5_token_runs",
     "is_fts5_stopword",
+    "quote_fts5_phrase",
+    "quote_fts5_prefix",
     "quote_fts5_token",
 ]
 
@@ -116,13 +118,59 @@ def quote_fts5_token(token: str) -> str:
     string with no operator semantics. An embedded double quote is doubled,
     FTS5's own escape for a literal quote inside a quoted term.
 
+    **TASK-19558 made this the ONE escape for the whole app, not just the
+    widening forms.** The FTS5 string-literal rule does not care whether
+    what it wraps is one token or a whole phrase -- ``"a b"`` is a phrase
+    query and ``"a"`` a single-token one, but both are the same literal
+    with the same escaping -- so ``quote_fts5_phrase`` below is a
+    same-named alias rather than a second implementation. Before that task
+    this repo carried **six** spellings of the escape (four correct, two
+    that omitted the doubling entirely and raised ``OperationalError(
+    'unterminated string')`` on any query containing a ``"``), plus three
+    ``ChaChaNotes_DB`` search methods that computed a ``safe_search_term``
+    and then bound the RAW one -- protection that read as protection in
+    review and reached no query. ``Tests/Utils/
+    test_fts5_quoting_adoption_census.py`` is the guard that keeps a
+    seventh spelling from being written: any ``.replace('"', '""')``
+    outside this module fails it.
+
     Args:
-        token: One raw token from ``fts5_query_tokens``.
+        token: One raw token from ``fts5_query_tokens``, or a whole raw
+            user-typed search phrase (see ``quote_fts5_phrase``).
 
     Returns:
         The token as a quoted FTS5 term.
     """
     return '"{}"'.format(token.replace('"', '""'))
+
+
+#: The whole-phrase reading of the same escape. Bound to the identical
+#: function on purpose: a caller quoting a whole user-typed search box
+#: value wants "this text, literally", which is exactly what an FTS5
+#: string literal is, and giving it a second implementation is how the
+#: two-that-omit-the-doubling variants got written in the first place. The
+#: name exists so a phrase call site reads honestly instead of claiming to
+#: quote a "token" it never tokenized.
+quote_fts5_phrase = quote_fts5_token
+
+
+def quote_fts5_prefix(text: str) -> str:
+    """Quote ``text`` as an FTS5 phrase-PREFIX term: ``foo"bar`` -> ``"foo""bar"*``.
+
+    The star goes **outside** the quotes: FTS5 reads ``"tok"*`` as "a
+    phrase whose last token is a prefix", while a star inside the quotes is
+    an inert character in the literal (the tokenizer drops it) and would
+    silently reduce this to a plain phrase match. Four call sites had this
+    spelled out longhand as ``f'"{term.replace(chr(34), chr(34) * 2)}"*'``
+    before TASK-19558; they now share this one.
+
+    Args:
+        text: Raw user-typed search text.
+
+    Returns:
+        The FTS5 phrase-prefix MATCH expression.
+    """
+    return f"{quote_fts5_token(text)}*"
 
 
 def is_fts5_stopword(token: str) -> bool:

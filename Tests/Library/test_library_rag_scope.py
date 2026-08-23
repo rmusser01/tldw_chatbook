@@ -119,9 +119,16 @@ class _SpyConversationsDB:
     def __init__(self, rows=None):
         self.rows = rows if rows is not None else []
         self.call_count = 0
+        self.match_queries: list[str | None] = []
 
-    def search_conversations_by_content(self, query, limit):
+    def search_conversations_by_content(self, query, limit, fts_match_query=None):
+        # TASK-19558: the seam now hands its pre-built (plural/singular- or
+        # prefix-widened) MATCH expression in through `fts_match_query`
+        # rather than through the plain-text parameter, which the DB method
+        # quotes as a literal phrase. Recorded rather than ignored so a
+        # future regression to passing it positionally is visible here.
         self.call_count += 1
+        self.match_queries.append(fts_match_query)
         return self.rows
 
 
@@ -439,6 +446,8 @@ async def test_unscoped_keyword_search_includes_conversations_no_diagnostics():
     result = await service.search("q", ("conversations",), "search", top_k=5)
 
     assert conv_db.call_count == 1
+    # The widened MATCH expression reaches the DB through `fts_match_query`.
+    assert conv_db.match_queries == ['"q"']
     assert result["diagnostics"] == {}
 
 

@@ -15,6 +15,11 @@ from tldw_chatbook.Utils.sensitive_config_keys import is_sensitive_config_key
 
 
 REDACTION_MARKER = "***REDACTED***"
+#: Labels that name a secret in a LOG LINE but are not config keys, so they
+#: are deliberately not added to ``sensitive_config_keys`` (that predicate
+#: also drives config encryption and the Privacy & Security protected-field
+#: count, and widening it would start encrypting fields for a
+#: logging-only reason).
 _LOG_ONLY_SENSITIVE_FIELDS = frozenset(
     {
         "authorization",
@@ -26,6 +31,19 @@ _LOG_ONLY_SENSITIVE_FIELDS = frozenset(
         "database_url",
         "connection_string",
         "dsn",
+        # TASK-19558. A bare ``key`` matches none of
+        # ``is_sensitive_config_key``'s rules (its ``_key`` rule is an
+        # underscore-SUFFIX match and ``api-key`` is a containment one), and
+        # bare ``key`` is exactly how Google's Custom Search credential
+        # travels: ``.../customsearch/v1?key=<API key>&cx=...``. Probed
+        # before the fix: that whole URL passed through ``sanitize_string``
+        # unchanged. The cost is stated rather than hidden -- a benign
+        # ``key=<value>`` label loses its value in diagnostics too (the
+        # measured population is small: ``config.py``'s "Failed to encrypt
+        # config value (key=...)" is the only shipped log line of that
+        # shape, and the name it prints is a secret-bearing config key
+        # anyway).
+        "key",
     }
 )
 

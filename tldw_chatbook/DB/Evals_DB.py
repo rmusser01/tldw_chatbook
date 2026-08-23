@@ -36,6 +36,7 @@ if TYPE_CHECKING:
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 from tldw_chatbook.DB.sql_validation import validate_identifier
+from tldw_chatbook.Utils.fts5_match_forms import quote_fts5_phrase
 
 # Database Schema Version
 SCHEMA_VERSION = 5
@@ -1107,10 +1108,9 @@ class EvalsDB:
                 (f"%{query}%", f"%{query}%", limit),
             )
         else:
-            # For normal queries, use FTS5 with proper escaping
-            # Escape double quotes in the query
-            escaped_query = query.replace('"', '""')
-            safe_query = f'"{escaped_query}"' if escaped_query else '""'
+            # For normal queries, use FTS5 with proper escaping (the ONE
+            # escape lives in `Utils/fts5_match_forms`; TASK-19558).
+            safe_query = quote_fts5_phrase(query)
             cursor = conn.execute(
                 """
                 SELECT t.* FROM eval_tasks t
@@ -1309,8 +1309,12 @@ class EvalsDB:
 
     def search_datasets(self, query: str, limit: int = 50) -> List[Dict[str, Any]]:
         """Search datasets using FTS5."""
-        # Escape special characters in FTS5 query by wrapping in quotes
-        safe_query = f'"{query}"' if query else '""'
+        # Escape special characters in FTS5 query by wrapping in quotes.
+        # TASK-19558: this wrapping never doubled an embedded `"`, so a
+        # dataset search containing one raised OperationalError and one
+        # shaped `x" OR name:"y` escaped the literal into a live column
+        # filter. `quote_fts5_phrase` is the ONE escape.
+        safe_query = quote_fts5_phrase(query or "")
 
         conn = self._get_connection()
         cursor = conn.execute(

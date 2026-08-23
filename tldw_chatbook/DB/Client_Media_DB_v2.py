@@ -59,6 +59,7 @@ from .sql_validation import (
 from .sql_logging import preview_params
 from .private_sqlite import backup_connection_to_private, connect_private_sqlite
 from tldw_chatbook.Utils.private_paths import PrivatePathError, lexical_path
+from tldw_chatbook.Utils.fts5_match_forms import quote_fts5_phrase, quote_fts5_token
 #
 ########################################################################################################################
 #
@@ -2523,30 +2524,28 @@ class MediaDatabase:
                     # matching is case-insensitive already.
                     fts_query_parts.append(effective_fts_query)
                 else:
-                    # For very short search terms (1-2 characters), add wildcards to improve matching
-                    is_quoted_fts_query = effective_fts_query.startswith(
-                        '"'
-                    ) and effective_fts_query.endswith('"')
-                    if len(effective_fts_query) <= 2 and not is_quoted_fts_query:
-                        # Add suffix wildcard for better partial matching with short terms
-                        fts_query_parts.append(f"{effective_fts_query}*")
-
-                        # Note: SQLite FTS5 doesn't support prefix wildcards (*term)
-                        # We'll handle "ends with" matching using LIKE conditions instead
-
-                        # Add case-insensitive versions if needed
-                        if effective_fts_query.lower() != effective_fts_query:
-                            fts_query_parts.append(f"{effective_fts_query.lower()}*")
+                    # TASK-19558: plain user text from the media search box.
+                    # It used to be bound to MATCH RAW, so a typed `"` raised
+                    # OperationalError('unterminated string') and a typed
+                    # `OR`/column filter executed as FTS5 syntax. It is now a
+                    # quoted literal phrase.
+                    #
+                    # The lowercased duplicates the raw path used to OR in
+                    # are gone with it: unicode61 matching is already
+                    # case-insensitive (the caller-owned branch above says
+                    # so), and a lowercased copy of a quoted literal is a
+                    # no-op OR-arm. The short-term (1-2 char) prefix widening
+                    # is kept, measured on the RAW length -- quoting adds two
+                    # characters, so testing the quoted string's length would
+                    # have silently retired that branch.
+                    quoted_fts_query = quote_fts5_phrase(search_query)
+                    if len(search_query) <= 2:
+                        # Note: SQLite FTS5 doesn't support prefix wildcards
+                        # (*term); "ends with" is handled by the LIKE
+                        # conditions built below.
+                        fts_query_parts.append(f"{quoted_fts_query}*")
                     else:
-                        # For longer terms, use the original query
-                        fts_query_parts.append(effective_fts_query)
-
-                        # Add case-insensitive version if needed
-                        if (
-                            not is_quoted_fts_query
-                            and effective_fts_query.lower() != effective_fts_query
-                        ):
-                            fts_query_parts.append(effective_fts_query.lower())
+                        fts_query_parts.append(quoted_fts_query)
 
                 # Combine all FTS query parts with OR
                 combined_fts_query = " OR ".join(fts_query_parts)
@@ -8025,7 +8024,7 @@ class MediaDatabase:
         if not tokens:
             return None
         tokens = tokens[: cls._LIBRARY_FTS_TOKEN_LIMIT]
-        return " ".join(f'"{token}"' for token in tokens)
+        return " ".join(quote_fts5_token(token) for token in tokens)
 
     def _library_keywords_for_media(
         self, conn: sqlite3.Connection, media_ids: List[int]

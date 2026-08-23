@@ -7055,3 +7055,77 @@ shutdown), not on which methods were called — that is the only shape that
 catches a probe, a shutdown hook, or a migrator quietly creating the file.
 This recurs for every store queued in TASK-21105 (seven more feature DBs to
 be made first-use-lazy).
+
+
+## A "safe_" local that only reaches the error message is not protection — mutate it to prove which value the query saw (TASK-19558, 2026-08-23)
+
+Three `ChaChaNotes_DB` search methods computed `safe_search_term = f'"{term}"'`
+and then bound the RAW term. The quoted value was interpolated into the
+`logger.error` f-string in the `except` block and nowhere else. It had survived
+every review of those methods because a reader who sees `safe_search_term` two
+lines above a query stops reading — the NAME is the assertion, and the name was
+free.
+
+The evidence that settles it is a **mutation, not a reading**. Replace the
+computed value with an absurd string
+(`"ZZZ_MUTATED_NEVER_MATCHES_ANYTHING_ZZZ"`) and run the real method against a
+real database: at base all three returned byte-identical results
+(`['Zed the Hunter'] / ['Talk about dragons'] / ['hello world']`), which is only
+possible if the value never reached SQLite. Apply the same mutation to the fixed
+code and all three return `[]`. Two directions, one probe each; no amount of
+staring at the diff produces that.
+
+Generalise it: **whenever a sanitizer's output is a local rather than an
+expression at the call site, the sanitizer might not be wired.** The shape is
+cheap to census — a local named `safe_*`/`quoted_*`/`escaped_*` whose every AST
+`Name` load sits inside a `logger.*` call is, by construction, decorative. That
+census (`Tests/Utils/test_fts5_quoting_adoption_census.py`) run against the base
+blob rediscovers exactly those three and nothing else, and it ships as a test so
+the rediscovery is repeatable rather than a claim in a PR description.
+
+The same shape has a second face, met later in the same task. The review had
+asked for `("reads",)` risk tags on the read-only local agent tools "so they are
+floored to ask". Measured: local tools resolve through
+`permission_store.resolve_effective_state`, whose floor set is
+`HIGH_RISK_TAGS = {"mutates", "process"}`; `"reads"` is in
+`BUILTIN_HIGH_RISK_TAGS`, which only `resolve_builtin_state` consults, and that
+function never serves the `local:__local__` server key. Adding the tag would
+have produced a marking that reads as protection in review and floors nothing —
+the `safe_search_term` defect, re-created while fixing it. **Before adding a
+marking because a sibling has it, run the resolver that consumes it and show
+the verdict change.** If the verdict does not change, the honest deliverable is
+the written-down mechanism plus a test that demonstrates the inertness, not the
+tag.
+
+## An FTS5 search box quietly has two contracts, and quoting one breaks the other (TASK-19558, 2026-08-23)
+
+Fixing the quoting above broke five Library tests, and the reason generalises to
+any "sanitize at the boundary" sweep. `search_conversations_by_content` had two
+kinds of caller: the Console/UI seams passing PLAIN user text (which must be
+quoted), and `library_local_rag_search_service._search_conversations` passing a
+pre-built, plural/singular-widened FTS5 MATCH expression (which must not be).
+The second only worked BECAUSE the argument was bound raw — the defect was load
+bearing. Its three sibling seams (notes, media, prompts) had already been given
+an explicit `fts_match_query` parameter for exactly this; the conversations seam
+had never been converted, and nothing marked it as the odd one out.
+
+So: before quoting a parameter, **enumerate its callers and split them by what
+they are actually passing**, and give the expression-supplying callers a
+separate, named parameter rather than overloading one argument with two
+contracts. A single parameter that means "plain text OR a MATCH expression,
+depending on who is calling" cannot be made safe — every fix for one caller is a
+regression for the other.
+
+Two smaller traps from the same sweep, both worth a line:
+
+- **A length test measured on the wrong string silently retires a branch.**
+  `search_media_db` widened 1-2 character queries to a prefix match
+  (`len(effective_fts_query) <= 2`). Quoting adds two characters, so testing the
+  quoted string's length would have made that branch dead code with no test
+  failing. Measure such predicates on the RAW input and say so in the comment.
+- **A test asserting that bad input raises can be pinning the bug.**
+  `test_search_with_invalid_fts_syntax_raises_error` asserted that typing
+  `invalid "syntax` into the prompt search box raises `DatabaseError`. That was
+  never a contract; it was the symptom of the raw bind, written down as if it
+  were one. When a fix turns such a test red, read what the test is asserting
+  about the USER before assuming the fix is wrong.

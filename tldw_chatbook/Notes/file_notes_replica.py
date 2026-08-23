@@ -12,6 +12,7 @@ from threading import RLock
 from typing import NamedTuple
 
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+from tldw_chatbook.Utils.fts5_match_forms import quote_fts5_phrase
 
 
 class ReplicaFileInfo(NamedTuple):
@@ -161,8 +162,7 @@ class FileNotesReplica:
         query = query.strip()
         if not query or limit <= 0 or "\x00" in query:
             return []
-        escaped_query = query.replace('"', '""')
-        literal_query = f'"{escaped_query}"'
+        literal_query = quote_fts5_phrase(query)
         try:
             with self._lock:
                 rows = self._connection.execute(

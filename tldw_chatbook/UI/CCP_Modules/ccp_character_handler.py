@@ -7,6 +7,7 @@ from loguru import logger
 from rich.text import Text
 from textual.widgets import Input, Select, Static, TextArea
 
+from tldw_chatbook.Utils.fts5_match_forms import quote_fts5_prefix
 from ..character_display_text import (
     sanitize_character_display_items,
     sanitize_character_display_label,
@@ -66,11 +67,16 @@ def search_characters_fts(search_term: str, limit: int = 50) -> List[Dict[str, A
     db = _default_character_db()
     if db is None:
         return []
-    escaped = term.replace('"', '""')
-    match_query = f'"{escaped}"*'
+    match_query = quote_fts5_prefix(term)
     return [
         _normalize_character_payload(row)
-        for row in db.search_character_cards(match_query, limit=limit)
+        # task-19558: this is a caller-BUILT prefix expression, so it goes
+        # through `fts_match_query`, not the plain-text parameter (which
+        # now quotes what it is given as a literal phrase and would have
+        # double-quoted this one into a no-match).
+        for row in db.search_character_cards(
+            term, limit=limit, fts_match_query=match_query
+        )
     ]
 
 
