@@ -23,6 +23,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import inspect
+import threading
 from pathlib import Path
 
 import pytest
@@ -463,26 +464,105 @@ def test_the_runtime_is_disposed_by_the_apps_shutdown_lifecycles():
 
 @pytest.mark.unit
 def test_persona_buddy_is_app_owned_and_shutdown_after_console_producers():
-    """Console producers stop before Buddy drains, which precedes profiles."""
+    """Console producers stop before Buddy drains, which precedes profiles.
+
+    TASK-21103 rewrote what the construction half of this pin means. The
+    controller is no longer built inside ``__init__`` — importing it drags
+    Persona_Visual and PIL (1.28 s cold) onto the boot path, so the eager
+    wiring became the lazy ``persona_buddy_controller`` property over
+    ``_build_persona_buddy_controller``. The construction SEMANTICS the old
+    pin protected (portrait loader partial over the local persona service)
+    moved there intact, and ``__init__`` must stay construction-free. The
+    shutdown half is unchanged in meaning: Console producers stop first,
+    then Buddy drains — but the disposer must now PEEK the slot rather than
+    read the property, or a never-built controller would be constructed
+    (importing PIL) purely to be shut down.
+    """
     import inspect
 
     from tldw_chatbook.app import TldwCli
 
     initializer = inspect.getsource(TldwCli.__init__)
-    wiring = initializer.index("self._wire_character_persona_services()")
-    construction = initializer.index("PersonaBuddyController(")
-    assert "PersonaBuddyController" in initializer, initializer
-    assert "self.persona_buddy_controller" in initializer, initializer
-    assert "portrait_loader=partial(" in initializer, initializer
-    assert "load_local_persona_portrait" in initializer, initializer
-    assert wiring < construction, initializer
+    assert "PersonaBuddyController(" not in initializer, (
+        "eager Buddy construction is back in __init__ (TASK-21103 regression)"
+    )
+    slot = initializer.index("self._persona_buddy_controller")
+    console_runtime = initializer.index("= ConsoleRuntime(self)")
+    assert slot < console_runtime, (
+        "the controller slot must exist before ConsoleRuntime reads the "
+        "persona_buddy_controller property"
+    )
+
+    assert isinstance(
+        inspect.getattr_static(TldwCli, "persona_buddy_controller"), property
+    )
+    builder = inspect.getsource(TldwCli._build_persona_buddy_controller)
+    assert "PersonaBuddyController(" in builder, builder
+    assert "portrait_loader=partial(" in builder, builder
+    assert "load_local_persona_portrait" in builder, builder
+    guard = builder.index('"local_character_persona_service"')
+    construction = builder.index("PersonaBuddyController(")
+    assert guard < construction, builder
 
     source = inspect.getsource(TldwCli._shutdown_app_owned_lifecycles)
     buddy = source.index("_shutdown_persona_buddy")
     console = source.index("_shutdown_console_runtime")
     assert console < buddy, source
     disposer = inspect.getsource(TldwCli._shutdown_persona_buddy)
-    assert "persona_buddy_controller.shutdown" in disposer, disposer
+    assert "self._persona_buddy_controller" in disposer, disposer
+    assert "controller.shutdown()" in disposer, disposer
+    assert "self.persona_buddy_controller.shutdown" not in disposer, (
+        "shutdown must peek the slot, never the constructing property"
+    )
+
+
+@pytest.mark.unit
+def test_lazy_persona_buddy_property_defers_and_ensure_constructs():
+    """The lazy controller property's three states behave as designed.
+
+    TASK-21103 behavior pins, on a skeletal ``TldwCli``:
+
+    - disabled preferences: the passive property returns None WITHOUT
+      constructing (the every-screen-mount reconcile early-out stays free of
+      the Persona_Visual/PIL import);
+    - disabled preferences, explicit feature use:
+      ``ensure_persona_buddy_controller()`` constructs anyway (this is what
+      lets Workbench "Use for Buddy" enable from a disabled state), and the
+      passive property then returns the same cached instance;
+    - enabled preferences: the first passive read constructs, and the
+      construction is cached (same object on the second read).
+    - the setter installs a test double the property returns verbatim.
+    """
+    from tldw_chatbook.app import TldwCli
+
+    def skeleton(enabled: bool) -> TldwCli:
+        app = object.__new__(TldwCli)
+        app._persona_buddy_controller = None
+        app._persona_buddy_controller_lock = threading.Lock()
+        app.app_config = {"persona_buddy": {"enabled": enabled}}
+        app.local_character_persona_service = object()
+        app.chachanotes_db = object()
+        app.call_after_refresh = lambda *args, **kwargs: None
+        return app
+
+    disabled = skeleton(enabled=False)
+    assert disabled.persona_buddy_controller is None
+    assert disabled._persona_buddy_controller is None, (
+        "the passive property constructed a controller for a disabled profile"
+    )
+
+    ensured = disabled.ensure_persona_buddy_controller()
+    assert ensured is not None
+    assert disabled.persona_buddy_controller is ensured
+
+    enabled = skeleton(enabled=True)
+    first = enabled.persona_buddy_controller
+    assert first is not None
+    assert enabled.persona_buddy_controller is first
+
+    injected = object()
+    enabled.persona_buddy_controller = injected
+    assert enabled.persona_buddy_controller is injected
 
 
 @pytest.mark.unit
@@ -532,10 +612,17 @@ def test_actor_pack_recovery_precedes_character_persona_surfaces():
         "self._blocked_intent_ids"
     ), create
 
-    initializer = inspect.getsource(TldwCli.__init__)
-    wiring_call = initializer.index("self._wire_character_persona_services()")
-    buddy = initializer.index("PersonaBuddyController(")
-    assert wiring_call < buddy, initializer
+    # TASK-21103 moved Buddy construction out of ``__init__`` into the lazy
+    # ``_build_persona_buddy_controller``. The ordering guarantee this stanza
+    # pinned — Buddy is only ever wired to a fully constructed local persona
+    # service — is now enforced by the builder itself: it reads the service
+    # defensively and defers (returns None, retried on next access) until
+    # ``_wire_character_persona_services`` has run.
+    builder = inspect.getsource(TldwCli._build_persona_buddy_controller)
+    guard = builder.index('"local_character_persona_service"')
+    buddy = builder.index("PersonaBuddyController(")
+    assert guard < buddy, builder
+    assert "PersonaBuddyController(" not in inspect.getsource(TldwCli.__init__)
 
 
 @pytest.mark.asyncio

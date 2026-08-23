@@ -6041,7 +6041,16 @@ class PersonasScreen(BaseAppScreen):
         scope_service = getattr(
             self.app_instance, "character_persona_scope_service", None
         )
+        # Explicit Buddy actions are the feature's entry point, so when the
+        # passive read yields None they must CONSTRUCT the lazy controller
+        # (TASK-21103): a profile whose preferences still say disabled reads
+        # None from the persona_buddy_controller property, and "Use for
+        # Buddy" from that state has to be able to enable it end to end.
         controller = getattr(self.app, "persona_buddy_controller", None)
+        if controller is None:
+            ensure = getattr(self.app, "ensure_persona_buddy_controller", None)
+            if callable(ensure):
+                controller = ensure()
         authority = _PersonaBuddyActionAuthority(
             action=message.action,
             source=message.source,

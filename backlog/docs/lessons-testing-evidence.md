@@ -6948,3 +6948,41 @@ any hit that is missing from the wheel as guilty until explained. That sweep is
 surfaced both. Filter the noise by hand — generic names (`README.md`,
 `LICENSE`, `pyproject.toml`, `.DS_Store`) match string literals all over the
 tree — 15 raw hits, 3 real.
+
+## A "prefer the new accessor" getattr order silently bypasses injected test doubles on MagicMock apps (TASK-21103, 2026-08-23)
+
+Converting the eager `persona_buddy_controller` to a lazy property needed an
+explicit-construction seam (`ensure_persona_buddy_controller()`) for the one
+consumer allowed to build it — the Personas Workbench Buddy action handler.
+The first wiring resolved it "new accessor first": `ensure =
+getattr(self.app, "ensure_persona_buddy_controller", None); controller =
+ensure() if callable(ensure) else getattr(self.app,
+"persona_buddy_controller", None)`. Every targeted Buddy test stayed green
+except `test_restart_restores_selection_open_collapsed_and_geometry`, which
+failed with an apparently unrelated `FileNotFoundError` on a config.toml the
+test expected the action to have written. The cause: the test's app double is
+a **MagicMock**, so `getattr(mock, "ensure_persona_buddy_controller", None)`
+auto-creates a callable attribute — the handler happily "constructed" a fresh
+MagicMock controller and the REAL injected `PersonaBuddyController` (the one
+whose preference writer persists to disk) was never touched. Nothing raised;
+the action "succeeded" against a phantom.
+
+Two rules from this:
+
+- When adding an optional accessor consulted via `getattr` in code that
+  MagicMock-backed tests drive, resolve the EXISTING seam first and fall back
+  to the new accessor only when it yields None. The passive-first order is
+  also the semantically correct one here — an already-built (or injected)
+  controller must always win over re-construction.
+- The failure surfaced two files away from the change (a missing config file,
+  not a wrong controller), which is exactly why the whole feature's test
+  files get re-run after a consumer-resolution change, not just the file that
+  motivated it.
+
+Same task, smaller trap: a source-pin test asserting init ordering via
+`initializer.index("ConsoleRuntime(self)")` matched the substring inside MY
+OWN explanatory comment ("Slots must exist before `ConsoleRuntime(self)`
+below") and pinned the comment, not the construction. A source-index pin's
+needle must be an expression form that cannot appear in prose (here
+`"= ConsoleRuntime(self)"`), or writing a helpful comment breaks the pin —
+or worse, keeps it green while pinning nothing.

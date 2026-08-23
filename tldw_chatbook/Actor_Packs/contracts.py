@@ -478,9 +478,16 @@ def _looks_like_raster(path: str, data: bytes) -> bool:
 def _validate_portrait(path: str, data: bytes) -> bool:
     if not _looks_like_raster(path, data):
         return False
-    try:
-        from PIL import Image, UnidentifiedImageError
+    # PIL stays function-local (TASK-21103): this module is in the app's
+    # import closure via Actor_Packs.persona_coordinator, and a module-level
+    # PIL import would put it back on the boot path.
+    from PIL import Image, UnidentifiedImageError
 
+    try:
+        from PIL.Image import DecompressionBombError
+    except ImportError:  # pragma: no cover - Pillow is a required project dependency.
+        DecompressionBombError = OSError  # type: ignore[misc, assignment]
+    try:
         with Image.open(io.BytesIO(data)) as image:
             width, height = image.size
             expected = {
@@ -525,12 +532,6 @@ def validate_actor_portrait(path: str, data: bytes) -> None:
         or not _validate_portrait(path, data)
     ):
         raise ActorPackValidationError("actor_pack_portrait_invalid")
-
-
-try:
-    from PIL.Image import DecompressionBombError
-except ImportError:  # pragma: no cover - Pillow is a required project dependency.
-    DecompressionBombError = OSError  # type: ignore[misc, assignment]
 
 
 def _validate_json_tree(value: object) -> None:

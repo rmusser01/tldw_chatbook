@@ -387,11 +387,9 @@ from .Character_Chat.server_character_persona_service import (
 from .Actor_Packs.persona_coordinator import PersonaActorPackCoordinator
 from .Actor_Packs.creation import ActorPackCreationService
 from .Actor_Packs.repository import ActorPackRepository
-from .Persona_Buddy import (
-    PersonaBuddyController,
-    load_local_persona_portrait,
-    parse_persona_buddy_preferences,
-)
+# Persona_Buddy is deliberately NOT imported at module scope (TASK-21103):
+# its controller drags Persona_Visual and PIL (1.28 s cold) onto the boot
+# path. See the lazy persona_buddy_controller property.
 from .RAG_Admin.local_rag_admin_service import LocalRAGAdminService
 from .RAG_Admin.rag_admin_scope_service import RAGAdminScopeService
 from .RAG_Admin.server_rag_admin_service import ServerRAGAdminService
@@ -430,7 +428,10 @@ from .Scheduling.services.briefing_projection import BriefingProjection
 from .ACP_Interop.runtime_process import ACPRuntimeProcessManager
 from .ACP_Interop.runtime_session import ACPRuntimeSessionState
 from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
-from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import ChatMessageEnhanced
+
+# chat_message_enhanced is deliberately NOT imported at module scope
+# (TASK-21103): it pulls PIL and the textual_image package at import time.
+# The two TTS event handlers that query it import it function-locally.
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Widgets.glyph_fallback import set_ascii_glyph_mode
 from .Widgets.AppFooterStatus import AppFooterStatus
@@ -5691,6 +5692,14 @@ class TldwCli(
         self.library_new_profile_admission = first_profile_created_this_session()
         self.console_image_edit_operations = ImageEditOperationRegistry()
         self._console_image_edit_shutdown_task: asyncio.Task[None] | None = None
+        # Persona Buddy controller is built lazily on first access
+        # (TASK-21103): constructing it imports Persona_Visual and PIL
+        # (1.28 s cold), and both consumers (screen reconcile, Console
+        # sink) already tolerate its absence. Slots must exist before
+        # `ConsoleRuntime(self)` below, whose constructor reads the
+        # persona_buddy_controller property. See that property.
+        self._persona_buddy_controller: Any | None = None
+        self._persona_buddy_controller_lock = threading.Lock()
         # task-15860 (headless wake): the Console runtime -- chat store,
         # provider gateway, agent bridge, chat controller -- is constructed
         # by the APP, not by `ChatScreen`, and it OUTLIVES every Console
@@ -6036,20 +6045,9 @@ class TldwCli(
         self._wire_study_services()
         self._wire_research_services()
         self._wire_character_persona_services()
-        self.persona_buddy_controller = PersonaBuddyController(
-            preferences=parse_persona_buddy_preferences(
-                self.app_config.get("persona_buddy", {})
-            ),
-            local_persona_service=self.local_character_persona_service,
-            portrait_loader=partial(
-                load_local_persona_portrait,
-                self.local_character_persona_service,
-            ),
-            profile_db=self.chachanotes_db,
-            profile_root=get_user_data_dir(),
-            reduced_motion=bool(get_cli_setting("appearance", "reduce_motion", False)),
-            scheduler=self.call_after_refresh,
-        )
+        # Persona Buddy: the controller slot itself is initialized earlier
+        # (before ConsoleRuntime construction); see the lazy
+        # persona_buddy_controller property (TASK-21103).
         self._persona_buddy_unavailable_authority = None
         self._persona_buddy_shutdown_task: asyncio.Task[None] | None = None
 
@@ -6150,6 +6148,124 @@ class TldwCli(
         if self._rag_admin_scope_service is None:
             self._build_rag_admin_services()
         return self._rag_admin_scope_service
+
+    def _persona_buddy_configured_enabled(self) -> bool:
+        """Report whether ``[persona_buddy] enabled`` is set in config.
+
+        Parses only the stdlib preference contract (``Persona_Buddy.
+        preferences`` behind the now-lazy package init) -- never the
+        controller chain, so a disabled profile stays PIL-free.
+
+        Returns:
+            bool: True when the persisted preferences enable the Buddy.
+        """
+        from .Persona_Buddy.preferences import (  # noqa: PLC0415 - stdlib-only seam; keeps PIL off the boot path (TASK-21103)
+            parse_persona_buddy_preferences,
+        )
+
+        config = getattr(self, "app_config", None)
+        section = config.get("persona_buddy", {}) if isinstance(config, dict) else {}
+        return parse_persona_buddy_preferences(section).enabled
+
+    def _build_persona_buddy_controller(self) -> Any | None:
+        """Construct and cache the app-owned Buddy controller (TASK-21103).
+
+        Constructor semantics are identical to the eager wiring this
+        replaced. Importing the controller module here is what pulls
+        Persona_Visual and PIL, so it must stay out of module scope. Built
+        under a lock so a racing first access from a worker thread cannot
+        construct two controllers; idempotent once built.
+
+        Returns:
+            The cached controller, or None when the persona services this
+            controller wires to are not present yet (early in ``__init__``,
+            or on skeletal test apps) -- callers retry on next access.
+        """
+        with self._persona_buddy_controller_lock:
+            if self._persona_buddy_controller is not None:
+                return self._persona_buddy_controller
+            # Only the persona service gates construction: the old eager
+            # wiring ran right after _wire_character_persona_services() and
+            # passed self.chachanotes_db through as-is (it is legitimately
+            # None on test-factory apps; the controller tolerates that).
+            local_persona_service = getattr(
+                self, "local_character_persona_service", None
+            )
+            if local_persona_service is None:
+                return None
+            profile_db = getattr(self, "chachanotes_db", None)
+            from .Persona_Buddy.controller import (  # noqa: PLC0415 - imports Persona_Visual + PIL; first feature use only (TASK-21103)
+                PersonaBuddyController,
+                load_local_persona_portrait,
+            )
+            from .Persona_Buddy.preferences import (  # noqa: PLC0415
+                parse_persona_buddy_preferences,
+            )
+
+            self._persona_buddy_controller = PersonaBuddyController(
+                preferences=parse_persona_buddy_preferences(
+                    self.app_config.get("persona_buddy", {})
+                ),
+                local_persona_service=local_persona_service,
+                portrait_loader=partial(
+                    load_local_persona_portrait,
+                    local_persona_service,
+                ),
+                profile_db=profile_db,
+                profile_root=get_user_data_dir(),
+                reduced_motion=bool(
+                    get_cli_setting("appearance", "reduce_motion", False)
+                ),
+                scheduler=self.call_after_refresh,
+            )
+            return self._persona_buddy_controller
+
+    def ensure_persona_buddy_controller(self) -> Any | None:
+        """Build (if needed) and return the Buddy controller for feature use.
+
+        Explicit Buddy actions (e.g. Personas Workbench "Use for Buddy" on a
+        profile whose preferences still say disabled) go through here: unlike
+        the passive property, this constructs regardless of the persisted
+        ``enabled`` flag so enabling from a disabled state works end to end.
+
+        Returns:
+            The controller, or None when its wiring prerequisites are absent.
+        """
+        return self._build_persona_buddy_controller()
+
+    @property
+    def persona_buddy_controller(self) -> Any | None:
+        """App-owned Persona Buddy controller, built lazily (TASK-21103).
+
+        Passive consumers (screen reconcile, Console sink, Workbench status)
+        read this via ``getattr(app, "persona_buddy_controller", None)`` and
+        already tolerate None. While unbuilt, a profile whose preferences
+        leave the Buddy disabled gets None back without constructing
+        anything, keeping the every-screen-mount reconcile early-out free of
+        the Persona_Visual/PIL import cost. First access on an enabled
+        profile -- or an explicit ``ensure_persona_buddy_controller()`` call
+        from a Buddy action -- performs the one-time construction.
+
+        Returns:
+            The cached controller; None when disabled-and-unbuilt or when
+            construction prerequisites are not wired yet.
+        """
+        controller = self._persona_buddy_controller
+        if controller is not None:
+            return controller
+        if not self._persona_buddy_configured_enabled():
+            return None
+        return self._build_persona_buddy_controller()
+
+    @persona_buddy_controller.setter
+    def persona_buddy_controller(self, controller: Any | None) -> None:
+        """Inject or clear the controller slot (tests and skeletal doubles).
+
+        Args:
+            controller: The controller instance to install, or None to make
+                the lazy property construct anew on next enabled access.
+        """
+        self._persona_buddy_controller = controller
 
     def _wire_server_context_provider(self) -> None:
         self.unified_mcp_target_store = ConfiguredServerTargetStore(
@@ -9690,6 +9806,10 @@ class TldwCli(
     @on(TTSCompleteEvent)
     async def handle_tts_complete_event(self, event: TTSCompleteEvent) -> None:
         """Handle TTS generation completion."""
+        from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import (  # noqa: PLC0415 - keeps PIL/textual_image off the boot path (TASK-21103)
+            ChatMessageEnhanced,
+        )
+
         self.loguru_logger.info(f"TTS complete for message {event.message_id}")
         playback_lifecycle = getattr(event, "playback_lifecycle", None)
 
@@ -9859,6 +9979,10 @@ class TldwCli(
     @on(TTSProgressEvent)
     async def handle_tts_progress_event(self, event: TTSProgressEvent) -> None:
         """Handle TTS generation progress updates."""
+        from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import (  # noqa: PLC0415 - keeps PIL/textual_image off the boot path (TASK-21103)
+            ChatMessageEnhanced,
+        )
+
         self.loguru_logger.debug(
             f"TTS progress for message {event.message_id}: {event.progress:.0%} - {event.status}"
         )
@@ -12232,11 +12356,20 @@ class TldwCli(
         await asyncio.shield(task)
 
     async def _shutdown_persona_buddy(self) -> None:
-        """Drain the app-owned Buddy before profile database teardown."""
+        """Drain the app-owned Buddy before profile database teardown.
+
+        Peeks the lazy controller slot (TASK-21103): a controller that was
+        never built has nothing to drain, and going through the property
+        here could CONSTRUCT one (importing Persona_Visual + PIL) purely to
+        shut it down.
+        """
         task = self._persona_buddy_shutdown_task
         if task is None:
+            controller = self._persona_buddy_controller
+            if controller is None:
+                return
             task = asyncio.create_task(
-                self.persona_buddy_controller.shutdown(),
+                controller.shutdown(),
                 name="shutdown_persona_buddy",
             )
             self._persona_buddy_shutdown_task = task
