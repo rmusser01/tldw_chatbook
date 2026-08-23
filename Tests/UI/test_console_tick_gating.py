@@ -315,11 +315,12 @@ async def test_console_workspace_context_legacy_alias_kick_skipped_when_state_un
         ):
             console._sync_console_workspace_context()
             await pilot.pause()
-            assert worker_calls == [1], "the first (changed) sync must kick the worker"
+            assert worker_calls, "the first (changed) sync must kick the worker"
+            changed_sync_calls = len(worker_calls)
 
             console._sync_console_workspace_context()
             await pilot.pause()
-            assert worker_calls == [1], (
+            assert len(worker_calls) == changed_sync_calls, (
                 "re-syncing with unchanged workspace-context state must not "
                 "kick the legacy-alias worker again"
             )

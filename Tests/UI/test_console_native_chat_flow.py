@@ -88,6 +88,7 @@ from tldw_chatbook.Widgets.Console import (
     ConsoleSetupModal,
     ConsoleTranscript,
     ConsoleWorkspaceContextTray,
+    ConsoleWorkspaceTree,
 )
 from tldw_chatbook.Widgets.Prompts.prompt_block_editor import PromptBlockEditor
 from tldw_chatbook.Widgets.Console.console_workspace_details import (
@@ -1832,8 +1833,16 @@ def _widget_text(widget) -> str:
 
 
 def _console_workspace_conversation_texts(console) -> list[str]:
-    rows = console.query(".console-workspace-conversation-row")
-    return [_widget_text(row) for row in rows]
+    rows = [
+        _widget_text(row)
+        for row in console.query(".console-workspace-conversation-row")
+    ]
+    try:
+        tree = console.query_one("#console-workspace-tree", ConsoleWorkspaceTree)
+    except NoMatches:
+        return rows
+    rows.extend(node.label.plain for node in tree.conversation_nodes.values())
+    return rows
 
 
 def _normalized_row_text(row) -> str:
@@ -2069,6 +2078,18 @@ async def _click_console_workspace_conversation_for_id(
                 # The rail rebuilt between the scroll and the click; the next
                 # attempt re-queries. The loop still has to land a real click.
                 pass
+        try:
+            tree = console.query_one("#console-workspace-tree", ConsoleWorkspaceTree)
+        except NoMatches:
+            tree = None
+        if tree is not None:
+            node = tree.conversation_nodes.get(conversation_id)
+            if node is not None:
+                tree.move_cursor(node)
+                tree.focus()
+                await pilot.press("enter")
+                await pilot.pause()
+                return str(tree.id)
         await pilot.pause(0.05)
     rows = [
         (
@@ -2137,6 +2158,21 @@ async def _wait_for_workspace_conversation_text(
                 continue
             if selected is None or _row_is_selected(row) == selected:
                 return row_texts
+        try:
+            tree = console.query_one("#console-workspace-tree", ConsoleWorkspaceTree)
+        except NoMatches:
+            tree = None
+        if tree is not None:
+            tree_texts = [
+                " ".join(node.label.plain.split())
+                for node in tree.conversation_nodes.values()
+            ]
+            for node, text in zip(tree.conversation_nodes.values(), tree_texts):
+                if expected not in text:
+                    continue
+                data = node.data
+                if selected is None or bool(data and data.selected) == selected:
+                    return [*row_texts, *tree_texts]
         await pilot.pause(0.05)
     raise AssertionError(
         f"Workspace conversation {expected!r} not found. "

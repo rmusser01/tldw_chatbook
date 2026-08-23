@@ -317,6 +317,7 @@ class ConsoleWorkspaceController:
         self._workspace_tree_search = _SearchAttemptState()
         self._flat_conversation_search = _SearchAttemptState()
         self._workspace_page_attempts: dict[str, _PageAttemptState] = {}
+        self._collapsed_workspace_ids: set[str] = set()
         self._workspace_membership_rows: dict[
             str, tuple[ConsoleConversationBrowserInputRow, ...]
         ] = {}
@@ -682,9 +683,9 @@ class ConsoleWorkspaceController:
     def _console_conversation_browser_collapse_preferences(self) -> Any:
         return self._conversation_browser_collapse_preferences_fn
 
-    def _workspace_tree_owner_token(self) -> object:
+    def _workspace_tree_owner_token(self) -> object | None:
         accessor = self._workspace_tree_owner_accessor
-        return accessor() if accessor is not None else self._screen
+        return accessor() if accessor is not None else None
 
     def _flat_conversation_owner_token(self) -> object:
         accessor = self._flat_conversation_owner_accessor
@@ -965,6 +966,7 @@ class ConsoleWorkspaceController:
             and attempt.request_key == request_key
             and request_key[2] == self._workspace_tree_search.generation
             and attempt.owner_token is self._workspace_tree_owner_token()
+            and workspace_id not in self._collapsed_workspace_ids
         )
         if not request_is_current:
             return False
@@ -977,6 +979,55 @@ class ConsoleWorkspaceController:
         if request_key[1] != current_membership:
             return False
         return True
+
+    def transition_workspace_tree_expansion(
+        self, workspace_id: str, *, expanded: bool
+    ) -> None:
+        """Fence a collapsed workspace page lane while retaining loaded rows."""
+
+        target = str(workspace_id or "").strip()
+        if not target:
+            return
+        if expanded:
+            self._collapsed_workspace_ids.discard(target)
+            return
+        self._collapsed_workspace_ids.add(target)
+        attempt = self._workspace_page_attempts.get(target)
+        if attempt is None:
+            return
+        attempt.generation += 1
+        attempt.request_key = None
+        attempt.loading = False
+        worker = attempt.worker
+        attempt.worker = None
+        cancel = getattr(worker, "cancel", None)
+        if callable(cancel):
+            cancel()
+
+    def request_next_workspace_tree_page(self, workspace_id: str) -> None:
+        """Request the retained lane's next cursor, when one exists."""
+
+        attempt = self._workspace_page_attempts.get(str(workspace_id or "").strip())
+        if attempt is not None and attempt.next_cursor is not None:
+            self.request_workspace_tree_page(workspace_id, attempt.next_cursor)
+
+    def activate_workspace_id(self, workspace_id: str) -> None:
+        """Activate a workspace selected from the native Tree."""
+
+        target = str(workspace_id or "").strip()
+        service = getattr(self.app_instance, "workspace_registry_service", None)
+        if not target or service is None:
+            return
+        try:
+            service.set_active_workspace(target)
+            self._ensure_console_chat_store().set_workspace_context(
+                self._current_console_workspace_context()
+            )
+            self._sync_console_workspace_context()
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Unable to activate Console workspace from Tree"
+            )
 
     def _settle_workspace_page_attempt(
         self,
@@ -1389,6 +1440,9 @@ class ConsoleWorkspaceController:
                 for workspace_id, attempt in self._workspace_page_attempts.items()
             },
             query=projection_query,
+            active_workspace_id=(
+                self._current_console_workspace_context().active_workspace_id
+            ),
         )
 
     def transition_browser_search(self, query: str, disabled: bool) -> None:
@@ -2242,6 +2296,28 @@ class ConsoleWorkspaceController:
             projection_query,
             current_conversation_id=current_conversation_id,
         )
+        active_workspace_id = str(
+            self._current_console_workspace_context().active_workspace_id or ""
+        ).strip()
+        active_workspace_label = str(
+            legacy_state.workspace_label.removeprefix("Workspace: ") or "Chats"
+        )
+        legacy_membership_rows = tuple(
+            ConsoleConversationBrowserInputRow(
+                row_key=row.conversation_id,
+                conversation_id=row.conversation_id,
+                native_session_id=None,
+                title=row.title,
+                scope_type="workspace",
+                workspace_id=active_workspace_id or DEFAULT_WORKSPACE_ID,
+                workspace_label=active_workspace_label,
+                status=row.status,
+                selected=row.selected,
+                source_kind="persisted",
+            )
+            for row in legacy_state.conversation_rows
+        )
+        rows = self._merge_console_browser_rows(rows, legacy_membership_rows)
         workspace_rows = (
             self._workspace_tree_search.settled_rows
             if self._workspace_tree_search.error
@@ -2325,9 +2401,14 @@ class ConsoleWorkspaceController:
             state,
             conversation_browser=browser,
             conversation_section=legacy_state.conversation_section,
-            workspace_tree=self.workspace_tree_projection(
-                row for row in rows if row.source_kind == "native"
+            workspace_tree=self.workspace_tree_projection(rows),
+            workspace_query=self._workspace_tree_search.query,
+            workspace_loading=self._workspace_tree_search.request_key is not None,
+            workspace_error=str(self._workspace_tree_search.error or ""),
+            workspace_retry_available=(
+                self._workspace_tree_search.retry_query is not None
             ),
+            workspace_marks_available=marks_service is not None,
         )
 
     # -- Workspace policy context -------------------------------------------

@@ -32,6 +32,7 @@ class WorkspaceTreeWorkspace:
     error: str = ""
     retry_cursor: int | None = None
     membership_unknown: bool = False
+    active: bool = False
 
 
 def build_workspace_tree_state(
@@ -43,6 +44,7 @@ def build_workspace_tree_state(
     errors: Mapping[str, str] | None = None,
     retry_cursors: Mapping[str, int | None] | None = None,
     membership_unknown: Mapping[str, bool] | None = None,
+    active_workspace_id: str | None = None,
     query: str = "",
 ) -> tuple[WorkspaceTreeWorkspace, ...]:
     """Build the named-workspace projection without I/O or UI dependencies."""
@@ -116,6 +118,7 @@ def build_workspace_tree_state(
                 error=str(errors_by_workspace.get(workspace_id, "") or ""),
                 retry_cursor=retries_by_workspace.get(workspace_id),
                 membership_unknown=bool(unknown_by_workspace.get(workspace_id, False)),
+                active=workspace_id == str(active_workspace_id or ""),
             )
         )
     return tuple(projected)

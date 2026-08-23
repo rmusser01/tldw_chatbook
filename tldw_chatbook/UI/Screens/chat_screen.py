@@ -413,6 +413,12 @@ from ...Widgets.Console import (
     ConsoleStagedEvidenceStrip,
     ConsoleTranscript,
     ConsoleWorkspaceContextTray,
+    WorkspaceTreeConversationSelected,
+    WorkspaceTreeExpansionChanged,
+    WorkspaceTreeLoadMoreRequested,
+    WorkspaceTreeRetryRequested,
+    WorkspaceTreeStarRequested,
+    WorkspaceTreeWorkspaceSelected,
 )
 from ...Widgets.Console.console_control_bar import (
     ConsoleAutoSpeakRetryRequested,
@@ -2242,6 +2248,70 @@ class ChatScreen(BaseAppScreen):
         disabled = bool(getattr(getattr(event, "input", None), "disabled", False))
         self._workspace.transition_browser_search(query, disabled)
 
+    @on(Input.Changed, "#console-workspace-search")
+    def on_console_workspace_search_changed(self, event: Changed) -> None:
+        """Keep Workspaces search independent from flat Conversations search."""
+
+        event.stop()
+        self._workspace.transition_workspace_tree_search(
+            str(event.value or ""),
+            bool(getattr(getattr(event, "input", None), "disabled", False)),
+        )
+
+    @on(WorkspaceTreeWorkspaceSelected)
+    def on_workspace_tree_workspace_selected(
+        self, event: WorkspaceTreeWorkspaceSelected
+    ) -> None:
+        event.stop()
+        self._workspace.activate_workspace_id(event.workspace_id)
+
+    @on(WorkspaceTreeExpansionChanged)
+    def on_workspace_tree_expansion_changed(
+        self, event: WorkspaceTreeExpansionChanged
+    ) -> None:
+        event.stop()
+        self._workspace.transition_workspace_tree_expansion(
+            event.workspace_id,
+            expanded=event.expanded,
+        )
+
+    @on(WorkspaceTreeStarRequested)
+    def on_workspace_tree_star_requested(
+        self, event: WorkspaceTreeStarRequested
+    ) -> None:
+        event.stop()
+        self._workspace._toggle_console_conversation_star(
+            event.conversation_id,
+            starred=event.starred,
+            conversation_title="",
+        )
+
+    @on(WorkspaceTreeLoadMoreRequested)
+    def on_workspace_tree_load_more_requested(
+        self, event: WorkspaceTreeLoadMoreRequested
+    ) -> None:
+        event.stop()
+        self._workspace.request_next_workspace_tree_page(event.workspace_id)
+
+    @on(WorkspaceTreeRetryRequested)
+    def on_workspace_tree_retry_requested(
+        self, event: WorkspaceTreeRetryRequested
+    ) -> None:
+        event.stop()
+        self.run_worker(
+            self._workspace.retry_workspace_tree_page(event.workspace_id),
+            group=f"console-workspace-page-{event.workspace_id}",
+            exclusive=False,
+        )
+
+    @on(WorkspaceTreeConversationSelected)
+    async def on_workspace_tree_conversation_selected(
+        self, event: WorkspaceTreeConversationSelected
+    ) -> None:
+        event.stop()
+        self._workspace.activate_workspace_id(event.workspace_id)
+        await self._open_console_workspace_conversation(event.conversation_id)
+
     @on(Select.Changed, "#compact-api-provider")
     def on_console_compact_provider_changed(self, event: Select.Changed) -> None:
         """Mirror native compact provider changes into Console-owned labels.
@@ -3744,6 +3814,17 @@ class ChatScreen(BaseAppScreen):
             self._workspace._open_console_workspace_scope_picker(),
             exclusive=True,
             group="console-workspace-scope-open",
+        )
+
+    @on(Button.Pressed, "#console-workspace-search-retry")
+    def on_console_workspace_search_retry(self, event: Button.Pressed) -> None:
+        """Retry only the independent Workspaces search lane."""
+
+        event.stop()
+        self.run_worker(
+            self._workspace.retry_workspace_tree_search(),
+            group="console-workspace-tree-search",
+            exclusive=True,
         )
 
     # Reactive property for sidebar state persistence
@@ -19383,6 +19464,69 @@ class ChatScreen(BaseAppScreen):
             event.allow, event.remember, request_id=event.request_id
         )
 
+    async def _open_console_workspace_conversation(
+        self,
+        conversation_id: str,
+        *,
+        row_key: str = "",
+    ) -> None:
+        """Open one saved conversation for both the flat browser and Tree."""
+
+        conversation_id = str(conversation_id or "").strip()
+        browser_row = self._workspace._find_console_browser_row(
+            row_key or conversation_id,
+            conversation_id=conversation_id,
+        )
+        if browser_row is not None:
+            self._workspace._activate_console_workspace_for_browser_row(browser_row)
+            row_conversation_id = str(browser_row.conversation_id or "").strip()
+            session_id = self._session._console_session_id_for_browser_row(browser_row)
+        else:
+            row_conversation_id = conversation_id
+            session_id = self._workspace._console_session_id_for_workspace_conversation(
+                conversation_id
+            )
+        if session_id is None:
+            if not row_conversation_id:
+                self.app_instance.notify(
+                    "This conversation row is no longer available.",
+                    severity="warning",
+                )
+                return
+            self._set_console_conversation_row_loading(row_conversation_id, True)
+            try:
+                resumed = await self._workspace._resume_console_workspace_conversation(
+                    row_conversation_id,
+                    target_scope_type=(
+                        browser_row.scope_type if browser_row is not None else None
+                    ),
+                    target_workspace_id=(
+                        browser_row.workspace_id if browser_row is not None else None
+                    ),
+                )
+            finally:
+                self._set_console_conversation_row_loading(row_conversation_id, False)
+            if resumed:
+                await self._workspace._refresh_console_conversation_browser_after_selection()
+                return
+            if resumed is None:
+                return
+            self._mark_console_conversation_row_broken(row_conversation_id)
+            self.app_instance.notify(
+                "This saved conversation could not be loaded - its record is missing.",
+                severity="warning",
+            )
+            return
+        controller = self._ensure_console_chat_controller()
+        if controller.store.active_session_id != session_id:
+            if browser_row is None:
+                self._workspace._set_active_workspace_for_console_session(session_id)
+            controller.switch_session(session_id)
+            await self._sync_native_console_chat_ui()
+            self._sync_console_temporary_chip()
+        self._focus_console_composer_if_needed(force=True)
+        await self._workspace._refresh_console_conversation_browser_after_selection()
+
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """
         Handle button events at the screen level.
@@ -19477,95 +19621,9 @@ class ChatScreen(BaseAppScreen):
             return
         if button_id and button_id.startswith("console-workspace-conversation-"):
             event.stop()
-            conversation_id = str(
-                getattr(event.button, "conversation_id", "") or ""
-            ).strip()
-            row_key = str(getattr(event.button, "row_key", "") or "").strip()
-            browser_row = self._workspace._find_console_browser_row(
-                row_key or conversation_id,
-                conversation_id=conversation_id,
-            )
-            if browser_row is not None:
-                self._workspace._activate_console_workspace_for_browser_row(browser_row)
-                row_conversation_id = str(browser_row.conversation_id or "").strip()
-                session_id = self._session._console_session_id_for_browser_row(
-                    browser_row
-                )
-            else:
-                row_conversation_id = conversation_id
-                session_id = (
-                    self._workspace._console_session_id_for_workspace_conversation(
-                        conversation_id
-                    )
-                )
-            if session_id is None:
-                if not row_conversation_id:
-                    self.app_instance.notify(
-                        "This conversation row is no longer available.",
-                        severity="warning",
-                    )
-                    return
-                # task-457(b): the resume is awaited inline and can be slow or
-                # fail; flag the pressed row loading for the duration so it does
-                # not read as a dead click, and always clear it afterwards (a
-                # successful resume also recomposes the rail, which drops the
-                # flag; the finally covers the not-resumable/error return).
-                self._set_console_conversation_row_loading(row_conversation_id, True)
-                try:
-                    resumed = (
-                        await self._workspace._resume_console_workspace_conversation(
-                            row_conversation_id,
-                            target_scope_type=(
-                                browser_row.scope_type
-                                if browser_row is not None
-                                else None
-                            ),
-                            target_workspace_id=(
-                                browser_row.workspace_id
-                                if browser_row is not None
-                                else None
-                            ),
-                        )
-                    )
-                finally:
-                    self._set_console_conversation_row_loading(
-                        row_conversation_id, False
-                    )
-                if resumed:
-                    await self._workspace._refresh_console_conversation_browser_after_selection()
-                    return
-                if resumed is None:
-                    # Transient failure; the resume path already explained it.
-                    return
-                # TASK-717: the record is missing - say so honestly (Library
-                # has no affordance for a nonexistent record) and mark the
-                # row visibly broken so it stops presenting as openable.
-                self._mark_console_conversation_row_broken(row_conversation_id)
-                self.app_instance.notify(
-                    "This saved conversation could not be loaded - "
-                    "its record is missing.",
-                    severity="warning",
-                )
-                return
-            controller = self._ensure_console_chat_controller()
-            if controller.store.active_session_id != session_id:
-                if browser_row is None:
-                    self._workspace._set_active_workspace_for_console_session(
-                        session_id
-                    )
-                controller.switch_session(session_id)
-                await self._sync_native_console_chat_ui()
-                # task-7 review: an already-open native tab for this
-                # conversation is never ephemeral, but the PREVIOUS active
-                # session might have been -- `_sync_native_console_chat_ui`
-                # above never touches the temporary chip (see
-                # `_sync_console_temporary_chip`), so without this the chip
-                # could keep reading "Temporary" after switching onto a
-                # saved conversation.
-                self._sync_console_temporary_chip()
-            self._focus_console_composer_if_needed(force=True)
-            await (
-                self._workspace._refresh_console_conversation_browser_after_selection()
+            await self._open_console_workspace_conversation(
+                str(getattr(event.button, "conversation_id", "") or ""),
+                row_key=str(getattr(event.button, "row_key", "") or ""),
             )
             return
         if button_id and button_id.startswith("console-close-session-tab-"):

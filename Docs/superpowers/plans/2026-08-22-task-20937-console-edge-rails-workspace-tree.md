@@ -395,7 +395,7 @@ Assert regions are identical focused/unfocused and ADR-043 explicit-open/single-
 
 The correction pass also preserves the original transcript, keyboard-trust,
 non-obscuring-focus, and decomposition regression intents while replacing
-their obsolete full-frame expectations with ADR-081 single-divider ownership.
+their obsolete full-frame expectations with ADR-083 single-divider ownership.
 These existing regression files are in the Task 3 map because the edge-rail
 implementation intentionally invalidates their old border contract; leaving
 them unchanged would make the approved behavior fail the broader focused gate.
@@ -406,7 +406,7 @@ Spec re-review surfaced a sixth obsolete full-frame assertion in the existing
 composer-collapse regression plus stale frame-cost commentary in the rail-state
 policy and transcript region module. The test belongs in Task 3 because its
 composer-collapse intent remains valid while its transcript side-frame focus
-expectation directly contradicts ADR-081. The two production modules are
+expectation directly contradicts ADR-083. The two production modules are
 comment-only corrections: ADR-043 thresholds and transcript runtime behavior do
 not change.
 
@@ -440,18 +440,54 @@ git commit -m "style(console): move rails to the application edges"
 - Modify: `tldw_chatbook/Widgets/Console/console_workspace_context.py`
 - Modify: `tldw_chatbook/UI/Console_Modules/left_rail.py`
 - Modify: `tldw_chatbook/UI/Console_Modules/workspace.py`
-- Modify: `tldw_chatbook/UI/Screens/chat_screen.py`
+- Modify: `tldw_chatbook/UI/Console_Modules/wiring.py`
+- Modify: `tldw_chatbook/UI/Screens/chat_screen.py` (narrow Tree routes/synchronization only)
+- Modify: `tldw_chatbook/Workspaces/display_state.py`
+- Modify: `tldw_chatbook/Workspaces/workspace_tree_state.py`
 - Modify: `tldw_chatbook/css/components/_agentic_terminal.tcss`
 - Modify: `tldw_chatbook/css/tldw_cli_modular.tcss` (generated)
 - Modify: `Tests/UI/test_console_workspace_context_rail.py`
 - Modify: `Tests/UI/test_console_workspace_keyboard.py`
 - Modify: `Tests/UI/test_console_rail_reconciliation.py`
 - Modify: `Tests/UI/test_console_left_rail.py`
+- Modify: `Tests/UI/test_css_build_integrity.py`
+- Modify if directly affected: `Tests/UI/test_console_workspace_controller.py`
+- Modify if directly affected: `Tests/UI/test_console_workspace_lifecycle.py`
+- Modify if directly affected: `Tests/UI/test_console_button_routing.py`
+- Modify if directly affected: `Tests/UI/test_console_workspace_action_row_geometry.py`
+- Modify if directly affected: `Tests/UI/test_console_workspace_tree_performance.py`
+- Modify if directly affected: `Tests/UI/test_console_native_chat_flow.py`
+- Modify if directly affected: `Tests/UI/test_console_workspace_tray_recompose_guard.py`
+- Modify if directly affected: `Tests/UI/test_console_tick_gating.py`
+- Modify: `backlog/decisions/083-console-edge-rails-and-workspace-tree-ownership.md`
 - Modify: `backlog/tasks/task-20937.4 - Render-the-native-Workspace-conversation-Tree.md`
 
-- [ ] **Step 1: Start TASK-20937.4 and write native interaction REDs**
+- [ ] **Step 1: Complete pre-code governance and framework audit**
 
-Cover hidden-root construction, `auto_expand=False`, literal `Text`, two-cell guides, Unicode/ASCII vocabulary, workspace vs conversation selection, disclosure, top-level Left no-op, shifted hidden-root guards, leaf/empty Right no-op, `s` editable exclusion, and non-overflow Tab focus.
+Direct-edit the child to In Progress with its task-local plan; keep the parent In
+Progress and do not address either five-digit ID through Backlog CLI 1.44.0.
+Amend ADR-083 before production work: Textual 8.2.8 has no public move/reparent
+API, so one isolated exact-version private helper may preserve `TreeNode`
+identity by moving the existing object between `_children`, updating `_parent`,
+retaining `_tree_nodes`, and calling `_invalidate()` once. Pin fail-closed
+version/private-shape and mutation tests, record public remove/add identity loss
+as the rejected alternative, and keep custom Tree/rendering frameworks rejected.
+
+The corrected file map includes the display/controller/wiring owners and every
+audit-discovered direct regression above. Add explicit coverage for actual Tree
+owner wiring, workspace collapse page-generation/worker/loading invalidation,
+mounted owner lifecycle fencing, and default route behavior before code.
+
+- [ ] **Step 2: Write mounted native adapter REDs**
+
+Cover `Tree[WorkspaceTreeNodeData]`, hidden expanded/non-expandable root,
+`show_root=False`, `auto_expand=False`, `guide_depth=2`, literal single-row
+`Text(raw)` labels and full raw tooltip, explicit Unicode/ASCII icon and all
+guide tuples, CJK/emoji/markup-looking text, workspace vs conversation
+selection, native pointer disclosure/label selection, Enter selection-only,
+Space toggle, guarded plain Left/Right, all shifted hidden-root/None/wrap
+boundaries, collapse-to-workspace cursor recovery, inert status nodes,
+contextual `s`, editable exclusion, and non-overflow Tab focus.
 
 Add a bounded-section RED proving an injected native `ScrollView` is the direct
 local scroll owner: the bounded root contains that scroll owner plus the
@@ -459,7 +495,7 @@ separate hint and contains no `BoundedSectionViewport`. The ordinary default
 mode must still create exactly one `BoundedSectionViewport` and preserve every
 Inspector contract.
 
-- [ ] **Step 2: Write geometry and lifecycle REDs**
+- [ ] **Step 3: Write bounded native geometry/focus REDs**
 
 Use real fixed chrome and the bounded Workspaces body:
 
@@ -468,10 +504,30 @@ Use real fixed chrome and the bounded Workspaces body:
 - long identity is one ellipsized row with full tooltip;
 - contextual Star row cannot intercept search typing;
 - Tree is the sole local scroll owner and hands wheel to Context at its boundary;
-- keyed title/marker/star updates preserve node object identity and cursor;
-- removal recovers same-owner next/previous, then header/outer.
+- native overflow derives from `virtual_size.height > allocated > 0` and
+  `max_scroll_y > 0`, while Tree focusability remains independent of overflow;
+- focus ownership/recovery includes the native owner itself, section collapse
+  hides the whole bounded root, and keyed build requests one reconcile;
+- the default mode remains byte-for-behavior unchanged for Context/Inspector.
 
-- [ ] **Step 3: Run meaningful RED**
+- [ ] **Step 4: Write display/controller/wiring and production-compose REDs**
+
+Expose immutable active workspace identity plus independent Workspaces
+query/result/loading/error/Retry/marks availability as needed. Require the
+wiring owner token to be the actual `#console-workspace-tree`; no tray or
+screen fallback may allow an old commit to mutate a replacement owner.
+Collapsing a workspace invalidates its page generation/worker/loading state
+without deleting loaded rows, and no late collapsed result commits.
+
+Mount the real Workspaces section and prove the direct Tree, one-row active
+identity, compact Switch/New/RAG Scope strip, independent search/status/Retry,
+Default route through Switch, and fixed chrome ≤12 at narrow worst case.
+Retain the flat Conversations projection, existing Switch/New/RAG/star writer,
+and saved-conversation hydration. Extract/reuse one conversation-open path for
+flat and Tree selection; delete the old generic Starred/Workspaces grouped
+rendering and routes rather than preserving contradictory compatibility.
+
+- [ ] **Step 5: Run meaningful behavioral RED**
 
 ```bash
 ../../.venv/bin/python -B -m pytest \
@@ -483,15 +539,23 @@ Use real fixed chrome and the bounded Workspaces body:
   Tests/UI/test_console_left_rail.py -q
 ```
 
-- [ ] **Step 4: Implement the thin adapter**
+Reject import-only failures after the adapter skeleton exists. Record behavioral
+failure counts for native interaction, geometry, ownership, routing, and stale
+commit guards.
+
+- [ ] **Step 6: Implement the thin adapter and native bounded mode**
 
 First extend `ConsoleBoundedSection` with one narrow optional
-native-scroll-owner mode. In that mode it yields the supplied `ScrollView`
+`native_scroll_owner: ScrollView | None` mode. In that mode it validates that
+the owner is not also supplied as fixed content, yields fixed chrome plus the
+supplied `ScrollView`
 directly instead of creating `BoundedSectionViewport`, measures and clamps that
-owner's virtual geometry against the instance ceiling, and keeps ownership of
-only the sibling hint. Its default path remains unchanged. The Tree selects
-this mode and the interactive focus policy; no other Context or Inspector
-caller does.
+owner's virtual geometry against the instance ceiling, and keeps only the
+sibling hint outside the 20-row content ceiling. `tree_available = max(0,
+limit - fixed_visible_physical_rows)`; natural and ≥8 demand behavior follow
+Step 3. Its default path remains unchanged. The Tree selects this mode and the
+interactive focus policy; no other Context or Inspector caller does. Native
+wheel boundary events are never stopped unconditionally.
 
 `ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData])` must configure native behavior rather than reimplement rendering:
 
@@ -501,23 +565,64 @@ self.auto_expand = False
 self.guide_depth = 2
 ```
 
-Override only the key actions whose target could be the hidden root and the glyph constants needed for fallback. Post small messages for workspace selected, conversation selected, star toggled, load-more, and retry. The host/controller remains the service and persistence owner.
+Root is expanded with `allow_expand=False`. Override only the key actions whose
+target could be the hidden root and the glyph constants needed for fallback.
+Status nodes remain inert even if Textual's native cursor highlights them. Post
+small messages for workspace selected, conversation selected, star toggled,
+load-more, and retry. The host/controller remains the service and persistence
+owner.
 
-- [ ] **Step 5: Replace only the Workspaces group UI**
+- [ ] **Step 7: Replace only the Workspaces subtree and wire one open path**
 
 Keep active identity and Switch/New/RAG Scope above independent Workspaces search. Mount the Tree directly as the Workspaces local scroll owner—never inside a second `VerticalScroll`. Keep the existing flat row widgets for Conversations and remove the old Starred/Workspaces grouped browser rendering/event routes.
 
-- [ ] **Step 6: Implement keyed synchronization and temporary search disclosure**
+- [ ] **Step 8: Implement keyed synchronization, removal fallback, and paging**
 
-Maintain `workspace_id -> TreeNode` and `conversation_id -> TreeNode` maps. Update labels/data in place; add/remove/move only for structural changes. Snapshot persisted expansion before the first active query, force parents for hits, ignore persistence writes during search, and restore exactly on clear. Preserve scroll/cursor unless deliberate selection requests reveal.
+Maintain business-ID node maps plus deterministic auxiliary status keys. Never
+clear/reset during synchronization. Update label/data in place; add and publicly
+remove only true additions/deletions; use the ADR-pinned private helper for
+same-parent reorder and cross-parent movement while preserving object/data/cursor
+identity and `_tree_nodes`. Passive sync preserves focus and local/outer offsets
+without reveal. Structural removal falls back to same-owner next, previous,
+owning workspace, next/previous workspace, then section header/outer.
 
-- [ ] **Step 7: Rebuild CSS and run GREEN**
+Render loading/error/Retry/empty/load-more deterministically from immutable
+public state. Validate page attempts against page generation, workspace,
+membership, cursor/query token, collapse state, and the mounted Tree owner.
+Unmounting clears maps/owner identity; tray recomposition must not replace the
+Tree.
 
-Style the pinned strip, identity, Tree, contextual Star action, literal status rows, local hint, and focus owner without adding borders. Rebuild CSS, then run the Step 3 suite plus `Tests/UI/test_css_build_integrity.py`.
+- [ ] **Step 9: Implement temporary search disclosure and lifecycle fencing**
 
-- [ ] **Step 8: Mutation checks and commit**
+Snapshot the exact persisted expanded workspace IDs once on empty→active
+search. Query changes reuse the snapshot; hits force parent disclosure;
+search-time gestures are transient with zero preference writes. Clearing search
+restores the exact surviving snapshot and seeds newly appeared workspaces by the
+ordinary preference rule. Search/page/membership rapid mutations and owner
+replacement discard stale results without moving focus, cursor, or offsets.
 
-Prove tests fail if `Tree.can_focus` is tied to overflow, `auto_expand` is restored, the hidden-root guard is removed, or one search writes disclosure preferences. Restore and commit:
+- [ ] **Step 10: Rebuild CSS and run the expanded GREEN gate**
+
+Style the pinned strip, identity, Tree, contextual Star action, literal status rows, local hint, and focus owner without adding borders. Rebuild CSS, then run the Task 4 scoped suites plus `Tests/UI/test_css_build_integrity.py`.
+
+Also run every audit-discovered direct file/node that changed or reaches the
+replaced Workspaces subtree: controller/lifecycle, button routing, action-row
+geometry, native chat flow, tray recompose guard, tick gating, and the
+incremental native-node performance harness. Assert integrated
+collapse/responsive/focus/offset/compositor geometry plus long literal,
+CJK/emoji, ASCII, and no-color cases. Task 4 updates the performance harness for
+incremental native node updates but makes no speed claim; Task 6 owns comparison.
+
+- [ ] **Step 11: Mutation checks, static review, governance closeout, and commit**
+
+Required mutants must fail precise tests: Tree focusability tied to overflow;
+`auto_expand=True`; hidden-root guard removed; search disclosure persisted;
+private move replaced with public remove/add; native mode wraps the Tree;
+workspace collapse page guard removed. Restore each mutation immediately.
+
+Run scoped Ruff/check-format, `git diff --check`, CSS integrity, and self-review.
+Complete child ACs and notes with exact tests, mutants, files, the ADR amendment,
+and trade-offs; leave the parent In Progress. Commit only owned files with:
 
 ```bash
 git commit -m "feat(console): add workspace conversation Tree"

@@ -13,8 +13,12 @@ from textual.widget import Widget
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Widgets.Console.console_bounded_section import (
+    BoundedSectionViewport,
     ConsoleBoundedSection,
 )
+from tldw_chatbook.Widgets.Console.console_workspace_tree import ConsoleWorkspaceTree
+
+from .test_console_workspace_tree import _workspace
 
 
 LOCAL_HINT = "▼ more — scroll"
@@ -110,6 +114,118 @@ def _section(
         ),
         content,
     )
+
+
+def _native_section(
+    node_count: int,
+    *,
+    fixed_lines: int = 2,
+    allocation: int | None = None,
+) -> tuple[ConsoleBoundedSection, ConsoleWorkspaceTree, Static]:
+    tree = ConsoleWorkspaceTree()
+    tree.sync_projection(
+        (
+            _workspace(
+                "w",
+                "Workspace",
+                *(
+                    (f"c{index}", f"Conversation {index}")
+                    for index in range(node_count - 1)
+                ),
+            ),
+        )
+        if node_count
+        else (),
+        expanded_workspace_ids={"w"} if node_count > 1 else set(),
+    )
+    fixed = Static(_lines(fixed_lines), id="fixed-chrome")
+    return (
+        ConsoleBoundedSection(
+            fixed,
+            section_id="native",
+            allocation=allocation,
+            native_scroll_owner=tree,
+        ),
+        tree,
+        fixed,
+    )
+
+
+def test_native_owner_cannot_also_be_wrapped_content() -> None:
+    tree = ConsoleWorkspaceTree()
+    with pytest.raises(ValueError, match="native_scroll_owner"):
+        ConsoleBoundedSection(
+            tree,
+            section_id="invalid-native",
+            native_scroll_owner=tree,
+        )
+
+
+@pytest.mark.asyncio
+async def test_native_mode_mounts_tree_directly_without_nested_viewport() -> None:
+    section, tree, fixed = _native_section(3)
+    app = _Harness(section)
+    async with app.run_test(size=(60, 30)) as pilot:
+        await _settle(pilot)
+        assert tuple(section.children) == (fixed, tree, section.hint)
+        assert tree.parent is section
+        assert section.viewport is tree
+        assert not tuple(section.query(BoundedSectionViewport))
+        assert not tuple(tree.ancestors).count(BoundedSectionViewport)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("nodes", "expected_tree_height", "overflow"),
+    [(1, 1, False), (8, 8, False), (25, 18, True)],
+)
+async def test_native_tree_gets_natural_then_capped_height_with_hint_outside(
+    nodes: int,
+    expected_tree_height: int,
+    overflow: bool,
+) -> None:
+    section, tree, _fixed = _native_section(nodes)
+    app = _Harness(section)
+    async with app.run_test(size=(60, 40)) as pilot:
+        await _settle(pilot)
+        assert section.desired_content_lines == 2 + nodes
+        assert tree.content_region.height == expected_tree_height
+        assert section.hint.display is overflow
+        assert section.hint.parent is section
+        assert tree.can_focus is True
+        assert section.region.height == 2 + expected_tree_height + int(overflow)
+
+
+@pytest.mark.asyncio
+async def test_native_tree_stays_focusable_when_nonoverflowing_and_recovers_as_owner() -> (
+    None
+):
+    recovered: list[None] = []
+    section, tree, _fixed = _native_section(1)
+    section._on_focus_recovery = lambda: recovered.append(None)
+    app = _FocusHarness(section)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await _settle(pilot)
+        tree.focus()
+        await pilot.pause()
+        assert app.focused is tree
+        assert tree.can_focus is True
+        assert section._owns_widget(tree)
+
+        tree.can_focus = False
+        section._notify_focus_recovery()
+        assert recovered == [None]
+
+
+@pytest.mark.asyncio
+async def test_default_mode_remains_one_bounded_viewport() -> None:
+    section, _content = _section(3)
+    app = _Harness(section)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await _settle(pilot)
+        assert isinstance(section.viewport, BoundedSectionViewport)
+        assert tuple(section.viewport.children)
+        assert section.native_scroll_owner is None
 
 
 @pytest.mark.asyncio

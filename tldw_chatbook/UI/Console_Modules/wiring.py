@@ -449,10 +449,7 @@ def build_console_controllers(
         wake_retry_poke=lambda: screen._fleet._poke_console_wake_retry(),
         sync_workspace_context=lambda: screen._sync_console_workspace_context(),
         workspace_tree_owner_accessor=(
-            lambda: (
-                getattr(screen, "_console_workspace_tree_owner", None)
-                or screen.query_one("#console-workspaces-context")
-            )
+            lambda: screen.query_one("#console-workspace-tree")
         ),
         flat_conversation_owner_accessor=(
             lambda: (

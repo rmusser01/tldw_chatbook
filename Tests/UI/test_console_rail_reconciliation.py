@@ -279,10 +279,18 @@ async def test_all_open_context_sections_keep_their_own_complete_ceiling_and_out
             assert section.desired_content_lines > 0
             assert section.max_content_lines == ceiling
             assert section.allocation is None
-            assert section.viewport.content_region.height == min(
-                section.desired_content_lines,
-                ceiling,
-            )
+            if section.native_scroll_owner is None:
+                assert section.viewport.content_region.height == min(
+                    section.desired_content_lines,
+                    ceiling,
+                )
+            else:
+                virtual = section.viewport.virtual_size.height
+                fixed = section.desired_content_lines - virtual
+                assert section.viewport.content_region.height == min(
+                    virtual,
+                    max(0, ceiling - fixed),
+                )
 
             header = rail.query_one(
                 f"#console-rail-section-header-{section.section_id}"
@@ -1114,8 +1122,25 @@ async def test_production_css_uses_uncompressed_header_demand_and_reaches_every_
         assert cue.display is True
         assert all(section.allocation is None for section in _sections(rail))
         assert all(
-            section.viewport.content_region.height
-            == min(section.desired_content_lines, section.max_content_lines)
+            (
+                section.viewport.content_region.height
+                == min(section.desired_content_lines, section.max_content_lines)
+            )
+            if section.native_scroll_owner is None
+            else (
+                section.viewport.content_region.height
+                == min(
+                    section.viewport.virtual_size.height,
+                    max(
+                        0,
+                        section.max_content_lines
+                        - (
+                            section.desired_content_lines
+                            - section.viewport.virtual_size.height
+                        ),
+                    ),
+                )
+            )
             for section in _sections(rail)
         )
         assert all(

@@ -541,6 +541,46 @@ async def test_workspace_page_retry_generation_rejects_stale_failure() -> None:
     await retry
 
     assert [row.conversation_id for row in attempt.rows] == ["existing", "page-row"]
+
+
+@pytest.mark.asyncio
+async def test_collapsing_workspace_fences_late_page_commit_without_dropping_rows() -> (
+    None
+):
+    controller = _workspace_controller(
+        app_instance=SimpleNamespace(
+            workspace_registry_service=_membership_registry("settled", "late")
+        )
+    )
+    settled = _browser_row("settled", "Settled")
+    attempt = controller._new_workspace_page_state(rows=(settled,), next_cursor=75)
+    controller._workspace_page_attempts["workspace-7"] = attempt
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def fetch(_workspace_id: str, _cursor: int):
+        started.set()
+        await release.wait()
+        return (_browser_row("late", "Late"),), None
+
+    controller._fetch_workspace_tree_page = fetch
+    page = asyncio.create_task(controller.load_workspace_tree_page("workspace-7", 75))
+    await started.wait()
+
+    controller.transition_workspace_tree_expansion("workspace-7", expanded=False)
+    release.set()
+    await page
+
+    assert [row.conversation_id for row in attempt.rows] == ["settled"]
+    assert attempt.loading is False
+    assert attempt.request_key is None
+
+    async def fetch_after_collapse(_workspace_id: str, _cursor: int):
+        return (_browser_row("late", "Late"),), None
+
+    controller._fetch_workspace_tree_page = fetch_after_collapse
+    await controller.load_workspace_tree_page("workspace-7", 75)
+    assert [row.conversation_id for row in attempt.rows] == ["settled"]
     assert attempt.error == ""
     assert attempt.retry_cursor is None
 
@@ -1686,11 +1726,13 @@ def test_partial_production_owner_observation_preserves_unobserved_page_members(
 
     state = controller._with_console_conversation_browser_state(_workspace_state())
 
-    assert [
-        row.conversation_id
-        for node in state.workspace_tree
-        for row in node.conversations
-    ] == ["a", "b"]
+    projected_rows = [
+        row for node in state.workspace_tree for row in node.conversations
+    ]
+    assert [(row.conversation_id, row.title) for row in projected_rows] == [
+        ("b", "B"),
+        ("a", "Fresh A"),
+    ]
     assert attempt.membership_token == ("a", "b")
     assert attempt.next_cursor == 75
     assert attempt.generation == 4

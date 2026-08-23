@@ -58,7 +58,11 @@ from ...Chat.console_session_settings import (
     ConsoleSettingsSummaryState,
     _summary_row_value,
 )
-from ...Widgets.Console import ConsoleBoundedSection, ConsoleWorkspaceContextTray
+from ...Widgets.Console import (
+    ConsoleBoundedSection,
+    ConsoleWorkspaceContextTray,
+    ConsoleWorkspaceTree,
+)
 from ...Widgets.Console.console_agent_steering_bar import (
     STEERING_BAR_ID,
     ConsoleAgentSteeringBar,
@@ -139,6 +143,7 @@ class _ContextBoundedSection(ConsoleBoundedSection):
         *content: Widget,
         section_id: str,
         owner: "ConsoleLeftRail",
+        native_scroll_owner: ConsoleWorkspaceTree | None = None,
     ) -> None:
         self._allocation_owner = owner
         descriptor = next(
@@ -151,6 +156,7 @@ class _ContextBoundedSection(ConsoleBoundedSection):
             section_id=section_id,
             max_content_lines=descriptor.max_content_lines,
             on_focus_recovery=lambda: owner.recover_section_focus(section_id),
+            native_scroll_owner=native_scroll_owner,
         )
 
     def _run_scheduled_reconcile(self) -> None:
@@ -479,11 +485,16 @@ class ConsoleLeftRail(Vertical):
             )
         except (NoMatches, QueryError):
             return ()
-        return tuple(
+        controls = tuple(
             widget
             for widget in bounded.viewport.query("*")
             if isinstance(widget, Widget) and self._is_enabled_focus_target(widget)
         )
+        if bounded.native_scroll_owner is not None and self._is_enabled_focus_target(
+            bounded.viewport
+        ):
+            return (bounded.viewport, *controls)
+        return controls
 
     def _record_section_focus(self, section_id: str, target: Widget) -> None:
         self._section_focus_history[section_id] = (
@@ -831,7 +842,8 @@ class ConsoleLeftRail(Vertical):
             except (NoMatches, QueryError):
                 continue
             section.set_allocation(None)
-            section.styles.height = "auto"
+            if section.native_scroll_owner is None:
+                section.styles.height = "auto"
             section.request_reconcile()
         self.call_after_refresh(self._run_allocation_reconcile)
 
@@ -872,7 +884,12 @@ class ConsoleLeftRail(Vertical):
                 demands.append(
                     ContextSectionDemand(
                         section_id=descriptor.section_id,
-                        desired_content_rows=bounded.desired_content_lines,
+                        desired_content_rows=max(
+                            bounded.desired_content_lines,
+                            int(
+                                bounded.native_scroll_owner is not None and body.display
+                            ),
+                        ),
                         is_open=bool(header.open and body.display),
                     )
                 )
@@ -1150,6 +1167,41 @@ class ConsoleLeftRail(Vertical):
             pass
         else:
             details_tray.sync_state(state)
+        try:
+            tree = self.query_one("#console-workspace-tree", ConsoleWorkspaceTree)
+        except (NoMatches, QueryError):
+            pass
+        else:
+            tree.star_enabled = state.workspace_marks_available
+            preferred = tree.preferred_expanded_workspace_ids
+            if not preferred and not tree.workspace_nodes:
+                preferred = frozenset(
+                    workspace.workspace_id for workspace in state.workspace_tree
+                )
+            query_active = bool(state.workspace_query.strip())
+            if query_active and not tree.search_active:
+                tree.set_search_active(True)
+            tree.sync_projection(
+                state.workspace_tree,
+                expanded_workspace_ids=preferred,
+            )
+            if query_active:
+                tree.set_search_active(
+                    True,
+                    forced_workspace_ids={
+                        workspace.workspace_id for workspace in state.workspace_tree
+                    },
+                )
+            elif tree.search_active:
+                tree.set_search_active(False)
+            try:
+                bounded = self.query_one(
+                    "#console-bounded-section-workspace", ConsoleBoundedSection
+                )
+            except (NoMatches, QueryError):
+                pass
+            else:
+                bounded.request_reconcile()
         self.request_allocation_reconcile()
 
     def compose(self) -> ComposeResult:
@@ -1246,15 +1298,39 @@ class ConsoleLeftRail(Vertical):
             )
             workspace_context_tray.styles.width = "100%"
             workspace_context_tray.styles.min_width = 0
+            workspace_context_tray.styles.height = "auto"
+            workspace_context_tray.styles.max_height = 12
+            workspace_context_tray.styles.overflow_y = "hidden"
+            workspace_tree = ConsoleWorkspaceTree(id="console-workspace-tree")
+            workspace_tree.star_enabled = (
+                workspace_context_state.workspace_marks_available
+            )
+            workspace_tree.sync_projection(
+                workspace_context_state.workspace_tree,
+                expanded_workspace_ids={
+                    workspace.workspace_id
+                    for workspace in workspace_context_state.workspace_tree
+                },
+            )
+            if workspace_context_state.workspace_query.strip():
+                workspace_tree.set_search_active(
+                    True,
+                    forced_workspace_ids={
+                        workspace.workspace_id
+                        for workspace in workspace_context_state.workspace_tree
+                    },
+                )
             workspace_body = self._section_body(
                 "workspace",
                 rail_state.workspace_open,
                 frame_console_region(workspace_context_tray, variant="quiet"),
             )
+            workspace_body.styles.max_height = 12
             yield _ContextBoundedSection(
                 workspace_body,
                 section_id="workspace",
                 owner=self,
+                native_scroll_owner=workspace_tree,
             )
 
             yield self._section_header(

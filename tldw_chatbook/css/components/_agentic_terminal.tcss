@@ -3625,6 +3625,26 @@ ConsoleBoundedSection {
     background: $ds-action-focus 12%;
 }
 
+#console-workspace-tree {
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+    scrollbar-size: 1 1;
+    scrollbar-background: $ds-surface-panel;
+    scrollbar-color: $ds-grid-line;
+    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color-active: $ds-action-focus;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+
+#console-workspace-tree:focus {
+    background: $ds-action-focus 12%;
+}
+
 .console-bounded-section-hint {
     display: none;
     height: 1;
@@ -5098,6 +5118,10 @@ ConsoleCitationSourcesModal {
 }
 
 .console-workspace-action-row {
+    /* The fixed tray reserves one cell for its native-scroll sibling's
+       scrollbar lane; keep the compact strip inside the tray clip. */
+    width: 99%;
+    max-width: 100%;
     height: auto;
     min-height: 1;
     /* TASK-2154.3 (LY-07): the rail IA spec's 12-col left indent (buttons
@@ -5120,6 +5144,22 @@ ConsoleCitationSourcesModal {
        labels so both fit the row. */
     min-width: 5;
     width: auto;
+}
+
+#console-workspace-search {
+    width: 100%;
+    min-width: 0;
+    height: 3;
+    min-height: 3;
+}
+
+#console-workspace-search-status {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
 }
 
 #console-transcript-empty-state,

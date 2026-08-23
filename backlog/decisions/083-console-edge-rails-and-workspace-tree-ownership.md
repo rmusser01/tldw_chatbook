@@ -123,6 +123,37 @@ and nested-scroll handoff continue to govern.
   than weakening the evidence requirement.
 - Source TCSS and the generated CSS bundle must remain canonical and identical.
 
+## Amendment (2026-08-22, TASK-20937.4 — identity-preserving Tree moves)
+
+Textual 8.2.8 exposes public node addition and removal but no public node move
+or reparent operation. Public `TreeNode.remove()` recursively deletes the node
+from `Tree._tree_nodes`; adding it again creates a different `TreeNode`, so a
+public remove/add reorder cannot preserve node object identity, cursor identity,
+or the incremental keyed-update contract above.
+
+TASK-20937.4 therefore permits one isolated, version-pinned private helper in
+the thin Console Tree adapter. The helper must fail closed unless the runtime is
+exactly Textual 8.2.8 and the source and destination nodes expose the expected
+`_children` and `_parent` attributes while the Tree exposes `_tree_nodes` and
+`_invalidate`. It detaches the existing node from its current parent's
+`_children`, inserts that same object into the destination parent's
+`_children`, updates only that node's `_parent`, retains the existing
+`_tree_nodes` registration, and calls `_invalidate()` exactly once after a
+successful mutation. It does not clear/reset the Tree, recreate the node, or
+become a general Tree/rendering framework. Public removal remains the only path
+for true deletion.
+
+Exact-version, private-shape, same-parent reorder, cross-parent move,
+`_tree_nodes`, cursor/data/object-identity, and single-invalidation tests pin
+this exception. A Textual upgrade must either provide a public identity-
+preserving move API or explicitly re-audit and update this compatibility check;
+until then structural moves fail closed rather than silently corrupting native
+Tree state.
+
+The rejected alternative is public remove/add: it uses supported APIs but
+necessarily loses node identity and cursor continuity in Textual 8.2.8. A
+custom Tree or generalized private rendering layer remains rejected.
+
 ## Links
 
 - [Approved design](../../Docs/superpowers/specs/2026-08-22-console-edge-rails-workspace-tree-design.md)

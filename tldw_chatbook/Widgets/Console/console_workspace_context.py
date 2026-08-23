@@ -59,7 +59,9 @@ class ConsoleBrowserSearchInput(Input):
     -- every `Changed` from this box is a real edit -- becomes true.
     """
 
-    def __init__(self, *args: object, initial_value: str = "", **kwargs: object) -> None:
+    def __init__(
+        self, *args: object, initial_value: str = "", **kwargs: object
+    ) -> None:
         """Store the display value without arming the reactive.
 
         Args:
@@ -164,10 +166,13 @@ def wrap_console_conversation_title(title: str, budget: int) -> tuple[str, ...]:
         still overflows two lines.
     """
     budget = max(_MIN_TITLE_WRAP_BUDGET, int(budget))
-    remaining = sanitize_character_display_label(
-        title,
-        max_characters=1_000,
-    ) or _UNTITLED_CONVERSATION
+    remaining = (
+        sanitize_character_display_label(
+            title,
+            max_characters=1_000,
+        )
+        or _UNTITLED_CONVERSATION
+    )
     lines: list[str] = []
     while remaining:
         if len(lines) == _TITLE_WRAP_MAX_LINES - 1:
@@ -293,7 +298,9 @@ def _marker_meaning_tooltip_suffix(marker_glyph: str) -> str:
     An unrecognized or empty glyph (the steady state) adds no suffix, so a
     caller can always append this unconditionally.
     """
-    meaning = CONSOLE_RUN_MARKER_MEANINGS_BY_GLYPH.get(str(marker_glyph or "").strip(), "")
+    meaning = CONSOLE_RUN_MARKER_MEANINGS_BY_GLYPH.get(
+        str(marker_glyph or "").strip(), ""
+    )
     return f" — {meaning}" if meaning else ""
 
 
@@ -349,9 +356,7 @@ _ROW_BOTTOM_MARGIN = 1
 _RELABEL_MIN_WIDTH_DELTA = 2
 
 
-def _conversation_row_render_height(
-    name_line_count: int, subagent_count: int
-) -> int:
+def _conversation_row_render_height(name_line_count: int, subagent_count: int) -> int:
     """Return the button height for a row: name lines + metadata line,
     plus a dedicated badge line when this conversation has historical
     sub-agent runs (see `format_console_conversation_row_label`)."""
@@ -850,14 +855,10 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         self._row_content_width = measured
         scroll_parent = self._nearest_scroll_parent()
         parent_scroll_y = getattr(scroll_parent, "scroll_y", None)
-        restore_scroll_y = (
-            int(parent_scroll_y) if parent_scroll_y is not None else None
-        )
+        restore_scroll_y = int(parent_scroll_y) if parent_scroll_y is not None else None
         self.refresh(recompose=True)
         if self.is_mounted:
-            self._schedule_recomposed_content_fit(
-                restore_scroll_y=restore_scroll_y
-            )
+            self._schedule_recomposed_content_fit(restore_scroll_y=restore_scroll_y)
             self.post_message(self.Relabeled())
         return True
 
@@ -1230,30 +1231,6 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                     disabled=not self.state.new_workspace_enabled,
                 )
             )
-
-        # task-13: workspace-level RAG retrieval scope entry point.
-        # Named "RAG Scope" (not "Scope") to avoid colliding with the
-        # Console Inspector's item-scope row ("Scope: everything" / "Scope:
-        # N items", `console_retrieval_scope_row.py`), which names a
-        # RAG retrieval scope, not this button. Enabled only for a real
-        # registry workspace (`rag_scope_enabled`) -- never for the
-        # "Local Default"/error/no-registry sentinel states, which have
-        # no real workspace_id to scope against.
-        #
-        # This lives on its OWN row (task-14) rather than sharing the
-        # Switch/New row: the narrow Console left rail body is only wide
-        # enough for ~2 compact buttons (Textual's default Button
-        # min-width is 16 columns each). A third button packed into the
-        # same Horizontal overflowed the rail's clipped width, so the
-        # button's clickable region extended past the rail body -- real
-        # clicks (and `pilot.click`) landed on the rail backdrop instead
-        # of the button.
-        with self._record_composed_node(
-            Horizontal(
-                id="console-workspace-rag-scope-row",
-                classes="console-workspace-action-row",
-            )
-        ):
             scope_button = Button(
                 "RAG Scope",
                 id="console-workspace-rag-scope-open",
@@ -1263,6 +1240,41 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             )
             scope_button.tooltip = "Narrow RAG retrieval to items in this workspace"
             yield self._record_composed_node(scope_button)
+
+        search = ConsoleBrowserSearchInput(
+            value=self.state.workspace_query,
+            placeholder="Search workspaces",
+            id="console-workspace-search",
+            classes="console-workspace-search",
+            disabled=not bool(self.state.workspace_tree),
+        )
+        yield self._record_composed_node(search)
+
+        if self.state.workspace_loading:
+            yield self._record_composed_node(
+                self._static(
+                    "Searching…",
+                    id="console-workspace-search-status",
+                    classes="console-workspace-recovery",
+                )
+            )
+        elif self.state.workspace_error:
+            yield self._record_composed_node(
+                self._static(
+                    self.state.workspace_error,
+                    id="console-workspace-search-status",
+                    classes="console-workspace-recovery",
+                )
+            )
+            if self.state.workspace_retry_available:
+                yield self._record_composed_node(
+                    Button(
+                        "Retry",
+                        id="console-workspace-search-retry",
+                        classes="console-workspace-action",
+                        compact=True,
+                    )
+                )
 
         if self.state.recovery_copy:
             yield self._record_composed_node(
@@ -1303,9 +1315,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
 
         if show_selected_summary:
             browser = self.state.conversation_browser
-            selected_summary = (
-                browser.selected_summary if browser is not None else ""
-            )
+            selected_summary = browser.selected_summary if browser is not None else ""
             yield self._record_composed_node(
                 self._static(
                     selected_summary or "No active session.",
@@ -1695,10 +1705,13 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
     @staticmethod
     def _conversation_title(title: str) -> str:
         """Return a readable conversation label."""
-        return sanitize_character_display_label(
-            title,
-            max_characters=1_000,
-        ) or _UNTITLED_CONVERSATION
+        return (
+            sanitize_character_display_label(
+                title,
+                max_characters=1_000,
+            )
+            or _UNTITLED_CONVERSATION
+        )
 
     def _browser_title_budget(self) -> int:
         """Cells available to grouped-browser row text."""
@@ -1759,7 +1772,9 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             part
             for part in (
                 workspace_label,
-                detail if detail and detail != CONSOLE_DEFAULT_CONVERSATION_DETAIL else "",
+                detail
+                if detail and detail != CONSOLE_DEFAULT_CONVERSATION_DETAIL
+                else "",
                 updated_label,
             )
             if str(part or "").strip()
