@@ -7,11 +7,11 @@ import pytest
 
 # --- Ported (chunking-engine-parity Task 4) ---------------------------------
 # Upstream file: tldw_Server_API/tests/Chunking/test_auto_chunking_resolver.py
-# Skipped: Ingestion_Media_Processing.chunking_options is server-side; deferred to #3. Terminal disposition (2026-08-23 program close):
+# Skipped: Ingestion_Media_Processing.chunking_options — the resolver that consumes the auto-planner — remains server-side by the descope rulings (#3 is merged); the resolver behavior is covered by the ported planner suite (test_auto_chunking_planner.py). Terminal disposition (2026-08-23 program close):
 # pinned by Tests/Chunking/test_descope_ledger.py; a re-sync regenerates
 # this block verbatim.
 pytest.importorskip("tldw_chatbook.NoSuchDeferredModule",
-                    reason="skipped: Ingestion_Media_Processing.chunking_options is server-side; deferred to #3")
+                    reason="skipped: Ingestion_Media_Processing.chunking_options — the resolver that consumes the auto-planner — remains server-side by the descope rulings (#3 is merged); the resolver behavior is covered by the ported planner suite (test_auto_chunking_planner.py)")
 
 from tldw_chatbook.Chunking._shims.Ingestion_Media_Processing.chunking_options import (
     async_resolve_chunking_for_result,

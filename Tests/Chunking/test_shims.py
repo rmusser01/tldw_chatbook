@@ -116,9 +116,15 @@ def test_prompt_loader_unknown_pairing_raises():
 def test_prompt_loader_shim_maps_proposition_profiles():
     """The vendored propositions strategy calls load_prompt for three
     OPTIONAL profile overrides (propositions.py:321/334/347 at the pin).
-    Chatbook ships no override for them, so a known pairing resolves to ""
-    and the strategy's built-in instruction applies — byte-faithful to
-    upstream's absent-override behavior (``if override:`` → default)."""
+    Chatbook does not carry the server's Prompts runtime, so a known
+    pairing resolves to "" and the strategy's in-code defaults are
+    chatbook's effective instructions. Upstream at the pin DOES ship
+    chunking.prompts.yaml entries for all three pairs; for
+    claimify/gemma_aps the YAML wording differs from the in-code
+    defaults — a recorded divergence, not byte-faithful parity. With
+    the _KNOWN value "" the resolver is never consulted, so overrides
+    cannot ride the Internal_Prompts catalog; a future override
+    mechanism changes the map VALUES, not the keys."""
     from tldw_chatbook.Chunking._shims.Utils import prompt_loader
     for name in ("proposition_claimify", "proposition_gemma_aps",
                  "proposition_generic"):

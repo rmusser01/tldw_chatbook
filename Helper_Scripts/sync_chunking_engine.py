@@ -99,7 +99,12 @@ TESTS_MODULE_SKIPPED = {
         "chatbook consumer; the capability is covered by #3's auto-selection "
         "and #4's agent surface; revisit only if a consumer appears"
     ),
-    "test_auto_chunking_resolver.py": "Ingestion_Media_Processing.chunking_options is server-side; deferred to #3",
+    "test_auto_chunking_resolver.py": (
+        "Ingestion_Media_Processing.chunking_options — the resolver that "
+        "consumes the auto-planner — remains server-side by the descope "
+        "rulings (#3 is merged); the resolver behavior is covered by the "
+        "ported planner suite (test_auto_chunking_planner.py)"
+    ),
     "test_chunker_process_metrics.py": (
         "server Metrics registry not vendored; engine degrades gracefully to "
         "no-op metrics — descope 2026-08-23 spec §4.3 REAFFIRMS the no-op "
