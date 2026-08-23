@@ -79,6 +79,23 @@ extraction of the bundled render hid their absence. The fix's regression test
 `TldwCli.CSS_PATH` stack and asserts button containment -- it failed red
 against the unfixed bundle without touching app code.
 
+**Recurred, TASK-19913, 2026-08-23.** A latest-dev merge moved the Trace
+screen and timeline from automatically registered `DEFAULT_CSS` into
+consolidated `BUNDLED_CSS`. The branch's plain-`App` geometry harness then
+mounted both widgets without their production defaults and reported four
+layout/style failures. Migrating the harness to `ConsolidatedCSSApp` fixed the
+false containment failure, but full-detail and brush-theme tests still failed:
+the checked-in generated widget sheets predated this branch's expanded
+`BUNDLED_CSS`. Rebuilding them restored the production interactions without a
+specificity workaround.
+
+**What to do.** After merging the consolidated-CSS system into a branch that
+changed class-level CSS, update production-shaped harnesses to inherit
+`Tests.UI.consolidated_css.ConsolidatedCSSApp`, rebuild with
+`python -m tldw_chatbook.css.build_css`, and run CSS-build integrity tests.
+Loading only the app bundle is insufficient, and testing regenerated sheets
+against stale source is equally misleading.
+
 ---
 
 ## An exact live-test gate must be the first gate that can skip the test

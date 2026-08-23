@@ -70,6 +70,80 @@
     }
 
 
+/* ===== WIDGET: TraceFiltersDialog (UI/Widgets/trace_filter_bar.py) ===== */
+
+
+    TraceFiltersDialog #trace-filter-dialog { width: 58; max-width: 94%; height: 17; padding: 0 2; background: $panel; }
+    TraceFiltersDialog #trace-filter-dialog-title { height: 1; text-style: bold; }
+    TraceFiltersDialog #trace-filter-dialog-time { height: 1; color: $text-muted; }
+
+    TraceFiltersDialog #trace-filter-dialog-actions { height: 3; align-horizontal: right; }
+    TraceFiltersDialog #trace-filter-dialog-actions Button { min-width: 9; }
+
+
+/* ===== WIDGET: TraceExportDialog (Widgets/Console/trace_export_dialog.py) ===== */
+
+
+    TraceExportDialog #trace-export-dialog {
+        width: 78;
+        max-width: 96%;
+        height: 24;
+        max-height: 96%;
+        border: tall $primary;
+        background: $surface;
+        padding: 1 2;
+        scrollbar-gutter: stable;
+    }
+    TraceExportDialog #trace-export-body {
+        height: 1fr;
+        scrollbar-gutter: stable;
+    }
+    TraceExportDialog #trace-export-title {
+        height: 1;
+        text-style: bold;
+    }
+    TraceExportDialog #trace-export-intro,
+    TraceExportDialog #trace-export-profile-copy {
+        height: auto;
+        margin-top: 1;
+    }
+    TraceExportDialog #trace-export-policy,
+    TraceExportDialog #trace-export-inventory,
+    TraceExportDialog #trace-export-selection,
+    TraceExportDialog #trace-export-status {
+        height: auto;
+    }
+    TraceExportDialog #trace-export-policy {
+        color: $warning;
+    }
+    TraceExportDialog #trace-export-profiles {
+        height: auto;
+        margin-top: 1;
+    }
+    TraceExportDialog #trace-export-selection {
+        text-style: bold;
+    }
+    TraceExportDialog #trace-export-selection.is-selector-focused {
+        color: $accent;
+    }
+    TraceExportDialog #trace-export-path {
+        margin-top: 0;
+    }
+    TraceExportDialog #trace-export-actions {
+        height: 3;
+        min-height: 3;
+        margin-top: 0;
+        align-horizontal: right;
+    }
+    TraceExportDialog #trace-export-actions Button {
+        min-width: 10;
+        margin-left: 1;
+    }
+    TraceExportDialog #trace-export-status.-error {
+        color: $error;
+    }
+
+
 /* ===== WIDGET: NoteSelectionDialog (Widgets/Note_Widgets/note_selection_dialog.py) ===== */
 
 

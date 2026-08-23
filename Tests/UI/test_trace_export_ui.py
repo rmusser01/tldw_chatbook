@@ -9,7 +9,7 @@ from html import unescape
 from pathlib import Path
 
 import pytest
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 from textual.containers import VerticalScroll
 from textual.widgets import DataTable, Input, RadioButton, RadioSet, Static
 
@@ -21,11 +21,14 @@ from tldw_chatbook.Chat.trajectory_export import (
 from tldw_chatbook.Chat.trajectory_import import load_imported_trace
 from tldw_chatbook.UI.Screens.trajectory_screen import TrajectoryScreen
 from tldw_chatbook.Widgets.Console.trace_export_dialog import TraceExportDialog
+from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 from Tests.UI.test_trace_responsive import _TraceHost
 from Tests.UI.test_trajectory_screen import base_snapshot
 
 
-class _Harness(App[None]):
+class _Harness(ConsolidatedCSSApp):
+    CSS_PATH = BUNDLED_STYLESHEET
+
     def compose(self) -> ComposeResult:
         yield Static("base")
 

@@ -1,7 +1,7 @@
 import pytest
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -632,15 +632,19 @@ async def test_console_left_rail_keeps_session_and_moves_staged_context_out():
         assert "Stage sources from Library" not in visible_text
         assert not list(rail.query("#console-staged-context-tray"))
 
-        # The staged-context tray now tops the Inspector rail body, above
-        # the run inspector (Source Readiness section) and the bottom card.
+        # Project-instruction status is the one-line Inspector preamble;
+        # staged context follows it and remains above Source Readiness.
         tray = console.query_one("#console-staged-context-tray")
+        project_status = console.query_one("#console-project-instruction-status")
         rail_body = console.query_one("#console-inspector-rail-body")
         assert tray.parent is rail_body
         children = list(rail_body.children)
-        assert children.index(tray) == 0
+        assert children.index(project_status) == 0
+        assert children.index(tray) == children.index(project_status) + 1
         readiness = console.query_one("#console-live-work-source-readiness")
-        assert children.index(tray) < children.index(readiness)
+        live_work_section = console.query_one("#console-live-work-section")
+        assert live_work_section in readiness.ancestors
+        assert children.index(tray) < children.index(live_work_section)
 
 
 @pytest.mark.asyncio
@@ -1656,7 +1660,6 @@ async def test_console_header_carries_inline_class_and_dash_subtitle():
 
 @pytest.mark.asyncio
 async def test_console_header_inline_css_renders_single_row():
-    from textual.app import App, ComposeResult
     from tldw_chatbook.UI.Workbench.workbench_widgets import DestinationHeader
     from tldw_chatbook.UI.Workbench.workbench_state import WorkbenchHeaderState
 
@@ -1687,7 +1690,6 @@ async def test_console_header_inline_css_renders_single_row():
 
 @pytest.mark.asyncio
 async def test_console_header_inline_subtitle_ellipsizes_when_narrow():
-    from textual.app import App, ComposeResult
     from tldw_chatbook.UI.Workbench.workbench_widgets import DestinationHeader
     from tldw_chatbook.UI.Workbench.workbench_state import WorkbenchHeaderState
 
@@ -1708,7 +1710,8 @@ async def test_console_header_inline_subtitle_ellipsizes_when_narrow():
     for label, cols in (("wide", 120), ("narrow", 60)):
         app = _NarrowHeaderApp()
         async with app.run_test(size=(cols, 10)) as pilot:
-            await pilot.pause(); await pilot.pause()
+            await pilot.pause()
+            await pilot.pause()
             header = app.query_one("#console-workbench-header")
             subtitle = app.query_one("#workbench-header-subtitle")
             status = app.query_one("#workbench-header-status")
@@ -1728,8 +1731,6 @@ async def test_console_header_inline_subtitle_visible_in_compact_density():
     hid it to save a row in the old stacked header, but the inline header is a
     single row regardless, so the id+class rule restores the subtitle to use
     the horizontal space."""
-    from textual.app import App, ComposeResult
-    from textual.containers import Vertical
     from tldw_chatbook.UI.Workbench.workbench_widgets import DestinationHeader
     from tldw_chatbook.UI.Workbench.workbench_state import WorkbenchHeaderState
 

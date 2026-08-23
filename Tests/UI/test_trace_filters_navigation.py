@@ -6,7 +6,6 @@ import contextlib
 from dataclasses import replace
 from html import unescape
 import importlib
-from pathlib import Path
 import re
 
 import pytest
@@ -18,9 +17,9 @@ from tldw_chatbook.Chat.trajectory import (
     TrajectorySnapshot,
     TrajectoryTurn,
 )
-from tldw_chatbook.css import build_css
 from tldw_chatbook.UI.Screens.trajectory_screen import TrajectoryScreen
 from tldw_chatbook.UI.Widgets.trajectory_timeline import TrajectoryTimeline
+from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 from Tests.UI.test_trajectory_screen import many_records_snapshot
 
 
@@ -92,16 +91,8 @@ def filter_snapshot() -> TrajectorySnapshot:
     return TrajectorySnapshot((TrajectoryTurn("turn-1", records),))
 
 
-_CSS_DIR = Path(build_css.__file__).parent
-_SCOPED_CSS, _SELF_CSS = build_css.screen_css_paths(_CSS_DIR)
-
-
-class _TraceHost(App[None]):
-    CSS_PATH = [
-        str(_SCOPED_CSS),
-        str(_CSS_DIR / "tldw_cli_modular.tcss"),
-        str(_SELF_CSS),
-    ]
+class _TraceHost(ConsolidatedCSSApp):
+    CSS_PATH = BUNDLED_STYLESHEET
 
     def compose(self) -> ComposeResult:
         yield Static("Console")

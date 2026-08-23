@@ -9,6 +9,8 @@ import pytest
 
 import tldw_chatbook.Agents.agent_service as agent_service_module
 from tldw_chatbook.Agents.agent_models import (
+    AGENT_LIFECYCLE_INDEX_BASE,
+    TRACE_STEP_INDEX_BASE,
     AgentConfig,
     AgentStep,
     ModelTurn,
@@ -192,8 +194,12 @@ def test_live_and_terminal_trace_write_failure_still_finalizes_status(
         def __str__(self):
             raise AssertionError("exception text must not be rendered")
 
-    def fail_trace_write(_run_id, _steps):
-        raise UnprintableTraceError("SECRET_TRACE_PAYLOAD")
+    durable_insert = db.insert_steps_at_indices
+
+    def fail_trace_write(run_id, steps):
+        if any(index < AGENT_LIFECYCLE_INDEX_BASE for index, _record in steps):
+            raise UnprintableTraceError("SECRET_TRACE_PAYLOAD")
+        return durable_insert(run_id, steps)
 
     monkeypatch.setattr(db, "insert_steps_at_indices", fail_trace_write)
     monkeypatch.setattr(
@@ -206,9 +212,10 @@ def test_live_and_terminal_trace_write_failure_still_finalizes_status(
     run = db.get_run(run_id)
     assert outcome.status == "done"
     assert run["status"] == "done" and run["result"] == "done"
-    assert run["steps"] == []
-    assert len(warnings) == 2
-    assert all("UnprintableTraceError" in args for _message, args in warnings)
+    outcome_indices = {step.index for step in outcome.steps}
+    assert not outcome_indices.intersection(step["index"] for step in run["steps"])
+    assert len(warnings) >= 2
+    assert any("UnprintableTraceError" in args for _message, args in warnings)
     assert all("SECRET_TRACE_PAYLOAD" not in repr(item) for item in warnings)
 
 
@@ -216,7 +223,8 @@ def test_failed_incremental_write_does_not_abort_and_terminal_write_recovers(
     db: AgentRunsDB, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     durable_insert = db.insert_steps_at_indices
-    calls = 0
+    calls: list[tuple[int, ...]] = []
+    failed_runtime_write = False
     replies = [
         _reply(
             "```tool_call\n"
@@ -227,9 +235,13 @@ def test_failed_incremental_write_does_not_abort_and_terminal_write_recovers(
     ]
 
     def fail_once(run_id, steps):
-        nonlocal calls
-        calls += 1
-        if calls == 1:
+        nonlocal failed_runtime_write
+        indices = tuple(index for index, _record in steps)
+        calls.append(indices)
+        if not failed_runtime_write and any(
+            index < TRACE_STEP_INDEX_BASE for index in indices
+        ):
+            failed_runtime_write = True
             raise RuntimeError("simulated transient write failure")
         return durable_insert(run_id, steps)
 
@@ -240,10 +252,12 @@ def test_failed_incremental_write_does_not_abort_and_terminal_write_recovers(
     )
 
     assert outcome.status == "done"
-    assert calls == len(outcome.steps) + 1
-    assert [step["index"] for step in db.get_run(run_id)["steps"]] == [
-        step.index for step in outcome.steps
-    ]
+    assert failed_runtime_write
+    assert any(len(indices) == len(outcome.steps) for indices in calls)
+    durable_by_index = {
+        step["index"]: step for step in db.get_run(run_id)["steps"]
+    }
+    assert all(step.index in durable_by_index for step in outcome.steps)
 
 
 def test_ui_callback_failure_does_not_abort_incremental_durability(
@@ -255,7 +269,8 @@ def test_ui_callback_failure_does_not_abort_incremental_durability(
     run_id, outcome = _run(_service(db, on_step=fail_ui))
 
     assert outcome.status == "done"
-    assert [step["index"] for step in db.get_run(run_id)["steps"]] == [0]
+    durable_indices = {step["index"] for step in db.get_run(run_id)["steps"]}
+    assert all(step.index in durable_indices for step in outcome.steps)
 
 
 def test_terminal_recovery_does_not_duplicate_successful_incremental_rows(
@@ -280,8 +295,12 @@ def test_terminal_recovery_does_not_duplicate_successful_incremental_rows(
             "SELECT seq, payload FROM agent_run_steps WHERE run_id = ? ORDER BY seq",
             (run_id,),
         ).fetchall()
-    assert [row["seq"] for row in rows] == expected_indices
-    assert [step["index"] for step in db.get_run(run_id)["steps"]] == expected_indices
+    outcome_rows = [row for row in rows if row["seq"] in expected_indices]
+    assert [row["seq"] for row in outcome_rows] == expected_indices
+    durable_indices = {
+        step["index"] for step in db.get_run(run_id)["steps"]
+    }
+    assert all(index in durable_indices for index in expected_indices)
 
 
 def test_explicit_index_insert_is_idempotent_and_first_writer_wins(

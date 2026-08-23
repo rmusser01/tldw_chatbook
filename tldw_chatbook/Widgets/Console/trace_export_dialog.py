@@ -56,7 +56,7 @@ class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
         Binding("escape", "request_safe_cancel", "Cancel", show=False),
     ]
 
-    DEFAULT_CSS = """
+    BUNDLED_SCREEN_CSS = """
     TraceExportDialog {
         align: center middle;
     }

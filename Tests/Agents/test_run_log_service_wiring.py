@@ -397,6 +397,7 @@ def test_real_run_log_omits_sensitive_tool_args_and_results(wired, monkeypatch):
         "chain-of-thought = private internal plan",
         "- reasoning: private internal plan",
         "items:\n  - reasoning_content: private internal plan",
+        "[Steering from supervisor] reasoning_content: private internal plan",
         "ghp_" + "a" * 36,
         "AKIA" + "A" * 16,
         "eyJabcdefghij.abcdefghij.abcdefghij",

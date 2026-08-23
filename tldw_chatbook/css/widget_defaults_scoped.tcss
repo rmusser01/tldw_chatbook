@@ -2052,6 +2052,16 @@
     }
 
 
+/* ===== WIDGET: TraceFilterBar (UI/Widgets/trace_filter_bar.py) ===== */
+
+
+    TraceFilterBar #trace-filter-wide { width: 1fr; height: 3; }
+    TraceFilterBar #trace-filter-counts { width: 20; height: 3; content-align: left middle; color: $text-muted; }
+
+    TraceFilterBar #trace-filter-compact { width: 1fr; height: 1; color: $text-muted; }
+
+
+
 /* ===== WIDGET: AutoSpeakConsentModal (Widgets/Console/console_auto_speak_consent.py) ===== */
 
 

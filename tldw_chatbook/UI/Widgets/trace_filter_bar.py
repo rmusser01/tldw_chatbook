@@ -139,7 +139,7 @@ class TraceFiltersDialog(ModalScreen[TraceFilterState | None]):
         Binding("x", "clear", "Clear"),
     ]
 
-    DEFAULT_CSS = """
+    BUNDLED_SCREEN_CSS = """
     TraceFiltersDialog { align: center middle; background: $background 70%; }
     #trace-filter-dialog { width: 58; max-width: 94%; height: 17; padding: 0 2; background: $panel; }
     #trace-filter-dialog-title { height: 1; text-style: bold; }
@@ -240,7 +240,7 @@ class TraceFilterBar(Widget):
 
     BINDINGS = [Binding("enter", "open_filters", "Filters", show=False)]
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     TraceFilterBar { width: 1fr; height: 3; }
     #trace-filter-wide { width: 1fr; height: 3; }
     #trace-filter-counts { width: 20; height: 3; content-align: left middle; color: $text-muted; }

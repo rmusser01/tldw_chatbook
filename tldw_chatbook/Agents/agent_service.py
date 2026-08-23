@@ -830,7 +830,7 @@ _THINK_TAG_RE = re.compile(r"<\s*/?\s*think(?:\s[^>]*)?>", re.IGNORECASE)
 _THINK_OPEN_RE = re.compile(r"<\s*think(?:\s[^>]*)?>", re.IGNORECASE)
 _THINK_CLOSE_RE = re.compile(r"<\s*/\s*think\s*>", re.IGNORECASE)
 _UNQUOTED_REASONING_FIELD_RE = re.compile(
-    r"(?:^\s*|[,:{]\s*|\\n\s*|\\?[\"']\s*)(?:-\s*)?"
+    r"(?:^\s*|[,:{]\s*|(?<=\])\s*|\\n\s*|\\?[\"']\s*)(?:-\s*)?"
     r"(?:reasoning|reasoning[\s_-]+content|chain[\s_-]+of[\s_-]+thought)"
     r"(?:\\?[\"'])?\s*[:=]",
     re.IGNORECASE | re.MULTILINE,
@@ -2795,7 +2795,25 @@ class AgentService:
             field_states=field_states,
             sensitivity="diagnostic",
         )
-        record = _safe_agent_step_record(run_id, step)
+        try:
+            record = _safe_agent_step_record(run_id, step)
+        except Exception as exc:  # noqa: BLE001 — status must still finalize
+            logger.warning(
+                "could not serialize atomic terminal observation "
+                "run_id={} error_type={}",
+                run_id,
+                _safe_exception_type(exc),
+            )
+            try:
+                return self.db.set_status(run_id, status, result)
+            except Exception as status_exc:  # noqa: BLE001 — bounded containment
+                logger.warning(
+                    "could not persist terminal status without observation "
+                    "run_id={} error_type={}",
+                    run_id,
+                    _safe_exception_type(status_exc),
+                )
+                return False
         for attempt in range(2):
             try:
                 return self.db.set_terminal_with_step(
@@ -2879,24 +2897,34 @@ class AgentService:
         outcome: RunOutcome,
         durable_handles: Mapping[str, str] | None = None,
     ) -> None:
-        step_dicts = []
-        for step in outcome.steps:
-            if not step.created_at:
-                step.created_at = safe_utc_timestamp(self.wall_clock)
-            step_dicts.append(
-                (
-                    step.index,
-                    _safe_agent_step_record(run_id, step, durable_handles),
-                )
-            )
         try:
-            self.db.insert_steps_at_indices(run_id, step_dicts)
+            step_dicts = []
+            for step in outcome.steps:
+                if not step.created_at:
+                    step.created_at = safe_utc_timestamp(self.wall_clock)
+                step_dicts.append(
+                    (
+                        step.index,
+                        _safe_agent_step_record(run_id, step, durable_handles),
+                    )
+                )
         except Exception as exc:  # noqa: BLE001 — trace capture is best-effort
+            step_dicts = []
             logger.warning(
                 "could not persist terminal agent steps run_id={} error_type={}",
                 run_id,
                 _safe_exception_type(exc),
             )
+        else:
+            try:
+                self.db.insert_steps_at_indices(run_id, step_dicts)
+            except Exception as exc:  # noqa: BLE001 — best-effort capture
+                logger.warning(
+                    "could not persist terminal agent steps "
+                    "run_id={} error_type={}",
+                    run_id,
+                    _safe_exception_type(exc),
+                )
         terminal_step = max(
             outcome.steps,
             key=lambda step: (
