@@ -37,6 +37,12 @@ from pathlib import Path
 from typing import Any
 
 from .assistant_generation_state import normalize_assistant_generation_state
+from .library_preparation import (
+    LIBRARY_PREPARATION_EVENT_KIND,
+    LibraryPreparationValidationError,
+    decode_library_preparation_event,
+    encode_library_preparation_event,
+)
 from tldw_chatbook.Chat.trajectory import (
     TrajectoryRecord,
     TrajectorySnapshot,
@@ -1221,7 +1227,14 @@ def build_trajectory_export(
         data = _as_dict(row)
         kind = str(data.get("event_kind") or "")
         payload_json = data.get("payload_json")
-        if not include_payloads and kind in _TOOL_KINDS and payload_json:
+        if kind == LIBRARY_PREPARATION_EVENT_KIND:
+            try:
+                payload_json = encode_library_preparation_event(
+                    decode_library_preparation_event(payload_json)
+                )
+            except LibraryPreparationValidationError:
+                payload_json = None
+        elif not include_payloads and kind in _TOOL_KINDS and payload_json:
             payload_json = _redacted_payload_json(payload_json)
         exported_row = {key: _jsonable(data.get(key)) for key in _TRAJECTORY_ROW_KEYS}
         exported_row["payload_json"] = payload_json

@@ -73,6 +73,9 @@ KIND_COMPACTION = "compaction"
 KIND_USER_FEEDBACK = "user_feedback"
 
 _TOOL_KINDS = frozenset({KIND_TOOL_CALL, KIND_TOOL_RESULT})
+# The preparation disclosure is projected by its owning pure module. It is never
+# a message row or nested tool row in the generic trajectory.
+_SIDECAR_ONLY_KINDS = frozenset({"library_preparation"})
 # Kinds that nest UNDER the message they key on rather than being that
 # message's own sidecar row. Feedback (task-17169) is keyed to the message
 # it critiques, so treating it as that message's row would displace the
@@ -515,6 +518,8 @@ def derive_trajectory(
         mid = _field(row, "message_id")
         kind = str(_field(row, "event_kind") or "")
         if not mid:
+            continue
+        if kind in _SIDECAR_ONLY_KINDS:
             continue
         if kind in _RENDERED_ROLES:
             message_rows[str(mid)] = row
