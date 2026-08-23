@@ -66,11 +66,15 @@ _TOPIC_STOPWORDS = frozenset(
 
 _MOOD_PATTERNS = {
     "happy": (
-        re.compile(r"\b(happy|glad|joy|cheerful|delighted|nice|great|awesome|lovely)\b"),
+        re.compile(
+            r"\b(happy|glad|joy|cheerful|delighted|nice|great|awesome|lovely)\b"
+        ),
         re.compile(r"\b(thank you|thanks|appreciate it)\b"),
     ),
     "excited": (
-        re.compile(r"\b(excited|amazing|incredible|fantastic|let'?s go|hyped|thrilled)\b"),
+        re.compile(
+            r"\b(excited|amazing|incredible|fantastic|let'?s go|hyped|thrilled)\b"
+        ),
         re.compile(r"!{1,}"),
     ),
     "sad": (
@@ -82,15 +86,21 @@ _MOOD_PATTERNS = {
         re.compile(r"\b(hate|ridiculous|unacceptable)\b"),
     ),
     "thinking": (
-        re.compile(r"\b(think|consider|analy(?:ze|sis)|reason|step by step|let'?s break)\b"),
+        re.compile(
+            r"\b(think|consider|analy(?:ze|sis)|reason|step by step|let'?s break)\b"
+        ),
         re.compile(r"\b(maybe|perhaps|possibly)\b"),
     ),
     "confused": (
-        re.compile(r"\b(confused|unclear|unsure|uncertain|puzzled|don'?t understand)\b"),
+        re.compile(
+            r"\b(confused|unclear|unsure|uncertain|puzzled|don'?t understand)\b"
+        ),
         re.compile(r"\b(not sure|hard to tell)\b"),
     ),
     "surprised": (
-        re.compile(r"\b(surprised|unexpected|whoa|wow|didn'?t expect|astonished|shocked)\b"),
+        re.compile(
+            r"\b(surprised|unexpected|whoa|wow|didn'?t expect|astonished|shocked)\b"
+        ),
         re.compile(r"\?{2,}"),
     ),
 }

@@ -21,9 +21,7 @@ from tldw_chatbook.Character_Chat.emote_directives import (
 pytestmark = pytest.mark.unit
 
 _FIXTURE_PATH = (
-    Path(__file__).resolve().parents[1]
-    / "fixtures"
-    / "character_emote_directives.json"
+    Path(__file__).resolve().parents[1] / "fixtures" / "character_emote_directives.json"
 )
 _FROZEN_VECTORS = json.loads(_FIXTURE_PATH.read_text(encoding="utf-8"))
 
@@ -36,8 +34,7 @@ def test_one_shot_parser_matches_frozen_cross_language_vectors(vector: dict) -> 
 
     assert parsed.clean_text == vector["clean_text"]
     assert [
-        {"state": event.state, "at_char": event.at_char}
-        for event in parsed.events
+        {"state": event.state, "at_char": event.at_char} for event in parsed.events
     ] == vector["events"]
 
 
@@ -71,15 +68,13 @@ def _stream_chunks(chunks: list[str]) -> tuple[str, list[dict[str, int | str]]]:
         result = parser.push(chunk)
         clean_parts.append(result.visible_text)
         events.extend(
-            {"state": event.state, "at_char": event.at_char}
-            for event in result.events
+            {"state": event.state, "at_char": event.at_char} for event in result.events
         )
         assert parser.pending_char_count <= STREAM_PREFIX_BUFFER_LIMIT
     flushed = parser.flush()
     clean_parts.append(flushed.visible_text)
     events.extend(
-        {"state": event.state, "at_char": event.at_char}
-        for event in flushed.events
+        {"state": event.state, "at_char": event.at_char} for event in flushed.events
     )
     assert parser.flush().visible_text == ""
     assert parser.flush().events == ()
@@ -193,10 +188,7 @@ def test_prompt_projection_uses_only_round_tripping_canonical_keys() -> None:
 
 
 def test_prompt_projection_keeps_first_asset_order_and_caps_instruction() -> None:
-    assets = [
-        {"expression_key": f"custom:state_{index}"}
-        for index in range(27)
-    ]
+    assets = [{"expression_key": f"custom:state_{index}"} for index in range(27)]
     states = project_character_emote_states(assets)
 
     assert states == tuple(f"state_{index}" for index in range(27))

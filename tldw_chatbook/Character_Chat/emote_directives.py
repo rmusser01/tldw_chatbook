@@ -368,9 +368,7 @@ class CharacterEmoteStreamParser:
             self._publish(buffered, visible_parts)
             return
 
-        possible_directive = (
-            not self._in_fence and "emote:".startswith(lowered)
-        )
+        possible_directive = not self._in_fence and "emote:".startswith(lowered)
         possible_fence = "```".startswith(stripped)
         if possible_directive or possible_fence:
             if len(self._prefix) <= STREAM_PREFIX_BUFFER_LIMIT:

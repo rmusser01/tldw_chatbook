@@ -108,8 +108,11 @@ def test_assistant_punctuation_uses_fractional_scores(
 
 
 def test_topic_uses_user_first_winner_and_is_bounded() -> None:
-    assert detect_character_mood(
-        assistant_text="beta",
-        user_text="alpha beta alpha",
-    ).topic == "alpha"
+    assert (
+        detect_character_mood(
+            assistant_text="beta",
+            user_text="alpha beta alpha",
+        ).topic
+        == "alpha"
+    )
     assert detect_character_mood(assistant_text="x" * 45).topic == "x" * 40
