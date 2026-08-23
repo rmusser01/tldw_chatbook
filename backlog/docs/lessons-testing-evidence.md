@@ -7416,3 +7416,35 @@ the test fixtures for that tuple before believing a red. An earlier probe leg
 with none of the identity fields set, so `getattr(frame, "paint_digest", None)`
 returned `None` for every frame and two visually different frames collapsed to
 one key. The old code never noticed because it repainted every tick regardless.
+## Count per-event work by instrumenting the call, not by reading the handler (TASK-21119, 2026-08-23)
+
+**What happened.** The holistic-perf finding said the Console's click-outside
+dismissal cost "~4 full-screen DOM walks per press": two `self.query(...)` calls
+visible in the handler, times the two events (MouseDown + Click) of one press.
+Shadowing `screen.query` on a real Console pilot and clicking said otherwise.
+A press on the composer cost **3** walks, because the composer stops the Click
+so the handler ran ONCE — and a single invocation costs three walks, not two:
+the third is `screen.query(ConsoleSelectionMenu)` inside
+`transcript._remove_selection_menu()`, a callee the review never opened. A press
+on the rail cost **6**. So the reviewed number was simultaneously too high for
+one press shape and 50% too low for the other, and both errors came from
+counting call sites by eye.
+
+**What to do.** For any "this runs N times per event" claim, instrument the
+thing being counted and drive a real event; do not multiply what you can see in
+the handler body. Two specifics that made the probe honest here:
+
+- **Shadow the method on the instance** (`screen.query = counting_query`), not
+  the class: it catches the callees that reach the same object by another route
+  (the transcript's own `self.screen.query(...)` landed in the same counter),
+  which is exactly where the uncounted work was hiding.
+- **Measure more than one press shape.** Whether the second handler invocation
+  happens at all depends on who swallows the Click, so a single target
+  understates or overstates the per-press cost depending on which one you pick.
+
+**Adjacent trap from the same task.** In zsh, an unquoted `$(...)` IS
+word-split but an unquoted `$VAR` is NOT. Hoisting a file list into
+`FILES=$(...)` and running `pytest $FILES` handed pytest one giant argument;
+the run collected nothing, printed only a warnings block, and the compound
+command still exited 0. It looked like a completed A/B. Inline the command
+substitution, and read the passed-count before believing any comparison.

@@ -51,6 +51,25 @@ class SelectionManager:
         return SelectionState(active=self._active, selection=selection)
 
     @property
+    def is_idle(self) -> bool:
+        """Whether ``cancel()`` would change nothing (TASK-21119).
+
+        Exactly the post-``cancel()`` field state, including the two
+        one-shot click tokens: the screen-level click-outside dismissal
+        skips its whole cleanup pass when every transcript is idle, so
+        "idle" has to mean *cancel is a no-op*, not merely "no visible
+        selection" -- a stale ``just_finished``/``release_click_pending``
+        still suppresses a later row click.
+        """
+        return (
+            self._origin_row is None
+            and not self._active
+            and self._finished is None
+            and not self._just_finished
+            and not self._release_click_pending
+        )
+
+    @property
     def just_finished(self) -> bool:
         return self._just_finished
 

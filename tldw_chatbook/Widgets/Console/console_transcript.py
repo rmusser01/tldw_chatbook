@@ -8,7 +8,8 @@ import re
 from dataclasses import dataclass, replace
 from functools import lru_cache
 from time import monotonic
-from typing import Any, Callable, Iterable, Literal, Mapping
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Literal, Mapping
+from weakref import WeakSet
 
 from loguru import logger
 from PIL import Image as PILImage
@@ -97,6 +98,7 @@ from tldw_chatbook.Widgets.Console.console_selection_menu import (
     ConsoleSelectionMenu,
     ConsoleSelectionQuoteRequested,
     ConsoleSideChatRequested,
+    selection_menus_on_screen,
 )
 from tldw_chatbook.Widgets.Console.console_turn_file_card import ConsoleTurnFileCard
 from tldw_chatbook.Widgets.Console.console_video_card import (
@@ -106,6 +108,9 @@ from tldw_chatbook.Widgets.Console.console_video_card import (
 )
 from tldw_chatbook.Widgets.diff_widgets import make_diff
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from textual.screen import Screen
 
 
 # TASK-17658: rule separators paint via the stylesheet's hatch fill
@@ -2544,6 +2549,44 @@ def _kb_selection_hint_text(
     return _KB_CHAR_SELECTION_HINT
 
 
+#: Every constructed, not-yet-collected transcript (TASK-21119).
+#:
+#: Same contract as ``_LIVE_SELECTION_MENUS``, and now the same two hooks:
+#: registration in ``__init__`` is synchronous and strictly precedes DOM
+#: attachment, so the registry can never MISS a mounted transcript (the
+#: direction that would silently break the click-outside cleanup); it may
+#: over-report, and attachment is always re-derived from the DOM in
+#: ``console_transcripts_on_screen``. ``_on_unmount`` prunes recomposed
+#: transcripts out of the candidate set, which is an optimization only.
+_LIVE_TRANSCRIPTS: "WeakSet[ConsoleTranscript]" = WeakSet()
+
+
+def console_transcripts_on_screen(screen: "Screen[object]") -> list["ConsoleTranscript"]:
+    """Transcripts currently attached under ``screen``.
+
+    Replaces ``screen.query(ConsoleTranscript)`` (a full-screen DOM walk) on
+    the per-press dismissal path. A Console screen holds one transcript
+    (side chats add at most a handful), so the candidate scan is a couple of
+    parent-chain walks, not a walk of the whole screen.
+
+    Args:
+        screen: The screen whose subtree is being inspected.
+
+    Returns:
+        The attached transcripts, in unspecified order.
+    """
+    transcripts: list[ConsoleTranscript] = []
+    for transcript in _LIVE_TRANSCRIPTS:
+        if transcript.parent is None:
+            continue  # never mounted, or already detached (cheap arm)
+        try:
+            if transcript.screen is screen:
+                transcripts.append(transcript)
+        except NoScreen:
+            continue  # attached to an orphaned subtree mid-teardown
+    return transcripts
+
+
 class ConsoleTranscript(VerticalScroll):
     """Focusable native Console transcript with compact rule-separated messages."""
 
@@ -2767,6 +2810,40 @@ class ConsoleTranscript(VerticalScroll):
         #: until Task 3 wires the motion keys.
         self._kb_anchor: int | None = None
         self._kb_end: int | None = None
+        # TASK-21119: register BEFORE any mount can happen (Textual delivers
+        # ``Mount`` asynchronously), so the screen's click-outside gate can
+        # never miss a transcript that is already in the DOM.
+        _LIVE_TRANSCRIPTS.add(self)
+
+    def _on_unmount(self) -> None:
+        """Prune the transcript registry (TASK-21119).
+
+        Best-effort only, exactly like the menu's: correctness never depends
+        on it (``console_transcripts_on_screen`` re-checks attachment, and
+        the weak reference expires on its own), it just keeps the candidate
+        set from carrying every recomposed transcript until the next
+        collection. No ``super()`` call is needed -- Textual dispatches
+        ``_on_unmount`` from every class in the MRO, so ``Widget``'s own
+        teardown still runs.
+        """
+        _LIVE_TRANSCRIPTS.discard(self)
+
+    @property
+    def has_pending_selection_ui(self) -> bool:
+        """Whether the screen's click-outside cleanup would change anything.
+
+        The screen-level dismissal (``ChatScreen._dismiss_console_selection_
+        menus_outside_transcript``) does three things per transcript: clear
+        the highlighted row, cancel the selection manager, and drop the
+        origin row. All three are no-ops when the manager is idle and no
+        origin row is held -- including the keyboard-selection mode, which
+        arms the manager without mounting a menu (so a menu-only gate would
+        leave its reverse-video strip painted after a click elsewhere).
+        """
+        return (
+            self._selection_origin_row is not None
+            or not self.selection_manager.is_idle
+        )
 
     def on_mount(self) -> None:
         """Engage tail-follow: stay scrolled to the newest content.
@@ -5475,13 +5552,20 @@ class ConsoleTranscript(VerticalScroll):
 
         Textual marks a widget ``_pruning`` synchronously inside
         ``remove()`` but detaches it only when the prune message is
-        processed, so a menu can appear in ``query`` twice across two
-        removal calls; already-pruning menus are skipped to keep
-        ``remove()`` single-shot per menu.
+        processed, so a menu can survive two removal calls; already-pruning
+        menus are skipped to keep ``remove()`` single-shot per menu.
+
+        TASK-21119: sourced from the menu registry rather than
+        ``self.screen.query(ConsoleSelectionMenu)`` -- same screen scope,
+        same result, without a full-screen DOM walk. This runs on every
+        in-transcript press (``on_mouse_down``), not just on dismissal.
+        ``self.screen`` still resolves first, so a detached transcript
+        raises ``NoScreen`` exactly as before.
         """
+        screen = self.screen
         return [
             menu
-            for menu in self.screen.query(ConsoleSelectionMenu)
+            for menu in selection_menus_on_screen(screen)
             if not getattr(menu, "_pruning", False)
         ]
 
