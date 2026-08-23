@@ -1639,6 +1639,7 @@ async def test_executor_advances_every_durable_stage_and_completes_last(
     assert result == NotesSyncExecutionResult(
         operation_id="operation-1",
         state=NotesSyncOperationState.COMPLETED,
+        recovery_required=False,
     )
     assert stages == [
         NotesSyncOperationState.RECOVERY_ADMITTED,
@@ -1744,7 +1745,7 @@ def test_capacity_is_durable_before_the_first_authority_mutation(
 
 
 @pytest.mark.asyncio
-async def test_capacity_refusal_mutates_nothing_and_persists_no_intent(
+async def test_conflict_capacity_refusal_has_no_recovery_or_recovery_actions(
     tmp_path: Path,
 ) -> None:
     store, database = _execution_store(tmp_path)
@@ -1757,19 +1758,25 @@ async def test_capacity_refusal_mutates_nothing_and_persists_no_intent(
         recovery_capacity_bytes=1,
     )
 
-    result = await executor.execute(
+    request = replace(
         _request(
             action=NotesSyncActionKind.UPDATE_NOTE,
             note=note_authority.snapshot,
             file=filesystem.snapshot,
-        )
+        ),
+        journal_kind="resolve_keep_file",
     )
+
+    result = await executor.execute(request)
 
     assert result.state is NotesSyncOperationState.NEEDS_ATTENTION
     assert result.reason_code == "recovery_capacity_exceeded"
-    assert result.choices == tuple(NotesSyncRecoveryChoice)
+    assert result.recovery_required is False
+    assert result.choices == ()
     assert note_authority.replace_calls == 0
     assert filesystem.replace_calls == 0
+    assert store.find_operation(request.operation_id) is None
+    assert store.find_operation_recovery(request.operation_id) is None
     assert _counts(database) == (0, 0)
 
 
@@ -1895,6 +1902,7 @@ async def test_resume_with_changed_observation_becomes_explicit_attention(
 
     assert result.state is NotesSyncOperationState.NEEDS_ATTENTION
     assert result.reason_code == "stale_observation"
+    assert result.recovery_required is True
     assert result.choices == tuple(NotesSyncRecoveryChoice)
     assert note_authority.replace_calls == 0
 
@@ -3280,7 +3288,21 @@ def test_execution_public_models_reject_ambiguous_states() -> None:
         NotesSyncExecutionResult(
             operation_id="operation-1",
             state=NotesSyncOperationState.COMPLETED,
+            recovery_required=False,
             reason_code="stale_observation",
+        )
+    with pytest.raises(TypeError, match="recovery_required"):
+        NotesSyncExecutionResult(
+            operation_id="operation-1",
+            state=NotesSyncOperationState.NEEDS_ATTENTION,
+            recovery_required="yes",  # type: ignore[arg-type]
+            reason_code="stale_observation",
+        )
+    with pytest.raises(ValueError, match="recovery_required"):
+        NotesSyncExecutionResult(
+            operation_id="operation-1",
+            state=NotesSyncOperationState.COMPLETED,
+            recovery_required=True,
         )
     with pytest.raises(ValueError, match="write authority"):
         NotesSyncExecutionRequest(
@@ -3893,6 +3915,7 @@ def test_public_results_and_executor_source_disclose_no_private_values() -> None
     result = NotesSyncExecutionResult(
         operation_id="operation-private",
         state=NotesSyncOperationState.NEEDS_ATTENTION,
+        recovery_required=True,
         reason_code="stale_observation",
         choices=tuple(NotesSyncRecoveryChoice),
     )

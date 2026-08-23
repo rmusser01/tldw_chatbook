@@ -294,6 +294,7 @@ class _Executor:
                 getattr(request, "action_id", "operation-1"),
             ),
             state=NotesSyncOperationState.COMPLETED,
+            recovery_required=False,
         )
 
     async def reconstruct_request(self, operation_id: str) -> object:
@@ -537,6 +538,7 @@ class _BlockingExecutor(_Executor):
                 getattr(request, "action_id", "operation-1"),
             ),
             state=NotesSyncOperationState.COMPLETED,
+            recovery_required=False,
         )
 
 
@@ -555,6 +557,7 @@ class _InvalidatingExecutor(_Executor):
                 getattr(request, "action_id", "operation-1"),
             ),
             state=NotesSyncOperationState.COMPLETED,
+            recovery_required=False,
         )
 
 

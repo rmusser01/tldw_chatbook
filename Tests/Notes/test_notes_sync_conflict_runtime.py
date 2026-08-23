@@ -179,6 +179,7 @@ class _Executor:
         return NotesSyncExecutionResult(
             operation_id=getattr(_request, "operation_id", "operation-1"),
             state=NotesSyncOperationState.COMPLETED,
+            recovery_required=False,
             reason_code=None,
         )
 
@@ -260,25 +261,36 @@ class _SubsetExecutor:
         final_input: ReconciliationInput,
         *,
         stop_binding_id: str | None = None,
+        refuse_before_admission: bool = False,
     ) -> None:
         self.adapter = adapter
         self.final_input = final_input
         self.stop_binding_id = stop_binding_id
+        self.refuse_before_admission = refuse_before_admission
         self.requests: list[object] = []
 
     async def execute(self, request: object) -> NotesSyncExecutionResult:
         self.requests.append(request)
         binding_id = getattr(request, "binding_id")
         operation_id = getattr(request, "operation_id")
+        if self.refuse_before_admission:
+            return NotesSyncExecutionResult(
+                operation_id=operation_id,
+                state=NotesSyncOperationState.NEEDS_ATTENTION,
+                recovery_required=False,
+                reason_code="recovery_capacity_exceeded",
+            )
         if binding_id == self.stop_binding_id:
             return NotesSyncExecutionResult(
                 operation_id=operation_id,
                 state=NotesSyncOperationState.FIRST_AUTHORITY_APPLIED,
+                recovery_required=False,
             )
         self.adapter.inputs[self.final_input.root_id] = self.final_input
         return NotesSyncExecutionResult(
             operation_id=operation_id,
             state=NotesSyncOperationState.COMPLETED,
+            recovery_required=False,
         )
 
 
@@ -289,12 +301,14 @@ class _SubsetAdapter(_Adapter):
         final: ReconciliationInput,
         *,
         stop_binding_id: str | None = None,
+        refuse_before_admission: bool = False,
     ) -> None:
         super().__init__(initial)
         self.executor = _SubsetExecutor(
             self,
             final,
             stop_binding_id=stop_binding_id,
+            refuse_before_admission=refuse_before_admission,
         )
 
     async def build_execution_request(
@@ -1317,8 +1331,37 @@ async def test_nonterminal_conflict_stops_later_work_and_reports_honest_partial(
     assert result.safe_completed == 1
     assert result.conflicts_resolved == 0
     assert result.partial is True
-    assert result.needs_recovery is True
+    assert result.needs_recovery is False
     assert result.fresh_plan is None
+
+
+@pytest.mark.asyncio
+async def test_first_conflict_capacity_refusal_is_not_published_as_recoverable() -> (
+    None
+):
+    initial = _reviewed_subset_input(conflict_count=1)
+    adapter = _SubsetAdapter(initial, initial, refuse_before_admission=True)
+    owner = _owner(adapter, _root())
+    token = _install_review(owner, initial)
+
+    result = await owner.apply_reviewed(
+        "root-1",
+        token,
+        (),
+        (ConflictSelection("binding-1", NotesSyncConflictChoice.KEEP_FILE),),
+    )
+
+    assert len(result.results) == 1
+    assert result.results[0].recovery_required is False
+    assert result.needs_recovery is False
+    assert result.partial is False
+    assert result.fresh_plan is None
+    root = owner.snapshot().roots[0]
+    assert (root.status, root.next_action, root.action_id) == (
+        "needs_attention",
+        "review_changes",
+        None,
+    )
 
 
 @pytest.mark.asyncio

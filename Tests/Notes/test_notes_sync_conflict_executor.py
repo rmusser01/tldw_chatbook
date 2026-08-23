@@ -25,12 +25,14 @@ from tldw_chatbook.Notes.notes_device_state_store import (
     NotesSyncBindingRecord,
 )
 from tldw_chatbook.Notes.notes_sync_executor import (
+    NotesSyncDirectionOverride,
     NotesSyncExecutionRequest,
     NotesSyncExecutor,
 )
 from tldw_chatbook.Notes.notes_sync_models import (
     NotesSyncActionKind,
     NotesSyncBindingState,
+    NotesSyncDirection,
     NotesSyncOperationState,
 )
 
@@ -101,6 +103,132 @@ def test_resolution_journal_kind_requires_its_existing_underlying_action(
         )
     with pytest.raises(ValueError, match="journal_kind"):
         replace(request, journal_kind="resolve_keep_both")
+
+
+@pytest.mark.parametrize(
+    ("journal_kind", "action", "permitted", "disallowed"),
+    (
+        (
+            "resolve_keep_file",
+            NotesSyncActionKind.UPDATE_NOTE,
+            NotesSyncDirection.FOLDER_TO_NOTES,
+            NotesSyncDirection.NOTES_TO_FOLDER,
+        ),
+        (
+            "resolve_keep_note",
+            NotesSyncActionKind.UPDATE_FILE,
+            NotesSyncDirection.NOTES_TO_FOLDER,
+            NotesSyncDirection.FOLDER_TO_NOTES,
+        ),
+    ),
+)
+def test_resolution_override_is_exact_occurrence_authority(
+    journal_kind: str,
+    action: NotesSyncActionKind,
+    permitted: NotesSyncDirection,
+    disallowed: NotesSyncDirection,
+) -> None:
+    note = _note(content="note side", version=5)
+    file = _file(content="file side")
+    request = replace(
+        _request(action=action, note=note, file=file),
+        journal_kind=journal_kind,
+    )
+
+    assert request.direction is NotesSyncDirection.BIDIRECTIONAL
+    assert request.direction_override is None
+    assert replace(request, direction=permitted).direction_override is None
+    with pytest.raises(ValueError, match="direction_override"):
+        replace(request, direction=disallowed)
+
+    exact_override = NotesSyncDirectionOverride(
+        review_id=request.operation_id,
+        action_kind=action,
+        observation_token=request.observation_token,
+    )
+    overridden = replace(
+        request,
+        direction=disallowed,
+        direction_override=exact_override,
+    )
+    assert overridden.direction_override == exact_override
+    with pytest.raises(ValueError, match="direction_override"):
+        replace(request, direction_override=exact_override)
+    with pytest.raises(ValueError, match="direction_override"):
+        replace(
+            request,
+            direction=disallowed,
+            direction_override=replace(exact_override, review_id="operation-other"),
+        )
+
+
+@pytest.mark.asyncio
+async def test_resolution_recovery_rejects_corrupt_override_review_id_before_write(
+    tmp_path: Path,
+) -> None:
+    store, database = _execution_store(tmp_path)
+    with store.transaction(immediate=True) as connection:
+        connection.execute(
+            "UPDATE notes_sync_roots SET direction = 'notes_to_folder' "
+            "WHERE root_id = 'root-1'"
+        )
+    note = _note(content="note side", version=5)
+    file = _file(content="file side")
+    request = replace(
+        _request(action=NotesSyncActionKind.UPDATE_NOTE, note=note, file=file),
+        direction=NotesSyncDirection.NOTES_TO_FOLDER,
+        journal_kind="resolve_keep_file",
+        direction_override=NotesSyncDirectionOverride(
+            review_id="operation-1",
+            action_kind=NotesSyncActionKind.UPDATE_NOTE,
+            observation_token="observation-1",
+        ),
+    )
+    notes = FakeNoteAuthority(note)
+    files = FakeFilesystem(file)
+
+    def stop_after_admission(stage: NotesSyncOperationState) -> None:
+        if stage is NotesSyncOperationState.RECOVERY_ADMITTED:
+            raise InjectedCrash
+
+    with pytest.raises(InjectedCrash):
+        await NotesSyncExecutor(
+            store,
+            notes,
+            files,
+            recovery_capacity_bytes=4096,
+            after_stage=stop_after_admission,
+        ).execute(request)
+
+    with store.transaction(immediate=True) as connection:
+        raw = connection.execute(
+            "SELECT metadata FROM notes_sync_recovery WHERE operation_id = ?",
+            (request.operation_id,),
+        ).fetchone()[0]
+        metadata = json.loads(raw)
+        metadata["direction_override"]["review_id"] = "operation-other"
+        connection.execute(
+            "UPDATE notes_sync_recovery SET metadata = ? WHERE operation_id = ?",
+            (
+                json.dumps(metadata, separators=(",", ":"), sort_keys=True).encode(),
+                request.operation_id,
+            ),
+        )
+
+    executor = NotesSyncExecutor(
+        NotesDeviceStateStore(database),
+        notes,
+        files,
+        recovery_capacity_bytes=4096,
+    )
+    with pytest.raises(RuntimeError, match="recovery_authority_changed"):
+        await executor.reconstruct_request(request.operation_id)
+    result = await executor.resume(request)
+
+    assert result.state is NotesSyncOperationState.NEEDS_ATTENTION
+    assert result.recovery_required is True
+    assert notes.replace_calls == 0
+    assert files.replace_calls == 0
 
 
 @pytest.mark.asyncio

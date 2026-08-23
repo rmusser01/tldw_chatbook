@@ -1491,7 +1491,7 @@ class NotesSyncRuntimeOwner:
                 safe_completed = sum(completed[:safe_result_count])
                 conflict_completed = sum(completed[len(safe_actions) :])
                 all_completed = len(results) == len(actions) and all(completed)
-                needs_recovery = any(not value for value in completed)
+                needs_recovery = any(result.recovery_required for result in results)
                 partial = not all_completed and (
                     any(completed) or len(results) < len(actions)
                 )
@@ -1610,7 +1610,11 @@ class NotesSyncRuntimeOwner:
                     root.root_id,
                     "needs_attention",
                     "review_changes",
-                    action_id=getattr(result, "operation_id", None),
+                    action_id=(
+                        getattr(result, "operation_id", None)
+                        if getattr(result, "recovery_required", False)
+                        else None
+                    ),
                 )
                 return tuple(results)
             if state is not NotesSyncOperationState.COMPLETED:

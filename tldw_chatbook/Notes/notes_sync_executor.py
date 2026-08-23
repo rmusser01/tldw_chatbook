@@ -53,6 +53,19 @@ _RESOLUTION_JOURNAL_ACTIONS = {
 }
 
 
+def _resolution_override_required(
+    action: NotesSyncActionKind,
+    direction: NotesSyncDirection,
+) -> bool:
+    return (
+        action is NotesSyncActionKind.UPDATE_NOTE
+        and direction is NotesSyncDirection.NOTES_TO_FOLDER
+    ) or (
+        action is NotesSyncActionKind.UPDATE_FILE
+        and direction is NotesSyncDirection.FOLDER_TO_NOTES
+    )
+
+
 class NotesSyncRecoveryChoice(StrEnum):
     """Bounded choices exposed for an unresolved operation."""
 
@@ -483,6 +496,23 @@ class NotesSyncExecutionRequest:
                 raise ValueError(
                     "direction_override must match action_kind and observation_token."
                 )
+        if self.journal_kind is not None:
+            override_required = _resolution_override_required(
+                self.action_kind,
+                self.direction,
+            )
+            if override_required and (
+                self.direction_override is None
+                or self.direction_override.review_id != self.operation_id
+            ):
+                raise ValueError(
+                    "direction_override must bind the reviewed resolution operation."
+                )
+            if not override_required and self.direction_override is not None:
+                raise ValueError(
+                    "direction_override is invalid when configured direction permits "
+                    "the reviewed resolution."
+                )
 
     def __repr__(self) -> str:
         return "NotesSyncExecutionRequest(<private>)"
@@ -494,6 +524,7 @@ class NotesSyncExecutionResult:
 
     operation_id: str
     state: NotesSyncOperationState
+    recovery_required: bool
     reason_code: str | None = None
     choices: tuple[NotesSyncRecoveryChoice, ...] = ()
 
@@ -501,16 +532,19 @@ class NotesSyncExecutionResult:
         validate_notes_sync_opaque_id(self.operation_id, field_name="operation_id")
         if type(self.state) is not NotesSyncOperationState:
             raise TypeError("state must be a NotesSyncOperationState.")
+        if type(self.recovery_required) is not bool:
+            raise TypeError("recovery_required must be a boolean.")
+        if (
+            self.recovery_required
+            and self.state is not NotesSyncOperationState.NEEDS_ATTENTION
+        ):
+            raise ValueError("recovery_required is only valid for attention.")
         validate_notes_sync_reason_code(self.reason_code)
         if type(self.choices) is not tuple or any(
             type(choice) is not NotesSyncRecoveryChoice for choice in self.choices
         ):
             raise TypeError("choices must be a tuple of NotesSyncRecoveryChoice.")
-        expected = (
-            _ATTENTION_CHOICES
-            if self.state is NotesSyncOperationState.NEEDS_ATTENTION
-            else ()
-        )
+        expected = _ATTENTION_CHOICES if self.recovery_required else ()
         if self.choices != expected:
             raise ValueError("choices must match the durable operation state.")
         if self.state is NotesSyncOperationState.NEEDS_ATTENTION:
@@ -700,6 +734,16 @@ class NotesSyncExecutor:
             )
         except (KeyError, TypeError, ValueError):
             raise RuntimeError("recovery_authority_changed") from None
+        if resolution_action is not None:
+            override_required = _resolution_override_required(action, direction)
+            if (
+                override_required
+                and (
+                    direction_override is None
+                    or direction_override.review_id != operation.operation_id
+                )
+            ) or (not override_required and direction_override is not None):
+                raise RuntimeError("recovery_authority_changed")
         current_note = await asyncio.to_thread(
             lambda: asyncio.run(self._notes.observe(note_id))
         )
@@ -2958,19 +3002,22 @@ class NotesSyncExecutor:
             return "executor_failed"
         return selected or "executor_failed"
 
-    @staticmethod
     def _result(
+        self,
         operation_id: str,
         state: NotesSyncOperationState,
         reason_code: str | None = None,
     ) -> NotesSyncExecutionResult:
+        recovery_required = (
+            state is NotesSyncOperationState.NEEDS_ATTENTION
+            and self._store.find_operation_recovery(operation_id) is not None
+        )
         return NotesSyncExecutionResult(
             operation_id=operation_id,
             state=state,
+            recovery_required=recovery_required,
             reason_code=reason_code,
-            choices=_ATTENTION_CHOICES
-            if state is NotesSyncOperationState.NEEDS_ATTENTION
-            else (),
+            choices=_ATTENTION_CHOICES if recovery_required else (),
         )
 
 
