@@ -523,6 +523,13 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
+      "call_count": 9,
+      "diagnostic_digest": "8abbad6370d0bd22eae5",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Chunking/engine/strategies/propositions.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
       "call_count": 2,
       "diagnostic_digest": "fdc080dc579ef1a68184",
       "owner": "TASK-494",
@@ -1441,7 +1448,7 @@
     },
     {
       "call_count": 1,
-      "diagnostic_digest": "fbea65e22de6943a1c69",
+      "diagnostic_digest": "0256c2b09e1be2639617",
       "owner": "TASK-494",
       "path": "tldw_chatbook/RAG_Search/__init__.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -3674,7 +3681,7 @@
     },
     {
       "call_count": 328,
-      "diagnostic_digest": "5a92956a5766f8b313e0",
+      "diagnostic_digest": "260780ad3fe242c5f3f8",
       "owner": "TASK-494",
       "path": "tldw_chatbook/app.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -3910,9 +3917,9 @@
   "schema_version": 2,
   "scope": "tldw_chatbook/**/*.py",
   "summary": {
-    "owner_files": 529,
+    "owner_files": 530,
     "persistent_sink_files": 8,
     "task_492_calls": 1222,
-    "task_494_calls": 7242
+    "task_494_calls": 7251
   }
 }
