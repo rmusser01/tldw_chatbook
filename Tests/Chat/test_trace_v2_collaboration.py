@@ -511,6 +511,8 @@ def test_round_trip_preserves_order_identity_lineage_timing_usage_and_missing() 
         ("result", "capture_failed"),
         ("task", "redacted"),
         ("event_id", "redacted"),
+        ("token_count", "not_available"),
+        ("input_token_count", "capture_failed"),
     ],
 )
 def test_round_trip_accounts_for_every_source_non_observed_field_state(

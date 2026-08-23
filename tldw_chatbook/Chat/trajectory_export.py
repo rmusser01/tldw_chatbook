@@ -279,6 +279,9 @@ _CONTENT_KEYS = frozenset(
 )
 _CREDENTIAL_SAFE_KEYS = frozenset({"first_token_at"})
 _CREDENTIAL_REDACTION_VALUES = frozenset({"[credential redacted]"})
+_STRUCTURAL_METADATA_KEYS = frozenset(
+    {"field_states", "field_provenance", "redaction_provenance"}
+)
 _IDENTIFIER_KEY_RE = re.compile(r"(?:^|[_-])(?:id|identifier|uuid)s?$", re.IGNORECASE)
 
 
@@ -313,7 +316,7 @@ def _has_credential(value: Any, key: str = "") -> bool:
     return isinstance(value, str) and _credential_text(value)[1]
 
 
-def _has_credential_material(value: Any) -> bool:
+def _has_credential_material(value: Any, *, structural_keys: bool = False) -> bool:
     """Detect unsanitized credential material in an already-governed document."""
     if isinstance(value, Mapping):
         for name, item in value.items():
@@ -321,7 +324,8 @@ def _has_credential_material(value: Any) -> bool:
             if _credential_text(key)[1]:
                 return True
             if (
-                key.lower() not in _CREDENTIAL_SAFE_KEYS
+                not structural_keys
+                and key.lower() not in _CREDENTIAL_SAFE_KEYS
                 and _CREDENTIAL_KEY_RE.search(key)
                 and (
                     not isinstance(item, str)
@@ -329,11 +333,17 @@ def _has_credential_material(value: Any) -> bool:
                 )
             ):
                 return True
-            if _has_credential_material(item):
+            if _has_credential_material(
+                item,
+                structural_keys=structural_keys or key in _STRUCTURAL_METADATA_KEYS,
+            ):
                 return True
         return False
     if isinstance(value, (list, tuple)):
-        return any(_has_credential_material(item) for item in value)
+        return any(
+            _has_credential_material(item, structural_keys=structural_keys)
+            for item in value
+        )
     return isinstance(value, str) and _credential_text(value)[1]
 
 
@@ -660,11 +670,25 @@ def _scrub_event_credentials(
     event: dict[str, Any],
 ) -> tuple[dict[str, Any], list[dict[str, str]]]:
     """Credential-scrub the complete serialized event as the final privacy gate."""
+    structural = {
+        key: value for key, value in event.items() if key in _STRUCTURAL_METADATA_KEYS
+    }
+    event_data = {
+        key: value
+        for key, value in event.items()
+        if key not in _STRUCTURAL_METADATA_KEYS
+    }
     scrubbed, nested, _, _ = _govern_value(
-        event,
+        event_data,
         profile=TraceExportProfile.FULL_TRACE,
         path="event",
     )
+    for key, value in structural.items():
+        scrubbed_value, metadata_provenance = _scrub_structural_metadata(
+            value, path=f"event.{key}"
+        )
+        scrubbed[key] = scrubbed_value
+        nested.extend(metadata_provenance)
     normalized = []
     for item in nested:
         field = item["field"]
@@ -672,6 +696,38 @@ def _scrub_event_credentials(
             field = field[len("event.") :]
         normalized.append({**item, "field": field})
     return dict(scrubbed), normalized
+
+
+def _scrub_structural_metadata(
+    value: Any, *, path: str
+) -> tuple[Any, list[dict[str, str]]]:
+    """Scrub metadata values while preserving field-name keys such as token_count."""
+    if isinstance(value, Mapping):
+        output: dict[str, Any] = {}
+        provenance: list[dict[str, str]] = []
+        for name, item in value.items():
+            item_path = f"{path}.{name}"
+            output[str(name)], item_provenance = _scrub_structural_metadata(
+                item, path=item_path
+            )
+            provenance.extend(item_provenance)
+        return output, provenance
+    if isinstance(value, (list, tuple)):
+        output = []
+        provenance = []
+        for index, item in enumerate(value):
+            scrubbed, item_provenance = _scrub_structural_metadata(
+                item, path=f"{path}[{index}]"
+            )
+            output.append(scrubbed)
+            provenance.extend(item_provenance)
+        return output, provenance
+    if not isinstance(value, str):
+        return value, []
+    scrubbed, credential = _credential_text(value)
+    if not credential:
+        return value, []
+    return scrubbed, [{"field": path, "state": "redacted", "reason": "credential"}]
 
 
 def preflight_trace_export(
