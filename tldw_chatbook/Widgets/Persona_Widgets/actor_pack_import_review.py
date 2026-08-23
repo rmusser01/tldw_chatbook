@@ -32,7 +32,7 @@ class ActorPackImportReviewDialog(SafeModalDismissMixin, ModalScreen[str | None]
     BINDINGS = [Binding("escape", "request_safe_cancel", "Cancel", show=False)]
     SAFE_MODAL_CONTENT = "#actor-pack-import-review"
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ActorPackImportReviewDialog {
         align: center middle;
     }
@@ -67,12 +67,6 @@ class ActorPackImportReviewDialog(SafeModalDismissMixin, ModalScreen[str | None]
     ActorPackImportReviewDialog .actor-pack-import-copy {
         height: auto;
         text-wrap: wrap;
-    }
-
-    ActorPackImportReviewDialog .actor-pack-import-portrait {
-        width: 18;
-        height: 7;
-        margin-top: 1;
     }
 
     ActorPackImportReviewDialog #actor-pack-import-actions {
@@ -237,6 +231,9 @@ def _portrait_widget(preview: ActorPackPortraitPreview) -> Any | None:
         widget = TerminalImage(image)
         widget.id = "actor-pack-import-portrait-preview"
         widget.add_class("actor-pack-import-portrait")
+        widget.styles.width = 18
+        widget.styles.height = 7
+        widget.styles.margin_top = 1
         return widget
     except Exception:
         return None
