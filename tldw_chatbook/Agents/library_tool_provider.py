@@ -15,8 +15,10 @@ per run after `BuiltinToolProvider` and before skills/MCP.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import threading
 from typing import Any, Mapping
 from uuid import uuid4
+import weakref
 
 from loguru import logger
 
@@ -42,7 +44,7 @@ def _error_result(error: LibraryToolError) -> ToolResult:
     return ToolResult(ok=False, error=json_dumps_compact(error.to_payload()))
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, weakref_slot=True)
 class BuiltinLibraryAuthority:
     """Live, credential-free authority issued by one built-in provider."""
 
@@ -56,12 +58,10 @@ class _BuiltinLibraryAuthorityIssuer:
 
     def _initialize_builtin_authority_issuer(self) -> None:
         self._builtin_library_provider_instance_id = uuid4().hex
-        self._builtin_library_authority: BuiltinLibraryAuthority | None = None
-
-    @property
-    def builtin_authority(self) -> BuiltinLibraryAuthority | None:
-        """Return this provider's currently issued live authority object."""
-        return self._builtin_library_authority
+        self._builtin_library_authorities: dict[
+            int, weakref.ReferenceType[BuiltinLibraryAuthority]
+        ] = {}
+        self._builtin_library_authority_lock = threading.RLock()
 
     def issue_builtin_authority(
         self,
@@ -69,25 +69,46 @@ class _BuiltinLibraryAuthorityIssuer:
         reserved_names: frozenset[str],
         assistant_access: ConsoleAssistantLibraryAccess,
     ) -> BuiltinLibraryAuthority:
-        """Replace and return this provider instance's live authority object."""
+        """Issue one independently live authority for an owning run registry."""
         authority = BuiltinLibraryAuthority(
             provider_instance_id=self._builtin_library_provider_instance_id,
             reserved_names=reserved_names,
             assistant_access=assistant_access,
         )
-        self._builtin_library_authority = authority
+        authority_key = id(authority)
+        issuer_ref = weakref.ref(self)
+
+        def _discard(
+            dead_ref: weakref.ReferenceType[BuiltinLibraryAuthority],
+            *,
+            key: int = authority_key,
+            owner_ref: weakref.ReferenceType[_BuiltinLibraryAuthorityIssuer] = issuer_ref,
+        ) -> None:
+            owner = owner_ref()
+            if owner is None:
+                return
+            with owner._builtin_library_authority_lock:
+                if owner._builtin_library_authorities.get(key) is dead_ref:
+                    owner._builtin_library_authorities.pop(key, None)
+
+        authority_ref = weakref.ref(authority, _discard)
+        with self._builtin_library_authority_lock:
+            self._builtin_library_authorities[authority_key] = authority_ref
         return authority
 
     def authenticates_builtin_authority(
         self, authority: object
     ) -> bool:
         """Authenticate only the exact currently issued object for this instance."""
-        return (
-            authority is self._builtin_library_authority
-            and isinstance(authority, BuiltinLibraryAuthority)
-            and authority.provider_instance_id
-            == self._builtin_library_provider_instance_id
-        )
+        if (
+            not isinstance(authority, BuiltinLibraryAuthority)
+            or authority.provider_instance_id
+            != self._builtin_library_provider_instance_id
+        ):
+            return False
+        with self._builtin_library_authority_lock:
+            authority_ref = self._builtin_library_authorities.get(id(authority))
+            return authority_ref is not None and authority_ref() is authority
 
 
 class LibraryToolProvider(_BuiltinLibraryAuthorityIssuer):

@@ -148,11 +148,10 @@ def test_allowed_context_selects_exact_captured_provider(
     direct, expected_type, expected_names
 ):
     context = _context(ConsoleAssistantLibraryAccess.ALLOWED, direct=direct)
-    provider = _controller()._library_provider_for_context(context)
+    provider, authority = _controller()._library_provider_for_context(context)
 
     assert type(provider) is expected_type
     assert frozenset(entry.name for entry in provider.list_catalog()) == expected_names
-    authority = provider.builtin_authority
     assert authority.assistant_access is ConsoleAssistantLibraryAccess.ALLOWED
 
     registry, allowed, _builtins, _locals = _compose_run_registry_and_allowed(
@@ -187,12 +186,14 @@ def test_provider_unavailable_or_wrong_for_captured_selector_fails_closed():
 def test_allowed_then_blocked_builds_fresh_registry_without_cached_provider():
     controller = _controller()
     allowed_context = _context(ConsoleAssistantLibraryAccess.ALLOWED, direct=True)
-    allowed_provider = controller._library_provider_for_context(allowed_context)
+    allowed_provider, allowed_authority = controller._library_provider_for_context(
+        allowed_context
+    )
     allowed_registry, allowed_names, _builtins, _locals = (
         _compose_run_registry_and_allowed(
             {},
             library_provider=allowed_provider,
-            library_authority=allowed_provider.builtin_authority,
+            library_authority=allowed_authority,
         )
     )
     assert "library_list_notes" in allowed_names
@@ -213,12 +214,12 @@ def test_allowed_then_blocked_builds_fresh_registry_without_cached_provider():
 
 def test_child_authority_can_narrow_but_never_widen_parent_registry():
     context = _context(ConsoleAssistantLibraryAccess.ALLOWED, direct=True)
-    provider = _controller()._library_provider_for_context(context)
+    provider, authority = _controller()._library_provider_for_context(context)
     registry, parent_allowed, _builtins, _locals = (
         _compose_run_registry_and_allowed(
             {},
             library_provider=provider,
-            library_authority=provider.builtin_authority,
+            library_authority=authority,
         )
     )
     reserved = frozenset(LIBRARY_TOOL_DESCRIPTORS)

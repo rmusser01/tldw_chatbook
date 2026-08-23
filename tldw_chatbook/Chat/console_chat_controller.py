@@ -5698,8 +5698,8 @@ class ConsoleChatController:
 
     def _library_provider_for_context(
         self, turn_context: ConsoleTurnExecutionContext
-    ) -> Any | None:
-        """Build and authenticate the provider from final immutable authority."""
+    ) -> tuple[Any, Any] | None:
+        """Build the provider and its run-owned authority from final context."""
         self._require_complete_turn_execution_context(turn_context)
         library_authority = turn_context.library_authority
         if (
@@ -5727,11 +5727,11 @@ class ConsoleChatController:
         )
         if type(provider) is not expected_type:
             return None
-        provider.issue_builtin_authority(
+        authority = provider.issue_builtin_authority(
             reserved_names=LIBRARY_RESERVED_TOOL_NAMES,
             assistant_access=library_authority.policy.assistant_access,
         )
-        return provider
+        return provider, authority
 
     def resolve_pending_approval(
         self, decisions: dict[str, str], *, round_id: str | None = None
@@ -12372,9 +12372,9 @@ class ConsoleChatController:
         library_provider_authority: Any | None = None
         if self._library_provider_factory is not None:
             try:
-                library_provider = self._library_provider_for_context(turn_context)
-                if library_provider is not None:
-                    library_provider_authority = library_provider.builtin_authority
+                library_selection = self._library_provider_for_context(turn_context)
+                if library_selection is not None:
+                    library_provider, library_provider_authority = library_selection
             except Exception:  # noqa: BLE001 -- never block a send
                 logger.opt(exception=True).warning(
                     "library_provider_factory failed; running without Library tools"

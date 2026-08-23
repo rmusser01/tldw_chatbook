@@ -125,11 +125,19 @@ def test_builtin_provider_authority_is_live_instance_bound(provider):
     assert authority.reserved_names is LIBRARY_RESERVED_TOOL_NAMES
 
 
-def test_builtin_provider_reissuing_authority_revokes_the_old_marker():
-    """One provider instance must have only one current live authority object."""
+@pytest.mark.parametrize(
+    "provider",
+    [
+        LibraryToolProvider(FakeLibraryService()),
+        LibraryRagToolProvider(None),
+    ],
+    ids=["direct", "rag"],
+)
+def test_builtin_provider_authenticates_multiple_live_exact_authorities(provider):
+    """Overlapping runs retain independent exact-object capabilities."""
+    from tldw_chatbook.Agents.library_tool_provider import BuiltinLibraryAuthority
     from tldw_chatbook.Agents.tool_catalog import LIBRARY_RESERVED_TOOL_NAMES
 
-    provider = LibraryToolProvider(FakeLibraryService())
     first = provider.issue_builtin_authority(
         reserved_names=LIBRARY_RESERVED_TOOL_NAMES,
         assistant_access=ConsoleAssistantLibraryAccess.ALLOWED,
@@ -138,9 +146,16 @@ def test_builtin_provider_reissuing_authority_revokes_the_old_marker():
         reserved_names=LIBRARY_RESERVED_TOOL_NAMES,
         assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
     )
+    copied = BuiltinLibraryAuthority(
+        provider_instance_id=first.provider_instance_id,
+        reserved_names=first.reserved_names,
+        assistant_access=first.assistant_access,
+    )
 
-    assert provider.authenticates_builtin_authority(first) is False
+    assert provider.authenticates_builtin_authority(first) is True
     assert provider.authenticates_builtin_authority(second) is True
+    assert first == copied
+    assert provider.authenticates_builtin_authority(copied) is False
 
 
 # --------------------------------------------------------------------------

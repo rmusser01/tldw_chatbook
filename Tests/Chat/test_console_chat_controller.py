@@ -5847,7 +5847,9 @@ async def test_run_agent_reply_threads_library_provider_from_factory():
     assert len(factory_calls) == 1
     assert len(bridge_calls) == 1
     assert bridge_calls[0]["library_provider"] is provider
-    assert bridge_calls[0]["library_authority"] is provider.builtin_authority
+    assert provider.authenticates_builtin_authority(
+        bridge_calls[0]["library_authority"]
+    )
 
 
 @pytest.mark.asyncio
@@ -5908,8 +5910,12 @@ async def test_library_provider_factory_refreshes_per_run_without_rebuilding_bri
     assert len(bridge_calls) == 2
     assert bridge_calls[0]["library_provider"] is first_provider
     assert bridge_calls[1]["library_provider"] is second_provider
-    assert bridge_calls[0]["library_authority"] is first_provider.builtin_authority
-    assert bridge_calls[1]["library_authority"] is second_provider.builtin_authority
+    assert first_provider.authenticates_builtin_authority(
+        bridge_calls[0]["library_authority"]
+    )
+    assert second_provider.authenticates_builtin_authority(
+        bridge_calls[1]["library_authority"]
+    )
     assert controller._agent_bridge is cached_bridge
 
 

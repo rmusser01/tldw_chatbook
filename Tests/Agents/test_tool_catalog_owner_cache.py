@@ -18,7 +18,9 @@ fix folds a name -> id map into the SAME cache build as the owner map, so
 both lookups share one `list_catalog()` sweep per provider per run.
 """
 
+import gc
 import itertools
+import weakref
 
 import pytest
 
@@ -476,3 +478,65 @@ def test_ephemeral_authenticated_provider_rejects_unreserved_future_name():
     assert registry.resolve_name("library_future_write") is None
     with pytest.raises(KeyError):
         registry.load_schema("library:library_future_write")
+
+
+@pytest.mark.parametrize(
+    ("provider", "name", "args"),
+    [
+        (LibraryToolProvider(_LibraryService()), "library_list_notes", {}),
+        (LibraryRagToolProvider(None), "search_library_rag", {"query": "q"}),
+    ],
+    ids=["direct", "rag"],
+)
+def test_overlapping_ephemeral_registries_keep_independent_live_authority(
+    provider, name, args
+):
+    """Issuing run B must not invalidate run A's cache, schema, or call path."""
+    registry_a = ToolCatalogRegistry(ephemeral=True)
+    authority_a = _allowed_authority(provider)
+    assert registry_a.register_builtin_library_provider(provider, authority_a)
+
+    assert registry_a.resolve_name(name) is not None
+    assert registry_a.load_schema(f"library:{name}").name == name
+    assert "temporary chat" not in registry_a.invoke_by_name(name, args).error
+
+    registry_b = ToolCatalogRegistry(ephemeral=True)
+    authority_b = _allowed_authority(provider)
+    assert registry_b.register_builtin_library_provider(provider, authority_b)
+    assert "temporary chat" not in registry_b.invoke_by_name(name, args).error
+
+    assert registry_a.load_schema(f"library:{name}").name == name
+    assert "temporary chat" not in registry_a.invoke_by_name(name, args).error
+    registry_a.reset_catalog_cache()
+    assert registry_a.resolve_name(name) is not None
+    assert registry_a.load_schema(f"library:{name}").name == name
+    assert "temporary chat" not in registry_a.invoke_by_name(name, args).error
+
+    authority_b_ref = weakref.ref(authority_b)
+    del registry_b, authority_b
+    gc.collect()
+    assert authority_b_ref() is None
+    assert provider.authenticates_builtin_authority(authority_a) is True
+    assert "temporary chat" not in registry_a.invoke_by_name(name, args).error
+
+
+@pytest.mark.parametrize(
+    "provider",
+    [LibraryToolProvider(_LibraryService()), LibraryRagToolProvider(None)],
+    ids=["direct", "rag"],
+)
+def test_released_run_authorities_do_not_accumulate_in_provider(provider):
+    """Registry lifetime is the strong owner; issuer bookkeeping stays bounded."""
+    authority_refs = []
+    for _ in range(32):
+        registry = ToolCatalogRegistry(ephemeral=True)
+        authority = _allowed_authority(provider)
+        authority_refs.append(weakref.ref(authority))
+        assert registry.register_builtin_library_provider(provider, authority)
+        registry.list_catalog()
+        del registry, authority
+
+    gc.collect()
+
+    assert all(reference() is None for reference in authority_refs)
+    assert provider._builtin_library_authorities == {}
