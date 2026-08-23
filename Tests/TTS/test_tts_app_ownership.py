@@ -1320,7 +1320,16 @@ async def test_voice_bundle_service_is_lazy_singleton_and_closes_before_reposito
         constructed.append((root, repo, dependency))
         return portability
 
-    monkeypatch.setattr(app_module, "TTSVoiceBundlePortabilityService", build)
+    # TASK-21108: `app.py` imports the portability class function-locally
+    # inside `_ensure_tts_voice_bundle_service` (the 1,857-line module is off
+    # the boot path now), so the substitution has to land on the defining
+    # module -- there is no `app_module.TTSVoiceBundlePortabilityService` to
+    # patch, and patching one would not be read by the deferred import.
+    import tldw_chatbook.TTS.voice_bundle_service as voice_bundle_module
+
+    monkeypatch.setattr(
+        voice_bundle_module, "TTSVoiceBundlePortabilityService", build
+    )
     monkeypatch.setattr(app_module, "get_user_data_dir", lambda: tmp_path)
     owner = SimpleNamespace(
         _tts_voice_bundle_service=None,
