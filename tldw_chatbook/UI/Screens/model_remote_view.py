@@ -26,6 +26,10 @@ from tldw_chatbook.Model_Artifacts.remote_huggingface import (
     build_remote_catalog,
     is_exact_repository,
 )
+from tldw_chatbook.Model_Artifacts.machine_memory import (
+    MachineMemorySnapshot,
+    project_gguf_memory,
+)
 from tldw_chatbook.Model_Artifacts.service import (
     ArtifactRef,
     ModelArtifactService,
@@ -38,6 +42,11 @@ from tldw_chatbook.UI.Screens.model_browser_state import (
     sort_variant_guidance,
     variant_guidance,
 )
+from tldw_chatbook.UI.Screens.model_memory_presenter import (
+    MachineMemoryPresentation,
+    build_candidate_memory_presentation,
+    build_machine_memory_presentation,
+)
 from tldw_chatbook.Widgets.ModelArtifacts import ModelInstallProgress
 
 if TYPE_CHECKING:
@@ -47,7 +56,7 @@ if TYPE_CHECKING:
     )
 
 
-_NARROW_WIDTH = 64
+_SINGLE_PANE_WIDTH = 72
 
 
 def _default_credential_resolver() -> "CredentialResolver":
@@ -183,6 +192,14 @@ class RemoteView(Widget):
             super().__init__()
             self.query = query
 
+    class MachineMemoryRequested(Message):
+        """Request screen-owned local-memory observation or refresh."""
+
+        def __init__(self, *, force: bool) -> None:
+            """Create one presentation-only observation intent."""
+            super().__init__()
+            self.force = force
+
     BUNDLED_CSS = """
     RemoteView {
         height: 100%;
@@ -295,6 +312,41 @@ class RemoteView(Widget):
         color: $text;
     }
 
+    RemoteView .remote-machine-panel {
+        height: auto;
+        margin-top: 1;
+        padding: 1;
+        border: solid $surface-lighten-1;
+        background: $panel;
+    }
+
+    RemoteView .remote-machine-actions {
+        height: auto;
+        min-height: 3;
+        margin-top: 1;
+    }
+
+    RemoteView .remote-machine-actions Button {
+        width: auto;
+        margin-right: 1;
+    }
+
+    RemoteView .remote-fit-outcome,
+    RemoteView .remote-fit-details,
+    RemoteView .remote-variant-filename {
+        width: 100%;
+        height: auto;
+    }
+
+    RemoteView .remote-fit-outcome {
+        margin-top: 1;
+        text-style: bold;
+    }
+
+    RemoteView .remote-fit-details {
+        color: $text-muted;
+    }
+
     RemoteView .remote-variant-controls {
         height: auto;
         min-height: 3;
@@ -381,12 +433,13 @@ class RemoteView(Widget):
     }
 
     RemoteView.-narrow .remote-results-pane {
-        width: 2fr;
+        width: 100%;
         min-width: 0;
+        border-right: none;
     }
 
     RemoteView.-narrow .remote-detail-pane {
-        width: 3fr;
+        width: 100%;
         min-width: 0;
     }
 
@@ -485,6 +538,12 @@ class RemoteView(Widget):
         self._operation_reference: ArtifactRef | None = None
         self._completed_reference: ArtifactRef | None = None
         self._progress: "AcquisitionProgress | None" = None
+        self._machine_snapshot: MachineMemorySnapshot | None = None
+        self._machine_presentation = build_machine_memory_presentation(None)
+        self._machine_details_expanded = True
+        self._machine_details_touched = False
+        self._single_pane_show_detail = False
+        self._repository_focus_locator: str | None = None
         super().__init__(id=id)
 
     def compose(self) -> ComposeResult:
@@ -518,6 +577,12 @@ class RemoteView(Widget):
                     can_focus=False,
                 )
             with Vertical(classes="remote-detail-pane"):
+                back = Button(
+                    "Back to repositories",
+                    id="remote-back-to-results",
+                )
+                back.display = self.has_class("-single-pane")
+                yield back
                 yield Static(
                     self._default_status(),
                     id="remote-model-status",
@@ -569,7 +634,50 @@ class RemoteView(Widget):
 
     def _set_responsive(self, width: int) -> None:
         """Stack the action bar and release pane floors below the breakpoint."""
-        self.set_class(width < _NARROW_WIDTH, "-narrow")
+        single_pane = width < _SINGLE_PANE_WIDTH
+        self.set_class(single_pane, "-narrow")
+        self.set_class(single_pane, "-single-pane")
+        if not self._machine_details_touched:
+            self._machine_details_expanded = not single_pane
+        self._apply_pane_visibility()
+        self._apply_machine_details_visibility()
+
+    def _apply_pane_visibility(self) -> None:
+        """Show both panes or the selected narrow drill-down pane in place."""
+        try:
+            results = self.query_one(".remote-results-pane", Vertical)
+            details = self.query_one(".remote-detail-pane", Vertical)
+        except NoMatches:
+            return
+        single_pane = self.has_class("-single-pane")
+        results.display = not single_pane or not self._single_pane_show_detail
+        details.display = not single_pane or self._single_pane_show_detail
+        for back in self.query("#remote-back-to-results").results(Button):
+            back.display = single_pane
+
+    def _show_repository_results(self, *, restore_focus: bool = True) -> None:
+        """Show narrow results and restore the exact retained repository control."""
+        self._single_pane_show_detail = False
+        self._apply_pane_visibility()
+        if not restore_focus:
+            return
+        repository = self._repository_focus_locator
+        for button in self.query(".remote-result").results(Button):
+            if getattr(button, "repository", None) == repository:
+                self.call_later(self.screen.set_focus, button)
+                return
+        try:
+            query = self.query_one("#remote-model-query", Input)
+        except NoMatches:
+            return
+        self.call_later(self.screen.set_focus, query)
+
+    def _show_repository_detail(self, repository: str | None = None) -> None:
+        """Show narrow detail while retaining a bounded result focus locator."""
+        if repository is not None:
+            self._repository_focus_locator = repository
+        self._single_pane_show_detail = True
+        self._apply_pane_visibility()
 
     def _default_status(self) -> str:
         if self._completed_reference is not None:
@@ -683,6 +791,7 @@ class RemoteView(Widget):
         )
         yield Static(f"License: {license_label}", markup=False)
         yield Static("Provenance: Local integrity recorded", markup=False)
+        yield from self._machine_panel_widgets()
         yield Static("Available GGUF files", classes="remote-detail-section")
         if resolved.total_candidate_count > len(resolved.candidates):
             yield Static(
@@ -694,10 +803,9 @@ class RemoteView(Widget):
             yield Static(f"Incomplete shard set: {warning}", markup=False)
         yield Static(
             (
-                "Filename-derived general guidance. Within the same model, "
-                "lower-bit variants are generally smaller; higher-bit variants "
-                "generally retain more fidelity. Runtime compatibility and "
-                "machine fit have not been verified."
+                "Filename-derived general guidance. Machine memory is estimated "
+                "below; model-context support and runtime compatibility remain "
+                "unverified."
             ),
             classes="remote-variant-guidance",
             markup=False,
@@ -800,9 +908,209 @@ class RemoteView(Widget):
                     classes="remote-muted remote-variant-summary",
                     markup=False,
                 ),
+                *self._candidate_memory_widgets(row.source_index, candidate),
                 button,
                 classes="remote-candidate-row",
             )
+
+    def _machine_panel_widgets(self):
+        presentation = self._machine_presentation
+        evidence = "\n".join(presentation.evidence_lines)
+        details = "\n".join(
+            (*presentation.limitation_lines, *presentation.accelerator_detail_lines)
+        )
+        details_static = Static(
+            details,
+            id="remote-machine-estimate-details",
+            markup=False,
+        )
+        details_static.display = self._machine_details_expanded and bool(details)
+        toggle = Button(
+            "Hide estimate details"
+            if self._machine_details_expanded
+            else "Show estimate details",
+            id="remote-machine-details-toggle",
+        )
+        toggle.display = bool(details)
+        yield Vertical(
+            Static(
+                presentation.headline,
+                id="remote-machine-headline",
+                markup=False,
+            ),
+            Static(
+                evidence,
+                id="remote-machine-evidence",
+                markup=False,
+            ),
+            Static(
+                presentation.failure_line or "",
+                id="remote-machine-failure",
+                markup=False,
+            ),
+            details_static,
+            Horizontal(
+                Button(
+                    presentation.action_label,
+                    id="remote-machine-recheck",
+                    disabled=presentation.action_disabled,
+                ),
+                toggle,
+                classes="remote-machine-actions",
+            ),
+            classes="remote-machine-panel",
+        )
+
+    def _candidate_memory_presentation(self, candidate: RemoteGGUFCandidate):
+        projection = (
+            project_gguf_memory(candidate.total_bytes, self._machine_snapshot)
+            if self._machine_snapshot is not None
+            else None
+        )
+        return build_candidate_memory_presentation(
+            projection,
+            self._machine_snapshot,
+            active=self._machine_presentation.action_disabled,
+        )
+
+    def _candidate_memory_widgets(
+        self,
+        source_index: int,
+        candidate: RemoteGGUFCandidate,
+    ) -> tuple[Static, Static]:
+        presentation = self._candidate_memory_presentation(candidate)
+        detail_lines = tuple(
+            line
+            for line in (
+                presentation.details,
+                presentation.pressure,
+                self._machine_presentation.failure_line,
+            )
+            if line
+        )
+        details = Static(
+            "\n".join(detail_lines),
+            id=f"remote-fit-details-{source_index}",
+            classes="remote-fit-details",
+            markup=False,
+        )
+        details.display = self._machine_details_expanded
+        return (
+            Static(
+                presentation.outcome,
+                id=f"remote-fit-outcome-{source_index}",
+                classes="remote-fit-outcome",
+                markup=False,
+            ),
+            details,
+        )
+
+    def apply_machine_memory_state(
+        self,
+        presentation: MachineMemoryPresentation,
+        snapshot: MachineMemorySnapshot | None,
+    ) -> None:
+        """Apply immutable screen-owned evidence without replacing controls."""
+        if type(presentation) is not MachineMemoryPresentation:
+            return
+        if snapshot is not None and type(snapshot) is not MachineMemorySnapshot:
+            return
+        self._machine_presentation = presentation
+        self._machine_snapshot = snapshot
+        self._update_machine_panel_in_place()
+        self._update_candidate_memory_statics_in_place()
+
+    def _update_machine_panel_in_place(self) -> None:
+        try:
+            headline = self.query_one("#remote-machine-headline", Static)
+            evidence = self.query_one("#remote-machine-evidence", Static)
+            failure = self.query_one("#remote-machine-failure", Static)
+            details = self.query_one("#remote-machine-estimate-details", Static)
+            recheck = self.query_one("#remote-machine-recheck", Button)
+            toggle = self.query_one("#remote-machine-details-toggle", Button)
+        except NoMatches:
+            return
+        presentation = self._machine_presentation
+        detail_text = "\n".join(
+            (*presentation.limitation_lines, *presentation.accelerator_detail_lines)
+        )
+        headline.update(presentation.headline)
+        evidence.update("\n".join(presentation.evidence_lines))
+        failure.update(presentation.failure_line or "")
+        details.update(detail_text)
+        recheck.label = presentation.action_label
+        recheck.disabled = presentation.action_disabled
+        toggle.display = bool(detail_text)
+        self._apply_machine_details_visibility()
+
+    def _update_candidate_memory_statics_in_place(self) -> None:
+        if self._resolved is None:
+            return
+        for source_index, candidate in enumerate(self._resolved.candidates):
+            try:
+                outcome = self.query_one(
+                    f"#remote-fit-outcome-{source_index}", Static
+                )
+                details = self.query_one(
+                    f"#remote-fit-details-{source_index}", Static
+                )
+            except NoMatches:
+                continue
+            presentation = self._candidate_memory_presentation(candidate)
+            outcome.update(presentation.outcome)
+            details.update(
+                "\n".join(
+                    line
+                    for line in (
+                        presentation.details,
+                        presentation.pressure,
+                        self._machine_presentation.failure_line,
+                    )
+                    if line
+                )
+            )
+            details.display = self._machine_details_expanded
+
+    def _apply_machine_details_visibility(self) -> None:
+        try:
+            details = self.query_one("#remote-machine-estimate-details", Static)
+            toggle = self.query_one("#remote-machine-details-toggle", Button)
+        except NoMatches:
+            return
+        detail_text = str(details.renderable)
+        details.display = self._machine_details_expanded and bool(detail_text)
+        toggle.display = bool(detail_text)
+        toggle.label = (
+            "Hide estimate details"
+            if self._machine_details_expanded
+            else "Show estimate details"
+        )
+        for candidate_details in self.query(".remote-fit-details").results(Static):
+            candidate_details.display = self._machine_details_expanded
+
+    @on(Button.Pressed, "#remote-machine-details-toggle")
+    def _machine_details_toggle_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._machine_details_touched = True
+        self._machine_details_expanded = not self._machine_details_expanded
+        self._apply_machine_details_visibility()
+
+    @on(Button.Pressed, "#remote-machine-recheck")
+    def _machine_recheck_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        if self._machine_presentation.action_disabled:
+            return
+        presentation_snapshot = (
+            self._machine_snapshot
+            if self._machine_snapshot is not None
+            and self._machine_snapshot.total_bytes is not None
+            else None
+        )
+        self.apply_machine_memory_state(
+            build_machine_memory_presentation(presentation_snapshot, active=True),
+            self._machine_snapshot,
+        )
+        self.post_message(self.MachineMemoryRequested(force=True))
 
     def _refresh_variant_list(self) -> None:
         """Refresh only candidate rows so local controls retain keyboard focus."""
@@ -877,6 +1185,7 @@ class RemoteView(Widget):
             return
         query = self.query_one("#remote-model-query", Input).value.strip()
         self._query_value = query
+        self._show_repository_results(restore_focus=False)
         self.post_message(self.DiscoveryStarted(query))
         was_completed = self._completed_reference is not None
         self._search_generation += 1
@@ -918,6 +1227,8 @@ class RemoteView(Widget):
         self._set_metadata_controls_disabled(True)
         if is_exact_repository(query):
             self._selected_repository = query
+            self._repository_focus_locator = None
+            self._show_repository_detail()
             self._refresh_with_status("Inspecting repository…")
             self._resolve_remote(query, resolve_generation, query)
             return
@@ -935,10 +1246,12 @@ class RemoteView(Widget):
         self._resolve_generation += 1
         self._resolved = None
         self._selected_repository = repository
+        self._repository_focus_locator = repository
         self._selected_candidate = None
         self._variant_filter = ""
         self._set_search_controls_disabled(True)
         self._set_selected_result_variant()
+        self._show_repository_detail(repository)
         self._refresh_details_with_status("Inspecting repository…")
         relevant_input = self.query_one("#remote-model-query", Input).value.strip()
         self._resolve_remote(repository, self._resolve_generation, relevant_input)
@@ -967,6 +1280,12 @@ class RemoteView(Widget):
             self._selection_summary()
         )
         self.query_one("#remote-model-install", Button).disabled = False
+
+    @on(Button.Pressed, "#remote-back-to-results")
+    def _back_to_results_pressed(self, event: Button.Pressed) -> None:
+        """Return to narrow repository results with exact focus restoration."""
+        event.stop()
+        self._show_repository_results()
 
     @on(Button.Pressed, "#remote-model-install")
     def _install_pressed(self, event: Button.Pressed) -> None:
@@ -1170,6 +1489,10 @@ class RemoteView(Widget):
         self._selected_repository = resolved.repository
         self._selected_candidate = None
         self._variant_filter = ""
+        if self._machine_snapshot is None:
+            self._machine_presentation = build_machine_memory_presentation(
+                None, active=True
+            )
         message = (
             f"Pinned {resolved.repository} at {resolved.commit}. "
             "Select one GGUF candidate."
@@ -1179,6 +1502,7 @@ class RemoteView(Widget):
             self._refresh_details_with_status(message)
         else:
             self._refresh_with_status(message)
+        self.post_message(self.MachineMemoryRequested(force=False))
 
     @on(Input.Changed, "#remote-variant-filter")
     def _variant_filter_changed(self, event: Input.Changed) -> None:

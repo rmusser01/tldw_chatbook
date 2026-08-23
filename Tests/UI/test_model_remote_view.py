@@ -37,6 +37,16 @@ from textual.app import App, ComposeResult
 from textual.css.query import NoMatches
 from textual.widgets import Button, Input, Select, Static
 
+from tldw_chatbook.Model_Artifacts.machine_memory import (
+    AcceleratorMemoryObservation,
+    AcceleratorSource,
+    AcceleratorState,
+    GIB,
+    MachineMemorySnapshot,
+    MemoryKind,
+    ProbeReason,
+    SystemMemoryState,
+)
 from tldw_chatbook.Model_Artifacts.remote_huggingface import (
     HuggingFaceRemoteAdapter,
     RemoteDiscoveryError,
@@ -246,6 +256,24 @@ def _resolved(
     )
 
 
+def _memory_resolved() -> ResolvedRemoteModel:
+    """Return one realistic 4 GiB candidate for scenario/pressure rendering."""
+    candidate = RemoteGGUFCandidate(
+        label="owner/repository · model-q4.gguf",
+        files=(RemoteGGUFFile("model-q4.gguf", 4 * GIB, _DIGEST),),
+        total_bytes=4 * GIB,
+    )
+    return ResolvedRemoteModel(
+        repository="owner/repository",
+        commit=_COMMIT,
+        license_id="apache-2.0",
+        review_url=f"https://huggingface.co/owner/repository/tree/{_COMMIT}",
+        candidates=(candidate,),
+        total_candidate_count=1,
+        warnings=(),
+    )
+
+
 def _variant_resolved() -> ResolvedRemoteModel:
     """Return deliberately unsorted known and unknown variant filenames."""
     candidates = tuple(
@@ -315,6 +343,61 @@ def _text(view) -> str:
     return "\n".join(str(item.renderable) for item in view.query(Static))
 
 
+def _memory_snapshot(
+    *,
+    total_gib: int = 32,
+    available_gib: int | None = 10,
+    system_state: SystemMemoryState = SystemMemoryState.OBSERVED,
+    system_reason: ProbeReason | None = None,
+    accelerator_state: AcceleratorState = AcceleratorState.NOT_OBSERVED,
+    accelerator_reason: ProbeReason | None = None,
+    accelerators: tuple[AcceleratorMemoryObservation, ...] = (),
+    memory_kind: MemoryKind = MemoryKind.SYSTEM,
+    platform: str = "linux",
+    architecture: str = "x86_64",
+) -> MachineMemorySnapshot:
+    """Build complete trusted memory evidence for mounted Remote tests."""
+    has_capacity = system_state in {
+        SystemMemoryState.OBSERVED,
+        SystemMemoryState.PARTIAL,
+    }
+    return MachineMemorySnapshot(
+        platform=platform,
+        architecture=architecture,
+        system_state=system_state,
+        accelerator_state=accelerator_state,
+        total_bytes=total_gib * GIB if has_capacity else None,
+        available_bytes=(
+            available_gib * GIB
+            if has_capacity and available_gib is not None
+            else None
+        ),
+        memory_kind=memory_kind if has_capacity else MemoryKind.UNKNOWN,
+        accelerators=accelerators,
+        system_reason=system_reason,
+        accelerator_reason=accelerator_reason,
+    )
+
+
+def _memory_presentation(
+    snapshot: MachineMemorySnapshot | None,
+    *,
+    active: bool = False,
+    observed_at_label: str | None = None,
+    failure: ProbeReason | None = None,
+):
+    from tldw_chatbook.UI.Screens.model_memory_presenter import (
+        build_machine_memory_presentation,
+    )
+
+    return build_machine_memory_presentation(
+        snapshot,
+        active=active,
+        observed_at_label=observed_at_label,
+        failure=failure,
+    )
+
+
 @pytest.mark.asyncio
 async def test_compose_and_mount_create_no_remote_dependencies_or_io() -> None:
     """An eager parent mount cannot instantiate any I/O-bearing dependency."""
@@ -356,6 +439,377 @@ async def test_exact_repository_submission_resolves_without_searching() -> None:
     assert resolver_calls == ["owner/repository"]
     assert "owner/repository" in rendered
     assert "model-q4.gguf" in rendered
+
+
+@pytest.mark.asyncio
+async def test_successful_repository_resolution_requests_machine_memory_once() -> None:
+    """Omitting the intent would leave every candidate in an unknown state."""
+    from tldw_chatbook.UI.Screens.model_remote_view import RemoteView
+
+    requests: list[bool] = []
+    view = _view(
+        adapter_factory=lambda: _Adapter(resolved=_memory_resolved()),
+        resolver_factory=lambda: _Resolver([]),
+    )
+
+    class _App(_RemoteApp):
+        @on(RemoteView.MachineMemoryRequested)
+        def _capture(self, event: RemoteView.MachineMemoryRequested) -> None:
+            requests.append(event.force)
+
+    app = _App(view)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await _submit(app, pilot, "owner/repository")
+
+    assert requests == [False]
+
+
+@pytest.mark.asyncio
+async def test_machine_memory_update_preserves_candidate_identity_and_focus() -> None:
+    """Rebuilding candidate rows on refresh would break keyboard continuity."""
+    view = _view(
+        adapter_factory=lambda: _Adapter(resolved=_memory_resolved()),
+        resolver_factory=lambda: _Resolver([]),
+    )
+    app = _RemoteApp(view)
+    snapshot = _memory_snapshot(total_gib=32, available_gib=10)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await _submit(app, pilot, "owner/repository")
+        candidate = view.query_one(".remote-candidate", Button)
+        outcome = view.query_one("#remote-fit-outcome-0", Static)
+        details = view.query_one("#remote-fit-details-0", Static)
+        candidate.focus()
+        view.apply_machine_memory_state(
+            _memory_presentation(snapshot),
+            snapshot,
+        )
+        await pilot.pause()
+
+        assert view.query_one(".remote-candidate", Button) is candidate
+        assert view.query_one("#remote-fit-outcome-0", Static) is outcome
+        assert view.query_one("#remote-fit-details-0", Static) is details
+        assert app.focused is candidate
+        assert "64K scenario within RAM budget" in _text(view)
+        assert "64K may need more free RAM now" in _text(view)
+        assert "model-context support and runtime compatibility remain unverified" in _text(
+            view
+        )
+        assert outcome._render_markup is False
+        assert details._render_markup is False
+
+
+@pytest.mark.asyncio
+async def test_memory_scenario_panel_recheck_and_details_toggle_are_explicit() -> None:
+    """Losing labeled controls would hide recovery and exact estimate evidence."""
+    from tldw_chatbook.UI.Screens.model_remote_view import RemoteView
+
+    requests: list[bool] = []
+    snapshot = _memory_snapshot(total_gib=32, available_gib=10)
+    view = _view(
+        adapter_factory=lambda: _Adapter(resolved=_resolved()),
+        resolver_factory=lambda: _Resolver([]),
+    )
+
+    class _App(_RemoteApp):
+        @on(RemoteView.MachineMemoryRequested)
+        def _capture(self, event: RemoteView.MachineMemoryRequested) -> None:
+            requests.append(event.force)
+
+    app = _App(view)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await _submit(app, pilot, "owner/repository")
+        view.apply_machine_memory_state(_memory_presentation(snapshot), snapshot)
+        await pilot.pause()
+        details = view.query_one("#remote-machine-estimate-details", Static)
+        toggle = view.query_one("#remote-machine-details-toggle", Button)
+        assert details.display is True
+        assert str(toggle.label) == "Hide estimate details"
+        assert "VRAM not used in this rating" in str(details.renderable)
+        assert "VRAM not observed · not used in this rating" in _text(view)
+
+        toggle.press()
+        await pilot.pause()
+        assert details.display is False
+        assert str(toggle.label) == "Show estimate details"
+
+        recheck = view.query_one("#remote-machine-recheck", Button)
+        recheck.press()
+        await pilot.pause()
+        assert requests == [False, True]
+        assert str(recheck.label) == "Checking…"
+        assert recheck.disabled is True
+
+
+@pytest.mark.asyncio
+async def test_memory_scenario_unavailable_and_retained_failure_copy_is_rendered() -> None:
+    """Flattening failure states would make a retained estimate look freshly observed."""
+    view = _view(
+        adapter_factory=lambda: _Adapter(resolved=_resolved()),
+        resolver_factory=lambda: _Resolver([]),
+    )
+    app = _RemoteApp(view)
+    unavailable = _memory_snapshot(
+        system_state=SystemMemoryState.PERMISSION_DENIED,
+        system_reason=ProbeReason.PERMISSION_DENIED,
+        available_gib=None,
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await _submit(app, pilot, "owner/repository")
+        view.apply_machine_memory_state(
+            _memory_presentation(unavailable),
+            unavailable,
+        )
+        await pilot.pause()
+        assert "Memory access was denied · filename guidance still applies" in _text(
+            view
+        )
+        assert "Memory estimate unavailable · memory access denied" in _text(view)
+        recheck = view.query_one("#remote-machine-recheck", Button)
+        recheck.press()
+        await pilot.pause()
+        assert str(recheck.label) == "Checking…"
+        assert recheck.disabled is True
+
+        accepted = _memory_snapshot()
+        view.apply_machine_memory_state(
+            _memory_presentation(
+                accepted,
+                observed_at_label="09:41",
+                failure=ProbeReason.MEMORY_UNAVAILABLE,
+            ),
+            accepted,
+        )
+        await pilot.pause()
+        assert "Recheck failed · using memory observed at 09:41" in _text(view)
+
+
+@pytest.mark.asyncio
+async def test_memory_scenario_accelerator_details_keep_all_bounded_labels() -> None:
+    """Capping compact copy must not make bounded device facts inaccessible."""
+    devices = tuple(
+        AcceleratorMemoryObservation(
+            vendor="nvidia",
+            label=("長い GPU مثال " + str(index)).ljust(96, "x"),
+            total_bytes=(index + 1) * GIB,
+            shared=False,
+            source=AcceleratorSource.NVIDIA_SMI,
+        )
+        for index in range(3)
+    )
+    snapshot = _memory_snapshot(
+        accelerator_state=AcceleratorState.OBSERVED,
+        accelerators=devices,
+    )
+    view = _view(
+        adapter_factory=lambda: _Adapter(resolved=_resolved()),
+        resolver_factory=lambda: _Resolver([]),
+    )
+    app = _RemoteApp(view)
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        await _submit(app, pilot, "owner/repository")
+        view.apply_machine_memory_state(_memory_presentation(snapshot), snapshot)
+        await pilot.pause()
+        panel = view.query_one("#remote-machine-evidence", Static)
+        details = view.query_one("#remote-machine-estimate-details", Static)
+
+        assert "VRAM observed on 3 devices · show estimate details" in str(
+            panel.renderable
+        )
+        assert all(device.label in str(details.renderable) for device in devices)
+        assert panel._render_markup is False
+        assert details._render_markup is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("device_count", [2, 16])
+async def test_memory_scenario_two_and_sixteen_accelerators_remain_inspectable(
+    device_count: int,
+) -> None:
+    """Changing compact/detail thresholds must not drop a bounded device fact."""
+    devices = tuple(
+        AcceleratorMemoryObservation(
+            vendor="nvidia",
+            label=f"GPU {index}",
+            total_bytes=8 * GIB,
+            shared=False,
+            source=AcceleratorSource.NVIDIA_SMI,
+        )
+        for index in range(device_count)
+    )
+    snapshot = _memory_snapshot(
+        accelerator_state=AcceleratorState.OBSERVED,
+        accelerators=devices,
+    )
+    view = _view(
+        adapter_factory=lambda: _Adapter(resolved=_resolved()),
+        resolver_factory=lambda: _Resolver([]),
+    )
+    app = _RemoteApp(view)
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        await _submit(app, pilot, "owner/repository")
+        view.apply_machine_memory_state(_memory_presentation(snapshot), snapshot)
+        await pilot.pause()
+        compact = str(view.query_one("#remote-machine-evidence", Static).renderable)
+        expanded = str(
+            view.query_one("#remote-machine-estimate-details", Static).renderable
+        )
+
+    if device_count == 2:
+        assert "NVIDIA GPU 0 8.0 GiB" in compact
+        assert "NVIDIA GPU 1 8.0 GiB" in compact
+    else:
+        assert "VRAM observed on 16 devices · show estimate details" in compact
+        assert "NVIDIA GPU 15 8.0 GiB" not in compact
+    assert all(device.label in expanded for device in devices)
+
+
+@pytest.mark.asyncio
+async def test_drill_down_at_71_cells_restores_exact_repository_focus() -> None:
+    """Using two squeezed panes or rebuilding results would break narrow browsing."""
+    adapter = _Adapter(
+        search_result=(_summary(),),
+        resolved=_memory_resolved(),
+    )
+    view = _view(
+        adapter_factory=lambda: adapter,
+        resolver_factory=lambda: _Resolver([]),
+    )
+    app = _RemoteApp(view)
+
+    async with app.run_test(size=(71, 30)) as pilot:
+        await _submit(app, pilot, "test model")
+        results_pane = view.query_one(".remote-results-pane")
+        detail_pane = view.query_one(".remote-detail-pane")
+        repository = view.query_one(".remote-result", Button)
+        assert view.has_class("-single-pane")
+        assert results_pane.display is True
+        assert detail_pane.display is False
+
+        repository.focus()
+        repository.press()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert results_pane.display is False
+        assert detail_pane.display is True
+        back = view.query_one("#remote-back-to-results", Button)
+        assert str(back.label) == "Back to repositories"
+
+        back.press()
+        await pilot.pause()
+        assert results_pane.display is True
+        assert detail_pane.display is False
+        assert view.query_one(".remote-result", Button) is repository
+        assert app.focused is repository
+
+
+@pytest.mark.asyncio
+async def test_drill_down_new_search_returns_to_results_and_details_start_collapsed() -> None:
+    """Retaining detail on a new narrow search would hide the new result set."""
+    adapter = _Adapter(
+        search_result=(_summary(),),
+        resolved=_memory_resolved(),
+    )
+    view = _view(
+        adapter_factory=lambda: adapter,
+        resolver_factory=lambda: _Resolver([]),
+    )
+    app = _RemoteApp(view)
+    snapshot = _memory_snapshot()
+
+    async with app.run_test(size=(71, 35)) as pilot:
+        await _submit(app, pilot, "test model")
+        view.query_one(".remote-result", Button).press()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        view.apply_machine_memory_state(_memory_presentation(snapshot), snapshot)
+        await pilot.pause()
+        details = view.query_one("#remote-machine-estimate-details", Static)
+        toggle = view.query_one("#remote-machine-details-toggle", Button)
+        assert details.display is False
+        assert str(toggle.label) == "Show estimate details"
+
+        query = view.query_one("#remote-model-query", Input)
+        query.value = "another model"
+        view.query_one("#remote-model-search", Button).press()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert view.query_one(".remote-results-pane").display is True
+        assert view.query_one(".remote-detail-pane").display is False
+
+
+@pytest.mark.asyncio
+async def test_drill_down_controls_are_reachable_by_tab() -> None:
+    """A narrow-only display rule must not remove estimate or install controls."""
+    adapter = _Adapter(
+        search_result=(_summary(),),
+        resolved=_memory_resolved(),
+    )
+    view = _view(
+        adapter_factory=lambda: adapter,
+        resolver_factory=lambda: _Resolver([]),
+    )
+    app = _RemoteApp(view)
+    snapshot = _memory_snapshot()
+
+    async with app.run_test(size=(71, 40)) as pilot:
+        await _submit(app, pilot, "test model")
+        view.query_one(".remote-result", Button).press()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        view.apply_machine_memory_state(_memory_presentation(snapshot), snapshot)
+        await pilot.pause()
+        view.query_one(".remote-candidate", Button).press()
+        await pilot.pause()
+
+        seen_ids: set[str] = set()
+        saw_candidate = False
+        for _ in range(18):
+            await pilot.press("tab")
+            focused = app.focused
+            if focused is None:
+                continue
+            if focused.id is not None:
+                seen_ids.add(focused.id)
+            saw_candidate |= focused.has_class("remote-candidate")
+
+        assert {
+            "remote-back-to-results",
+            "remote-machine-recheck",
+            "remote-machine-details-toggle",
+            "remote-variant-filter",
+            "remote-variant-sort",
+            "remote-model-install",
+        } <= seen_ids
+        assert saw_candidate
+
+
+@pytest.mark.asyncio
+async def test_two_pane_layout_starts_at_72_cells_with_details_expanded() -> None:
+    """Moving the exact breakpoint would regress the approved 72-cell contract."""
+    view = _view(
+        adapter_factory=lambda: _Adapter(resolved=_memory_resolved()),
+        resolver_factory=lambda: _Resolver([]),
+    )
+    app = _RemoteApp(view)
+    snapshot = _memory_snapshot()
+
+    async with app.run_test(size=(72, 35)) as pilot:
+        await _submit(app, pilot, "owner/repository")
+        view.apply_machine_memory_state(_memory_presentation(snapshot), snapshot)
+        await pilot.pause()
+
+        assert not view.has_class("-single-pane")
+        assert view.query_one(".remote-results-pane").display is True
+        assert view.query_one(".remote-detail-pane").display is True
+        assert view.query_one("#remote-machine-estimate-details", Static).display is True
+        assert (
+            str(view.query_one("#remote-machine-details-toggle", Button).label)
+            == "Hide estimate details"
+        )
 
 
 @pytest.mark.asyncio
@@ -636,7 +1090,10 @@ async def test_variant_rows_explain_filename_derived_guidance_without_fit_claims
         "experimental.gguf",
     )
     assert "Filename-derived general guidance" in rendered
-    assert "Runtime compatibility and machine fit have not been verified" in rendered
+    assert (
+        "model-context support and runtime compatibility remain unverified"
+        in rendered
+    )
     assert "Quantization: Q4_K_M · 1 file · 40.0 MiB" in rendered
     assert "Quantization: Not identified · 1 file · 60.0 MiB" in rendered
     assert "No recognized quantization token in the filename" in rendered

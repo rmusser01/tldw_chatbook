@@ -12,6 +12,14 @@ from textual.widgets import Button, Input, Select, Static
 
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.config import get_cli_setting as _real_get_cli_setting
+from tldw_chatbook.Model_Artifacts.machine_memory import (
+    AcceleratorState,
+    GIB,
+    MachineMemorySnapshot,
+    MemoryKind,
+    ProbeReason,
+    SystemMemoryState,
+)
 from tldw_chatbook.UI.LLM_Management_Window import LLMManagementWindow
 from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
 from Tests.UI.app_factory import _build_test_app
@@ -76,6 +84,208 @@ def _assert_painted_inside(app, widget, parent) -> None:
     assert widget.region.right <= bounds.right
     assert widget.region.y >= bounds.y
     assert widget.region.bottom <= bounds.bottom
+
+
+def _machine_snapshot(
+    *,
+    total_gib: int = 32,
+    available_gib: int | None = 10,
+    system_state: SystemMemoryState = SystemMemoryState.OBSERVED,
+    system_reason: ProbeReason | None = None,
+    accelerator_state: AcceleratorState = AcceleratorState.NOT_OBSERVED,
+    accelerator_reason: ProbeReason | None = None,
+) -> MachineMemorySnapshot:
+    """Build one complete bounded probe result for screen lifecycle tests."""
+    has_capacity = system_state in {
+        SystemMemoryState.OBSERVED,
+        SystemMemoryState.PARTIAL,
+    }
+    return MachineMemorySnapshot(
+        platform="linux",
+        architecture="x86_64",
+        system_state=system_state,
+        accelerator_state=accelerator_state,
+        total_bytes=total_gib * GIB if has_capacity else None,
+        available_bytes=(
+            available_gib * GIB
+            if has_capacity and available_gib is not None
+            else None
+        ),
+        memory_kind=MemoryKind.SYSTEM if has_capacity else MemoryKind.UNKNOWN,
+        accelerators=(),
+        system_reason=system_reason,
+        accelerator_reason=accelerator_reason,
+    )
+
+
+def _machine_screen() -> LLMScreen:
+    """Build only the screen-owned memory lifecycle state, without mounting UI."""
+    screen = LLMScreen.__new__(LLMScreen)
+    screen._machine_memory_snapshot = None
+    screen._machine_memory_observed_label = None
+    screen._machine_memory_generation = 0
+    screen._machine_memory_worker = None
+    screen._machine_memory_active = False
+    screen._machine_memory_failure = None
+    screen._hydrate_remote_machine_memory = MagicMock(return_value=False)
+    return screen
+
+
+def test_first_machine_memory_request_starts_one_screen_worker() -> None:
+    """Removing the no-duplicate guard would start two probes for one resolution."""
+    screen = _machine_screen()
+    worker = object()
+    screen._run_machine_memory_probe = MagicMock(return_value=worker)
+
+    LLMScreen._request_remote_machine_memory(screen, force=False)
+    LLMScreen._request_remote_machine_memory(screen, force=False)
+
+    assert screen._machine_memory_generation == 1
+    assert screen._machine_memory_active is True
+    assert screen._machine_memory_worker is worker
+    screen._run_machine_memory_probe.assert_called_once_with(1)
+
+
+def test_forced_machine_memory_recheck_advances_generation() -> None:
+    """Treating a forced recheck as a duplicate would leave stale facts forever."""
+    screen = _machine_screen()
+    screen._machine_memory_snapshot = _machine_snapshot()
+    screen._run_machine_memory_probe = MagicMock(side_effect=[object(), object()])
+
+    LLMScreen._request_remote_machine_memory(screen, force=True)
+    LLMScreen._request_remote_machine_memory(screen, force=True)
+
+    assert screen._machine_memory_generation == 2
+    assert [item.args for item in screen._run_machine_memory_probe.call_args_list] == [
+        (1,),
+        (2,),
+    ]
+
+
+def test_stale_machine_memory_result_cannot_replace_newer_snapshot() -> None:
+    """Dropping the generation fence would publish an older probe completion."""
+    screen = _machine_screen()
+    screen._machine_memory_generation = 2
+    current = _machine_snapshot(total_gib=32)
+    screen._machine_memory_snapshot = current
+
+    LLMScreen._apply_machine_memory_result(
+        screen, 1, _machine_snapshot(total_gib=64)
+    )
+
+    assert screen._machine_memory_snapshot is current
+    screen._hydrate_remote_machine_memory.assert_not_called()
+
+
+def test_machine_memory_failed_recheck_retains_last_valid_ram() -> None:
+    """Replacing accepted RAM with an unavailable refresh would erase useful facts."""
+    screen = _machine_screen()
+    current = _machine_snapshot(total_gib=32)
+    screen._machine_memory_snapshot = current
+    screen._machine_memory_observed_label = "09:41"
+    screen._machine_memory_generation = 3
+
+    LLMScreen._apply_machine_memory_result(
+        screen,
+        3,
+        _machine_snapshot(
+            system_state=SystemMemoryState.UNAVAILABLE,
+            system_reason=ProbeReason.MEMORY_UNAVAILABLE,
+            available_gib=None,
+        ),
+    )
+
+    assert screen._machine_memory_snapshot is current
+    assert screen._machine_memory_observed_label == "09:41"
+    assert screen._machine_memory_failure is ProbeReason.MEMORY_UNAVAILABLE
+    assert screen._machine_memory_active is False
+    screen._hydrate_remote_machine_memory.assert_called_once_with()
+
+
+def test_machine_memory_partial_valid_ram_replaces_previous_observation() -> None:
+    """Rejecting valid partial RAM would keep an obsolete installed-memory total."""
+    screen = _machine_screen()
+    screen._machine_memory_snapshot = _machine_snapshot(total_gib=32)
+    screen._machine_memory_generation = 4
+    partial = _machine_snapshot(
+        total_gib=64,
+        available_gib=None,
+        system_state=SystemMemoryState.PARTIAL,
+        system_reason=ProbeReason.MEMORY_UNAVAILABLE,
+    )
+
+    LLMScreen._apply_machine_memory_result(screen, 4, partial)
+
+    assert screen._machine_memory_snapshot is partial
+    assert screen._machine_memory_failure is None
+    assert screen._machine_memory_observed_label is not None
+
+
+def test_machine_memory_accelerator_failure_does_not_discard_valid_ram() -> None:
+    """Coupling accelerator and RAM status would hide a valid capacity estimate."""
+    screen = _machine_screen()
+    screen._machine_memory_generation = 1
+    result = _machine_snapshot(
+        accelerator_state=AcceleratorState.NOT_OBSERVED,
+        accelerator_reason=ProbeReason.COMMAND_TIMEOUT,
+    )
+
+    LLMScreen._apply_machine_memory_result(screen, 1, result)
+
+    assert screen._machine_memory_snapshot is result
+    assert screen._machine_memory_failure is None
+
+
+def test_machine_memory_completion_is_retained_during_remote_remount_gap() -> None:
+    """A missing RemoteView at completion must not lose the accepted snapshot."""
+    screen = _machine_screen()
+    screen._machine_memory_generation = 1
+    result = _machine_snapshot(total_gib=64)
+
+    LLMScreen._apply_machine_memory_result(screen, 1, result)
+
+    assert screen._machine_memory_snapshot is result
+    screen._hydrate_remote_machine_memory.assert_called_once_with()
+
+
+def test_deferred_remote_mount_hydrates_machine_memory_without_another_probe() -> None:
+    """Recomposition may hydrate retained state but must not observe twice."""
+    screen = _machine_screen()
+    screen._machine_memory_snapshot = _machine_snapshot()
+    screen._audio_cpp_model_request_claim = None
+    screen._model_install_active = False
+    screen._model_install_last_progress = None
+    screen._model_install_kind = None
+    screen._external_operation_status = ""
+    screen._remote_runtime_handoff = None
+    screen._model_install_presentation_pending = MagicMock(return_value=False)
+    screen._hydrate_external_status = MagicMock()
+    screen._replay_remote_runtime_handoff = MagicMock()
+    screen._run_machine_memory_probe = MagicMock()
+
+    LLMScreen._on_deferred_views_mounted(screen)
+
+    screen._hydrate_remote_machine_memory.assert_called_once_with()
+    screen._run_machine_memory_probe.assert_not_called()
+
+
+def test_machine_memory_worker_returns_bounded_result_on_event_thread(
+    monkeypatch,
+) -> None:
+    """Applying directly from the worker thread would violate Textual ownership."""
+    screen = _machine_screen()
+    result = _machine_snapshot()
+    screen._machine_memory_probe_factory = MagicMock(return_value=result)
+    app = MagicMock()
+    monkeypatch.setattr(LLMScreen, "app", property(lambda _screen: app))
+
+    LLMScreen._run_machine_memory_probe.__wrapped__(screen, 7)
+
+    app.call_from_thread.assert_called_once_with(
+        screen._apply_machine_memory_result,
+        7,
+        result,
+    )
 
 
 @pytest.mark.asyncio
