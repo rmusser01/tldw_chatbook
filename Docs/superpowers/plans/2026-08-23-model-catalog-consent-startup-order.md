@@ -17,9 +17,9 @@
 ### Task 0: Record the approved plan in Backlog.md
 
 **Files:**
-- Modify: `backlog/tasks/task-21161 - Order-model-catalog-consent-after-intro-startup.md`
+- Modify: `backlog/tasks/task-21163 - Order-model-catalog-consent-after-intro-startup.md`
 
-- [x] Add the implementation plan to TASK-21161 while it is In Progress and before changing application or test code.
+- [x] Add the implementation plan to TASK-21163 while it is In Progress and before changing application or test code.
 - [x] Include the ADR required/no, existing ADR path, and lifecycle-fix reason in the task plan.
 
 ### Task 1: Add a failing launch-order regression
@@ -71,8 +71,8 @@
 ### Task 4: Close task documentation
 
 **Files:**
-- Modify: `backlog/tasks/task-21161 - Order-model-catalog-consent-after-intro-startup.md`
+- Modify: `backlog/tasks/task-21163 - Order-model-catalog-consent-after-intro-startup.md`
 
 - [x] Check every acceptance criterion only after its verification evidence exists.
 - [x] Add concise implementation notes covering the lifecycle move, regression, ADR decision, and commands run.
-- [x] Set TASK-21161 to Done only after all Definition of Done checks are satisfied.
+- [x] Set TASK-21163 to Done only after all Definition of Done checks are satisfied.

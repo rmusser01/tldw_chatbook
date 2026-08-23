@@ -1,8 +1,20 @@
 # Console DeepSeek private-scratch UAT
 
-Date: 2026-08-23  
-Task: TASK-21161  
+Date: 2026-08-23
+Task: TASK-21161
 Provider: DeepSeek (`deepseek-chat`)
+
+## Execution metadata
+
+- Live terminal: 180 columns × 55 rows.
+- Live branch: `codex/console-per-chat-sandbox`.
+- Live code: `6c6844290b498c05f88bfdfd65cd72fcab2badcb`, based on the
+  then-current `origin/dev` commit
+  `ae817fefed519921d7da5047e22634756337fc34`.
+- Final integration base: the branch was subsequently rebased cleanly onto
+  latest `origin/dev` at `be0a1694696b7b2296dcb79017696dd79c56f677`.
+  The intervening upstream changes did not overlap the Console implementation;
+  fresh post-rebase targeted gates are recorded below.
 
 ## Claim under test
 
@@ -57,14 +69,35 @@ hash comparison.
    painted `Private scratch` as `Priva…`. The rendered label is now the concise
    `Local files`, leaving the full authority value visible; the underlying
    detailed status remains unchanged.
+4. **Private scratch locators could enter tool results and run logs.** An
+   independent code review traced absolute scratch-owned paths from built-in
+   success results and local `fs_*` errors into model history and persisted
+   tool-result records. Both provider boundaries now convert only the private
+   scratch locator to relative text before those shared sinks. Explicit
+   Workspace folder paths retain their existing behavior. Success, error, and
+   real run-log regressions pin the boundary.
+5. **The Workspace-create modal's legacy test harness omitted production
+   CSS.** A broad UI pass found ten off-screen Pilot clicks. Untouched latest
+   `dev` reproduced the same ten failures. Widening the screen moved the
+   controls farther out, identifying missing layout CSS rather than a narrow
+   terminal defect. Mounting `WorkspaceCreateModal.BUNDLED_CSS` restored the
+   real geometry and all 23 modal tests pass.
 
 The first issue was fixed before the complete scenario matrix was rerun. The
 copy and narrow-rail polish are also pinned by targeted mounted-widget tests.
 
 ## Automated evidence
 
-The implementation was verified with targeted authority, lifecycle, retained
-artifact, Console UI, and project-instruction suites. The final command set and
-pass counts are recorded in TASK-21161's implementation notes. No full
-repository sweep was run, in accordance with repository policy.
+On the final latest-`dev` base:
 
+- 388 authority, lifecycle, provider, project-instruction, run-log, and
+  retained-skill tests passed.
+- The broad affected UI-module diagnostic reached 576 passes and the ten
+  pre-existing modal-harness failures described above. Untouched latest `dev`
+  reproduced those failures at 10 failed / 12 passed; after loading the
+  production modal CSS, the complete branch modal module passed 23 / 23.
+- The final focused mounted Console/Workspace UI gate passed 56 / 56.
+- Ruff and Python compile checks passed for every changed Python file;
+  `git diff --check` and the diff secret-pattern scan were clean.
+
+No full repository sweep was run, in accordance with repository policy.

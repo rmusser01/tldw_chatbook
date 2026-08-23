@@ -39,6 +39,15 @@ known, expensive to rediscover. Every entry states the incident that produced it
   **never pass a "next safe id" between tasks in a brief** — an ID is only safe at the
   instant it is derived, so re-derive it at filing time.
 
+- **2026-08-23, Console private scratch.** A task added at 08:11 as
+  `TASK-21161` rebased over a different `TASK-21161` added to `dev` at 10:22.
+  The first closeout command, `backlog task edit 21161 -s Done`, reported
+  success but resolved the later task file; the Console task visibly remained
+  In Progress. Add-commit provenance applied the older-arrival rule, the later
+  startup-order task moved to `TASK-21163`, and every reference moved with it.
+  The extra guard is important: after any rebase, verify the CLI's printed
+  **file path**, not merely its success message or requested ID.
+
 Checking `origin/dev` *feels* like diligence. It is not: parallel agents hold IDs on
 unmerged branches. And a *green* Backlog Guard at branch time proves nothing later —
 a duplicate can arrive from dev moving underneath you, in which case rebasing is the
