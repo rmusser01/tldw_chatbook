@@ -1441,7 +1441,7 @@ def test_invoke_kill_switch_check_survives_getter_exception(running_loop):
 # builtin_raw_name_exclusions (task-1337, plan Task 8)
 # ---------------------------------------------------------------------------
 #
-# The Console shadows 23 built-in raw names (the 18 `library_*` descriptor
+# The Console shadows 29 built-in raw names (the 24 `library_*` descriptor
 # tools served by its own LibraryToolProvider, plus the five legacy RAG/chat
 # readers whose Console coverage is the bounded RAG/direct tools). The
 # Console-composed provider must drop those names ONLY when they come from
@@ -1481,15 +1481,15 @@ def test_compose_catalog_without_exclusions_keeps_every_builtin_name():
     assert "mcp__tldw_chatbook__library_list_media" in names
     assert "mcp__tldw_chatbook__search_rag" in names
     assert "mcp__tldw_chatbook__chat_with_llm" in names
-    assert len(names) == 29  # 28 shadowed + the unrelated built-in
+    assert len(names) == 30  # 29 shadowed + the unrelated built-in
 
 
 def test_compose_catalog_builtin_exclusions_scoped_to_builtin_source():
-    """With the Console exclusion set: exactly the 28 built-in raw names
+    """With the Console exclusion set: exactly the 29 built-in raw names
     disappear; the unrelated built-in and same-named local-profile tools
     remain, and the inventory mapping is left untouched."""
     exclusions = _console_exclusion_set()
-    assert len(exclusions) == 28  # 23 descriptors + 5 legacy, no overlap
+    assert len(exclusions) == 29  # 24 descriptors + 5 legacy, no overlap
     service = FakeMCPService(
         inventory=_mixed_library_inventory(),
         catalog_records=[

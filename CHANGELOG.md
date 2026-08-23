@@ -48,6 +48,29 @@ and this project adheres to Some kind of Versioning
   schemas from the one descriptor table (23 Library tools total); the
   student story is pinned end to end by
   `Tests/Library/test_agent_chunk_student_story.py`.
+- Note-save agent tool (student-workflow): `library_save_note` closes the
+  student story's write loop — the 24th `library_*` tool lets Console agents
+  and local MCP clients land their per-chapter study notes where the user
+  already reads them (the notes screen). Create by default; update by
+  `note_id` + `expected_version` together (exactly one without the other is
+  refused; a stale version is the named `content_changed` error). Bounds are
+  schema-level (title ≤ 512, content ≤ 100_000, folder ≤ 256). The optional
+  one-level folder is created when missing in the notes UI's own local
+  scope, concurrent savers converge on one folder, and a folder failure
+  never lands an orphaned note. Notes derived from Library media carry the
+  documented provenance-header convention (`source`/`revision`/`chapter`/
+  `chunks` — revision is load-bearing for staleness). The re-run convention
+  is search-based (`library_search_notes` by title, then update by id) since
+  the list tool has no folder filter; flashcards are Q/A markdown inside
+  notes (the real flashcards rows have no screen route yet). Runs under the
+  new `library.notes.save` runtime-policy resource, denied before any
+  backend call on both Console and MCP surfaces. The fan-out pattern
+  (structure → spawn-per-chapter → fetch → save → re-run, riding the
+  existing `spawn_subagent`) is documented in the Console guide, and the
+  story test now proves the whole loop — read from stored chunks,
+  provenance-headered save, re-read, search-based re-run update without
+  duplicates, Q/A flashcard note — end to end against real databases
+  (`Tests/Library/test_agent_chunk_student_story.py`).
 - UX efficiency cycle (critique follow-up, ADR-016): the Console composer is now a real
   editable text field with a movable caret (arrows, Home/End, Ctrl+W, mid-draft
   insertion, Shift+Enter newline); destination hotkeys ctrl+1..9,0 jump to the first ten

@@ -14,8 +14,8 @@ Pinned here (the task-13/task-4 pin pattern):
   attributes (and present in the equality test's own literal, so the verb
   cannot drift from the registry);
 * the MCP local-control mapping resolves the tool to EXACTLY that action
-  id, and the override map is EXACTLY the two writing tools (the
-  tool-mapping pin);
+  id, and the override map is EXACTLY the writing tools (the tool-mapping
+  pin; three since the student-workflow note-save landed);
 * no server variant exists (local-only resource).
 """
 
@@ -65,10 +65,13 @@ def test_mcp_local_control_maps_rechunk_to_the_write_action() -> None:
     assert _TOOL_ACTION_IDS["library_rechunk_media"] == LIBRARY_MEDIA_RECHUNK_ACTION_ID
 
 
-def test_writing_tool_overrides_are_exactly_the_two_write_tools() -> None:
-    """The override map stays descriptor-keyed and exactly the two writing
-    operations -- every other descriptor keeps its type-owned read mapping."""
+def test_writing_tool_overrides_are_exactly_the_three_write_tools() -> None:
+    """The override map stays descriptor-keyed and exactly the writing
+    operations -- every other descriptor keeps its type-owned read mapping.
+    (Grew from two to three when student-workflow Task 1 landed the
+    note-save write; the count pin lives here so growth stays deliberate.)"""
     assert _LIBRARY_TOOL_ACTION_OVERRIDES == {
         "spec_save": "library.templates.save.local",
         "rechunk": LIBRARY_MEDIA_RECHUNK_ACTION_ID,
+        "save": "library.notes.save.local",
     }

@@ -5592,6 +5592,15 @@ class ChatScreen(BaseAppScreen):
             conversation_service=getattr(app, "local_chat_conversation_service", None),
             collections_service=getattr(app, "local_library_collections_service", None),
             media_chunk_service=media_chunk_service,
+            # student-workflow (spec §4.3): the note-save folder seam -- the
+            # app's scope service (folders live only there); a missing handle
+            # degrades folder requests to feature_unavailable like every
+            # other optional backend.
+            notes_scope_service=getattr(app, "notes_scope_service", None),
+            # student-workflow (spec §6): the writing note tool's
+            # Console-direct gate (the chunk-tools pattern) -- the same app
+            # enforcer handle the writing chunk tools receive above.
+            policy_enforcer=getattr(app, "service_policy_enforcer", None),
         )
         return LibraryToolProvider(service)
 

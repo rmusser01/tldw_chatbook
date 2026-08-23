@@ -577,6 +577,7 @@ EXPECTED_ACTION_IDS_BY_CAPABILITY = {
         library.collections.detail.local
         library.collections.list.local
         library.media.rechunk.local
+        library.notes.save.local
         library.templates.save.local
     """),
     "external_connectors": _action_ids("""

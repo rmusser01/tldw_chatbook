@@ -1,10 +1,14 @@
-"""Task 6 (chunking-agent-tools): the student story, end to end (spec §7.6).
+"""The student story, end to end (chunking-agent-tools spec §7.6, upgraded
+by student-workflow spec §7.6 to close the write loop).
 
 The program's motivating payoff: a student ingests a book and wants
-per-chapter notes. The four ``library_*`` chunk tools deliver it from the
+per-chapter notes. The ``library_*`` chunk tools deliver the read from the
 item's OWN stored chunks — structure map -> chapter node -> chunk address
 span -> unit fetches -> note text — with no window-walking and no
-re-chunking behind anyone's back.
+re-chunking behind anyone's back; ``library_save_note`` then lands the
+note (provenance-headered, folder-grouped), a re-run leg proves
+search-first + update-not-duplicate, and a flashcard leg saves the Q/A
+markdown convention (student-workflow spec §5/§6).
 
 The ingestion is REAL end to end at the chunking seam (the established
 convention from ``Tests/Local_Ingestion/test_book_ingestion_chunking.py``
@@ -35,17 +39,20 @@ Two behaviors worth knowing before reading the assertions:
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.Library.library_tool_contract import (
     ERROR_FEATURE_UNAVAILABLE,
     make_public_id,
 )
+from tldw_chatbook.Library.local_library_tool_service import LocalLibraryToolService
 from tldw_chatbook.Library.local_media_chunk_tool_service import (
     LocalMediaChunkToolService,
 )
@@ -55,6 +62,9 @@ from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
     persist_parsed_media,
 )
 from tldw_chatbook.Media.local_media_reading_service import LocalMediaReadingService
+from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
+from tldw_chatbook.Notes.Notes_Library import NotesInteropService
+from tldw_chatbook.Notes.notes_scope_service import NotesScopeService, ScopeType
 
 # ---------------------------------------------------------------------------
 # Fixture books: chapters with recognizable headings
@@ -164,6 +174,39 @@ def _service(db: MediaDatabase) -> LocalMediaChunkToolService:
     )
 
 
+def _agent_surface(
+    db: MediaDatabase, tmp_path: Path
+) -> tuple[LocalLibraryToolService, NotesScopeService]:
+    """One tool surface for the WHOLE story: the shared dispatcher the
+    Console provider and local MCP both call, with the media chunk tools
+    and the real note row/folder seams wired (student-workflow Task 1's
+    ``library_save_note`` landing).
+
+    Rows go through a real ``NotesInteropService`` over a real ChaChaNotes
+    DB; folders through a real ``NotesScopeService`` — the same construction
+    Task 1's real-DB save test pins. The scope handle comes back too, so the
+    story can assert what the notes screen would list.
+    """
+    notes_db = CharactersRAGDB(tmp_path / "notes.db", "student-story-notes")
+    notes = NotesInteropService(
+        base_db_directory=tmp_path,
+        api_client_id="student-story",
+        global_db_to_use=notes_db,
+    )
+    scope = NotesScopeService(
+        local_notes_service=notes,
+        server_service=None,
+        folder_repository=LocalNoteFolderRepository(notes_db),
+    )
+    service = LocalLibraryToolService(
+        media_chunk_service=_service(db),
+        notes_service=notes,
+        notes_scope_service=scope,
+        notes_user_id="student",
+    )
+    return service, scope
+
+
 def _public(media_uuid: str) -> str:
     return make_public_id("media", media_uuid)
 
@@ -212,7 +255,10 @@ def test_student_story_chapter_notes_from_stored_chunks_only(
         media_db, tmp_path, "student-reader.epub", STUDENT_READER, CHAPTER_CHUNK_OPTIONS
     )
     content = str(media_db.get_media_by_id(media_id)["content"])
-    service = _service(media_db)
+    # One surface for the whole story — the shared dispatcher a Console
+    # agent actually calls; the chunk reads below route through it to the
+    # same chunk service, unchanged.
+    service, scope = _agent_surface(media_db, tmp_path)
     public = _public(media_uuid)
 
     # Ground truth first: the stored rows are exact, engine-stamped slices
@@ -284,6 +330,119 @@ def test_student_story_chapter_notes_from_stored_chunks_only(
             " worth noting for the exam."
         )
         assert _note_text(sentence) in _note_text(owning["text"])
+
+    # 5. The write loop closes (student-workflow spec §7.6): the agent
+    #    lands the Chapter-7 note WITH the provenance header — source,
+    #    revision (the media revision from the structure payload), chapter,
+    #    chunks — grouped in one per-book folder.
+    note_title = "The Student Reader — Chapter 7 notes"
+    provenance_header = (
+        f"source: {public}\n"
+        f"revision: {structure['revision']}\n"
+        f"chapter: {node['title']}\n"
+        f"chunks: {span[0]}-{span[1]}"
+    )
+    note_content = (
+        f"{provenance_header}\n\n"
+        "Key points:\n"
+        "- Three paragraphs, each carrying sentences worth noting for the"
+        " exam.\n"
+        f"- Verbatim source: {_note_text(owning['text'])}\n"
+    )
+    saved = service.invoke(
+        "library_save_note",
+        {"title": note_title, "content": note_content, "folder": "Student Reader"},
+    )
+    assert "error" not in saved, saved
+    assert saved["created"] is True
+    assert saved["version"] == 1
+    assert saved["item"]["title"] == note_title
+    assert saved["item"]["folder"] == "Student Reader"
+
+    # 6. The re-read: library_get_note serves the note back whole, the
+    #    payload's revision is the note's own version (what an update
+    #    needs), and the header round-trips verbatim — media revision
+    #    included, so staleness stays detectable.
+    reread = service.invoke("library_get_note", {"id": saved["item"]["id"]})
+    assert "error" not in reread, reread
+    assert reread["content"]["revision"] == str(saved["version"])
+    assert reread["content"]["has_more"] is False
+    assert reread["content"]["text"].startswith(provenance_header)
+
+    # 7. The re-run leg: a later session rediscovers the note by title —
+    #    SEARCH-based, because the list tool has no folder filter and its
+    #    payloads carry no folder info — and UPDATES it in place instead of
+    #    minting a duplicate (notes have no unique title; the convention is
+    #    the agent's explicit choice).
+    found = service.invoke("library_search_notes", {"query": note_title})
+    assert "error" not in found, found
+    assert found["total"] == 1
+    assert found["items"][0]["id"] == saved["item"]["id"]
+    assert found["items"][0]["title"] == note_title
+    assert "title" in found["items"][0]["matched_fields"]
+
+    rerun_content = note_content + "\nRe-run addition: reviewed again.\n"
+    updated = service.invoke(
+        "library_save_note",
+        {
+            "title": note_title,
+            "content": rerun_content,
+            "folder": "Student Reader",
+            "note_id": found["items"][0]["id"],
+            "expected_version": int(reread["content"]["revision"]),
+        },
+    )
+    assert "error" not in updated, updated
+    assert updated["created"] is False
+    assert updated["version"] == 2
+
+    # Still exactly ONE note — the re-run updated, never duplicated.
+    still_one = service.invoke("library_search_notes", {"query": note_title})
+    assert still_one["total"] == 1
+    updated_read = service.invoke("library_get_note", {"id": updated["item"]["id"]})
+    assert updated_read["content"]["revision"] == "2"
+    assert updated_read["content"]["text"].endswith("reviewed again.\n")
+
+    # 8. The flashcard convention (student-workflow spec §6): flashcards
+    #    are Q/A markdown inside notes — visible the moment they land.
+    flashcard_title = "The Student Reader — Chapter 7 flashcards"
+    flashcard_content = (
+        f"{provenance_header}\n\n"
+        "Q: How many paragraphs does Chapter 7 carry?\n"
+        "A: Three, each worth noting for the exam.\n"
+        "Q: What does every paragraph of Chapter 7 carry?\n"
+        "A: Sentences worth noting for the exam.\n"
+    )
+    flashcards = service.invoke(
+        "library_save_note",
+        {
+            "title": flashcard_title,
+            "content": flashcard_content,
+            "folder": "Student Reader",
+        },
+    )
+    assert "error" not in flashcards, flashcards
+    assert flashcards["created"] is True
+    flashcard_read = service.invoke(
+        "library_get_note", {"id": flashcards["item"]["id"]}
+    )
+    assert "error" not in flashcard_read, flashcard_read
+    assert flashcard_read["content"]["text"].startswith(provenance_header)
+    assert flashcard_read["content"]["text"].count("Q:") == 2
+    assert flashcard_read["content"]["text"].count("A:") == 2
+
+    # Both saves converged on ONE per-book folder — what the notes screen
+    # lists, because the folder seam is pinned to the notes UI's scope.
+    children = asyncio.run(
+        scope.list_note_folder_children(
+            scope=ScopeType.LOCAL_NOTE,
+            parent_id=None,
+            limit=50,
+            offset=0,
+            user_id="student",
+        )
+    )
+    assert [folder.name for folder in children.folders] == ["Student Reader"]
 
 
 # ---------------------------------------------------------------------------

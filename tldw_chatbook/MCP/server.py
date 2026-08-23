@@ -290,6 +290,7 @@ def build_local_library_tool_service(
     chachanotes_db: Any,
     media_db: Any,
     notes_service: Any = None,
+    notes_scope_service: Any = None,
     policy_enforcer: Any = None,
 ) -> Any:
     """Compose the six local Library backends into one shared synchronous service.
@@ -314,13 +315,20 @@ def build_local_library_tool_service(
         notes_service: Optional pre-built ``NotesInteropService``; when
             omitted, one is constructed with the canonical signature off
             ``get_chachanotes_db_path()`` and ``chachanotes_db``.
+        notes_scope_service: Optional pre-built ``NotesScopeService``
+            (student-workflow spec §4.3): the note-save tool's folder seam.
+            When omitted, one is composed over ``chachanotes_db`` with the
+            app builder's own shape (shared local folder repository); a
+            construction failure degrades folder requests to
+            ``feature_unavailable`` rather than sinking the surface.
         policy_enforcer: Optional runtime-policy enforcer
             (``require_allowed(action_id=...)`` seam) threaded into the
-            media chunk tool service, whose WRITING tools
-            (``library_save_chunk_spec``, ``library_rechunk_media``) are
-            service-level gated (chunking-agent-tools Tasks 4-5, spec §6);
-            ``None`` leaves the always-on MCP action mapping as the outer
-            gate.
+            media chunk tool service and the note-save path, whose WRITING
+            tools (``library_save_chunk_spec``, ``library_rechunk_media``,
+            ``library_save_note``) are service-level gated
+            (chunking-agent-tools Tasks 4-5 + student-workflow Task 1,
+            spec §6); ``None`` leaves the always-on MCP action mapping as
+            the outer gate.
 
     Returns:
         The shared ``LocalLibraryToolService``.
@@ -424,6 +432,26 @@ def build_local_library_tool_service(
 
     _build("media_chunk", _build_media_chunk)
 
+    if notes_scope_service is not None:
+        backends["notes_scope"] = notes_scope_service
+    else:
+
+        def _build_notes_scope():
+            # student-workflow (spec §4.3): the note-save folder seam, built
+            # with the app builder's own shape -- the scope facade over one
+            # shared local folder repository (the notes UI's own scope, so
+            # folders saved here are visible there).
+            from ..Notes.note_folder_repository import LocalNoteFolderRepository
+            from ..Notes.notes_scope_service import NotesScopeService
+
+            return NotesScopeService(
+                local_notes_service=backends["note"],
+                server_service=None,
+                folder_repository=LocalNoteFolderRepository(chachanotes_db),
+            )
+
+        _build("notes_scope", _build_notes_scope)
+
     return LocalLibraryToolService(
         media_service=backends["media"],
         notes_service=backends["note"],
@@ -432,6 +460,10 @@ def build_local_library_tool_service(
         conversation_service=backends["conversation"],
         collections_service=backends["collection"],
         media_chunk_service=backends["media_chunk"],
+        # student-workflow (spec §4.3/§6): the note-save folder seam and the
+        # writing note tool's service-level gate (the chunk-tools pattern).
+        notes_scope_service=backends.get("notes_scope"),
+        policy_enforcer=policy_enforcer,
     )
 
 

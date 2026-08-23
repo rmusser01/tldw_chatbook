@@ -642,6 +642,10 @@ AUDITED_CAPABILITY_SEEDS = (
     # and `library.media/rechunk` backs `library_rechunk_media`'s one-item
     # chunk-row regeneration (deliberately NOT `rag.admin.launch`, the
     # RAG-admin bulk action's verb -- this is a Library-media item action).
+    # student-workflow (Task 1, spec §4/§6): `library.notes/save` backs
+    # `library_save_note`'s create-or-update over the local notes rows
+    # (deliberately NOT the notes UI's own `notes.*` CRUD verbs -- those
+    # model the screen's row operations; this is the Library write surface).
     _capability(
         "library_collections",
         "Library Collections & agent tools (local)",
@@ -651,6 +655,7 @@ AUDITED_CAPABILITY_SEEDS = (
             _resource("library.collections", actions=(LIST, DETAIL)),
             _resource("library.templates", actions=(SAVE,)),
             _resource("library.media", actions=(RECHUNK,)),
+            _resource("library.notes", actions=(SAVE,)),
         ),
     ),
     _capability(

@@ -9,7 +9,7 @@ from this module so their contracts cannot drift.
 
 The table holds the 18 task-1337 tools plus the four media chunking tools
 (chunking-agent-tools spec §4: structure, chunk fetch, spec list/save,
-re-chunk).
+re-chunk) and the note-save write tool (student-workflow spec §4).
 
 Design: Docs/superpowers/specs/2026-08-02-local-library-agent-tools-design.md
 Pure module: no I/O, no SQLite, no Textual, no event-loop imports.
@@ -61,6 +61,20 @@ MAX_CHUNK_CONTEXT = 10
 #: Defensive ceiling on raw search text (spec §9: runtime re-validates what the
 #: schema already bounds; work must stay bounded for hostile callers).
 MAX_SEARCH_QUERY_CHARS = 1_000
+
+#: Input-side length bounds for the two write tools (chunking-agent-tools
+#: spec §4.3 spec-save; student-workflow spec §4.1 save-note). One source
+#: for the descriptor ``maxLength`` literals AND the invoke-time guards in
+#: the services' ``_validate_*_arguments`` helpers, so a schema-bypassing
+#: caller still fails closed with the same named limit.
+SPEC_SAVE_NAME_MAX_CHARS = 120
+SPEC_SAVE_DESCRIPTION_MAX_CHARS = 2_000
+SAVE_NOTE_TITLE_MAX_CHARS = 512
+SAVE_NOTE_CONTENT_MAX_CHARS = 100_000
+#: 255, not 256: the folder model's ``normalize_folder_name`` refuses any
+#: segment longer than 255 characters, so this bound must equal the model's
+#: own limit -- a schema-passing 256-char name would die at the model.
+SAVE_NOTE_FOLDER_MAX_CHARS = 255
 
 # -- Structured errors (spec §9) -------------------------------------------------
 
@@ -318,7 +332,7 @@ def _spec_save_schema() -> dict:
             "name": {
                 "type": "string",
                 "minLength": 1,
-                "maxLength": 120,
+                "maxLength": SPEC_SAVE_NAME_MAX_CHARS,
                 "description": "Spec (custom chunking template) name.",
             },
             "spec": {
@@ -327,7 +341,7 @@ def _spec_save_schema() -> dict:
             },
             "description": {
                 "type": "string",
-                "maxLength": 2_000,
+                "maxLength": SPEC_SAVE_DESCRIPTION_MAX_CHARS,
                 "description": "Optional human-readable description.",
             },
             "tags": {
@@ -337,6 +351,68 @@ def _spec_save_schema() -> dict:
             },
         },
         "required": ["name", "spec"],
+        "additionalProperties": False,
+    }
+
+
+def _save_note_schema() -> dict:
+    """The note-save input schema (student-workflow spec §4.1).
+
+    Bounds are input-side ``maxLength`` literals in the spec-save precedent
+    style (title 512 / content 100_000 / folder 255 -- the folder model's
+    own segment limit; minLength 1 on the text bodies) so an agent cannot
+    push a megabyte into the notes DB through the tool.
+    """
+    return {
+        "type": "object",
+        "properties": {
+            "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": SAVE_NOTE_TITLE_MAX_CHARS,
+                "description": "Note title.",
+            },
+            "content": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": SAVE_NOTE_CONTENT_MAX_CHARS,
+                "description": (
+                    "Full note content in Markdown. For notes derived from"
+                    " Library media, start the body with the provenance"
+                    " header documented in this tool's description."
+                ),
+            },
+            "folder": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": SAVE_NOTE_FOLDER_MAX_CHARS,
+                "description": (
+                    "Optional ONE-LEVEL folder name (no slashes); the folder"
+                    " is created when missing and the note is filed into it."
+                    " Omit to leave the note unfiled."
+                ),
+            },
+            "note_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": MAX_PUBLIC_ID_BYTES,
+                "description": (
+                    "Opaque note ID from a previous save/list/search --"
+                    " supplies this together with expected_version to UPDATE"
+                    " that note instead of creating a new one."
+                ),
+            },
+            "expected_version": {
+                "type": "integer",
+                "minimum": 1,
+                "description": (
+                    "The note's current version (from a previous save's"
+                    " response or library_get_note's revision); required"
+                    " together with note_id."
+                ),
+            },
+        },
+        "required": ["title", "content"],
         "additionalProperties": False,
     }
 
@@ -460,6 +536,12 @@ LIBRARY_TOOL_DESCRIPTORS: dict[str, LibraryToolDescriptor] = {
             "library_search_notes", "note", "search",
             "Lexically search note titles, content, and keywords (literal, case-insensitive; no semantic/embedding search).",
             _search_schema(),
+        ),
+        _descriptor(
+            "library_save_note", "note", "save",
+            "Save one note: create by default, or update an existing note when note_id and expected_version are supplied together (exactly one without the other is refused; a stale version returns content_changed). Notes have no unique title, so a re-run should search by title (library_search_notes) and update by id rather than create a duplicate. For notes derived from Library media, begin the content with this provenance header so staleness is detectable: 'source: <media id>\\nrevision: <media revision>\\nchapter: <chapter title>\\nchunks: <first>-<last>' (revision is load-bearing: a chunk span is meaningless without the media version it was derived from). The optional folder is one level and is created when missing, so concurrent savers converge on one folder.",
+            _save_note_schema(),
+            writing=True,
         ),
         # -- Prompts ----------------------------------------------------------
         _descriptor(

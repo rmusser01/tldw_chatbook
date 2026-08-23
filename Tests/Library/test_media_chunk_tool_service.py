@@ -1815,6 +1815,42 @@ def test_spec_save_argument_validation(
         assert _error_code(payload) == ERROR_INVALID_ARGUMENT, args
 
 
+def test_spec_save_over_long_name_and_description_name_the_limit(
+    spec_service: LocalMediaChunkToolService,
+):
+    # Invoke-time mirrors of the schema maxLength literals (the save-note
+    # follow-up's twin): a schema-bypassing caller still fails closed, with
+    # the bound named so the agent can self-correct.
+    long_name = _invoke(
+        spec_service,
+        "library_save_chunk_spec",
+        {"name": "n" * 121, "spec": _valid_spec_body()},
+    )
+    assert _error_code(long_name) == ERROR_INVALID_ARGUMENT
+    assert "120" in long_name["error"]["message"]
+
+    long_description = _invoke(
+        spec_service,
+        "library_save_chunk_spec",
+        {
+            "name": "x",
+            "spec": _valid_spec_body(),
+            "description": "d" * 2_001,
+        },
+    )
+    assert _error_code(long_description) == ERROR_INVALID_ARGUMENT
+    assert "2000" in long_description["error"]["message"]
+
+    # Exactly-at-limit is NOT over-long (strict '>'): the boundary value
+    # passes the argument gate.
+    at_limit = _invoke(
+        spec_service,
+        "library_save_chunk_spec",
+        {"name": "n" * 120, "spec": _valid_spec_body()},
+    )
+    assert at_limit.get("error", {}).get("code") != ERROR_INVALID_ARGUMENT
+
+
 def test_spec_tools_without_interop_map_to_feature_unavailable(
     media_db: MediaDatabase,
 ):

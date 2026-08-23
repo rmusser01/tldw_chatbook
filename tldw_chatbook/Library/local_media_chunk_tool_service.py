@@ -59,6 +59,8 @@ from tldw_chatbook.Library.library_tool_contract import (
     MAX_CHUNK_CONTEXT,
     MAX_MAX_NODES,
     MAX_RESULT_BYTES,
+    SPEC_SAVE_DESCRIPTION_MAX_CHARS,
+    SPEC_SAVE_NAME_MAX_CHARS,
     LibraryToolDescriptor,
     LibraryToolError,
     check_cursor_revision,
@@ -829,17 +831,32 @@ class LocalMediaChunkToolService:
         """Type-check the save args; returns ``(name, description, tags)``.
 
         The body is NOT validated here -- it goes through the template
-        validator (and then the CRUD's own gate), never ad-hoc checks."""
+        validator (and then the CRUD's own gate), never ad-hoc checks.
+        The name/description length bounds ARE re-checked here (the
+        schema's maxLength literals): a schema-bypassing caller still
+        fails closed with the named limit.
+        """
         raw_name = arguments.get("name")
         if not isinstance(raw_name, str) or not raw_name.strip():
             raise _invalid("name must be a non-empty string")
         name = raw_name.strip()
+        if len(name) > SPEC_SAVE_NAME_MAX_CHARS:
+            raise _invalid(
+                f"name must be at most {SPEC_SAVE_NAME_MAX_CHARS} characters"
+                f" (got {len(name)})"
+            )
 
         raw_description = arguments.get("description")
         if raw_description is None:
             description: str | None = None
         elif isinstance(raw_description, str) and raw_description.strip():
             description = raw_description.strip()
+            if len(description) > SPEC_SAVE_DESCRIPTION_MAX_CHARS:
+                raise _invalid(
+                    "description must be at most"
+                    f" {SPEC_SAVE_DESCRIPTION_MAX_CHARS} characters"
+                    f" (got {len(description)})"
+                )
         else:
             raise _invalid("description must be a non-empty string when supplied")
 

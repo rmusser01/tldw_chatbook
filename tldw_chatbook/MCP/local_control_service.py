@@ -55,16 +55,18 @@ _LIBRARY_ITEM_TYPE_ACTION_NAMESPACE = {
     "collection": "library.collections",
 }
 
-# chunking-agent-tools (Tasks 4-5, spec §6): writing operations map to
-# their OWN registered action instead of the type-owned read. ``spec_save``
-# resolves to the dedicated ``library.templates/save`` verb and ``rechunk``
-# to ``library.media/rechunk`` -- the Task-3 provisional derived READ
-# mapping had to stop the moment the save handler went live (a live write
-# resolving to a read action under policy would be wrong even though the
-# v7 CRUD validator still guards the write itself).
+# chunking-agent-tools (Tasks 4-5, spec §6) + student-workflow (Task 1,
+# spec §4/§6): writing operations map to their OWN registered action
+# instead of the type-owned read. ``spec_save`` resolves to the dedicated
+# ``library.templates/save`` verb, ``rechunk`` to ``library.media/rechunk``,
+# and ``save`` to ``library.notes/save`` -- the Task-3 provisional derived
+# READ mapping had to stop the moment the save handler went live (a live
+# write resolving to a read action under policy would be wrong even though
+# the v7 CRUD validator still guards the write itself).
 _LIBRARY_TOOL_ACTION_OVERRIDES = {
     "spec_save": "library.templates.save.local",
     "rechunk": "library.media.rechunk.local",
+    "save": "library.notes.save.local",
 }
 
 
