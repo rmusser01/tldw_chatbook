@@ -26,6 +26,7 @@ CHECKERS = (
     "scripts/check_profile_owned_path_inventory.py",
     "scripts/check_persistent_diagnostic_inventory.py",
     "scripts/check_backlog_task_ids.py",
+    "scripts/check_backlog_task_files.py",
     # TASK-20971. VALID_TABLES['chachanotes'] went stale, was repaired, and
     # went stale again 14.5 hours later; this is its authoring-time half.
     "scripts/check_schema_table_allowlist.py",
