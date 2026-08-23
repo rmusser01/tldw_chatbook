@@ -5789,18 +5789,42 @@ async def test_submit_without_prompt_history_configured_is_a_noop():
 # -- task-1337: per-run Library/RAG provider factory seam --
 
 
+class _AllowedLibraryCoordinator:
+    def register_holder(self, *_args, **_kwargs):
+        return None
+
+    def unregister_holder(self, *_args, **_kwargs):
+        return None
+
+    async def capture_for_execution(self, _session_id):
+        return ConsoleLibraryPolicySnapshot(
+            auto_retrieve=ConsoleAutoRetrieve.NEVER,
+            assistant_access=ConsoleAssistantLibraryAccess.ALLOWED,
+            policy_revision=1,
+            source="durable",
+        )
+
+
+class _ControllerLibraryService:
+    def invoke(self, _name, _arguments):
+        return {"items": [], "total": 0}
+
+
 @pytest.mark.asyncio
 async def test_run_agent_reply_threads_library_provider_from_factory():
     """The controller resolves the injected `library_provider_factory` exactly
     once per run, on the main loop, and hands the resulting provider to the
     bridge's run_reply alongside the other per-run providers."""
     store = ConsoleChatStore()
+    store.library_policy_coordinator = _AllowedLibraryCoordinator()
     gateway = RecordingStreamingGateway()
-    provider = object()
+    from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
+
+    provider = LibraryToolProvider(_ControllerLibraryService())
     factory_calls = []
 
-    def factory():
-        factory_calls.append(1)
+    def factory(context):
+        factory_calls.append(context)
         return provider
 
     controller = ConsoleChatController(
@@ -5820,9 +5844,10 @@ async def test_run_agent_reply_threads_library_provider_from_factory():
 
     await controller.submit_draft("hello")
 
-    assert factory_calls == [1]
+    assert len(factory_calls) == 1
     assert len(bridge_calls) == 1
     assert bridge_calls[0]["library_provider"] is provider
+    assert bridge_calls[0]["library_authority"] is provider.builtin_authority
 
 
 @pytest.mark.asyncio
@@ -5851,20 +5876,21 @@ async def test_run_agent_reply_without_factory_passes_no_library_provider():
 
 @pytest.mark.asyncio
 async def test_library_provider_factory_refreshes_per_run_without_rebuilding_bridge():
-    """Per-run freshness: flipping which provider the factory returns between
-    runs changes the NEXT run's provider while the cached bridge instance is
-    reused untouched."""
+    """Per-run freshness issues a new provider/authority on the cached bridge."""
     store = ConsoleChatStore()
+    store.library_policy_coordinator = _AllowedLibraryCoordinator()
     gateway = RecordingStreamingGateway()
-    direct_provider = object()
-    rag_provider = object()
-    offerings = [direct_provider, rag_provider]
+    from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
+
+    first_provider = LibraryToolProvider(_ControllerLibraryService())
+    second_provider = LibraryToolProvider(_ControllerLibraryService())
+    offerings = [first_provider, second_provider]
 
     controller = ConsoleChatController(
         store=store,
         provider_gateway=gateway,
         agent_runtime_enabled=True,
-        library_provider_factory=lambda: offerings.pop(0),
+        library_provider_factory=lambda _context: offerings.pop(0),
     )
     bridge_calls = []
 
@@ -5880,8 +5906,10 @@ async def test_library_provider_factory_refreshes_per_run_without_rebuilding_bri
     await controller.submit_draft("second")
 
     assert len(bridge_calls) == 2
-    assert bridge_calls[0]["library_provider"] is direct_provider
-    assert bridge_calls[1]["library_provider"] is rag_provider
+    assert bridge_calls[0]["library_provider"] is first_provider
+    assert bridge_calls[1]["library_provider"] is second_provider
+    assert bridge_calls[0]["library_authority"] is first_provider.builtin_authority
+    assert bridge_calls[1]["library_authority"] is second_provider.builtin_authority
     assert controller._agent_bridge is cached_bridge
 
 
@@ -5892,7 +5920,7 @@ async def test_library_provider_factory_failure_degrades_to_no_provider():
     store = ConsoleChatStore()
     gateway = RecordingStreamingGateway()
 
-    def factory():
+    def factory(_context):
         raise RuntimeError("config exploded")
 
     controller = ConsoleChatController(

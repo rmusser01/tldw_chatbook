@@ -14,7 +14,9 @@ per run after `BuiltinToolProvider` and before skills/MCP.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Mapping
+from uuid import uuid4
 
 from loguru import logger
 
@@ -22,6 +24,9 @@ from tldw_chatbook.Agents.agent_models import (
     ToolCatalogEntry,
     ToolResult,
     ToolSchema,
+)
+from tldw_chatbook.Chat.console_library_policy import (
+    ConsoleAssistantLibraryAccess,
 )
 from tldw_chatbook.Library.library_tool_contract import (
     ERROR_INVALID_ARGUMENT,
@@ -37,7 +42,55 @@ def _error_result(error: LibraryToolError) -> ToolResult:
     return ToolResult(ok=False, error=json_dumps_compact(error.to_payload()))
 
 
-class LibraryToolProvider:
+@dataclass(frozen=True, slots=True)
+class BuiltinLibraryAuthority:
+    """Live, credential-free authority issued by one built-in provider."""
+
+    provider_instance_id: str
+    reserved_names: frozenset[str]
+    assistant_access: ConsoleAssistantLibraryAccess
+
+
+class _BuiltinLibraryAuthorityIssuer:
+    """Private instance-identity capability shared by the two built-in providers."""
+
+    def _initialize_builtin_authority_issuer(self) -> None:
+        self._builtin_library_provider_instance_id = uuid4().hex
+        self._builtin_library_authority: BuiltinLibraryAuthority | None = None
+
+    @property
+    def builtin_authority(self) -> BuiltinLibraryAuthority | None:
+        """Return this provider's currently issued live authority object."""
+        return self._builtin_library_authority
+
+    def issue_builtin_authority(
+        self,
+        *,
+        reserved_names: frozenset[str],
+        assistant_access: ConsoleAssistantLibraryAccess,
+    ) -> BuiltinLibraryAuthority:
+        """Replace and return this provider instance's live authority object."""
+        authority = BuiltinLibraryAuthority(
+            provider_instance_id=self._builtin_library_provider_instance_id,
+            reserved_names=reserved_names,
+            assistant_access=assistant_access,
+        )
+        self._builtin_library_authority = authority
+        return authority
+
+    def authenticates_builtin_authority(
+        self, authority: object
+    ) -> bool:
+        """Authenticate only the exact currently issued object for this instance."""
+        return (
+            authority is self._builtin_library_authority
+            and isinstance(authority, BuiltinLibraryAuthority)
+            and authority.provider_instance_id
+            == self._builtin_library_provider_instance_id
+        )
+
+
+class LibraryToolProvider(_BuiltinLibraryAuthorityIssuer):
     """Exposes the 18 descriptor-backed ``library_*`` tools to Console agents.
 
     Catalog entries and schemas are derived from ``LIBRARY_TOOL_DESCRIPTORS``
@@ -50,6 +103,7 @@ class LibraryToolProvider:
 
     def __init__(self, service: Any) -> None:
         """Bind the shared synchronous Library service (duck-typed ``invoke``)."""
+        self._initialize_builtin_authority_issuer()
         self._service = service
 
     def _tool_id(self, name: str) -> str:
@@ -107,4 +161,4 @@ class LibraryToolProvider:
         return ToolResult(ok=True, content=text)
 
 
-__all__ = ["LibraryToolProvider"]
+__all__ = ["BuiltinLibraryAuthority", "LibraryToolProvider"]

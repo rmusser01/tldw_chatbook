@@ -31,8 +31,14 @@ from typing import (
 
 from loguru import logger
 
+from tldw_chatbook.Chat.console_library_policy import (
+    ConsoleAssistantLibraryAccess,
+)
+from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
 from tldw_chatbook.Tools.tool_executor import CalculatorTool, DateTimeTool
 
+from .library_rag_tool_provider import LibraryRagToolProvider, RAG_TOOL_NAME
+from .library_tool_provider import BuiltinLibraryAuthority, LibraryToolProvider
 from .agent_models import (
     AgentDefinition,
     CHECK_AGENTS_TOOL_NAME,
@@ -59,6 +65,10 @@ from .run_log_search import (
     MAX_SLICE_RECORDS,
     MAX_STATS_GROUPS,
     STATS_GROUP_BY_FIELDS,
+)
+
+LIBRARY_RESERVED_TOOL_NAMES: frozenset[str] = frozenset(
+    (*LIBRARY_TOOL_DESCRIPTORS.keys(), RAG_TOOL_NAME)
 )
 
 SPAWN_TOOL_SCHEMA = ToolSchema(
@@ -1178,6 +1188,8 @@ class ToolCatalogRegistry:
 
     def __init__(self, *, ephemeral: bool = False) -> None:
         self._providers: list[ToolProvider] = []
+        self._builtin_library_provider: ToolProvider | None = None
+        self._builtin_library_authority: BuiltinLibraryAuthority | None = None
         # Whether the Console session owning THIS run is temporary ("not
         # saved locally"). Enforced in `invoke_by_name` -- the one choke
         # point every provider's `invoke()` is reached through -- rather
@@ -1206,6 +1218,64 @@ class ToolCatalogRegistry:
             # cache already built — invalidate so the next lookup rebuilds it.
             self._catalog_snapshot = None
             self._catalog_generation += 1
+
+    def register_builtin_library_provider(
+        self,
+        provider: ToolProvider,
+        authority: BuiltinLibraryAuthority | None,
+    ) -> bool:
+        """Register one exact in-tree Library provider with its live capability.
+
+        Source strings and structural lookalikes are deliberately irrelevant:
+        only the concrete built-in provider classes and the exact authority
+        object currently issued by that same instance cross this boundary.
+        """
+        provider_type = type(provider)
+        if provider_type is LibraryToolProvider:
+            expected_names = frozenset(LIBRARY_TOOL_DESCRIPTORS)
+        elif provider_type is LibraryRagToolProvider:
+            expected_names = frozenset({RAG_TOOL_NAME})
+        else:
+            return False
+        if (
+            not isinstance(authority, BuiltinLibraryAuthority)
+            or authority.assistant_access is not ConsoleAssistantLibraryAccess.ALLOWED
+            or authority.reserved_names is not LIBRARY_RESERVED_TOOL_NAMES
+            or not provider.authenticates_builtin_authority(authority)
+        ):
+            return False
+        try:
+            entries = provider.list_catalog()
+        except Exception:  # noqa: BLE001 - malformed provider fails closed
+            return False
+        if (
+            frozenset(entry.name for entry in entries) != expected_names
+            or any(entry.source != "library" for entry in entries)
+        ):
+            return False
+        with self._catalog_lock:
+            if self._builtin_library_provider is not None:
+                return False
+            self._builtin_library_provider = provider
+            self._builtin_library_authority = authority
+            self._providers.append(provider)
+            self._catalog_snapshot = None
+            self._catalog_generation += 1
+        return True
+
+    def _authenticated_builtin_library_name(
+        self, provider: ToolProvider, name: str
+    ) -> bool:
+        """Return whether ``name`` is live-authorized for this exact provider."""
+        authority = self._builtin_library_authority
+        return bool(
+            provider is self._builtin_library_provider
+            and isinstance(authority, BuiltinLibraryAuthority)
+            and authority.assistant_access is ConsoleAssistantLibraryAccess.ALLOWED
+            and authority.reserved_names is LIBRARY_RESERVED_TOOL_NAMES
+            and name in LIBRARY_RESERVED_TOOL_NAMES
+            and provider.authenticates_builtin_authority(authority)
+        )
 
     def reset_catalog_cache(self) -> None:
         """Drop the owner-map/name-map cache; call once at the start of a run.
@@ -1241,6 +1311,14 @@ class ToolCatalogRegistry:
         accepted_entries: list[ToolCatalogEntry] = []
         for provider in self._providers:
             for entry in provider.list_catalog():
+                if (
+                    self._ephemeral
+                    and entry.source == "library"
+                    and not self._authenticated_builtin_library_name(
+                        provider, entry.name
+                    )
+                ):
+                    continue
                 if entry.id in by_id or entry.name in by_name:
                     continue
                 record = _ToolOwnerRecord(
@@ -1324,6 +1402,8 @@ class ToolCatalogRegistry:
         # Returns a ToolResult rather than raising: the pure loop must never
         # see an exception out of tool invocation.
         if self._ephemeral:
+            if self._authenticated_builtin_library_name(provider, name):
+                return provider.invoke(tool_id, args)
             from tldw_chatbook.Chat.console_ephemeral import tool_blocked_reason
 
             reason = tool_blocked_reason(name, source=record.source, ephemeral=True)

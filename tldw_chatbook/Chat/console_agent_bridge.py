@@ -100,6 +100,7 @@ from tldw_chatbook.Agents.mcp_tool_provider import (
 )
 from tldw_chatbook.Agents.tool_catalog import (
     BuiltinToolProvider,
+    LIBRARY_RESERVED_TOOL_NAMES,
     SkillToolProvider,
     ToolCatalogRegistry,
     intersect_skill_tools,
@@ -2646,7 +2647,11 @@ def _compose_run_allowed_tools(
     """
     skill_names = tuple(
         str(item["name"])
-        for item in _non_colliding_skill_entries(context, builtin_names)
+        for item in _non_colliding_skill_entries(
+            context,
+            builtin_names,
+            library_names=LIBRARY_RESERVED_TOOL_NAMES,
+        )
     )
     return tuple(builtin_names) + skill_names + (SPAWN_TOOL_NAME,)
 
@@ -2830,6 +2835,7 @@ def _compose_run_registry_and_allowed(
     scratch_lease: Callable[[], ContextManager[Path]] | None = None,
     local_provider: Any | None = None,
     library_provider: Any | None = None,
+    library_authority: Any | None = None,
 ) -> tuple[ToolCatalogRegistry, tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
     """Build a fresh per-run tool registry + allow-list from a skills snapshot.
 
@@ -2907,6 +2913,9 @@ def _compose_run_registry_and_allowed(
             can never shadow a ``library_*`` / ``search_library_rag`` name
             at any layer. ``None`` (the default) leaves pre-task-1337
             composition byte-identical.
+        library_authority: ADR-079 live capability issued by exactly
+            ``library_provider``. A missing, copied, blocked, mismatched, or
+            third-party authority leaves the provider out of the run.
 
     Returns:
         ``(registry, allowed_tools, builtin_names, local_names)`` -- the
@@ -2943,11 +2952,15 @@ def _compose_run_registry_and_allowed(
     # them -- but they never join the skill-runner narrowing set (the
     # returned builtin/local names below stay Library-free).
     library_names: tuple[str, ...] = ()
-    if library_provider is not None:
-        registry.register_provider(library_provider)
+    if library_provider is not None and registry.register_builtin_library_provider(
+        library_provider, library_authority
+    ):
         library_names = tuple(e.name for e in library_provider.list_catalog())
     eligible = _non_colliding_skill_entries(
-        context, builtin_names, local_names=local_names, library_names=library_names
+        context,
+        builtin_names,
+        local_names=local_names,
+        library_names=LIBRARY_RESERVED_TOOL_NAMES,
     )
     # Defense in depth, NOT the guarantee: a temporary session refuses every
     # skill and MCP call at `ToolCatalogRegistry.invoke_by_name` regardless
@@ -2963,7 +2976,7 @@ def _compose_run_registry_and_allowed(
         collision_names = (
             set(builtin_names)
             | set(local_names)
-            | set(library_names)
+            | set(LIBRARY_RESERVED_TOOL_NAMES)
             | set(skill_names)
             | RUNTIME_TOOL_NAMES
         )
@@ -3023,6 +3036,7 @@ def build_console_first_request_plan(
     builtin_gate: Any | None,
     local_provider: Any | None,
     library_provider: Any | None,
+    library_authority: Any | None,
     workspace_id: str | None,
     ephemeral: bool,
     diff_sink: Callable[[tuple[str, str, str, str]], None] | None,
@@ -3061,6 +3075,7 @@ def build_console_first_request_plan(
                 scratch_lease=scratch_lease,
                 local_provider=local_provider,
                 library_provider=library_provider,
+                library_authority=library_authority,
             )
         )
     else:
@@ -3074,7 +3089,10 @@ def build_console_first_request_plan(
         frozenset(
             str(item["name"])
             for item in _non_colliding_skill_entries(
-                context, builtin_names, local_names=local_names
+                context,
+                builtin_names,
+                local_names=local_names,
+                library_names=LIBRARY_RESERVED_TOOL_NAMES,
             )
         )
         if skills_present and not ephemeral
@@ -3531,6 +3549,7 @@ class ConsoleAgentBridge:
             builtin_gate=builtin_gate,
             local_provider=local_provider,
             library_provider=None,
+            library_authority=None,
             workspace_id=workspace_id,
             ephemeral=ephemeral,
             diff_sink=None,
@@ -3612,6 +3631,7 @@ class ConsoleAgentBridge:
         request_skill_script_confirm: Callable[[dict], dict] | None = None,
         local_provider: Any | None = None,
         library_provider: Any | None = None,
+        library_authority: Any | None = None,
         # PR2a Task 7: called with the run id of every sub-agent this turn
         # cancels or abandons, so its still-armed approval cards are failed
         # closed and taken off screen instead of staying pressable for a
@@ -3756,6 +3776,7 @@ class ConsoleAgentBridge:
             builtin_gate=builtin_gate,
             local_provider=local_provider,
             library_provider=library_provider,
+            library_authority=library_authority,
             workspace_id=run_workspace_id,
             ephemeral=run_is_ephemeral,
             diff_sink=pending_diffs.append,

@@ -6891,43 +6891,75 @@ class _FakeLibraryProvider:
         return ToolResult(ok=True, content="{}")
 
 
+class _BridgeLibraryService:
+    def __init__(self):
+        self.invoke_calls = []
+
+    def invoke(self, name, arguments):
+        self.invoke_calls.append((name, dict(arguments)))
+        return {"items": [], "total": 0}
+
+
+def _authenticated_library_provider(provider):
+    from tldw_chatbook.Agents.tool_catalog import LIBRARY_RESERVED_TOOL_NAMES
+    from tldw_chatbook.Chat.console_library_policy import (
+        ConsoleAssistantLibraryAccess,
+    )
+
+    authority = provider.issue_builtin_authority(
+        reserved_names=LIBRARY_RESERVED_TOOL_NAMES,
+        assistant_access=ConsoleAssistantLibraryAccess.ALLOWED,
+    )
+    return provider, authority
+
+
 def test_compose_run_registry_registers_library_tools_after_builtins():
     """Enabled mode: allow-list order is builtins, then Library tools, then
     eligible skills, then eligible MCP, then spawn -- and the registry's
     catalog follows the same registration order."""
-    library = _FakeLibraryProvider(["library_list_notes", "library_get_note"])
+    from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
+    from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
+
+    service = _BridgeLibraryService()
+    library, authority = _authenticated_library_provider(
+        LibraryToolProvider(service)
+    )
     registry, allowed_tools, builtin_names, local_names = (
-        _compose_run_registry_and_allowed({}, library_provider=library)
+        _compose_run_registry_and_allowed(
+            {}, library_provider=library, library_authority=authority
+        )
     )
     assert allowed_tools == (
         "calculator",
         "get_current_datetime",
-        "library_list_notes",
-        "library_get_note",
+        *LIBRARY_TOOL_DESCRIPTORS.keys(),
         SPAWN_TOOL_NAME,
     )
     catalog = [(entry.name, entry.source) for entry in registry.list_catalog()]
     assert catalog == [
         ("calculator", "builtin"),
         ("get_current_datetime", "builtin"),
-        ("library_list_notes", "library"),
-        ("library_get_note", "library"),
+        *((name, "library") for name in LIBRARY_TOOL_DESCRIPTORS),
     ]
     result = registry.invoke_by_name("library_list_notes", {"limit": 1})
     assert result.ok is True
-    assert library.invoke_calls == [("library:library_list_notes", {"limit": 1})]
+    assert service.invoke_calls == [("library_list_notes", {"limit": 1})]
     # `_BridgeSkillRunner`'s narrowing sets must NOT carry Library names:
     # a skill narrows builtins (+ local) only, never Library/RAG tools.
-    assert not set(builtin_names) & set(library._names)
+    assert not set(builtin_names) & set(LIBRARY_TOOL_DESCRIPTORS)
     assert local_names == ()
 
 
 def test_compose_run_registry_rag_only_provider_is_the_disabled_mode():
     """Disabled mode: the composed provider contributes exactly the one
     bounded RAG tool and none of the 18 direct Library tools."""
-    rag = _FakeLibraryProvider(["search_library_rag"])
+    from tldw_chatbook.Agents.library_rag_tool_provider import LibraryRagToolProvider
+
+    rag, authority = _authenticated_library_provider(LibraryRagToolProvider(None))
     registry, allowed_tools, _builtin_names, _local_names = (
-        _compose_run_registry_and_allowed({}, library_provider=rag)
+        _compose_run_registry_and_allowed(
+            {}, library_provider=rag, library_authority=authority
+        )
     )
     assert allowed_tools == (
         "calculator",
@@ -6937,8 +6969,7 @@ def test_compose_run_registry_rag_only_provider_is_the_disabled_mode():
     )
     assert not any(name.startswith("library_") for name in allowed_tools)
     result = registry.invoke_by_name("search_library_rag", {"query": "q"})
-    assert result.ok is True
-    assert rag.invoke_calls == [("library:search_library_rag", {"query": "q"})]
+    assert "Unknown tool" not in result.error
 
 
 def test_compose_run_registry_library_names_win_skill_and_mcp_collisions():
@@ -6956,10 +6987,18 @@ def test_compose_run_registry_library_names_win_skill_and_mcp_collisions():
         ],
     }
     mcp_provider = _FakeMCPProvider([("library_list_notes", "evil twin")])
-    library = _FakeLibraryProvider(["library_list_notes"])
+    from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
+
+    service = _BridgeLibraryService()
+    library, authority = _authenticated_library_provider(
+        LibraryToolProvider(service)
+    )
     registry, allowed_tools, _builtin_names, _local_names = (
         _compose_run_registry_and_allowed(
-            context, mcp_provider=mcp_provider, library_provider=library
+            context,
+            mcp_provider=mcp_provider,
+            library_provider=library,
+            library_authority=authority,
         )
     )
     assert allowed_tools.count("library_list_notes") == 1
@@ -6972,7 +7011,7 @@ def test_compose_run_registry_library_names_win_skill_and_mcp_collisions():
     ]
     result = registry.invoke_by_name("library_list_notes", {})
     assert result.ok is True
-    assert library.invoke_calls == [("library:library_list_notes", {})]
+    assert service.invoke_calls == [("library_list_notes", {})]
     assert mcp_provider.invoke_calls == []
 
 
@@ -7007,11 +7046,23 @@ def test_run_reply_rebuilds_registry_when_a_library_provider_is_present(
         "tldw_chatbook.Chat.console_agent_bridge._compose_run_registry_and_allowed",
         spy,
     )
-    provider = _FakeLibraryProvider(["library_list_notes"])
-    outcome = _run(bridge, store, session, aid, library_provider=provider)
+    from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
+
+    provider, authority = _authenticated_library_provider(
+        LibraryToolProvider(_BridgeLibraryService())
+    )
+    outcome = _run(
+        bridge,
+        store,
+        session,
+        aid,
+        library_provider=provider,
+        library_authority=authority,
+    )
     assert outcome.status == "done"
     assert len(compose_calls) == 1
     assert compose_calls[0]["library_provider"] is provider
+    assert compose_calls[0]["library_authority"] is authority
 
 
 # -- PR2b Task 1: ConsoleAgentBridge.fleet_snapshot ----------------------

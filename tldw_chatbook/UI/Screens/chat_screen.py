@@ -5397,27 +5397,17 @@ class ChatScreen(BaseAppScreen):
     ):
         """Resolve the Library retrieval provider for one Console agent run.
 
-        task-1337 (spec section 8): a turn context pins
-        ``[console].direct_library_tools`` for one run; the compatibility
-        no-context path still reads it fresh. Direct mode assembles
+        ADR-079: the final turn authority pins the Library mode for one run;
+        a missing context fails closed. Direct mode assembles
         ``LocalLibraryToolService`` purely from the app's local service
         attributes (any missing backend degrades its own tools to
         ``feature_unavailable``); off mode binds the bounded RAG provider to
         the app-owned ``library_rag_search_service``.
         """
-        # Local imports: keeps the Agents/Library import chains off the
-        # ChatScreen module import path (and lets tests patch the config seam
-        # at call time).
-        from tldw_chatbook.UI.Screens.settings_library_rag_defaults import (
-            load_direct_library_tools,
-        )
-
+        if turn_context is None:
+            return None
         app = self.app_instance
-        direct_library_tools = (
-            bool(turn_context.tool_configuration.get("direct_library_tools", False))
-            if turn_context is not None
-            else load_direct_library_tools()
-        )
+        direct_library_tools = turn_context.library_authority.direct_library_tools
         if not direct_library_tools:
             from tldw_chatbook.Agents.library_rag_tool_provider import (
                 LibraryRagToolProvider,

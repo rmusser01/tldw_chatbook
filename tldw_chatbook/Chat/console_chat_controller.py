@@ -5699,25 +5699,39 @@ class ConsoleChatController:
     def _library_provider_for_context(
         self, turn_context: ConsoleTurnExecutionContext
     ) -> Any | None:
-        """Build the Library provider from this turn's captured mode."""
+        """Build and authenticate the provider from final immutable authority."""
         self._require_complete_turn_execution_context(turn_context)
+        library_authority = turn_context.library_authority
+        if (
+            library_authority.policy.assistant_access
+            is not ConsoleAssistantLibraryAccess.ALLOWED
+        ):
+            return None
         factory = self._library_provider_factory
         if factory is None:
             return None
-        try:
-            parameters = inspect.signature(factory).parameters.values()
-            accepts_context = any(
-                parameter.kind
-                in {
-                    inspect.Parameter.POSITIONAL_ONLY,
-                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                    inspect.Parameter.VAR_POSITIONAL,
-                }
-                for parameter in parameters
-            )
-        except (TypeError, ValueError):
-            accepts_context = False
-        return factory(turn_context) if accepts_context else factory()
+        provider = factory(turn_context)
+        if provider is None:
+            return None
+
+        from tldw_chatbook.Agents.library_rag_tool_provider import (
+            LibraryRagToolProvider,
+        )
+        from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
+        from tldw_chatbook.Agents.tool_catalog import LIBRARY_RESERVED_TOOL_NAMES
+
+        expected_type = (
+            LibraryToolProvider
+            if library_authority.direct_library_tools
+            else LibraryRagToolProvider
+        )
+        if type(provider) is not expected_type:
+            return None
+        provider.issue_builtin_authority(
+            reserved_names=LIBRARY_RESERVED_TOOL_NAMES,
+            assistant_access=library_authority.policy.assistant_access,
+        )
+        return provider
 
     def resolve_pending_approval(
         self, decisions: dict[str, str], *, round_id: str | None = None
@@ -12355,9 +12369,12 @@ class ConsoleChatController:
         # the injected factory -- a raising factory degrades to None (no
         # Library tools this run) rather than breaking the send.
         library_provider: Any | None = None
+        library_provider_authority: Any | None = None
         if self._library_provider_factory is not None:
             try:
                 library_provider = self._library_provider_for_context(turn_context)
+                if library_provider is not None:
+                    library_provider_authority = library_provider.builtin_authority
             except Exception:  # noqa: BLE001 -- never block a send
                 logger.opt(exception=True).warning(
                     "library_provider_factory failed; running without Library tools"
@@ -12404,6 +12421,7 @@ class ConsoleChatController:
                 review_tool_calls=review_hook,
                 local_provider=local_provider,
                 library_provider=library_provider,
+                library_authority=library_provider_authority,
                 native_tools_enabled=bool(
                     turn_context.tool_configuration.get(
                         "native_tool_calls_enabled", True
