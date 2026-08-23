@@ -777,6 +777,7 @@ async def test_folded_mode_resolves_real_thumbnail_under_distinct_authority():
                 and buddy._accepted_render.authority != full.authority
             )
         )
+        await _wait_until(lambda: "THUMB-0" in _compositor_text(app.screen))
 
         folded = buddy._accepted_render
         assert folded is not None
