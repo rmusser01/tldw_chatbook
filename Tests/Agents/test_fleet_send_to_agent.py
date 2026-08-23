@@ -49,6 +49,7 @@ from Tests.Agents.test_fleet_runtime import (
     make_fleet_service,
     make_inline_service,
 )
+from tldw_chatbook.Agents import run_log as run_log_module
 from tldw_chatbook.Agents.agent_models import (
     FENCE_TOOL_RESULT_PREFIX,
     MAX_STEERING_CHARS,
@@ -64,11 +65,13 @@ from tldw_chatbook.Agents.agent_models import (
 )
 from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator
+from tldw_chatbook.Agents.run_log_search import load_records
 from tldw_chatbook.Agents.tool_catalog import (
     SEND_TO_AGENT_SCHEMA,
     BuiltinToolProvider,
     ToolCatalogRegistry,
 )
+from tldw_chatbook.Chat.trajectory import derive_trajectory
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 #: How long a parked approval card waits for the test to answer it.
@@ -189,14 +192,19 @@ def test_schema_is_primary_only_and_a_childs_call_is_refused(db):
 # -- the supervisor path, end to end --------------------------------------
 
 
-def test_supervisor_steers_a_live_child_end_to_end(db):
+def test_supervisor_steers_a_live_child_end_to_end(db, tmp_path, monkeypatch):
     """The whole seam: the supervisor calls the tool, the ok copy states
     queued-plus-latency honestly, and the child's next model-turn payload
     ends with the ``[Steering from supervisor]``-labeled user message,
     after the batch's tool result -- Task 1's coherent boundary."""
+    monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
     entered = threading.Event()
     steered = threading.Event()
     holder: dict = {}
+    steering_message = (
+        "reasoning_content: wrap up using /Users/alice/secret.txt and "
+        "api_key=sk-private-steering"
+    )
 
     def steer():
         assert entered.wait(_JOIN_TIMEOUT), "the child never reached its model call"
@@ -204,7 +212,7 @@ def test_supervisor_steers_a_live_child_end_to_end(db):
         holder["handle_id"] = handle.handle_id
         return fence(
             SEND_TO_AGENT_TOOL_NAME,
-            {"id": handle.handle_id, "message": "wrap up quickly"},
+            {"id": handle.handle_id, "message": steering_message},
         )
 
     def release_then_wait():
@@ -235,7 +243,7 @@ def test_supervisor_steers_a_live_child_end_to_end(db):
     )
     assert outcome.status == RUN_DONE
 
-    labeled = format_steering_message(STEERING_SOURCE_SUPERVISOR, "wrap up quickly")
+    labeled = format_steering_message(STEERING_SOURCE_SUPERVISOR, steering_message)
     assert labeled.startswith("[Steering from supervisor] ")
     child_turns = chat.child_calls["steer target"]
     assert len(child_turns) == 2
@@ -256,6 +264,62 @@ def test_supervisor_steers_a_live_child_end_to_end(db):
         assert not any(
             labeled in str(m.get("content", "")) for m in call["messages_payload"]
         )
+
+    parent = db.get_run(run_id)
+    send_step = next(
+        step
+        for step in parent["steps"]
+        if step["kind"] == "tool_call"
+        and step["tool_name"] == SEND_TO_AGENT_TOOL_NAME
+    )
+    send_event_id = f"agent-step:{run_id}:{send_step['index']}"
+    child = next(row for row in db.list_runs("c") if row["agent_kind"] == "subagent")
+    steering = next(step for step in child["steps"] if step["kind"] == "steering")
+    assert steering["parent_event_id"] == send_event_id
+    assert steering["source_event_id"] == send_event_id
+
+    path = db.db_path
+    db.close()
+    reopened = AgentRunsDB(path, client_id="handoff-reload")
+    runs = reopened.list_runs("c", include_superseded=True)
+    steps = [
+        {**step, "run_id": row["id"], "conversation_id": "c"}
+        for row in runs
+        for step in row["steps"]
+    ]
+    snapshot = derive_trajectory(
+        messages=[],
+        usage_by_id={},
+        traj_rows=[],
+        variant_sets=[],
+        compaction_records=[],
+        agent_runs=runs,
+        agent_steps=steps,
+    )
+    records = [record for turn in snapshot.turns for record in turn.records]
+    projected = next(
+        record
+        for record in records
+        if record.run_id == child["id"] and record.kind == "steering"
+    )
+    assert projected.parent_event_id == send_event_id
+    assert projected.source_event_id == send_event_id
+    assert [record.event_id for record in records].index(send_event_id) < [
+        record.event_id for record in records
+    ].index(projected.event_id)
+    logged = "\n".join(
+        record.content for record in load_records(service.run_log_writer.log_dir)
+    )
+    durable = str(runs)
+    for forbidden in (
+        "reasoning_content",
+        "/Users/alice/secret.txt",
+        "sk-private-steering",
+        holder["handle_id"],
+    ):
+        assert forbidden not in logged
+        assert forbidden not in durable
+    reopened.close()
 
 
 # -- refusal shapes: the producer validates (Task 1 pinned that the
@@ -420,7 +484,10 @@ def test_an_unknown_id_is_refused_naming_the_live_ids(db):
     assert "'nope'" in sends[0]
     # The error NAMES the known live ids, so the supervisor can correct
     # itself without a check_agents round trip.
-    assert holder["handle_id"] in sends[0]
+    handle = coordinator.get(holder["handle_id"])
+    assert handle.run_id
+    assert holder["handle_id"] not in sends[0]
+    assert f"run:{handle.run_id}" in sends[0]
     # Nothing landed anywhere.
     assert coordinator.get(holder["handle_id"]).queued_steering == 0
 
@@ -548,7 +615,10 @@ def test_a_run_id_reaches_the_same_mailbox_as_the_handle_id(db):
     # vocabularies land on one mailbox, not two.
     sends = _sends(db, run_id)
     assert sends and "ERROR" not in sends[0]
-    assert holder["handle_id"] in sends[0]
+    handle = coordinator.get(holder["handle_id"])
+    assert handle.run_id
+    assert holder["handle_id"] not in sends[0]
+    assert f"run:{handle.run_id}" in sends[0]
     assert coordinator.get(holder["handle_id"]).queued_steering == 0
 
 
@@ -619,7 +689,11 @@ def test_a_live_handle_id_beats_a_colliding_run_id(db):
     # The message landed in B's mailbox and only B's.
     assert holder["queued"] == (0, 1)
     sends = _sends(db, run_id)
-    assert sends and "ERROR" not in sends[0] and holder["b"] in sends[0]
+    target = coordinator.get(holder["b"])
+    assert target.run_id
+    assert sends and "ERROR" not in sends[0]
+    assert holder["b"] not in sends[0]
+    assert f"run:{target.run_id}" in sends[0]
     # Neither child took another model turn, so B never DRAINED the entry
     # -- and A's mailbox stayed empty throughout. PR3b Task 4: at finish
     # time retention CLAIMED B's undelivered remnant (Task 1's pinned
@@ -929,7 +1003,11 @@ def test_a_foreign_live_survivor_is_steerable(db):
         assert outcome_2.status == RUN_DONE
         sends = _sends(db, run_id_2)
         assert sends and "ERROR" not in sends[0] and "queued" in sends[0]
-        assert coordinator.get(holder["handle_id"]).queued_steering == 1
+        survivor = coordinator.get(holder["handle_id"])
+        assert survivor.run_id
+        assert holder["handle_id"] not in sends[0]
+        assert f"run:{survivor.run_id}" in sends[0]
+        assert survivor.queued_steering == 1
         # And the post cancelled nothing: the survivor is still running.
         assert coordinator.get(holder["handle_id"]).status == RUN_RUNNING
     finally:

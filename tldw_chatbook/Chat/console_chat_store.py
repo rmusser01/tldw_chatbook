@@ -70,6 +70,7 @@ from tldw_chatbook.Chat.console_speech import (
 from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
+from tldw_chatbook.Chat.trajectory import contains_local_path
 from tldw_chatbook.Chat.provider_continuation import (
     ProviderContinuationCheckpoint,
     dump_provider_continuation_json,
@@ -80,6 +81,7 @@ from tldw_chatbook.Chat.rag_scope import RagScope, SessionScopeHolder
 from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
 from tldw_chatbook.TTS.profile_errors import ProfileValidationError
 from tldw_chatbook.TTS.profile_types import CharacterRef
+from tldw_chatbook.Utils.log_sanitizer import REDACTION_MARKER, redact_log_line
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 from tldw_chatbook.Video_Generation.video_store import video_content_marker
 
@@ -92,12 +94,6 @@ if TYPE_CHECKING:
 
 #: Maximum number of attachments a Console session may stage before send.
 MAX_PENDING_ATTACHMENTS = 5
-
-#: Trajectory sidecar (schema v38): stored tool-result payload cap. The full
-#: untruncated output remains available live in-session via
-#: ``ConsoleChatMessage.tool_output_full``; beyond this cap the sidecar row
-#: stores a truncated result plus ``{"truncated": true}`` in its payload.
-TRAJECTORY_RESULT_CAP_BYTES = 256 * 1024
 
 TerminalCitationFinalizer = Callable[[str], SealedCitationWrite | None]
 
@@ -857,6 +853,9 @@ class ConsoleChatStore:
         # time, flushed -- remapped to the parent's persisted id -- when the
         # parent message persists. Keyed by the parent's NATIVE message id.
         self._pending_trajectory_tool_rows: dict[str, list[dict[str, Any]]] = {}
+        self._pending_trajectory_event_rows: dict[str, list[dict[str, Any]]] = {}
+        self._trajectory_capture_failure_keys: set[str] = set()
+        self._trajectory_capture_failure_hydrated: set[str] = set()
 
     def subscribe_message_completed(
         self,
@@ -963,15 +962,12 @@ class ConsoleChatStore:
                 raise ValueError("session id is invalid")
             if session_id in self._sessions:
                 raise ValueError("session id already exists")
-        if (
-            canonical_settings_baseline is not None
-            and (
-                not isinstance(
-                    canonical_settings_baseline,
-                    ConsoleSessionSettings,
-                )
-                or canonical_settings_baseline != settings
+        if canonical_settings_baseline is not None and (
+            not isinstance(
+                canonical_settings_baseline,
+                ConsoleSessionSettings,
             )
+            or canonical_settings_baseline != settings
         ):
             raise ValueError("canonical baseline must equal the session settings.")
         session = ConsoleChatSession(
@@ -1043,7 +1039,9 @@ class ConsoleChatStore:
             or self._nodes_by_session.get(session_id)
             or self._children_by_parent.get(session_id)
             or self._active_leaf_by_session.get(session_id) is not None
-            or any(owner == session_id for owner in self._message_session_index.values())
+            or any(
+                owner == session_id for owner in self._message_session_index.values()
+            )
             or bool(self._tool_markers_by_session.get(session_id))
         )
         session_live_state = (
@@ -1144,10 +1142,9 @@ class ConsoleChatStore:
         current_canonical_settings: ConsoleSessionSettings,
     ) -> ConsoleChatSession:
         """Atomically refresh proven canonical defaults on an untouched tab."""
-        if (
-            not isinstance(prior_canonical_settings, ConsoleSessionSettings)
-            or not isinstance(current_canonical_settings, ConsoleSessionSettings)
-        ):
+        if not isinstance(
+            prior_canonical_settings, ConsoleSessionSettings
+        ) or not isinstance(current_canonical_settings, ConsoleSessionSettings):
             raise TypeError("Canonical settings provenance is required.")
         if not all(
             settings.source == "derived"
@@ -1218,12 +1215,9 @@ class ConsoleChatStore:
         """Remove an exact newly-created target without touching claimed work."""
 
         session = self._sessions.get(session_id)
-        if (
-            session is not expected_session
-            or not self.is_pristine_session(
-                session_id,
-                expected_settings=expected_settings,
-            )
+        if session is not expected_session or not self.is_pristine_session(
+            session_id,
+            expected_settings=expected_settings,
         ):
             return False
         self._messages_by_session.pop(session_id, None)
@@ -1421,10 +1415,7 @@ class ConsoleChatStore:
         self, session_id: str, conversation_id: str
     ) -> None:
         """Project exact current unbridged Chat intents during normal restore."""
-        if (
-            self.sync_v2_server_profile_id is None
-            or self.sync_v2_chat_producer is None
-        ):
+        if self.sync_v2_server_profile_id is None or self.sync_v2_chat_producer is None:
             return
         database = getattr(self.persistence, "db", None) if self.persistence else None
         enumerate_intents = getattr(
@@ -1991,9 +1982,7 @@ class ConsoleChatStore:
         session.pending_attachments.clear()
         return session
 
-    def consume_pending_attachment(
-        self, session_id: str, attachment_id: str
-    ) -> bool:
+    def consume_pending_attachment(self, session_id: str, attachment_id: str) -> bool:
         """Remove only the currently staged attachment with the exact identity.
 
         Args:
@@ -2607,9 +2596,7 @@ class ConsoleChatStore:
             ),
             None,
         )
-        self._register_tree_node(
-            session_id, message, parent_native_id=parent_native_id
-        )
+        self._register_tree_node(session_id, message, parent_native_id=parent_native_id)
         self._active_leaf_by_session[session_id] = message.id
         self._recompute_active_path(session_id)
         self._bump_payload_revision(session_id)
@@ -3186,6 +3173,19 @@ class ConsoleChatStore:
         if persisted and message.content != previous_content and descendant_ids:
             self._purge_descendants_invalidated_by_edit(
                 session_id, message.id, descendant_ids
+            )
+        if persisted and message.content != previous_content:
+            self.record_trace_event(
+                session_id,
+                anchor_message_id=message.id,
+                event_kind="message_edited",
+                summary="Message edited",
+                status="completed",
+                source_event_id=(
+                    f"message:{message.persisted_message_id}"
+                    if message.persisted_message_id is not None
+                    else None
+                ),
             )
         return self._snapshot(message)
 
@@ -4276,6 +4276,20 @@ class ConsoleChatStore:
         self._bump_payload_revision(session_id)
         if message_id != previous_leaf:
             self._bump_conversation_context_epoch(session_id)
+            if message_id is not None:
+                self.record_trace_event(
+                    session_id,
+                    anchor_message_id=message_id,
+                    event_kind="branch_selected",
+                    summary="Conversation branch selected",
+                    status="selected",
+                    source_event_id=(
+                        f"message:{nodes[previous_leaf].persisted_message_id}"
+                        if previous_leaf in nodes
+                        and nodes[previous_leaf].persisted_message_id is not None
+                        else None
+                    ),
+                )
 
     def session_context_summary(self, session_id: str) -> tuple[str | None, str | None]:
         """Return the session's in-memory ``(summary, boundary_native_id)`` pair.
@@ -4430,6 +4444,7 @@ class ConsoleChatStore:
         completed_at: float | None = None,
         model: str | None = None,
         provider: str | None = None,
+        model_status: str | None = None,
         flush: bool = False,
     ) -> None:
         """Merge timing facts for one message's trajectory capture; never raises.
@@ -4454,6 +4469,9 @@ class ConsoleChatStore:
                     stash[key] = value
             if completed_at is not None:
                 stash["completed_at"] = completed_at
+                stash.setdefault("model_status", "completed")
+            if model_status is not None:
+                stash["model_status"] = model_status
             if not flush:
                 return
             message = self._nodes_lookup(message_id)
@@ -4480,24 +4498,110 @@ class ConsoleChatStore:
         with self._trajectory_lock:
             try:
                 result = writer(list(rows))
-            except Exception as exc:
-                logger.bind(row_count=len(rows), error=repr(exc)).warning(
-                    "trajectory_rows_write_failed"
-                )
+            except Exception:
+                logger.warning("trajectory_rows_write_failed")
+                result = False
+            if result is False:
+                self._write_capture_failed_diagnostic(writer, rows)
                 return False
         if result is not False:
             # task-5: a successful sidecar write is trajectory-visible state.
             # Bump the revision bus (conversation key + every live session
             # bound to that conversation) so the polling trajectory screen
             # rebuilds its snapshot; without this, tail-follow sees nothing.
-            for conversation_id in dict.fromkeys(
-                row.conversation_id for row in rows
-            ):
+            for conversation_id in dict.fromkeys(row.conversation_id for row in rows):
                 self._bump_payload_revision(conversation_id)
                 for session in self._sessions.values():
                     if session.persisted_conversation_id == conversation_id:
                         self._bump_payload_revision(session.id)
         return result is not False
+
+    def _write_capture_failed_diagnostic(
+        self,
+        writer: Callable[[Sequence[TrajectoryRowWrite]], object],
+        rows: Sequence[TrajectoryRowWrite],
+    ) -> None:
+        """Attempt one payload-free diagnostic without re-entering capture."""
+        first = rows[0]
+        if any(row.event_kind == "capture_failed" for row in rows):
+            return
+        source_events: list[dict[str, str]] = []
+        for row in rows:
+            source_event_id = ""
+            try:
+                payload = json.loads(row.payload_json or "{}")
+                if isinstance(payload, dict):
+                    source_event_id = str(payload.get("event_id") or "")
+            except (TypeError, ValueError):
+                pass
+            if not source_event_id:
+                source_event_id = canonical_payload_hash(
+                    {
+                        "event_kind": row.event_kind,
+                        "payload_json": row.payload_json or "",
+                    }
+                )
+            source_events.append(
+                {"event_kind": row.event_kind, "event_id": source_event_id}
+            )
+        digest = canonical_payload_hash(
+            {
+                "stage": "trajectory_write",
+                "conversation_id": first.conversation_id,
+                "message_id": first.message_id,
+                "turn_id": first.turn_id,
+                "source_events": source_events,
+            }
+        )
+        event_id = f"capture-failed:{digest.removeprefix('sha256:')}"
+        if event_id in self._trajectory_capture_failure_keys:
+            return
+        if first.conversation_id not in self._trajectory_capture_failure_hydrated:
+            try:
+                db = getattr(self.persistence, "db", None)
+                reader = getattr(db, "get_trajectory_rows", None)
+                if callable(reader):
+                    for existing in reader(first.conversation_id):
+                        if existing.event_kind != "capture_failed":
+                            continue
+                        try:
+                            existing_payload = json.loads(
+                                existing.payload_json or "{}"
+                            )
+                        except (TypeError, ValueError):
+                            continue
+                        existing_id = existing_payload.get("event_id")
+                        if isinstance(existing_id, str):
+                            self._trajectory_capture_failure_keys.add(existing_id)
+                    self._trajectory_capture_failure_hydrated.add(
+                        first.conversation_id
+                    )
+            except Exception:  # noqa: BLE001 — diagnostic lookup is best-effort
+                logger.warning("trajectory_capture_diagnostic_lookup_failed")
+        if event_id in self._trajectory_capture_failure_keys:
+            return
+        self._trajectory_capture_failure_keys.add(event_id)
+        diagnostic = TrajectoryRowWrite(
+            message_id=first.message_id,
+            conversation_id=first.conversation_id,
+            turn_id=first.turn_id,
+            seq=None,
+            event_kind="capture_failed",
+            step_started_at=first.step_started_at,
+            payload_json=json.dumps(
+                {
+                    "event_id": event_id,
+                    "summary": "Trace capture failed",
+                    "status": "incomplete",
+                    "field_states": {"payload": "capture_failed"},
+                    "sensitivity": "diagnostic",
+                }
+            ),
+        )
+        try:
+            writer([diagnostic])
+        except Exception:
+            logger.warning("trajectory_capture_diagnostic_write_failed")
 
     def variant_sets_for_conversation(
         self, conversation_id: str
@@ -4538,30 +4642,62 @@ class ConsoleChatStore:
     def _trajectory_tool_payload(content: str, tool_output_full: str | None) -> str:
         """Build the ``payload_json`` for one tool record.
 
-        ``name`` is best-effort parsed from the marker text (the live bridge
-        formats tool markers as ``⚙ <tool_name> → <preview>``); ``result``
-        is the full untruncated output when available, capped at
-        ``TRAJECTORY_RESULT_CAP_BYTES`` with a ``{"truncated": true}``
-        marker beyond that. ``args`` is ``None``: the marker-append seam
-        carries no argument dict, and fabricating one from display text
-        would be worse than absent.
+        ``name`` is best-effort parsed from the marker text. File-shaped and
+        hidden-reasoning outputs are omitted; other outputs pass through the
+        shared credential/path scrubber and its bounded-summary limit.
+        ``args`` is ``None`` because this seam does not observe arguments.
         """
         text = content or ""
         name: str | None = None
         if text.startswith("⚙ "):
             name = text[2:].split(" →", 1)[0].strip() or None
-        result = tool_output_full if tool_output_full is not None else text
-        payload: dict[str, Any] = {"name": name, "args": None, "result": result}
-        encoded = result.encode("utf-8")
-        if len(encoded) > TRAJECTORY_RESULT_CAP_BYTES:
-            # Cap BYTES, not characters: a character slice of multibyte
-            # text (up to 4 bytes/codepoint) could leave the stored result
-            # up to 4x over budget. Truncate the encoded form and decode
-            # back with errors="ignore" so a split codepoint is dropped
-            # rather than crashing or being replaced by a longer escape.
-            payload["result"] = encoded[:TRAJECTORY_RESULT_CAP_BYTES].decode(
-                "utf-8", errors="ignore"
+        raw_result = tool_output_full if tool_output_full is not None else text
+        file_result = bool(name) and (
+            name.startswith("fs_")
+            or name
+            in {
+                "read_file",
+                "write_file",
+                "list_directory",
+                "glob_files",
+                "grep_files",
+                "read_skill_file",
+                "run_skill_script",
+            }
+        )
+        contains_private_key = (
+            "-----BEGIN " in raw_result.upper()
+            and "PRIVATE KEY-----" in raw_result.upper()
+        )
+        hidden_reasoning = any(
+            marker in raw_result.lower()
+            for marker in ("reasoning_content", "chain of thought")
+        )
+        path_result = contains_local_path(raw_result)
+        scrubbed = redact_log_line(raw_result)
+        if file_result or hidden_reasoning or path_result:
+            result = ""
+            result_state = "omitted"
+        elif contains_private_key:
+            result = REDACTION_MARKER
+            result_state = "redacted"
+        else:
+            result = scrubbed
+            result_state = (
+                "redacted"
+                if REDACTION_MARKER in scrubbed
+                else "truncated"
+                if scrubbed != raw_result
+                else "observed"
             )
+        payload: dict[str, Any] = {
+            "name": name,
+            "args": None,
+            "result": result,
+            "field_states": {"args": "not_available", "result": result_state},
+            "sensitivity": "path" if path_result else "tool_content",
+        }
+        if result_state == "truncated":
             payload["truncated"] = True
         return json.dumps(payload)
 
@@ -4640,9 +4776,7 @@ class ConsoleChatStore:
             TrajectoryRowWrite(event_kind="tool_result", **shared),
         ]
 
-    def _trajectory_turn_id(
-        self, session_id: str, message: ConsoleChatMessage
-    ) -> str:
+    def _trajectory_turn_id(self, session_id: str, message: ConsoleChatMessage) -> str:
         """Resolve (and memoize) the turn id for a persisted message.
 
         A USER message opens a turn and registers its id as the session's
@@ -4730,6 +4864,69 @@ class ConsoleChatStore:
             ).warning("feedback_event_write_failed")
             return False
 
+    def record_trace_event(
+        self,
+        session_id: str,
+        *,
+        anchor_message_id: str,
+        event_kind: str,
+        summary: str,
+        status: str = "observed",
+        event_id: str | None = None,
+        parent_event_id: str | None = None,
+        source_event_id: str | None = None,
+        replacement_event_id: str | None = None,
+        sensitivity: str = "diagnostic",
+        field_states: Mapping[str, str] | None = None,
+    ) -> bool:
+        """Append one payload-free mutation/context observation; never raises."""
+        try:
+            message = self._message_or_raise(anchor_message_id)
+            session = self._sessions.get(session_id)
+            conversation_id = (
+                session.persisted_conversation_id if session is not None else None
+            )
+            payload = {
+                "summary": summary,
+                "status": status,
+                "event_id": event_id,
+                "parent_event_id": parent_event_id,
+                "source_event_id": source_event_id,
+                "replacement_event_id": replacement_event_id,
+                "field_states": {
+                    "payload": "omitted",
+                    **dict(field_states or {}),
+                },
+                "sensitivity": sensitivity,
+            }
+            captured_at = time.time()
+            if conversation_id is None or message.persisted_message_id is None:
+                self._pending_trajectory_event_rows.setdefault(message.id, []).append(
+                    {
+                        "event_kind": event_kind,
+                        "payload_json": json.dumps(payload),
+                        "captured_at": captured_at,
+                    }
+                )
+                return True
+            row = TrajectoryRowWrite(
+                message_id=message.persisted_message_id,
+                conversation_id=conversation_id,
+                turn_id=self._trajectory_turn_id(session_id, message),
+                seq=None,
+                event_kind=event_kind,
+                step_started_at=captured_at,
+                payload_json=json.dumps(payload),
+            )
+            return self.write_trajectory_rows([row])
+        except Exception as exc:  # noqa: BLE001 — capture is never load-bearing
+            logger.warning(
+                "trace_event_write_failed event_kind={} error_type={}",
+                event_kind,
+                type(exc).__name__,
+            )
+            return False
+
     def record_feedback_annotation(
         self,
         session_id: str,
@@ -4755,7 +4952,9 @@ class ConsoleChatStore:
         lost marker must never cost the user their feedback message.
         """
         try:
-            database = getattr(self.persistence, "db", None) if self.persistence else None
+            database = (
+                getattr(self.persistence, "db", None) if self.persistence else None
+            )
             if database is None:
                 return None
             try:
@@ -4826,28 +5025,40 @@ class ConsoleChatStore:
             event_kind = (
                 "user" if message.role is ConsoleMessageRole.USER else "assistant"
             )
-            rows: list[TrajectoryRowWrite] = [
-                TrajectoryRowWrite(
-                    message_id=message.persisted_message_id,
-                    conversation_id=conversation_id,
-                    turn_id=turn_id,
-                    seq=None,
-                    event_kind=event_kind,
-                    # User records get a step-start only (spec: no token
-                    # boundaries on the user's own action); assistant rows
-                    # carry whatever the controller's capture armed --
-                    # NULL timing when nothing was armed (never fabricated).
-                    step_started_at=(
-                        time.time()
-                        if event_kind == "user"
-                        else timing.get("step_started_at")
-                    ),
-                    first_token_at=timing.get("first_token_at"),
-                    completed_at=timing.get("completed_at"),
-                    model=timing.get("model"),
-                    provider=timing.get("provider"),
-                )
-            ]
+            message_row = TrajectoryRowWrite(
+                message_id=message.persisted_message_id,
+                conversation_id=conversation_id,
+                turn_id=turn_id,
+                seq=None,
+                event_kind=event_kind,
+                # User records get a step-start only (spec: no token
+                # boundaries on the user's own action); assistant rows
+                # carry whatever the controller's capture armed --
+                # NULL timing when nothing was armed (never fabricated).
+                step_started_at=(
+                    time.time()
+                    if event_kind == "user"
+                    else timing.get("step_started_at")
+                ),
+                first_token_at=timing.get("first_token_at"),
+                completed_at=timing.get("completed_at"),
+                model=timing.get("model"),
+                provider=timing.get("provider"),
+                payload_json=(
+                    json.dumps(
+                        {
+                            "trace_version": 2,
+                            "model_status": timing.get("model_status"),
+                        }
+                    )
+                    if event_kind == "assistant"
+                    and timing.get("step_started_at") is not None
+                    else None
+                ),
+            )
+            rows: list[TrajectoryRowWrite] = (
+                [message_row] if event_kind == "user" else []
+            )
             pending = self._pending_trajectory_tool_rows.pop(message.id, None)
             for entry in pending or ():
                 rows.extend(
@@ -4859,12 +5070,61 @@ class ConsoleChatStore:
                         captured_at=entry["captured_at"],
                     )
                 )
+            pending_events = self._pending_trajectory_event_rows.pop(message.id, None)
+            for entry in pending_events or ():
+                rows.append(
+                    TrajectoryRowWrite(
+                        message_id=message.persisted_message_id,
+                        conversation_id=conversation_id,
+                        turn_id=turn_id,
+                        seq=None,
+                        event_kind=entry["event_kind"],
+                        step_started_at=entry["captured_at"],
+                        payload_json=entry["payload_json"],
+                    )
+                )
+            if event_kind == "assistant":
+                rows.append(message_row)
             if self.write_trajectory_rows(rows):
                 self._trajectory_written_ids.add(message.id)
         except Exception as exc:
             logger.bind(message_id=message.id, error=repr(exc)).warning(
                 "trajectory_row_write_failed"
             )
+
+    def _flush_pending_trace_events_to_parent(
+        self, message: ConsoleChatMessage
+    ) -> None:
+        """Preserve terminal observations when an empty child has no DB row."""
+        pending = self._pending_trajectory_event_rows.pop(message.id, None)
+        if not pending:
+            return
+        session_id = self._message_session_index.get(message.id)
+        parent_native_id = self._native_parent_by_message.get(message.id)
+        parent = self._nodes_lookup(parent_native_id) if parent_native_id else None
+        session = self._sessions.get(session_id) if session_id else None
+        conversation_id = (
+            session.persisted_conversation_id if session is not None else None
+        )
+        if (
+            parent is None
+            or parent.persisted_message_id is None
+            or conversation_id is None
+        ):
+            return
+        rows = [
+            TrajectoryRowWrite(
+                message_id=parent.persisted_message_id,
+                conversation_id=conversation_id,
+                turn_id=message.turn_id or self._trajectory_turn_id(session_id, parent),
+                seq=None,
+                event_kind=entry["event_kind"],
+                step_started_at=entry["captured_at"],
+                payload_json=entry["payload_json"],
+            )
+            for entry in pending
+        ]
+        self.write_trajectory_rows(rows)
 
     def reset_stream_content(self, message_id: str) -> ConsoleChatMessage:
         """Discard streamed content once a turn is reclassified as a tool call.
@@ -5049,9 +5309,7 @@ class ConsoleChatStore:
             self._bump_message_speech_revision(message.id)
             self._bump_payload_revision(session_id)
             self._settle_failed_retry_context(message, provider_visible=True)
-            self._persist_existing_message(
-                message, preserve_provider_continuation=True
-            )
+            self._persist_existing_message(message, preserve_provider_continuation=True)
             self._record_message_completed(session_id, message.id)
             return self._snapshot(message)
 
@@ -5150,6 +5408,8 @@ class ConsoleChatStore:
             provider_visible=message.status != "failed",
         )
         self._persist_existing_message(message, preserve_provider_continuation=True)
+        if message.persisted_message_id is None:
+            self._flush_pending_trace_events_to_parent(message)
         return self._snapshot(message)
 
     def mark_message_failed(self, message_id: str) -> ConsoleChatMessage:
@@ -5191,6 +5451,8 @@ class ConsoleChatStore:
             provider_visible=message.status != "failed",
         )
         self._persist_existing_message(message, preserve_provider_continuation=True)
+        if message.persisted_message_id is None:
+            self._flush_pending_trace_events_to_parent(message)
         return self._snapshot(message)
 
     def mark_message_send_blocked(self, message_id: str) -> ConsoleChatMessage:
@@ -5306,9 +5568,7 @@ class ConsoleChatStore:
             self._bump_payload_revision(session_id)
         if on_active_path and message.content != previous_content:
             self._bump_conversation_context_epoch(session_id)
-        self._persist_existing_message(
-            message, force_metadata_write=provenance_cleared
-        )
+        self._persist_existing_message(message, force_metadata_write=provenance_cleared)
         self._record_message_completed(session_id, message.id)
         return self._snapshot(message)
 
@@ -5390,9 +5650,7 @@ class ConsoleChatStore:
             self._bump_payload_revision(session_id)
         if on_active_path and message.content != base:
             self._bump_conversation_context_epoch(session_id)
-        self._persist_existing_message(
-            message, force_metadata_write=provenance_cleared
-        )
+        self._persist_existing_message(message, force_metadata_write=provenance_cleared)
         self._record_message_completed(session_id, message.id)
         return self._snapshot(message)
 

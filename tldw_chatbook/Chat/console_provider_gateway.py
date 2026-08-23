@@ -142,6 +142,10 @@ class ConsoleProviderStreamSignals:
         init=False,
         repr=False,
     )
+    model_retry_callback: Callable[[], None] | None = field(
+        default=None,
+        repr=False,
+    )
     # Usage for the provider call currently in flight. Key-merged, because a
     # single Anthropic call splits its usage across two SSE chunks
     # (message_start carries the input/cache buckets, message_delta the
@@ -176,6 +180,16 @@ class ConsoleProviderStreamSignals:
     def mark_synthetic_fallback(self) -> None:
         """Record that locally synthesized fallback copy was emitted."""
         self._synthetic_fallback.set()
+
+    def mark_model_retry(self) -> None:
+        """Report an observed provider retry without coupling to its owner."""
+        callback = self.model_retry_callback
+        if callback is None:
+            return
+        try:
+            callback()
+        except Exception:
+            logger.warning("model_retry_callback_failed")
 
     def record_usage_payload(self, payload: Mapping[str, Any]) -> None:
         """Merge a usage payload into the IN-FLIGHT provider call's payload."""
@@ -2031,6 +2045,7 @@ class ConsoleProviderGateway:
         reasoning_effort: str | None = None,
         thinking_budget_tokens: int | None = None,
         api_key: str | None = None,
+        on_fallback_retry_started: "Callable[[], None] | None" = None,
         on_fallback_retry: "Callable[[dict[str, Any], str], None] | None" = None,
     ) -> AsyncIterator[str]:
         """Stream OpenAI-compatible chat completion chunks from llama.cpp.
@@ -2105,6 +2120,11 @@ class ConsoleProviderGateway:
                 raise stream_error
             return
 
+        if on_fallback_retry_started is not None:
+            try:
+                on_fallback_retry_started()
+            except Exception:
+                logger.warning("model_retry_capture_failed")
         fallback = await self.complete_llamacpp_chat(
             base_url=normalized_base_url,
             model=model,
@@ -2639,6 +2659,11 @@ class ConsoleProviderGateway:
                         reasoning_effort=resolution.reasoning_effort,
                         thinking_budget_tokens=resolution.thinking_budget_tokens,
                         api_key=resolution.api_key,
+                        on_fallback_retry_started=(
+                            signals.mark_model_retry
+                            if isinstance(signals, ConsoleProviderStreamSignals)
+                            else None
+                        ),
                         on_fallback_retry=_capture_llamacpp_fallback,
                     ):
                         if call_signals is not None:

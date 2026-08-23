@@ -5,9 +5,8 @@ Covers:
   * the five `[console] agent_max_*` keys resolve config -> default, read
     fresh on every call so a Settings save applies to the next run (AC#2);
   * the shipped defaults are the ones the owner specified (AC#3);
-  * floors and fallbacks: a below-floor, unparsable, or hostile value falls
-    back to the shipped default instead of breaking a run, and there is no
-    upper ceiling (AC#4);
+  * floors and fallbacks: a below-floor, above-safe-ceiling, unparsable, or
+    hostile value falls back to the shipped default instead of breaking a run;
   * the engine's own RunBudget defaults are untouched (AC#5);
   * the bridge's mirrored literals cannot drift from config's (the
     duplication that exists only because this module may not import config
@@ -22,7 +21,14 @@ from __future__ import annotations
 import pytest
 
 from tldw_chatbook import config as config_module
-from tldw_chatbook.Agents.agent_models import RunBudget
+from tldw_chatbook.Agents.agent_models import (
+    AGENT_LIFECYCLE_INDEX_BASE,
+    CONTROL_CAPTURE_INDEX_BASE,
+    MAX_RUN_CONTROL_STEPS,
+    TRACE_CAPTURE_INDEX_BASE,
+    TRACE_STEP_INDEX_BASE,
+    RunBudget,
+)
 from tldw_chatbook.Chat.console_agent_bridge import (
     DEFAULT_CONSOLE_MAX_MODEL_TURNS,
     DEFAULT_CONSOLE_MAX_STEPS,
@@ -123,6 +129,21 @@ def test_every_key_is_configurable(monkeypatch):
     assert budget.max_wall_seconds == 90.5
     assert budget.max_total_tokens == 1234
     assert budget.max_tool_call_seconds == 11.0
+
+
+def test_step_limit_is_capped_below_the_trace_storage_band(monkeypatch):
+    assert config_module.MAX_CONSOLE_AGENT_MAX_STEPS == MAX_RUN_CONTROL_STEPS
+    assert (
+        TRACE_STEP_INDEX_BASE
+        < TRACE_CAPTURE_INDEX_BASE
+        < CONTROL_CAPTURE_INDEX_BASE
+        < AGENT_LIFECYCLE_INDEX_BASE
+    )
+    assert TRACE_STEP_INDEX_BASE + (5 * MAX_RUN_CONTROL_STEPS) + 2 < (
+        TRACE_CAPTURE_INDEX_BASE
+    )
+    _pin_console(monkeypatch, {"agent_max_steps": MAX_RUN_CONTROL_STEPS + 1})
+    assert console_run_budget().max_steps == DEFAULT_CONSOLE_MAX_STEPS
 
 
 def test_config_is_re_read_on_every_call(monkeypatch):

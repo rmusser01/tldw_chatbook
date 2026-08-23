@@ -35,6 +35,7 @@ from typing import (
 # Third-Party Imports
 from loguru import logger
 
+
 #
 # Local Imports
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
@@ -783,6 +784,9 @@ MIN_CONSOLE_AGENT_MAX_MODEL_TURNS = 1
 #: room for native multi-call batches, which cost `1 + 2N` steps per turn.
 DEFAULT_CONSOLE_AGENT_MAX_STEPS = 25000
 MIN_CONSOLE_AGENT_MAX_STEPS = 1
+# Mirrored by agent_models.MAX_RUN_CONTROL_STEPS; pinned by Console budget tests
+# without importing Agents here (that would create a config import cycle).
+MAX_CONSOLE_AGENT_MAX_STEPS = 199_999
 #: Wall-clock ceiling for ONE agent run (one user message), in seconds.
 #: 86400 = 24h, so a genuinely long-running operation is not cut off. This
 #: is a backstop, not a target: Stop cancels at every step boundary and
@@ -1611,6 +1615,7 @@ def _load_settings_uncached(
         ),
         DEFAULT_CONSOLE_AGENT_MAX_STEPS,
         minimum=MIN_CONSOLE_AGENT_MAX_STEPS,
+        maximum=MAX_CONSOLE_AGENT_MAX_STEPS,
     )
     final_console_settings_cli["agent_max_wall_seconds"] = coerce_float_setting(
         final_console_settings_cli.get(

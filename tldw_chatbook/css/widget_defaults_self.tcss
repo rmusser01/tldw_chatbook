@@ -1476,11 +1476,42 @@
 
 
 
+
+    TrajectoryScreen.trace-detail-full #trajectory-search,
+    TrajectoryScreen.trace-detail-full #trajectory-timeline,
+    TrajectoryScreen.trace-detail-full #trajectory-table {
+        display: none;
+    }
+    TrajectoryScreen.trace-inspector-open #trajectory-timeline {
+        display: none;
+    }
+    TrajectoryScreen.trace-detail-full #trajectory-inspector {
+        height: 1fr;
+        max-height: 100%;
+    }
+
+
+
+/* ===== WIDGET: TraceFilterBar (UI/Widgets/trace_filter_bar.py) ===== */
+
+    TraceFilterBar { width: 1fr; height: 3; }
+
+
+    TraceFilterBar #trace-filter-wide > Select { width: 1fr; min-width: 0; height: 3; margin: 0; }
+
+    TraceFilterBar:focus #trace-filter-compact { text-style: reverse; color: $text; }
+
+
 /* ===== WIDGET: TrajectoryTimeline (UI/Widgets/trajectory_timeline.py) ===== */
 
     TrajectoryTimeline {
         height: 6;
         width: 1fr;
+
+        &>.timeline--brush {
+            background: $primary 35%;
+            text-style: bold;
+        }
     }
 
 

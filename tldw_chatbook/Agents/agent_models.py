@@ -36,15 +36,59 @@ STEP_TOOL_CALL = "tool_call"
 STEP_TOOL_RESULT = "tool_result"
 STEP_SPAWN = "spawn"
 STEP_ERROR = "error"
+STEP_MODEL_REQUEST_STARTED = "model_request_started"
+STEP_MODEL_RESPONSE_COMPLETED = "model_response_completed"
+STEP_MODEL_RETRY = "model_retry"
+STEP_MODEL_ERROR = "model_error"
+STEP_MODEL_CANCELLED = "model_cancelled"
+STEP_TOOL_PROPOSED = "tool_proposed"
+STEP_APPROVAL_REQUESTED = "approval_requested"
+STEP_APPROVAL_APPROVED = "approval_approved"
+STEP_APPROVAL_DENIED = "approval_denied"
+STEP_APPROVAL_REVOKED = "approval_revoked"
+STEP_TOOL_EXECUTION_STARTED = "tool_execution_started"
+STEP_TOOL_SUCCEEDED = "tool_succeeded"
+STEP_TOOL_FAILED = "tool_failed"
+STEP_TOOL_TIMED_OUT = "tool_timed_out"
+STEP_TOOL_CANCELLED = "tool_cancelled"
 # Fleet PR3b Task 1 (spec SS6): a steering entry delivered to a child at the
 # protocol-coherent drain boundary records a step of this kind, so the step
 # log shows WHEN each entry actually reached the model.
 STEP_STEERING = "steering"
 
+# Append-only agent-run lifecycle observations use dedicated storage-index
+# bands. Control rows must remain below TRACE_STEP_INDEX_BASE; runtime trace
+# rows and capture diagnostics use the following named bands.
+TRACE_STEP_INDEX_BASE = 1_000_000
+TRACE_CAPTURE_INDEX_BASE = 2_000_000
+CONTROL_CAPTURE_INDEX_BASE = 3_000_000
+# One control step can emit at most five trace observations (proposed,
+# approval requested, approved/denied, execution started, terminal outcome),
+# plus two one-time context observations per run. Keep the derived final trace
+# index strictly below the capture band; owner_seq, not these indices, carries
+# observation order.
+MAX_RUN_CONTROL_STEPS = (
+    TRACE_CAPTURE_INDEX_BASE - TRACE_STEP_INDEX_BASE - 3
+) // 5
+# Lifecycle stays above every runtime/capture band.
+# keeping lifecycle at 10_000_000+ prevents collisions while owner_seq carries
+# the real observation order independently of this storage identity.
+AGENT_LIFECYCLE_INDEX_BASE = 10_000_000
+STEP_AGENT_RUN_RESERVED = "agent_run_reserved"
+STEP_AGENT_RUN_CREATED = "agent_run_created"
+STEP_AGENT_RUN_RESUMED = "agent_run_resumed"
+STEP_AGENT_RUN_STARTED = "agent_run_started"
+STEP_AGENT_RUN_COMPLETED = "agent_run_completed"
+STEP_AGENT_RUN_FAILED = "agent_run_failed"
+STEP_AGENT_RUN_CANCELLED = "agent_run_cancelled"
+STEP_AGENT_RUN_SUPERSEDED = "agent_run_superseded"
+
 TOOL_OUTCOME_SUCCESS = "success"
 TOOL_OUTCOME_FAILED = "failed"
 TOOL_OUTCOME_BLOCKED = "blocked"
-ToolOutcome: TypeAlias = Literal["success", "failed", "blocked"]
+TOOL_OUTCOME_TIMEOUT = "timeout"
+TOOL_OUTCOME_CANCELLED = "cancelled"
+ToolOutcome: TypeAlias = Literal["success", "failed", "blocked", "timeout", "cancelled"]
 
 # The two steering sources (spec SS6: "two paths, one mechanism"). The label
 # the child sees is derived from the source by `format_steering_message`
@@ -75,6 +119,7 @@ def format_steering_message(source: str, text: str) -> str:
         ``"[Steering from {source}] {text}"``.
     """
     return f"[Steering from {source}] {text}"
+
 
 SPAWN_TOOL_NAME = "spawn_subagent"
 FIND_TOOLS_NAME = "find_tools"
@@ -355,6 +400,13 @@ class RunBudget:
     # on its abandoned thread -- see `_call_with_timeout`'s docstring).
     max_tool_call_seconds: float = 300.0
 
+    def __post_init__(self) -> None:
+        if self.max_steps > MAX_RUN_CONTROL_STEPS:
+            raise ValueError(
+                f"max_steps must be <= {MAX_RUN_CONTROL_STEPS} to preserve "
+                "agent trace storage bands"
+            )
+
 
 #: Fleet spec §4: validation caps for user-authored agent definitions.
 #: description rides the spawn tool's schema (re-sent every fence-model
@@ -457,6 +509,18 @@ class AgentStep:
     # Optional for backward compatibility with persisted steps written before
     # tool outcomes were structured. Only meaningful on STEP_TOOL_RESULT.
     tool_outcome: ToolOutcome | None = None
+    status: str = ""
+    parent_event_id: str | None = None
+    source_event_id: str | None = None
+    replacement_event_id: str | None = None
+    field_states: dict[str, str] = field(default_factory=dict)
+    sensitivity: str = ""
+    # Trace-v2 envelope fields. ``index`` remains the legacy control-step
+    # identity; owner_seq is the observation order across control + lifecycle.
+    owner_seq: int | None = None
+    call_id: str = ""
+    parent_step_index: int | None = None
+    source_step_index: int | None = None
 
 
 @dataclass(frozen=True)

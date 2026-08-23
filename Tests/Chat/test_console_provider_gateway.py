@@ -2112,6 +2112,7 @@ def test_stream_signal_privacy_has_one_private_event_and_a_public_usage_payload(
     signal_fields = dataclasses.fields(signals)
     assert [item.name for item in signal_fields] == [
         "_synthetic_fallback",
+        "model_retry_callback",
         "usage_payload",
         "completed_usage_payloads",
         "_active_usage_payloads",
@@ -2125,6 +2126,7 @@ def test_stream_signal_privacy_has_one_private_event_and_a_public_usage_payload(
     assert isinstance(signals._synthetic_fallback, threading.Event)
     assert signals.__class__.__slots__ == (
         "_synthetic_fallback",
+        "model_retry_callback",
         "usage_payload",
         "completed_usage_payloads",
         "_active_usage_payloads",
@@ -6789,6 +6791,74 @@ class TestLlamaCppExchangeCapture:
         assert retry_capture.response["content"] == "recovered text"
         # Same keyless guarantee the sibling captures hold.
         assert "local-secret" not in _json.dumps(retry_capture.request)
+
+    @pytest.mark.asyncio
+    async def test_llamacpp_stream_to_complete_fallback_emits_retry_signal(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        class _EmptyStreamResponse:
+            def raise_for_status(self):
+                return None
+
+            async def aiter_lines(self):
+                return
+                yield  # pragma: no cover
+
+        class _StreamCtx:
+            async def __aenter__(self):
+                return _EmptyStreamResponse()
+
+            async def __aexit__(self, *_exc):
+                return False
+
+        class _FakeClient:
+            def stream(self, *_args, **_kwargs):
+                return _StreamCtx()
+
+        gateway = ConsoleProviderGateway()
+        monkeypatch.setattr(
+            ConsoleProviderGateway,
+            "_active_http_client",
+            lambda self: _FakeClient(),
+        )
+
+        retries: list[str] = []
+
+        async def fake_complete(self, **_kwargs):
+            assert retries == ["model_retry"]
+            return "recovered"
+
+        monkeypatch.setattr(
+            ConsoleProviderGateway, "complete_llamacpp_chat", fake_complete
+        )
+        signals = ConsoleProviderStreamSignals(
+            model_retry_callback=lambda: retries.append("model_retry")
+        )
+        out = [
+            chunk
+            async for chunk in gateway.stream_chat(
+                self._resolution(streaming=True),
+                [{"role": "user", "content": "q"}],
+                signals=signals,
+            )
+        ]
+        assert out == ["recovered"]
+        assert retries == ["model_retry"]
+
+        def failing_callback() -> None:
+            raise RuntimeError("capture callback failed")
+
+        out_with_failed_capture = [
+            chunk
+            async for chunk in gateway.stream_chat(
+                self._resolution(streaming=True),
+                [{"role": "user", "content": "q"}],
+                signals=ConsoleProviderStreamSignals(
+                    model_retry_callback=failing_callback
+                ),
+            )
+        ]
+        assert out_with_failed_capture == ["recovered"]
 
     @pytest.mark.asyncio
     async def test_llamacpp_non_streaming_abort_after_first_item_keeps_recorded_content(

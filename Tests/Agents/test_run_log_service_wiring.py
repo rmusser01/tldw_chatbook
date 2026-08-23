@@ -18,6 +18,7 @@ from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Agents.run_log import RunLogWriter
 from tldw_chatbook.Agents.run_log_format import iter_records
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolCatalogRegistry
+from tldw_chatbook.Chat.console_fleet_wake import compose_wake_notice
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
@@ -87,6 +88,132 @@ def test_a_plain_run_writes_records_without_the_caller_wiring_anything(wired):
     assert [r.type for r in records] == ["model"]
     assert records[0].content == "hello"
     assert records[0].kind == "primary"
+
+
+def test_real_model_output_is_private_at_log_and_terminal_db_boundaries(wired):
+    db, registry, root = wired
+    private = (
+        "Implemented the parser successfully.\n"
+        "Saved the patch at /Users/alice/secret/parser.py\n"
+        "reasoning_content: private plan\n"
+        "api_key=sk-private-model-output\n"
+        "All 7 parser tests passed."
+    )
+    service = AgentService(db, registry, chat_call=chat_call_returning(private))
+    run_id, outcome = service.run_turn(
+        conversation_id="conv-private-model",
+        messages=[{"role": "user", "content": "hi"}],
+        config=AgentConfig(model="m", system_prompt="s", budget=RunBudget()),
+        api_endpoint="openai",
+    )
+
+    assert outcome.final_text == private
+    durable_result = db.get_run(run_id)["result"]
+    assert durable_result
+    assert "Implemented the parser successfully." in durable_result
+    assert "All 7 parser tests passed." in durable_result
+    records = read_all(root)
+    assert len(records) == 1
+    assert records[0].type == "model"
+    assert "Implemented the parser successfully." in records[0].content
+    assert "All 7 parser tests passed." in records[0].content
+    wake_notice = compose_wake_notice([db.get_run(run_id)])
+    assert "Implemented the parser successfully." in wake_notice
+    assert "All 7 parser tests passed." in wake_notice
+    decoded = "\n".join(record.content for record in records)
+    for forbidden in (
+        "secret/parser.py",
+        "reasoning_content",
+        "/Users/alice/secret.txt",
+        "sk-private-model-output",
+        "private plan",
+    ):
+        assert forbidden not in decoded
+        assert forbidden not in durable_result
+        assert forbidden not in wake_notice
+
+
+@pytest.mark.parametrize(
+    "private,public_fragments,forbidden",
+    [
+        (
+            "Public prefix\n<think>\nprivate unfinished plan\npublic-looking secret",
+            ("Public prefix", "[hidden reasoning withheld]"),
+            ("private unfinished plan", "public-looking secret"),
+        ),
+        (
+            'Before\nreasoning_content: [\n"private step",\n]\nAfter',
+            ("Before", "After", "[hidden reasoning withheld]"),
+            ("private step",),
+        ),
+        (
+            "Before\n<think>private step</think>\nAfter",
+            ("Before", "After", "[hidden reasoning withheld]"),
+            ("private step", "<think>"),
+        ),
+        (
+            "Implemented /Users/alice/work/app.py and all tests pass",
+            ("Implemented", "[local path withheld]", "and all tests pass"),
+            ("/Users/alice/work/app.py",),
+        ),
+        (
+            '{"status":"done","path":"/Users/alice/work/app.py",'
+            '"tests":"passed"}',
+            ('"status": "done"', '"tests": "passed"', "[local path withheld]"),
+            ("/Users/alice/work/app.py",),
+        ),
+    ],
+)
+def test_private_model_summaries_are_stateful_useful_and_wake_safe(
+    wired, private, public_fragments, forbidden
+):
+    db, registry, root = wired
+    service = AgentService(db, registry, chat_call=chat_call_returning(private))
+    run_id, outcome = service.run_turn(
+        conversation_id="stateful-private-model",
+        messages=[{"role": "user", "content": "hi"}],
+        config=AgentConfig(model="m", system_prompt="s", budget=RunBudget()),
+        api_endpoint="openai",
+    )
+
+    assert outcome.final_text == private
+    durable_result = db.get_run(run_id)["result"]
+    records = read_all(root)
+    assert len(records) == 1
+    decoded = records[0].content
+    wake_notice = compose_wake_notice([db.get_run(run_id)])
+    for fragment in public_fragments:
+        assert fragment in durable_result
+        assert fragment in decoded
+        assert fragment in wake_notice
+    for secret in forbidden:
+        assert secret not in durable_result
+        assert secret not in decoded
+        assert secret not in wake_notice
+
+
+def test_large_durable_summary_never_requests_unbounded_redaction(monkeypatch) -> None:
+    real_redact = agent_service_module.redact_log_line
+    redaction_calls: list[tuple[int, int]] = []
+
+    def track_redaction(text: str, max_length: int = 2_000) -> str:
+        redaction_calls.append((len(text), max_length))
+        return real_redact(text, max_length=max_length)
+
+    monkeypatch.setattr(agent_service_module, "redact_log_line", track_redaction)
+    secret = "sk-" + ("a" * 32)
+    content = "Public prefix " + ("x" * 100_000) + f" api_key={secret}"
+
+    summary, altered = agent_service_module._safe_bounded_summary(content)
+
+    assert altered is True
+    assert len(summary) < 5_000
+    assert secret not in summary
+    assert redaction_calls
+    assert any(input_length > 4_000 for input_length, _limit in redaction_calls)
+    assert all(
+        limit > 0 for input_length, limit in redaction_calls if input_length > 4_000
+    )
 
 
 def test_record_numbers_are_unique_across_the_whole_run_tree(wired):
@@ -258,6 +385,98 @@ def test_on_record_returns_the_assigned_record_number(wired, monkeypatch):
     )
 
 
+def test_real_run_log_omits_sensitive_tool_args_and_results(wired, monkeypatch):
+    from tldw_chatbook.Chat import trajectory as trajectory_module
+
+    db, registry, root = wired
+    captured: dict = {}
+    real_run_agent_loop = agent_service_module.run_agent_loop
+
+    def spy_run_agent_loop(config, messages, active, deps):
+        captured["deps"] = deps
+        return real_run_agent_loop(config, messages, active, deps)
+
+    monkeypatch.setattr(agent_service_module, "run_agent_loop", spy_run_agent_loop)
+    service = AgentService(db, registry, chat_call=chat_call_returning("hello"))
+    service.run_turn(
+        conversation_id="conv1",
+        messages=[{"role": "user", "content": "hi"}],
+        config=AgentConfig(model="m", system_prompt="s", budget=RunBudget()),
+        api_endpoint="openai",
+    )
+    on_record = captured["deps"].on_record
+    sensitive = (
+        "chain of thought: private internal plan",
+        "chain-of-thought: private internal plan",
+        "CHAIN_OF_THOUGHT: private internal plan",
+        "<think>private internal plan</think>",
+        "<THINK>private internal plan</THINK>",
+        json.dumps({"reasoning": "private internal plan"}),
+        json.dumps({"meta": {"reasoning_content": "private internal plan"}}),
+        "{'chain_of_thought': 'private internal plan'}",
+        "reasoning: private internal plan",
+        "  reasoning_content = private internal plan",
+        "meta:\n  chain_of_thought: private internal plan",
+        "{reasoning: private internal plan}",
+        "chain-of-thought = private internal plan",
+        "- reasoning: private internal plan",
+        "items:\n  - reasoning_content: private internal plan",
+        "[Steering from supervisor] reasoning_content: private internal plan",
+        "ghp_" + "a" * 36,
+        "AKIA" + "A" * 16,
+        "eyJabcdefghij.abcdefghij.abcdefghij",
+        "-----BEGIN PRIVATE KEY-----\nprivate-key-body",
+        "/private/var/db/secrets.txt",
+        "file:///private/tmp/secret.txt",
+        r"C:\Users\alice\secret.txt",
+        r"\\server\share\secret.txt",
+        'File "package/module.py", line 42, in run',
+        json.dumps({"meta": {"file_path": "/api/private"}}),
+        "cat /docs/private/local",
+        "open /help/private/local",
+        "[" * 1_000 + '{"file_path":"/api/private"}' + "]" * 1_000,
+    )
+    for value in sensitive:
+        assert on_record("tool_call", {"content": json.dumps({"value": value})}) is None
+        assert on_record("tool_result", {"content": value}) is None
+    safe_values = (
+        "safe output: reasoning about three visible matches",
+        "rendered HTML: <div>safe</div>",
+        json.dumps({"value": "[" * 65}),
+        "ordinary - reasoning about visible output",
+    )
+    for value in safe_values:
+        assert isinstance(on_record("tool_result", {"content": value}), int)
+    real_loads = trajectory_module.json.loads
+    decode_count = 0
+
+    def counted_loads(value):
+        nonlocal decode_count
+        decode_count += 1
+        return real_loads(value)
+
+    monkeypatch.setattr(trajectory_module.json, "loads", counted_loads)
+    assert isinstance(
+        on_record("tool_result", {"content": '{"endpoint":"/api/safe"}'}), int
+    )
+    assert decode_count == 1
+
+    def exhausted_decoder(_value):
+        raise MemoryError
+
+    monkeypatch.setattr(trajectory_module.json, "loads", exhausted_decoder)
+    assert on_record("tool_result", {"content": '{"file_path":"/api/private"}'}) is None
+    monkeypatch.setattr(trajectory_module.json, "loads", real_loads)
+
+    records = read_all(root)
+    persisted = "\n".join(record.content for record in records)
+    for value in sensitive:
+        assert value not in persisted
+    assert "private internal plan" not in persisted
+    assert "private-key-body" not in persisted
+    assert all(any(record.content == value for record in records) for value in safe_values)
+
+
 def test_run_turn_called_twice_on_one_service_gets_two_separate_logs(wired):
     """Round-1 review fix (item 3): ``bind()`` latches permanently, so a
     writer built once in ``__init__`` and reused across two ``run_turn``
@@ -349,8 +568,6 @@ def test_tool_is_not_offered_when_nothing_else_is_disclosed(wired, monkeypatch):
     a native-capable endpoint with no disclosable schemas must send no
     ``tools=`` kwarg at all).
     """
-    from tldw_chatbook.Agents.agent_models import SEARCH_RUN_LOG_TOOL_NAME
-
     db, registry, root = wired
     offered = []
 

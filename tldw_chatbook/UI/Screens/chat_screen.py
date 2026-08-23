@@ -1151,7 +1151,7 @@ CONSOLE_WORKBENCH_SHORTCUTS = (
     ("Shift+F6", "previous pane"),
     ("F1", "help"),
     ("Enter", "send / queue"),
-    ("Y", "trajectory"),
+    ("Y", "trace"),
     ("Ctrl+K", "switch session"),
     ("Ctrl+T", "new tab"),
     ("Ctrl+P", "palette"),
@@ -1168,7 +1168,10 @@ CONSOLE_WORKBENCH_SHORTCUTS_SETUP_BLOCKED = tuple(
 
 
 def _build_trajectory_snapshot(
-    store: Any, conversation_id: str
+    store: Any,
+    conversation_id: str,
+    *,
+    agent_runs_db: Any | None = None,
 ) -> "TrajectorySnapshot":
     """Assemble the ``derive_trajectory`` inputs for one persisted conversation.
 
@@ -1178,12 +1181,52 @@ def _build_trajectory_snapshot(
     Variant contents are process-local (see
     ``ConsoleChatStore.variant_sets_for_conversation``): cold conversations
     render without superseded variants by design.
+
+    Args:
+        store: Console store whose persistence owner supplies message/context facts.
+        conversation_id: Durable Console conversation identifier.
+        agent_runs_db: Optional public AgentRunsDB read seam captured by the caller.
+
+    Returns:
+        A completed pure-projection snapshot; the screen performs no DB reads.
     """
     messages: list[Any] = []
     traj_rows: list[Any] = []
     variant_sets: list[Any] = []
     compaction_records: list[Any] = []
+    agent_runs: list[Any] = []
+    agent_steps: list[Any] = []
+    retrieval_runs: list[Any] = []
+    diagnostic_events: list[Any] = []
     active_leaf: str | None = None
+
+    def capture_failed(
+        source: str, error: Exception, *, message_id: str | None = None
+    ) -> None:
+        logger.opt(exception=error).error(
+            "Trace source read failed: source={} conversation_id={}",
+            source,
+            conversation_id,
+        )
+        diagnostic_events.append(
+            {
+                "event_id": (
+                    f"capture-failed:{source}:{conversation_id}"
+                    f"{f':{message_id}' if message_id else ''}"
+                ),
+                "conversation_id": conversation_id,
+                "message_id": message_id,
+                "event_kind": "capture_failed",
+                "status": "capture_failed",
+                "summary": f"{source} capture failed",
+                "field_states": {
+                    "source": "capture_failed",
+                    **({"message_id": "observed"} if message_id else {}),
+                },
+                "sensitivity": "diagnostic",
+            }
+        )
+
     persistence = getattr(store, "persistence", None)
     db = getattr(persistence, "db", None)
     if db is not None:
@@ -1196,15 +1239,18 @@ def _build_trajectory_snapshot(
                     include_image_data=False,
                 )
             )
-        except Exception:  # noqa: BLE001 - launch must degrade, not fail
+        except Exception as error:  # noqa: BLE001 - launch must degrade, not fail
+            capture_failed("messages", error)
             messages = []
         try:
             traj_rows = list(db.get_trajectory_rows(conversation_id))
-        except Exception:  # noqa: BLE001
+        except Exception as error:  # noqa: BLE001
+            capture_failed("trajectory", error)
             traj_rows = []
         try:
             active_leaf = db.get_conversation_active_leaf(conversation_id)
-        except Exception:  # noqa: BLE001
+        except Exception as error:  # noqa: BLE001
+            capture_failed("active_leaf", error)
             active_leaf = None
     usage_by_id: dict[str, ProviderUsage] = {}
     for message in messages:
@@ -1215,17 +1261,123 @@ def _build_trajectory_snapshot(
             usage_by_id[str(message.get("id"))] = usage
     try:
         variant_sets = list(store.variant_sets_for_conversation(conversation_id))
-    except Exception:  # noqa: BLE001
+    except Exception as error:  # noqa: BLE001
+        capture_failed("variants", error)
         variant_sets = []
     context_repository = getattr(persistence, "context_repository", None)
     if context_repository is not None:
         try:
             # The projection itself filters purpose == "conversation_compaction".
-            compaction_records = list(
-                context_repository.list_auxiliary_attempts(conversation_id, limit=500)
+            offset = 0
+            while True:
+                page = list(
+                    context_repository.list_auxiliary_attempts(
+                        conversation_id, limit=500, offset=offset
+                    )
+                )
+                compaction_records.extend(
+                    {**record, "trace_lifecycle": True}
+                    if isinstance(record, Mapping)
+                    else record
+                    for record in page
+                )
+                if len(page) < 500:
+                    break
+                offset += len(page)
+        except Exception as error:  # noqa: BLE001
+            capture_failed("context", error)
+    turn_by_message: dict[str, str] = {}
+    for trajectory_row in traj_rows:
+        if isinstance(trajectory_row, Mapping):
+            row_message_id = trajectory_row.get("message_id")
+            row_turn_id = trajectory_row.get("turn_id")
+        else:
+            row_message_id = getattr(trajectory_row, "message_id", None)
+            row_turn_id = getattr(trajectory_row, "turn_id", None)
+        if row_message_id and row_turn_id:
+            turn_by_message[str(row_message_id)] = str(row_turn_id)
+    if agent_runs_db is not None:
+        try:
+            raw_runs = agent_runs_db.list_runs(conversation_id)
+            for raw_run in raw_runs:
+                try:
+                    run = dict(raw_run) if isinstance(raw_run, Mapping) else {}
+                    run_id = str(run.get("id") or "")
+                    if not run_id:
+                        continue
+                    assistant_message_id = str(run.get("assistant_message_id") or "")
+                    if assistant_message_id in turn_by_message:
+                        run["turn_id"] = turn_by_message[assistant_message_id]
+                    steps = list(run.get("steps", ()) or ())
+                    converted_steps = [
+                        {
+                            **step,
+                            "run_id": run_id,
+                            "conversation_id": conversation_id,
+                            "turn_id": run.get("turn_id"),
+                        }
+                        for step in steps
+                        if isinstance(step, Mapping)
+                    ]
+                    agent_runs.append(run)
+                    agent_steps.extend(converted_steps)
+                except Exception as error:  # noqa: BLE001
+                    capture_failed("agent", error)
+        except Exception as error:  # noqa: BLE001
+            capture_failed("agent", error)
+    citation_repository = getattr(persistence, "citation_repository", None)
+    if citation_repository is not None:
+        assistant_ids = [
+            str(message.get("id") or "")
+            for message in messages
+            if isinstance(message, Mapping)
+            and str(message.get("sender") or "").lower() == "assistant"
+            and message.get("id")
+        ]
+        try:
+            candidates = citation_repository.active_owner_candidate_message_ids(
+                assistant_ids
             )
-        except Exception:  # noqa: BLE001
-            compaction_records = []
+        except Exception as error:  # noqa: BLE001
+            capture_failed("retrieval_candidates", error)
+            candidates = set()
+        for message in messages:
+            if not isinstance(message, Mapping):
+                continue
+            message_id = str(message.get("id") or "")
+            if (
+                not message_id
+                or str(message.get("sender") or "").lower() != "assistant"
+                or message_id not in candidates
+            ):
+                continue
+            try:
+                result = citation_repository.get_active_trace_for_current_message(
+                    message_id,
+                    str(message.get("content") or ""),
+                )
+                if (
+                    result.state is not ActiveCitationTraceState.ACTIVE
+                    or result.summary is None
+                    or not citation_repository.verify_active_trace_result(result)
+                ):
+                    continue
+                for run in result.summary.trace.evidence_runs:
+                    row = run.model_dump(mode="python")
+                    retrieval_runs.append(
+                        {
+                            **row,
+                            "conversation_id": conversation_id,
+                            "message_id": message_id,
+                            "turn_id": turn_by_message.get(message_id),
+                            "field_states": {"payload": "omitted"},
+                            "sensitivity": "retrieval_metadata",
+                            "trace_lifecycle": True,
+                        }
+                    )
+            except Exception as error:  # noqa: BLE001
+                capture_failed("retrieval", error, message_id=message_id)
+                continue
     return derive_trajectory(
         messages,
         usage_by_id,
@@ -1233,6 +1385,10 @@ def _build_trajectory_snapshot(
         variant_sets,
         compaction_records,
         active_leaf_message_id=active_leaf,
+        agent_runs=agent_runs,
+        agent_steps=agent_steps,
+        retrieval_runs=retrieval_runs,
+        diagnostic_events=diagnostic_events,
     )
 
 
@@ -1896,7 +2052,7 @@ class ChatScreen(BaseAppScreen):
         # exactly the surface a trajectory reader comes from. The footer
         # hint is registered via CONSOLE_WORKBENCH_SHORTCUTS like the rest
         # of the Console vocabulary.
-        Binding("y", "open_trajectory_view", "Trajectory", show=True),
+        Binding("y", "open_trajectory_view", "Trace", show=True),
         Binding("alt+m", "open_console_model_popover", "Model", show=True),
         Binding("alt+w", "open_console_workspace_switcher", "Workspace", show=True),
         Binding("alt+v", "paste_clipboard_image", "Paste image", show=True),
@@ -3198,7 +3354,7 @@ class ChatScreen(BaseAppScreen):
         )
 
     def action_open_trajectory_view(self) -> None:
-        """Open the trajectory ledger for the active Console conversation (``y``).
+        """Open Trace for the active Console conversation (``y``).
 
         task-5: the snapshot is built off the UI thread (DB reads); the
         screen is pushed with live tail-follow callables wired to the
@@ -3210,13 +3366,24 @@ class ChatScreen(BaseAppScreen):
         )
         conversation_id = getattr(session, "persisted_conversation_id", None)
         if not conversation_id:
-            self.notify("The active conversation has no persisted trajectory yet.")
+            self.notify("The active conversation has no persisted trace yet.")
             return
         conv_id = str(conversation_id)
         screen_title = str(getattr(session, "title", "") or "Console")
+        agent_controller = getattr(self, "_agent", None)
+        bridge = (
+            self._ensure_console_agent_bridge()
+            if agent_controller is not None
+            else None
+        )
+        agent_runs_db = getattr(bridge, "runs_db", None)
 
         def build() -> TrajectorySnapshot:
-            return _build_trajectory_snapshot(store, conv_id)
+            return _build_trajectory_snapshot(
+                store,
+                conv_id,
+                agent_runs_db=agent_runs_db,
+            )
 
         # task-16847: `Screen` defines NEITHER `call_from_thread` NOR
         # `push_screen` (both are App-only in Textual 8) -- the original
@@ -3237,7 +3404,7 @@ class ChatScreen(BaseAppScreen):
             snapshot = build()
             self.app.call_from_thread(present, snapshot)
 
-        self.notify("Building trajectory…")
+        self.notify("Building trace…")
         self.run_worker(
             build_worker, thread=True, exclusive=True, group="trajectory-launch"
         )

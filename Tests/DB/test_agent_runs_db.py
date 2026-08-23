@@ -6,7 +6,7 @@ from contextlib import contextmanager
 import pytest
 
 from tldw_chatbook.Agents.agent_models import AgentDefinition
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB, AgentStepConflictError
 
 
 @pytest.fixture()
@@ -419,6 +419,117 @@ def test_reconcile_preserves_existing_result(tmp_path):
     row = db2.get_run(rid)
     assert row["status"] == "error"
     assert row["result"] == "partial output"  # COALESCE keeps it
+    diagnostics = [step for step in row["steps"] if step["kind"] == "capture_failed"]
+    assert len(diagnostics) == 1
+    assert diagnostics[0]["status"] == "incomplete"
+    assert diagnostics[0]["parent_event_id"] == f"agent-run:{rid}"
+
+
+def test_terminal_status_and_lifecycle_insert_are_atomic_on_fault(tmp_path, monkeypatch):
+    db = AgentRunsDB(tmp_path / "atomic-terminal.db")
+    run_id = db.create_run(conversation_id="c", agent_kind="primary")
+    step = {
+        "index": 10_000_010,
+        "kind": "agent_run_completed",
+        "summary": "Agent run completed",
+        "created_at": "2026-08-22T00:00:00.000000Z",
+        "status": "done",
+        "owner_seq": 0,
+        "parent_event_id": f"agent-run:{run_id}",
+        "source_event_id": None,
+        "field_states": {"payload": "omitted"},
+        "sensitivity": "diagnostic",
+    }
+    real_transaction = db.transaction
+
+    class FaultAfterInsert:
+        def __init__(self, conn):
+            self.conn = conn
+
+        def execute(self, sql, params=()):
+            if sql.startswith("UPDATE agent_runs SET status"):
+                raise sqlite3.OperationalError("injected after lifecycle insert")
+            return self.conn.execute(sql, params)
+
+    @contextmanager
+    def faulting_transaction():
+        with real_transaction() as conn:
+            yield FaultAfterInsert(conn)
+
+    monkeypatch.setattr(db, "transaction", faulting_transaction)
+    with pytest.raises(sqlite3.OperationalError):
+        db.set_terminal_with_step(run_id, "done", "answer", step)
+
+    row = db.get_run(run_id)
+    assert row["status"] == "running"
+    assert row["result"] is None
+    assert not any(step["kind"] == "agent_run_completed" for step in row["steps"])
+
+
+def test_terminal_status_result_and_lifecycle_are_first_writer_wins(db):
+    run_id = db.create_run(conversation_id="c", agent_kind="primary")
+    completed = {
+        "index": 10_000_010,
+        "kind": "agent_run_completed",
+        "summary": "Agent run completed",
+        "created_at": "2026-08-22T00:00:00.000000Z",
+        "status": "done",
+        "owner_seq": 0,
+        "parent_event_id": f"agent-run:{run_id}",
+        "source_event_id": None,
+        "field_states": {"payload": "omitted"},
+        "sensitivity": "diagnostic",
+    }
+    failed = {**completed, "index": 10_000_014, "kind": "agent_run_failed"}
+
+    assert db.set_terminal_with_step(run_id, "done", "answer", completed) is True
+    assert db.set_terminal_with_step(run_id, "error", "late error", failed) is False
+    with pytest.raises(AgentStepConflictError):
+        db.set_terminal_with_step(
+            run_id,
+            "done",
+            "answer",
+            {**completed, "summary": "conflicting terminal observation"},
+        )
+
+    row = db.get_run(run_id)
+    assert row["status"] == "done"
+    assert row["result"] == "answer"
+    assert [step["kind"] for step in row["steps"]] == ["agent_run_completed"]
+
+
+def test_reconcile_marks_preexisting_split_terminal_row_as_incomplete(tmp_path):
+    db_path = tmp_path / "split-terminal.db"
+    setup = AgentRunsDB(db_path)
+    run_id = setup.create_run(conversation_id="c", agent_kind="primary")
+    setup.insert_steps_at_indices(
+        run_id,
+        [
+            (
+                0,
+                {
+                    "index": 0,
+                    "kind": "model_request_started",
+                    "summary": "Model request started",
+                    "owner_seq": 0,
+                    "parent_event_id": f"agent-run:{run_id}",
+                },
+            )
+        ],
+    )
+    assert setup.set_status(run_id, "done", "legacy answer") is True
+    setup.close()
+    AgentRunsDB._swept_paths.discard(str(db_path))
+
+    reopened = AgentRunsDB(db_path)
+    row = reopened.get_run(run_id)
+    assert row["status"] == "done"
+    assert row["result"] == "legacy answer"
+    diagnostic = next(step for step in row["steps"] if step["kind"] == "capture_failed")
+    assert diagnostic["status"] == "incomplete"
+    assert diagnostic["field_states"]["agent_run_completed"] == "not_observed"
+    assert diagnostic["parent_event_id"] == f"agent-step:{run_id}:0"
+    reopened.close()
 
 
 def test_reconcile_idempotent_same_process(tmp_path):
@@ -848,3 +959,57 @@ def test_create_run_resumed_from_run_id_round_trips_and_defaults_none(db):
     # The lineage flows through the list read too (SELECT * row dicts).
     listed = {row["id"]: row for row in db.list_runs("c")}
     assert listed[resumed]["resumed_from_run_id"] == origin
+
+
+def test_pre_v14_db_gains_spawn_event_id_and_opens_twice(tmp_path):
+    path = tmp_path / "legacy_pre_v14.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE schema_version (version INTEGER PRIMARY KEY NOT NULL);
+        INSERT INTO schema_version(version) VALUES
+            (4), (5), (6), (7), (8), (9), (10), (11), (12), (13);
+        CREATE TABLE agent_runs (
+            id TEXT PRIMARY KEY,
+            conversation_id TEXT NOT NULL,
+            parent_run_id TEXT,
+            agent_kind TEXT NOT NULL,
+            task TEXT,
+            status TEXT NOT NULL,
+            steps TEXT NOT NULL DEFAULT '[]',
+            result TEXT,
+            budget TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            assistant_message_id TEXT,
+            agent_definition TEXT,
+            definition_fingerprint TEXT,
+            wake_delivered_at TEXT,
+            resumed_from_run_id TEXT
+        );
+        """
+    )
+    conn.commit()
+    columns_before = {row[1] for row in conn.execute("PRAGMA table_info(agent_runs)")}
+    conn.close()
+    assert "spawn_event_id" not in columns_before
+
+    first = AgentRunsDB(path, client_id="migrate-v14")
+    with first.connection() as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(agent_runs)")}
+        recorded = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
+    assert "spawn_event_id" in columns
+    assert recorded == AgentRunsDB._CURRENT_SCHEMA_VERSION == 14
+    parent = first.create_run(conversation_id="c", agent_kind="primary")
+    child = first.create_run(
+        conversation_id="c",
+        agent_kind="subagent",
+        parent_run_id=parent,
+        spawn_event_id=f"agent-step:{parent}:3",
+    )
+    assert first.get_run(child)["spawn_event_id"] == f"agent-step:{parent}:3"
+    first.close()
+
+    second = AgentRunsDB(path, client_id="reopen-v14")
+    assert second.get_run(child)["spawn_event_id"] == f"agent-step:{parent}:3"
+    second.close()

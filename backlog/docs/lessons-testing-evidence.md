@@ -9,6 +9,24 @@ decays into folklore, and folklore is ignored. If you add one, bring the inciden
 
 ---
 
+## A privacy assertion must inspect every default durable owner, not only the primary database
+
+**TASK-19908, 2026-08-22.** Trace capture tests proved that AgentRunsDB and the
+projected ledger omitted hidden reasoning, credentials, and local tool content. An
+independent quality probe then decoded the default filesystem run log and found the
+same raw tool result persisted there, including an explicit hidden-reasoning phrase.
+The projection and its database owner were safe, but the product still violated the
+privacy contract because a second, default-enabled audit owner had not been included
+in the test oracle.
+
+**What to do.** For any capture/privacy change, inventory every durable owner reached
+by the real service seam (database rows, sidecars, files, caches, exports) and inspect
+their decoded persisted bytes. A green projection or sanitized primary table proves
+only that owner. When content is intentionally withheld, also verify that recovery
+handles and user/model guidance do not promise a nonexistent full copy.
+
+---
+
 ## Textual's geometric center is not the painted row for an even-height one-line control
 
 **TASK-16001, 2026-08-13.** A compositor regression helper sampled
@@ -60,6 +78,23 @@ extraction of the bundled render hid their absence. The fix's regression test
 (`Tests/UI/test_enhanced_file_dialog_bundle_css.py`) registers the exact
 `TldwCli.CSS_PATH` stack and asserts button containment -- it failed red
 against the unfixed bundle without touching app code.
+
+**Recurred, TASK-19913, 2026-08-23.** A latest-dev merge moved the Trace
+screen and timeline from automatically registered `DEFAULT_CSS` into
+consolidated `BUNDLED_CSS`. The branch's plain-`App` geometry harness then
+mounted both widgets without their production defaults and reported four
+layout/style failures. Migrating the harness to `ConsolidatedCSSApp` fixed the
+false containment failure, but full-detail and brush-theme tests still failed:
+the checked-in generated widget sheets predated this branch's expanded
+`BUNDLED_CSS`. Rebuilding them restored the production interactions without a
+specificity workaround.
+
+**What to do.** After merging the consolidated-CSS system into a branch that
+changed class-level CSS, update production-shaped harnesses to inherit
+`Tests.UI.consolidated_css.ConsolidatedCSSApp`, rebuild with
+`python -m tldw_chatbook.css.build_css`, and run CSS-build integrity tests.
+Loading only the app bundle is insufficient, and testing regenerated sheets
+against stale source is equally misleading.
 
 ---
 
