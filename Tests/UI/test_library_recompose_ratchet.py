@@ -18,10 +18,11 @@ from pathlib import Path
 
 #: Maximum allowed statement-level whole-screen recompose sites in
 #: library_screen.py. Recorded at the TASK-21116 conversion (107 before,
-#: 96 after -- 12 per-click sites removed, 4 sanctioned fallback arms
-#: added). LOWER this pin when you remove sites; never raise it for a
-#: per-click path -- see the failure message for the sanctioned seams.
-LIBRARY_WHOLE_SCREEN_RECOMPOSE_MAX = 96
+#: 97 after -- 15 per-click statements removed, 5 sanctioned fallback /
+#: structural-boundary arms added inside the new targeted seams). LOWER
+#: this pin when you remove sites; never raise it for a per-click path --
+#: see the failure message for the sanctioned seams.
+LIBRARY_WHOLE_SCREEN_RECOMPOSE_MAX = 97
 
 _LIBRARY_SCREEN_PATH = (
     Path(__file__).resolve().parents[2]

@@ -8304,6 +8304,7 @@ class LibraryScreen(BaseAppScreen):
         generation: int,
         route_key: tuple[object, ...],
         rail_mode: str = "sync",
+        then: Callable[[], None] | None = None,
     ) -> LibraryEntryReconcileResult:
         """Replace only the active Library canvas child for one entry owner.
 
@@ -8323,6 +8324,15 @@ class LibraryScreen(BaseAppScreen):
                 in place (``LibraryRail.apply_selection``) -- the task-21116
                 per-click open seam, where only the selected row moved and a
                 full rail rebuild would recreate every row button per click.
+            then: Optional follow-up ordered AFTER the mounted owner's own
+                post-mount synchronization recompose settles (task-21116).
+                Required for follow-ups that measure or scroll the new
+                children: the sync recompose is serviced by the CANVAS's
+                pump, so a follow-up scheduled from the caller's
+                continuation can run against children the sync is about to
+                replace (reproduced: the compact Media viewer-back scroll
+                restore clamped to 0 against a not-yet-final list). Runs
+                only when the replacement APPLIED.
         """
         if not self._library_entry_reconcile_is_current(generation, route_key):
             return LibraryEntryReconcileResult.SUPERSEDED
@@ -8439,12 +8449,28 @@ class LibraryScreen(BaseAppScreen):
                 ),
             )
 
+        follow_up: Callable[[], bool | None] | None = restore_focus
+        if then is not None:
+            if restore_focus is None:
+                follow_up = then
+            else:
+
+                def follow_up(
+                    _restore: Callable[[], bool] = restore_focus,
+                    _then: Callable[[], None] = then,
+                ) -> bool:
+                    # Preserve the restore's veto-relevant return while
+                    # still running the caller's follow-up.
+                    restored = _restore()
+                    _then()
+                    return restored
+
         if sync_kind is not None:
             capture = self._library_entry_focus_capture
             if not _sync_library_canvas(
                 self,
                 sync_kind,
-                then=restore_focus,
+                then=follow_up,
                 allow_screen_fallback=False,
                 notes_focus_identity=(
                     capture.notes_identity
@@ -8453,12 +8479,20 @@ class LibraryScreen(BaseAppScreen):
                 ),
             ):
                 return LibraryEntryReconcileResult.FAILED
+        elif then is not None:
+            # No owner-driven sync recompose to order against (loading
+            # Static, media viewer, collections): after-refresh is the
+            # settled point.
+            self.call_after_refresh(then)
         self._apply_library_notes_stage_visibility()
         self._apply_library_notes_footer_context()
         return LibraryEntryReconcileResult.APPLIED
 
     async def _apply_library_open_item_surface(
-        self, build: Callable[[], Widget]
+        self,
+        build: Callable[[], Widget],
+        *,
+        then: Callable[[], None] | None = None,
     ) -> None:
         """Project one just-selected Library surface without a screen recompose.
 
@@ -8483,6 +8517,13 @@ class LibraryScreen(BaseAppScreen):
             build: Zero-argument builder for the destination canvas child.
                 Called lazily so a failure falls back to the legacy
                 whole-screen recompose instead of raising.
+            then: Optional follow-up ordered after the mounted destination's
+                children have settled (see ``_replace_library_canvas_child``).
+                On a whole-screen fallback it runs synchronously right after
+                the ``refresh`` call -- the exact statement order the
+                retired call sites used (``refresh(recompose=True)`` then
+                arm/focus). Dropped when a newer navigation superseded the
+                projection.
 
         Returns:
             None.
@@ -8491,6 +8532,8 @@ class LibraryScreen(BaseAppScreen):
             # Parity with the retired unconditional refresh: an unmounted
             # screen simply records the recompose request for mount time.
             self.refresh(recompose=True)
+            if then is not None:
+                then()
             return
         self._register_footer_shortcuts()
         # Crossing the Notes boundary is STRUCTURAL: the Database/Files
@@ -8516,18 +8559,42 @@ class LibraryScreen(BaseAppScreen):
             strip_mounted, strip_needed = False, True
         if strip_mounted != strip_needed:
             self.refresh(recompose=True)
+            if then is not None:
+                then()
             return
+        try:
+            widget = build()
+        except Exception:
+            logger.debug(
+                "Targeted Library open-surface build failed.", exc_info=True
+            )
+            widget = None
+        if widget is None:
+            self.refresh(recompose=True)
+            if then is not None:
+                then()
+            return
+        # Captured AFTER ``build()``: the state builders are allowed to
+        # RESOLVE state as they build (``_build_library_media_active_child``
+        # mirrors the resolved ``_selected_media_id`` back onto the screen
+        # when the requested row no longer exists), and ``_selected_media_id``
+        # is part of the route key. Capturing before the build made the
+        # replacement seam see its own builder's resolution as a newer
+        # navigation and silently SUPERSEDE the projection -- reproduced:
+        # viewer Back after the opened row was deleted left the dead viewer
+        # on screen while the state said "list".
         generation = self._library_snapshot_state_generation
         route_key = self._library_entry_route_key()
         try:
             result = await self._replace_library_canvas_child(
-                build(),
+                widget,
                 generation=generation,
                 route_key=route_key,
                 # A per-click open moves only the rail SELECTION; counts and
                 # sections are untouched, so patch the two affected rows in
                 # place instead of recreating every rail row per click.
                 rail_mode="selection",
+                then=then,
             )
         except Exception:
             logger.debug(
@@ -8536,6 +8603,8 @@ class LibraryScreen(BaseAppScreen):
             result = LibraryEntryReconcileResult.FAILED
         if result is LibraryEntryReconcileResult.FAILED:
             self.refresh(recompose=True)
+            if then is not None:
+                then()
         # SUPERSEDED is deliberately NOT a fallback: the generation/route
         # moved mid-await, so a newer navigation owns the canvas and will
         # paint (or already painted) its own surface -- rebuilding the
@@ -8578,13 +8647,19 @@ class LibraryScreen(BaseAppScreen):
             or self._library_media_view != "list"
         ):
             return
-        await self._apply_library_media_active_surface()
-        # Armed AFTER the list canvas is mounted: the arm's immediate
-        # ``call_after_refresh`` attempt has no ordering against a
-        # canvas-child mount (only against whole-screen recomposes), and
-        # unlike the retired whole-screen path, ``compose_content`` no
-        # longer runs to re-request a still-armed focus.
-        self._arm_library_list_entry_focus(media_return=media_return)
+        # The task-2856 AC1 entry-focus arm (and its media_return scroll
+        # restore) rides the replacement's ``then=`` so it runs only after
+        # the mounted list's own sync recompose settles. Arming from this
+        # continuation directly was measurably too early: the restore's
+        # ``scroll_to`` clamped against a not-yet-laid-out list
+        # (``max_scroll_y == 0``) and the compact viewer-back scroll came
+        # back as 0 -- the same clamp the 15457 notes-canvas fix recorded.
+        await self._apply_library_open_item_surface(
+            self._build_library_media_active_child,
+            then=lambda: self._arm_library_list_entry_focus(
+                media_return=media_return
+            ),
+        )
 
     async def _reconcile_library_entry_state(
         self, generation: int, route_key: tuple[object, ...]
