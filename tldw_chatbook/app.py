@@ -1989,19 +1989,50 @@ _INGEST_HEAVY_TYPES = frozenset({"audio", "video"})
 
 # (task 10, spec §9.1 AC 37/AC-24b) The named template errors the ingest
 # dispatch fails an item on: an unresolvable choice (deleted/renamed) and a
-# stored-invalid body refused by the validator. Aliased with leading
-# underscores to keep them off the module's public surface.
-from tldw_chatbook.Chunking.chunking_interop_library import (  # noqa: E402
-    InvalidTemplateError as _InvalidTemplateError,
-)
-from tldw_chatbook.Chunking.template_runtime import (  # noqa: E402
-    TemplateResolutionError as _TemplateResolutionError,
-)
+# stored-invalid body refused by the validator.
+#
+# (task-21102) Resolved at except-time by the sole consumer (the ingest job
+# dispatch loop) rather than imported at module scope: these two imports were
+# one of the six entry points that executed the full Chunking package
+# (~15k LOC shim + vendored engine) during ``import tldw_chatbook.app``.
+# The lazily imported classes are the SAME objects the raising code
+# (``_ingest_job_options`` -> ``Chunking.template_runtime`` /
+# ``chunking_interop_library``) raises, so the except clause catches exactly
+# what it always caught.
+#
+# (task-21102 review round) Because ``except _template_resolution_errors()``
+# evaluates this for EVERY exception reaching that clause -- not only
+# template errors -- the matcher must be inert for unrelated errors:
+# * If ``tldw_chatbook.Chunking`` is not resident, no template error can be
+#   in flight (an instance of its exception classes cannot exist without the
+#   defining modules having been imported), so return ``()`` -- which
+#   matches nothing -- WITHOUT importing ~39 Chunking modules as a side
+#   effect of handling an unrelated exception.
+# * If the imports themselves fail (broken install), also return ``()`` so
+#   the ORIGINAL in-flight exception propagates with its own class instead
+#   of being replaced by a ModuleNotFoundError raised from the except
+#   clause.
+# Guarded by ``Tests/App/test_template_error_lazy_matching.py``.
+def _template_resolution_errors() -> tuple[type[Exception], ...]:
+    """Return the named template-resolution error types, imported lazily.
 
-_TEMPLATE_RESOLUTION_ERRORS: tuple[type[Exception], ...] = (
-    _TemplateResolutionError,
-    _InvalidTemplateError,
-)
+    Returns:
+        ``(TemplateResolutionError, InvalidTemplateError)`` when the
+        Chunking package is resident and importable; ``()`` otherwise, so
+        that using this as an ``except`` matcher never masks an unrelated
+        in-flight exception and never imports Chunking as a side effect.
+    """
+    if "tldw_chatbook.Chunking" not in sys.modules:
+        return ()
+    try:
+        from tldw_chatbook.Chunking.chunking_interop_library import (
+            InvalidTemplateError,
+        )
+        from tldw_chatbook.Chunking.template_runtime import TemplateResolutionError
+    except Exception:
+        return ()
+
+    return (TemplateResolutionError, InvalidTemplateError)
 
 _INGEST_LOCAL_STT_PHASE_MESSAGES: dict[WorkerPhase, str] = {
     WorkerPhase.PREPARING: "Preparing import",
@@ -4042,7 +4073,7 @@ class LibraryIngestQueueMixin:
                     permanent=False,
                 )
                 continue
-            except _TEMPLATE_RESOLUTION_ERRORS as exc:
+            except _template_resolution_errors() as exc:
                 # (task 10, AC 37/AC-24b) A template choice that no longer
                 # resolves (or a stored-invalid body) FAILS THIS ITEM with
                 # the named error -- never a silent fallback to plain

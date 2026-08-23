@@ -18,7 +18,10 @@ from typing import Any, Mapping, Optional
 from urllib.parse import quote, unquote, urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from tldw_chatbook.RAG_Search.chunking_service import ChunkingService
+# (task-21102) RAG_Search.chunking_service (the full Chunking shim + vendored
+# engine, ~15k LOC) is deliberately NOT imported at module scope: this module
+# is on the app's boot-import path via ``Media/__init__``, and only
+# ``_chunk_text`` needs the service. It is imported there, on first real use.
 from tldw_chatbook.STT.persistence import (
     load_transcription_provenance_document,
 )
@@ -1801,6 +1804,10 @@ class LocalMediaReadingService:
         # ChunkingError on these degenerate values; the legacy contract clamps.
         normalized_size = max(int(chunk_size or 0), 1)
         normalized_overlap = min(max(int(chunk_overlap or 0), 0), normalized_size - 1)
+        # Function-local import (task-21102): keeps the Chunking engine off
+        # the boot path; a sys.modules hit after the first chunking call.
+        from tldw_chatbook.RAG_Search.chunking_service import ChunkingService
+
         engine_chunks = ChunkingService().chunk_text(
             text,
             chunk_size=normalized_size,

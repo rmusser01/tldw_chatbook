@@ -171,7 +171,16 @@ def _ensure_local_video_processor():
 
 # Import database
 from ..DB.Client_Media_DB_v2 import MediaDatabase  # noqa: E402
-from ..Chunking.Chunk_Lib import ENGINE_VERSION  # noqa: E402
+
+# (task-21102) The engine-version pin comes from the stdlib-only
+# ``chunking_engine_version`` module, NOT from ``Chunking.Chunk_Lib``: this
+# module is on the app's boot-import path (app.py / Library.ingest_capabilities
+# import it directly), and importing anything under ``tldw_chatbook.Chunking``
+# executes the package init and with it the full shim + vendored engine
+# (~15k LOC). ``Chunk_Lib.ENGINE_VERSION`` re-exports the same object, so the
+# stamp cannot drift. Guarded by
+# ``Tests/Packaging/test_chunking_import_closure.py``.
+from ..chunking_engine_version import ENGINE_VERSION  # noqa: E402
 from ..RAG_Search.ingestion_indexing import suppress_ingestion_indexing  # noqa: E402
 
 # Import metrics

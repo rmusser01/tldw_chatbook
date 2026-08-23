@@ -14,8 +14,12 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any, Optional
 
-from ..Chunking.auto_selection import AUTO_SENTINEL
-from ..Chunking.chunking_interop_library import get_chunking_service
+# (task-21102) ``Chunking.auto_selection`` / ``Chunking.chunking_interop_
+# library`` are deliberately NOT imported at module scope: this module is on
+# the app's boot-import path (``RAG_Admin/__init__`` <- app.py), and any
+# ``tldw_chatbook.Chunking`` import executes the full shim + vendored engine
+# (~15k LOC). Both names are imported function-locally at their use sites --
+# a sys.modules hit after the first template operation.
 
 
 class LocalRAGAdminService:
@@ -30,9 +34,13 @@ class LocalRAGAdminService:
         media_service: Any = None,
     ):
         self.media_db = media_db
-        self.chunking_service = chunking_service or (
-            get_chunking_service(media_db) if media_db is not None else None
-        )
+        # ``not chunking_service`` (not ``is None``) preserves the original
+        # ``chunking_service or ...`` falsy semantics exactly.
+        if not chunking_service and media_db is not None:
+            from ..Chunking.chunking_interop_library import get_chunking_service
+
+            chunking_service = get_chunking_service(media_db)
+        self.chunking_service = chunking_service or None
         self._vector_store = vector_store
         self.media_service = media_service
 
@@ -126,6 +134,8 @@ class LocalRAGAdminService:
         # name (never selected, never auto-shadowed). Case-insensitive on
         # the whole word (Qodo #4): "Auto"/"AUTO" render indistinguishably
         # from the picker's built-in Auto option, so they are flagged too.
+        from ..Chunking.auto_selection import AUTO_SENTINEL
+
         if str(decorated.get("name") or "").strip().lower() == AUTO_SENTINEL:
             decorated["name_reserved"] = True
         # (task 10, AC-24a) The listing surface carries validity DATA: a

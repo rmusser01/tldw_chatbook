@@ -147,7 +147,13 @@ MAX_DOCUMENT_SIZE_BYTES = MAX_DOCUMENT_SIZE_MB * 1024 * 1024  # In bytes
 # (``_persist_chunks``) persists to ``UnvectorizedMediaChunks``. The
 # top-level dict stays clean of the key by design (task-11): DB stamping
 # happens at persist, not at chunk time.
-ENGINE_VERSION = "parity-1@385afa95"
+#
+# (task-21102) The value itself lives in the stdlib-only
+# ``tldw_chatbook.chunking_engine_version`` module -- outside this package --
+# so the persist seam (on the app's boot-import path) can read the pin
+# without executing the shim + vendored engine. Re-exported here so the
+# package surface is unchanged and there is exactly one source of truth.
+from ..chunking_engine_version import ENGINE_VERSION  # noqa: E402
 
 
 #######################################################################################################################

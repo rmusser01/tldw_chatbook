@@ -57,11 +57,33 @@ from __future__ import annotations
 import json
 from typing import Any, Callable, Optional
 
-from tldw_chatbook.Chunking.engine.regex_safety import (
-    check_pattern as _rx_check,
-    compile_flags as _rx_flags,
-    warn_ambiguity as _rx_warn,
-)
+# (task-21102) The regex-safety helpers live in the vendored engine, and any
+# ``tldw_chatbook.Chunking`` import executes the package init and with it the
+# full shim + engine (~15k LOC). This module is on the app's boot-import path
+# (``rag_admin_scope_service`` <- ``RAG_Admin/__init__`` <- app.py), so the
+# helpers are resolved inside these pass-through wrappers on first validation
+# instead of at module scope -- a sys.modules hit thereafter.
+
+
+def _rx_check(*args: Any, **kwargs: Any) -> Any:
+    """Lazily dispatch to ``Chunking.engine.regex_safety.check_pattern``."""
+    from tldw_chatbook.Chunking.engine.regex_safety import check_pattern
+
+    return check_pattern(*args, **kwargs)
+
+
+def _rx_flags(*args: Any, **kwargs: Any) -> Any:
+    """Lazily dispatch to ``Chunking.engine.regex_safety.compile_flags``."""
+    from tldw_chatbook.Chunking.engine.regex_safety import compile_flags
+
+    return compile_flags(*args, **kwargs)
+
+
+def _rx_warn(*args: Any, **kwargs: Any) -> Any:
+    """Lazily dispatch to ``Chunking.engine.regex_safety.warn_ambiguity``."""
+    from tldw_chatbook.Chunking.engine.regex_safety import warn_ambiguity
+
+    return warn_ambiguity(*args, **kwargs)
 
 __all__ = ["FALLBACK_METHODS", "TemplateValidator", "validate_template"]
 
