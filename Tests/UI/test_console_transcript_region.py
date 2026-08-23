@@ -15,10 +15,12 @@ wrong:
 1. **The composed block** -- the ``#console-main-column`` >
    ``#console-transcript-region`` > ``#console-session-surface`` >
    ``#console-native-transcript`` chain, the inline sizing the workspace
-   grid depends on, and the explicitly borderless
-   ``#console-transcript-region`` (``frame_console_region(..., edges=())``).
-   Ids and nesting are the extraction's stated contract, so
-   they are asserted as a parent/child chain rather than by bare presence:
+   grid depends on, and the then-deliberately top-less frame on
+   ``#console-transcript-region`` (``_frame_console_region(..., top=False)``),
+   which made the transcript read as continuous with the control bar above it.
+   This is the historical pre-extraction shape, not the current borderless
+   ``edges=()`` contract. Ids and nesting are the extraction's stated contract,
+   so they are asserted as a parent/child chain rather than by bare presence:
    a region widget that mounted the right ids in the wrong place would pass
    a presence check.
 
@@ -217,6 +219,8 @@ def test_both_transcript_compose_paths_request_explicitly_borderless_edges(
     source = inspect.getsource(region_type.compose)
 
     assert "edges=()," in source
+    assert "top=False" not in source
+    assert "bottom=False" not in source
 
 
 @pytest.mark.asyncio

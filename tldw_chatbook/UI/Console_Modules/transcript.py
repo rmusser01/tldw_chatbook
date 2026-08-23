@@ -7,7 +7,6 @@ decomposition, task 2): the subtree that used to be built inline as
     with main_column:
         transcript_region = self._frame_console_region(
             Vertical(id="console-transcript-region", classes="console-region"),
-            edges=(),
             top=False,
         )
         with transcript_region:
@@ -161,16 +160,12 @@ class ConsoleTranscriptRegion(Vertical):
 
         Returns:
             The borderless ``#console-transcript-region`` container holding the
-            Console session surface. ``top=False`` and ``bottom=False`` keep
-            this child root from duplicating the workspace grid's shell edges.
+            Console session surface. ``edges=()`` makes this child root own no
+            workspace shell edge.
         """
         transcript_region = frame_console_region(
             Vertical(id="console-transcript-region", classes="console-region"),
             edges=(),
-            top=False,
-            # TASK-17651: the workspace grid's own bottom border is the
-            # bottom stack's single separator; the region ends flush.
-            bottom=False,
         )
         with transcript_region:
             yield self._session_surface_builder()
