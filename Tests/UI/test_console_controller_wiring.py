@@ -43,6 +43,7 @@ from tldw_chatbook.UI.Console_Modules.agent import ConsoleAgentController
 from tldw_chatbook.UI.Console_Modules.character import ConsoleCharacterController
 from tldw_chatbook.UI.Console_Modules.dictation import ConsoleDictationController
 from tldw_chatbook.UI.Console_Modules.fleet import ConsoleFleetLifecycleController
+from tldw_chatbook.UI.Console_Modules import hands_free as hands_free_module
 from tldw_chatbook.UI.Console_Modules.hands_free import ConsoleHandsFreeController
 from tldw_chatbook.UI.Console_Modules.image import ConsoleImageController
 from tldw_chatbook.UI.Console_Modules.message import ConsoleMessageController
@@ -460,7 +461,11 @@ def test_hands_free_reads_dictation_state_through_the_screen_at_call_time():
 
 @pytest.mark.asyncio
 async def test_hands_free_auto_speak_edges_are_late_bound_and_mount_safe(monkeypatch):
-    """Wave 6 keeps policy on HandsFree without freezing its sibling edge."""
+    """Wave 6 keeps policy on HandsFree without freezing its sibling edge.
+
+    Args:
+        monkeypatch: Pytest fixture used to simulate teardown and capture logging.
+    """
     screen = _unmounted_console()
     controller = screen._hands_free
     requests: list[tuple[str, object | None]] = []
@@ -490,6 +495,26 @@ async def test_hands_free_auto_speak_edges_are_late_bound_and_mount_safe(monkeyp
     assert (
         await controller._resolve_console_auto_speak_destination("character", None)
         is destination
+    )
+
+    async def fail_destination(assistant_kind, character_ref):
+        raise RuntimeError("destination failed")
+
+    async def ensure_failing_handler():
+        return SimpleNamespace(
+            resolve_console_speech_destination=fail_destination,
+        )
+
+    screen.app_instance._ensure_tts_handler = ensure_failing_handler
+    logger = MagicMock()
+    monkeypatch.setattr(hands_free_module, "logger", logger)
+    assert (
+        await controller._resolve_console_auto_speak_destination("character", None)
+        is None
+    )
+    logger.opt.assert_called_once_with(exception=True)
+    logger.opt.return_value.warning.assert_called_once_with(
+        "Failed to resolve the Console auto-speak destination."
     )
 
     # Both presentation paths must remain harmless before the screen mounts.

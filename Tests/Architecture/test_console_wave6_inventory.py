@@ -632,6 +632,14 @@ def _span(node: ast.AST) -> int:
     return node.end_lineno - node.lineno + 1  # type: ignore[attr-defined]
 
 
+def _executable_span(method: ast.AST) -> int:
+    """Return a method's source span without its optional docstring."""
+    span = _span(method)
+    if ast.get_docstring(method) is not None:
+        span -= _span(method.body[0])
+    return span
+
+
 def _is_property(node: ast.AST) -> bool:
     return any(
         isinstance(decorator, ast.Name) and decorator.id == "property"
@@ -1125,7 +1133,7 @@ def _assert_delegate_contract(
 ) -> None:
     assert _has_real_delegate_binding(screen_methods, method_name)
     if complete:
-        assert _span(screen_methods[method_name]) <= 5
+        assert _executable_span(screen_methods[method_name]) <= 5
 
 
 def _assigns_attribute(path: Path, attribute: str) -> bool:
@@ -1261,8 +1269,9 @@ def test_wave6_inventory_matches_the_implementation_base() -> None:
         )
         if complete:
             residue = group.delegates | group.stays
-            assert sum(_span(screen_methods[item]) for item in residue) <= (
-                group.residue_lines
+            assert (
+                sum(_executable_span(screen_methods[item]) for item in residue)
+                <= group.residue_lines
             )
             for method_name in group.delegates:
                 _assert_delegate_contract(screen_methods, method_name, complete=True)
@@ -1316,9 +1325,16 @@ def test_auto_speak_family_has_completed_hands_free_ownership() -> None:
     assert group.delegates <= target_methods.keys()
     for name in group.delegates:
         method = screen_methods[name]
-        _assert_delegate_contract(screen_methods, name, complete=True)
-        assert len(method.body) == 2
-        stop_statement, delegate_statement = method.body
+        _assert_delegate_contract(screen_methods, name, complete=False)
+        docstring = ast.get_docstring(method)
+        assert docstring is not None and "Args:" in docstring
+        docstring_statement, *executable_body = method.body
+        assert isinstance(docstring_statement, ast.Expr)
+        assert isinstance(docstring_statement.value, ast.Constant)
+        assert isinstance(docstring_statement.value.value, str)
+        assert _span(method) - _span(docstring_statement) <= 5
+        assert len(executable_body) == 2
+        stop_statement, delegate_statement = executable_body
         assert isinstance(stop_statement, ast.Expr)
         assert isinstance(stop_statement.value, ast.Call)
         assert isinstance(stop_statement.value.func, ast.Attribute)
@@ -1334,6 +1350,8 @@ def test_auto_speak_family_has_completed_hands_free_ownership() -> None:
         assert isinstance(owner.value, ast.Name)
         assert owner.value.id == "self"
         assert owner.attr == group.owner_name
+        target_docstring = ast.get_docstring(target_methods[name])
+        assert target_docstring is not None and "Args:" in target_docstring
     _assert_no_dom_access(
         target_methods[name]
         for name in group.moved | group.delegates | {"_sync_hands_free_switch"}

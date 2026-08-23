@@ -417,6 +417,9 @@ class ConsoleHandsFreeController:
         try:
             return await resolver(assistant_kind, character_ref)
         except Exception:
+            logger.opt(exception=True).warning(
+                "Failed to resolve the Console auto-speak destination."
+            )
             return None
 
     def _sync_console_auto_speak_controls(
@@ -432,21 +435,33 @@ class ConsoleHandsFreeController:
         self,
         event: "ConsoleAutoSpeakChanged",
     ) -> None:
-        """Request the durable per-conversation auto-speak state."""
+        """Request the durable per-conversation auto-speak state.
+
+        Args:
+            event: Change event carrying the requested enabled state.
+        """
         self._request_auto_speak_enabled_fn(event.enabled)
 
     def on_console_auto_speak_resume_requested(
         self,
         event: "ConsoleAutoSpeakResumeRequested",
     ) -> None:
-        """Resume future automatic speech after a failure."""
+        """Resume future automatic speech after a failure.
+
+        Args:
+            event: Resume request from the Console speech controls.
+        """
         self._request_auto_speak_resume_fn()
 
     def on_console_auto_speak_retry_requested(
         self,
         event: "ConsoleAutoSpeakRetryRequested",
     ) -> None:
-        """Retry the failed automatic reply."""
+        """Retry the failed automatic reply.
+
+        Args:
+            event: Retry request from the Console speech controls.
+        """
         self._request_auto_speak_retry_fn()
 
     @property

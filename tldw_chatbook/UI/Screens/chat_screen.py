@@ -17096,6 +17096,11 @@ class ChatScreen(BaseAppScreen):
 
     @on(ConsoleAutoSpeakChanged)
     def on_console_auto_speak_changed(self, event: ConsoleAutoSpeakChanged) -> None:
+        """Delegate a Console auto-speak state change.
+
+        Args:
+            event: Change event carrying the requested enabled state.
+        """
         event.stop()
         self._hands_free.on_console_auto_speak_changed(event)
 
@@ -17103,6 +17108,11 @@ class ChatScreen(BaseAppScreen):
     def on_console_auto_speak_resume_requested(
         self, event: ConsoleAutoSpeakResumeRequested
     ) -> None:
+        """Delegate a Console auto-speak resume request.
+
+        Args:
+            event: Resume request from the Console speech controls.
+        """
         event.stop()
         self._hands_free.on_console_auto_speak_resume_requested(event)
 
@@ -17110,6 +17120,11 @@ class ChatScreen(BaseAppScreen):
     def on_console_auto_speak_retry_requested(
         self, event: ConsoleAutoSpeakRetryRequested
     ) -> None:
+        """Delegate a Console auto-speak retry request.
+
+        Args:
+            event: Retry request from the Console speech controls.
+        """
         event.stop()
         self._hands_free.on_console_auto_speak_retry_requested(event)
 
