@@ -48,6 +48,7 @@ from typing import Any
 
 from loguru import logger
 
+from tldw_chatbook.MCP.execution_log import APPROVED_SESSION_DECISION
 from tldw_chatbook.MCP.hub_tool_catalog import (
     HubTool,
     builtin_tools_from_inventory,
@@ -607,9 +608,9 @@ class MCPToolProvider:
         wins outright; absent a stamp, this resolves a fresh gate itself
         (direct `gate_tool_test` call -- see module docstring), a live
         session approval short-circuits an `"ask"` state to execute
-        (decision="approved"), and otherwise an `"ask"` verdict falls back
-        to `self._approval_callback` as a single-call list (no callback ->
-        fail closed to deny).
+        (decision="approved-session"), and otherwise an `"ask"` verdict
+        falls back to `self._approval_callback` as a single-call list (no
+        callback -> fail closed to deny).
 
         PR2a Task 8 (provider thread-safety audit): this whole call runs
         under `self._invoke_lock`, so at most ONE call into this provider
@@ -718,7 +719,9 @@ class MCPToolProvider:
             # (and the model-facing execution record) distinct so Findings
             # mode can tell "server default was allow" apart from "the
             # user approved this session".
-            return self._execute(tool, call_args, decision="approved")
+            return self._execute(
+                tool, call_args, decision=APPROVED_SESSION_DECISION
+            )
 
         # state == "ask"
         if self._approval_callback is None:
@@ -800,12 +803,16 @@ class MCPToolProvider:
         if verdict == "approve_once":
             return self._execute(tool, args, decision="approved")
         if verdict == "approve_session":
+            already_approved = self._is_session_approved_safe(tool)
             self._safe_side_effect(
                 lambda: self._service.approve_for_session(tool.server_key, tool.name),
                 tool,
                 what="approve_for_session",
             )
-            return self._execute(tool, args, decision="approved")
+            decision = (
+                APPROVED_SESSION_DECISION if already_approved else "approved"
+            )
+            return self._execute(tool, args, decision=decision)
         if verdict == "always_allow":
             self._safe_side_effect(
                 lambda: self._service.set_tool_state(
@@ -875,10 +882,10 @@ class MCPToolProvider:
             tool: The resolved `HubTool` to execute.
             args: The call's arguments, passed through unchanged.
             decision: The audit decision string this call was authorized
-                under (e.g. `"allowed"`/`"approved"`), forwarded to
-                `execute_hub_tool` and, on a bridge failure this method
-                itself must record (see the discriminator comment below),
-                to the best-effort audit record below.
+                under (e.g. `"allowed"`/`"approved"`/`"approved-session"`),
+                forwarded to `execute_hub_tool` and, on a bridge failure
+                this method itself must record (see the discriminator
+                comment below), to the best-effort audit record below.
 
         Returns:
             A `ToolResult`: `ok=True` with the formatted result on

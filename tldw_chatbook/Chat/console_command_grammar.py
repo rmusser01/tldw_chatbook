@@ -42,6 +42,10 @@ SKILLS_COMMAND_NAME = "skills"
 SKILLS_COMMAND_ARGUMENT_HINT = "[name] [args]"
 SKILLS_COMMAND_HANDLER_ID = "skills"
 
+FEWER_PERMISSION_PROMPTS_COMMAND_NAME = "fewer-permission-prompts"
+FEWER_PERMISSION_PROMPTS_COMMAND_ARGUMENT_HINT = ""
+FEWER_PERMISSION_PROMPTS_COMMAND_HANDLER_ID = "fewer-permission-prompts"
+
 PREFILL_COMMAND_NAME = "prefill"
 PREFILL_COMMAND_ARGUMENT_HINT = "[pin|clear] [text]"
 PREFILL_COMMAND_HANDLER_ID = "prefill"
@@ -188,7 +192,7 @@ class ConsoleCommandRegistry:
 
 
 def default_console_registry() -> ConsoleCommandRegistry:
-    """Build the default registry with built-in ``/prompt``, ``/system``, ``/skills``, ``/prefill``, ``/generate-image``, and ``/rewind`` commands.
+    """Build the default registry of native Console slash commands.
 
     Returns:
         A new `ConsoleCommandRegistry` with `PROMPT_COMMAND_NAME`, `SYSTEM_COMMAND_NAME`,
@@ -215,6 +219,13 @@ def default_console_registry() -> ConsoleCommandRegistry:
             name=SKILLS_COMMAND_NAME,
             argument_hint=SKILLS_COMMAND_ARGUMENT_HINT,
             handler_id=SKILLS_COMMAND_HANDLER_ID,
+        )
+    )
+    registry.register(
+        ConsoleCommand(
+            name=FEWER_PERMISSION_PROMPTS_COMMAND_NAME,
+            argument_hint=FEWER_PERMISSION_PROMPTS_COMMAND_ARGUMENT_HINT,
+            handler_id=FEWER_PERMISSION_PROMPTS_COMMAND_HANDLER_ID,
         )
     )
     registry.register(
