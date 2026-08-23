@@ -64,6 +64,9 @@ class _FakeController:
         )
         self.generation = 1
         self.viewport_generation = 0
+        self.state = "idle"
+        self.state_source: str | None = None
+        self.state_owner: str | None = None
         self.persisted: list[PersonaBuddyPreferences] = []
         self.preference_writes: list[dict[str, object]] = []
         self.resolve_sizes: list[tuple[int, int]] = []
@@ -112,7 +115,9 @@ class _FakeController:
         return PersonaBuddySnapshot(
             generation=self.generation,
             selection=self.preferences.selection,
-            state="idle",
+            state=self.state,
+            state_source=self.state_source,
+            state_owner=self.state_owner,
             enabled=self.preferences.enabled,
             open=self.preferences.open,
             collapsed=self.preferences.collapsed,
@@ -264,6 +269,32 @@ class _SlotSizedFrameController(_FakeController):
         return self.visual
 
 
+class _ModeSizedFrameController(_FakeController):
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        self.visual = replace(
+            self.visual,
+            graph_identity="shared-graph",  # type: ignore[arg-type]
+            cache_identity="shared-cache",  # type: ignore[arg-type]
+        )
+
+    async def resolve_current_visual(self, *, cols: int, lines: int):
+        self.resolve_sizes.append((cols, lines))
+        prefix = "THUMB" if (cols, lines) == (10, 4) else "FULL"
+        prepared = []
+        for index, frame in enumerate(self.visual.frames):
+            values = vars(frame).copy()
+            values.update(
+                width=cols,
+                height=lines * 2,
+                paint_digest=f"{prefix.lower()}-{index}",
+                renderable=Text(f"{prefix}-{index}"),
+            )
+            prepared.append(SimpleNamespace(**values))
+        self.visual = replace(self.visual, frames=tuple(prepared))  # type: ignore[arg-type]
+        return self.visual
+
+
 class _BuddyApp(ConsolidatedCSSApp):
     CSS_PATH = BUNDLED_STYLESHEET
     CSS = """
@@ -380,6 +411,277 @@ async def test_resting_buddy_contains_pet_and_icons_without_default_words():
             "HJKL size",
         ):
             assert default_word not in resting
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("state", "label"),
+    (
+        ("approval_needed", "Approval needed"),
+        ("error", "Error"),
+        ("offline", "Offline"),
+    ),
+)
+async def test_only_actionable_states_replace_pet_with_fixed_path_free_text(
+    state: str,
+    label: str,
+):
+    controller = _FakeController(
+        frames=("PET",),
+        frame_sizes=((10, 8),),
+    )
+    app = _BuddyApp(controller)
+
+    async with app.run_test(size=(80, 24)):
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        frame = buddy.query_one("#persona-buddy-frame", Static)
+        await _wait_until(lambda: "PET" in _compositor_text(app.screen))
+        stable_region = buddy.region
+
+        controller.state = state
+        controller.state_source = "/private/provider/output"
+        controller.state_owner = "assistant-secret-owner"
+        controller.visual = replace(
+            controller.visual,
+            reason="hostile exception /Users/alice/private.txt",
+        )
+        controller.generation += 1
+        buddy.refresh_from_controller()
+        await _wait_until(lambda: str(frame.renderable) == label)
+        painted = _compositor_text(app.screen)
+
+        assert "PET" not in painted
+        assert "/private/provider/output" not in painted
+        assert "assistant-secret-owner" not in painted
+        assert "hostile exception" not in painted
+        assert "/Users/alice/private.txt" not in painted
+        assert frame.has_class("persona-buddy-alert")
+        rows = [frame.render_line(y).text for y in range(frame.region.height)]
+        nonempty = [row for row in rows if row.strip()]
+        assert 1 <= len(nonempty) <= 2
+        assert " ".join(row.strip() for row in nonempty) == label
+        for row in nonempty:
+            left = len(row) - len(row.lstrip())
+            right = len(row) - len(row.rstrip())
+            assert abs(left - right) <= 1
+        assert buddy.region == stable_region
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "state",
+    (
+        "idle",
+        "thinking",
+        "speaking",
+        "listening",
+        "tool_running",
+        "wake_armed",
+        "explicit",
+        "authored",
+        "custom",
+        "arbitrary /tmp/private-state",
+    ),
+)
+async def test_non_actionable_states_remain_wordless(state: str):
+    controller = _FakeController(frames=("PET-ONLY",))
+    controller.state = state
+    controller.state_source = "hostile-source"
+    controller.state_owner = "hostile-owner"
+    controller.visual = replace(controller.visual, reason="hostile-reason")
+    app = _BuddyApp(controller)
+
+    async with app.run_test(size=(80, 24)):
+        await _wait_until(lambda: "PET-ONLY" in _compositor_text(app.screen))
+        painted = _compositor_text(app.screen)
+
+        assert state not in painted
+        assert "hostile-source" not in painted
+        assert "hostile-owner" not in painted
+        assert "hostile-reason" not in painted
+
+
+@pytest.mark.asyncio
+async def test_alert_restores_latest_current_accepted_frame():
+    controller = _FakeController(frames=("ORIGINAL-PET",))
+    app = _BuddyApp(controller)
+
+    async with app.run_test(size=(80, 24)):
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        await _wait_until(lambda: "ORIGINAL-PET" in _compositor_text(app.screen))
+
+        controller.state = "offline"
+        controller.visual = _visual_with_frame(
+            controller,
+            label="LATEST-PET",
+            width=24,
+            height=10,
+        )
+        controller.generation += 1
+        buddy.refresh_from_controller()
+        await _wait_until(
+            lambda: (
+                buddy._accepted_render is not None
+                and "LATEST-PET"
+                in str(buddy._accepted_render.visual.frames[0].renderable)
+            )
+        )
+        assert "Offline" in _compositor_text(app.screen)
+        assert "LATEST-PET" not in _compositor_text(app.screen)
+
+        controller.state = "idle"
+        controller.generation += 1
+        buddy.refresh_from_controller(schedule_resolution=False)
+
+        assert "LATEST-PET" in _compositor_text(app.screen)
+        assert "Offline" not in _compositor_text(app.screen)
+
+
+@pytest.mark.asyncio
+async def test_folded_mode_resolves_real_thumbnail_under_distinct_authority():
+    controller = _ModeSizedFrameController(frames=("SOURCE",))
+    app = _BuddyApp(controller)
+
+    async with app.run_test(size=(80, 24)):
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        await _wait_until(lambda: "FULL-0" in _compositor_text(app.screen))
+        full = buddy._accepted_render
+        assert full is not None
+        assert controller.resolve_sizes == [(26, 10)]
+
+        controller.preferences = replace(controller.preferences, collapsed=True)
+        controller.generation += 1
+        buddy.refresh_from_controller()
+        await _wait_until(lambda: controller.resolve_sizes == [(26, 10), (10, 4)])
+        await _wait_until(
+            lambda: (
+                buddy._accepted_render is not None
+                and buddy._accepted_render.authority != full.authority
+            )
+        )
+
+        folded = buddy._accepted_render
+        assert folded is not None
+        assert folded.authority != full.authority
+        assert full.authority[-2:] == (False, (26, 10))
+        assert folded.authority[-2:] == (True, (10, 4))
+        assert folded.visual.graph_identity == full.visual.graph_identity
+        assert folded.visual.cache_identity == full.visual.cache_identity
+        assert "THUMB-0" in _compositor_text(app.screen)
+        await asyncio.sleep(0.25)
+        assert controller.resolve_sizes == [(26, 10), (10, 4)]
+
+
+@pytest.mark.asyncio
+async def test_folded_thumbnail_is_static_and_uses_open_close_icons():
+    controller = _ModeSizedFrameController(
+        collapsed=True,
+        animate=True,
+        frames=("SOURCE-A", "SOURCE-B"),
+    )
+    app = _BuddyApp(controller)
+
+    async with app.run_test(size=(80, 24)):
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        await _wait_until(lambda: "THUMB-0" in _compositor_text(app.screen))
+        collapse = buddy.query_one("#persona-buddy-collapse", Button)
+        close = buddy.query_one("#persona-buddy-close", Button)
+
+        assert controller.resolve_sizes == [(10, 4)]
+        assert (str(collapse.label), collapse.tooltip) == ("▴", "Open")
+        assert (str(close.label), close.tooltip) == ("×", "Close")
+        assert buddy._frame_timer is None
+        buddy._next_frame_at = 0
+        buddy.advance_frame()
+        assert buddy.frame_index == 0
+        assert "THUMB-0" in _compositor_text(app.screen)
+        assert "THUMB-1" not in _compositor_text(app.screen)
+        buddy.on_mouse_down(
+            _mouse(
+                events.MouseDown,
+                x=buddy.region.right - 1,
+                y=buddy.region.bottom - 1,
+            )
+        )
+        assert buddy._interaction is not None
+        assert buddy._interaction[0] == "resize"
+        buddy.release_interaction_capture()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("constraint", "effective_size", "paints_thumbnail"),
+    (
+        ("preferred", (10, 4), True),
+        ("viewport", (10, 4), True),
+        ("preferred", (9, 4), False),
+        ("preferred", (10, 3), False),
+        ("viewport", (9, 4), False),
+        ("viewport", (10, 3), False),
+    ),
+)
+async def test_only_effective_area_below_10x4_uses_two_button_fallback(
+    constraint: str,
+    effective_size: tuple[int, int],
+    paints_thumbnail: bool,
+):
+    outer_size = (effective_size[0] + 2, effective_size[1] + 2)
+    preferred = outer_size if constraint == "preferred" else (28, 12)
+    viewport = outer_size if constraint == "viewport" else (80, 24)
+    controller = _ModeSizedFrameController(size=preferred, collapsed=True)
+    app = _BuddyApp(controller)
+
+    async with app.run_test(size=viewport):
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        collapse = buddy.query_one("#persona-buddy-collapse", Button)
+        close = buddy.query_one("#persona-buddy-close", Button)
+        if paints_thumbnail:
+            await _wait_until(lambda: "THUMB-0" in _compositor_text(app.screen))
+            assert controller.resolve_sizes == [(10, 4)]
+            assert not buddy.has_class("persona-buddy-compact")
+        else:
+            await _wait_until(lambda: buddy.has_class("persona-buddy-compact"))
+            await asyncio.sleep(0.15)
+            assert "THUMB-0" not in _compositor_text(app.screen)
+            assert controller.resolve_sizes == []
+
+        assert collapse.display
+        assert close.display
+        assert collapse.region.right <= close.region.x
+        for control in (collapse, close):
+            assert buddy.region.contains_region(control.region)
+            target, _ = app.screen.get_widget_at(
+                control.region.x + control.region.width // 2,
+                control.region.y + control.region.height // 2,
+            )
+            assert target is control
+
+
+@pytest.mark.asyncio
+async def test_undersized_asset_uses_only_10x4_operable_minimum():
+    controller = _FakeController(
+        collapsed=True,
+        frames=("P",),
+        frame_sizes=((1, 1),),
+    )
+    app = _BuddyApp(controller)
+
+    async with app.run_test(size=(80, 24)):
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        frame = buddy.query_one("#persona-buddy-frame", Static)
+        await _wait_until(lambda: "P" in _compositor_text(app.screen))
+
+        accepted = buddy._accepted_render
+        assert accepted is not None
+        assert controller.resolve_sizes == [(10, 4)]
+        assert (accepted.content_width, accepted.content_height) == (10, 4)
+        assert frame.content_region.size == (10, 4)
+        assert buddy.region.size == (12, 6)
+        rows = [frame.render_line(y).text for y in range(frame.region.height)]
+        painted_y = next(index for index, row in enumerate(rows) if "P" in row)
+        painted_x = rows[painted_y].index("P")
+        assert painted_x in (4, 5)
+        assert painted_y in (1, 2)
 
 
 @pytest.mark.asyncio
@@ -581,7 +883,7 @@ async def test_drag_and_resize_are_viewport_bounded_and_persist_once():
 
 @pytest.mark.asyncio
 async def test_keyboard_move_resize_reset_collapse_close_exact_bindings():
-    controller = _FakeController()
+    controller = _ModeSizedFrameController()
     app = _BuddyApp(controller)
     async with app.run_test(size=(100, 30)) as pilot:
         buddy = app.screen.query_one(PersonaBuddyWidget)
@@ -594,13 +896,17 @@ async def test_keyboard_move_resize_reset_collapse_close_exact_bindings():
         await pilot.press("H", "J", "K", "L")
         await _wait_until(lambda: len(controller.persisted) >= 8)
         await pilot.press("0")
-        assert buddy.absolute_offset == Offset(74, 23)
+        assert buddy.absolute_offset == Offset(
+            app.size.width - buddy.region.width,
+            app.size.height - buddy.region.height,
+        )
         await pilot.press("c")
         await _wait_until(lambda: controller.preferences.collapsed)
         await _wait_until(
             lambda: buddy.query_one("#persona-buddy-collapse", Button).tooltip == "Open"
         )
-        await _wait_until(lambda: buddy.region.height == 3)
+        await _wait_until(lambda: buddy.region.size == (12, 6))
+        assert controller.resolve_sizes[-1] == (10, 4)
         await pilot.press("x")
         await _wait_until(lambda: not controller.preferences.open)
 
@@ -625,7 +931,7 @@ async def test_tiny_viewport_uses_icon_compact_control():
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("viewport", "compact"),
-    [((28, 12), False), ((18, 6), True), ((12, 4), True), ((10, 2), True)],
+    [((28, 12), False), ((18, 6), False), ((12, 4), True), ((10, 2), True)],
 )
 async def test_exact_cell_layouts_keep_complete_icon_controls(
     viewport: tuple[int, int], compact: bool
@@ -642,8 +948,7 @@ async def test_exact_cell_layouts_keep_complete_icon_controls(
         text = _compositor_text(app.screen)
         collapse = buddy.query_one("#persona-buddy-collapse", Button)
         close = buddy.query_one("#persona-buddy-close", Button)
-        controls = (collapse, close) if viewport[0] >= 14 else (collapse,)
-        for control in controls:
+        for control in (collapse, close):
             assert control.display
             assert control.region.width >= len(str(control.label))
             assert buddy.region.contains_region(control.region)
@@ -656,9 +961,8 @@ async def test_exact_cell_layouts_keep_complete_icon_controls(
         if compact:
             assert "▾" in text
             assert "Buddy" not in text
-            assert close.display is (viewport[0] >= 14)
-            if close.display:
-                assert "×" in text
+            assert close.display
+            assert "×" in text
         else:
             assert "▾" in text
             assert "×" in text
@@ -668,7 +972,7 @@ async def test_exact_cell_layouts_keep_complete_icon_controls(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("viewport", [(18, 6), (12, 4), (10, 2)])
+@pytest.mark.parametrize("viewport", [(12, 4), (10, 2)])
 async def test_compact_keyboard_move_preserves_preferred_size_on_restore(
     viewport: tuple[int, int],
 ):
@@ -1166,9 +1470,18 @@ async def test_frame_slot_resize_does_not_feed_resolution_authority():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mode", ("hidden", "collapsed"))
-async def test_hidden_or_collapsed_buddy_does_not_resolve(mode: str):
-    controller = _FakeController()
+@pytest.mark.parametrize(
+    ("mode", "expected_sizes"),
+    (
+        ("hidden", [(26, 10)]),
+        ("collapsed", [(26, 10), (10, 4)]),
+    ),
+)
+async def test_hidden_stops_resolution_but_collapsed_resolves_thumbnail(
+    mode: str,
+    expected_sizes: list[tuple[int, int]],
+):
+    controller = _ModeSizedFrameController()
     app = _BuddyApp(controller)
     async with app.run_test(size=(80, 24)):
         buddy = app.screen.query_one(PersonaBuddyWidget)
@@ -1185,7 +1498,7 @@ async def test_hidden_or_collapsed_buddy_does_not_resolve(mode: str):
         buddy.refresh_from_controller()
         await asyncio.sleep(0.2)
 
-        assert len(controller.resolve_sizes) == 1
+        assert controller.resolve_sizes == expected_sizes
 
 
 @pytest.mark.asyncio

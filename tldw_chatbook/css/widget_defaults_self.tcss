@@ -2240,26 +2240,23 @@
         padding: 0;
         layer: pet;
         content-align: center middle;
+        text-align: center;
         color: $text;
+    }
+
+    PersonaBuddyWidget #persona-buddy-frame.persona-buddy-alert {
+        color: $warning;
+        text-style: bold;
     }
 
     PersonaBuddyWidget #persona-buddy-collapse {
         offset: 0 0;
     }
 
-    PersonaBuddyWidget.persona-buddy-collapsed {
-        height: 3;
-        padding: 0;
-    }
-
     PersonaBuddyWidget.persona-buddy-compact {
         height: 1;
         padding: 0;
         border: none;
-    }
-
-    PersonaBuddyWidget.persona-buddy-collapsed #persona-buddy-frame {
-        display: none;
     }
 
     PersonaBuddyWidget.persona-buddy-compact #persona-buddy-frame {
@@ -2275,13 +2272,6 @@
         text-align: center;
     }
 
-    PersonaBuddyWidget.persona-buddy-minimal #persona-buddy-close {
-        display: none;
-    }
-
-    PersonaBuddyWidget.persona-buddy-minimal #persona-buddy-collapse {
-        width: 100%;
-    }
 
 
 /* ===== WIDGET: PersonaProfileCardWidget (Widgets/Persona_Widgets/persona_profile_card_widget.py) ===== */

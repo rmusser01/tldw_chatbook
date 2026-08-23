@@ -30,14 +30,16 @@ _DEFAULT_WIDTH = 28
 _DEFAULT_HEIGHT = 12
 _MIN_WIDTH = 18
 _MIN_HEIGHT = 6
-_FULL_CONTENT_HEIGHT = 8
 _OPERABLE_WIDTH = 10
 _OPERABLE_HEIGHT = 4
 _BOUNDARY_SIZE = 2
-_DUAL_CONTROL_WIDTH = 14
-_COLLAPSED_HEIGHT = 3
 _COMPACT_HEIGHT = 1
 _POLL_SECONDS = 0.10
+_ACTIONABLE_ALERTS = {
+    "approval_needed": "Approval needed",
+    "error": "Error",
+    "offline": "Offline",
+}
 
 
 def _visual_identity(visual: Any) -> tuple[object, ...]:
@@ -166,26 +168,23 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         padding: 0;
         layer: pet;
         content-align: center middle;
+        text-align: center;
         color: $text;
+    }
+
+    PersonaBuddyWidget #persona-buddy-frame.persona-buddy-alert {
+        color: $warning;
+        text-style: bold;
     }
 
     PersonaBuddyWidget #persona-buddy-collapse {
         offset: 0 0;
     }
 
-    PersonaBuddyWidget.persona-buddy-collapsed {
-        height: 3;
-        padding: 0;
-    }
-
     PersonaBuddyWidget.persona-buddy-compact {
         height: 1;
         padding: 0;
         border: none;
-    }
-
-    PersonaBuddyWidget.persona-buddy-collapsed #persona-buddy-frame {
-        display: none;
     }
 
     PersonaBuddyWidget.persona-buddy-compact #persona-buddy-frame {
@@ -201,13 +200,6 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         text-align: center;
     }
 
-    PersonaBuddyWidget.persona-buddy-minimal #persona-buddy-close {
-        display: none;
-    }
-
-    PersonaBuddyWidget.persona-buddy-minimal #persona-buddy-collapse {
-        width: 100%;
-    }
     """
 
     def __init__(
@@ -294,10 +286,11 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         if (
             not self.is_attached
             or not self.display
-            or snapshot.collapsed
             or self._compact_for_geometry(self._working_preferences.geometry)
         ):
             return None
+        if snapshot.collapsed:
+            return _OPERABLE_WIDTH, _OPERABLE_HEIGHT
         viewport = self.screen.size
         geometry = self._working_preferences.geometry
         cols = min(geometry.width, viewport.width) - _BOUNDARY_SIZE
@@ -553,7 +546,22 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         if not self.is_attached:
             return
         target = self.query_one("#persona-buddy-frame", Static)
+        if self.has_class("persona-buddy-compact"):
+            target.set_class(False, "persona-buddy-alert")
+            target.update("")
+            return
+        alert = _ACTIONABLE_ALERTS.get(getattr(self._snapshot, "state", None))
+        target.set_class(alert is not None, "persona-buddy-alert")
+        if alert is not None:
+            target.update(alert)
+            return
         accepted = self._accepted_render
+        if (
+            accepted is not None
+            and self._snapshot is not None
+            and accepted.authority[-2] != self._snapshot.collapsed
+        ):
+            accepted = None
         visual = accepted.visual if accepted is not None else None
         frames = getattr(visual, "frames", ()) if visual is not None else ()
         if frames:
@@ -564,15 +572,7 @@ class PersonaBuddyWidget(Widget, can_focus=True):
 
     def _sync_compact_state(self, collapsed: bool) -> None:
         compact = self._compact_for_geometry(self._working_preferences.geometry)
-        available_width = min(
-            self._working_preferences.geometry.width,
-            max(1, self.screen.size.width),
-        )
         self.set_class(compact, "persona-buddy-compact")
-        self.set_class(
-            compact and available_width < _DUAL_CONTROL_WIDTH,
-            "persona-buddy-minimal",
-        )
         self.set_class(collapsed and not compact, "persona-buddy-collapsed")
         self._sync_control_presentation(collapsed)
         self._apply_geometry(self._working_preferences.geometry)
@@ -609,11 +609,11 @@ class PersonaBuddyWidget(Widget, can_focus=True):
 
     def _compact_for_geometry(self, geometry: PersonaBuddyGeometry) -> bool:
         viewport = self.screen.size
-        available_width = min(geometry.width, max(1, viewport.width))
-        available_height = min(geometry.height, max(1, viewport.height))
-        return (
-            available_width < _DEFAULT_WIDTH or available_height < _FULL_CONTENT_HEIGHT
+        available_width = min(geometry.width, max(1, viewport.width)) - _BOUNDARY_SIZE
+        available_height = (
+            min(geometry.height, max(1, viewport.height)) - _BOUNDARY_SIZE
         )
+        return available_width < _OPERABLE_WIDTH or available_height < _OPERABLE_HEIGHT
 
     def _display_geometry(self, geometry: PersonaBuddyGeometry) -> PersonaBuddyGeometry:
         """Fit accepted content without changing the saved render budget."""
@@ -622,24 +622,29 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         compact = self._compact_for_geometry(geometry)
         if compact:
             available_width = min(geometry.width, max(1, viewport.width))
-            width = min(
-                max(1, viewport.width),
-                max(min(_OPERABLE_WIDTH, max(1, viewport.width)), available_width),
-            )
+            width = min(max(6, available_width), max(1, viewport.width))
             height = min(_COMPACT_HEIGHT, max(1, viewport.height))
         else:
             width = min(max(_MIN_WIDTH, geometry.width), viewport.width)
-            if self._snapshot and self._snapshot.collapsed:
-                height = min(_COLLAPSED_HEIGHT, viewport.height)
-            elif self._accepted_render is not None:
+            accepted = self._accepted_render
+            if (
+                accepted is not None
+                and self._snapshot is not None
+                and accepted.authority[-2] != self._snapshot.collapsed
+            ):
+                accepted = None
+            if accepted is not None:
                 width = min(
-                    self._accepted_render.content_width + _BOUNDARY_SIZE,
+                    accepted.content_width + _BOUNDARY_SIZE,
                     viewport.width,
                 )
                 height = min(
-                    self._accepted_render.content_height + _BOUNDARY_SIZE,
+                    accepted.content_height + _BOUNDARY_SIZE,
                     viewport.height,
                 )
+            elif self._snapshot and self._snapshot.collapsed:
+                width = min(_OPERABLE_WIDTH + _BOUNDARY_SIZE, viewport.width)
+                height = min(_OPERABLE_HEIGHT + _BOUNDARY_SIZE, viewport.height)
             else:
                 height = min(max(_MIN_HEIGHT, geometry.height), viewport.height)
         max_x = max(0, viewport.width - width)
