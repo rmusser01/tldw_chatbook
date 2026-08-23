@@ -2984,8 +2984,30 @@ def test_app_wires_character_persona_services(monkeypatch):
         app_module, "CharacterPersonaScopeService", scope_service_factory
     )
 
+    class EmptyIntentDatabase:
+        """Answer the one query this wiring now runs at construction time.
+
+        TASK-20970: `chachanotes_db` here used to be a bare ``object()``,
+        which was harmless right up until TASK-19057 made this function
+        actually *use* the database -- `PersonaActorPackCoordinator.recover()`
+        lists Persona intents before any Persona surface mounts. From then on
+        the sentinel raised `AttributeError: 'object' object has no attribute
+        'execute_query'` straight out of the function under test, in the same
+        frame chain as the 294 app-construction reds. A double that reports
+        no intents keeps this test about the scope-service wiring it is
+        named for.
+        """
+
+        class _Cursor:
+            @staticmethod
+            def fetchall():
+                return []
+
+        def execute_query(self, *_args, **_kwargs):
+            return self._Cursor()
+
     fake_app = Mock()
-    fake_app.chachanotes_db = object()
+    fake_app.chachanotes_db = EmptyIntentDatabase()
     fake_app.service_policy_enforcer = object()
     fake_app.server_context_provider = object()
 

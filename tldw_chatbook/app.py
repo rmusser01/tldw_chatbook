@@ -389,7 +389,7 @@ from .Actor_Packs.persona_coordinator import (
     PersonaActorPackCoordinatorError,
 )
 from .Actor_Packs.creation import ActorPackCreationService
-from .Actor_Packs.repository import ActorPackRepository
+from .Actor_Packs.repository import ActorPackRepository, ActorPackRepositoryError
 from .Persona_Buddy import (
     PersonaBuddyController,
     load_local_persona_portrait,
@@ -6602,29 +6602,59 @@ class TldwCli(
             self.chachanotes_db,
             persona_store_path=get_user_data_dir() / "tldw_chatbook_personas.json",
         )
-        self.actor_pack_repository = ActorPackRepository(self.chachanotes_db)
-        self.persona_actor_pack_coordinator = PersonaActorPackCoordinator(
-            self.actor_pack_repository,
-            self.local_character_persona_service,
-        )
+        # TASK-20970: `self.chachanotes_db` is `None` whenever the database
+        # could not be opened -- a corrupt file, a permission error, or a
+        # migration that cannot complete all land in the branch a few hundred
+        # lines above that logs `ChaChaNotesDB (CharactersRAGDB) instance not
+        # found/assigned` and assigns `None`. Decide about it explicitly, the
+        # way `_wire_chat_conversation_services` decides about the same value,
+        # rather than handing `None` to the repository and discovering it as
+        # an `AttributeError` from inside `recover()`.
+        actor_pack_db = getattr(self, "chachanotes_db", None)
         self.actor_pack_recovery_error: str | None = None
-        try:
-            recovery = self.persona_actor_pack_coordinator.recover()
-        except PersonaActorPackCoordinatorError:
-            self.actor_pack_recovery_error = "actor_pack_recovery_failed"
-            self.loguru_logger.error("Actor Pack recovery failed: actor_pack_recovery_failed")
+        if actor_pack_db is None:
+            self.actor_pack_repository = None
+            self.persona_actor_pack_coordinator = None
+            self.actor_pack_creation_service = None
+            self.actor_pack_recovery_error = "actor_pack_recovery_unavailable"
+            self.loguru_logger.error(
+                "Actor Pack services disabled: the ChaChaNotes database could "
+                "not be opened, so portable-identity recovery was skipped and "
+                "Actor Pack creation is unavailable for this session "
+                "(actor_pack_recovery_unavailable)"
+            )
         else:
-            if recovery.blocked_intent_ids:
-                self.actor_pack_recovery_error = "actor_pack_recovery_blocked"
-                self.loguru_logger.warning(
-                    "Actor Pack recovery retained quarantined intents: "
-                    "actor_pack_recovery_blocked"
+            self.actor_pack_repository = ActorPackRepository(actor_pack_db)
+            self.persona_actor_pack_coordinator = PersonaActorPackCoordinator(
+                self.actor_pack_repository,
+                self.local_character_persona_service,
+            )
+            try:
+                recovery = self.persona_actor_pack_coordinator.recover()
+            # `recover()` converts the repository's failures into its own
+            # category, but it sits one layer above a store that has its own
+            # typed error, and only that store knows what it can raise. Naming
+            # both here means a repository failure cannot escape the guard
+            # written to contain it -- without widening to a bare
+            # `except Exception`, which would also swallow the programming
+            # errors this wiring should still surface.
+            except (PersonaActorPackCoordinatorError, ActorPackRepositoryError):
+                self.actor_pack_recovery_error = "actor_pack_recovery_failed"
+                self.loguru_logger.error(
+                    "Actor Pack recovery failed: actor_pack_recovery_failed"
                 )
-        self.actor_pack_creation_service = ActorPackCreationService(
-            self.chachanotes_db,
-            self.actor_pack_repository,
-            self.persona_actor_pack_coordinator,
-        )
+            else:
+                if recovery.blocked_intent_ids:
+                    self.actor_pack_recovery_error = "actor_pack_recovery_blocked"
+                    self.loguru_logger.warning(
+                        "Actor Pack recovery retained quarantined intents: "
+                        "actor_pack_recovery_blocked"
+                    )
+            self.actor_pack_creation_service = ActorPackCreationService(
+                actor_pack_db,
+                self.actor_pack_repository,
+                self.persona_actor_pack_coordinator,
+            )
         self.character_persona_scope_service = CharacterPersonaScopeService(
             local_service=self.local_character_persona_service,
             server_service=self.server_character_persona_service,

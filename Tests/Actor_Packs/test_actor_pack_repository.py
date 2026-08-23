@@ -359,3 +359,19 @@ def test_sqlite_failures_do_not_expose_database_details(
     assert str(write_error.value) == "actor_pack_repository_write_failed"
     assert "private" not in repr(read_error.value)
     assert "private" not in repr(write_error.value)
+
+
+def test_missing_database_is_rejected_in_the_repositorys_own_error_category() -> None:
+    """TASK-20970: a `None` database fails typed, at the boundary.
+
+    The app hands its callers `None` whenever the ChaChaNotes database could
+    not be opened. Every query method here guards `sqlite3.Error` /
+    `CharactersRAGDBError`, which a `None` database sails past as a raw
+    `AttributeError` -- and callers that guard on this class's own error type
+    (or on `PersonaActorPackCoordinatorError`, which is also a `ValueError`
+    subclass) never see it coming. Rejecting it once, here, is what makes
+    those guards true.
+    """
+    with pytest.raises(ActorPackRepositoryError) as unavailable:
+        ActorPackRepository(None)
+    assert str(unavailable.value) == "actor_pack_repository_unavailable"

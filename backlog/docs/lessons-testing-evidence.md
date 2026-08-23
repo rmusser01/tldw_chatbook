@@ -6808,3 +6808,50 @@ per-key work was ~7 widget refreshes — the static read had been right all alon
 
 Full disclosure section: `Docs/Design/2026-08-22-holistic-perf-review.md`
 ("Measurement-artifact disclosure").
+
+## A test double that is a bare `object()` is a lie with a delayed fuse (TASK-20970)
+
+`Tests/Character_Chat/test_character_persona_scope_service.py::test_app_wires_
+character_persona_services` set `fake_app.chachanotes_db = object()` — a
+sentinel, chosen because the wiring under test only ever *passed the value
+along*. It stayed green for as long as that was true. TASK-19057 then made the
+same function actually **use** the database (`PersonaActorPackCoordinator.
+recover()` lists Persona intents at construction time), and the sentinel
+started raising `AttributeError: 'object' object has no attribute
+'execute_query'` from inside the function under test — a red that says nothing
+about the scope-service wiring the test is named for. The sentinel had been
+asserting "this collaborator is never used", implicitly and invisibly, for as
+long as it sat there.
+
+The same task showed the *other* half of that trap: the shared app factory
+patches `get_chachanotes_db_lazy` to `None`, so **every** app-building test in
+the repo silently became a no-database test. When the wiring stopped tolerating
+`None`, 294 tests across four suites and 4 whole `Tests/UI/test_settings_*`
+modules went red at once with one identical frame chain. Rule: when a double
+stands in for a real collaborator, give it the collaborator's shape (even a
+two-line class answering one query), so that a change which starts using the
+collaborator fails in the code that changed, not in an unrelated test's
+sentinel.
+
+## An `except` clause is only as true as the layer beneath it (TASK-20970)
+
+The Actor Pack wiring wrapped its startup recovery in `except
+PersonaActorPackCoordinatorError` — a guard that reads as complete. It was not:
+that error subclasses `ValueError`, and the repository under it dereferenced a
+`None` database, so a raw `AttributeError` walked straight through the clause
+written to contain it and killed `TldwCli.__init__`. Grepping for "is this call
+guarded?" answers yes; the honest question is "does the guard's type actually
+cover everything the callee can raise?", which requires reading the callee's own
+error boundary. The repository's boundary caught `sqlite3.Error` /
+`CharactersRAGDBError` at every query site — and a `None` database sails past
+all of them, at all of them.
+
+The durable repair was not to widen the caller to `except Exception` (which
+would also swallow the programming errors the wiring should surface) but to
+make the store reject the impossible state **in its own typed category, once,
+at construction**. Ten query sites each remembering to catch `AttributeError`
+is not a boundary; one constructor check is. Mutation-proved both halves
+independently: removing only the constructor check reds the repository's unit
+test and leaves the app tests green; disabling only the caller's guard reds the
+app tests with the typed error; removing both reproduces the original
+`AttributeError` verbatim.

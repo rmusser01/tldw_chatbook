@@ -70,6 +70,29 @@ class ActorPackRepository:
         *,
         uuid_factory: Callable[[], uuid.UUID] = uuid.uuid4,
     ) -> None:
+        """Bind the repository to one open ChaChaNotes database.
+
+        Args:
+            db: The open ChaChaNotes database every query runs against.
+            uuid_factory: Portable-UUID source, overridable for tests.
+
+        Raises:
+            ActorPackRepositoryError: If ``db`` is absent. TASK-20970: the
+                app tolerates an unopenable ChaChaNotes database and hands
+                its callers ``None`` (`app.py`'s
+                ``ChaChaNotesDB ... not found/assigned`` branch), and every
+                query method here has a ``sqlite3.Error``/
+                ``CharactersRAGDBError`` boundary that a ``None`` database
+                sails straight past as an ``AttributeError`` -- which then
+                escapes callers guarding on this class's own error type.
+                Rejecting the missing database once, here, makes every
+                method on the class fail in the repository's own typed
+                category instead of asking ten query sites each to remember
+                to catch ``AttributeError`` (which would also swallow real
+                attribute bugs).
+        """
+        if db is None:
+            raise ActorPackRepositoryError("actor_pack_repository_unavailable")
         self.db = db
         self._uuid_factory = uuid_factory
 
