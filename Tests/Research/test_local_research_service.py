@@ -430,6 +430,9 @@ def test_a_pre_lease_database_upgrades_through_a_versioned_migration(tmp_path):
     """
     db_path = _make_pre_lease_database(tmp_path)
     service = LocalResearchService(db_path)
+    # TASK-21105: the store opens (and migrates) on FIRST USE, not at
+    # construction; one operation is what upgrades the database now.
+    service.list_runs()
 
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -454,7 +457,8 @@ def test_a_pre_lease_database_upgrades_through_a_versioned_migration(tmp_path):
 def test_a_fresh_database_is_stamped_with_the_schema_version(tmp_path):
     """Fresh databases must carry the same versioned stamp -- not a
     versionless shape that the next migration then cannot find."""
-    LocalResearchService(tmp_path / "research.db")
+    # TASK-21105: first use, not construction, creates and stamps the file.
+    LocalResearchService(tmp_path / "research.db").list_runs()
 
     conn = sqlite3.connect(tmp_path / "research.db")
     conn.row_factory = sqlite3.Row
@@ -468,11 +472,13 @@ def test_a_fresh_database_is_stamped_with_the_schema_version(tmp_path):
 
 
 def test_reopening_an_upgraded_database_is_an_idempotent_noop(tmp_path):
-    """Re-constructing the service (next app launch) must neither re-ALTER
-    nor drift the version -- the migration runs once per database."""
+    """Re-opening on the next app launch must neither re-ALTER nor drift
+    the version -- the migration runs once per database."""
     db_path = _make_pre_lease_database(tmp_path)
-    LocalResearchService(db_path)
-    LocalResearchService(db_path)
+    # TASK-21105: each launch's first USE (not construction) is what runs
+    # the schema/migration path now; exercise two full open cycles.
+    LocalResearchService(db_path).list_runs()
+    LocalResearchService(db_path).list_runs()
 
     conn = sqlite3.connect(db_path)
     try:
@@ -491,5 +497,9 @@ def test_a_database_from_a_future_schema_version_is_refused(tmp_path):
     conn.commit()
     conn.close()
 
+    # TASK-21105: the refusal now fires on first USE (construction no
+    # longer opens the database) -- still loud, still before any data
+    # from the newer schema is touched or written.
+    service = LocalResearchService(db_path)
     with pytest.raises(RuntimeError, match="newer"):
-        LocalResearchService(db_path)
+        service.list_runs()
