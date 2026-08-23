@@ -122,8 +122,9 @@ not:
   `Paragraphs`): how source text is split before embedding. The picker offers
   the three text methods; the chunking engine underneath (shared with the
   server) also implements `tokens`, `semantic`, `json`, `xml`,
-  `ebook_chapters`, `rolling_summarize`, `fixed_size`, `code`, `code_ast` and
-  `structure_aware` for callers that go through the pipeline directly — see
+  `ebook_chapters`, `rolling_summarize`, `propositions`, `fixed_size`, `code`,
+  `code_ast` and `structure_aware` for callers that go through the pipeline
+  directly — see
   [Import & export](../library/import-and-export.md) for the e-book
   chapter method in the UI.
 - **Vector store** — distance metric ⚠ (`Cosine` / `Euclidean (L2)` / `Inner
