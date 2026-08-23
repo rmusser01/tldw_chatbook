@@ -28,6 +28,7 @@ SECRET_VALUES = (
 LOCAL_PATH = "/Users/alice/private/trace.txt"
 LONG_CONTENT = "diagnostic-body-" * 30
 PRIVATE_IDENTIFIER = "customer-999-secret-id"
+URL_CREDENTIAL = "https://alice:hunter2@example.com/private"
 
 
 def _record(**overrides: object) -> TrajectoryRecord:
@@ -340,6 +341,23 @@ def test_credentials_are_absent_from_serialized_bytes_in_every_profile(
         assert secret.encode() not in serialized
 
 
+@pytest.mark.parametrize(
+    "profile",
+    ["safe_summary", "redacted_diagnostic", "full_trace"],
+)
+def test_url_userinfo_credentials_are_absent_from_every_profile(profile: str) -> None:
+    snapshot = _snapshot(
+        _record(
+            content_preview=f"Request failed at {URL_CREDENTIAL}",
+            payload={"endpoint": URL_CREDENTIAL},
+        )
+    )
+
+    payload = _build(snapshot, profile, confirm_full=profile == "full_trace")
+
+    assert URL_CREDENTIAL not in json.dumps(payload)
+
+
 def test_preflight_has_one_decision_per_material_field_without_count_drift() -> None:
     snapshot = _snapshot(
         _record(
@@ -401,6 +419,17 @@ def test_preflight_counts_overlapping_redaction_and_truncation_once_each() -> No
     assert preflight.privacy_inventory["observed"] == sum(
         decision.source_state == "observed" for decision in preflight.field_decisions
     )
+
+
+def test_credential_scrub_keeps_one_decision_per_event_field() -> None:
+    preflight = trajectory_export.preflight_trace_export(
+        _snapshot(_record(payload={"api_key": SECRET_VALUES[0]}))
+    )
+    keys = [
+        (decision.event_id, decision.field) for decision in preflight.field_decisions
+    ]
+
+    assert len(keys) == len(set(keys))
 
 
 def test_safe_summary_coarsens_timing_and_records_provenance() -> None:
@@ -596,6 +625,109 @@ def test_resigned_bundle_cannot_claim_digest_authenticity() -> None:
     with pytest.raises(
         trajectory_import.TrajectoryImportError, match="authenticity.*false"
     ):
+        trajectory_import.load_imported_trace(payload)
+
+
+@pytest.mark.parametrize("field", ["sensitive", "included", "observed"])
+def test_resigned_bundle_rejects_contradictory_privacy_inventory(field: str) -> None:
+    payload = _build(_snapshot())
+    payload["manifest"]["privacy_inventory"][field] += 100
+    _resign(payload)
+
+    with pytest.raises(
+        trajectory_import.TrajectoryImportError,
+        match=rf"privacy_inventory\.{field}",
+    ):
+        trajectory_import.load_imported_trace(payload)
+
+
+def test_resigned_bundle_rejects_field_state_provenance_contradiction() -> None:
+    payload = _build(_snapshot(_record(field_states={"payload": "redacted"})))
+    payload["events"][0]["field_provenance"]["payload"]["state"] = "observed"
+    _resign(payload)
+
+    with pytest.raises(
+        trajectory_import.TrajectoryImportError,
+        match="field_provenance.*payload.*field_states",
+    ):
+        trajectory_import.load_imported_trace(payload)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (lambda p: p["events"][0].update(step_started_at=float("nan")), "finite"),
+        (lambda p: p["events"][0].update(completed_at=float("inf")), "finite"),
+        (lambda p: p["events"][0].update(seq=-1), "seq"),
+        (lambda p: p["events"][0].update(depth=-1), "depth"),
+        (
+            lambda p: p["events"][0]["usage"].update(uncached_input="many"),
+            "usage.uncached_input",
+        ),
+        (
+            lambda p: p["events"][0]["usage"].update(cache_read=-1),
+            "usage.cache_read",
+        ),
+        (
+            lambda p: p["events"][0]["usage"].update(
+                transcription_seconds=float("inf")
+            ),
+            "usage.transcription_seconds",
+        ),
+        (
+            lambda p: p["events"][0]["usage"].update(provider=7),
+            "usage.provider",
+        ),
+        (
+            lambda p: p["events"][0]["usage"].update(partial="false"),
+            "usage.partial",
+        ),
+    ],
+)
+def test_resigned_bundle_rejects_invalid_numeric_and_usage_data(
+    mutation, message: str
+) -> None:
+    payload = _build(_snapshot())
+    mutation(payload)
+    _resign(payload)
+
+    with pytest.raises(trajectory_import.TrajectoryImportError, match=message):
+        trajectory_import.load_imported_trace(payload)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (
+            lambda p: p["manifest"].update(exported_at="yesterday"),
+            "exported_at.*ISO 8601",
+        ),
+        (
+            lambda p: p["manifest"].update(
+                exported_timestamp="2026-08-22T20:00:00+00:00"
+            ),
+            "timestamps.*match",
+        ),
+        (
+            lambda p: p["manifest"].update(source={"type": "database"}),
+            "source",
+        ),
+        (
+            lambda p: p["manifest"]["source"].update(
+                conversation_ids=["wrong-conversation"]
+            ),
+            "conversation_ids.*events",
+        ),
+    ],
+)
+def test_resigned_bundle_rejects_invalid_manifest_source_and_timestamps(
+    mutation, message: str
+) -> None:
+    payload = _build(_snapshot())
+    mutation(payload)
+    _resign(payload)
+
+    with pytest.raises(trajectory_import.TrajectoryImportError, match=message):
         trajectory_import.load_imported_trace(payload)
 
 

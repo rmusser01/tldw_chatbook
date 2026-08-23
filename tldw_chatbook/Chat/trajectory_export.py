@@ -270,6 +270,10 @@ _CREDENTIAL_VALUE_RES = (
     re.compile(r"\bsk-[A-Za-z0-9_-]{8,}", re.IGNORECASE),
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
     re.compile(
+        r"\b[a-z][a-z0-9+.-]*://[^/\s:@]+:[^/\s@]+@",
+        re.IGNORECASE,
+    ),
+    re.compile(
         r"\b(?:api[_ -]?key|token|password|passwd|secret)\s*[:=]\s*\S+",
         re.IGNORECASE,
     ),
@@ -565,7 +569,13 @@ def _prepare_field(
         if source_state in {"omitted", "not_available", "capture_failed"}:
             value = [] if field == "variants" else None
         elif source_state == "redacted":
-            value = [] if field == "variants" else "[redacted]"
+            value = (
+                []
+                if field == "variants"
+                else None
+                if field == "payload"
+                else "[redacted]"
+            )
         elif source_state == "truncated":
             value, _, _, nested_sensitive = _govern_value(
                 value, profile=profile, path=field
@@ -730,6 +740,25 @@ def _scrub_structural_metadata(
     return scrubbed, [{"field": path, "state": "redacted", "reason": "credential"}]
 
 
+def _upsert_field_decision(
+    decisions: list[TraceFieldDecision], decision: TraceFieldDecision
+) -> None:
+    """Keep the preflight basis unique by event and root field."""
+    existing_index = next(
+        (
+            index
+            for index in range(len(decisions) - 1, -1, -1)
+            if decisions[index].event_id == decision.event_id
+            and decisions[index].field == decision.field
+        ),
+        None,
+    )
+    if existing_index is None:
+        decisions.append(decision)
+    else:
+        decisions[existing_index] = decision
+
+
 def preflight_trace_export(
     snapshot: TrajectorySnapshot,
     *,
@@ -802,7 +831,8 @@ def preflight_trace_export(
             }
             event_provenance.append(entry)
             provenance.append(entry)
-            decisions.append(
+            _upsert_field_decision(
+                decisions,
                 TraceFieldDecision(
                     str(event["event_id"]),
                     str(field),
@@ -811,7 +841,7 @@ def preflight_trace_export(
                     bool(record.sensitivity)
                     or state in {"redacted", "truncated", "omitted"},
                     str(state),
-                )
+                ),
             )
         event["field_provenance"] = field_provenance
         event["redaction_provenance"] = event_provenance
@@ -829,14 +859,27 @@ def preflight_trace_export(
                 "reason": "credential",
                 "sensitivity": record.sensitivity or "unspecified",
             }
-            decisions.append(
+            event_id = str(event["event_id"])
+            existing = next(
+                (
+                    decision
+                    for decision in reversed(decisions)
+                    if decision.event_id == event_id and decision.field == field
+                ),
+                None,
+            )
+            _upsert_field_decision(
+                decisions,
                 TraceFieldDecision(
-                    str(event["event_id"]),
+                    event_id,
                     field,
-                    "redacted",
-                    "credential",
-                    True,
-                )
+                    state="redacted",
+                    reason="credential",
+                    sensitive=True,
+                    source_state=(
+                        existing.source_state if existing is not None else "observed"
+                    ),
+                ),
             )
         prepared_events.append(event)
 
@@ -1045,6 +1088,9 @@ def build_trace_export(
         "missing_metadata": missing_metadata,
         "privacy_inventory": dict(preflight.privacy_inventory),
         "redaction_provenance": list(preflight.redaction_provenance),
+        "privacy_decisions": [
+            dataclasses.asdict(decision) for decision in preflight.field_decisions
+        ],
         "integrity_notice": "SHA-256 detects corruption; it does not prove authenticity",
     }
     payload: dict[str, Any] = {

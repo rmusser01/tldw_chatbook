@@ -22,9 +22,11 @@ Purity contract
 from __future__ import annotations
 
 import json
+import math
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from secrets import compare_digest
 from typing import Any
@@ -199,7 +201,25 @@ _PRIVACY_KEYS = frozenset(
 
 
 def _is_number(value: Any) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
+
+
+def _parse_manifest_timestamp(value: str, field: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise TrajectoryImportError(
+            f"Invalid Trace v2 manifest: '{field}' must be an ISO 8601 datetime"
+        ) from exc
+    if parsed.tzinfo is None:
+        raise TrajectoryImportError(
+            f"Invalid Trace v2 manifest: '{field}' must include a timezone"
+        )
+    return parsed
 
 
 def _require_v2(
@@ -263,6 +283,7 @@ def _validate_v2(document: Mapping) -> tuple[dict[str, Any], list[Mapping[str, A
         ("source", dict),
         ("missing_metadata", list),
         ("redaction_provenance", list),
+        ("privacy_decisions", list),
         ("integrity_notice", str),
     ):
         if field not in manifest:
@@ -273,6 +294,37 @@ def _validate_v2(document: Mapping) -> tuple[dict[str, Any], list[Mapping[str, A
             raise TrajectoryImportError(
                 f"Invalid Trace v2 manifest: '{field}' must be {expected.__name__}"
             )
+    exported_at = _parse_manifest_timestamp(manifest["exported_at"], "exported_at")
+    exported_timestamp = _parse_manifest_timestamp(
+        manifest["exported_timestamp"], "exported_timestamp"
+    )
+    if (
+        exported_at != exported_timestamp
+        or manifest["exported_at"] != manifest["exported_timestamp"]
+    ):
+        raise TrajectoryImportError(
+            "Invalid Trace v2 manifest: exported timestamps must match"
+        )
+    source = manifest["source"]
+    if set(source) != {"type", "conversation_ids"} or source.get("type") != (
+        "trajectory_snapshot"
+    ):
+        raise TrajectoryImportError(
+            "Invalid Trace v2 manifest: source must name a trajectory_snapshot "
+            "and conversation_ids"
+        )
+    source_conversation_ids = source.get("conversation_ids")
+    if not isinstance(source_conversation_ids, list) or not all(
+        isinstance(value, str) and value for value in source_conversation_ids
+    ):
+        raise TrajectoryImportError(
+            "Invalid Trace v2 manifest: source.conversation_ids must be a list "
+            "of non-empty strings"
+        )
+    if source_conversation_ids != sorted(set(source_conversation_ids)):
+        raise TrajectoryImportError(
+            "Invalid Trace v2 manifest: source.conversation_ids must be unique and sorted"
+        )
     privacy = manifest.get("privacy_inventory")
     if not isinstance(privacy, dict) or not all(
         isinstance(value, int) and not isinstance(value, bool) and value >= 0
@@ -287,6 +339,12 @@ def _validate_v2(document: Mapping) -> tuple[dict[str, Any], list[Mapping[str, A
         raise TrajectoryImportError(
             "Invalid Trace v2 manifest: 'privacy_inventory' is missing "
             + ", ".join(missing_privacy_keys)
+        )
+    unexpected_privacy_keys = sorted(privacy.keys() - _PRIVACY_KEYS)
+    if unexpected_privacy_keys:
+        raise TrajectoryImportError(
+            "Invalid Trace v2 manifest: 'privacy_inventory' has unsupported fields: "
+            + ", ".join(unexpected_privacy_keys)
         )
 
     raw_events = _require_v2(document, "events", list)
@@ -313,21 +371,33 @@ def _validate_v2(document: Mapping) -> tuple[dict[str, Any], list[Mapping[str, A
                 f"Invalid Trace v2 bundle: duplicate event_id {event_id!r}"
             )
         ids.add(event_id)
-        if not isinstance(event["seq"], int) or isinstance(event["seq"], bool):
+        if (
+            not isinstance(event["seq"], int)
+            or isinstance(event["seq"], bool)
+            or event["seq"] < 0
+        ):
             raise TrajectoryImportError(
-                f"Invalid Trace v2 bundle: 'events[{index}].seq' must be an integer"
+                f"Invalid Trace v2 bundle: 'events[{index}].seq' must be a "
+                "non-negative integer"
             )
-        if not isinstance(event["depth"], int) or isinstance(event["depth"], bool):
+        if (
+            not isinstance(event["depth"], int)
+            or isinstance(event["depth"], bool)
+            or event["depth"] < 0
+        ):
             raise TrajectoryImportError(
-                f"Invalid Trace v2 bundle: 'events[{index}].depth' must be an integer"
+                f"Invalid Trace v2 bundle: 'events[{index}].depth' must be a "
+                "non-negative integer"
             )
         source_seq = event.get("source_seq")
         if source_seq is not None and (
-            not isinstance(source_seq, int) or isinstance(source_seq, bool)
+            not isinstance(source_seq, int)
+            or isinstance(source_seq, bool)
+            or source_seq < 0
         ):
             raise TrajectoryImportError(
                 f"Invalid Trace v2 bundle: 'events[{index}].source_seq' "
-                "must be an integer or null"
+                "must be a non-negative integer or null"
             )
         for field in ("kind", "turn_id", "content_preview"):
             if not isinstance(event[field], str):
@@ -357,7 +427,7 @@ def _validate_v2(document: Mapping) -> tuple[dict[str, Any], list[Mapping[str, A
             if value is not None and not _is_number(value):
                 raise TrajectoryImportError(
                     f"Invalid Trace v2 bundle: 'events[{index}].{field}' "
-                    "must be a number or null"
+                    "must be a finite number or null"
                 )
         payload = event["payload"]
         if payload is not None and not isinstance(payload, Mapping):
@@ -371,6 +441,41 @@ def _validate_v2(document: Mapping) -> tuple[dict[str, Any], list[Mapping[str, A
                 f"Invalid Trace v2 bundle: 'events[{index}].usage' "
                 "must be an object or null"
             )
+        if isinstance(usage, Mapping):
+            unknown_usage = sorted(set(usage) - set(_USAGE_FIELDS))
+            if unknown_usage:
+                raise TrajectoryImportError(
+                    f"Invalid Trace v2 bundle: 'events[{index}].usage' contains "
+                    f"unsupported fields: {', '.join(map(str, unknown_usage))}"
+                )
+            for field in _USAGE_COUNT_FIELDS:
+                if field not in usage:
+                    continue
+                value = usage[field]
+                if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                    raise TrajectoryImportError(
+                        f"Invalid Trace v2 bundle: 'events[{index}].usage.{field}' "
+                        "must be a non-negative integer"
+                    )
+            if "transcription_seconds" in usage and (
+                not _is_number(usage["transcription_seconds"])
+                or usage["transcription_seconds"] < 0
+            ):
+                raise TrajectoryImportError(
+                    f"Invalid Trace v2 bundle: 'events[{index}].usage."
+                    "transcription_seconds' must be a finite non-negative number"
+                )
+            for field in ("provider", "model"):
+                if field in usage and not isinstance(usage[field], str):
+                    raise TrajectoryImportError(
+                        f"Invalid Trace v2 bundle: 'events[{index}].usage.{field}' "
+                        "must be a string"
+                    )
+            if "partial" in usage and not isinstance(usage["partial"], bool):
+                raise TrajectoryImportError(
+                    f"Invalid Trace v2 bundle: 'events[{index}].usage.partial' "
+                    "must be a boolean"
+                )
         field_states = event["field_states"]
         if not isinstance(field_states, Mapping):
             raise TrajectoryImportError(
@@ -405,6 +510,11 @@ def _validate_v2(document: Mapping) -> tuple[dict[str, Any], list[Mapping[str, A
                     f"Invalid Trace v2 bundle: 'events[{index}].field_provenance.{field}' "
                     "must include valid state, reason, and sensitivity strings"
                 )
+            if field in field_states and detail.get("state") != field_states[field]:
+                raise TrajectoryImportError(
+                    f"Invalid Trace v2 bundle: 'events[{index}].field_provenance."
+                    f"{field}.state' does not match field_states.{field}"
+                )
         if not isinstance(event["redaction_provenance"], list):
             raise TrajectoryImportError(
                 f"Invalid Trace v2 bundle: 'events[{index}].redaction_provenance' "
@@ -431,6 +541,17 @@ def _validate_v2(document: Mapping) -> tuple[dict[str, Any], list[Mapping[str, A
     if manifest.get("event_count") != len(events):
         raise TrajectoryImportError(
             "Invalid Trace v2 manifest: 'event_count' does not match events"
+        )
+    expected_conversation_ids = sorted(
+        {
+            str(event["conversation_id"])
+            for event in events
+            if event.get("conversation_id")
+        }
+    )
+    if source_conversation_ids != expected_conversation_ids:
+        raise TrajectoryImportError(
+            "Invalid Trace v2 manifest: source.conversation_ids does not match events"
         )
     for index, event in enumerate(events):
         for field in _REFERENCE_FIELDS:
@@ -487,6 +608,107 @@ def _validate_v2(document: Mapping) -> tuple[dict[str, Any], list[Mapping[str, A
         raise TrajectoryImportError(
             "Invalid Trace v2 manifest: redaction_provenance does not match events"
         )
+
+    event_by_id = {str(event["event_id"]): event for event in events}
+    privacy_decisions = manifest["privacy_decisions"]
+    decision_keys: set[tuple[str, str]] = set()
+    validated_decisions: list[dict[str, Any]] = []
+    required_decision_fields = {
+        "event_id",
+        "field",
+        "state",
+        "reason",
+        "sensitive",
+        "source_state",
+    }
+    for index, decision in enumerate(privacy_decisions):
+        if not isinstance(decision, Mapping) or set(decision) != (
+            required_decision_fields
+        ):
+            raise TrajectoryImportError(
+                f"Invalid Trace v2 manifest privacy_decisions[{index}]: expected "
+                "the complete decision schema"
+            )
+        event_id = decision["event_id"]
+        field = decision["field"]
+        state = decision["state"]
+        source_state = decision["source_state"]
+        if (
+            event_id not in event_by_id
+            or not isinstance(field, str)
+            or not field
+            or state not in _FIELD_STATES
+            or source_state not in _FIELD_STATES
+            or not isinstance(decision["reason"], str)
+            or not decision["reason"]
+            or not isinstance(decision["sensitive"], bool)
+        ):
+            raise TrajectoryImportError(
+                f"Invalid Trace v2 manifest privacy_decisions[{index}] values"
+            )
+        key = (str(event_id), field)
+        if key in decision_keys:
+            raise TrajectoryImportError(
+                f"Invalid Trace v2 manifest privacy_decisions: duplicate {key!r}"
+            )
+        decision_keys.add(key)
+        event = event_by_id[str(event_id)]
+        field_states = event["field_states"]
+        if field in field_states and field_states[field] != state:
+            raise TrajectoryImportError(
+                f"Invalid Trace v2 manifest privacy_decisions[{index}]: state "
+                f"does not match event field_states.{field}"
+            )
+        detail = event["field_provenance"].get(field)
+        if isinstance(detail, Mapping) and detail.get("state") != state:
+            raise TrajectoryImportError(
+                f"Invalid Trace v2 manifest privacy_decisions[{index}]: state "
+                f"does not match event field_provenance.{field}"
+            )
+        validated_decisions.append(dict(decision))
+
+    expected_decision_counts = {
+        "sensitive": sum(
+            bool(decision["sensitive"]) for decision in validated_decisions
+        ),
+        "included": sum(
+            decision["state"] not in {"not_available", "capture_failed", "omitted"}
+            for decision in validated_decisions
+        ),
+        "observed": sum(
+            decision["source_state"] == "observed" for decision in validated_decisions
+        ),
+    }
+    for field, expected_count in expected_decision_counts.items():
+        if privacy[field] != expected_count:
+            raise TrajectoryImportError(
+                f"Invalid Trace v2 manifest: privacy_inventory.{field} "
+                "does not match privacy_decisions"
+            )
+
+    provenance_roots = {
+        (
+            entry["event_id"],
+            re.split(r"[.[]", entry["field"], maxsplit=1)[0],
+            entry["state"],
+        )
+        for entry in validated_event_provenance
+    }
+    for event in events:
+        for field, state in event["field_states"].items():
+            if state == "observed":
+                continue
+            detail = event["field_provenance"].get(field)
+            if not isinstance(detail, Mapping) or detail.get("state") != state:
+                raise TrajectoryImportError(
+                    f"Invalid Trace v2 bundle: event {event['event_id']!r} "
+                    f"field_provenance.{field} does not match field_states"
+                )
+            if (str(event["event_id"]), str(field), str(state)) not in provenance_roots:
+                raise TrajectoryImportError(
+                    f"Invalid Trace v2 bundle: event {event['event_id']!r} "
+                    f"field {field!r} lacks matching redaction provenance"
+                )
 
     expected_missing = [
         {"event_id": str(event["event_id"]), "field": str(field), "state": str(state)}
@@ -603,6 +825,16 @@ _USAGE_FIELDS = (
     "provider",
     "model",
     "partial",
+)
+_USAGE_COUNT_FIELDS = frozenset(
+    {
+        "uncached_input",
+        "cache_read",
+        "cache_write",
+        "output",
+        "audio_input",
+        "audio_output",
+    }
 )
 
 
