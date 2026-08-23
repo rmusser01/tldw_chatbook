@@ -817,8 +817,10 @@ print(package_root)
 """
 
 INSTALLED_MIGRATION_PROBE = r"""
+from contextlib import closing
 from pathlib import Path
 import os
+import sqlite3
 
 expected_target = Path(os.environ["EXPECTED_TARGET"]).resolve(strict=True)
 
@@ -846,11 +848,18 @@ assert current_schema_version > 35
 fresh_path = validate_path("installed-fresh-probe.sqlite", home_path)
 assert not fresh_path.exists()
 fresh_db = CharactersRAGDB(fresh_path, client_id="installed-probe-fresh")
-fresh_version = fresh_db.get_connection().execute(
-    "SELECT version FROM db_schema_version WHERE schema_name = ?",
-    (CharactersRAGDB._SCHEMA_NAME,),
-).fetchone()[0]
 fresh_db.close_connection()
+# Read the reached version with a RAW sqlite3 connection on the closed file,
+# not through the class that just wrote it. Qodo flagged the earlier
+# `get_connection().execute(...)` for bypassing `transaction()`; going raw is
+# the better answer than wrapping it, because this assertion's whole value is
+# that it does not agree with itself -- neither the constant nor the class's
+# own accessor is in the path.
+with closing(sqlite3.connect(fresh_path)) as fresh_probe:
+    fresh_version = fresh_probe.execute(
+        "SELECT version FROM db_schema_version WHERE schema_name = ?",
+        (CharactersRAGDB._SCHEMA_NAME,),
+    ).fetchone()[0]
 assert fresh_version == current_schema_version, (fresh_version, current_schema_version)
 print(f"installed-wheel-fresh-init-ok v{fresh_version}")
 CharactersRAGDB._CURRENT_SCHEMA_VERSION = 35
@@ -2007,6 +2016,21 @@ def test_release_checker_rejects_missing_database_migration(
     archive_kind: str,
     missing: str,
 ) -> None:
+    """Dropping any single migration from one archive is caught, named, and refused.
+
+    Parametrized across every migration the runtime opens rather than a
+    representative one: the defect this task closed (task-19860) hid because
+    the old checker aborted at the first gap, so a per-file sweep is the
+    point, not thoroughness for its own sake.
+
+    Args:
+        built_distributions: The wheel and sdist built once per session.
+        tmp_path: Scratch directory for the doctored dist tree.
+        archive_kind: Which archive to drop the file from -- ``wheel`` or
+            ``sdist``; both must be checked, since ``package-data`` and
+            ``MANIFEST.in`` are separate lists that have drifted apart before.
+        missing: Repo-relative path of the migration script to remove.
+    """
     dist_dir = _dist_dir_without(
         built_distributions,
         tmp_path,
