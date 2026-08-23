@@ -103,4 +103,148 @@ Converted every confirmed per-click whole-screen recompose path in `UI/Screens/l
 ### Deliberately not converted
 
 The nine low-frequency admin flows named in the finding (delete / undo / receipt and friends), the media edit and analysis ENTRY buttons (only the Escape/Cancel EXITS were in the confirmed per-click list), the export RUN press, and the entry-origin deep-link refreshes. `_apply_library_row_toggle` needed no change (already 0 recomposes per click, measured).
+## Review fix round
+
+Independent review reproduced every number in the notes above (117->29 and
+113->47 widget counts, 1->0 recomposes, the 107->97 census, both self-found
+defect fixes, the `_apply_library_row_toggle` false-positive call, the
+Notes-boundary claim, and the graduation retarget's honesty) and returned
+FIX-FIRST on four Majors. All four are fixed at the mechanism, each RED-first.
+
+### M1 -- the media-detail worker could clobber the Trash view (CONFIRMED)
+
+`_build_library_media_active_child` had no `"trash"` branch at all, unlike
+the two sibling builders (`compose_content` and
+`_build_library_entry_active_child`) which both check it first. The worker
+continuation `_recompose_library_media_detail_if_unrendered` guards only on
+the rail row id, so a media-detail fetch resolving after the user pressed
+"Trash" mounted the LIST canvas over the mounted `LibraryMediaTrashCanvas`
+while `_library_media_view` stayed `"trash"` -- DOM/state divergence plus a
+broken follow-on `_sync_library_canvas("media-trash")`. The supersede guard
+structurally cannot catch this: the view is INSIDE the route key, so the key
+stays self-consistent.
+
+Fixed at the source of truth rather than at the call site: the builder grows
+the branch, and `_build_library_entry_active_child` now DELEGATES instead of
+duplicating the check -- that duplication is precisely what allowed the
+shared builder to go missing one. The surface seam additionally early-returns
+for trash, because Trash is a distinct surface with its own updater and
+remounting it from a stale worker would drop its selection (the TASK-15706
+rule). RED-first: with both guards mutated off, the integration test fails
+on the exact symptom (`the media LIST canvas was mounted over the Trash
+view`) and the builder unit test fails on the returned type.
+
+### M2 -- the footer hint went stale on a viewer sub-state Escape (CONFIRMED)
+
+`_sync_library_media_viewer_or_recompose` never called
+`_register_footer_shortcuts()`; the retired whole-screen recompose did, via
+`compose_content`. The sets genuinely differ --
+`_library_route_shortcuts_for_current_state` branches on
+`_library_media_viewer_substate_active()` -- so Escaping out of edit mode
+left the footer advertising the sub-state's "back a step" when Escape had
+already returned to the plain viewer, where it means "back to list".
+Registered once in that method rather than in each of Escape's three
+branches, so a future sub-state cannot be added without it. The test guards
+itself against passing vacuously: it asserts the two sets differ before
+asserting the restore.
+
+### M3 -- the targeted swap raced the canvas-sync whole-screen fallback (CONFIRMED)
+
+While a projection has the canvas host's child detached across its
+remove/mount awaits, any `_sync_library_canvas` landing in that window
+cannot find its canvas and took its `allow_screen_fallback=True` arm: a
+whole-screen `refresh(recompose=True)`. That both re-introduced the exact
+recompose this task removes AND raced a fresh same-id canvas into the
+in-flight `mount` (`DuplicateIds` on `#library-media-canvas`, then a pilot
+stall). Not confined to deleted rows: `_open_library_media_viewer` and
+`_exit_library_media_viewer` each kick a list reload one line before
+scheduling the swap, so any reload slower than the swap hits it -- the
+shipped tests missed it only because their in-memory service always won the
+race.
+
+Fixed with a projection DEPTH counter (`_library_canvas_projection_depth`)
+held across the swap via try/finally -- the region has eight early returns,
+so the swap body was extracted into `_project_library_canvas_child` purely
+so the caller can hold the marker across all of them. The repair loop holds
+it too. Suppression is safe rather than lossy: the projection rebuilds the
+destination from CURRENT screen state, so the state the suppressed sync
+wanted is picked up by the projection; `then` is deliberately not run there
+because the projection owns focus through its own ordered `then=`.
+
+Two tests, both RED with the guard mutated off: a mechanism test carrying
+its own CONTROL arm (same call with the marker cleared MUST still fall back
+-- otherwise the treatment proves nothing), and a realistic one that injects
+the delay INSIDE the guarded region (the host's `remove_children` await),
+which is where the real race lives.
+
+### M4 -- a routine snapshot dropped the projection's follow-up (SUSPECTED -> CONFIRMED)
+
+Verified before fixing. `_library_entry_reconcile_is_current` compares
+`_library_snapshot_state_generation` as well as the route key, and the
+ordinary local-source snapshot apply bumps that generation -- one that
+`_exit_library_media_viewer` itself kicks (via
+`_load_library_media_list_if_needed`) a line before scheduling the swap. So
+a routine snapshot landing mid-await returned SUPERSEDED and the seam
+skipped `then()`, silently dropping BOTH the task-2856 AC1 first-row focus
+and the media_return scroll restore that the pre-conversion code armed
+unconditionally.
+
+Fixed by distinguishing the two supersede kinds rather than by running the
+follow-up unconditionally: a GENERATION-only supersede (route key unchanged)
+still runs it, because the destination is still ours; a genuine ROUTE-change
+supersede still skips it, preserving the TASK-15706 transitioning-surface
+rule. The test asserts the route key did NOT change, so it cannot silently
+degrade into testing the route-change path.
+
+### Also taken
+
+* **m3** -- `_repair_library_entry_canvas_owner` captured the route key
+  BEFORE `_build_library_entry_active_child()`, the identical shape as the
+  self-found defect 2 (the media arm mirrors the resolved
+  `_selected_media_id`, a route-key field, back onto the screen). It
+  self-healed in one iteration but only by spinning, and every `continue`
+  path in that loop is await-free. The key is now captured after the builder
+  and the loop is bounded at 8 passes as a hot-spin guard.
+* **m5** -- the ratchet failure message now lists every site as
+  `library_screen.py:<line>  <function>()  ->  <spelling>` instead of a bare
+  count, on a 34.8k-line file. The counter also now matches the
+  `self.screen.refresh(...)` spelling, and its remaining blind spots
+  (aliased receiver, non-literal flag, `**kwargs`, getattr/partial indirect
+  dispatch, `self.app.screen`) are both documented in the docstring AND
+  pinned by their own test, so the documented list cannot drift from real
+  behaviour.
+
+### Not fixed (ledgered by the reviewer)
+
+m1/m2/m4/m6/m7: arrival-note side effects, the latent notes-files arm, the
+`follow_up` discard, the notes-canvas export fallback, and the armed-focus
+re-request.
+
+### Review-round verification
+
+* Census unchanged at **97** -- none of these fixes adds a whole-screen
+  recompose; the pin still holds.
+* Widget-recreation probes re-run after all six changes: media open
+  **0 recomposes / 29 widgets**, viewer back **0 / 47** -- identical to the
+  pre-review numbers, so the fixes cost nothing.
+* `Tests/UI/test_library_review_round_t21116.py` -- 6 tests, each RED-first
+  against its own mechanism (mutation-based, Edit-restored).
+* Core battery re-run (17 files): **34 failed / 408 passed** -- the 34 are
+  byte-identical to the base `30c7e1fe9` pre-existing set (15 + 19); the
+  passed count rose from 400 by exactly the 8 new tests. Zero new reds.
+* Ruff clean on every changed file.
+* **`scripts/check_persistent_diagnostic_inventory.py`**: RED on arrival with
+  four drifted rows. Attributed against base `30c7e1fe9`: only
+  `library_screen.py` (+5) is mine -- the other three
+  (`chachanotes_fts_backfill.py` new, `ChaChaNotes_DB.py` +3, `app.py` +3)
+  are untouched on this branch, i.e. pre-existing pin staleness from a
+  sibling merge. All 12 added statements were read before regenerating. Mine
+  are five `logger.debug` calls with static text plus the fixed internal
+  `{kind}` vocabulary -- no user content, secret, or path. Of the absorbed
+  foreign rows, worth flagging for the ledger: the `ChaChaNotes_DB.py`
+  V46->V47 migration lines interpolate `self.db_path_str` (a local
+  filesystem path) at INFO -- consistent with the 353 pre-existing calls in
+  that file's migration logging, not introduced here, but absorbed into the
+  pin by this regeneration. Pin regenerated with `--write`; gate now green
+  (531 owners, 7265 TASK-494 calls).
 <!-- SECTION:NOTES:END -->
