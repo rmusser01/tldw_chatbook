@@ -8,6 +8,7 @@ import pytest
 
 from tldw_chatbook.Library import library_notes_lasting_sync_state as lasting_state
 from tldw_chatbook.Library.library_notes_lasting_sync_state import (
+    LastingSyncReviewRow,
     LastingSyncSetup,
     build_reconciliation_review,
     initial_lasting_sync_snapshot,
@@ -366,6 +367,31 @@ def test_conflict_review_projects_typed_selection_and_skip_only_apply_blocker() 
     assert mutating.rows[0].selected_label == "Selected: Keep file"
     assert mutating.can_apply is True
     assert mutating.apply_blocker.value == "none"
+
+
+def test_conflict_row_and_snapshot_bound_review_labels_and_focus_request() -> None:
+    row = LastingSyncReviewRow(
+        "bind-1",
+        "attention",
+        "Both file and note changed",
+        conflict_eligible=True,
+        conflict_title="Release [red]note[/red]",
+        conflict_relative_path="notes/release.md",
+    )
+    snapshot = replace(
+        initial_lasting_sync_snapshot(),
+        history_available=True,
+        conflict_focus_binding_id="bind-1",
+    )
+
+    assert row.conflict_title == "Release [red]note[/red]"
+    assert row.conflict_relative_path == "notes/release.md"
+    assert snapshot.history_available is True
+    assert snapshot.conflict_focus_binding_id == "bind-1"
+    with pytest.raises(ValueError, match="conflict_title"):
+        replace(row, conflict_title="x" * 161)
+    with pytest.raises(ValueError, match="relative path"):
+        replace(row, conflict_relative_path="../private.md")
 
 
 def test_review_apply_blockers_derive_from_typed_plan_facts() -> None:

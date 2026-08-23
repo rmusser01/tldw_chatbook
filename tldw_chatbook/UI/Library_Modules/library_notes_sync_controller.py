@@ -11,6 +11,7 @@ from tldw_chatbook.Library.library_notes_lasting_sync_state import (
     LastingSyncApplyBlocker,
     LastingSyncHistory,
     LastingSyncHistoryRow,
+    LastingSyncReview,
     LastingSyncReceiptRow,
     LastingSyncRootRow,
     LibraryNotesLastingSyncSnapshot,
@@ -24,14 +25,19 @@ from tldw_chatbook.Notes.notes_sync_conflicts import (
     ConflictComparison,
     ConflictSelection,
     NotesSyncConflictChoice,
+    eligible_conflict_reason,
 )
 from tldw_chatbook.Notes.notes_sync_executor import NotesSyncExecutionResult
-from tldw_chatbook.Notes.notes_sync_reconciler import ReconciliationPlan
+from tldw_chatbook.Notes.notes_sync_reconciler import (
+    ReconciliationAttentionKind,
+    ReconciliationPlan,
+)
 from tldw_chatbook.Notes.notes_sync_runtime import (
     NotesSyncControlResult,
     NotesSyncRootSetup,
     NotesSyncRuntimeSnapshot,
     RuntimeConflictHistoryRow,
+    RuntimeConflictLabel,
     RuntimeConflictReceipt,
 )
 from tldw_chatbook.Notes.notes_sync_models import (
@@ -70,6 +76,10 @@ class LastingSyncRuntimePort(Protocol):
         self, root_id: str, observation_token: str, binding_id: str
     ) -> ConflictComparison: ...
 
+    async def conflict_labels(
+        self, root_id: str, observation_token: str
+    ) -> tuple[RuntimeConflictLabel, ...]: ...
+
     async def active_conflict_receipts(
         self, root_id: str
     ) -> tuple[RuntimeConflictReceipt, ...]: ...
@@ -88,6 +98,8 @@ class LastingSyncRuntimePort(Protocol):
         offset: int = 0,
         now: int | None = None,
     ) -> tuple[RuntimeConflictHistoryRow, ...]: ...
+
+    async def conflict_history_available(self, root_id: str) -> bool: ...
 
     async def activate_root(
         self, root_id: str, authorization: object
@@ -147,6 +159,11 @@ class InertLastingSyncRuntime:
     ) -> ConflictComparison:
         return await self._blocked()
 
+    async def conflict_labels(
+        self, root_id: str, observation_token: str
+    ) -> tuple[RuntimeConflictLabel, ...]:
+        return await self._blocked()
+
     async def active_conflict_receipts(
         self, root_id: str
     ) -> tuple[RuntimeConflictReceipt, ...]:
@@ -168,6 +185,9 @@ class InertLastingSyncRuntime:
         offset: int = 0,
         now: int | None = None,
     ) -> tuple[RuntimeConflictHistoryRow, ...]:
+        return await self._blocked()
+
+    async def conflict_history_available(self, root_id: str) -> bool:
         return await self._blocked()
 
     async def activate_root(
@@ -247,6 +267,7 @@ class LibraryNotesSyncController:
         self._import_controller = import_controller
         self._publish_snapshot = publish_snapshot
         self._review_plan: ReconciliationPlan | None = None
+        self._review_labels: dict[str, RuntimeConflictLabel] = {}
         self._selections: dict[tuple[str, str], NotesSyncConflictChoice] = {}
         self._comparison_generation = 0
         self._expanded_binding_id: str | None = None
@@ -284,14 +305,134 @@ class LibraryNotesSyncController:
         current = self._state.review
         self._state = replace(
             self._state,
-            review=build_reconciliation_review(
+            review=self._review_projection(
                 plan,
                 page=current.page if page is None else page,
-                selections=self._current_selections(),
                 stale=current.stale if stale is None else stale,
                 activation=current.activation if activation is None else activation,
             ),
         )
+
+    def _review_projection(
+        self,
+        plan: ReconciliationPlan,
+        *,
+        page: int = 1,
+        stale: bool = False,
+        activation: bool = False,
+    ) -> LastingSyncReview:
+        review = build_reconciliation_review(
+            plan,
+            page=page,
+            selections=self._current_selections(),
+            stale=stale,
+            activation=activation,
+        )
+        return replace(
+            review,
+            rows=tuple(
+                replace(
+                    row,
+                    conflict_title=self._review_labels[row.item_id].note_title,
+                    conflict_relative_path=self._review_labels[
+                        row.item_id
+                    ].relative_path,
+                )
+                if row.conflict_eligible and row.item_id in self._review_labels
+                else row
+                for row in review.rows
+            ),
+        )
+
+    async def _load_review_facts(
+        self, root_id: str, observation_token: str
+    ) -> tuple[dict[str, RuntimeConflictLabel], bool]:
+        labels = await self._runtime.conflict_labels(root_id, observation_token)
+        if type(labels) is not tuple or any(
+            type(label) is not RuntimeConflictLabel for label in labels
+        ):
+            raise RuntimeError("invalid conflict label projection")
+        plan = self._review_plan
+        if plan is None:
+            raise RuntimeError("review authority unavailable")
+        managed = {effect.binding_id for effect in plan.managed_placement_effects}
+        eligible = {
+            attention.binding_id
+            for attention in plan.attention
+            if attention.kind is ReconciliationAttentionKind.CONFLICT
+            and attention.binding_id is not None
+            and eligible_conflict_reason(
+                attention.reason_code,
+                managed=attention.binding_id in managed,
+            )
+        }
+        projected = {label.binding_id: label for label in labels}
+        if len(projected) != len(labels) or set(projected) != eligible:
+            raise RuntimeError("incomplete conflict label projection")
+        try:
+            history_available = await self._runtime.conflict_history_available(root_id)
+            if type(history_available) is not bool:
+                raise RuntimeError("invalid conflict history availability")
+        except Exception:
+            history_available = False
+        return projected, history_available
+
+    async def _install_review(
+        self,
+        plan: ReconciliationPlan,
+        *,
+        activation: bool = False,
+    ) -> bool:
+        self._review_plan = plan
+        try:
+            labels, history_available = await self._load_review_facts(
+                plan.root_id, plan.observation_token
+            )
+        except Exception:
+            self._review_labels.clear()
+            self._state = replace(
+                self._state,
+                review=build_reconciliation_review(
+                    plan, stale=True, activation=activation
+                ),
+                history_available=False,
+                conflict_focus_binding_id=None,
+            )
+            self._review_plan = None
+            return False
+        self._review_labels = labels
+        self._state = replace(
+            self._state,
+            review=self._review_projection(plan, activation=activation),
+            history_available=history_available,
+            conflict_focus_binding_id=None,
+        )
+        return True
+
+    async def _history_available(self, root_id: str) -> bool:
+        try:
+            available = await self._runtime.conflict_history_available(root_id)
+        except Exception:
+            return False
+        return available if type(available) is bool else False
+
+    @staticmethod
+    def _first_conflict_focus(plan: ReconciliationPlan) -> tuple[str, int] | None:
+        """Return the first eligible conflict and the page containing it."""
+
+        managed = {effect.binding_id for effect in plan.managed_placement_effects}
+        for index, attention in enumerate(plan.attention, start=len(plan.safe_actions)):
+            binding_id = attention.binding_id
+            if (
+                attention.kind is ReconciliationAttentionKind.CONFLICT
+                and binding_id is not None
+                and eligible_conflict_reason(
+                    attention.reason_code,
+                    managed=binding_id in managed,
+                )
+            ):
+                return binding_id, index // plan.page_size + 1
+        return None
 
     def _clear_comparison(self) -> None:
         self._comparison_generation += 1
@@ -306,6 +447,7 @@ class LibraryNotesSyncController:
 
     def _invalidate_review_authority(self) -> None:
         self._selections.clear()
+        self._review_labels.clear()
         self._clear_comparison()
         if self._review_plan is not None:
             self._project_review(stale=True)
@@ -318,6 +460,7 @@ class LibraryNotesSyncController:
                 can_apply=False,
                 apply_blocker=LastingSyncApplyBlocker.STALE_REVIEW,
             ),
+            conflict_focus_binding_id=None,
         )
         self._review_plan = None
 
@@ -347,6 +490,7 @@ class LibraryNotesSyncController:
             receipts=(),
             receipts_unavailable=False,
             history=LastingSyncHistory(),
+            history_available=False,
         )
 
     def _switch_projection_root(self, root_id: str) -> None:
@@ -481,6 +625,18 @@ class LibraryNotesSyncController:
         )
         self._publish()
 
+    def return_to_roots(self) -> None:
+        """Leave a persisted-root review and restore the bounded root list."""
+
+        self._begin_unbound_lifecycle()
+        self.refresh_roots(publish=False)
+        self._state = replace(
+            self._state,
+            phase="roots",
+            status_line="Sync folders refreshed.",
+        )
+        self._publish()
+
     def choose_relationship(self, relationship: str) -> str:
         """Choose one-time import or the gated lasting setup before any picker."""
 
@@ -541,12 +697,15 @@ class LibraryNotesSyncController:
             )
             self._publish()
             return
-        self._review_plan = plan
+        installed = await self._install_review(plan)
         self._state = replace(
             self._state,
             phase="review",
-            review=build_reconciliation_review(plan),
-            status_line="Review the mutation-free check before applying changes.",
+            status_line=(
+                "Review the mutation-free check before applying changes."
+                if installed
+                else "Conflict details are unavailable. Check again before applying."
+            ),
         )
         self._publish()
 
@@ -589,12 +748,15 @@ class LibraryNotesSyncController:
             self._publish()
             return
         self._projection_root_id = plan.root_id
-        self._review_plan = plan
+        installed = await self._install_review(plan, activation=True)
         self._state = replace(
             self._state,
             phase="review",
-            review=build_reconciliation_review(plan, activation=True),
-            status_line="Review setup effects before activating this root.",
+            status_line=(
+                "Review setup effects before activating this root."
+                if installed
+                else "Conflict details are unavailable. Check the folder again."
+            ),
         )
         self._publish()
 
@@ -759,23 +921,43 @@ class LibraryNotesSyncController:
             self._publish()
             return
 
-        self._review_plan = result.fresh_plan
         self._selections.clear()
         self._clear_comparison()
+        installed = await self._install_review(result.fresh_plan)
+        if not installed:
+            self._state = replace(
+                self._state,
+                phase="review",
+                receipts=receipts,
+                receipts_unavailable=receipts_unavailable,
+                status_line="Applied changes, but fresh conflict details are unavailable. Check again.",
+                receipt_line="",
+            )
+            self._publish()
+            return
         self._state = replace(
             self._state,
-            review=build_reconciliation_review(result.fresh_plan),
             receipts=receipts,
             receipts_unavailable=receipts_unavailable,
         )
         if result.attention_remains:
             count = result.unresolved_conflicts
             noun = "conflict remains" if count == 1 else "conflicts remain"
+            focus_request = (
+                self._first_conflict_focus(result.fresh_plan)
+                if applied > 0 and count > 0
+                else None
+            )
+            if focus_request is not None:
+                self._project_review(page=focus_request[1])
             self._state = replace(
                 self._state,
                 phase="review",
                 status_line=f"{applied} applied · {count} {noun}{receipt_suffix}.",
                 receipt_line="",
+                conflict_focus_binding_id=(
+                    focus_request[0] if focus_request is not None else None
+                ),
             )
         else:
             self._state = replace(
@@ -819,12 +1001,15 @@ class LibraryNotesSyncController:
             )
             self._publish()
             return
-        self._review_plan = plan
+        installed = await self._install_review(plan)
         self._state = replace(
             self._state,
             phase="review",
-            review=build_reconciliation_review(plan),
-            status_line="Manual check finished. Review exact effects.",
+            status_line=(
+                "Manual check finished. Review exact effects."
+                if installed
+                else "Conflict details are unavailable. Check again."
+            ),
         )
         self._publish()
 
@@ -1114,6 +1299,9 @@ class LibraryNotesSyncController:
                 row for row in self._state.receipts if row.operation_id != operation_id
             )
             unavailable = self._state.receipts_unavailable
+        history_available = await self._history_available(root_id)
+        if not self._lifecycle_is_current(root_id, epoch):
+            return
         self._state = replace(
             self._state,
             receipts=receipts,
@@ -1123,6 +1311,7 @@ class LibraryNotesSyncController:
                 if not unavailable
                 else "Receipt dismissed; fresh receipts are unavailable."
             ),
+            history_available=history_available,
         )
         self._publish()
 
@@ -1211,6 +1400,9 @@ class LibraryNotesSyncController:
             status = "Undo finished, but its fresh projection is unavailable."
         if unavailable:
             status = "Undo finished; fresh receipts are unavailable."
+        history_available = await self._history_available(root_id)
+        if not self._lifecycle_is_current(root_id, epoch):
+            return
         self.refresh_roots(publish=False)
         self._state = replace(
             self._state,
@@ -1224,6 +1416,7 @@ class LibraryNotesSyncController:
                 else self._disable_local_history_action(operation_id, undone=True)
             ),
             status_line=status,
+            history_available=history_available,
         )
         self._publish()
 
@@ -1279,10 +1472,16 @@ class LibraryNotesSyncController:
             root_id, epoch
         ) or not self._history_is_current(root_id, page, generation):
             return
+        history_available = await self._history_available(root_id)
+        if not self._lifecycle_is_current(
+            root_id, epoch
+        ) or not self._history_is_current(root_id, page, generation):
+            return
         self._state = replace(
             self._state,
             phase="history",
             history=history,
+            history_available=history_available,
             status_line=status,
         )
         self._publish()

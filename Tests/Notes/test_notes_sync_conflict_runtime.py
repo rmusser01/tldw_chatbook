@@ -67,6 +67,7 @@ from tldw_chatbook.Notes.notes_sync_reconciler import (
 )
 from tldw_chatbook.Notes.notes_sync_runtime import (
     NotesSyncRuntimeOwner,
+    RuntimeConflictLabel,
     _ProductionRuntimeAdapter,
 )
 from tldw_chatbook.Notes.notes_sync_executor import (
@@ -286,6 +287,7 @@ class _Adapter:
         self.comparison_release: asyncio.Event | None = None
         self.close_lease_on_observe: _Lease | None = None
         self.comparison_builds = 0
+        self.label_builds = 0
 
     async def observe_root(self, root: NotesSyncRootRecord) -> ReconciliationInput:
         observed = self.inputs[root.root_id]
@@ -323,6 +325,16 @@ class _Adapter:
             note_version=1,
             note_updated_at="2026-08-22T12:30:00+00:00",
             file_modified_ns=7,
+        )
+
+    async def build_conflict_labels(
+        self, _root: object, plan: object, binding_ids: tuple[str, ...]
+    ) -> tuple[RuntimeConflictLabel, ...]:
+        assert plan.observation_token in self.live_bundles
+        self.label_builds += 1
+        return tuple(
+            RuntimeConflictLabel(binding_id, "Private title", f"{binding_id}.md")
+            for binding_id in binding_ids
         )
 
     def release_observation(self, observation_token: str) -> None:
@@ -935,6 +947,45 @@ async def test_comparison_reobserves_exact_authority_and_returns_projection() ->
     assert adapter.live_bundles == set()
     assert not hasattr(comparison, "note")
     assert not hasattr(comparison, "file")
+
+
+@pytest.mark.asyncio
+async def test_conflict_labels_reobserve_exact_authority_without_building_content() -> (
+    None
+):
+    observed = _input(file_digest=_B, note_digest=_C)
+    adapter = _Adapter(observed)
+    owner = _owner(adapter, _root())
+    token = _install_review(owner, observed)
+
+    labels = await owner.conflict_labels("root-1", token)
+
+    assert labels == (
+        RuntimeConflictLabel("binding-1", "Private title", "binding-1.md"),
+    )
+    assert adapter.label_builds == 1
+    assert adapter.comparison_builds == 0
+    assert adapter.released == [token]
+    assert adapter.live_bundles == set()
+
+
+@pytest.mark.asyncio
+async def test_conflict_labels_reject_stale_review_and_ineligible_binding() -> None:
+    observed = _input(file_digest=_B, note_digest=_C)
+    adapter = _Adapter(observed)
+    owner = _owner(adapter, _root())
+    token = _install_review(owner, observed)
+
+    with pytest.raises(ValueError, match="stale_review"):
+        await owner.conflict_labels("root-1", "d" * 64)
+
+    owner._reviews["root-1"] = replace(  # noqa: SLF001 - exact reviewed authority
+        owner._reviews["root-1"], attention=()
+    )
+    with pytest.raises(ValueError, match="stale_review"):
+        await owner.conflict_labels("root-1", token)
+
+    assert adapter.label_builds == 0
 
 
 @pytest.mark.asyncio

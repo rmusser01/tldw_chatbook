@@ -17,6 +17,7 @@ from tldw_chatbook.Notes.notes_sync_conflicts import (
 )
 from tldw_chatbook.Notes.notes_sync_models import (
     NotesSyncActionKind,
+    normalize_notes_sync_relative_path,
     validate_notes_sync_digest,
     validate_notes_sync_opaque_id,
 )
@@ -163,6 +164,8 @@ class LastingSyncReviewRow:
     conflict_eligible: bool = False
     selected_choice: NotesSyncConflictChoice | None = None
     selected_label: str = ""
+    conflict_title: str = ""
+    conflict_relative_path: str = ""
 
     def __post_init__(self) -> None:
         if type(self.choices) is not tuple:
@@ -196,6 +199,26 @@ class LastingSyncReviewRow:
         )
         if self.selected_label != expected_label:
             raise ValueError("selected_label must match selected_choice")
+        if self.conflict_title:
+            if (
+                not self.conflict_eligible
+                or len(self.conflict_title) > 160
+                or "\n" in self.conflict_title
+                or "\r" in self.conflict_title
+            ):
+                raise ValueError("conflict_title must be a bounded conflict label")
+        if self.conflict_relative_path:
+            if not self.conflict_eligible:
+                raise ValueError("only eligible conflicts may carry relative_path")
+            object.__setattr__(
+                self,
+                "conflict_relative_path",
+                normalize_notes_sync_relative_path(self.conflict_relative_path),
+            )
+        if bool(self.conflict_title) != bool(self.conflict_relative_path):
+            raise ValueError(
+                "conflict title and relative_path must be projected together"
+            )
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -431,6 +454,8 @@ class LibraryNotesLastingSyncSnapshot:
     history: LastingSyncHistory = LastingSyncHistory()
     root_page: int = 1
     root_page_count: int = 1
+    history_available: bool = False
+    conflict_focus_binding_id: str | None = None
 
     def __post_init__(self) -> None:
         if self.phase not in _PHASES:
@@ -461,6 +486,13 @@ class LibraryNotesLastingSyncSnapshot:
             raise TypeError("receipts_unavailable must be a boolean")
         if type(self.history) is not LastingSyncHistory:
             raise TypeError("history must be a LastingSyncHistory")
+        if type(self.history_available) is not bool:
+            raise TypeError("history_available must be a boolean")
+        if self.conflict_focus_binding_id is not None:
+            validate_notes_sync_opaque_id(
+                self.conflict_focus_binding_id,
+                field_name="conflict_focus_binding_id",
+            )
         if len(self.roots) > 20:
             raise ValueError("roots must be bounded to one page")
         if (

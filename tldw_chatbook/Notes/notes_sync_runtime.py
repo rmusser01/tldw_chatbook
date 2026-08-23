@@ -238,6 +238,34 @@ class RuntimeConflictReceipt:
 
 
 @dataclass(frozen=True, slots=True, repr=False)
+class RuntimeConflictLabel:
+    """Bounded identity label for one currently eligible conflict."""
+
+    binding_id: str
+    note_title: str
+    relative_path: str
+
+    def __post_init__(self) -> None:
+        validate_notes_sync_opaque_id(self.binding_id, field_name="binding_id")
+        if (
+            type(self.note_title) is not str
+            or not self.note_title
+            or len(self.note_title) > _DISPLAY_LABEL_MAX_CHARS
+            or "\n" in self.note_title
+            or "\r" in self.note_title
+        ):
+            raise ValueError("note_title must be bounded single-line text")
+        object.__setattr__(
+            self,
+            "relative_path",
+            normalize_notes_sync_relative_path(self.relative_path),
+        )
+
+    def __repr__(self) -> str:
+        return "RuntimeConflictLabel(<private>)"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class RuntimeConflictHistoryRow:
     """Fresh, bounded display projection for one durable history row."""
 
@@ -372,6 +400,13 @@ class _RuntimeAdapter(Protocol):
         plan: ReconciliationPlan,
         binding_id: str,
     ) -> ConflictComparison: ...
+
+    async def build_conflict_labels(
+        self,
+        root: NotesSyncRootRecord,
+        plan: ReconciliationPlan,
+        binding_ids: tuple[str, ...],
+    ) -> tuple[RuntimeConflictLabel, ...]: ...
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -815,6 +850,34 @@ class _ProductionRuntimeAdapter:
             file_modified_ns=binding.file.reviewed_state.mtime_ns,
         )
 
+    async def build_conflict_labels(
+        self,
+        root: NotesSyncRootRecord,
+        plan: ReconciliationPlan,
+        binding_ids: tuple[str, ...],
+    ) -> tuple[RuntimeConflictLabel, ...]:
+        """Project titles and root-relative paths without diffing content."""
+
+        bundle = self._bundles.get(plan.observation_token, {})
+        labels: list[RuntimeConflictLabel] = []
+        for binding_id in binding_ids:
+            binding = bundle.get(binding_id)
+            if (
+                binding is None
+                or binding.note is None
+                or binding.file is None
+                or binding.record.root_id != root.root_id
+            ):
+                raise RuntimeError("private_label_authority_missing")
+            labels.append(
+                RuntimeConflictLabel(
+                    binding_id,
+                    " ".join(binding.note.title.split())[:_DISPLAY_LABEL_MAX_CHARS],
+                    binding.file.observation.relative_path,
+                )
+            )
+        return tuple(labels)
+
     def executor_for(
         self,
         root: NotesSyncRootRecord,
@@ -1099,6 +1162,19 @@ class NotesSyncRuntimeOwner:
                 )
             )
         return tuple(projected)
+
+    async def conflict_history_available(self, root_id: str) -> bool:
+        """Report whether durable conflict history contains at least one row."""
+
+        validate_notes_sync_opaque_id(root_id, field_name="root_id")
+        records = await asyncio.to_thread(
+            self._store.list_resolution_history,
+            root_id,
+            limit=1,
+            offset=0,
+            now=time.time_ns(),
+        )
+        return bool(records)
 
     async def _inspect_resolution_undo(
         self,
@@ -1695,6 +1771,69 @@ class NotesSyncRuntimeOwner:
                 self._next_action = "sync_now"
             self._start_watcher()
         return plan
+
+    async def conflict_labels(
+        self,
+        root_id: str,
+        observation_token: str,
+    ) -> tuple[RuntimeConflictLabel, ...]:
+        """Return exact bounded labels under current reviewed authority."""
+
+        validate_notes_sync_opaque_id(root_id, field_name="root_id")
+        task = self._admit_task(root_id)
+        observed_token: str | None = None
+        try:
+            setup_review = self._setup_reviews.get(root_id)
+            reviewed = (
+                setup_review.plan
+                if setup_review is not None
+                else self._reviews.get(root_id)
+            )
+            if reviewed is None or reviewed.observation_token != observation_token:
+                raise ValueError("stale_review")
+            if setup_review is not None:
+                setup = setup_review.setup
+                root = NotesSyncRootRecord(
+                    root_id=root_id,
+                    note_scope_id=setup.note_scope_id,
+                    logical_folder_id=None,
+                    canonical_path=setup.canonical_path,
+                    direction=setup.direction,
+                    state=NotesSyncRootState.PENDING,
+                )
+            else:
+                root = await asyncio.to_thread(self._store.get_root, root_id)
+                if root.state is not NotesSyncRootState.ACTIVE:
+                    raise RuntimeError("sync_root_not_active")
+            if root.root_id != root_id:
+                raise RuntimeError("root_authority_mismatch")
+            self._require_authority(root_id, "plan")
+            observations = await self._adapter.observe_root(root)
+            observed_token = _observation_token(observations)
+            plan = plan_reconciliation(observations)
+            self._require_authority(root_id, "plan")
+            if observations.root_id != root_id or plan.root_id != root_id:
+                raise RuntimeError("root_observation_mismatch")
+            if observations.direction is not root.direction:
+                raise RuntimeError("root_direction_changed")
+            if plan.observation_token != observation_token or plan != reviewed:
+                raise ValueError("stale_review")
+            eligible = self._eligible_conflicts(plan)
+            binding_ids = tuple(sorted(eligible))
+            labels = await self._adapter.build_conflict_labels(root, plan, binding_ids)
+            if (
+                type(labels) is not tuple
+                or any(type(label) is not RuntimeConflictLabel for label in labels)
+                or tuple(label.binding_id for label in labels) != binding_ids
+            ):
+                raise RuntimeError("invalid_conflict_label_projection")
+            return labels
+        finally:
+            if observed_token is not None:
+                release = getattr(self._adapter, "release_observation", None)
+                if callable(release):
+                    release(observed_token)
+            self._finish_task(root_id, task)
 
     async def compare_conflict(
         self,
@@ -2825,6 +2964,7 @@ __all__ = [
     "NotesSyncRootRuntimeSnapshot",
     "NotesSyncRootSetup",
     "RuntimeConflictHistoryRow",
+    "RuntimeConflictLabel",
     "RuntimeConflictReceipt",
     "NotesSyncRuntimeOwner",
     "NotesSyncRuntimeSnapshot",
