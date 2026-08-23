@@ -36,7 +36,11 @@ from tldw_chatbook.Chat.console_context_repository import (
 )
 from tldw_chatbook.Chat.trajectory import derive_trajectory
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, TrajectoryRowWrite
-from tldw_chatbook.UI.Screens.chat_screen import ChatScreen, _build_trajectory_snapshot
+from tldw_chatbook.UI.Screens.chat_screen import (
+    CONSOLE_WORKBENCH_SHORTCUTS,
+    ChatScreen,
+    _build_trajectory_snapshot,
+)
 from tldw_chatbook.UI.Screens.trajectory_screen import TrajectoryScreen
 
 # ---------------------------------------------------------------------------
@@ -313,6 +317,7 @@ def test_follow_binding_registered_and_hints_stay_one_to_one():
 def test_console_binds_single_letter_trajectory_launch():
     bindings = {b.key: b.action for b in ChatScreen.BINDINGS}
     assert bindings.get("y") == "open_trajectory_view"
+    assert ("Y", "trace") in CONSOLE_WORKBENCH_SHORTCUTS
     assert hasattr(ChatScreen, "action_open_trajectory_view")
     # 'j' stays owned by the focused transcript (next-message selection in
     # console_transcript.on_key); the launch key must not collide with it.
@@ -627,7 +632,11 @@ async def test_trajectory_launch_action_presents_screen():
         # attribute the production code must reach through) resolves.
         Screen.__init__(instance)
         instance._parent = app
-        instance._console_chat_store = _Store()
+        # Latest dev owns the store through the app-scoped ConsoleRuntime.
+        # Seed that public ownership seam directly: assigning the property
+        # would try to attach this intentionally bare test screen as a full
+        # Console view and require every decomposed controller.
+        instance._console_runtime_ref = SimpleNamespace(chat_store=_Store())
         instance.notify = lambda *args, **kwargs: None  # not under test
 
         ChatScreen.action_open_trajectory_view(instance)
