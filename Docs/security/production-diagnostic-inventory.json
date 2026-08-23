@@ -180,8 +180,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 6,
-      "diagnostic_digest": "609085bf8c63e649890e",
+      "call_count": 7,
+      "diagnostic_digest": "891a89059cce156037dd",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Character_Chat/visual_identity.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -243,15 +243,15 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 46,
-      "diagnostic_digest": "7bd14438eee18f3d1fb3",
+      "call_count": 47,
+      "diagnostic_digest": "1ddb75a04e1f930c2768",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Chat/console_chat_controller.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 62,
-      "diagnostic_digest": "ed0c8cf76d581ca0cb13",
+      "call_count": 63,
+      "diagnostic_digest": "ff142bc8ee24d628e0f7",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Chat/console_chat_store.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -2280,8 +2280,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 4,
-      "diagnostic_digest": "7edf22bbca1d98e545c0",
+      "call_count": 6,
+      "diagnostic_digest": "2cbdd29f8f55c9b28688",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Console_Modules/character.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2336,8 +2336,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 14,
-      "diagnostic_digest": "a80f13d41e7990de87d3",
+      "call_count": 15,
+      "diagnostic_digest": "cc155896cba9a643485e",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Console_Modules/session.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -3933,7 +3933,7 @@
   "summary": {
     "owner_files": 532,
     "persistent_sink_files": 8,
-    "task_492_calls": 1231,
-    "task_494_calls": 7286
+    "task_492_calls": 1233,
+    "task_494_calls": 7290
   }
 }

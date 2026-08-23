@@ -9,6 +9,11 @@ from pathlib import Path
 
 import pytest
 
+from tldw_chatbook.Chat.message_metadata import (
+    CharacterEmoteEventMetadata,
+    CharacterEmoteMetadata,
+    MessageMetadata,
+)
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
@@ -168,3 +173,43 @@ def test_migration_is_idempotent_when_column_already_present(tmp_path, monkeypat
     )
     assert db.get_message_by_id(msg_id)["metadata_json"] == '{"engine": "realtime"}'
     db.close_connection()
+
+
+def test_character_emote_metadata_reopens_without_schema_bump(tmp_path):
+    db_path = tmp_path / "emote.db"
+    metadata = MessageMetadata(
+        character_emote=CharacterEmoteMetadata(
+            mood_label="sad",
+            emote_events=(
+                CharacterEmoteEventMetadata("smug", 0),
+                CharacterEmoteEventMetadata("sad", 4),
+            ),
+            sanitized_utf16_length=8,
+            actor_kind="character",
+            actor_id=3,
+            pack_id=5,
+            pack_version_id=7,
+            expression_key="sad",
+            expression_id=11,
+            asset_id=13,
+        )
+    )
+    db = CharactersRAGDB(db_path, client_id="emote-write")
+    expected_version = CharactersRAGDB._CURRENT_SCHEMA_VERSION
+    conv_id = db.add_conversation({"title": "emote"})
+    msg_id = db.add_message(
+        {
+            "conversation_id": conv_id,
+            "sender": "assistant",
+            "content": "safe text",
+            "metadata_json": metadata.to_json(),
+        }
+    )
+    db.close_connection()
+
+    reopened = CharactersRAGDB(db_path, client_id="emote-read")
+    row = reopened.get_message_by_id(msg_id)
+
+    assert _version(reopened.get_connection()) == expected_version
+    assert MessageMetadata.from_json(row["metadata_json"]) == metadata
+    reopened.close_connection()

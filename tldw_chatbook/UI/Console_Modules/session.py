@@ -148,7 +148,10 @@ from ...Chat.console_context_policy import (
     ConsoleContextPolicyOverrides,
     ContextPolicyError,
 )
-from ...Chat.console_expression_state import resolve_console_expression_state
+from ...Chat.console_expression_state import (
+    CharacterEmoteHistoryIdentity,
+    resolve_console_expression_state,
+)
 from ...Chat.console_image_view import resolve_react_character_expressions
 from ...Chat.console_roleplay_identity import (
     ChatDisplayNameError,
@@ -176,6 +179,7 @@ from ...Chat.console_turn_context import ConsoleTurnExecutionContext
 from ...Chat.provider_readiness import provider_config_key
 from ...Character_Chat.visual_identity import (
     VisualIdentityResolution,
+    resolve_historical_visual_identity,
     resolve_visual_identity,
 )
 from ...Character_Chat.persona_visual_identity import (
@@ -1012,6 +1016,38 @@ class ConsoleSessionController:
                 else None
             ),
         )
+
+    def _resolve_historical_visual_identity(
+        self,
+        scope: tuple[str, str, str],
+        identity: CharacterEmoteHistoryIdentity,
+    ) -> VisualIdentityResolution | None:
+        """Resolve a message's exact immutable character expression."""
+
+        _session_id, actor_kind, actor_id = scope
+        db = self._visual_identity_db_accessor()
+        if (
+            db is None
+            or actor_kind != "character"
+            or str(identity.actor_id) != actor_id
+        ):
+            return None
+        try:
+            return resolve_historical_visual_identity(
+                db,
+                actor_id=identity.actor_id,
+                pack_id=identity.pack_id,
+                pack_version_id=identity.pack_version_id,
+                expression_key=identity.expression_key,
+                expression_id=identity.expression_id,
+                asset_id=identity.asset_id,
+            )
+        except (SQLiteError, TypeError, ValueError, OverflowError):
+            logger.debug(
+                "Console historical reaction resolution failed actor_id={}",
+                actor_id,
+            )
+            return None
 
     def _visual_identity_options(
         self, scope: tuple[str, str, str]

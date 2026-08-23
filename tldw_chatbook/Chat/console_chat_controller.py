@@ -32,6 +32,12 @@ from uuid import uuid4
 from loguru import logger
 from rich.markup import escape as escape_markup
 
+from tldw_chatbook.Character_Chat.emote_directives import (
+    CharacterEmoteAssetReference,
+    CharacterEmoteRunSnapshot,
+    append_character_emote_prompt_instruction,
+    project_character_emote_states,
+)
 from tldw_chatbook.Chat.attachment_core import (
     image_url_part,
     max_history_images,
@@ -147,6 +153,7 @@ from tldw_chatbook.Chat.provider_continuation import (
     ProviderContinuationCheckpoint,
     validate_continuation_restore,
 )
+from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
 from tldw_chatbook.Chat.console_roleplay_identity import (
     ConsoleMessagePresentation,
     ConsolePresentationContext,
@@ -1648,6 +1655,21 @@ class ImpersonateResult:
     detail: str = ""
 
 
+@dataclass(frozen=True, slots=True)
+class _CharacterEmoteAuthority:
+    """Captured character ownership fence for one provider dispatch."""
+
+    identity_revision: int
+    runtime_backend: str
+    assistant_id: str | None
+    assistant_authority_id: str | None
+    local_character_id: int | None
+
+
+class _CharacterEmoteAuthorityChanged(RuntimeError):
+    """The owning character identity changed during the off-thread read."""
+
+
 class ConsoleChatController:
     """Coordinate native Console chat state between store and provider gateway."""
 
@@ -1756,6 +1778,11 @@ class ConsoleChatController:
         self._library_provider_factory = library_provider_factory
         self._global_user_display_name = global_user_display_name or (lambda: "User")
         persistence_db = getattr(getattr(store, "persistence", None), "db", None)
+        self._visual_identity_repository = (
+            VisualIdentityRepository(persistence_db)
+            if persistence_db is not None
+            else None
+        )
         self._context_repository = context_repository
         if self._context_repository is None and persistence_db is not None:
             try:
@@ -10485,6 +10512,25 @@ class ConsoleChatController:
             logger.bind(session_id=owner_id, error=repr(exc)).warning(
                 "cost_fingerprint_record_failed"
             )
+        character_emote_snapshot: CharacterEmoteRunSnapshot | None = None
+        if force_plain:
+            try:
+                character_emote_snapshot = (
+                    await self._character_emote_snapshot_for_run(owner_id)
+                )
+            except _CharacterEmoteAuthorityChanged:
+                return self._block_context_preflight(
+                    session_id=owner_id,
+                    assistant_message_id=assistant_message_id,
+                    visible_copy=(
+                        "Character context changed before dispatch; try again."
+                    ),
+                )
+            if character_emote_snapshot is not None:
+                provider_messages = self._apply_character_emote_prompt(
+                    provider_messages,
+                    character_emote_snapshot,
+                )
         # SP2 /rewind "summarize up to here": at the SINGLE dispatch choke point
         # (agent + direct both flow through here), fold the session's boundary
         # summary into the payload -- but ONLY when the boundary message is
@@ -10635,6 +10681,7 @@ class ConsoleChatController:
                 stream_signals=stream_signals,
                 continuation_sidecar=continuation_sidecar,
                 continuation_target=continuation_target,
+                character_emote_snapshot=character_emote_snapshot,
             )
         finally:
             if (
@@ -11086,6 +11133,7 @@ class ConsoleChatController:
         stream_signals: ConsoleProviderStreamSignals | None,
         continuation_sidecar: tuple[ProviderContinuationSidecar, ...] = (),
         continuation_target: ContinuationRestoreTarget | None = None,
+        character_emote_snapshot: CharacterEmoteRunSnapshot | None = None,
     ) -> ConsoleSubmitResult:
         # Dev's citation-repair refactor extracted this streaming body out of
         # the wrapper (`_stream_assistant_response_inner`) into its own
@@ -11154,6 +11202,11 @@ class ConsoleChatController:
         )
         if variant_mode:
             self.store.begin_variant_stream(assistant_message_id)
+        if character_emote_snapshot is not None and not prepare_retry:
+            self.store.begin_character_emote_capture(
+                assistant_message_id,
+                character_emote_snapshot,
+            )
         if prefill and not prepare_retry:
             try:
                 self.store.append_stream_chunk(assistant_message_id, prefill)
@@ -11210,6 +11263,11 @@ class ConsoleChatController:
                 if prepare_retry and not retry_prepared:
                     self.store.prepare_message_retry(assistant_message_id)
                     retry_prepared = True
+                    if character_emote_snapshot is not None:
+                        self.store.begin_character_emote_capture(
+                            assistant_message_id,
+                            character_emote_snapshot,
+                        )
                     if prefill:
                         try:
                             self.store.append_stream_chunk(
@@ -12769,6 +12827,143 @@ class ConsoleChatController:
             user_name=context.user_name,
             character_name=session.character_name.strip(),
         )
+
+    def _character_emote_authority(
+        self, session_id: str
+    ) -> _CharacterEmoteAuthority | None:
+        """Return the character identity fence currently owning ``session_id``."""
+
+        session = next(
+            (candidate for candidate in self.store.sessions() if candidate.id == session_id),
+            None,
+        )
+        if session is None or session.assistant_kind != "character":
+            return None
+        return _CharacterEmoteAuthority(
+            identity_revision=session.identity_revision,
+            runtime_backend=session.runtime_backend,
+            assistant_id=session.assistant_id,
+            assistant_authority_id=session.assistant_authority_id,
+            local_character_id=session.local_character_id(),
+        )
+
+    @staticmethod
+    def _build_character_emote_snapshot(
+        authority: _CharacterEmoteAuthority,
+        graph: Mapping[str, Any] | None,
+        *,
+        fallback_reason: str,
+    ) -> CharacterEmoteRunSnapshot:
+        """Project one validated active graph into bounded run-local identities."""
+
+        if graph is None:
+            return CharacterEmoteRunSnapshot(
+                actor_id=authority.local_character_id,
+                fallback_reason=fallback_reason,
+            )
+        try:
+            pack = graph["pack"]
+            version = graph["version"]
+            raw_assets = tuple(graph["assets"])
+            pack_id = int(pack["id"])
+            pack_version_id = int(version["id"])
+            if pack_id < 1 or pack_version_id < 1:
+                raise ValueError
+            states = project_character_emote_states(raw_assets)
+            assets: list[CharacterEmoteAssetReference] = []
+            for state in states:
+                source = next(
+                    (
+                        asset
+                        for asset in raw_assets
+                        if project_character_emote_states((asset,)) == (state,)
+                    ),
+                    None,
+                )
+                if not isinstance(source, Mapping):
+                    continue
+                asset_id = source.get("id")
+                expression_key = source.get("expression_key")
+                if (
+                    isinstance(asset_id, bool)
+                    or not isinstance(asset_id, int)
+                    or asset_id < 1
+                    or not isinstance(expression_key, str)
+                ):
+                    continue
+                assets.append(
+                    CharacterEmoteAssetReference(
+                        state=state,
+                        expression_key=expression_key,
+                        asset_id=asset_id,
+                    )
+                )
+            return CharacterEmoteRunSnapshot(
+                actor_id=authority.local_character_id,
+                pack_id=pack_id,
+                pack_version_id=pack_version_id,
+                states=tuple(asset.state for asset in assets),
+                assets=tuple(assets),
+            )
+        except (KeyError, TypeError, ValueError, OverflowError):
+            return CharacterEmoteRunSnapshot(
+                actor_id=authority.local_character_id,
+                fallback_reason="resolver_error",
+            )
+
+    async def _character_emote_snapshot_for_run(
+        self, session_id: str
+    ) -> CharacterEmoteRunSnapshot | None:
+        """Read and revalidate one immutable character-emote run authority."""
+
+        initial = self._character_emote_authority(session_id)
+        if initial is None:
+            return None
+        for _attempt in range(2):
+            authority = self._character_emote_authority(session_id)
+            if authority is None:
+                raise _CharacterEmoteAuthorityChanged
+            graph: Mapping[str, Any] | None = None
+            fallback_reason = "no_active_pack"
+            repository = self._visual_identity_repository
+            if authority.local_character_id is not None and repository is not None:
+                try:
+                    graph = await asyncio.to_thread(
+                        repository.get_active_actor_pack,
+                        "character",
+                        authority.local_character_id,
+                    )
+                except Exception:
+                    logger.warning("character_emote_snapshot_read_failed")
+                    fallback_reason = "resolver_error"
+            if self._character_emote_authority(session_id) != authority:
+                continue
+            return self._build_character_emote_snapshot(
+                authority,
+                graph,
+                fallback_reason=fallback_reason,
+            )
+        raise _CharacterEmoteAuthorityChanged
+
+    @staticmethod
+    def _apply_character_emote_prompt(
+        provider_messages: list[dict[str, Any]],
+        snapshot: CharacterEmoteRunSnapshot,
+    ) -> list[dict[str, Any]]:
+        """Compose the pinned instruction without mutating stored settings."""
+
+        messages = [dict(row) for row in provider_messages]
+        if messages and messages[0].get("role") == ConsoleMessageRole.SYSTEM.value:
+            messages[0]["content"] = append_character_emote_prompt_instruction(
+                str(messages[0].get("content", "")),
+                snapshot.states,
+            )
+            return messages
+        instruction = append_character_emote_prompt_instruction("", snapshot.states)
+        return [
+            {"role": ConsoleMessageRole.SYSTEM.value, "content": instruction},
+            *messages,
+        ]
 
     def _leading_system_message(
         self,

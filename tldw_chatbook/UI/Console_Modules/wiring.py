@@ -435,6 +435,11 @@ def build_console_controllers(
                 scope, state, manual
             )
         ),
+        resolve_historical_visual_identity=(
+            lambda scope, identity: screen._session._resolve_historical_visual_identity(
+                scope, identity
+            )
+        ),
         ensure_console_image_view=lambda: screen._ensure_console_image_view(),
         console_image_default_mode=lambda: screen._console_image_default_mode,
         is_mounted=lambda: screen.is_mounted,
