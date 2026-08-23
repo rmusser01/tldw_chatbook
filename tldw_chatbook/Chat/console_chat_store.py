@@ -1705,7 +1705,7 @@ class ConsoleChatStore:
                 actions=(),
                 error_code="checkpoint_read_error",
             )
-        if recovery is None:
+        if recovery is None or not recovery.recovery_needed:
             self._dispatch_recoveries_by_session.pop(session_id, None)
             self._dispatch_recovery_message_baselines.pop(session_id, None)
             self._dispatch_recovery_queue_hydration_pending.discard(session_id)
@@ -1732,6 +1732,28 @@ class ConsoleChatStore:
         with self._preparation_lock:
             return self._dispatch_recoveries_by_session.get(session_id)
 
+    def dispatch_recovery_for_presentation(
+        self, session_id: str | None
+    ) -> ConsoleDispatchRecoveryState | None:
+        """Return only an owner that currently needs user recovery."""
+
+        recovery = self.dispatch_recovery_for_session(session_id)
+        if recovery is None or not recovery.recovery_needed:
+            return None
+        return recovery
+
+    def dispatch_recovery_blocks_submission(self, session_id: str | None) -> bool:
+        """Return whether one source-local owner owns the next response slot."""
+
+        recovery = self.dispatch_recovery_for_session(session_id)
+        return recovery is not None and recovery.kind in {
+            ConsoleDispatchRecoveryKind.ACCEPTED,
+            ConsoleDispatchRecoveryKind.DISPATCH_STARTED,
+            ConsoleDispatchRecoveryKind.EPHEMERAL_ACCEPTED,
+            ConsoleDispatchRecoveryKind.EPHEMERAL_DISPATCH_STARTED,
+            ConsoleDispatchRecoveryKind.QUARANTINED,
+        }
+
     def dispatch_recovery_needs_queue_hydration(self, session_id: str) -> bool:
         """Return whether restore published a queued owner not yet projected."""
 
@@ -1757,6 +1779,10 @@ class ConsoleChatStore:
         recovery = console_dispatch_recovery_from_checkpoint(
             checkpoint,
             in_flight=in_flight,
+        )
+        recovery = recovery.with_runtime_truth(
+            runtime_active=True,
+            recovery_needed=False,
         )
         with self._preparation_lock:
             current = self._dispatch_recoveries_by_session.get(session_id)
@@ -1787,10 +1813,13 @@ class ConsoleChatStore:
         frozen_authority: ConsoleTurnLibraryAuthority,
         resolved_destination: ConsoleResolvedDestination,
         reconstructability: ConsoleDispatchReconstructability,
+        runtime_active: bool = False,
     ) -> ConsoleDispatchRecoveryState:
         """Install the no-SQL analogue of one accepted dispatch checkpoint."""
 
         session = self._session_or_raise(session_id)
+        if type(runtime_active) is not bool:
+            raise TypeError("runtime_active must be a bool")
         if not session.ephemeral:
             raise RuntimeError("Only a temporary session can own ephemeral recovery.")
         user = self._message_or_raise(user_message_id)
@@ -1821,6 +1850,9 @@ class ConsoleChatStore:
         recovery = console_dispatch_recovery_from_checkpoint(
             checkpoint,
             ephemeral=True,
+        ).with_runtime_truth(
+            runtime_active=runtime_active,
+            recovery_needed=not runtime_active,
         )
         with self._preparation_lock:
             current = self._dispatch_recoveries_by_session.get(session_id)
@@ -1842,7 +1874,7 @@ class ConsoleChatStore:
             raise TypeError("action_id must be a ConsoleDispatchRecoveryActionId")
         with self._preparation_lock:
             current = self._dispatch_recoveries_by_session.get(session_id)
-            if current is None or current.in_flight:
+            if current is None or current.in_flight or not current.recovery_needed:
                 return None
             action = next(
                 (item for item in current.actions if item.action_id is action_id),
@@ -1893,6 +1925,36 @@ class ConsoleChatStore:
             self._bump_payload_revision(session_id)
         return current.in_flight
 
+    def mark_dispatch_recovery_needed(
+        self,
+        session_id: str,
+        assistant_message_id: str,
+    ) -> bool:
+        """Restore one exact owner and expose it as unresolved recovery."""
+
+        released = self.release_dispatch_recovery_action(
+            session_id,
+            assistant_message_id,
+        )
+        with self._preparation_lock:
+            current = self._dispatch_recoveries_by_session.get(session_id)
+            if current is None or current.assistant_message_id != assistant_message_id:
+                return False
+            self._dispatch_recoveries_by_session[session_id] = (
+                current.with_runtime_truth(
+                    runtime_active=False,
+                    recovery_needed=True,
+                )
+            )
+            checkpoint = current.checkpoint
+            if (
+                checkpoint is not None
+                and checkpoint.origin == "queued"
+                and checkpoint.queue_entry_id is not None
+            ):
+                self._dispatch_recovery_queue_hydration_pending.add(session_id)
+        return released or current.recovery_needed is False
+
     def transition_dispatch_recovery_for_retry(
         self,
         session_id: str,
@@ -1927,6 +1989,9 @@ class ConsoleChatStore:
                     updated_checkpoint,
                     ephemeral=True,
                     in_flight=True,
+                ).with_runtime_truth(
+                    runtime_active=True,
+                    recovery_needed=current.recovery_needed,
                 )
                 self._dispatch_recoveries_by_session[session_id] = updated
                 return updated
@@ -1956,6 +2021,9 @@ class ConsoleChatStore:
         updated = console_dispatch_recovery_from_checkpoint(
             result.checkpoint,
             in_flight=True,
+        ).with_runtime_truth(
+            runtime_active=True,
+            recovery_needed=current.recovery_needed,
         )
         with self._preparation_lock:
             if self._dispatch_recoveries_by_session.get(session_id) is not current:
@@ -2443,6 +2511,19 @@ class ConsoleChatStore:
             The session activated after closing, or ``None`` when no sessions remain.
         """
         self._session_or_raise(session_id)
+        recovery = self.dispatch_recovery_for_session(session_id)
+        if (
+            recovery is not None
+            and recovery.recovery_needed
+            and recovery.kind
+            in {
+                ConsoleDispatchRecoveryKind.EPHEMERAL_ACCEPTED,
+                ConsoleDispatchRecoveryKind.EPHEMERAL_DISPATCH_STARTED,
+            }
+        ):
+            raise RuntimeError(
+                "Finish or discard the pending turn before closing this chat."
+            )
         preparation = self.preparation_for_session(session_id)
         if preparation is not None and preparation.state in {
             ConsoleTurnPreparationState.PREPARING,
@@ -4131,6 +4212,44 @@ class ConsoleChatStore:
             active_session_id: Preferred active session after restoration.
         """
         restored_sessions = list(sessions)
+        restored_messages = {
+            session_id: tuple(messages)
+            for session_id, messages in (messages_by_session or {}).items()
+        }
+        preserved_ephemeral = {
+            session_id: recovery
+            for session_id, recovery in self._dispatch_recoveries_by_session.items()
+            if recovery.kind
+            in {
+                ConsoleDispatchRecoveryKind.EPHEMERAL_ACCEPTED,
+                ConsoleDispatchRecoveryKind.EPHEMERAL_DISPATCH_STARTED,
+            }
+        }
+        preserved_baselines = {
+            session_id: baseline
+            for session_id, baseline in self._dispatch_recovery_message_baselines.items()
+            if session_id in preserved_ephemeral
+        }
+        sessions_by_id = {session.id: session for session in restored_sessions}
+        for session_id, recovery in preserved_ephemeral.items():
+            session = sessions_by_id.get(session_id)
+            checkpoint = recovery.checkpoint
+            message_roles = {
+                message.id: message.role
+                for message in restored_messages.get(session_id, ())
+            }
+            if (
+                session is None
+                or not session.ephemeral
+                or checkpoint is None
+                or message_roles.get(checkpoint.user_message_id)
+                is not ConsoleMessageRole.USER
+                or message_roles.get(recovery.assistant_message_id)
+                is not ConsoleMessageRole.ASSISTANT
+            ):
+                raise RuntimeError(
+                    "Unresolved temporary dispatch recovery cannot be replaced."
+                )
         self._activate_session(None)
         if self.library_policy_coordinator is not None:
             for replaced_session_id in tuple(self._sessions):
@@ -4179,7 +4298,6 @@ class ConsoleChatStore:
         self._dispatch_recovery_message_baselines.clear()
         self._dispatch_recovery_queue_hydration_pending.clear()
 
-        messages_by_session = messages_by_session or {}
         for session in restored_sessions:
             restored_holder = ConsoleLibraryPolicyHolder(
                 snapshot=session.library_policy_holder.snapshot,
@@ -4212,14 +4330,35 @@ class ConsoleChatStore:
             self._conversation_context_epochs[session.id] = 0
             self._messages_by_session[session.id] = []
             self._ingest_linear_messages(
-                session.id, messages_by_session.get(session.id, ())
+                session.id, restored_messages.get(session.id, ())
             )
             self._bump_payload_revision(session.id)
+
+        self._dispatch_recoveries_by_session.update(preserved_ephemeral)
+        self._dispatch_recovery_message_baselines.update(preserved_baselines)
 
         if active_session_id in self._sessions:
             self._activate_session(active_session_id)
         elif self._sessions:
             self._activate_session(next(iter(self._sessions)))
+
+    def end_app_runtime(self) -> None:
+        """Drop app-lifetime-only temporary recovery during explicit teardown."""
+
+        with self._preparation_lock:
+            ephemeral_session_ids = tuple(
+                session_id
+                for session_id, recovery in self._dispatch_recoveries_by_session.items()
+                if recovery.kind
+                in {
+                    ConsoleDispatchRecoveryKind.EPHEMERAL_ACCEPTED,
+                    ConsoleDispatchRecoveryKind.EPHEMERAL_DISPATCH_STARTED,
+                }
+            )
+            for session_id in ephemeral_session_ids:
+                self._dispatch_recoveries_by_session.pop(session_id, None)
+                self._dispatch_recovery_message_baselines.pop(session_id, None)
+                self._dispatch_recovery_queue_hydration_pending.discard(session_id)
 
     @staticmethod
     def _set_message_attachments(

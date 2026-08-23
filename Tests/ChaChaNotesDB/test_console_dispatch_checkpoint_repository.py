@@ -123,6 +123,90 @@ def _insert(
         return repository.insert_with_messages(cursor, acceptance)
 
 
+def _force_insert_corrupt_second_owner(
+    db: CharactersRAGDB,
+    acceptance: ConsoleDurableTurnAcceptance,
+) -> ConsoleDispatchCheckpoint:
+    """Bypass admission solely to construct an impossible imported/corrupt pair."""
+
+    now = db._get_current_utc_timestamp_iso()
+    with db.transaction(immediate=True) as cursor:
+        cursor.execute(
+            "INSERT INTO messages "
+            "(id, conversation_id, parent_message_id, sender, content, timestamp, "
+            "last_modified, client_id, version, deleted, role) "
+            "VALUES (?, ?, ?, 'user', ?, ?, ?, ?, 1, 0, 'user')",
+            (
+                acceptance.user_message_id,
+                acceptance.conversation_id,
+                acceptance.parent_message_id,
+                acceptance.user_content,
+                now,
+                now,
+                db.client_id,
+            ),
+        )
+        cursor.execute(
+            "INSERT INTO messages "
+            "(id, conversation_id, parent_message_id, sender, content, timestamp, "
+            "last_modified, client_id, version, deleted, role, "
+            "assistant_generation_state) "
+            "VALUES (?, ?, ?, 'assistant', '', ?, ?, ?, 1, 0, 'assistant', "
+            "'accepted')",
+            (
+                acceptance.assistant_message_id,
+                acceptance.conversation_id,
+                acceptance.user_message_id,
+                now,
+                now,
+                db.client_id,
+            ),
+        )
+        cursor.execute(
+            "INSERT INTO console_dispatch_checkpoints "
+            "(assistant_message_id, user_message_id, conversation_id, "
+            "schema_version, preparation_id, attempt_id, state, "
+            "checkpoint_revision, user_message_version, assistant_message_version, "
+            "origin, queue_entry_id, frozen_authority_json, "
+            "resolved_destination_json, reconstructability_json) "
+            "VALUES (?, ?, ?, 1, ?, ?, 'accepted', 1, 1, 1, ?, ?, ?, ?, ?)",
+            (
+                acceptance.assistant_message_id,
+                acceptance.user_message_id,
+                acceptance.conversation_id,
+                acceptance.preparation_id,
+                acceptance.attempt_id,
+                acceptance.origin,
+                acceptance.queue_entry_id,
+                dump_console_turn_library_authority_json(
+                    acceptance.frozen_authority
+                ),
+                dump_console_resolved_destination_json(
+                    acceptance.resolved_destination
+                ),
+                dump_console_dispatch_reconstructability_json(
+                    acceptance.reconstructability
+                ),
+            ),
+        )
+    return ConsoleDispatchCheckpoint(
+        assistant_message_id=acceptance.assistant_message_id,
+        user_message_id=acceptance.user_message_id,
+        conversation_id=acceptance.conversation_id,
+        preparation_id=acceptance.preparation_id,
+        attempt_id=acceptance.attempt_id,
+        state=ConsoleDispatchCheckpointState.ACCEPTED,
+        checkpoint_revision=1,
+        user_message_version=1,
+        assistant_message_version=1,
+        origin=acceptance.origin,
+        queue_entry_id=acceptance.queue_entry_id,
+        frozen_authority=acceptance.frozen_authority,
+        resolved_destination=acceptance.resolved_destination,
+        reconstructability=acceptance.reconstructability,
+    )
+
+
 def _start_dispatch(
     repository: ConsoleDispatchRepository,
     checkpoint: ConsoleDispatchCheckpoint,
@@ -405,7 +489,7 @@ def test_read_quarantines_duplicate_active_path_owners(tmp_path: Path) -> None:
         _acceptance(conversation_id, suffix="2"),
         parent_message_id=first.assistant_message_id,
     )
-    second = _insert(db, repository, second_acceptance)
+    second = _force_insert_corrupt_second_owner(db, second_acceptance)
     db.set_conversation_active_leaf(conversation_id, second.assistant_message_id)
 
     result = repository.read_for_session(conversation_id)
@@ -421,7 +505,10 @@ def test_read_considers_only_checkpoint_owners_on_the_selected_active_lineage(
     db, conversation_id = _db_and_conversation(tmp_path / "active-lineage.sqlite")
     repository = ConsoleDispatchRepository(db)
     first = _insert(db, repository, _acceptance(conversation_id, suffix="1"))
-    second = _insert(db, repository, _acceptance(conversation_id, suffix="2"))
+    second = _force_insert_corrupt_second_owner(
+        db,
+        _acceptance(conversation_id, suffix="2"),
+    )
 
     db.set_conversation_active_leaf(conversation_id, first.assistant_message_id)
     first_read = repository.read_for_session(conversation_id)
@@ -440,7 +527,7 @@ def test_insert_is_not_a_generic_upsert(tmp_path: Path) -> None:
     acceptance = _acceptance(conversation_id)
     original = _insert(db, repository, acceptance)
 
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(RuntimeError, match="active dispatch checkpoint"):
         _insert(
             db,
             repository,

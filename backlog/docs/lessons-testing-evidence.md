@@ -7520,6 +7520,21 @@ never-awaited coroutine. Never mutate private Task warning flags or manually
 close its coroutine; those operations change the behavior the test is meant to
 observe.
 
+## An isolated recovery widget does not prove one mounted action owner (TASK-19900.3, 2026-08-23)
+
+Task 15's first recovery UI tests passed against the standalone Textual widget,
+but the production ChatScreen never composed it. Once the real screen mounted
+the region, a queued recovery exposed a second Retry/Discard projection through
+the queue shelf, and a Button event delayed across navigation re-resolved the
+new `active_session_id` instead of the owner displayed when the click occurred.
+
+For recovery or destructive controls, mount the production hierarchy at empty
+and non-empty companion-state counts, count each advertised action across all
+sibling surfaces, and exercise the real callback after changing navigation
+state. Keep companion UI limited to its own count/pause truth, and carry the
+displayed session plus durable/ephemeral owner identity through the event rather
+than looking up a mutable active selection at handling time.
+
 ---
 
 ## UI lifecycle tests must stop before optional native backends (TASK-21201, 2026-08-23)

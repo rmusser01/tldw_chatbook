@@ -115,6 +115,7 @@ def derive_prompt_queue_presentation(
     *,
     composer_collapsed: bool = False,
     dispatch_recovery: ConsoleDispatchRecoveryState | None = None,
+    dispatch_recovery_blocked: bool = False,
 ) -> ConsolePromptQueuePresentation:
     """Derive exact visible queue vocabulary without reading a prompt body."""
 
@@ -187,6 +188,12 @@ def derive_prompt_queue_presentation(
         primary_action = "dispatch-recovery"
         pause_enabled = False
         recovery_actions = dispatch_recovery.actions
+    elif dispatch_recovery_blocked:
+        state_label = "Paused for response recovery"
+        pause_label = "Resume"
+        primary_action = "toggle-pause"
+        pause_enabled = False
+        recovery_actions = ()
     else:
         pause_enabled = count > 0
         recovery_actions = ()
@@ -298,8 +305,8 @@ class ConsolePromptQueueRegion(Widget):
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="console-prompt-queue-row"):
-            yield Static("", id="console-prompt-queue-summary")
-            yield Static("", id="console-prompt-queue-preview")
+            yield Static("", id="console-prompt-queue-summary", markup=False)
+            yield Static("", id="console-prompt-queue-preview", markup=False)
             yield Button("Manage", id="console-prompt-queue-manage")
             yield Button("Pause", id="console-prompt-queue-pause")
 
@@ -533,8 +540,10 @@ class ConsolePromptQueueUIController:
             snapshot,
             activity,
             composer_collapsed=composer_collapsed,
-            dispatch_recovery=controller.store.dispatch_recovery_for_session(
-                session_id
+            dispatch_recovery_blocked=(
+                controller.prompt_queue_coordinator.dispatch_recovery_blocks_queue(
+                    session_id
+                )
             ),
         )
 

@@ -115,6 +115,14 @@ class ConsoleDispatchRepository:
             raise ConsoleDispatchCheckpointValidationError(
                 "Conversation is missing or deleted."
             )
+        existing_rows = cursor.execute(
+            _OWNER_SELECT + " WHERE checkpoint.conversation_id = ?",
+            (acceptance.conversation_id,),
+        ).fetchall()
+        if existing_rows:
+            raise RuntimeError(
+                "Conversation already has an active dispatch checkpoint."
+            )
         if acceptance.parent_message_id is not None:
             parent = cursor.execute(
                 "SELECT conversation_id, deleted FROM messages WHERE id = ?",

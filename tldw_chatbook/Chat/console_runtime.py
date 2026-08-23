@@ -1059,6 +1059,10 @@ class ConsoleRuntime:
                 logger.opt(exception=True).warning(
                     "Console runtime: controller shutdown failed at dispose."
                 )
+        if self._chat_store is not None:
+            end_app_runtime = getattr(self._chat_store, "end_app_runtime", None)
+            if callable(end_app_runtime):
+                end_app_runtime()
         try:
             await asyncio.to_thread(self._scratch_spaces.dispose)
         except Exception as exc:  # noqa: BLE001 - quit must continue after cleanup failure

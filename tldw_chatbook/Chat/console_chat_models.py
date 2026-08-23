@@ -351,6 +351,8 @@ class ConsoleDispatchRecoveryState:
     queue_entry_id: str | None = None
     preparation_id: str | None = None
     in_flight: bool = False
+    runtime_active: bool = False
+    recovery_needed: bool = True
 
     def __post_init__(self) -> None:
         if not isinstance(self.kind, ConsoleDispatchRecoveryKind):
@@ -370,6 +372,10 @@ class ConsoleDispatchRecoveryState:
             raise TypeError("warning must be text")
         if type(self.in_flight) is not bool:
             raise TypeError("in_flight must be a bool")
+        if type(self.runtime_active) is not bool:
+            raise TypeError("runtime_active must be a bool")
+        if type(self.recovery_needed) is not bool:
+            raise TypeError("recovery_needed must be a bool")
         if self.error_code is not None and (
             not isinstance(self.error_code, str)
             or not self.error_code
@@ -406,6 +412,22 @@ class ConsoleDispatchRecoveryState:
                 in_flight=False,
             )
         return replace(self, actions=actions, in_flight=in_flight)
+
+    def with_runtime_truth(
+        self,
+        *,
+        runtime_active: bool,
+        recovery_needed: bool,
+    ) -> "ConsoleDispatchRecoveryState":
+        """Return the same owner with explicit runtime/recovery truth."""
+
+        if type(runtime_active) is not bool or type(recovery_needed) is not bool:
+            raise TypeError("dispatch runtime truth must be bools")
+        return replace(
+            self,
+            runtime_active=runtime_active,
+            recovery_needed=recovery_needed,
+        )
 
 
 def _console_dispatch_actions(

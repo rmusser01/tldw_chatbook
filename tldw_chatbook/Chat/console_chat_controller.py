@@ -2505,6 +2505,26 @@ class ConsoleChatController:
             self.store.mark_dispatch_recovery_queue_hydrated(session_id)
         return hydrated
 
+    def _restore_dispatch_recovery_after_settlement_failure(
+        self,
+        session_id: str,
+        assistant_message_id: str,
+    ) -> None:
+        """Publish one rollback-preserved owner before any queue can advance."""
+
+        self.store.mark_dispatch_recovery_needed(
+            session_id,
+            assistant_message_id,
+        )
+        self._set_run_state(
+            ConsoleRunState(
+                ConsoleRunStatus.BLOCKED,
+                "Response recovery failed. Try again or discard.",
+            ),
+            session_id=session_id,
+        )
+        self._hydrate_dispatch_recovery_queue(session_id, force=True)
+
     def _advance_lifecycle_revision(self, session_id: str) -> None:
         """Advance content-free fleet and owning-session confirmation fences."""
 
@@ -3274,6 +3294,11 @@ class ConsoleChatController:
             )
         if not self.run_state_for(session_id).is_send_allowed:
             return "A run is already running in this tab."
+        if self.store.dispatch_recovery_blocks_submission(session_id):
+            return (
+                "Finish or discard the pending response before sending another "
+                "message."
+            )
         busy_ids = self._live_busy_session_ids()
         if len(busy_ids) < self.max_parallel_runs:
             return None
@@ -4573,6 +4598,21 @@ class ConsoleChatController:
         if active_rejection is not None and resumed_preparation is None:
             return active_rejection
 
+        if (
+            target_id
+            and resumed_preparation is None
+            and self.store.dispatch_recovery_blocks_submission(target_id)
+        ):
+            return ConsoleSubmitResult(
+                False,
+                False,
+                "Finish or discard the pending response before sending another "
+                "message.",
+                session_id=target_id,
+                origin=origin,
+                queue_entry_id=queue_entry_id,
+            )
+
         if session_id:
             session = next(
                 (s for s in self.store.sessions() if s.id == session_id), None
@@ -5315,6 +5355,7 @@ class ConsoleChatController:
                         ),
                         opaque_reference=(f"opaque:{preparation.preparation_id}"),
                     ),
+                    runtime_active=True,
                 )
             if preparation is not None and not self._transition_preparation(
                 preparation.preparation_id,
@@ -5562,16 +5603,10 @@ class ConsoleChatController:
             reconstructability=ConsoleDispatchReconstructability(
                 attachments_reconstructable=True,
                 evidence_reconstructable=not bool(
-                    (
-                        preparation_outcome is not None
-                        and preparation_outcome.evidence_bundle is not None
-                    )
-                    or (
-                        prepared_continuation is not None
-                        and (
-                            prepared_continuation.staged_evidence_frozen
-                            or prepared_continuation.staged_evidence is not None
-                        )
+                    prepared_continuation is not None
+                    and (
+                        prepared_continuation.staged_evidence_frozen
+                        or prepared_continuation.staged_evidence is not None
                     )
                 ),
                 prefill_reconstructable=(prefill is None and not prefill_from_one_shot),
@@ -5668,6 +5703,11 @@ class ConsoleChatController:
             and "checkpoint_transition" in existing_effects.completed
             and "provider_entry" not in existing_effects.completed
         ):
+            self.store.mark_dispatch_recovery_needed(
+                session_id,
+                commit.assistant_message_id,
+            )
+            self._hydrate_dispatch_recovery_queue(session_id, force=True)
             return ConsoleSubmitResult(
                 True,
                 True,
@@ -5889,19 +5929,45 @@ class ConsoleChatController:
                 ),
                 fingerprint=fingerprint,
             )
-        except BaseException:
-            self.store.release_dispatch_recovery_action(
+        except ConsoleDispatchSettlementError:
+            self._restore_dispatch_recovery_after_settlement_failure(
                 session_id,
                 commit.assistant_message_id,
             )
-            if continuation.origin is ConsoleSubmissionOrigin.QUEUED:
-                self.prompt_queue_coordinator.retain_durable_acceptance(session_id)
+            return ConsoleSubmitResult(
+                True,
+                True,
+                "Accepted turn is retained for recovery.",
+                session_id=session_id,
+                user_message_id=commit.user_message_id,
+                assistant_message_id=commit.assistant_message_id,
+                terminal_status=ConsoleRunStatus.BLOCKED,
+                origin=continuation.origin,
+                queue_entry_id=continuation.queue_entry_id,
+                committed_context_epoch=continuation.committed_context_epoch,
+                preparation_id=preparation_id,
+                provider_started=True,
+            )
+        except BaseException:
             state = self.store.durable_postcommit_effects_for(
                 preparation_id, fingerprint=fingerprint
             )
             provider_started = bool(
                 state is not None and "checkpoint_transition" in state.completed
             )
+            if provider_started:
+                self.store.mark_dispatch_recovery_needed(
+                    session_id,
+                    commit.assistant_message_id,
+                )
+                self._hydrate_dispatch_recovery_queue(session_id, force=True)
+            else:
+                self.store.release_dispatch_recovery_action(
+                    session_id,
+                    commit.assistant_message_id,
+                )
+                if continuation.origin is ConsoleSubmissionOrigin.QUEUED:
+                    self.prompt_queue_coordinator.retain_durable_acceptance(session_id)
             return ConsoleSubmitResult(
                 True,
                 True,
@@ -6047,19 +6113,28 @@ class ConsoleChatController:
         current: ConsoleTurnLibraryAuthority,
         frozen: ConsoleTurnLibraryAuthority,
     ) -> bool:
-        """Compare effective authority while tolerating first-save bookkeeping."""
+        """Compare authority with only the exact first-save bookkeeping change."""
 
         if current.policy.error_code != frozen.policy.error_code:
             return False
-        if (
-            frozen.policy.policy_revision is not None
-            and current.policy.policy_revision != frozen.policy.policy_revision
+        frozen_source = frozen.policy.source
+        frozen_revision = frozen.policy.policy_revision
+        current_source = current.policy.source
+        current_revision = current.policy.policy_revision
+        first_save = (
+            frozen_source == "new_session"
+            and frozen_revision is None
+            and current_source == "durable"
+            and current_revision == 1
+        )
+        if not first_save and (
+            current_source != frozen_source or current_revision != frozen_revision
         ):
             return False
         normalized_policy = replace(
             current.policy,
-            policy_revision=frozen.policy.policy_revision,
-            source=frozen.policy.source,
+            policy_revision=frozen_revision,
+            source=frozen_source,
         )
         return (
             replace(
@@ -6497,6 +6572,19 @@ class ConsoleChatController:
         Returns:
             The session activated after closing, or ``None`` when no sessions remain.
         """
+        recovery = self.store.dispatch_recovery_for_session(session_id)
+        if (
+            recovery is not None
+            and recovery.recovery_needed
+            and recovery.kind
+            in {
+                ConsoleDispatchRecoveryKind.EPHEMERAL_ACCEPTED,
+                ConsoleDispatchRecoveryKind.EPHEMERAL_DISPATCH_STARTED,
+            }
+        ):
+            raise RuntimeError(
+                "Finish or discard the pending turn before closing this chat."
+            )
         # Revoke file authority before any close action can wake a worker or
         # remove the owning session from the store.
         self._scratch_spaces.close(session_id)
@@ -8978,7 +9066,7 @@ class ConsoleChatController:
             )
         except ConsoleDispatchSettlementError:
             settlement_failed = True
-            self.store.release_dispatch_recovery_action(
+            self._restore_dispatch_recovery_after_settlement_failure(
                 session_id,
                 assistant_message_id,
             )

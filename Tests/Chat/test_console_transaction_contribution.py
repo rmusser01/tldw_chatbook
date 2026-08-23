@@ -520,7 +520,7 @@ def test_trajectory_allocator_cannot_request_another_conversation(
     ).fetchone()[0] == 0
 
 
-def test_concurrent_repositories_serialize_trajectory_sequence_allocation(
+def test_concurrent_repositories_serialize_and_reject_second_active_owner(
     tmp_path: Path,
 ) -> None:
     database_path = tmp_path / "trajectory-concurrent.sqlite"
@@ -577,16 +577,18 @@ def test_concurrent_repositories_serialize_trajectory_sequence_allocation(
     for thread in threads:
         thread.join()
 
-    assert errors == []
+    assert len(errors) == 1
+    assert isinstance(errors[0], RuntimeError)
+    assert "active dispatch checkpoint" in str(errors[0])
     assert sorted(
         first_contribution.allocated_sequences
         + second_contribution.allocated_sequences
-    ) == [31, 32]
+    ) == [31]
     rows = first_service.db.get_connection().execute(
         "SELECT seq FROM message_trajectory_metadata "
         "WHERE event_kind LIKE 'library_activity_%' ORDER BY seq"
     ).fetchall()
-    assert [tuple(row) for row in rows] == [(31,), (32,)]
+    assert [tuple(row) for row in rows] == [(31,)]
 
 
 def test_contribution_error_propagates_and_rolls_back_every_write(tmp_path: Path) -> None:
