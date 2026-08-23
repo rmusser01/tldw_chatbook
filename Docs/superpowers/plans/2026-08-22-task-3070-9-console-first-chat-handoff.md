@@ -1358,7 +1358,7 @@ HEAD unchanged. Mutation probes produce no commit.
 - Modify: `Docs/superpowers/plans/2026-08-22-task-3070-9-console-first-chat-handoff.md`
 - Modify: `backlog/tasks/task-3070.9 - Extract-Console-first-chat-handoff-ownership.md`
 
-- [ ] **Step 1: Fetch and rebase onto the latest dev**
+- [x] **Step 1: Fetch and rebase onto the latest dev**
 
 Run:
 
@@ -1384,7 +1384,7 @@ Expected: clean rebase, merge base equals the frozen latest `origin/dev`, and
 range-diff preserves task commits. If the eight-method source family changed,
 stop and amend/re-review the design and ratchet before continuing.
 
-- [ ] **Step 2: Remeasure ownership and ratchet**
+- [x] **Step 2: Remeasure ownership and ratchet**
 
 Rerun the Task 0 Step 2 revision comparison, replacing only its candidate
 assertions with completed-owner assertions. Capture the final rebased
@@ -1425,7 +1425,7 @@ review; it cannot be absorbed as unrelated growth. Assert:
   328 lines / eight methods; any increase over Task 0 is exactly the enumerated
   unrelated upstream growth.
 
-- [ ] **Step 3: Repeat mutation proof on the final rebased candidate**
+- [x] **Step 3: Repeat mutation proof on the final rebased candidate**
 
 Repeat every Task 4 mutation and exact inverse against the rebased candidate,
 even when range-diff reports no conflict. Record each final RED discriminator,
@@ -1433,7 +1433,7 @@ restored GREEN result, identical pre/post binary-diff SHA-256, empty residue
 scan, clean status, and unchanged HEAD. A pre-rebase mutation run is development
 evidence only; closeout uses this post-rebase run.
 
-- [ ] **Step 4: Preview diagnostic reconciliation without writing**
+- [x] **Step 4: Preview diagnostic reconciliation without writing**
 
 Run this exact read-only preview. It writes only under a validated temporary
 directory and does not invoke the canonical writer:
@@ -1571,7 +1571,7 @@ git diff -- Docs/security/production-diagnostic-inventory.json
 Expected: the diff is only the reviewed owner redistribution plus separately
 classified inherited latest-dev reconciliation; checker and both tests pass.
 
-- [ ] **Step 6: Run final affected-only behavior gates**
+- [x] **Step 6: Run final affected-only behavior gates**
 
 Run the Task 3 matrix plus:
 
@@ -1590,7 +1590,7 @@ skipped node passed. A baseline-identical failure is evidence of non-regression,
 not a passing gate; either amend the completion contract transparently or leave
 the task open.
 
-- [ ] **Step 7: Run final changed-file static and scope gates**
+- [x] **Step 7: Run final changed-file static and scope gates**
 
 Enumerate changed Python files from the rebased merge base, then run Ruff check
 and Ruff format-check on every one. Compile changed production modules into a
@@ -1646,6 +1646,60 @@ Review cumulative `origin/dev...HEAD` for exact behavior/ordering, privacy,
 late binding, callback typing, DOM/sibling reach-through, wizard fallback,
 formatter churn, and truthful evidence. Request independent specification and
 quality reviews. Fix only verified findings with focused RED/GREEN evidence.
+
+**Task 5 interim evidence (2026-08-23):**
+
+- A clean 24-commit rebase moved the task from frozen base
+  `0f9638cef395b74861ad29937b58023994002a12` to then-latest `origin/dev`
+  `12931e1a30505e5e21644031c3c450c8b839e498`; range-diff paired every
+  pre/post commit exactly. An isolated worktree preserved the still-running
+  frozen-base repository suite while the rebase and scoped gates ran.
+- Latest dev changed only `chat_screen.py` among the task's production files,
+  outside the first-chat family. Its 17 unrelated lines changed the reviewed
+  delivery base from 20,028 to 20,045 lines. The immutable design and Task 0
+  oracles remain unchanged; the refreshed delivery ceiling is 19,717 lines,
+  and the 19,701-line candidate remains 16 lines below it. The base still has
+  all eight definitions exactly once, in the same order, with 328 definition
+  lines, 640 direct methods, and normalized family digest
+  `3a2968883c63dc89de430ee72b40444ebd97fb9b36c1dbc8a46e19d063a715ee`.
+- Review identified two temporary `PersonaActorPackCoordinator.recover`
+  patches made obsolete by latest dev's deferred `ensure_recovered` path;
+  both were removed. It also identified a redundant compatibility-delegate
+  oracle already subsumed by zero-screen-owner multiplicity; removing the
+  helper and its duplicate mutant, together with the obsolete patches, reduced
+  the test fixtures by 50 lines without weakening the ownership discriminator.
+- The latest-dev focused matrix passed `235 passed, 2 warnings in 159.63s`.
+  The six final Wave 6 architecture nodes passed `6 passed, 1 warning in
+  4.84s`. The three ratchet nodes reproduced the stale-ceiling RED exactly
+  (`19,701 <= 19,700` failed) and passed `3 passed, 1 warning in 1.50s` after
+  the reviewed refreeze.
+- All eight post-rebase controller mutants failed on their intended active
+  session, config generation, rollback order, guarded acknowledgement,
+  current-claim, false-acknowledgement, privacy, or focus discriminator. Each
+  explicit inverse passed. The final combined selection passed `8 passed, 2
+  warnings in 6.39s`; the controller restored to file SHA-256
+  `a2551c3e7a9832e6c67f7b2ca77a616ac658d9ba0ec3824050b2c30681bcb17f`,
+  blob `fee6e6c40f8c4c5a2591d947028d7aee0c7257be`, and empty binary-diff digest
+  `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
+- The read-only diagnostic preview exited zero. Checked manifest and latest
+  base were byte-identical (SHA-256
+  `41eda798cf7ab65ed6386c05585fbd9f9e1b87d9ddc1ea5bf4c1ef2bee7a70aa`);
+  base-to-candidate was only session TASK-494 `14 -> 15` plus screen TASK-494
+  `140 -> 139`. The combined `(method, digest)` multiset and complete sink
+  topology were exact. The canonical writer remains intentionally uninvoked
+  until the final dev freshness check.
+- Ruff check passed all nine changed Python files. Eight are formatted; the
+  decorator-only library collection fix remains formatter-red exactly as its
+  unchanged latest-dev blob does. All four changed production modules compile,
+  `git diff --check` passes, and conflict/residue scans are empty.
+- Repository-wide Ruff lint remains inherited-red with 574 findings: candidate
+  and detached latest-dev output are byte-identical (SHA-256
+  `065161097aadf1a382dc8b0147e218e29d3f785bb35741866c81f6731cbf3535`).
+  Repository-wide format-check improves from 1,635 baseline candidates to
+  1,633, removing `test_console_session_settings.py` and
+  `test_first_run_setup_wizard.py` with no newly unformatted file. The frozen
+  repository-wide pytest run is still active; Step 8 and any completion-contract
+  exception remain open pending its exact final inventory.
 
 - [ ] **Step 10: Close the task only after every gate is satisfied**
 
