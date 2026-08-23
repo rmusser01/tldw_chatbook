@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -435,12 +436,20 @@ def test_windows_task_name_rejects_reserved_device_stems(name, stem):
         "LPT0.md",
         "LPT10.md",
         "LPT⁴.md",
+        "CONSOLE.md",
+        "PRN1.md",
+        "AUXILIARY.md",
+        "NULL.md",
     ],
 )
 def test_windows_task_name_accepts_valid_names(name):
     assert backlog_ids.windows_incompatible_reason(name) is None
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="POSIX-only fixture creates filenames that Win32 cannot represent",
+)
 def test_windows_incompatible_paths_scan_files_in_each_existing_bucket(tmp_path):
     tasks = tmp_path / "tasks"
     completed = tmp_path / "completed"
@@ -457,25 +466,59 @@ def test_windows_incompatible_paths_scan_files_in_each_existing_bucket(tmp_path)
     for path in invalid:
         path.write_text("id: TASK-1\n", encoding="utf-8")
     (tasks / "task-4 - Safe.md").write_text("id: TASK-4\n", encoding="utf-8")
-    (tasks / "task-5 - Directory?.md").mkdir()
+    invalid_directory = tasks / "task-5 - Directory?.md"
+    invalid_directory.mkdir()
+    (invalid_directory / "task-6 - Nested>Invalid.md").write_text(
+        "id: TASK-6\n", encoding="utf-8"
+    )
 
     assert backlog_ids.windows_incompatible_paths(
         tasks, completed, archive, tmp_path / "absent"
     ) == {path.resolve().as_posix(): reason for path, reason in invalid.items()}
 
 
-def test_main_reports_duplicate_ids_and_windows_paths_together(tmp_path, capsys):
-    first = tmp_path / "task-42 - First?.md"
+def test_main_reports_duplicate_ids_and_windows_paths_together(
+    tmp_path, capsys, monkeypatch
+):
+    first = tmp_path / "task-42 - First.md"
     second = tmp_path / "task-42 - Second.md"
     first.write_text("id: TASK-42\n", encoding="utf-8")
     second.write_text("id: TASK-42\n", encoding="utf-8")
+    offending = tmp_path / "task-42 - Synthetic.md"
+    reason = "contains Windows-reserved character '?'"
+    monkeypatch.setattr(
+        backlog_ids,
+        "windows_incompatible_paths",
+        lambda *task_dirs: {offending.resolve().as_posix(): reason},
+    )
 
     assert backlog_ids.main(["--tasks-dir", str(tmp_path)]) == 1
     captured = capsys.readouterr()
     report = captured.out + captured.err
     assert "Duplicate backlog task IDs" in report
     assert "Windows-incompatible Backlog task paths" in report
-    assert first.resolve().as_posix() in report
+    assert offending.resolve().as_posix() in report
+    assert reason in report
+    assert "Keep punctuation in task content" in report
+
+
+def test_main_reports_windows_paths_without_duplicate_ids(tmp_path, capsys, monkeypatch):
+    task = tmp_path / "task-7 - Safe.md"
+    task.write_text("id: TASK-7\n", encoding="utf-8")
+    offending = tmp_path / "task-8 - Synthetic.md"
+    reason = "ends with a dot or space"
+    monkeypatch.setattr(
+        backlog_ids,
+        "windows_incompatible_paths",
+        lambda *task_dirs: {offending.resolve().as_posix(): reason},
+    )
+
+    assert backlog_ids.main(["--tasks-dir", str(tmp_path)]) == 1
+    captured = capsys.readouterr()
+    report = captured.out + captured.err
+    assert "Windows-incompatible Backlog task paths" in report
+    assert offending.resolve().as_posix() in report
+    assert reason in report
     assert "Keep punctuation in task content" in report
 
 
