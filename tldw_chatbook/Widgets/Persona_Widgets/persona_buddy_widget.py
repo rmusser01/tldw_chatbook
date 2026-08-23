@@ -610,7 +610,9 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         target.update("")
 
     def _sync_compact_state(self, collapsed: bool) -> None:
-        compact = self._compact_for_geometry(self._working_preferences.geometry)
+        compact = self._compact_presentation_for_geometry(
+            self._working_preferences.geometry
+        )
         self.set_class(compact, "persona-buddy-compact")
         self.set_class(collapsed and not compact, "persona-buddy-collapsed")
         self._sync_control_presentation(collapsed)
@@ -654,11 +656,35 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         )
         return available_width < _OPERABLE_WIDTH or available_height < _OPERABLE_HEIGHT
 
+    def _compact_presentation_for_geometry(
+        self, geometry: PersonaBuddyGeometry
+    ) -> bool:
+        """Hide an accepted pet that cannot fit the current render budget."""
+
+        if self._compact_for_geometry(geometry):
+            return True
+        snapshot = self._snapshot
+        accepted = self._accepted_render
+        if (
+            snapshot is None
+            or accepted is None
+            or snapshot.state in _ACTIONABLE_ALERTS
+            or accepted.collapsed != bool(snapshot.collapsed)
+        ):
+            return False
+        viewport = self.screen.size
+        available_width = min(geometry.width, viewport.width) - _BOUNDARY_SIZE
+        available_height = min(geometry.height, viewport.height) - _BOUNDARY_SIZE
+        return (
+            accepted.content_width > available_width
+            or accepted.content_height > available_height
+        )
+
     def _display_geometry(self, geometry: PersonaBuddyGeometry) -> PersonaBuddyGeometry:
         """Fit accepted content without changing the saved render budget."""
 
         viewport = self.screen.size
-        compact = self._compact_for_geometry(geometry)
+        compact = self._compact_presentation_for_geometry(geometry)
         if compact:
             available_width = min(geometry.width, max(1, viewport.width))
             width = min(max(6, available_width), max(1, viewport.width))
@@ -736,7 +762,8 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         resize = screen_x >= region.right - 2 and screen_y >= region.bottom - 1
         for button in self.query(Button):
             if (
-                button.display
+                not resize
+                and button.display
                 and button.region.x <= screen_x < button.region.right
                 and button.region.y <= screen_y < button.region.bottom
             ):
