@@ -209,3 +209,49 @@ async def test_first_run_completion_finishes_chat_navigation_before_consent():
     finally:
         for worker in host.worker_coroutines:
             worker.close()
+
+
+@pytest.mark.asyncio
+async def test_first_run_navigation_failure_still_schedules_consent_after_attempt():
+    """A failed first-run route still releases the pending consent offer."""
+    from tldw_chatbook.app import TldwCli
+
+    class FailingNavigationHost:
+        current_tab = "home"
+        focus_mode = False
+
+        def __init__(self) -> None:
+            self.events: list[str] = []
+            self.worker_coroutines = []
+            self._schedule_startup_model_catalog_refresh = MagicMock(
+                side_effect=lambda **_kwargs: self.events.append("consent")
+            )
+
+        async def handle_screen_navigation(self, _message) -> None:
+            self.events.append("navigation-attempt")
+            raise RuntimeError("injected navigation failure")
+
+        def run_worker(self, work, **_kwargs) -> None:
+            self.worker_coroutines.append(work)
+
+        def post_message(self, _message) -> None:
+            raise AssertionError("completed navigation must use its worker")
+
+    host = FailingNavigationHost()
+    try:
+        TldwCli._handle_first_run_wizard_result(
+            host,
+            {"completed": True, "exit_route": "chat", "exit_context": None},
+        )
+
+        assert len(host.worker_coroutines) == 1
+        with pytest.raises(RuntimeError, match="injected navigation failure"):
+            await host.worker_coroutines[0]
+
+        host._schedule_startup_model_catalog_refresh.assert_called_once_with(
+            after_setup_completion=True
+        )
+        assert host.events == ["navigation-attempt", "consent"]
+    finally:
+        for worker in host.worker_coroutines:
+            worker.close()

@@ -1893,7 +1893,6 @@ async def test_rerun_over_settings_start_chatting_navigates_to_chat(
     _persist_complete_custom_provider_setup()
     app = _build_test_app(first_run_setup_completed=True)
     app._initial_tab_value = "chat"
-    navigation_messages = _capture_navigation_messages(monkeypatch, app)
 
     with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(180, 55)) as pilot:
@@ -1907,20 +1906,15 @@ async def test_rerun_over_settings_start_chatting_navigates_to_chat(
                 == "Start chatting",
             )
 
-            navigation_messages.clear()
             _press(app.screen, "#setup-exit-chat")
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ != "FirstRunSetupWizard"
             )
-            # Dismiss pops back to Settings first; the exit_route is applied
-            # via a separately-queued NavigateToScreen message (same race
-            # noted in test_back_next_mashing_... above) -- wait for the
-            # final tab rather than racing the first screen-stack pop.
             await _wait_until(pilot, lambda: app.current_tab == TAB_CHAT)
+            await _wait_until(pilot, lambda: isinstance(app.screen, ChatScreen))
             assert app.current_tab == TAB_CHAT
-            assert len(navigation_messages) == 1
-            assert navigation_messages[0].screen_name == TAB_CHAT
-            assert navigation_messages[0].screen_context == {}
+            assert isinstance(app.screen, ChatScreen)
+            assert app.screen.is_mounted
 
 
 @pytest.mark.asyncio
