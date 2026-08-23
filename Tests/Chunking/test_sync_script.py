@@ -23,10 +23,26 @@ PIN = "385afa951922c8a9dc2002c675bb6cad65e4ac23"
 # upstream repo per invocation (three times for this one test) and, before
 # this task, never cleaned its temp clone up. This module must never itself
 # trigger that network clone.
+#
+# TASK-19574 Qodo review (PR #1999 finding 4): TLDW_SERVER_SYNC_SOURCE is a
+# maintainer-set env var pointing at their own local tldw_server worktree --
+# not user- or model-supplied input reaching the app at runtime -- so it is
+# deliberately not routed through path_validation.py's confine-to-a-
+# workspace-root helpers (see the matching disposition note in
+# sync_chunking_engine.py's main()). The `Path(SOURCE).exists()` check below
+# and the pytest.skip guard it feeds are the whole of what this seam needs:
+# a clear skip instead of a confusing failure or an accidental network clone.
 SOURCE = os.environ.get("TLDW_SERVER_SYNC_SOURCE")
 
 
 def _run_sync() -> subprocess.CompletedProcess:
+    """Run sync_chunking_engine.py --source SOURCE and capture the result.
+
+    Returns:
+        subprocess.CompletedProcess: the finished sync-script invocation
+            (returncode/stdout/stderr), so callers can assert on either a
+            successful sync or a FATAL failure message.
+    """
     assert SOURCE and Path(SOURCE).exists(), (
         "_run_sync() must only be called once the caller has confirmed SOURCE "
         "exists (see the pytest.skip guard in "
@@ -182,7 +198,14 @@ def test_no_server_imports_remain():
         assert "from app.core" not in src, f"{py.name} still references app.core"
 
 
-def test_sync_idempotent_and_rejects_local_edits():
+def test_sync_idempotent_and_rejects_local_edits() -> None:
+    """Two --source runs are a no-op, and a hand-edited vendored file fails
+    the third run loudly instead of being silently overwritten (spec §5.2).
+
+    Skips (rather than falling through to the no-arg network-clone path --
+    TASK-19574) when TLDW_SERVER_SYNC_SOURCE isn't set to an existing local
+    tldw_server worktree.
+    """
     if not SOURCE or not Path(SOURCE).exists():
         pytest.skip(
             "TLDW_SERVER_SYNC_SOURCE is not set to an existing local "

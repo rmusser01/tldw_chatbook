@@ -281,3 +281,66 @@ test for `aider`/`textual_fspicker`, and the wrong `repomap.py:1` comment) and
 repo hygiene (rr-cache expiry, merged-worktree pruning, clearing `gc.log`)
 remain — same task, To Do. The 17 GiB of leaked clones listed above are
 reported, not deleted, per instruction (owner's call).
+
+**Qodo review fix round (PR #1999).** Four findings.
+
+- **Finding 1 (Bug, unchecked `git show`).** Step 3's EXTRA_FILES loop wrote
+  `subprocess.run(...).stdout` straight to disk without checking
+  `returncode` — the same shape as the already-fixed silent-`rmtree`
+  defect. Checked every other `git show` call site in the script
+  (`git_show()` at the vendored-file steps, the test-porting loop's inline
+  `git show`): both already FATAL on a non-zero return code; EXTRA_FILES was
+  the only unchecked one. Added `git_show_bytes()` (matches `git_show()`'s
+  FATAL idiom) and switched step 3 to the same validate-then-write split
+  already used in steps 2/4. Born-red proof: a sandboxed namespace-rebinding
+  harness (rebinds `subprocess`/`tempfile` inside the loaded module's own
+  namespace only; no real git/network at any point) faked `git show` to
+  return code 1 with empty stdout for the one EXTRA_FILES entry. At the
+  pre-fix commit (`8e4081c40`, reconstructed via a local `git show <sha>:
+  <path>` blob read — not a clone) this reproduced the bug exactly: an empty
+  `LICENSE` file was written to disk, `main()` returned 0, and stdout
+  contained "Synced ...". Against the fixed script the same harness now hits
+  `SystemExit` from `git_show_bytes()` before any write happens (no file on
+  disk).
+- **Finding 4 (path validation on `--source`/`TLDW_SERVER_SYNC_SOURCE`).**
+  Declined `path_validation.py` on the merits: both inputs are a
+  maintainer's own local filesystem path on their own machine, not user- or
+  model-supplied input reaching the app at runtime, and `validate_path_
+  simple()`/`validate_path()` exist to confine untrusted paths inside an
+  app-managed workspace root — the opposite relationship of `--source`,
+  which is deliberately a path *outside* this repo (and `validate_path_
+  simple()` would actively reject a legitimate `--source ~/repos/
+  tldw_server`). Instead improved the actual failure mode: `--source` is
+  now `.expanduser()`d, and `main()` gives an explicit FATAL for "does not
+  exist" / "is not a directory" / "is not a git repository (no .git)" before
+  ever reaching `verify_clean()`, which previously was the only diagnostic —
+  a missing path made `git -C <path> rev-parse HEAD` fail with empty stdout,
+  surfacing as the misleading "worktree HEAD  != pin 385afa95" pin-mismatch
+  message. Folded in the reviewer's separate residual: `if args.source:` was
+  a truthy check, so `--source ""` on a direct CLI run (not reachable from
+  the test module, which always passes a real path) silently fell through to
+  the no-arg network-clone path; changed to `if args.source is not None:`
+  with an explicit empty-value FATAL. Added matching disposition comments at
+  both call sites (the script's `main()` and `Tests/Chunking/
+  test_sync_script.py`'s `SOURCE` env-var read) so the reasoning doesn't need
+  rediscovering next review.
+- **Findings 2/3 (rule violations — missing docstrings/type hints).** Added
+  Google-style docstrings and `-> None` return annotations to all 7
+  `test_*` functions in `Tests/Architecture/test_vendor_pin_consistency.py`
+  (all new in this branch), plus to the parts of `Tests/Chunking/
+  test_sync_script.py` this branch actually changed: `_run_sync()` (gained a
+  docstring; already had its return type hint) and
+  `test_sync_idempotent_and_rejects_local_edits()` (gained both). Left every
+  other pre-existing test in both files untouched, per instruction not to
+  sweep unrelated tests.
+
+**Re-verification.** `Tests/Chunking/` + `Tests/Architecture/
+test_vendor_pin_consistency.py`: **607 passed, 26 skipped, 1 xfailed**, plus
+the same 2 pre-existing failures as the prior verification pass
+(`test_chunker_v2.py::test_process_text_tokenizer_override`,
+`test_golden_parity.py::test_golden_parity[tokens-cjk]`) — reconfirmed
+unrelated to this branch via a 3-dot merge-base diff
+(`origin/dev...HEAD -- Tests/Chunking/test_chunker_v2.py Tests/Chunking/
+test_golden_parity.py` is empty). The new pin-consistency guard stayed 7/7.
+Leaked-clone count under `$TMPDIR` after this run: still **17** — unchanged,
+confirming the cleanup fix still holds and this round didn't add any.

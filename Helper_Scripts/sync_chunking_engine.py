@@ -660,6 +660,26 @@ def git_show(worktree: Path, path: str) -> str:
     return r.stdout
 
 
+def git_show_bytes(worktree: Path, repo_relative_path: str) -> bytes:
+    """Like git_show(), but for a repo-root-relative path (EXTRA_FILES),
+    returned as raw bytes.
+
+    TASK-19574 Qodo review (PR #1999 finding 1): step 3 used to write
+    `subprocess.run(...).stdout` straight to disk without checking
+    `returncode`, so a missing path or failed `git show` silently wrote an
+    empty/truncated file while the script went on to print "Synced" --
+    breaking this script's own fail-loudly contract. Match git_show()'s
+    FATAL idiom instead of inventing a new one.
+    """
+    r = subprocess.run(
+        ["git", "-C", str(worktree), "show", f"{PIN}:{repo_relative_path}"],
+        capture_output=True)
+    if r.returncode != 0:
+        sys.exit(f"FATAL: {repo_relative_path} not found at pinned SHA {PIN}: "
+                  f"{r.stderr.decode(errors='replace')}")
+    return r.stdout
+
+
 def verify_clean(worktree: Path) -> None:
     """Wrong-tree hazard (spec §0): the source must match the pin exactly."""
     r = subprocess.run(["git", "-C", str(worktree), "rev-parse", "HEAD"],
@@ -680,10 +700,45 @@ def main() -> int:
     # runs `finally`), or an uncaught exception. Before this fix nothing ever
     # removed it: three leaked ~1.0 GiB clones per test-suite run, 17 found
     # on one machine in a single day (~17 GiB).
+    # TASK-19574 Qodo review (PR #1999 finding 4): --source and
+    # TLDW_SERVER_SYNC_SOURCE are a maintainer's own local filesystem path
+    # to a tldw_server worktree on their own machine -- a developer-supplied
+    # CLI flag to a Helper_Scripts/ tool, not user- or model-supplied input
+    # reaching the app at runtime. path_validation.py's helpers exist to
+    # confine untrusted, potentially adversarial paths inside an
+    # app-managed workspace root; that relationship doesn't hold here (the
+    # whole point of --source is a path deliberately OUTSIDE this repo), so
+    # routing it through validate_path_simple()/validate_path() would be
+    # the wrong tool -- e.g. validate_path_simple() rejects any path
+    # containing "~/", which a maintainer typing --source ~/repos/tldw_server
+    # could reasonably supply. What the failure mode actually needed was
+    # clarity: expanduser() so a literal "~" works when the shell hasn't
+    # already expanded it, and explicit checks so a bad path fails with a
+    # direct message instead of surfacing through verify_clean()'s pin-
+    # mismatch wording (which used to be the only diagnostic: a missing
+    # --source path made `git -C <path> rev-parse HEAD` fail with empty
+    # stdout, which read as "worktree HEAD  != pin 385afa95" -- technically
+    # fatal, but not an honest description of what was actually wrong).
     tmp = None
     try:
-        if args.source:
-            worktree = Path(args.source).resolve()
+        if args.source is not None:
+            # `if args.source:` was a truthy check -- `--source ""` on a
+            # direct CLI invocation fell through to the no-arg network-clone
+            # path below instead of failing. `is not None` catches an
+            # explicit empty value too.
+            if not args.source:
+                sys.exit("FATAL: --source was given an empty value; pass a "
+                          "path to a local tldw_server worktree checked out "
+                          "at the pin, or omit --source entirely")
+            worktree = Path(args.source).expanduser().resolve()
+            if not worktree.exists():
+                sys.exit(f"FATAL: --source {worktree} does not exist")
+            if not worktree.is_dir():
+                sys.exit(f"FATAL: --source {worktree} is not a directory")
+            if not (worktree / ".git").exists():
+                sys.exit(f"FATAL: --source {worktree} is not a git repository "
+                          f"(no .git found) -- checkout tldw_server at the "
+                          f"pin first")
             verify_clean(worktree)
         else:
             tmp = tempfile.mkdtemp(prefix="tldw_server_sync_")
@@ -718,13 +773,18 @@ def main() -> int:
             dst.parent.mkdir(parents=True, exist_ok=True)
             dst.write_text(content)
 
-        # 3. Manifest + licence (GPLv3 §4: licence text ships in-subtree)
-        for rel in EXTRA_FILES:
-            dst = TARGET_ROOT / rel
+        # 3. Manifest + licence (GPLv3 §4: licence text ships in-subtree).
+        # Same validate-then-write split as steps 2/4: every EXTRA_FILES
+        # entry is read (and FATALs loudly via git_show_bytes() on a missing
+        # path or failed `git show`) before anything is written, so a
+        # mid-loop failure can never leave a partially-synced extra file.
+        extra_writes = [
+            (TARGET_ROOT / rel, git_show_bytes(worktree, rel))
+            for rel in EXTRA_FILES
+        ]
+        for dst, content in extra_writes:
             dst.parent.mkdir(parents=True, exist_ok=True)
-            dst.write_bytes(
-                subprocess.run(["git", "-C", str(worktree), "show", f"{PIN}:{rel}"],
-                               capture_output=True).stdout)
+            dst.write_bytes(content)
         print(f"Synced {len(VENDORED)} files from {REPO} @ {PIN}")
 
         # 4. Tests (spec §10.1): port with the same import rewrite + chatbook-side

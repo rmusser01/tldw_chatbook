@@ -115,11 +115,14 @@ def _samira_pin() -> str:
 # Chunking-engine vendoring pin: 3 authoritative copies + the source of truth.
 # ---------------------------------------------------------------------------
 
-def test_chunking_pin_is_a_valid_sha():
+def test_chunking_pin_is_a_valid_sha() -> None:
+    """The Chunking-engine vendoring pin itself is a 40-char hex SHA."""
     assert _SHA_RE.fullmatch(_chunking_pin())
 
 
-def test_vendor_manifest_matches_sync_script_pin():
+def test_vendor_manifest_matches_sync_script_pin() -> None:
+    """VENDOR_MANIFEST.toml's upstream.commit agrees with the sync script's
+    PIN, the source of truth (see this file's docstring upgrade path)."""
     manifest = tomllib.loads(VENDOR_MANIFEST.read_text())
     assert manifest["upstream"]["commit"] == _chunking_pin(), (
         f"{VENDOR_MANIFEST} upstream.commit is out of sync with the source of "
@@ -128,7 +131,9 @@ def test_vendor_manifest_matches_sync_script_pin():
     )
 
 
-def test_sync_test_pin_matches_sync_script_pin():
+def test_sync_test_pin_matches_sync_script_pin() -> None:
+    """test_sync_script.py's hardcoded PIN agrees with the sync script's own
+    PIN, the source of truth (see this file's docstring upgrade path)."""
     text = SYNC_TEST.read_text()
     test_pin = _extract_one(text, r'^PIN = "[0-9a-f]{40}"', where=str(SYNC_TEST))
     assert test_pin == _chunking_pin(), (
@@ -142,11 +147,12 @@ def test_sync_test_pin_matches_sync_script_pin():
 # source of truth (SAMIRA_SERVER_COMMIT in visual_identity.py itself).
 # ---------------------------------------------------------------------------
 
-def test_samira_pin_is_a_valid_sha():
+def test_samira_pin_is_a_valid_sha() -> None:
+    """The Samira compatibility pin itself is a 40-char hex SHA."""
     assert _SHA_RE.fullmatch(_samira_pin())
 
 
-def test_visual_identity_docstring_matches_its_own_constant():
+def test_visual_identity_docstring_matches_its_own_constant() -> None:
     """Bonus check beyond the task's six: visual_identity.py carries the pin
     TWICE in one file (the "pinned server normalization block" docstring
     comment, and the SAMIRA_SERVER_COMMIT constant a few lines below it) --
@@ -161,7 +167,10 @@ def test_visual_identity_docstring_matches_its_own_constant():
     )
 
 
-def test_samira_pack_matches_visual_identity_pin():
+def test_samira_pack_matches_visual_identity_pin() -> None:
+    """visual_identity_pack.json's two commit fields agree with
+    SAMIRA_SERVER_COMMIT, the source of truth (see this file's docstring
+    upgrade path)."""
     data = json.loads(SAMIRA_PACK.read_text())
     pin = _samira_pin()
     assert data["normalization_contract"]["source_commit"] == pin, (
@@ -176,7 +185,10 @@ def test_samira_pack_matches_visual_identity_pin():
     )
 
 
-def test_visual_identity_contract_test_matches_visual_identity_pin():
+def test_visual_identity_contract_test_matches_visual_identity_pin() -> None:
+    """test_visual_identity_contract.py's hardcoded literal agrees with
+    SAMIRA_SERVER_COMMIT, the source of truth (see this file's docstring
+    upgrade path)."""
     text = VISUAL_IDENTITY_CONTRACT_TEST.read_text()
     literal_pin = _extract_one(
         text,
