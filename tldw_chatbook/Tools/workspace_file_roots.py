@@ -255,7 +255,9 @@ def folder_binding_roots(workspace_id: str | None) -> tuple[Path, ...]:
         Existing, resolved root directories; empty when the workspace has
         no usable bindings or the registry is unavailable.
     """
-    if not workspace_id:
+    from tldw_chatbook.Workspaces.models import DEFAULT_WORKSPACE_ID
+
+    if not workspace_id or workspace_id == DEFAULT_WORKSPACE_ID:
         return ()
     # TASK-1979: this function exists solely as the change-review tracker's
     # root source, so the enable gates live HERE — one choke point, read
@@ -372,12 +374,16 @@ def allowed_file_roots(*, write: bool, sandbox_root: Path) -> tuple[Path, ...]:
     """
     roots: list[Path] = [sandbox_root]
     try:
-        registry = _registry_factory()
         workspace_id = current_run_workspace_id()
+        from tldw_chatbook.Workspaces.models import DEFAULT_WORKSPACE_ID
+
+        if workspace_id == DEFAULT_WORKSPACE_ID:
+            return tuple(roots)
+        registry = _registry_factory()
         if workspace_id is None:
             active = registry.get_active_workspace()
             workspace_id = active.workspace_id if active is not None else None
-        if workspace_id is None:
+        if workspace_id is None or workspace_id == DEFAULT_WORKSPACE_ID:
             return tuple(roots)
         for binding in registry.list_folder_bindings(workspace_id):
             if write and str(binding.metadata.get("access", "ro")) != "rw":

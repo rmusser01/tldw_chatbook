@@ -33,6 +33,7 @@ from tldw_chatbook.Agents.agent_models import (
     SPAWN_TOOL_NAME,
     STEP_ERROR,
     STEP_TOOL_RESULT,
+    ToolCall,
     WAIT_AGENTS_TOOL_NAME,
 )
 from tldw_chatbook.Agents.mcp_tool_provider import MCPToolProvider
@@ -153,9 +154,7 @@ class _SignalGateway:
             shared synthetic-fallback signal.
     """
 
-    def __init__(
-        self, scripts, *, child_scripts=(), mark_fallback_calls=frozenset()
-    ):
+    def __init__(self, scripts, *, child_scripts=(), mark_fallback_calls=frozenset()):
         self._scripts = list(scripts)
         self._child_scripts = list(child_scripts)
         self._mark_fallback_calls = mark_fallback_calls
@@ -295,6 +294,7 @@ def _mcp_tests_keep_a_small_catalog(monkeypatch):
         return real_get_cli_setting(section, key, default, *args, **kwargs)
 
     monkeypatch.setattr(controller_module, "get_cli_setting", _small_catalog)
+
 
 def _controller(tmp_path, scripts, *, child_scripts=(), enabled=True):
     gateway = _Gateway(scripts, child_scripts)
@@ -475,9 +475,7 @@ async def test_agent_run_records_persisted_assistant_message_id(tmp_path):
     store = ConsoleChatStore(persistence=persistence)
     gateway = _Gateway([["Tok", "yo."]])
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
-    bridge = ConsoleAgentBridge(
-        agent_runs_db=db, store=store, provider_gateway=gateway
-    )
+    bridge = ConsoleAgentBridge(agent_runs_db=db, store=store, provider_gateway=gateway)
     controller = ConsoleChatController(
         store=store,
         provider_gateway=gateway,
@@ -1401,9 +1399,7 @@ def _fake_app(service=None):
 def _capturing_run_reply(captured, *, final_text="ok."):
     def run_reply(**kwargs):
         captured.append(kwargs)
-        return "run-test", RunOutcome(
-            status=RUN_DONE, steps=[], final_text=final_text
-        )
+        return "run-test", RunOutcome(status=RUN_DONE, steps=[], final_text=final_text)
 
     return run_reply
 
@@ -1538,6 +1534,83 @@ async def test_review_hook_and_run_reply_share_one_builtin_gate(tmp_path, monkey
 
 
 @pytest.mark.asyncio
+async def test_review_precheck_and_dispatch_share_captured_scratch(
+    tmp_path,
+    monkeypatch,
+):
+    """Approval precheck and worker dispatch receive one immutable authority."""
+    import tldw_chatbook.config as config
+
+    class ScratchReviewGate:
+        def __init__(self):
+            self.stamps = []
+
+        def begin_turn(self, _run_id):
+            return None
+
+        def resolve(self, _tool):
+            return EffectiveToolState(state="ask", origin="builtin_default")
+
+        def stamp(self, run_id, name, decision):
+            self.stamps.append((run_id, name, decision))
+
+        def is_session_approved(self, _name):
+            return False
+
+    real_setting = config.get_cli_setting
+
+    def enable_read_file(section, key, default=None):
+        if section == "tools" and key == "read_file_enabled":
+            return True
+        return real_setting(section, key, default)
+
+    observed = {}
+
+    def record_precheck(_name, _args, **kwargs):
+        observed.update(kwargs)
+        return False
+
+    controller, store, _db = _controller(tmp_path, [["ok."]])
+    captured = []
+    controller._agent_bridge.run_reply = _capturing_run_reply(captured)
+    controller.app = _fake_app()
+    controller.request_mcp_approvals = lambda pending, **_kwargs: {
+        row.call_id or row.llm_name: "approve_once" for row in pending
+    }
+    gate = ScratchReviewGate()
+    monkeypatch.setattr(config, "get_cli_setting", enable_read_file)
+    monkeypatch.setattr(controller_module, "build_builtin_gate", lambda _=None: gate)
+    monkeypatch.setattr(controller_module, "path_precheck_failed", record_precheck)
+
+    result = await controller.submit_draft("hi")
+
+    assert result.accepted is True
+    dispatch_root = captured[0]["scratch_root"]
+    dispatch_lease = captured[0]["scratch_lease"]
+    with dispatch_lease() as leased_root:
+        assert leased_root == dispatch_root
+
+    review_hook = captured[0]["review_tool_calls"]
+    review_hook(
+        [
+            ToolCall(
+                name="read_file",
+                args={"file_path": str(dispatch_root / "input.txt")},
+                call_id="read-1",
+            )
+        ],
+        "run-1",
+    )
+
+    assert observed["sandbox_root"] == dispatch_root
+    assert observed["sandbox_lease"] is dispatch_lease
+    assert observed["workspace_id"] == store.session_workspace_id(
+        store.active_session_id
+    )
+    assert controller._scratch_spaces.dispose()
+
+
+@pytest.mark.asyncio
 async def test_mcp_tool_call_executes_end_to_end_when_state_allows(tmp_path):
     """Full plumbing, real bridge: a fence call to an MCP tool name is
     registered, dispatched, and actually invoked via the real provider --
@@ -1639,7 +1712,9 @@ async def test_mcp_tool_call_session_approval_suppresses_card_on_next_turn(tmp_p
     llm_name = received[-1]["calls"][0]["llm_name"]
     assert llm_name == "mcp__srv__run"
     round_id = received[-1]["round_id"]
-    controller.resolve_pending_approval({llm_name: "approve_session"}, round_id=round_id)
+    controller.resolve_pending_approval(
+        {llm_name: "approve_session"}, round_id=round_id
+    )
     result1 = await send_task
     assert result1.accepted is True
     cards_pushed_after_turn1 = len(received)

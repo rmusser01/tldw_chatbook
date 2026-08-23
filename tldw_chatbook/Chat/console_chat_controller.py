@@ -1274,6 +1274,12 @@ def build_tool_review_hook(
                         call.args,
                         workspace_id=workspace_id,
                         roots_cache=path_roots_cache,
+                        sandbox_root=getattr(builtin_provider, "sandbox_root", None),
+                        sandbox_lease=getattr(
+                            builtin_provider,
+                            "sandbox_lease",
+                            None,
+                        ),
                     ),
                 )
             )
@@ -8109,6 +8115,17 @@ class ConsoleChatController:
             provider_selection or self._provider_selection_for_session(session_id)
         )
         try:
+            turn_context = self.resolve_turn_execution_context(session_id)
+        except Exception:  # noqa: BLE001 - preview failure stays content-free
+            return None
+        scratch_snapshot = turn_context.scratch_space
+        if scratch_snapshot is None:
+            return None
+        scratch_lease = functools.partial(
+            self._scratch_spaces.lease,
+            scratch_snapshot,
+        )
+        try:
             resolution = await self.provider_gateway.resolve_for_send(
                 owning_provider_selection
             )
@@ -8168,6 +8185,7 @@ class ConsoleChatController:
             session_id=session_id,
             project_selection=selection,
             project_authority_guard=None,
+            turn_context=turn_context,
             publish_mcp_counts=False,
         )
         try:
@@ -8186,6 +8204,8 @@ class ConsoleChatController:
                 mcp_provider=mcp_provider,
                 builtin_gate=builtin_gate,
                 local_provider=local_provider,
+                scratch_root=scratch_snapshot.root,
+                scratch_lease=scratch_lease,
                 turn_skill_bindings=turn_skill_bindings,
                 turn_bundle_block=turn_bundle_block,
                 request_skill_install_enabled=True,
@@ -11794,6 +11814,13 @@ class ConsoleChatController:
             turn_context = self.resolve_turn_execution_context(session_id)
         elif turn_context.session_id != session_id:
             raise ValueError("Console turn context does not own the assistant row.")
+        scratch_snapshot = turn_context.scratch_space
+        if scratch_snapshot is None:
+            return self._block(session_id, "Private scratch space is unavailable.")
+        scratch_lease = functools.partial(
+            self._scratch_spaces.lease,
+            scratch_snapshot,
+        )
         session = next((s for s in self.store.sessions() if s.id == session_id), None)
         startup_candidate: StartupInstructionCandidate | None = None
         project_selection: ProjectInstructionBindingSelection | None = None
@@ -12041,7 +12068,6 @@ class ConsoleChatController:
         # so it does not need to be the SAME `BuiltinToolProvider` object
         # the bridge's registry actually dispatches through (its `_tools`
         # dict is stateless data rebuilt identically by any instance).
-        builtin_review_provider = BuiltinToolProvider(gate=builtin_gate)
         # Round 1 review CRITICAL 1: resolve THIS run's OWN workspace id --
         # the SAME lookup `ConsoleAgentBridge.run_reply` makes
         # (`self._store.session_workspace_id(session_id)`) for the real
@@ -12055,6 +12081,12 @@ class ConsoleChatController:
             review_workspace_id = self.store.session_workspace_id(session_id)
         except KeyError:
             review_workspace_id = None
+        builtin_review_provider = BuiltinToolProvider(
+            gate=builtin_gate,
+            workspace_id=review_workspace_id,
+            sandbox_root=scratch_snapshot.root,
+            sandbox_lease=scratch_lease,
+        )
         # Task 9: bind THIS run's owning session id into the approval
         # bridge so `request_mcp_approvals` can (a) scope its cancellation
         # check to this run's own cancel event rather than falling back to
@@ -12129,6 +12161,8 @@ class ConsoleChatController:
                 supersede_previous=bool(prepare_retry or variant_mode),
                 mcp_provider=mcp_provider,
                 builtin_gate=builtin_gate,
+                scratch_root=scratch_snapshot.root,
+                scratch_lease=scratch_lease,
                 review_tool_calls=review_hook,
                 local_provider=local_provider,
                 library_provider=library_provider,

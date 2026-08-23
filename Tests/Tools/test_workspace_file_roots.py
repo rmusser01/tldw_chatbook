@@ -89,6 +89,35 @@ def test_registry_failure_degrades_to_sandbox_only(tmp_path, monkeypatch) -> Non
         assert wfr.allowed_file_roots(write=True, sandbox_root=sandbox) == (sandbox,)
 
 
+def test_default_chat_ignores_folder_bindings_even_from_permissive_registry(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """Default Chat stays scratch-only even if a registry violates its contract."""
+    scratch = tmp_path / "chat"
+    external = tmp_path / "external"
+    scratch.mkdir()
+    external.mkdir()
+
+    class PermissiveRegistry:
+        def list_folder_bindings(self, _workspace_id):
+            return (
+                type(
+                    "Binding",
+                    (),
+                    {"locator": str(external), "metadata": {"access": "rw"}},
+                )(),
+            )
+
+    monkeypatch.setattr(wfr, "_registry_factory", PermissiveRegistry)
+
+    with wfr.run_workspace(DEFAULT_WORKSPACE_ID):
+        roots = wfr.allowed_file_roots(write=False, sandbox_root=scratch)
+
+    assert roots == (scratch,)
+    assert wfr.folder_binding_roots(DEFAULT_WORKSPACE_ID) == ()
+
+
 def test_run_file_sandbox_overrides_global_only_inside_scope(
     tmp_path,
     monkeypatch,

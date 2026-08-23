@@ -773,6 +773,11 @@ class BuiltinToolProvider:
         """Return this provider's explicit run sandbox, when one was bound."""
         return self._sandbox_root
 
+    @property
+    def sandbox_lease(self) -> Callable[[], ContextManager[Path]] | None:
+        """Return the lease factory paired with the explicit run sandbox."""
+        return self._sandbox_lease
+
     @contextmanager
     def _file_authority(self) -> Iterator[None]:
         """Keep the explicit scratch generation alive for one file access."""
