@@ -8,6 +8,7 @@ from typing import Never, Protocol
 
 from tldw_chatbook.Library.library_notes_lasting_sync_state import (
     LASTING_SYNC_HISTORY_PAGE_SIZE,
+    LastingSyncApplyBlocker,
     LastingSyncHistory,
     LastingSyncHistoryRow,
     LastingSyncReceiptRow,
@@ -303,12 +304,29 @@ class LibraryNotesSyncController:
         self._clear_comparison()
         self._project_review()
 
+    def _invalidate_review_authority(self) -> None:
+        self._selections.clear()
+        self._clear_comparison()
+        if self._review_plan is not None:
+            self._project_review(stale=True)
+        self._state = replace(
+            self._state,
+            review=replace(
+                self._state.review,
+                stale=True,
+                next_action="Check again",
+                can_apply=False,
+                apply_blocker=LastingSyncApplyBlocker.STALE_REVIEW,
+            ),
+        )
+        self._review_plan = None
+
     def invalidate_for_remount(self) -> None:
         """Release review-only state when the presenting canvas is replaced."""
 
         self._advance_lifecycle()
         self._projection_root_id = None
-        self._clear_ephemeral_review()
+        self._invalidate_review_authority()
         self._invalidate_receipt_history()
 
     def _advance_lifecycle(self) -> int:
@@ -344,13 +362,13 @@ class LibraryNotesSyncController:
             self._switch_projection_root(root_id)
         else:
             self._advance_lifecycle()
-            self._clear_ephemeral_review()
+        self._invalidate_review_authority()
         return self._lifecycle_epoch
 
     def _begin_unbound_lifecycle(self) -> int:
         self._advance_lifecycle()
         self._projection_root_id = None
-        self._clear_ephemeral_review()
+        self._invalidate_review_authority()
         self._invalidate_receipt_history()
         return self._lifecycle_epoch
 
@@ -498,7 +516,7 @@ class LibraryNotesSyncController:
             return
         if not self._lifecycle_is_current(root_id, epoch):
             return
-        if plan.root_id != root_id:
+        if type(plan) is not ReconciliationPlan or plan.root_id != root_id:
             self._state = replace(
                 self._state,
                 phase="review",
@@ -545,6 +563,14 @@ class LibraryNotesSyncController:
             return
         if not self._lifecycle_is_current(None, epoch):
             return
+        if type(plan) is not ReconciliationPlan:
+            self._state = replace(
+                self._state,
+                phase="configure",
+                status_line="Check returned an invalid review. Review setup and try again.",
+            )
+            self._publish()
+            return
         self._projection_root_id = plan.root_id
         self._review_plan = plan
         self._state = replace(
@@ -562,6 +588,7 @@ class LibraryNotesSyncController:
         await self.check_root(root_id)
         if (
             self._lifecycle_is_current(root_id, expected_epoch)
+            and self._review_plan is not None
             and self._state.phase == "review"
             and self._state.review.root_id == root_id
         ):
@@ -767,7 +794,7 @@ class LibraryNotesSyncController:
             return
         if not self._lifecycle_is_current(root_id, epoch):
             return
-        if plan.root_id != root_id:
+        if type(plan) is not ReconciliationPlan or plan.root_id != root_id:
             self._state = replace(
                 self._state,
                 phase="roots",
@@ -788,6 +815,7 @@ class LibraryNotesSyncController:
         """Forward one operation-specific recovery already exposed by the runtime."""
 
         self._switch_projection_root(root_id)
+        self._invalidate_review_authority()
         epoch = self._lifecycle_epoch
         try:
             await self._runtime.resolve_cleanup(root_id, operation_id)
@@ -1257,6 +1285,7 @@ class LibraryNotesSyncController:
         }:
             raise ValueError("unknown root action")
         self._switch_projection_root(root_id)
+        self._invalidate_review_authority()
         self._state = replace(
             self._state,
             phase="roots",
@@ -1277,6 +1306,8 @@ class LibraryNotesSyncController:
             )
             self._publish()
             return False
+        authorization = self._state.review.observation_token
+        self._invalidate_review_authority()
         self._state = replace(
             self._state,
             phase="activating",
@@ -1284,9 +1315,7 @@ class LibraryNotesSyncController:
         )
         self._publish()
         try:
-            result = await self._runtime.activate_root(
-                root_id, self._state.review.observation_token
-            )
+            result = await self._runtime.activate_root(root_id, authorization)
         except Exception:
             if not self._lifecycle_is_current(root_id, epoch):
                 return False
@@ -1327,6 +1356,7 @@ class LibraryNotesSyncController:
 
     async def pause_root(self, root_id: str) -> None:
         self._switch_projection_root(root_id)
+        self._invalidate_review_authority()
         epoch = self._lifecycle_epoch
         await self._run_root_control(
             self._runtime.pause_root(root_id), root_id=root_id, epoch=epoch
@@ -1334,6 +1364,7 @@ class LibraryNotesSyncController:
 
     async def resume_root(self, root_id: str) -> None:
         self._switch_projection_root(root_id)
+        self._invalidate_review_authority()
         epoch = self._lifecycle_epoch
         await self._run_root_control(
             self._runtime.resume_root(root_id), root_id=root_id, epoch=epoch
@@ -1341,6 +1372,7 @@ class LibraryNotesSyncController:
 
     async def retarget_root(self, root_id: str, target: str) -> None:
         self._switch_projection_root(root_id)
+        self._invalidate_review_authority()
         epoch = self._lifecycle_epoch
         if not await self._run_root_control(
             self._runtime.retarget_root(root_id, target),
@@ -1368,6 +1400,7 @@ class LibraryNotesSyncController:
         self, root_id: str, *, keep_folder_organization: bool
     ) -> None:
         self._switch_projection_root(root_id)
+        self._invalidate_review_authority()
         epoch = self._lifecycle_epoch
         if not await self._run_root_control(
             self._runtime.disconnect_root(root_id, keep_folder_organization),

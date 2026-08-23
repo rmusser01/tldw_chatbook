@@ -8,6 +8,9 @@ from inspect import signature
 
 import pytest
 
+from tldw_chatbook.Library.library_notes_lasting_sync_state import (
+    LastingSyncApplyBlocker,
+)
 from tldw_chatbook.Notes.notes_sync_conflicts import (
     ConflictApplyResult,
     ConflictComparison,
@@ -517,6 +520,10 @@ async def test_runtime_failure_is_bounded_redacted_and_leaves_checking_phase() -
 
     assert controller.snapshot.phase == "review"
     assert controller.snapshot.review.next_action == "Check again"
+    assert controller.snapshot.review.stale is True
+    assert (
+        controller.snapshot.review.apply_blocker is LastingSyncApplyBlocker.STALE_REVIEW
+    )
     assert "failed" in controller.snapshot.status_line.casefold()
     assert "/Users" not in repr(controller.snapshot)
     assert "secret body" not in repr(controller.snapshot)
@@ -1617,3 +1624,71 @@ async def test_new_check_supersedes_pending_activate_and_control_publication() -
     await pending_control
     assert controller.snapshot.phase == "review"
     assert controller.snapshot.review.observation_token == TOKEN
+
+
+@pytest.mark.parametrize("failure", ["exception", "wrong_root", "malformed"])
+async def test_failed_recheck_invalidates_prior_review_authority(
+    failure: str,
+) -> None:
+    runtime = _Runtime()
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+    await controller.check_root("root-1")
+    assert controller.snapshot.review.can_apply is True
+
+    async def failed_check(root_id: str) -> object:
+        if failure == "exception":
+            raise RuntimeError("check unavailable")
+        if failure == "wrong_root":
+            return _conflict_plan(root_id="root-2")
+        return {"root_id": root_id, "observation_token": TOKEN_2}
+
+    runtime.check_root = failed_check
+    await controller.check_root("root-1")
+
+    assert controller._review_plan is None  # noqa: SLF001 - authority contract
+    assert controller.snapshot.review.stale is True
+    assert controller.snapshot.review.can_apply is False
+    calls_before_apply = tuple(runtime.calls)
+    await controller.apply_reviewed()
+    assert tuple(runtime.calls) == calls_before_apply
+
+
+@pytest.mark.parametrize(
+    "operation", ["sync_now", "check_setup", "activate", "control"]
+)
+async def test_failed_fresh_review_paths_clear_prior_authority(operation: str) -> None:
+    runtime = _Runtime()
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+    await controller.check_root("root-1")
+    assert controller.snapshot.review.can_apply is True
+
+    async def fail(*args: object, **kwargs: object) -> object:
+        raise RuntimeError("operation unavailable")
+
+    if operation == "sync_now":
+        runtime.request_sync_now = fail
+        await controller.sync_now("root-1")
+    elif operation == "check_setup":
+        controller.set_setup("display_name", "Notes")
+        controller.set_setup("folder", "/private/root")
+        runtime.review_setup = fail
+        await controller.check_setup()
+    elif operation == "activate":
+        runtime.activate_root = fail
+        await controller.activate_root("root-1")
+    else:
+        runtime.pause_root = fail
+        await controller.pause_root("root-1")
+
+    assert controller._review_plan is None  # noqa: SLF001 - authority contract
+    assert controller.snapshot.review.stale is True
+    assert controller.snapshot.review.can_apply is False
+    calls_before_apply = tuple(runtime.calls)
+    await controller.apply_reviewed()
+    assert tuple(runtime.calls) == calls_before_apply
