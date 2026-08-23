@@ -69,6 +69,14 @@ class LibraryPreparationContribution:
     event: LibraryPreparationEvent
     owner_message_key: Literal["user"] = "user"
 
+    def durable_acceptance_fingerprint(self) -> Mapping[str, object]:
+        """Return the bounded immutable inputs which determine this write."""
+
+        return {
+            "event": self.event,
+            "owner_message_key": self.owner_message_key,
+        }
+
     def write(
         self,
         *,

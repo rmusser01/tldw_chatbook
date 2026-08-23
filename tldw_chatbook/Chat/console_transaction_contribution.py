@@ -50,6 +50,13 @@ class ConsoleTransactionContribution(Protocol):
         """Write through the caller-owned capability without committing."""
 
 
+class ConsoleDurableFingerprintContribution(Protocol):
+    """Optional canonical plan input for a non-frozen durable contribution."""
+
+    def durable_acceptance_fingerprint(self) -> Mapping[str, object]:
+        """Return bounded immutable data which fully determines the write."""
+
+
 class _CursorConsoleTransactionWriter:
     __slots__ = (
         "__cursor",

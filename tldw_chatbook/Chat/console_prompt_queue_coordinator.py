@@ -363,6 +363,28 @@ class ConsolePromptQueueCoordinator:
                 callback(ConsoleQueuedAcceptanceEvent(session_id, entry_id))
         return True
 
+    def bind_claimed_preparation(
+        self,
+        session_id: str,
+        *,
+        entry_id: str,
+        preparation_id: str,
+    ) -> bool:
+        """Bind the exact current claim to its precommit recovery owner."""
+
+        chain = self._chains.get(session_id)
+        if chain is None or chain.current_entry_id != entry_id:
+            return False
+        result = self.registry.bind_claimed_preparation(
+            session_id,
+            entry_id=entry_id,
+            preparation_id=preparation_id,
+        )
+        return result.status in {
+            QueueMutationStatus.APPLIED,
+            QueueMutationStatus.UNCHANGED,
+        }
+
     def retain_durable_acceptance(self, session_id: str) -> None:
         """Fence a committed queued claim from returning to pending.
 
@@ -629,7 +651,7 @@ class ConsolePromptQueueCoordinator:
         return resumed
 
     def reclaim_prepared_entry(
-        self, session_id: str, entry_id: str
+        self, session_id: str, entry_id: str, preparation_id: str
     ) -> QueueGenerationAuthorization | None:
         """Resume and reclaim the exact head entry owned by a paused preparation."""
 
@@ -653,6 +675,17 @@ class ConsolePromptQueueCoordinator:
             return None
         chain = self._chains[session_id]
         chain.current_entry_id = entry_id
+        if not self.bind_claimed_preparation(
+            session_id,
+            entry_id=entry_id,
+            preparation_id=preparation_id,
+        ):
+            self._return_claim(
+                session_id,
+                entry_id,
+                PromptQueuePauseReason.DISPATCH_REFUSED,
+            )
+            return None
         self._changed(session_id)
         return QueueGenerationAuthorization(self, session_id, _key=_AUTHORIZATION_KEY)
 

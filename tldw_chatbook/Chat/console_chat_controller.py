@@ -3813,7 +3813,9 @@ class ConsoleChatController:
             try:
                 queue_authorization = (
                     self.prompt_queue_coordinator.reclaim_prepared_entry(
-                        preparation.session_id, preparation.queue_entry_id
+                        preparation.session_id,
+                        preparation.queue_entry_id,
+                        preparation.preparation_id,
                     )
                 )
             except BaseException:
@@ -4056,7 +4058,14 @@ class ConsoleChatController:
         if removed is not None:
             self._preparation_outcomes.pop(preparation_id, None)
             self._prepared_send_continuations.pop(preparation_id, None)
-            if self.store.durable_turn_commit_for(preparation_id) is None:
+            fingerprint = self.store.durable_acceptance_fingerprint_for(preparation_id)
+            if (
+                fingerprint is None
+                or self.store.durable_turn_commit_for(
+                    preparation_id, fingerprint=fingerprint
+                )
+                is None
+            ):
                 self.store.discard_uncommitted_durable_preparation(preparation_id)
 
     def _abandon_preparation(self, preparation_id: str) -> None:
@@ -4842,6 +4851,25 @@ class ConsoleChatController:
                     False,
                     "Another send is still preparing for this conversation.",
                 )
+            if origin is ConsoleSubmissionOrigin.QUEUED and (
+                queue_entry_id is None
+                or not self.prompt_queue_coordinator.bind_claimed_preparation(
+                    session.id,
+                    entry_id=queue_entry_id,
+                    preparation_id=preparation.preparation_id,
+                )
+            ):
+                self._abandon_preparation(preparation.preparation_id)
+                if echoed_user is not None:
+                    self._mark_transient_echo_blocked(echoed_user.id)
+                return ConsoleSubmitResult(
+                    False,
+                    False,
+                    "Queued preparation could not bind its exact entry.",
+                    session_id=session.id,
+                    origin=origin,
+                    queue_entry_id=queue_entry_id,
+                )
             self._prepared_send_continuations[preparation.preparation_id] = (
                 _PreparedSendContinuation(
                     preparation_id=preparation.preparation_id,
@@ -5308,7 +5336,7 @@ class ConsoleChatController:
         effect_name: str,
         callback: Callable[[], Any],
         *,
-        fingerprint: ConsoleDurableAcceptanceFingerprint | None = None,
+        fingerprint: ConsoleDurableAcceptanceFingerprint,
     ) -> Any:
         """Run one preparation-keyed effect and mark it only after success."""
 
@@ -5363,10 +5391,20 @@ class ConsoleChatController:
     ) -> ConsoleSubmitResult:
         """Commit one durable owner, then enter its idempotent effect chain."""
 
+        staged_identity = self.store.staged_durable_turn_identity_for(
+            preparation.preparation_id
+        )
         identity = self.store.stage_durable_turn_identity(
             session.id,
             preparation.preparation_id,
-            title=staged_title,
+            title=staged_identity.title
+            if staged_identity is not None
+            else staged_title,
+        )
+        owner_ids = self.store.stage_durable_turn_owner_ids(
+            session.id,
+            preparation.preparation_id,
+            user_message_id=echoed_user.id,
         )
         parent_message_id = None
         if echoed_user.parent_message_id is not None:
@@ -5394,8 +5432,8 @@ class ConsoleChatController:
         )
         acceptance = ConsoleDurableTurnAcceptance(
             conversation_id=identity.conversation_id,
-            user_message_id=echoed_user.id,
-            assistant_message_id=str(uuid4()),
+            user_message_id=owner_ids.user_message_id,
+            assistant_message_id=owner_ids.assistant_message_id,
             parent_message_id=parent_message_id,
             user_content=preparation.executed_draft,
             attachments=tuple(

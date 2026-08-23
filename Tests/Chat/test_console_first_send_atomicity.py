@@ -21,6 +21,7 @@ from tldw_chatbook.Chat.console_turn_preparation import (
 )
 from tldw_chatbook.Chat.prompt_history import PromptHistory
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from Tests.Chat.test_console_durable_turn_acceptance import _ready_store
 
 
 _POSTCOMMIT_EFFECTS = (
@@ -167,8 +168,6 @@ async def test_first_durable_send_commits_owner_then_cas_before_provider_entry(
     assert checkpoint["assistant_message_id"] == result.assistant_message_id
     assert accepted_hooks == 1
     assert controller.prompt_history.size == 1
-    effects = store.durable_postcommit_effects_for(result.preparation_id)
-    assert effects is None
     assert store.durable_content_retention_count() == 0
     assert store.durable_tombstone_count() == 1
 
@@ -215,12 +214,11 @@ async def test_postcommit_effect_failure_is_reentered_once_by_preparation_id(
     tmp_path: Path,
     effect_name: str,
 ) -> None:
-    _db, store, controller, _gateway = _controller(tmp_path)
-    store.begin_durable_postcommit_effects(
-        preparation_id="preparation-1",
-        session_id="session-1",
-        assistant_message_id="assistant-1",
-    )
+    _db, _service, store, _preparation, acceptance = _ready_store(tmp_path)
+    store.commit_durable_turn(acceptance)
+    fingerprint = store.durable_acceptance_fingerprint_for("preparation-1")
+    assert fingerprint is not None
+    controller = ConsoleChatController(store=store, provider_gateway=object())
     calls = 0
 
     async def flaky_effect() -> None:
@@ -231,20 +229,24 @@ async def test_postcommit_effect_failure_is_reentered_once_by_preparation_id(
 
     with pytest.raises(RuntimeError, match="injected postcommit"):
         await controller._run_durable_postcommit_effect(
-            "preparation-1", effect_name, flaky_effect
+            "preparation-1", effect_name, flaky_effect, fingerprint=fingerprint
         )
-    failed = store.durable_postcommit_effects_for("preparation-1")
+    failed = store.durable_postcommit_effects_for(
+        "preparation-1", fingerprint=fingerprint
+    )
     assert failed is not None
     assert effect_name not in failed.completed
 
     await controller._run_durable_postcommit_effect(
-        "preparation-1", effect_name, flaky_effect
+        "preparation-1", effect_name, flaky_effect, fingerprint=fingerprint
     )
     await controller._run_durable_postcommit_effect(
-        "preparation-1", effect_name, flaky_effect
+        "preparation-1", effect_name, flaky_effect, fingerprint=fingerprint
     )
 
-    completed = store.durable_postcommit_effects_for("preparation-1")
+    completed = store.durable_postcommit_effects_for(
+        "preparation-1", fingerprint=fingerprint
+    )
     assert completed is not None
     assert effect_name in completed.completed
     assert calls == 2

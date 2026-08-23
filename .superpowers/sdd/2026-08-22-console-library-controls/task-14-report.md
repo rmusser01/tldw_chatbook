@@ -162,3 +162,83 @@ killed: adapter-shape fallback, global-id collision removal, detached queue ack
 success, evidence omission, pre-callback effect completion, success cleanup
 removal, and tombstone-cap removal. Scoped Ruff, formatter, privacy/source scans,
 and `git diff --check` passed. No full repository sweep was run.
+
+## Review fix round 2
+
+Every durable preparation now stages its conversation, USER, and assistant IDs
+once under the preparation RLock and reuses those exact owners on persistence
+Retry. Real controller tests fail at conversation creation, policy persistence,
+checkpoint insertion, and the actual outer SQLite COMMIT across Never/Automatic
+manual/queued sends; each failure returns the same owner to
+`PAUSED(PERSISTENCE)` with Retry/Cancel, then commits one USER, one empty
+assistant, one checkpoint, and enters the provider once. Fingerprint construction
+failure follows the same pause contract. A concurrent exact caller may receive an
+explicit in-flight refusal, but cannot remove or pause the caller that owns the
+commit; once that owner completes, the exact acceptance returns its cached commit.
+
+One mandatory body-free `ConsoleDurableAcceptanceFingerprint` now carries a
+SHA-256 digest of canonical preparation/attempt/session and effect ownership,
+staged conversation/title/message identity, workspace/policy/conversation
+arguments, USER body hash, parent, canonical attachments, origin/queue identity,
+frozen authority, credential-free destination, reconstruction truth, and bounded
+contribution fingerprints. Frozen dataclasses are canonical by typed fields;
+other contributions must expose `durable_acceptance_fingerprint()` and
+noncanonical or oversized values fail before SQLite. Every commit/effect cache API
+requires and validates the exact fingerprint. Only the digest and owner IDs reach
+the bounded tombstone; draft, attachment bytes, evidence, prefill, provider
+messages, and contribution bodies are not retained.
+
+Queue claims bind their exact `session_id + entry_id + preparation_id` before a
+queued preparation is published. Return-to-pending clears the binding, reclaim
+rebinds it, accepted settlement validates it, and the exact tombstone alone makes
+detached replay idempotent. A forged preparation cannot settle the claim or a
+different entry/session; later entries remain paused after accepted settlement.
+
+The round-2 suite began RED at 19 failed/1 passed before production changes. A
+later concurrency self-review ratchet independently failed on stolen in-flight
+ownership before its fix. Fresh restored verification was:
+
+- prior Task-14 files: 46 passed;
+- round-2 file: 21 passed;
+- exact Task-13 affected command: 628 passed;
+- runtime/queue/UI companion command: 100 passed;
+- exact DB/migration/state command: 126 passed.
+
+The exact 126-test command was
+`../../.venv/bin/python -m pytest -q --tb=short --show-capture=no`
+`Tests/DB/test_chachanotes_console_library_policy_migration.py`
+`Tests/ChaChaNotesDB/test_migration_atomicity.py`
+`Tests/Chat/test_assistant_generation_state.py`
+`Tests/Chat/test_chat_persistence_service.py`. Every gate emitted only the
+inherited Requests dependency warning; no full repository sweep was run.
+
+Four independently applied and restored round-2 mutants were killed: generating
+a fresh assistant ID per Retry failed all four real Retry cases; omitting the USER
+body hash failed the content-forgery ratchet; allowing a `None` effect fingerprint
+failed the mandatory-API ratchet; and omitting claim/preparation validation let a
+forged queue owner settle and failed the exact-binding ratchet. Each target below
+was invoked with `../../.venv/bin/python -m pytest -q --tb=short --show-capture=no`;
+the exact targets/results were:
+
+- `Tests/Chat/test_console_durable_turn_fix_round2.py::test_real_persistence_retry_reuses_exact_staged_message_owners`
+  — 4 failed;
+- `Tests/Chat/test_console_durable_turn_fix_round2.py::test_cached_commit_rejects_each_material_acceptance_mutation[content]`
+  — 1 failed;
+- `Tests/Chat/test_console_durable_turn_fix_round2.py::test_every_postcommit_cache_api_requires_exact_non_none_fingerprint`
+  — 1 failed;
+- `Tests/Chat/test_console_durable_turn_fix_round2.py::test_claim_binding_rejects_forged_ack_then_correct_owner_settles`
+  — 1 failed.
+
+Scoped Ruff passed
+for every affected file, formatter checks passed for the new test and changed
+controller/queue files, changed store/contribution ranges were reviewed against
+the repository's pre-existing whole-file format drift, and `git diff --check` plus
+body-retention/source inspection passed.
+
+ADR required: no. ADR path:
+`backlog/decisions/079-console-library-conversation-authority.md`. This round
+tightens ADR-079's existing ownership/authentication boundaries. TASK-19900.3
+remains In Progress with all 22 criteria unchecked. Task 15 still owns restart
+hydration/recovery actions, queue restart reconciliation, terminal checkpoint
+settlement/deletion, and Discard; the live terminal seam therefore still leaves
+the durable checkpoint honestly `dispatch_started`.

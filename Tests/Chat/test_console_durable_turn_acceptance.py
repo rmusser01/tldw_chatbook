@@ -53,6 +53,10 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, TransactionContextM
 class _SequenceThenInsertContribution:
     calls: int = 0
 
+    def durable_acceptance_fingerprint(self) -> dict[str, object]:
+        """Return only immutable contribution inputs, excluding test counters."""
+        return {"event_kind": "library_preparation", "outcome": "bypassed"}
+
     def write(
         self,
         *,

@@ -9,8 +9,9 @@ import json
 import threading
 import time
 from collections import OrderedDict, deque
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, is_dataclass, replace
 from datetime import datetime, timezone
+from enum import Enum
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Mapping, Protocol, Sequence
 from uuid import uuid4
 
@@ -312,6 +313,15 @@ class ConsoleDurableAcceptanceFingerprint:
     attempt_id: str
     origin: str
     queue_entry_id: str | None
+    user_message_id: str
+    assistant_message_id: str
+    digest: str
+
+
+@dataclass(frozen=True, slots=True)
+class _ConsoleStagedDurableOwnerIds:
+    """Stable USER/assistant identities reserved for every commit retry."""
+
     user_message_id: str
     assistant_message_id: str
 
@@ -912,6 +922,9 @@ class ConsoleChatStore:
         self._preparations_by_id: dict[str, ConsoleTurnPreparation] = {}
         self._durable_identity_by_preparation: dict[
             str, ConsoleStagedConversationIdentity
+        ] = {}
+        self._durable_owner_ids_by_preparation: dict[
+            str, _ConsoleStagedDurableOwnerIds
         ] = {}
         self._durable_commit_by_preparation: dict[str, ConsoleDurableTurnCommit] = {}
         self._durable_effects_by_preparation: dict[
@@ -2405,12 +2418,189 @@ class ConsoleChatStore:
             self._durable_identity_by_preparation[preparation_id] = identity
             return identity
 
+    def staged_durable_turn_identity_for(
+        self, preparation_id: str
+    ) -> ConsoleStagedConversationIdentity | None:
+        """Return one live staged identity for exact in-process Retry."""
+
+        with self._preparation_lock:
+            return self._durable_identity_by_preparation.get(preparation_id)
+
+    def stage_durable_turn_owner_ids(
+        self,
+        session_id: str,
+        preparation_id: str,
+        *,
+        user_message_id: str,
+        assistant_message_id: str | None = None,
+    ) -> _ConsoleStagedDurableOwnerIds:
+        """Reserve exact message owners once and reuse them across persistence Retry."""
+
+        if type(user_message_id) is not str or not user_message_id:
+            raise ValueError("user_message_id must be non-empty text")
+        if assistant_message_id is not None and (
+            type(assistant_message_id) is not str or not assistant_message_id
+        ):
+            raise ValueError("assistant_message_id must be non-empty text or None")
+        with self._preparation_lock:
+            preparation = self._preparations_by_id.get(preparation_id)
+            if preparation is None or preparation.session_id != session_id:
+                raise RuntimeError("Durable preparation owner changed.")
+            if preparation_id in self._durable_tombstones:
+                raise RuntimeError("Durable preparation was already retired.")
+            existing = self._durable_owner_ids_by_preparation.get(preparation_id)
+            if existing is not None:
+                if existing.user_message_id != user_message_id or (
+                    assistant_message_id is not None
+                    and existing.assistant_message_id != assistant_message_id
+                ):
+                    raise RuntimeError("Durable message owner changed.")
+                return existing
+            owners = _ConsoleStagedDurableOwnerIds(
+                user_message_id=user_message_id,
+                assistant_message_id=assistant_message_id or str(uuid4()),
+            )
+            self._durable_owner_ids_by_preparation[preparation_id] = owners
+            return owners
+
     @staticmethod
+    def _canonical_fingerprint_value(value: object, *, depth: int = 0) -> object:
+        """Return deterministic JSON-safe data without retaining binary bodies."""
+
+        if depth > 12:
+            raise ValueError("Durable acceptance fingerprint is not canonical.")
+        if value is None or type(value) in {bool, int, str}:
+            return value
+        if isinstance(value, Enum):
+            return {
+                "enum": f"{type(value).__module__}.{type(value).__qualname__}",
+                "value": value.value,
+            }
+        if type(value) is bytes:
+            return {
+                "bytes_sha256": hashlib.sha256(value).hexdigest(),
+                "bytes_length": len(value),
+            }
+        if isinstance(value, Mapping):
+            if any(type(key) is not str for key in value):
+                raise TypeError("Durable acceptance fingerprint keys must be text.")
+            return {
+                key: ConsoleChatStore._canonical_fingerprint_value(
+                    item, depth=depth + 1
+                )
+                for key, item in sorted(value.items())
+            }
+        if type(value) in {tuple, list}:
+            return [
+                ConsoleChatStore._canonical_fingerprint_value(item, depth=depth + 1)
+                for item in value
+            ]
+        if is_dataclass(value) and not isinstance(value, type):
+            parameters = getattr(type(value), "__dataclass_params__", None)
+            if parameters is None or not parameters.frozen:
+                raise TypeError(
+                    "Durable acceptance fingerprint requires a frozen dataclass."
+                )
+            return {
+                "dataclass": f"{type(value).__module__}.{type(value).__qualname__}",
+                "fields": {
+                    item.name: ConsoleChatStore._canonical_fingerprint_value(
+                        getattr(value, item.name), depth=depth + 1
+                    )
+                    for item in fields(value)
+                },
+            }
+        raise TypeError("Durable acceptance fingerprint input is not canonical.")
+
+    @classmethod
+    def _contribution_fingerprint(cls, contribution: object) -> object:
+        provider = getattr(contribution, "durable_acceptance_fingerprint", None)
+        if callable(provider):
+            payload = provider()
+        elif is_dataclass(contribution) and not isinstance(contribution, type):
+            parameters = getattr(type(contribution), "__dataclass_params__", None)
+            if parameters is None or not parameters.frozen:
+                raise TypeError(
+                    "Durable contribution fingerprint requires a frozen dataclass "
+                    "or durable_acceptance_fingerprint()."
+                )
+            payload = contribution
+        else:
+            raise TypeError("Durable contribution fingerprint requires canonical data.")
+        canonical = {
+            "type": f"{type(contribution).__module__}.{type(contribution).__qualname__}",
+            "payload": cls._canonical_fingerprint_value(payload),
+        }
+        encoded = json.dumps(
+            canonical,
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        if len(encoded) > 16_384:
+            raise ValueError("Durable contribution fingerprint exceeds its bound.")
+        return canonical
+
+    @classmethod
     def _durable_acceptance_fingerprint(
+        cls,
         acceptance: ConsoleDurableTurnAcceptance,
         preparation: ConsoleTurnPreparation,
         identity: ConsoleStagedConversationIdentity,
+        owners: _ConsoleStagedDurableOwnerIds,
+        policy_candidate: ConsoleLibraryPolicyCandidate,
+        conversation_kwargs: Mapping[str, object],
     ) -> ConsoleDurableAcceptanceFingerprint:
+        plan = {
+            "preparation_id": acceptance.preparation_id,
+            "attempt_id": acceptance.attempt_id,
+            "session_id": preparation.session_id,
+            "effect_owner": {
+                "session_id": preparation.session_id,
+                "preparation_id": acceptance.preparation_id,
+                "assistant_message_id": owners.assistant_message_id,
+            },
+            "identity": {
+                "conversation_id": identity.conversation_id,
+                "title_sha256": hashlib.sha256(
+                    identity.title.encode("utf-8")
+                ).hexdigest(),
+                "user_message_id": owners.user_message_id,
+                "assistant_message_id": owners.assistant_message_id,
+            },
+            "policy_candidate": cls._canonical_fingerprint_value(policy_candidate),
+            "conversation_kwargs": cls._canonical_fingerprint_value(
+                conversation_kwargs
+            ),
+            "user_content_sha256": hashlib.sha256(
+                acceptance.user_content.encode("utf-8")
+            ).hexdigest(),
+            "parent_message_id": acceptance.parent_message_id,
+            "attachments": cls._canonical_fingerprint_value(acceptance.attachments),
+            "origin": acceptance.origin,
+            "queue_entry_id": acceptance.queue_entry_id,
+            "frozen_authority": cls._canonical_fingerprint_value(
+                acceptance.frozen_authority
+            ),
+            "resolved_destination": cls._canonical_fingerprint_value(
+                acceptance.resolved_destination
+            ),
+            "reconstructability": cls._canonical_fingerprint_value(
+                acceptance.reconstructability
+            ),
+            "contributions": [
+                cls._contribution_fingerprint(contribution)
+                for contribution in acceptance.contributions
+            ],
+        }
+        encoded = json.dumps(
+            plan,
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
         return ConsoleDurableAcceptanceFingerprint(
             preparation_id=acceptance.preparation_id,
             session_id=preparation.session_id,
@@ -2419,8 +2609,9 @@ class ConsoleChatStore:
             attempt_id=acceptance.attempt_id,
             origin=acceptance.origin,
             queue_entry_id=acceptance.queue_entry_id,
-            user_message_id=acceptance.user_message_id,
-            assistant_message_id=acceptance.assistant_message_id,
+            user_message_id=owners.user_message_id,
+            assistant_message_id=owners.assistant_message_id,
+            digest=hashlib.sha256(encoded).hexdigest(),
         )
 
     def durable_acceptance_fingerprint_for(
@@ -2442,9 +2633,7 @@ class ConsoleChatStore:
 
         if not isinstance(fingerprint, ConsoleDurableAcceptanceFingerprint):
             raise TypeError("fingerprint must be ConsoleDurableAcceptanceFingerprint")
-        current = self.durable_acceptance_fingerprint_for(
-            fingerprint.preparation_id
-        )
+        current = self.durable_acceptance_fingerprint_for(fingerprint.preparation_id)
         if current != fingerprint:
             raise RuntimeError("Durable acceptance fingerprint changed.")
 
@@ -2492,76 +2681,103 @@ class ConsoleChatStore:
             preparation = resumed
         if preparation.state is not ConsoleTurnPreparationState.COMMITTING:
             raise RuntimeError("Durable preparation is not committing.")
-        with self._preparation_lock:
-            staged = self._durable_identity_by_preparation.get(
-                acceptance.preparation_id
-            )
-        identity = self.stage_durable_turn_identity(
-            session.id,
-            acceptance.preparation_id,
-            title=staged.title if staged is not None else session.title,
-        )
-        if identity.conversation_id != acceptance.conversation_id:
-            raise RuntimeError("Durable acceptance identity changed.")
-        fingerprint = self._durable_acceptance_fingerprint(
-            acceptance, preparation, identity
-        )
-        with self._preparation_lock:
-            retired = self._durable_tombstones.get(acceptance.preparation_id)
-            if retired is not None:
-                if retired.fingerprint != fingerprint:
-                    raise RuntimeError("Durable acceptance fingerprint changed.")
-                raise RuntimeError("Durable acceptance was already retired.")
-            existing_fingerprint = self._durable_fingerprint_by_preparation.get(
-                acceptance.preparation_id
-            )
-            if existing_fingerprint is not None and existing_fingerprint != fingerprint:
-                raise RuntimeError("Durable acceptance fingerprint changed.")
-            existing_commit = self._durable_commit_by_preparation.get(
-                acceptance.preparation_id
-            )
-            if existing_commit is not None:
-                return existing_commit
-            if acceptance.preparation_id in self._durable_commit_in_flight:
-                raise RuntimeError("Durable acceptance commit is already in flight.")
-            self._durable_fingerprint_by_preparation[
-                acceptance.preparation_id
-            ] = fingerprint
-            self._durable_commit_in_flight[acceptance.preparation_id] = fingerprint
-        durable_commit = getattr(self.persistence, "commit_durable_turn", None)
-        if not callable(durable_commit):
-            with self._preparation_lock:
-                self._durable_commit_in_flight.pop(acceptance.preparation_id, None)
-            raise RuntimeError("Durable Console persistence is unavailable.")
-        scope_type, workspace_id = self._persistence_scope(session)
-        local_character_id = session.local_character_id()
-        conversation_kwargs: dict[str, object] = {
-            "conversation_title": identity.title,
-            "workspace_id": workspace_id,
-            "scope_type": scope_type,
-            "system_prompt": (
-                session.settings.system_prompt if session.settings is not None else None
-            ),
-            "runtime_backend": session.runtime_backend,
-            "assistant_kind": session.assistant_kind,
-            "assistant_id": session.assistant_id,
-            "assistant_authority_id": session.assistant_authority_id,
-            "character_id": local_character_id,
-            "character_name": (
-                session.character_name if local_character_id is not None else None
-            ),
-        }
-        if session.speech_preferences != ConsoleSpeechPreferences():
-            conversation_kwargs["speech_preferences"] = session.speech_preferences
+        fingerprint: ConsoleDurableAcceptanceFingerprint | None = None
+        owns_in_flight = False
         try:
+            with self._preparation_lock:
+                staged = self._durable_identity_by_preparation.get(
+                    acceptance.preparation_id
+                )
+            identity = self.stage_durable_turn_identity(
+                session.id,
+                acceptance.preparation_id,
+                title=staged.title if staged is not None else session.title,
+            )
+            owners = self.stage_durable_turn_owner_ids(
+                session.id,
+                acceptance.preparation_id,
+                user_message_id=acceptance.user_message_id,
+                assistant_message_id=acceptance.assistant_message_id,
+            )
+            if identity.conversation_id != acceptance.conversation_id:
+                raise RuntimeError("Durable acceptance identity changed.")
+            scope_type, workspace_id = self._persistence_scope(session)
+            local_character_id = session.local_character_id()
+            conversation_kwargs: dict[str, object] = {
+                "conversation_title": identity.title,
+                "workspace_id": workspace_id,
+                "scope_type": scope_type,
+                "system_prompt": (
+                    session.settings.system_prompt
+                    if session.settings is not None
+                    else None
+                ),
+                "runtime_backend": session.runtime_backend,
+                "assistant_kind": session.assistant_kind,
+                "assistant_id": session.assistant_id,
+                "assistant_authority_id": session.assistant_authority_id,
+                "character_id": local_character_id,
+                "character_name": (
+                    session.character_name if local_character_id is not None else None
+                ),
+            }
+            if session.speech_preferences != ConsoleSpeechPreferences():
+                conversation_kwargs["speech_preferences"] = session.speech_preferences
+            policy_candidate = self.session_library_policy_candidate(session.id)
+            fingerprint = self._durable_acceptance_fingerprint(
+                acceptance,
+                preparation,
+                identity,
+                owners,
+                policy_candidate,
+                conversation_kwargs,
+            )
+            with self._preparation_lock:
+                retired = self._durable_tombstones.get(acceptance.preparation_id)
+                if retired is not None:
+                    if retired.fingerprint != fingerprint:
+                        raise RuntimeError("Durable acceptance fingerprint changed.")
+                    raise RuntimeError("Durable acceptance was already retired.")
+                existing_fingerprint = self._durable_fingerprint_by_preparation.get(
+                    acceptance.preparation_id
+                )
+                if (
+                    existing_fingerprint is not None
+                    and existing_fingerprint != fingerprint
+                ):
+                    raise RuntimeError("Durable acceptance fingerprint changed.")
+                existing_commit = self._durable_commit_by_preparation.get(
+                    acceptance.preparation_id
+                )
+                if existing_commit is not None:
+                    return existing_commit
+                if acceptance.preparation_id in self._durable_commit_in_flight:
+                    raise RuntimeError(
+                        "Durable acceptance commit is already in flight."
+                    )
+                self._durable_fingerprint_by_preparation[acceptance.preparation_id] = (
+                    fingerprint
+                )
+                self._durable_commit_in_flight[acceptance.preparation_id] = fingerprint
+                owns_in_flight = True
+            durable_commit = getattr(self.persistence, "commit_durable_turn", None)
+            if not callable(durable_commit):
+                raise RuntimeError("Durable Console persistence is unavailable.")
             checkpoint = durable_commit(
                 acceptance=acceptance,
-                policy_candidate=self.session_library_policy_candidate(session.id),
+                policy_candidate=policy_candidate,
                 conversation_kwargs=conversation_kwargs,
             )
         except Exception:
             with self._preparation_lock:
-                self._durable_commit_in_flight.pop(acceptance.preparation_id, None)
+                foreign_in_flight = (
+                    not owns_in_flight
+                    and acceptance.preparation_id in self._durable_commit_in_flight
+                )
+                if owns_in_flight:
+                    self._durable_commit_in_flight.pop(acceptance.preparation_id, None)
+            if foreign_in_flight:
+                raise
             self.compare_and_set_preparation(
                 session.id,
                 ConsolePreparationTransition(
@@ -2577,6 +2793,7 @@ class ConsoleChatStore:
                 preparation_id=preparation.preparation_id,
             ).warning("console_durable_turn_commit_failed")
             raise
+        assert fingerprint is not None
         commit = ConsoleDurableTurnCommit(
             identity=identity,
             user_message_id=acceptance.user_message_id,
@@ -2587,9 +2804,7 @@ class ConsoleChatStore:
         )
         with self._preparation_lock:
             if (
-                self._durable_fingerprint_by_preparation.get(
-                    acceptance.preparation_id
-                )
+                self._durable_fingerprint_by_preparation.get(acceptance.preparation_id)
                 != fingerprint
             ):
                 raise RuntimeError("Durable acceptance fingerprint changed.")
@@ -2609,18 +2824,13 @@ class ConsoleChatStore:
         preparation_id: str,
         session_id: str,
         assistant_message_id: str,
-        fingerprint: ConsoleDurableAcceptanceFingerprint | None = None,
+        fingerprint: ConsoleDurableAcceptanceFingerprint,
     ) -> ConsoleDurablePostcommitEffects:
         """Create or return one preparation-keyed postcommit ledger."""
 
         self._session_or_raise(session_id)
         with self._preparation_lock:
-            if fingerprint is not None:
-                current_fingerprint = self._durable_fingerprint_by_preparation.get(
-                    preparation_id
-                )
-                if current_fingerprint != fingerprint:
-                    raise RuntimeError("Durable postcommit fingerprint changed.")
+            self._require_durable_fingerprint_locked(preparation_id, fingerprint)
             existing = self._durable_effects_by_preparation.get(preparation_id)
             if existing is not None:
                 if (
@@ -2641,34 +2851,26 @@ class ConsoleChatStore:
         self,
         preparation_id: str | None,
         *,
-        fingerprint: ConsoleDurableAcceptanceFingerprint | None = None,
+        fingerprint: ConsoleDurableAcceptanceFingerprint,
     ) -> ConsoleDurablePostcommitEffects | None:
         """Return the immutable effect ledger for one committed turn."""
 
         if not preparation_id:
             return None
         with self._preparation_lock:
-            if fingerprint is not None and (
-                self._durable_fingerprint_by_preparation.get(preparation_id)
-                != fingerprint
-            ):
-                raise RuntimeError("Durable postcommit fingerprint changed.")
+            self._require_durable_fingerprint_locked(preparation_id, fingerprint)
             return self._durable_effects_by_preparation.get(preparation_id)
 
     def durable_turn_commit_for(
         self,
         preparation_id: str,
         *,
-        fingerprint: ConsoleDurableAcceptanceFingerprint | None = None,
+        fingerprint: ConsoleDurableAcceptanceFingerprint,
     ) -> ConsoleDurableTurnCommit | None:
         """Return one app-lifetime durable acceptance result."""
 
         with self._preparation_lock:
-            if fingerprint is not None and (
-                self._durable_fingerprint_by_preparation.get(preparation_id)
-                != fingerprint
-            ):
-                raise RuntimeError("Durable commit fingerprint changed.")
+            self._require_durable_fingerprint_locked(preparation_id, fingerprint)
             return self._durable_commit_by_preparation.get(preparation_id)
 
     def complete_durable_postcommit_effect(
@@ -2676,16 +2878,12 @@ class ConsoleChatStore:
         preparation_id: str,
         effect_name: str,
         *,
-        fingerprint: ConsoleDurableAcceptanceFingerprint | None = None,
+        fingerprint: ConsoleDurableAcceptanceFingerprint,
     ) -> ConsoleDurablePostcommitEffects:
         """Mark one effect complete only after its caller reports success."""
 
         with self._preparation_lock:
-            if fingerprint is not None and (
-                self._durable_fingerprint_by_preparation.get(preparation_id)
-                != fingerprint
-            ):
-                raise RuntimeError("Durable postcommit fingerprint changed.")
+            self._require_durable_fingerprint_locked(preparation_id, fingerprint)
             current = self._durable_effects_by_preparation.get(preparation_id)
             if current is None:
                 raise RuntimeError("Durable postcommit ledger is unavailable.")
@@ -2702,17 +2900,13 @@ class ConsoleChatStore:
         preparation_id: str,
         effect_name: str,
         *,
-        fingerprint: ConsoleDurableAcceptanceFingerprint | None = None,
+        fingerprint: ConsoleDurableAcceptanceFingerprint,
     ) -> bool:
         """Claim one incomplete effect so concurrent re-entry cannot duplicate it."""
 
         key = (preparation_id, effect_name)
         with self._preparation_lock:
-            if fingerprint is not None and (
-                self._durable_fingerprint_by_preparation.get(preparation_id)
-                != fingerprint
-            ):
-                raise RuntimeError("Durable postcommit fingerprint changed.")
+            self._require_durable_fingerprint_locked(preparation_id, fingerprint)
             current = self._durable_effects_by_preparation.get(preparation_id)
             if (
                 current is None
@@ -2728,17 +2922,23 @@ class ConsoleChatStore:
         preparation_id: str,
         effect_name: str,
         *,
-        fingerprint: ConsoleDurableAcceptanceFingerprint | None = None,
+        fingerprint: ConsoleDurableAcceptanceFingerprint,
     ) -> None:
         """Release a failed effect claim without recording completion."""
 
         with self._preparation_lock:
-            if fingerprint is not None and (
-                self._durable_fingerprint_by_preparation.get(preparation_id)
-                != fingerprint
-            ):
-                raise RuntimeError("Durable postcommit fingerprint changed.")
+            self._require_durable_fingerprint_locked(preparation_id, fingerprint)
             self._durable_effects_in_flight.discard((preparation_id, effect_name))
+
+    def _require_durable_fingerprint_locked(
+        self,
+        preparation_id: str,
+        fingerprint: ConsoleDurableAcceptanceFingerprint,
+    ) -> None:
+        if not isinstance(fingerprint, ConsoleDurableAcceptanceFingerprint):
+            raise TypeError("fingerprint must be ConsoleDurableAcceptanceFingerprint")
+        if self._durable_fingerprint_by_preparation.get(preparation_id) != fingerprint:
+            raise RuntimeError("Durable postcommit fingerprint changed.")
 
     def retire_durable_acceptance(
         self,
@@ -2754,6 +2954,7 @@ class ConsoleChatStore:
             effects = self._durable_effects_by_preparation.get(preparation_id)
             completed = effects.completed if effects is not None else frozenset()
             self._durable_identity_by_preparation.pop(preparation_id, None)
+            self._durable_owner_ids_by_preparation.pop(preparation_id, None)
             self._durable_commit_by_preparation.pop(preparation_id, None)
             self._durable_effects_by_preparation.pop(preparation_id, None)
             self._durable_fingerprint_by_preparation.pop(preparation_id, None)
@@ -2776,6 +2977,7 @@ class ConsoleChatStore:
             if preparation_id in self._durable_commit_by_preparation:
                 raise RuntimeError("Committed durable acceptance cannot be discarded.")
             self._durable_identity_by_preparation.pop(preparation_id, None)
+            self._durable_owner_ids_by_preparation.pop(preparation_id, None)
             self._durable_fingerprint_by_preparation.pop(preparation_id, None)
             self._durable_commit_in_flight.pop(preparation_id, None)
 

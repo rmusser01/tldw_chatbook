@@ -188,7 +188,13 @@ def test_cached_commit_and_identity_reject_forged_preparation_reuse(tmp_path) ->
                 attempt_id="forged-attempt",
             )
         )
-    assert store.durable_turn_commit_for(acceptance.preparation_id) == committed
+    fingerprint = store.durable_acceptance_fingerprint_for(
+        acceptance.preparation_id
+    )
+    assert fingerprint is not None
+    assert store.durable_turn_commit_for(
+        acceptance.preparation_id, fingerprint=fingerprint
+    ) == committed
 
 
 def _queue_coordinator():
@@ -215,6 +221,11 @@ def _queue_coordinator():
 
 def test_detached_durable_queue_ack_settles_exact_claim_and_pauses_later() -> None:
     registry, coordinator = _queue_coordinator()
+    assert registry.bind_claimed_preparation(
+        "session-1",
+        entry_id="accepted-entry",
+        preparation_id="preparation-1",
+    ).applied
 
     assert coordinator.acknowledge_durable_acceptance(
         "session-1",
@@ -237,6 +248,11 @@ def test_detached_durable_queue_ack_settles_exact_claim_and_pauses_later() -> No
 
 def test_durable_queue_ack_cannot_settle_a_different_claim() -> None:
     registry, coordinator = _queue_coordinator()
+    assert registry.bind_claimed_preparation(
+        "session-1",
+        entry_id="accepted-entry",
+        preparation_id="preparation-1",
+    ).applied
 
     assert not coordinator.acknowledge_durable_acceptance(
         "session-1",
@@ -495,7 +511,11 @@ async def test_real_postcommit_seam_failure_resumes_same_owner_once(
 
     assert first.accepted is True
     assert first.preparation_id is not None
-    effects = store.durable_postcommit_effects_for(first.preparation_id)
+    fingerprint = store.durable_acceptance_fingerprint_for(first.preparation_id)
+    assert fingerprint is not None
+    effects = store.durable_postcommit_effects_for(
+        first.preparation_id, fingerprint=fingerprint
+    )
     assert effects is not None
     assert effect_name not in effects.completed
     durable_before = tuple(
@@ -609,7 +629,11 @@ async def test_real_queued_ack_reentry_settles_detached_claim_and_pauses_later(
     )
     assert checkpoint is not None
     preparation_id = checkpoint["preparation_id"]
-    effects = store.durable_postcommit_effects_for(preparation_id)
+    fingerprint = store.durable_acceptance_fingerprint_for(preparation_id)
+    assert fingerprint is not None
+    effects = store.durable_postcommit_effects_for(
+        preparation_id, fingerprint=fingerprint
+    )
     assert effects is not None
     assert "queue_acknowledgement" not in effects.completed
     assert "session-1" not in coordinator._chains
