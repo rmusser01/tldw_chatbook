@@ -3414,22 +3414,14 @@ class ChatScreen(BaseAppScreen):
         """Clear Console Workbench shortcuts from this screen's own footer."""
         self.clear_footer_shortcuts(source="console")
 
-    def action_open_console_session_switcher(self) -> None:
+    async def action_open_console_session_switcher(self) -> None:
         """Open the Ctrl+K fuzzy session switcher."""
         if self._console_setup_modal_blocking():
             return
-        rows = [
-            *self._workspace._native_console_browser_rows(),
-            *self._workspace._membership_console_browser_rows(),
-        ]
-        persisted_rows, _total, _error = (
-            self._workspace._sync_persisted_console_browser_rows(
-                current_conversation_id=self._current_console_conversation_id()
-            )
-        )
-        rows.extend(persisted_rows)
         self.app.push_screen(
-            ConsoleSessionSwitcherModal(rows=tuple(rows)),
+            ConsoleSessionSwitcherModal(
+                rows=await self._workspace.console_session_switcher_rows()
+            ),
             callback=self._session._apply_console_switcher_choice,
         )
 
@@ -16437,8 +16429,7 @@ class ChatScreen(BaseAppScreen):
             report = await loader()
         except Exception as exc:  # noqa: BLE001 -- render recovery, never send command
             logger.warning(
-                "MCP prompt recommendations command failed "
-                "(exception_type={})",
+                "MCP prompt recommendations command failed (exception_type={})",
                 type(exc).__name__,
             )
             await self._append_native_console_system_message(

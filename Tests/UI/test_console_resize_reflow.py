@@ -399,7 +399,12 @@ async def test_height_resize_requests_one_coalesced_context_reconcile(
             descriptor.max_content_lines for descriptor in CONTEXT_SECTION_DESCRIPTORS
         ]
         assert all(
-            section.viewport.content_region.height
+            sum(
+                child.virtual_region_with_margin.height
+                for child in section.children
+                if child not in {section.viewport, section.hint} and child.display
+            )
+            + section.viewport.content_region.height
             == min(section.desired_content_lines, section.max_content_lines)
             for section in sections
         )

@@ -490,6 +490,85 @@ def test_private_same_parent_move_treats_index_as_final_position(monkeypatch) ->
     assert invalidations == [None]
 
 
+def test_identical_keyed_sync_does_not_invalidate_native_tree(monkeypatch) -> None:
+    """A passive refresh leaves every unchanged native node untouched."""
+
+    tree = _tree()
+    nodes = {
+        data.key: node
+        for node in (
+            *tree.workspace_nodes.values(),
+            *tree.conversation_nodes.values(),
+            *tree.auxiliary_nodes.values(),
+        )
+        if (data := node.data) is not None
+    }
+    update_counts = {key: node._updates for key, node in nodes.items()}
+    invalidations: list[None] = []
+    move_requests: list[tuple[str, str, int]] = []
+    original_move = tree._move_node_preserving_identity
+
+    def record_move(node, parent, index) -> None:
+        parent_key = parent.data.key if parent.data is not None else "root"
+        move_requests.append((node.data.key, parent_key, index))
+        original_move(node, parent, index)
+
+    monkeypatch.setattr(tree, "_invalidate", lambda: invalidations.append(None))
+    monkeypatch.setattr(tree, "_move_node_preserving_identity", record_move)
+
+    tree.sync_projection(
+        (
+            _workspace("w1", "One", ("c1", "First"), ("c2", "Second")),
+            _workspace("w2", "Two", ("c3", "Third")),
+        ),
+        expanded_workspace_ids={"w1"},
+    )
+
+    assert invalidations == []
+    assert move_requests == []
+    assert {key: node._updates for key, node in nodes.items()} == update_counts
+
+
+def test_keyed_sync_refreshes_only_the_changed_native_label() -> None:
+    """A marker/title update does not schedule refreshes for passive siblings."""
+
+    tree = _tree()
+    nodes = {
+        data.key: node
+        for node in (
+            *tree.workspace_nodes.values(),
+            *tree.conversation_nodes.values(),
+            *tree.auxiliary_nodes.values(),
+        )
+        if (data := node.data) is not None
+    }
+    update_counts = {key: node._updates for key, node in nodes.items()}
+    changed = replace(
+        _workspace("w1", "One", ("c1", "First"), ("c2", "Second")),
+        conversations=(
+            replace(
+                _workspace("w1", "One", ("c1", "First")).conversations[0],
+                run_marker="●",
+            ),
+            _workspace("w1", "One", ("c2", "Second")).conversations[0],
+        ),
+    )
+
+    tree.sync_projection(
+        (changed, _workspace("w2", "Two", ("c3", "Third"))),
+        expanded_workspace_ids={"w1"},
+    )
+
+    assert (
+        tree.conversation_nodes["c1"]._updates == update_counts["conversation:c1"] + 1
+    )
+    assert {
+        key: node._updates for key, node in nodes.items() if key != "conversation:c1"
+    } == {
+        key: count for key, count in update_counts.items() if key != "conversation:c1"
+    }
+
+
 @pytest.mark.asyncio
 async def test_removing_final_selectable_node_requests_owning_section_recovery() -> (
     None

@@ -10,7 +10,7 @@ labels:
   - ui
   - ux
 dependencies:
-  - TASK-20937
+  - TASK-20935
 references:
   - backlog/decisions/080-model-machine-memory-fit-estimation.md
   - Docs/superpowers/specs/2026-08-22-remote-model-machine-fit-design.md

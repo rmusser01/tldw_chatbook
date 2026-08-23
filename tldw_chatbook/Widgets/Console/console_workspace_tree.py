@@ -339,20 +339,26 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
                 workspace_data = WorkspaceTreeNodeData.workspace(
                     workspace.workspace_id, workspace.label
                 )
+                workspace_label = self._workspace_label(workspace)
                 if workspace_node is None:
                     workspace_node = self.root.add(
-                        self._workspace_label(workspace),
+                        workspace_label,
                         workspace_data,
                         before=workspace_index,
                         expand=workspace.workspace_id in expanded_workspace_ids,
                     )
                     self.workspace_nodes[workspace.workspace_id] = workspace_node
                 else:
-                    workspace_node.data = workspace_data
-                    workspace_node.set_label(self._workspace_label(workspace))
-                    self._move_node_preserving_identity(
+                    if workspace_node.data != workspace_data:
+                        workspace_node.data = workspace_data
+                    if workspace_node.label != workspace_label:
+                        workspace_node.set_label(workspace_label)
+                    if not self._node_is_at_index(
                         workspace_node, self.root, workspace_index
-                    )
+                    ):
+                        self._move_node_preserving_identity(
+                            workspace_node, self.root, workspace_index
+                        )
 
                 if not self._search_active:
                     should_expand = workspace.workspace_id in expanded_workspace_ids
@@ -372,38 +378,48 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
                         selected=conversation.selected,
                         star_enabled=conversation.star_enabled,
                     )
+                    conversation_label = self._conversation_label(conversation)
                     node = self.conversation_nodes.get(conversation.conversation_id)
                     if node is None:
                         node = workspace_node.add_leaf(
-                            self._conversation_label(conversation),
+                            conversation_label,
                             data,
                             before=conversation_index,
                         )
                         self.conversation_nodes[conversation.conversation_id] = node
                     else:
-                        node.data = data
-                        node.set_label(self._conversation_label(conversation))
-                        self._move_node_preserving_identity(
+                        if node.data != data:
+                            node.data = data
+                        if node.label != conversation_label:
+                            node.set_label(conversation_label)
+                        if not self._node_is_at_index(
                             node, workspace_node, conversation_index
-                        )
+                        ):
+                            self._move_node_preserving_identity(
+                                node, workspace_node, conversation_index
+                            )
 
                 specs = self._status_specs(workspace)
                 for offset, data in enumerate(specs, len(workspace.conversations)):
                     wanted_auxiliary.add(data.key)
+                    auxiliary_label = Text(_single_physical_row(data.raw_label))
                     node = self.auxiliary_nodes.get(data.key)
                     if node is None:
                         node = workspace_node.add_leaf(
-                            Text(_single_physical_row(data.raw_label)),
+                            auxiliary_label,
                             data,
                             before=offset,
                         )
                         self.auxiliary_nodes[data.key] = node
                     else:
-                        node.data = data
-                        node.set_label(Text(_single_physical_row(data.raw_label)))
-                        self._move_node_preserving_identity(
-                            node, workspace_node, offset
-                        )
+                        if node.data != data:
+                            node.data = data
+                        if node.label != auxiliary_label:
+                            node.set_label(auxiliary_label)
+                        if not self._node_is_at_index(node, workspace_node, offset):
+                            self._move_node_preserving_identity(
+                                node, workspace_node, offset
+                            )
 
             for key in tuple(self.auxiliary_nodes):
                 if key not in wanted_auxiliary:
@@ -536,7 +552,7 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
         """Version-pinned Textual 8.2.8 reparent/reorder primitive.
 
         Textual has no public move API. Public remove/add unregisters the old
-        object and loses cursor identity, so ADR-081 permits this one isolated
+        object and loses cursor identity, so ADR-083 permits this one isolated
         private-shape operation. Any version or shape mismatch fails closed.
         """
 
@@ -567,6 +583,21 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
         parent._children.insert(bounded_index, node)
         node._parent = parent
         self._invalidate()
+
+    @staticmethod
+    def _node_is_at_index(
+        node: TreeNode[WorkspaceTreeNodeData],
+        parent: TreeNode[WorkspaceTreeNodeData],
+        index: int,
+    ) -> bool:
+        """Return whether a keyed node already occupies its projected slot."""
+
+        children = parent.children
+        return (
+            node.parent is parent
+            and 0 <= index < len(children)
+            and children[index] is node
+        )
 
     def set_search_active(
         self,

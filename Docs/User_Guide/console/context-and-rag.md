@@ -46,9 +46,24 @@ Where this page's controls live:
 
 ### Reading long Context and Inspector sections
 
-Each open, named section in the Context and Inspector rails shows up to 20
-lines of content, then scrolls within that section. The cues tell you which
-area to move:
+Each open Context section keeps a complete reading body until it reaches its
+own ceiling:
+
+| Context section | Complete body before local scrolling |
+| --- | ---: |
+| Sessions | 15 rows |
+| Workspaces | 20 rows |
+| Conversations | 20 rows |
+| Model | 15 rows |
+| Agent | 15 rows |
+| Details | 15 rows |
+| Character | 35 rows |
+
+Inspector sections retain a 20-row ceiling. A shorter body hugs its content;
+a longer body stops at its ceiling and scrolls locally. Context does not shrink
+one open section to make a later section fit in the initial viewport. Instead,
+the rail keeps each complete body and scrolls as a whole when their combined
+height exceeds the terminal. The cues tell you which area to move:
 
 - **▼ more — scroll** means the current section has more content. Scroll over
   that section, or Tab to it and use the arrow keys, Page Up/Page Down, Home,
@@ -64,16 +79,71 @@ without wrapping. They work only while the Inspector has focus and never take
 over an editable field. The footer shows **n/p Sections** while this is active,
 and **F1** shows the full shortcut list.
 
-On short terminals, Context scrolls as a whole so every header and open
-section remains reachable. An open section without room to show its contents
-is marked **· no room**; press its **[>]** control to prioritize it temporarily.
-This does not alter your saved open/closed choices. Section and rail scroll
-positions, and the temporary priority, last only for the current session. The
-full-width layout on larger terminals remains primary, with these safeguards
-available as the terminal narrows or shortens.
+On short terminals, scroll Context as a whole to reach every header and
+complete open section. A section's local position and the rail's outer
+position are independent, so reading deep inside one section does not resize
+or truncate its neighbors. The full-width layout on larger terminals remains
+primary, with this same cell-based behavior as the terminal narrows or
+shortens.
 
 The **Project** status row (for Project Instructions) and retrieval **Scope**
 remain compact rows; they do not expand into separate 20-line sections.
+
+### Workspaces and conversation ownership
+
+The **Workspaces** section owns every named workspace and all conversations
+associated with it. Each workspace is a top-level branch in a native terminal
+Tree, and its conversations are children beneath it. The separate
+**Conversations** section contains only conversations assigned to the built-in
+Default workspace or to no workspace. A conversation therefore appears in one
+of these ordinary browsers, never both.
+
+Starred is an ordering and status property, not another copy of a
+conversation. Starred conversations sort first inside their one workspace or
+inside the flat Conversations list; the remaining entries follow by recency.
+Workspaces and Conversations also have independent search boxes. Workspaces
+search matches workspace names and associated conversation titles, including
+service results that have not yet been paged into an open branch. Conversations
+search covers only Default and unassigned records. Starting, clearing, or
+retrying one search does not replace the other search.
+
+Above the Tree, the active-workspace identity stays on one compact line and
+**Switch**, **New**, and **RAG** share one compact action strip. **Switch**
+is the authoritative route to every workspace, including **Default**, which is
+intentionally absent from the Tree. After switching to Default, the Tree stays
+available for switching back while Default conversations appear in the flat
+Conversations section.
+
+The Tree uses native disclosure and scrolling:
+
+- Select a workspace or conversation label with the pointer or **Enter**.
+  Selecting a workspace switches to it without also changing disclosure.
+- Toggle a workspace branch with its disclosure marker or **Space**. **Right**
+  expands a closed workspace, then moves to its first child when already open;
+  **Left** collapses an open workspace, then moves to its visible parent when
+  already closed. A boundary action that would land on the hidden Tree root
+  does nothing.
+- Use **Up/Down**, **Page Up/Page Down**, **Home**, and **End** for native Tree
+  navigation and paging within the section. A **Load more…** row fetches the
+  next bounded conversation page for that workspace; a failed page keeps
+  settled children in place and offers **Retry**.
+- While a markable conversation leaf has the Tree cursor, use the contextual
+  **Star**/**Unstar** action or press `s`. These controls do not intercept text
+  typed in either search box.
+- During Workspaces search, matching conversation results keep their parent
+  visible. Temporary disclosure changes made while searching are discarded
+  when the query is cleared, restoring the disclosure state from before the
+  search.
+
+### Character image containment
+
+The optional **Character** section uses up to a 35-row complete body so the image,
+name, reaction state, and action remain together. Valid character art is
+centered and shown complete with its aspect ratio preserved. It scales down
+when needed, but a smaller source is not enlarged merely to fill the available
+space. The image is never stretched or cropped. Missing, corrupt, or
+unsupported art leaves the character controls available rather than replacing
+them with a distorted image.
 
 ### The Conversation Inspector
 
@@ -328,7 +398,7 @@ bulk **Select all matching** / **Clear shown** (large select-alls ask
 **Confirm** / **Cancel**), and a footer with a "N selected of M" count
 plus **Save**, **Clear scope**, and **Cancel**.
 
-Scope exists at two levels. The left rail's **RAG Scope** button sets a
+Scope exists at two levels. The left rail's **RAG** button sets a
 **workspace-level** scope ("Narrow RAG retrieval to items in this
 workspace"); a conversation's scope then narrows *within* it — items
 outside are suffixed "— outside workspace scope", and the effective scope

@@ -1156,7 +1156,10 @@ async def test_new_screen_waits_for_cancelled_old_screen_preview_to_drain(
     option = ReactionOption("custom:alarm", "Alarm", "image/webp", False)
     barrier = _BlockedPreviewDecode()
     app = SimpleNamespace()
-    coordinator_accessor = lambda: get_console_reaction_preview_coordinator(app)
+
+    def coordinator_accessor():
+        return get_console_reaction_preview_coordinator(app)
+
     controller, first_screen = _preview_controller(
         monkeypatch,
         (option,),

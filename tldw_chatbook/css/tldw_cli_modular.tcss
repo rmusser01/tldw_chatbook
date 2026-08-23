@@ -7308,9 +7308,10 @@ ConsoleCitationSourcesModal {
     /* TASK-2154.3 (LY-07): the rail IA spec's 12-col left indent (buttons
        aligned under the value column) assumed a ~35-col rail. The real rail
        renders at 24-30 cols, so the indent left only 3-6 cells for the
-       buttons -- Switch clipped to "Switc", RAG Scope to "RAG S"/"RA", and
+       buttons -- Switch clipped to "Switc", the former RAG Scope label to
+       "RAG S"/"RA", and
        New rendered past the rail clip (invisible but clickable). Left-align
-       the rows: Switch + New = 13 cells and RAG Scope = 11 both fit the
+       the rows: Switch + New = 13 cells and RAG = 5 both fit the
        23-cell content width at the rail's 30-col minimum. */
     margin: 0;
 }
