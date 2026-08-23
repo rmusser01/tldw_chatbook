@@ -13,6 +13,13 @@ from tldw_chatbook.Character_Chat.character_mood import (
 pytestmark = pytest.mark.unit
 
 
+def test_mood_detector_docstring_documents_public_contract() -> None:
+    docstring = detect_character_mood.__doc__ or ""
+
+    assert "\n    Args:" in docstring
+    assert "\n    Returns:" in docstring
+
+
 def test_empty_input_has_pinned_neutral_result() -> None:
     assert detect_character_mood(assistant_text="") == CharacterMoodDetection(
         label="neutral",

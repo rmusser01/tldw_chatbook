@@ -1749,6 +1749,7 @@ def test_character_controller_has_only_named_non_dom_dependencies() -> None:
         "actor_scope_accessor",
         "manual_reaction_key",
         "resolve_visual_identity",
+        "resolve_historical_visual_identity",
         "ensure_console_image_view",
         "console_image_default_mode",
         "is_mounted",

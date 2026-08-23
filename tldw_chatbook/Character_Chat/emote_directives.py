@@ -72,7 +72,14 @@ class CharacterEmoteRunSnapshot:
 
 
 def normalize_character_emote_state(value: object) -> str | None:
-    """Return a normalized safe state slug when valid."""
+    """Return a normalized safe state slug when valid.
+
+    Args:
+        value: Candidate state value from a directive or asset inventory.
+
+    Returns:
+        The normalized safe slug, or ``None`` when the value is invalid.
+    """
 
     if not isinstance(value, str):
         return None

@@ -243,6 +243,7 @@ async def test_console_persona_expression_resolves_and_paints_active_asset() -> 
         actor_scope_accessor=lambda: scope,
         manual_reaction_key=lambda _scope: None,
         resolve_visual_identity=lambda *_args: _resolution(),
+        resolve_historical_visual_identity=lambda *_args: None,
         ensure_console_image_view=lambda: (None, cache),
         console_image_default_mode=lambda: "pixels",
         is_mounted=lambda: True,
@@ -291,6 +292,7 @@ async def test_persona_source_revision_binding_or_asset_change_drops_stale_decod
         actor_scope_accessor=lambda: scope,
         manual_reaction_key=lambda _scope: None,
         resolve_visual_identity=lambda *_args: next(resolutions),
+        resolve_historical_visual_identity=lambda *_args: None,
         ensure_console_image_view=lambda: (
             None,
             SimpleNamespace(

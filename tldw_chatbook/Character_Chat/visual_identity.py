@@ -923,38 +923,39 @@ def resolve_historical_visual_identity(
     ):
         return unavailable()
     try:
-        row = db.execute_query(
-            """
-            SELECT p.source_kind AS pack_source_kind,
-                   a.id AS asset_id,
-                   a.expression_key AS asset_expression_key,
-                   a.original_expression_key AS asset_original_expression_key,
-                   a.display_label AS asset_display_label,
-                   a.storage_relpath AS asset_storage_relpath,
-                   a.content_type AS asset_content_type,
-                   a.bytes AS asset_bytes,
-                   a.sha256 AS asset_sha256,
-                   a.width AS asset_width,
-                   a.height AS asset_height,
-                   a.is_animated AS asset_is_animated,
-                   a.frame_count AS asset_frame_count,
-                   a.duration_ms AS asset_duration_ms
-              FROM character_cards c
-              JOIN visual_identity_packs p
-                ON p.id = ? AND p.owner_user_id = 0
-              JOIN visual_identity_pack_versions v
-                ON v.id = ? AND v.pack_id = p.id AND v.owner_user_id = 0
-              JOIN visual_identity_assets a
-                ON a.id = ?
-               AND a.pack_id = p.id
-               AND a.pack_version_id = v.id
-               AND a.owner_user_id = 0
-               AND a.deleted = 0
-               AND a.expression_key = ?
-             WHERE c.id = ? AND c.deleted = 0
-            """,
-            (pack_id, pack_version_id, asset_id, normalized_key, actor_id),
-        ).fetchone()
+        with db.transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT p.source_kind AS pack_source_kind,
+                       a.id AS asset_id,
+                       a.expression_key AS asset_expression_key,
+                       a.original_expression_key AS asset_original_expression_key,
+                       a.display_label AS asset_display_label,
+                       a.storage_relpath AS asset_storage_relpath,
+                       a.content_type AS asset_content_type,
+                       a.bytes AS asset_bytes,
+                       a.sha256 AS asset_sha256,
+                       a.width AS asset_width,
+                       a.height AS asset_height,
+                       a.is_animated AS asset_is_animated,
+                       a.frame_count AS asset_frame_count,
+                       a.duration_ms AS asset_duration_ms
+                  FROM character_cards c
+                  JOIN visual_identity_packs p
+                    ON p.id = ? AND p.owner_user_id = 0
+                  JOIN visual_identity_pack_versions v
+                    ON v.id = ? AND v.pack_id = p.id AND v.owner_user_id = 0
+                  JOIN visual_identity_assets a
+                    ON a.id = ?
+                   AND a.pack_id = p.id
+                   AND a.pack_version_id = v.id
+                   AND a.owner_user_id = 0
+                   AND a.deleted = 0
+                   AND a.expression_key = ?
+                 WHERE c.id = ? AND c.deleted = 0
+                """,
+                (pack_id, pack_version_id, asset_id, normalized_key, actor_id),
+            ).fetchone()
         if row is None:
             return unavailable()
         candidate = dict(row)

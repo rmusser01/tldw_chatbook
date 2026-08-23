@@ -56,6 +56,13 @@ def test_no_session_is_idle():
     assert resolve_console_expression_state(store, None, react_enabled=True) == "idle"
 
 
+def test_selection_docstring_documents_public_contract() -> None:
+    docstring = resolve_console_expression_selection.__doc__ or ""
+
+    assert "\n    Args:" in docstring
+    assert "\n    Returns:" in docstring
+
+
 def test_missing_session_is_idle():
     store = _FakeStore({})
     assert resolve_console_expression_state(store, "nope", react_enabled=True) == "idle"

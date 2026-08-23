@@ -39,6 +39,7 @@ def _controller(**overrides: Any) -> ConsoleCharacterController:
         "actor_scope_accessor": lambda: None,
         "manual_reaction_key": lambda _scope: None,
         "resolve_visual_identity": lambda *_args: None,
+        "resolve_historical_visual_identity": lambda *_args: None,
         "ensure_console_image_view": lambda: (None, None),
         "console_image_default_mode": lambda: "pixels",
         "is_mounted": lambda: False,

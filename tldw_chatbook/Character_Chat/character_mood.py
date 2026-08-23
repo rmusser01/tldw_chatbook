@@ -156,7 +156,15 @@ def detect_character_mood(
     assistant_text: str,
     user_text: str | None = None,
 ) -> CharacterMoodDetection:
-    """Classify sanitized visible text using the pinned server-WebUI heuristic."""
+    """Classify sanitized visible text using the pinned server-WebUI heuristic.
+
+    Args:
+        assistant_text: Sanitized assistant-visible text to classify.
+        user_text: Optional user-visible text that provides topic context.
+
+    Returns:
+        The bounded mood label, confidence, and optional topic.
+    """
 
     normalized_assistant = _normalize_text(assistant_text)
     normalized_user = _normalize_text(user_text)

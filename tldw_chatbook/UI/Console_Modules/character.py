@@ -12,7 +12,7 @@ import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import replace
 from functools import partial
-from typing import Any
+from typing import Any, Literal
 
 from loguru import logger
 from rich.markup import escape as escape_markup
@@ -42,6 +42,9 @@ from .session import (
 _EXPRESSION_SPEC_CACHE_MAX = 16
 
 ActorScope = tuple[str, str, str]
+AvatarRequestSource = Literal[
+    "idle", "operational", "explicit", "historical", "manual"
+]
 AvatarRequest = tuple[
     ActorScope | None,
     str,
@@ -51,7 +54,7 @@ AvatarRequest = tuple[
     bool,
     bool,
     str | None,
-    str,
+    AvatarRequestSource,
     str | None,
     CharacterEmoteHistoryIdentity | None,
 ]
@@ -80,8 +83,7 @@ class ConsoleCharacterController:
         resolve_visual_identity: Callable[[ActorScope, str, str | None], Any | None],
         resolve_historical_visual_identity: Callable[
             [ActorScope, CharacterEmoteHistoryIdentity], Any | None
-        ]
-        | None = None,
+        ],
         ensure_console_image_view: Callable[[], tuple[Any, Any]],
         console_image_default_mode: Callable[[], str | None],
         is_mounted: Callable[[], bool],
@@ -292,7 +294,7 @@ class ConsoleCharacterController:
                 store, session_id, react_enabled=react
             )
         manual = self._manual_reaction_key(actor) if actor else None
-        source = selection.source
+        source: AvatarRequestSource = selection.source
         history_identity = selection.history_identity
         message_id = selection.message_id
         if manual is not None:

@@ -26,6 +26,13 @@ _FIXTURE_PATH = (
 _FROZEN_VECTORS = json.loads(_FIXTURE_PATH.read_text(encoding="utf-8"))
 
 
+def test_state_normalizer_docstring_documents_public_contract() -> None:
+    docstring = normalize_character_emote_state.__doc__ or ""
+
+    assert "\n    Args:" in docstring
+    assert "\n    Returns:" in docstring
+
+
 @pytest.mark.parametrize("vector", _FROZEN_VECTORS, ids=lambda item: item["name"])
 def test_one_shot_parser_matches_frozen_cross_language_vectors(vector: dict) -> None:
     """One-shot Python behavior stays pinned to the server/WebUI corpus."""

@@ -51,7 +51,18 @@ def resolve_console_expression_selection(
     explicit_message_id: str | None = None,
     explicit_state: str | None = None,
 ) -> ConsoleExpressionSelection:
-    """Return the operational, live-explicit, or final historical selection."""
+    """Return the operational, live-explicit, or final historical selection.
+
+    Args:
+        store: Console chat store that owns the session messages.
+        active_session_id: Session whose latest assistant message controls state.
+        react_enabled: Whether automatic character reactions are enabled.
+        explicit_message_id: Streaming message associated with an explicit event.
+        explicit_state: Most recent normalized explicit state for that message.
+
+    Returns:
+        The precedence-resolved selection before manual display overrides.
+    """
 
     idle = ConsoleExpressionSelection("idle", "idle")
     if not react_enabled or active_session_id is None or store is None:

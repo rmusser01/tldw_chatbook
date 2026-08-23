@@ -20,6 +20,7 @@ from dataclasses import replace
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
+from typing import get_args
 from unittest.mock import AsyncMock
 
 import pytest
@@ -49,6 +50,7 @@ from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleCha
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.UI.Console_Modules.character import ConsoleCharacterController
+import tldw_chatbook.UI.Console_Modules.character as character_module
 from tldw_chatbook.UI.Console_Modules.retrieval import ConsoleRetrievalController
 from tldw_chatbook.UI.Console_Modules.session import (
     CharacterSessionPromptSeed,
@@ -67,6 +69,19 @@ def _avatar_png(color: tuple[int, int, int]) -> bytes:
     output = BytesIO()
     PILImage.new("RGB", (32, 32), color).save(output, format="PNG")
     return output.getvalue()
+
+
+def test_avatar_request_source_types_manual_at_the_display_override_boundary() -> None:
+    source_type = getattr(character_module, "AvatarRequestSource", None)
+
+    assert source_type is not None
+    assert set(get_args(source_type)) == {
+        "idle",
+        "operational",
+        "explicit",
+        "historical",
+        "manual",
+    }
 
 
 def _resolution(
@@ -139,6 +154,7 @@ def _bare_console_screen(store: ConsoleChatStore) -> ChatScreen:
         actor_scope_accessor=lambda: None,
         manual_reaction_key=lambda _scope: None,
         resolve_visual_identity=lambda *_args: None,
+        resolve_historical_visual_identity=lambda *_args: None,
         ensure_console_image_view=lambda: (None, None),
         console_image_default_mode=lambda: None,
         is_mounted=lambda: False,

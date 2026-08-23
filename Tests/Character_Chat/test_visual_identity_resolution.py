@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from contextlib import contextmanager
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -230,7 +231,7 @@ def test_live_explicit_states_map_to_pack_keys(
 
 
 def test_history_resolves_exact_recorded_asset_after_active_pack_changes(
-    db: CharactersRAGDB, user_data_dir: Path
+    db: CharactersRAGDB, user_data_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     character_id = _add_character(db)
     old = _activate(db, user_data_dir, character_id, ("neutral", "happy"))
@@ -241,6 +242,17 @@ def test_history_resolves_exact_recorded_asset_after_active_pack_changes(
         user_data_dir / "visual_identities" / old_asset["storage_relpath"]
     ).read_bytes()
     _activate(db, user_data_dir, character_id, ("neutral", "sad"))
+    transaction_calls = 0
+    original_transaction = db.transaction
+
+    @contextmanager
+    def tracked_transaction():
+        nonlocal transaction_calls
+        transaction_calls += 1
+        with original_transaction() as connection:
+            yield connection
+
+    monkeypatch.setattr(db, "transaction", tracked_transaction)
 
     result = visual_identity.resolve_historical_visual_identity(
         db,
@@ -260,6 +272,7 @@ def test_history_resolves_exact_recorded_asset_after_active_pack_changes(
     assert result.asset_id == old_asset["id"]
     assert result.resolved_expression_key == "happy"
     assert result.image_bytes == old_bytes
+    assert transaction_calls == 1
 
 
 def test_history_fails_closed_when_recorded_identity_is_inconsistent(
