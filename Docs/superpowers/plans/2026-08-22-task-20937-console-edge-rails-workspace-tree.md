@@ -328,6 +328,8 @@ Close TASK-20937.2 with exact counts and no speed claim.
 
 - Modify: `tldw_chatbook/css/components/_agentic_terminal.tcss`
 - Modify: `tldw_chatbook/css/tldw_cli_modular.tcss` (generated)
+- Modify: `tldw_chatbook/UI/Console_Modules/frame.py`
+- Modify: `tldw_chatbook/UI/Screens/chat_screen.py` (existing Console frame/focus call sites and comments only)
 - Modify: `Tests/UI/test_console_shell_regions.py`
 - Modify: `Tests/UI/test_console_resize_reflow.py`
 - Create: `Tests/UI/test_console_edge_rail_geometry.py`
@@ -348,9 +350,20 @@ assert right.region.x == transcript.region.right
 
 Sample compositor cells on both boundaries and assert exactly one divider owns each cell. Record RED against current grid padding/full borders/rounded transcript.
 
-- [ ] **Step 2: Make the smallest source-TCSS change**
+- [ ] **Step 2: Make the smallest truthful source-TCSS and inline-frame change**
 
 Remove `padding: 0 1` and side framing from `#console-workspace-grid`. Assign divider ownership once (rail edge or transcript edge, never both). Remove the full `#console-left-rail:focus` border and rounded transcript frame; express focus through color/text/background on existing geometry. Preserve top/bottom separation from global chrome.
+
+TCSS alone cannot establish this ownership: `frame_console_region()` and
+`_paint_console_rail_focus_frame` write inline borders that outrank TCSS in
+Textual 8.2.8. Narrow those existing seams to explicit edge ownership and
+update only their Console call sites/comments. Use the smallest local API
+needed (for example, an explicit `edges` tuple); do not expand this into a
+generic framing framework. The grid owns top/bottom only, Context and its
+collapsed handle own right only, Inspect and its collapsed handle own left
+only, and the transcript owns neither divider. Focus may repaint the existing
+Context-right/Inspect-left divider and add a stable non-color label/control cue,
+but it must never restore removed border edges or change geometry.
 
 - [ ] **Step 3: Rebuild the canonical bundle**
 

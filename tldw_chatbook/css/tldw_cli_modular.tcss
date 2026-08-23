@@ -4991,7 +4991,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
 #console-workspace-grid {
     height: $ds-console-workspace-grid-height;
     min-height: 20;
-    padding: 0 1;
+    padding: 0;
     margin: 0;
     overflow: hidden;
     border-top: solid $ds-grid-line;
@@ -5481,7 +5481,6 @@ with stray left-edge border fragments), and padding 0 1 so the full
 
 #console-left-rail:focus {
     outline: none;
-    border: solid $ds-column-line;
     background: $ds-surface-panel;
 }
 
@@ -5572,10 +5571,13 @@ with stray left-edge border fragments), and padding 0 1 so the full
 #console-session-context,
 #console-workspaces-context,
 #console-workspace-context,
-#console-right-rail,
-#console-run-inspector,
-#console-transcript-region {
+#console-run-inspector {
     border: solid $ds-column-line;
+    background: $ds-surface-panel;
+}
+
+#console-right-rail,
+#console-transcript-region {
     background: $ds-surface-panel;
 }
 
@@ -5607,7 +5609,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
     height: 100%;
     min-height: 20;
     padding: 0;
-    border: solid $ds-grid-line;
+    border: none;
     background: $ds-surface-panel;
 }
 
@@ -6112,8 +6114,17 @@ ConsoleBoundedSection {
 
 #console-transcript-region {
     padding: 0 1;
-    border: round $ds-column-line;
+    border: none;
     background: $ds-surface-panel;
+}
+
+#console-left-rail.console-edge-region-focused #console-context-rail-collapse,
+#console-context-rail-handle.console-edge-region-focused #console-context-rail-open,
+#console-right-rail.console-edge-region-focused #console-inspector-rail-collapse,
+#console-inspector-rail-handle.console-edge-region-focused #console-inspector-rail-open {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 /* TASK-17651: the composer is a dense-form one-row field (task-1586

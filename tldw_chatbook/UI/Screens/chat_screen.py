@@ -568,12 +568,10 @@ CONSOLE_RAIL_SYSTEM_EDIT_AFFORDANCE = "▸"
 # alongside `frame_console_region`, which is their only consumer that needs
 # them as a module-level default; imported above for the other call sites in
 # this file that still reference them directly.
-# TASK-359: the F6 rail stop focuses the collapse button inside an
-# INLINE-framed region — CSS :focus-within can never win against
-# widget.styles.border, so the pane-stop accent (matching the transcript/
-# composer stops, review-measured #0178D4) is swapped in Python on focus
-# change. $ds-focus-accent resolves to $primary; this mirrors it the same
-# way CONSOLE_FRAME_COLOR hardcodes the frame gray.
+# TASK-359/TASK-20937.3: the F6 rail stop focuses a control inside an
+# inline-framed edge region. CSS :focus-within cannot recolor that divider,
+# so Python repaints only the divider the rail already owns; a class supplies
+# the accompanying non-color control cue without changing geometry.
 CONSOLE_FOCUS_FRAME_COLOR = "#0178D4"
 CONSOLE_FOCUS_FRAME_BORDER = ("solid", CONSOLE_FOCUS_FRAME_COLOR)
 CONSOLE_START_HERE_COPY = ""
@@ -12604,8 +12602,7 @@ class ChatScreen(BaseAppScreen):
     def _frame_console_region(
         widget: Any,
         *,
-        top: bool = True,
-        bottom: bool = True,
+        edges: tuple[str, ...],
         variant: str = "solid",
     ) -> Any:
         """Apply a visible Textual-native workbench frame.
@@ -12613,7 +12610,7 @@ class ChatScreen(BaseAppScreen):
         Delegates to `UI.Console_Modules.frame.frame_console_region` (wave-1
         console decomposition, task 2). Kept as a thin shim so the
         not-yet-extracted call sites in `compose_content` are untouched.
-        Task 6 (wave 1's close-out) checked this: 7 call sites remain
+        Task 6 (wave 1's close-out) checked this; five call sites remain
         inside `compose_content` (the main-column block, wave 2's job), so
         the shim stays rather than being force-removed. It is safe to
         delete once every remaining call site imports
@@ -12622,13 +12619,13 @@ class ChatScreen(BaseAppScreen):
 
         Args:
             widget: The Console shell region widget to frame in place.
-            top: When False, suppresses the top border.
+            edges: The exact application or interior edges owned by the region.
             variant: ``"solid"`` or ``"quiet"`` framing.
 
         Returns:
             The same `widget`, mutated in place with frame styling applied.
         """
-        return frame_console_region(widget, top=top, bottom=bottom, variant=variant)
+        return frame_console_region(widget, edges=edges, variant=variant)
 
     def _build_console_live_work_source_readiness_card(self) -> Container:
         """Build the mounted source-readiness card shown without a launch.
@@ -13081,7 +13078,8 @@ class ChatScreen(BaseAppScreen):
                 Horizontal(
                     id="console-workspace-grid",
                     classes="ds-panel destination-workbench",
-                )
+                ),
+                edges=("top", "bottom"),
             )
             workspace_grid.styles.min_height = 0
             stack_rail_labels = self._stack_collapsed_rail_labels()
@@ -13105,7 +13103,7 @@ class ChatScreen(BaseAppScreen):
                     # TASK-2154.1: single-pane mode hides both handles -- the
                     # transcript is the only pane left to point at.
                     left_handle.styles.display = "none"
-                yield self._frame_console_region(left_handle, bottom=False)
+                yield self._frame_console_region(left_handle, edges=("right",))
 
                 # The section-level values below are computed here, on the
                 # screen, exactly as they were computed inline before this
@@ -13189,10 +13187,10 @@ class ChatScreen(BaseAppScreen):
                 left_rail.can_focus = True
                 left_rail.styles.width = "3fr"
                 # TASK-19639 (formerly TASK-18913) compact contract: at exactly 100 columns the
-                # workspace grid has 96 content columns after two border and
-                # two horizontal-padding cells. Default horizontal-label
-                # geometry resolves as Context 30 + main outer 55 + collapsed
-                # Inspector handle 11 = 96. The main min-width waiver keeps
+                # workspace grid has all 100 application columns. Default
+                # horizontal-label geometry resolves as Context 30 + main
+                # outer 59 + collapsed Inspector handle 11 = 100. The main
+                # min-width waiver keeps
                 # the row solvable; `rail_state.left_open` determines Context
                 # visibility. Below 100, default Context force-collapses
                 # without rewriting preference; eligible explicit opens
@@ -13203,7 +13201,7 @@ class ChatScreen(BaseAppScreen):
                 left_rail.styles.min_width = 30
                 if not rail_state.left_open:
                     left_rail.styles.display = "none"
-                yield self._frame_console_region(left_rail, bottom=False)
+                yield self._frame_console_region(left_rail, edges=("right",))
 
                 # A zero-arg builder, not a pre-built widget, for the same
                 # reason `character_avatar_widget_builder` above is one --
@@ -13236,8 +13234,9 @@ class ChatScreen(BaseAppScreen):
                 # minimum is waived. The default layout is transcript-only;
                 # budget-eligible explicit rails may still render from their
                 # 70/74 floors through 83 via compact override. At 84, default
-                # horizontal handles (13 + 11), main 56, two borders, and two
-                # padding cells fit exactly; stacked handles are 3 columns each.
+                # horizontal handles (13 + 11) leave 60 application columns
+                # for the main, above its 56-column floor; stacked handles are
+                # 3 columns each.
                 # TASK-2154.2/TASK-19639 (formerly TASK-18913): ``compact_override`` is only
                 # layout-minimum-waiver authority. It covers eligible explicit
                 # opens below the thresholds, default Context at exactly 100,
@@ -13292,7 +13291,7 @@ class ChatScreen(BaseAppScreen):
                 right_rail.styles.min_width = 34
                 if not rail_state.right_open:
                     right_rail.styles.display = "none"
-                yield self._frame_console_region(right_rail, bottom=False)
+                yield self._frame_console_region(right_rail, edges=("left",))
 
                 right_handle = ConsoleRailHandle(
                     label=rail_state.right_label,
@@ -13311,7 +13310,7 @@ class ChatScreen(BaseAppScreen):
                 right_handle.styles.max_width = right_handle_width
                 if rail_state.right_open or rail_state.single_pane:
                     right_handle.styles.display = "none"
-                yield self._frame_console_region(right_handle, bottom=False)
+                yield self._frame_console_region(right_handle, edges=("left",))
             # task-17652: the status row's side of the composer cluster is
             # user-configurable ([console] status_chips_position). "above"
             # (the default; owner ruling 2026-08-17) tops the cluster
@@ -17759,24 +17758,26 @@ class ChatScreen(BaseAppScreen):
 
     @on(DescendantFocus)
     def _paint_console_rail_focus_frame(self, event: DescendantFocus) -> None:
-        """Swap framed regions' inline borders to the accent while focused.
+        """Repaint only an edge region's owned divider while focused.
 
-        TASK-359: F6's rail stop focuses the collapse button; the region
-        border is inline-styled (single-frame contract), so this is the
-        only place a visible pane-stop indicator can be painted.
-
-        TASK-17651: the transcript region joins the painter — the widget
-        inside it draws no border of its own any more, so the region's
-        column lines ARE the transcript's focus indicator. Edges are
-        written individually, never via the ``border`` shorthand: every
-        region here has a suppressed edge (rails: bottom; transcript
-        region: top and bottom — the workspace grid's border closes the
-        frame) that a shorthand write would silently resurrect.
+        TASK-20937.3: expanded rails and collapsed handles keep the exact
+        same border cells focused or unfocused. The focus class reinforces
+        the owning control with bold/underline/background, so color is not
+        the only cue. The transcript owns neither divider and is not painted.
         """
-        for region_id, accent_edges in (
-            ("console-left-rail", ("left", "right", "top")),
-            ("console-right-rail", ("left", "right", "top")),
-            ("console-transcript-region", ("left", "right")),
+        for region_id, accent_edge, control_id in (
+            ("console-left-rail", "right", "console-context-rail-collapse"),
+            (
+                "console-context-rail-handle",
+                "right",
+                "console-context-rail-open",
+            ),
+            ("console-right-rail", "left", "console-inspector-rail-collapse"),
+            (
+                "console-inspector-rail-handle",
+                "left",
+                "console-inspector-rail-open",
+            ),
         ):
             try:
                 framed = self.query_one(f"#{region_id}")
@@ -17789,16 +17790,24 @@ class ChatScreen(BaseAppScreen):
                     focused_within = True
                     break
                 node = node.parent
+            framed.set_class(focused_within, "console-edge-region-focused")
+            try:
+                focus_control = framed.query_one(f"#{control_id}", Button)
+            except QueryError:
+                focus_control = None
+            if focus_control is not None:
+                focus_control.styles.text_style = (
+                    "bold underline" if focused_within else "none"
+                )
             border = (
                 CONSOLE_FOCUS_FRAME_BORDER if focused_within else CONSOLE_FRAME_BORDER
             )
-            # styles.border_left holds (str, Color) — compare against the
-            # parsed color, or the dedup guard never dedups (review #739).
-            current_kind, current_color = framed.styles.border_left
+            current_kind, current_color = getattr(
+                framed.styles, f"border_{accent_edge}"
+            )
             if current_kind == border[0] and current_color == Color.parse(border[1]):
                 continue
-            for edge in accent_edges:
-                setattr(framed.styles, f"border_{edge}", border)
+            setattr(framed.styles, f"border_{accent_edge}", border)
 
     #: Task 4 fix-round-2 (I3): how long `_recover_stuck_console_send_stash`
     #: waits before treating `_console_pending_send_stash` as abandoned.
