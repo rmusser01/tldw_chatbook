@@ -11,10 +11,13 @@ import json
 import pytest
 
 from tldw_chatbook.Chat.message_metadata import (
+    CHARACTER_EMOTE_FALLBACK_REASONS,
     MESSAGE_ORIGIN_AGENT_WAKE,
     MESSAGE_ORIGINS,
     TEMPLATE_KINDS,
     TRANSCRIPT_STATUSES,
+    CharacterEmoteEventMetadata,
+    CharacterEmoteMetadata,
     MessageMetadata,
 )
 
@@ -233,3 +236,135 @@ def test_from_json_degrades_an_unrecognised_origin_to_blank():
 
     assert restored == MessageMetadata(engine="realtime")
     assert restored.origin == ""
+
+
+def _emote_metadata() -> CharacterEmoteMetadata:
+    return CharacterEmoteMetadata(
+        mood_label="sad",
+        mood_confidence=None,
+        mood_topic=None,
+        emote_events=(
+            CharacterEmoteEventMetadata("smug", 0),
+            CharacterEmoteEventMetadata("sad", 8),
+        ),
+        sanitized_utf16_length=12,
+        actor_kind="character",
+        actor_id=7,
+        pack_id=11,
+        pack_version_id=13,
+        expression_key="sad",
+        expression_id=17,
+        asset_id=19,
+        fallback_reason="",
+    )
+
+
+def test_character_emote_metadata_round_trips_as_bounded_scalars() -> None:
+    metadata = MessageMetadata(character_emote=_emote_metadata())
+
+    payload = json.loads(metadata.to_json())
+
+    assert payload["character_emote"]["emote_events"] == [
+        {"at_char": 0, "state": "smug"},
+        {"at_char": 8, "state": "sad"},
+    ]
+    assert MessageMetadata.from_json(metadata.to_json()) == metadata
+
+
+@pytest.mark.parametrize(
+    "events",
+    [
+        tuple(CharacterEmoteEventMetadata(f"state-{index}", index) for index in range(6)),
+        (CharacterEmoteEventMetadata("sad", 9), CharacterEmoteEventMetadata("happy", 8)),
+        (CharacterEmoteEventMetadata("sad", 13),),
+    ],
+)
+def test_character_emote_event_bounds_are_strict(events) -> None:
+    with pytest.raises(ValueError):
+        CharacterEmoteMetadata(
+            mood_label=events[-1].state,
+            emote_events=events,
+            sanitized_utf16_length=12,
+        )
+
+
+def test_character_emote_final_explicit_state_must_match_mood() -> None:
+    with pytest.raises(ValueError, match="mood_label"):
+        CharacterEmoteMetadata(
+            mood_label="happy",
+            emote_events=(CharacterEmoteEventMetadata("sad", 0),),
+            sanitized_utf16_length=3,
+        )
+
+
+@pytest.mark.parametrize("value", [True, 0, -1, 1.5, "7"])
+def test_character_emote_local_identities_are_positive_integers(value) -> None:
+    with pytest.raises(ValueError):
+        CharacterEmoteMetadata(
+            mood_label="neutral",
+            sanitized_utf16_length=0,
+            actor_kind="character",
+            actor_id=value,
+        )
+
+
+def test_character_emote_fallback_vocabulary_is_closed() -> None:
+    with pytest.raises(ValueError, match="fallback_reason"):
+        CharacterEmoteMetadata(
+            mood_label="neutral",
+            sanitized_utf16_length=0,
+            fallback_reason="/private/path/to/asset.png",
+        )
+
+    for reason in CHARACTER_EMOTE_FALLBACK_REASONS:
+        assert CharacterEmoteMetadata(
+            mood_label="neutral",
+            sanitized_utf16_length=0,
+            fallback_reason=reason,
+        ).fallback_reason == reason
+
+
+@pytest.mark.parametrize(
+    "bad_emote",
+    [
+        [],
+        {"mood_label": "../../bad", "sanitized_utf16_length": 0},
+        {"mood_label": "sad", "sanitized_utf16_length": True},
+        {
+            "mood_label": "sad",
+            "sanitized_utf16_length": 2,
+            "emote_events": [{"state": "sad", "at_char": 3}],
+        },
+        {
+            "mood_label": "sad",
+            "sanitized_utf16_length": 2,
+            "assistant_text": "Emote: sad",
+        },
+        {
+            "mood_label": "sad",
+            "sanitized_utf16_length": 2,
+            "actor_id": "server-character-id",
+        },
+    ],
+)
+def test_malformed_character_emote_load_drops_only_nested_record(bad_emote) -> None:
+    restored = MessageMetadata.from_json(
+        json.dumps({"engine": "pipeline", "character_emote": bad_emote})
+    )
+
+    assert restored == MessageMetadata(engine="pipeline")
+
+
+def test_character_emote_payload_has_no_content_or_path_fields() -> None:
+    payload = json.dumps(json.loads(MessageMetadata(character_emote=_emote_metadata()).to_json()))
+
+    for forbidden in (
+        "assistant_text",
+        "directive",
+        "prompt",
+        "provider_payload",
+        "storage_relpath",
+        "manual_override",
+        "server_id",
+    ):
+        assert forbidden not in payload
