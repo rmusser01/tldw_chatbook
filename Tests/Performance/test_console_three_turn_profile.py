@@ -4767,7 +4767,7 @@ def test_prepare_target_worktree_cleans_partial_add_failure(tmp_path: Path) -> N
         ["git", "worktree", "list", "--porcelain"],
         ["git", "worktree", "list", "--porcelain"],
     ]
-    assert not target.exists()
+    assert target.is_dir()
     _assert_retained_target_tombstone(target.parent, "candidate")
     assert (target.parent / ".candidate-cleanup-receipt.json").is_file()
 
@@ -4792,7 +4792,7 @@ def test_prepare_target_worktree_cleans_partial_when_git_proves_absent(
             run_command=fake_run,
         )
 
-    assert not target.exists()
+    assert target.is_dir()
     _assert_retained_target_tombstone(target.parent, "candidate")
     assert (target.parent / ".candidate-cleanup-receipt.json").is_file()
 
@@ -4817,9 +4817,89 @@ def test_prepare_target_worktree_cleans_partial_directory_when_add_raises(
             run_command=fake_run,
         )
 
-    assert not target.exists()
+    assert target.is_dir()
     _assert_retained_target_tombstone(target.parent, "candidate")
     assert (target.parent / ".candidate-cleanup-receipt.json").is_file()
+
+
+@pytest.mark.parametrize(
+    "reserved_name",
+    (
+        "candidate",
+        ".candidate-cleanup",
+        ".candidate-cleanup-receipt.json",
+        ".candidate-cleanup-terminal.json",
+        "..candidate-cleanup-receipt.json-stage-deadbeef",
+        ".candidate-cleanup-orphan-deadbeef",
+        ".campaign-worktree-cleanup-deadbeef",
+    ),
+)
+def test_prepare_target_worktree_rejects_reserved_cleanup_namespace_before_git(
+    tmp_path: Path,
+    reserved_name: str,
+) -> None:
+    run_root = tmp_path / "run"
+    run_root.mkdir()
+    (run_root / reserved_name).mkdir()
+    calls: list[list[str]] = []
+
+    def fake_run(command, **_kwargs):
+        calls.append(command)
+        raise AssertionError("Git must not run for reserved cleanup evidence")
+
+    with pytest.raises(RuntimeError, match="^target_worktree_failed:candidate"):
+        profile.prepare_target_worktree(
+            tmp_path / "repository",
+            run_root,
+            name="candidate",
+            revision=profile.CANDIDATE_SHA,
+            run_command=fake_run,
+        )
+
+    assert calls == []
+    assert (run_root / reserved_name).is_dir()
+
+
+def test_prepare_target_worktree_refuses_completed_target_tombstone_before_git(
+    tmp_path: Path,
+) -> None:
+    repository = tmp_path / "repository"
+    run_root = tmp_path / "run"
+    target = run_root / "candidate"
+    target.mkdir(parents=True)
+
+    def list_only(command, **_kwargs):
+        assert command == ["git", "worktree", "list", "--porcelain"]
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    profile._remove_target_worktree(
+        repository,
+        run_root,
+        name="candidate",
+        run_command=list_only,
+        allow_unregistered_owned=True,
+    )
+    calls: list[list[str]] = []
+
+    def reject_git(command, **_kwargs):
+        calls.append(command)
+        raise AssertionError("terminal target tombstone must block reuse")
+
+    with pytest.raises(
+        RuntimeError,
+        match="^target_worktree_failed:candidate:target_exists$",
+    ):
+        profile.prepare_target_worktree(
+            repository,
+            run_root,
+            name="candidate",
+            revision=profile.CANDIDATE_SHA,
+            run_command=reject_git,
+        )
+
+    assert calls == []
+    assert target.is_dir()
+    assert list(target.iterdir()) == []
 
 
 def test_remove_target_worktree_partial_no_owned_rechecks_before_success(
@@ -4885,9 +4965,7 @@ def test_remove_target_worktree_partial_no_owned_rejects_orphan_receipt(
     assert receipt.read_bytes() == b"{}\n"
 
 
-@pytest.mark.parametrize(
-    "checkpoint", ("receipt_published", "target_quarantined", "target_cleared")
-)
+@pytest.mark.parametrize("checkpoint", ("receipt_published", "target_cleared"))
 def test_remove_target_worktree_partial_owned_cleanup_is_crash_resumable(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -4902,7 +4980,6 @@ def test_remove_target_worktree_partial_owned_cleanup_is_crash_resumable(
     target_identity = (target_metadata.st_dev, target_metadata.st_ino)
     original_remove = profile._remove_directory_contents_fd
     original_publish = profile._publish_local_target_receipt
-    original_rename = profile.os.rename
 
     def fake_run(command, **_kwargs):
         assert command == ["git", "worktree", "list", "--porcelain"]
@@ -4923,19 +5000,12 @@ def test_remove_target_worktree_partial_owned_cleanup_is_crash_resumable(
             raise KeyboardInterrupt("partial receipt published")
         return result
 
-    def quarantine_then_interrupt(source, destination, *args, **kwargs):
-        result = original_rename(source, destination, *args, **kwargs)
-        if checkpoint == "target_quarantined" and destination == ".candidate-cleanup":
-            raise KeyboardInterrupt("partial target quarantined")
-        return result
-
     monkeypatch.setattr(
         profile, "_remove_directory_contents_fd", clear_then_interrupt
     )
     monkeypatch.setattr(
         profile, "_publish_local_target_receipt", publish_then_interrupt
     )
-    monkeypatch.setattr(profile.os, "rename", quarantine_then_interrupt)
     with pytest.raises(KeyboardInterrupt):
         profile._remove_target_worktree(
             repository,
@@ -4945,12 +5015,10 @@ def test_remove_target_worktree_partial_owned_cleanup_is_crash_resumable(
             allow_unregistered_owned=True,
         )
 
-    quarantine = run_root / ".candidate-cleanup"
     receipt = run_root / ".candidate-cleanup-receipt.json"
     assert receipt.is_file()
     assert str(target).encode() not in receipt.read_bytes()
-    retained_path = target if checkpoint == "receipt_published" else quarantine
-    retained = retained_path.stat()
+    retained = target.stat()
     assert (retained.st_dev, retained.st_ino) == target_identity
     monkeypatch.setattr(
         profile, "_remove_directory_contents_fd", original_remove
@@ -4958,7 +5026,6 @@ def test_remove_target_worktree_partial_owned_cleanup_is_crash_resumable(
     monkeypatch.setattr(
         profile, "_publish_local_target_receipt", original_publish
     )
-    monkeypatch.setattr(profile.os, "rename", original_rename)
 
     profile._remove_target_worktree(
         repository,
@@ -4975,9 +5042,9 @@ def test_remove_target_worktree_partial_owned_cleanup_is_crash_resumable(
         allow_unregistered_owned=True,
     )
 
-    retained = quarantine.stat()
+    retained = target.stat()
     assert (retained.st_dev, retained.st_ino) == target_identity
-    assert list(quarantine.iterdir()) == []
+    assert list(target.iterdir()) == []
     terminal_receipt = run_root / ".candidate-cleanup-terminal.json"
     assert terminal_receipt.is_file()
     assert terminal_receipt.read_bytes() == receipt.read_bytes()
@@ -4990,7 +5057,6 @@ def test_remove_target_worktree_partial_receipt_rejects_foreign_quarantine(
     run_root = tmp_path / "run"
     target = run_root / "candidate"
     target.mkdir(parents=True)
-    detached_original = tmp_path / "detached-original-partial"
 
     def fake_run(command, **_kwargs):
         assert command == ["git", "worktree", "list", "--porcelain"]
@@ -5004,7 +5070,6 @@ def test_remove_target_worktree_partial_receipt_rejects_foreign_quarantine(
         allow_unregistered_owned=True,
     )
     quarantine = run_root / ".candidate-cleanup"
-    quarantine.rename(detached_original)
     quarantine.mkdir()
     (quarantine / "foreign-sentinel").write_bytes(b"preserve")
 
@@ -5020,7 +5085,7 @@ def test_remove_target_worktree_partial_receipt_rejects_foreign_quarantine(
             allow_unregistered_owned=True,
         )
 
-    assert detached_original.is_dir()
+    assert target.is_dir()
     assert (quarantine / "foreign-sentinel").read_bytes() == b"preserve"
 
 
@@ -5043,8 +5108,7 @@ def test_remove_target_worktree_partial_terminal_rejects_nonempty_quarantine(
         run_command=fake_run,
         allow_unregistered_owned=True,
     )
-    quarantine = run_root / ".candidate-cleanup"
-    sentinel = quarantine / "foreign-sentinel"
+    sentinel = target / "foreign-sentinel"
     sentinel.write_bytes(b"preserve")
 
     with pytest.raises(
@@ -5060,6 +5124,52 @@ def test_remove_target_worktree_partial_terminal_rejects_nonempty_quarantine(
         )
 
     assert sentinel.read_bytes() == b"preserve"
+
+
+def test_remove_target_worktree_partial_does_not_replace_injected_empty_quarantine(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = tmp_path / "repository"
+    run_root = tmp_path / "run"
+    target = run_root / "candidate"
+    target.mkdir(parents=True)
+    (target / "owned-sentinel").write_bytes(b"owned")
+    quarantine = run_root / ".candidate-cleanup"
+    original_publish = profile._publish_local_target_receipt
+    injected_identity: tuple[int, int] | None = None
+
+    def fake_run(command, **_kwargs):
+        assert command == ["git", "worktree", "list", "--porcelain"]
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    def publish_then_inject(*args, **kwargs):
+        nonlocal injected_identity
+        result = original_publish(*args, **kwargs)
+        quarantine.mkdir()
+        metadata = quarantine.stat()
+        injected_identity = (metadata.st_dev, metadata.st_ino)
+        return result
+
+    monkeypatch.setattr(
+        profile, "_publish_local_target_receipt", publish_then_inject
+    )
+    with pytest.raises(
+        RuntimeError,
+        match="^target_worktree_admin_marker_conflict:candidate$",
+    ):
+        profile._remove_target_worktree(
+            repository,
+            run_root,
+            name="candidate",
+            run_command=fake_run,
+            allow_unregistered_owned=True,
+        )
+
+    assert injected_identity is not None
+    current = quarantine.stat()
+    assert (current.st_dev, current.st_ino) == injected_identity
+    assert target.is_dir()
 
 
 def test_prepare_target_worktree_preserves_add_when_registration_check_raises(
@@ -5195,9 +5305,9 @@ def _linked_worktree_admin(target: Path) -> Path:
 
 
 def _assert_retained_target_tombstone(run_root: Path, name: str) -> None:
-    quarantine = run_root / f".{name}-cleanup"
-    assert quarantine.is_dir()
-    assert list(quarantine.iterdir()) == []
+    target = run_root / name
+    assert target.is_dir()
+    assert list(target.iterdir()) == []
 
 
 def test_remove_target_worktree_real_git_parent_swap_preserves_unrelated(
@@ -5212,19 +5322,20 @@ def test_remove_target_worktree_real_git_parent_swap_preserves_unrelated(
     _add_real_worktree(repository, outside, branch="unrelated")
     sentinel = outside / "uncommitted-sentinel"
     sentinel.write_bytes(b"must survive")
-    original_rename = profile.os.rename
+    original_move = profile._move_worktree_admin_to_marker
     swapped = False
 
-    def swap_after_quarantine(source, destination, *args, **kwargs):
+    def swap_after_admin_claim(*args, **kwargs):
         nonlocal swapped
-        result = original_rename(source, destination, *args, **kwargs)
-        if source == "candidate" and destination == ".candidate-cleanup":
-            swapped = True
-            original_rename(attempts, tmp_path / "original-attempts")
-            original_rename(tmp_path / "outside", attempts)
+        result = original_move(*args, **kwargs)
+        swapped = True
+        profile.os.rename(attempts, tmp_path / "original-attempts")
+        profile.os.rename(tmp_path / "outside", attempts)
         return result
 
-    monkeypatch.setattr(profile.os, "rename", swap_after_quarantine)
+    monkeypatch.setattr(
+        profile, "_move_worktree_admin_to_marker", swap_after_admin_claim
+    )
 
     profile._remove_target_worktree(
         repository,
@@ -5327,7 +5438,7 @@ def test_remove_target_worktree_real_git_rejects_claim_replacement_before_delete
     )
     assert (marker / "admin/replacement-sentinel").read_bytes() == b"preserve"
     assert detached_claim.is_dir()
-    assert (run_root / ".candidate-cleanup").is_dir()
+    assert target.is_dir()
 
 
 def test_remove_target_worktree_identity_conflict_preserves_empty_canonical(
@@ -5500,6 +5611,8 @@ def test_remove_target_worktree_terminal_tombstone_rejects_new_generation(
         target_metadata.st_dev,
         target_metadata.st_ino,
     )
+    detached_original = tmp_path / "detached-original-candidate"
+    target.rename(detached_original)
     if replacement == "path":
         target.mkdir()
         (target / "sentinel").write_bytes(b"preserve")
@@ -5519,8 +5632,46 @@ def test_remove_target_worktree_terminal_tombstone_rejects_new_generation(
         )
 
     assert target.is_dir()
+    assert detached_original.is_dir()
     if replacement == "path":
         assert (target / "sentinel").read_bytes() == b"preserve"
+
+
+def test_remove_target_worktree_registered_does_not_replace_injected_empty_quarantine(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _init_real_worktree_repository(tmp_path)
+    run_root = tmp_path / "run"
+    target = run_root / "candidate"
+    quarantine = run_root / ".candidate-cleanup"
+    _add_real_worktree(repository, target, branch="candidate")
+    original_backlink = profile._worktree_backlink_admin_name
+    injected_identity: tuple[int, int] | None = None
+
+    def validate_then_inject(*args, **kwargs):
+        nonlocal injected_identity
+        result = original_backlink(*args, **kwargs)
+        quarantine.mkdir()
+        metadata = quarantine.stat()
+        injected_identity = (metadata.st_dev, metadata.st_ino)
+        return result
+
+    monkeypatch.setattr(
+        profile, "_worktree_backlink_admin_name", validate_then_inject
+    )
+    with pytest.raises(
+        RuntimeError,
+        match="^target_worktree_admin_marker_conflict:candidate$",
+    ):
+        profile._remove_target_worktree(
+            repository, run_root, name="candidate"
+        )
+
+    assert injected_identity is not None
+    current = quarantine.stat()
+    assert (current.st_dev, current.st_ino) == injected_identity
+    assert target.is_dir()
 
 
 def test_remove_target_worktree_pending_receipt_rejects_foreign_quarantine(
@@ -5550,6 +5701,7 @@ def test_remove_target_worktree_pending_receipt_rejects_foreign_quarantine(
         str(target)
     )
     pending_before = (marker / "pending.json").read_bytes()
+    target.rename(quarantine)
     quarantine.rename(detached_original)
     quarantine.mkdir()
     foreign_sentinel = quarantine / "foreign-sentinel"
@@ -5581,8 +5733,7 @@ def test_remove_target_worktree_terminal_rejects_quarantine_path_swap(
     repository = _init_real_worktree_repository(tmp_path)
     run_root = tmp_path / "run"
     target = run_root / "candidate"
-    quarantine = run_root / ".candidate-cleanup"
-    detached_original = tmp_path / "detached-original-quarantine"
+    detached_original = tmp_path / "detached-original-target"
     _add_real_worktree(repository, target, branch="candidate")
     target_metadata = target.stat()
     target_identity = (target_metadata.st_dev, target_metadata.st_ino)
@@ -5595,10 +5746,10 @@ def test_remove_target_worktree_terminal_rejects_quarantine_path_swap(
         metadata = os.fstat(descriptor)
         if not swapped and (metadata.st_dev, metadata.st_ino) == target_identity:
             swapped = True
-            quarantine.rename(detached_original)
-            quarantine.mkdir()
+            target.rename(detached_original)
+            target.mkdir()
             if replacement_content == "nonempty":
-                (quarantine / "foreign-sentinel").write_bytes(b"preserve")
+                (target / "foreign-sentinel").write_bytes(b"preserve")
 
     monkeypatch.setattr(
         profile, "_remove_directory_contents_fd", clear_then_swap
@@ -5614,9 +5765,9 @@ def test_remove_target_worktree_terminal_rejects_quarantine_path_swap(
 
     assert swapped
     assert detached_original.is_dir()
-    assert quarantine.is_dir()
+    assert target.is_dir()
     if replacement_content == "nonempty":
-        assert (quarantine / "foreign-sentinel").read_bytes() == b"preserve"
+        assert (target / "foreign-sentinel").read_bytes() == b"preserve"
 
 
 def test_remove_target_worktree_terminal_rejects_nonempty_exact_quarantine(
@@ -5625,10 +5776,9 @@ def test_remove_target_worktree_terminal_rejects_nonempty_exact_quarantine(
     repository = _init_real_worktree_repository(tmp_path)
     run_root = tmp_path / "run"
     target = run_root / "candidate"
-    quarantine = run_root / ".candidate-cleanup"
     _add_real_worktree(repository, target, branch="candidate")
     profile._remove_target_worktree(repository, run_root, name="candidate")
-    sentinel = quarantine / "foreign-sentinel"
+    sentinel = target / "foreign-sentinel"
     sentinel.write_bytes(b"preserve")
 
     with pytest.raises(
@@ -5659,6 +5809,7 @@ def test_remove_target_worktree_terminal_rechecks_reappeared_target(
     def complete_then_reappear(*args, **kwargs):
         result = original_delete(*args, **kwargs)
         if kwargs.get("complete"):
+            target.rename(detached_reappeared)
             if reappeared == "path":
                 target.mkdir()
                 (target / "foreign-sentinel").write_bytes(b"preserve")
@@ -5676,7 +5827,6 @@ def test_remove_target_worktree_terminal_rechecks_reappeared_target(
                     cwd=repository,
                     check=True,
                 )
-                target.rename(detached_reappeared)
         return result
 
     monkeypatch.setattr(
@@ -5777,7 +5927,6 @@ def test_remove_target_worktree_rejects_malformed_target_receipt_schema(
 @pytest.mark.parametrize(
     "checkpoint",
     (
-        "target_quarantine",
         "empty_admin_marker",
         "owned_admin_marker",
         "admin_content_removed",
@@ -5812,8 +5961,6 @@ def test_remove_target_worktree_real_git_resumes_namespace_checkpoints(
         if checkpoint == "empty_admin_marker" and destination == "admin":
             raise KeyboardInterrupt("empty admin marker checkpoint")
         result = original_rename(source, destination, *args, **kwargs)
-        if checkpoint == "target_quarantine" and destination == ".candidate-cleanup":
-            raise KeyboardInterrupt("target quarantine checkpoint")
         if checkpoint == "owned_admin_marker" and destination == "admin":
             raise KeyboardInterrupt("owned admin marker checkpoint")
         return result
@@ -5851,7 +5998,7 @@ def test_remove_target_worktree_real_git_resumes_namespace_checkpoints(
             repository, run_root, name="candidate"
         )
 
-    assert (run_root / ".candidate-cleanup").is_dir()
+    assert target.is_dir()
     monkeypatch.setattr(profile.os, "rename", original_rename)
     monkeypatch.setattr(profile.os, "unlink", original_unlink)
     monkeypatch.setattr(
@@ -5877,7 +6024,6 @@ def test_remove_target_worktree_real_git_resumes_after_admin_tombstone_published
     repository = _init_real_worktree_repository(tmp_path)
     run_root = tmp_path / "run"
     target = run_root / name
-    quarantine = run_root / f".{name}-cleanup"
     _add_real_worktree(repository, target, branch=name)
     original_delete_marker = profile._delete_worktree_admin_marker
 
@@ -5895,7 +6041,7 @@ def test_remove_target_worktree_real_git_resumes_after_admin_tombstone_published
             repository, run_root, name=name
         )
 
-    assert quarantine.is_dir()
+    assert target.is_dir()
     assert str(target) not in profile._worktree_registrations(repository)
     monkeypatch.setattr(
         profile, "_delete_worktree_admin_marker", original_delete_marker
@@ -5905,6 +6051,79 @@ def test_remove_target_worktree_real_git_resumes_after_admin_tombstone_published
     )
 
     _assert_retained_target_tombstone(run_root, name)
+
+
+def test_remove_target_worktree_resumes_legacy_registered_quarantine(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _init_real_worktree_repository(tmp_path)
+    run_root = tmp_path / "run"
+    target = run_root / "candidate"
+    quarantine = run_root / ".candidate-cleanup"
+    _add_real_worktree(repository, target, branch="candidate")
+    original_delete = profile._delete_worktree_admin_marker
+
+    def publish_then_interrupt(*args, **kwargs) -> None:
+        original_delete(*args, **kwargs)
+        raise KeyboardInterrupt("legacy pending receipt")
+
+    monkeypatch.setattr(
+        profile, "_delete_worktree_admin_marker", publish_then_interrupt
+    )
+    with pytest.raises(KeyboardInterrupt):
+        profile._remove_target_worktree(
+            repository, run_root, name="candidate"
+        )
+    target.rename(quarantine)
+    monkeypatch.setattr(
+        profile, "_delete_worktree_admin_marker", original_delete
+    )
+
+    profile._remove_target_worktree(
+        repository, run_root, name="candidate"
+    )
+
+    assert quarantine.is_dir()
+    assert list(quarantine.iterdir()) == []
+    assert not target.exists()
+
+
+def test_remove_target_worktree_resumes_legacy_partial_quarantine(
+    tmp_path: Path,
+) -> None:
+    repository = tmp_path / "repository"
+    run_root = tmp_path / "run"
+    target = run_root / "candidate"
+    quarantine = run_root / ".candidate-cleanup"
+    target.mkdir(parents=True)
+    (target / "partial-sentinel").write_bytes(b"remove")
+    root_descriptor = os.open(run_root, os.O_RDONLY)
+    target_descriptor = os.open(target, os.O_RDONLY)
+    try:
+        profile._publish_local_target_receipt(
+            root_descriptor, str(target), "candidate", target_descriptor
+        )
+    finally:
+        os.close(target_descriptor)
+        os.close(root_descriptor)
+    target.rename(quarantine)
+
+    def fake_run(command, **_kwargs):
+        assert command == ["git", "worktree", "list", "--porcelain"]
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    profile._remove_target_worktree(
+        repository,
+        run_root,
+        name="candidate",
+        run_command=fake_run,
+        allow_unregistered_owned=True,
+    )
+
+    assert quarantine.is_dir()
+    assert list(quarantine.iterdir()) == []
+    assert not target.exists()
 
 
 def test_remove_target_worktree_real_git_refuses_admin_marker_collision(
@@ -6137,7 +6356,7 @@ def test_remove_target_worktree_real_git_disappearance_race_is_stable(
     target = run_root / "candidate"
     _add_real_worktree(repository, target, branch="candidate")
     original_strict = profile._strict_owned_directory
-    original_rename = profile.os.rename
+    original_move = profile._move_worktree_admin_to_marker
     loser_waiting = threading.Event()
     allow_loser = threading.Event()
     selection_lock = threading.Lock()
@@ -6156,14 +6375,15 @@ def test_remove_target_worktree_real_git_disappearance_race_is_stable(
             assert allow_loser.wait(timeout=5)
         return original_strict(path, *args, **kwargs)
 
-    def release_after_quarantine(source, destination, *args, **kwargs):
-        result = original_rename(source, destination, *args, **kwargs)
-        if source == "candidate" and destination == ".candidate-cleanup":
-            allow_loser.set()
+    def release_after_admin_claim(*args, **kwargs):
+        result = original_move(*args, **kwargs)
+        allow_loser.set()
         return result
 
     monkeypatch.setattr(profile, "_strict_owned_directory", delayed_strict)
-    monkeypatch.setattr(profile.os, "rename", release_after_quarantine)
+    monkeypatch.setattr(
+        profile, "_move_worktree_admin_to_marker", release_after_admin_claim
+    )
 
     def cleanup() -> BaseException | None:
         try:
@@ -6308,8 +6528,8 @@ def test_remove_target_worktrees_attempts_both_when_first_cleanup_fails(
             names=("candidate", "control"),
         )
 
-    assert (run_root / ".candidate-cleanup").is_dir()
-    assert not (run_root / "control").exists()
+    assert (run_root / "candidate").is_dir()
+    _assert_retained_target_tombstone(run_root, "control")
     assert profile._worktree_registrations(repository) == frozenset(
         {str(repository.resolve()), str(run_root / "candidate")}
     )

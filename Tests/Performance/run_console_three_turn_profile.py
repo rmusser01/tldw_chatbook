@@ -3158,9 +3158,16 @@ def prepare_target_worktree(
     target = (root / name).resolve()
     if target.parent != root:
         raise RuntimeError("target_worktree_invalid")
-    if target.exists():
-        raise RuntimeError(f"target_worktree_failed:{name}:target_exists")
     target.parent.mkdir(parents=True, exist_ok=True)
+    for entry in os.scandir(root):
+        if entry.name == name:
+            raise RuntimeError(f"target_worktree_failed:{name}:target_exists")
+        if entry.name.startswith(f".{name}-cleanup") or entry.name.startswith(
+            f"..{name}-cleanup"
+        ) or entry.name.startswith(".campaign-worktree-cleanup-"):
+            raise RuntimeError(
+                f"target_worktree_failed:{name}:cleanup_reserved"
+            )
     command = ["git", "worktree", "add", "--detach", str(target), revision]
     try:
         completed = run_command(
@@ -5671,37 +5678,39 @@ def _verify_target_worktree_terminal(
     )
     if target in registrations:
         raise RuntimeError("target_worktree_admin_marker_conflict")
-    try:
-        os.stat(name, dir_fd=root_descriptor, follow_symlinks=False)
-    except FileNotFoundError:
-        pass
-    except OSError as exc:
-        raise RuntimeError("target_worktree_unregister_failed") from exc
-    else:
-        raise RuntimeError("target_worktree_admin_marker_conflict")
     quarantine_name = f".{name}-cleanup"
+    observed: list[tuple[str, int]] = []
     try:
-        quarantine_descriptor = os.open(
-            quarantine_name,
-            _directory_open_flags(),
-            dir_fd=root_descriptor,
-        )
-    except FileNotFoundError:
-        if expected_target_identity is not None:
-            raise RuntimeError("target_worktree_admin_marker_conflict") from None
-        return
-    except OSError as exc:
-        raise RuntimeError("target_worktree_admin_marker_conflict") from exc
-    try:
-        quarantine = os.fstat(quarantine_descriptor)
-        if (
-            expected_target_identity
-            != (quarantine.st_dev, quarantine.st_ino)
-            or any(os.scandir(quarantine_descriptor))
-        ):
+        for owned_name in (name, quarantine_name):
+            try:
+                descriptor = os.open(
+                    owned_name,
+                    _directory_open_flags(),
+                    dir_fd=root_descriptor,
+                )
+            except FileNotFoundError:
+                continue
+            except OSError as exc:
+                raise RuntimeError(
+                    "target_worktree_admin_marker_conflict"
+                ) from exc
+            observed.append((owned_name, descriptor))
+        if expected_target_identity is None:
+            if observed:
+                raise RuntimeError("target_worktree_admin_marker_conflict")
+            return
+        if len(observed) != 1:
+            raise RuntimeError("target_worktree_admin_marker_conflict")
+        _owned_name, descriptor = observed[0]
+        metadata = os.fstat(descriptor)
+        if expected_target_identity != (
+            metadata.st_dev,
+            metadata.st_ino,
+        ) or any(os.scandir(descriptor)):
             raise RuntimeError("target_worktree_admin_marker_conflict")
     finally:
-        os.close(quarantine_descriptor)
+        for _owned_name, descriptor in observed:
+            os.close(descriptor)
 
 
 def _remove_target_worktree(
@@ -5871,21 +5880,11 @@ def _remove_target_worktree(
                     f"target_worktree_admin_marker_conflict:{name}"
                 ) from exc
             if receipt_is_terminal:
-                if owned_name != quarantine_name or any(
-                    os.scandir(owned_descriptor)
-                ):
+                if any(os.scandir(owned_descriptor)):
                     raise RuntimeError(
                         f"target_worktree_admin_marker_conflict:{name}"
                     )
             else:
-                if owned_name == name:
-                    os.rename(
-                        name,
-                        quarantine_name,
-                        src_dir_fd=root_descriptor,
-                        dst_dir_fd=root_descriptor,
-                    )
-                    os.fsync(root_descriptor)
                 _remove_directory_contents_fd(owned_descriptor)
                 _complete_local_target_receipt(root_descriptor, name)
             try:
@@ -5923,10 +5922,6 @@ def _remove_target_worktree(
         raise RuntimeError(f"target_worktree_admin_marker_conflict:{name}")
     if not registered:
         if marker_state in {"pending", "tombstone"}:
-            if owned_name == name:
-                raise RuntimeError(
-                    f"target_worktree_admin_marker_conflict:{name}"
-                )
             if owned_name is None:
                 terminal_root_descriptor = _open_identity_bound_directory(
                     root, root_identity, error_code=confinement_error
@@ -6046,19 +6041,6 @@ def _remove_target_worktree(
                 )
                 if registered and backlink_name != admin_name:
                     raise RuntimeError("target_worktree_admin_invalid")
-        if owned_name == name:
-            try:
-                os.rename(
-                    name,
-                    quarantine_name,
-                    src_dir_fd=root_descriptor,
-                    dst_dir_fd=root_descriptor,
-                )
-            except FileNotFoundError as exc:
-                raise RuntimeError(
-                    f"target_worktree_unregister_failed:{name}"
-                ) from exc
-            os.fsync(root_descriptor)
         try:
             if registered:
                 assert admin_name is not None
