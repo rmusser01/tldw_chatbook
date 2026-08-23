@@ -269,6 +269,7 @@ class LibraryNotesSyncController:
         self._review_plan: ReconciliationPlan | None = None
         self._review_labels: dict[str, RuntimeConflictLabel] = {}
         self._selections: dict[tuple[str, str], NotesSyncConflictChoice] = {}
+        self._apply_in_flight: set[tuple[str, str]] = set()
         self._comparison_generation = 0
         self._expanded_binding_id: str | None = None
         self._projection_root_id: str | None = None
@@ -505,6 +506,7 @@ class LibraryNotesSyncController:
     def _advance_lifecycle(self) -> int:
         if self._lifecycle_epoch >= _LIFECYCLE_EPOCH_MAX:
             raise RuntimeError("controller lifecycle epoch exhausted")
+        self._apply_in_flight.clear()
         self._lifecycle_epoch += 1
         return self._lifecycle_epoch
 
@@ -846,23 +848,32 @@ class LibraryNotesSyncController:
         self._state = replace(self._state, phase="review")
         self._publish()
 
-    async def apply_reviewed(self) -> None:
+    async def apply_reviewed(self, root_id: str, observation_token: str) -> None:
         review = self._state.review
         plan = self._review_plan
-        root_id = review.root_id
         epoch = self._lifecycle_epoch
         if (
             self._state.phase != "review"
             or plan is None
             or not root_id
-            or not review.observation_token
+            or not observation_token
+            or review.root_id != root_id
+            or review.observation_token != observation_token
             or root_id != self._projection_root_id
             or plan.root_id != root_id
-            or plan.observation_token != review.observation_token
+            or plan.observation_token != observation_token
         ):
             self._state = replace(
                 self._state,
                 status_line="The review is invalid. Check again before applying.",
+            )
+            self._publish()
+            return
+        provenance = (root_id, observation_token)
+        if provenance in self._apply_in_flight:
+            self._state = replace(
+                self._state,
+                status_line="Apply is already running for this review.",
             )
             self._publish()
             return
@@ -875,10 +886,11 @@ class LibraryNotesSyncController:
             return
         action_ids = tuple(action.action_id for action in plan.safe_actions)
         selections = self._current_selections()
+        self._apply_in_flight.add(provenance)
         try:
             result = await self._runtime.apply_reviewed(
                 root_id,
-                review.observation_token,
+                observation_token,
                 action_ids,
                 selections,
             )
@@ -927,6 +939,7 @@ class LibraryNotesSyncController:
                 status_line="Apply returned an invalid result. Check again.",
             )
             self._publish()
+            self._apply_in_flight.discard(provenance)
             return
         if not self._lifecycle_is_current(root_id, epoch):
             return
@@ -959,6 +972,7 @@ class LibraryNotesSyncController:
                 receipt_line="",
             )
             self._publish()
+            self._apply_in_flight.discard(provenance)
             return
 
         installed = await self._install_review(
@@ -1015,6 +1029,7 @@ class LibraryNotesSyncController:
             )
         self.refresh_roots(publish=False)
         self._publish()
+        self._apply_in_flight.discard(provenance)
 
     async def sync_now(self, root_id: str) -> None:
         """Run the runtime's existing mutation-free manual reconciliation."""
@@ -1087,7 +1102,13 @@ class LibraryNotesSyncController:
         )
         self.refresh_roots()
 
-    def stage_attention_choice(self, item_id: str, choice: str) -> None:
+    def stage_attention_choice(
+        self,
+        root_id: str,
+        observation_token: str,
+        item_id: str,
+        choice: str,
+    ) -> None:
         """Stage one eligible conflict choice without calling the runtime."""
 
         review = self._state.review
@@ -1107,6 +1128,8 @@ class LibraryNotesSyncController:
             self._state.phase != "review"
             or review.stale
             or plan is None
+            or review.root_id != root_id
+            or review.observation_token != observation_token
             or review.root_id != self._projection_root_id
             or plan.root_id != review.root_id
             or plan.observation_token != review.observation_token
@@ -1128,7 +1151,12 @@ class LibraryNotesSyncController:
         )
         self._publish()
 
-    async def show_conflict_comparison(self, binding_id: str) -> None:
+    async def show_conflict_comparison(
+        self,
+        root_id: str,
+        observation_token: str,
+        binding_id: str,
+    ) -> None:
         """Load one bounded comparison and publish only for current provenance."""
 
         review = self._state.review
@@ -1137,6 +1165,8 @@ class LibraryNotesSyncController:
             self._state.phase != "review"
             or review.stale
             or plan is None
+            or review.root_id != root_id
+            or review.observation_token != observation_token
             or review.root_id != self._projection_root_id
             or plan.root_id != review.root_id
             or plan.observation_token != review.observation_token
@@ -1155,8 +1185,7 @@ class LibraryNotesSyncController:
         self._expanded_binding_id = binding_id
         generation = self._comparison_generation
         epoch = self._lifecycle_epoch
-        root_id = review.root_id
-        token = review.observation_token
+        token = observation_token
         try:
             comparison = await self._runtime.compare_conflict(
                 root_id,
@@ -1235,9 +1264,30 @@ class LibraryNotesSyncController:
             and self._state.review.observation_token == token
         )
 
-    def return_to_conflict_choices(self) -> None:
+    def return_to_conflict_choices(
+        self,
+        root_id: str,
+        observation_token: str,
+        binding_id: str,
+    ) -> None:
         """Collapse the retained comparison without changing staged choices."""
 
+        review = self._state.review
+        comparison = self._state.comparison
+        if (
+            self._state.phase != "review"
+            or review.root_id != root_id
+            or review.observation_token != observation_token
+            or root_id != self._projection_root_id
+            or comparison is None
+            or comparison.binding_id != binding_id
+        ):
+            self._state = replace(
+                self._state,
+                status_line="Comparison return unavailable for this review.",
+            )
+            self._publish()
+            return
         self._clear_comparison()
         self._publish()
 
@@ -1480,6 +1530,20 @@ class LibraryNotesSyncController:
             type(row) is not RuntimeConflictHistoryRow for row in rows
         ):
             raise RuntimeError("invalid resolution history projection")
+        try:
+            sentinel_offset = validate_lasting_sync_history_page(page + 1)
+        except ValueError:
+            sentinel: tuple[RuntimeConflictHistoryRow, ...] = ()
+        else:
+            sentinel = await self._runtime.resolution_history(
+                root_id,
+                limit=1,
+                offset=sentinel_offset,
+            )
+        if type(sentinel) is not tuple or any(
+            type(row) is not RuntimeConflictHistoryRow for row in sentinel
+        ):
+            raise RuntimeError("invalid resolution history sentinel")
         projected = tuple(
             LastingSyncHistoryRow(
                 row.operation_id,
@@ -1497,7 +1561,7 @@ class LibraryNotesSyncController:
             root_id,
             projected,
             page,
-            len(projected) == LASTING_SYNC_HISTORY_PAGE_SIZE,
+            bool(sentinel),
         )
 
     async def show_resolution_history(self, root_id: str, *, page: int = 1) -> None:

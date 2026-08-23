@@ -49,7 +49,23 @@ _CHOICE_LABELS = {
 }
 
 
-class _ConflictChoiceButton(Button):
+class _ReviewActionButton(Button):
+    """Retain the exact review provenance rendered with an action."""
+
+    def __init__(
+        self,
+        label: str,
+        *,
+        review_root_id: str,
+        review_observation_token: str,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(label, **kwargs)
+        self.review_root_id = review_root_id
+        self.review_observation_token = review_observation_token
+
+
+class _ConflictChoiceButton(_ReviewActionButton):
     """Use Button semantics while adding the expected Space activation."""
 
     BINDINGS = [*Button.BINDINGS, Binding("space", "press", show=False)]
@@ -76,21 +92,42 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
         pass
 
     class ApplyRequested(Message):
-        pass
+        def __init__(self, root_id: str, observation_token: str) -> None:
+            super().__init__()
+            self.root_id = root_id
+            self.observation_token = observation_token
 
     class ChoiceRequested(Message):
-        def __init__(self, binding_id: str, choice: str) -> None:
+        def __init__(
+            self,
+            root_id: str,
+            observation_token: str,
+            binding_id: str,
+            choice: str,
+        ) -> None:
             super().__init__()
+            self.root_id = root_id
+            self.observation_token = observation_token
             self.binding_id = binding_id
             self.choice = choice
 
     class ViewRequested(Message):
-        def __init__(self, binding_id: str) -> None:
+        def __init__(
+            self, root_id: str, observation_token: str, binding_id: str
+        ) -> None:
             super().__init__()
+            self.root_id = root_id
+            self.observation_token = observation_token
             self.binding_id = binding_id
 
     class ReturnRequested(Message):
-        pass
+        def __init__(
+            self, root_id: str, observation_token: str, binding_id: str
+        ) -> None:
+            super().__init__()
+            self.root_id = root_id
+            self.observation_token = observation_token
+            self.binding_id = binding_id
 
     class UndoRequested(Message):
         def __init__(self, root_id: str, operation_id: str) -> None:
@@ -388,8 +425,10 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                 classes="notes-sync-conflict-path",
                 markup=False,
             )
-            yield Button(
+            yield _ReviewActionButton(
                 "View comparison",
+                review_root_id=self.snapshot.review.root_id,
+                review_observation_token=self.snapshot.review.observation_token,
                 name=row.item_id,
                 id=f"notes-sync-conflict-view-{index}",
                 classes="library-canvas-action notes-sync-conflict-view",
@@ -402,12 +441,25 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
         choices_panel.display = not expanded
         with choices_panel:
             if row.conflict_eligible:
+                yield Static(
+                    row.selected_label or "No choice selected.",
+                    id=f"notes-sync-conflict-selected-{index}",
+                    classes="notes-sync-conflict-selected",
+                    markup=False,
+                )
                 with Vertical(classes="library-notes-sync-attention-actions"):
-                    for choice in row.choices:
+                    ordered_choices = sorted(
+                        row.choices, key=lambda choice: choice != "Keep both"
+                    )
+                    for choice in ordered_choices:
                         selected = _CHOICE_LABELS.get(row.selected_choice) == choice
-                        label = f"{choice} — {_CHOICE_EFFECTS[choice]}"
+                        effect = _CHOICE_EFFECTS[choice]
                         yield _ConflictChoiceButton(
-                            f"✓ {label}" if selected else label,
+                            f"✓ {choice}" if selected else choice,
+                            review_root_id=self.snapshot.review.root_id,
+                            review_observation_token=(
+                                self.snapshot.review.observation_token
+                            ),
                             name=row.item_id,
                             id=(f"notes-sync-conflict-{index}-{_CHOICE_SLUGS[choice]}"),
                             classes=(
@@ -415,13 +467,22 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                                 + (" is-selected" if selected else "")
                             ),
                             compact=True,
+                            tooltip=effect,
                         )
-                yield Static(
-                    row.selected_label or "No choice selected.",
-                    id=f"notes-sync-conflict-selected-{index}",
-                    classes="notes-sync-conflict-selected",
-                    markup=False,
-                )
+                        yield Static(
+                            (
+                                "preserve an unbound note copy\n"
+                                "then update the bound note."
+                                if choice == "Keep both"
+                                else effect
+                            ),
+                            id=(
+                                f"notes-sync-conflict-effect-{index}-"
+                                f"{_CHOICE_SLUGS[choice]}"
+                            ),
+                            classes="notes-sync-conflict-effect",
+                            markup=False,
+                        )
             elif row.choices:
                 unavailable = (
                     "Resolution unavailable for this item. No changes can be staged."
@@ -468,8 +529,11 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                 id=f"notes-sync-comparison-diff-{index}",
                 classes="notes-sync-comparison-diff",
             )
-            yield Button(
+            yield _ReviewActionButton(
                 "Return to choices",
+                review_root_id=self.snapshot.review.root_id,
+                review_observation_token=self.snapshot.review.observation_token,
+                name=row.item_id,
                 id=f"notes-sync-comparison-return-{index}",
                 classes="library-canvas-action",
                 compact=True,
@@ -564,6 +628,12 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
     def _compose_history(self) -> ComposeResult:
         history = self.snapshot.history
         yield Static("Resolution history", classes="destination-section", markup=False)
+        yield Static(
+            "Scroll history for more entries; paging controls stay below.",
+            id="notes-sync-history-scroll-cue",
+            classes="library-disabled-reason",
+            markup=False,
+        )
         if history.unavailable:
             yield Static(
                 "Resolution history is unavailable. Try again.",
@@ -578,30 +648,37 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             )
         for index, row in enumerate(history.rows):
             yield from self._compose_history_row(index, row)
-        yield Static(f"Page {history.page}", id="notes-sync-history-page", markup=False)
-        with Horizontal(classes="ds-toolbar notes-sync-history-actions"):
-            yield Button(
-                "Previous",
-                name=history.root_id,
-                id="notes-sync-history-previous",
-                classes="library-canvas-action",
-                compact=True,
-                disabled=history.page <= 1,
-            )
-            yield Button(
-                "Next",
-                name=history.root_id,
-                id="notes-sync-history-next",
-                classes="library-canvas-action",
-                compact=True,
-                disabled=not history.has_next,
-            )
-            yield Button(
-                "Return",
-                id="notes-sync-history-return",
-                classes="library-canvas-action",
-                compact=True,
-            )
+
+    def _compose_history_actions(self) -> ComposeResult:
+        history = self.snapshot.history
+        yield Static(
+            f"Page {history.page}",
+            id="notes-sync-history-page",
+            classes="notes-sync-history-page",
+            markup=False,
+        )
+        yield Button(
+            "Previous",
+            name=history.root_id,
+            id="notes-sync-history-previous",
+            classes="library-canvas-action",
+            compact=True,
+            disabled=history.page <= 1,
+        )
+        yield Button(
+            "Next",
+            name=history.root_id,
+            id="notes-sync-history-next",
+            classes="library-canvas-action",
+            compact=True,
+            disabled=not history.has_next,
+        )
+        yield Button(
+            "Return",
+            id="notes-sync-history-return",
+            classes="library-canvas-action",
+            compact=True,
+        )
 
     def _compose_history_row(
         self, index: int, row: LastingSyncHistoryRow
@@ -687,8 +764,12 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                         disabled=self.snapshot.review.attention_count > 0,
                     )
                 else:
-                    yield Button(
+                    yield _ReviewActionButton(
                         "Apply reviewed",
+                        review_root_id=self.snapshot.review.root_id,
+                        review_observation_token=(
+                            self.snapshot.review.observation_token
+                        ),
                         id="notes-sync-apply",
                         classes="library-canvas-action",
                         compact=True,
@@ -748,6 +829,8 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                 classes="library-canvas-action",
                 compact=True,
             )
+        elif phase == "history":
+            yield from self._compose_history_actions()
 
     def _apply_tooltip(self) -> str | None:
         blocker = self.snapshot.review.apply_blocker
@@ -876,8 +959,7 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                 slug = _CHOICE_SLUGS[choice]
                 button = self.query_one(f"#notes-sync-conflict-{index}-{slug}", Button)
                 selected = choice == selected_label
-                label = f"{choice} — {_CHOICE_EFFECTS[choice]}"
-                button.label = f"✓ {label}" if selected else label
+                button.label = f"✓ {choice}" if selected else choice
                 button.set_class(selected, "is-selected")
             selected = self.query_one(f"#notes-sync-conflict-selected-{index}", Static)
             selected.update(row.selected_label or "No choice selected.")
@@ -1067,11 +1149,26 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
         elif button_id in {"notes-sync-check", "notes-sync-check-again"}:
             self.post_message(self.CheckRequested())
         elif button_id == "notes-sync-apply":
-            self.post_message(self.ApplyRequested())
+            if not isinstance(event.button, _ReviewActionButton):
+                return
+            self.post_message(
+                self.ApplyRequested(
+                    event.button.review_root_id,
+                    event.button.review_observation_token,
+                )
+            )
         elif button_id == "notes-sync-activate":
             self.post_message(self.ActivateRequested())
         elif button_id.startswith("notes-sync-conflict-view-"):
-            self.post_message(self.ViewRequested(event.button.name or ""))
+            if not isinstance(event.button, _ReviewActionButton):
+                return
+            self.post_message(
+                self.ViewRequested(
+                    event.button.review_root_id,
+                    event.button.review_observation_token,
+                    event.button.name or "",
+                )
+            )
         elif button_id.startswith("notes-sync-conflict-"):
             parts = button_id.removeprefix("notes-sync-conflict-").split("-", 1)
             if len(parts) != 2:
@@ -1082,21 +1179,51 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                 None,
             )
             binding_id = event.button.name
-            if choice is None or not binding_id:
+            if (
+                choice is None
+                or not binding_id
+                or not isinstance(event.button, _ReviewActionButton)
+            ):
                 return
             try:
                 validate_notes_sync_opaque_id(binding_id, field_name="binding_id")
             except (TypeError, ValueError):
                 return
-            self.post_message(self.ChoiceRequested(binding_id, choice))
+            self.post_message(
+                self.ChoiceRequested(
+                    event.button.review_root_id,
+                    event.button.review_observation_token,
+                    binding_id,
+                    choice,
+                )
+            )
         elif button_id.startswith("notes-sync-comparison-return-"):
+            if not isinstance(event.button, _ReviewActionButton):
+                return
+            binding_id = event.button.name or ""
+            current_review = self.snapshot.review
+            is_current = (
+                event.button.review_root_id == current_review.root_id
+                and event.button.review_observation_token
+                == current_review.observation_token
+                and self.snapshot.comparison is not None
+                and self.snapshot.comparison.binding_id == binding_id
+            )
+            self.post_message(
+                self.ReturnRequested(
+                    event.button.review_root_id,
+                    event.button.review_observation_token,
+                    binding_id,
+                )
+            )
+            if not is_current:
+                return
             index = int(button_id.rsplit("-", 1)[1])
             choices = self.query_one(f"#notes-sync-conflict-choices-{index}")
             comparison = self.query_one(f"#notes-sync-comparison-{index}")
             choices.display = True
             comparison.display = False
             self.query_one(f"#notes-sync-conflict-view-{index}", Button).focus()
-            self.post_message(self.ReturnRequested())
         elif button_id.startswith("notes-sync-receipt-undo-"):
             self.post_message(
                 self.UndoRequested(self._root_id(), event.button.name or "")

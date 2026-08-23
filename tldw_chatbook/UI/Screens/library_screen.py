@@ -6254,6 +6254,7 @@ class LibraryScreen(BaseAppScreen):
         ``False`` after removal) -- so this call is what actually closes
         the window, not the guard.
         """
+        self._library_notes_sync_controller.invalidate_for_remount()
         # A local thread read may outlive this screen. Revoke apply authority
         # before any awaited shutdown work can yield back to its completion.
         self._library_onboarding_generation += 1
@@ -26594,7 +26595,14 @@ class LibraryScreen(BaseAppScreen):
         self, event: LibraryNotesAddFromFilesCanvas.ApplyRequested
     ) -> None:
         event.stop()
-        await self._library_notes_sync_controller.apply_reviewed()
+        await self._library_notes_sync_controller.apply_reviewed(
+            event.root_id, event.observation_token
+        )
+        if self._library_notes_sync_controller.snapshot.phase == "roots":
+            self._library_notes_lasting_origin = None
+            self._library_notes_view = "lasting_roots"
+            self._apply_library_notes_footer_context()
+            _sync_library_canvas(self, "notes")
 
     @on(LibraryNotesAddFromFilesCanvas.ActivateRequested)
     async def handle_library_notes_lasting_activate(
@@ -26614,7 +26622,10 @@ class LibraryScreen(BaseAppScreen):
     ) -> None:
         event.stop()
         self._library_notes_sync_controller.stage_attention_choice(
-            event.binding_id, event.choice
+            event.root_id,
+            event.observation_token,
+            event.binding_id,
+            event.choice,
         )
 
     @on(LibraryNotesAddFromFilesCanvas.ViewRequested)
@@ -26626,7 +26637,9 @@ class LibraryScreen(BaseAppScreen):
         event.stop()
         self.run_worker(
             self._library_notes_sync_controller.show_conflict_comparison(
-                event.binding_id
+                event.root_id,
+                event.observation_token,
+                event.binding_id,
             ),
             exclusive=True,
             group="library_notes_sync_comparison",
@@ -26637,7 +26650,11 @@ class LibraryScreen(BaseAppScreen):
         self, event: LibraryNotesAddFromFilesCanvas.ReturnRequested
     ) -> None:
         event.stop()
-        self._library_notes_sync_controller.return_to_conflict_choices()
+        self._library_notes_sync_controller.return_to_conflict_choices(
+            event.root_id,
+            event.observation_token,
+            event.binding_id,
+        )
 
     @on(LibraryNotesAddFromFilesCanvas.UndoRequested)
     async def handle_library_notes_lasting_undo(
@@ -26647,6 +26664,11 @@ class LibraryScreen(BaseAppScreen):
         await self._library_notes_sync_controller.undo_conflict_resolution(
             event.root_id, event.operation_id
         )
+        if self._library_notes_sync_controller.snapshot.phase == "roots":
+            self._library_notes_lasting_origin = None
+            self._library_notes_view = "lasting_roots"
+            self._apply_library_notes_footer_context()
+            _sync_library_canvas(self, "notes")
 
     @on(LibraryNotesAddFromFilesCanvas.DismissRequested)
     async def handle_library_notes_lasting_dismiss(

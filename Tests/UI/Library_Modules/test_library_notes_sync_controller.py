@@ -327,7 +327,7 @@ async def test_check_and_apply_reviewed_use_observation_token_and_selected_actio
     )
 
     await controller.check_root("root-1")
-    await controller.apply_reviewed()
+    await controller.apply_reviewed("root-1", TOKEN)
 
     assert runtime.calls == [
         ("check_root", "root-1"),
@@ -384,7 +384,7 @@ async def test_stale_review_returns_to_review_with_check_again_and_does_not_retr
     await controller.check_root("root-1")
     runtime.stale = True
 
-    await controller.apply_reviewed()
+    await controller.apply_reviewed("root-1", TOKEN)
 
     assert controller.snapshot.phase == "review"
     assert controller.snapshot.review.stale is True
@@ -419,7 +419,7 @@ async def test_stale_review_paging_cannot_restore_apply_eligibility() -> None:
     )
     await controller.check_root("root-1")
     runtime.stale = True
-    await controller.apply_reviewed()
+    await controller.apply_reviewed("root-1", TOKEN)
 
     controller.set_review_page(2)
 
@@ -651,7 +651,7 @@ async def test_controller_privately_applies_all_safe_actions_across_review_pages
     )
     await controller.check_root("root-1")
 
-    await controller.apply_reviewed()
+    await controller.apply_reviewed("root-1", TOKEN)
 
     apply_call = next(call for call in runtime.calls if call[0] == "apply_reviewed")
     assert len(apply_call[3]) == 101
@@ -719,7 +719,7 @@ async def test_conflict_selection_stages_without_runtime_and_survives_paging() -
     calls_before = tuple(runtime.calls)
     publications.clear()
 
-    controller.stage_attention_choice("bind-1", "Keep both")
+    controller.stage_attention_choice("root-1", TOKEN, "bind-1", "Keep both")
 
     assert tuple(runtime.calls) == calls_before
     assert publications == ["Choice staged. No changes yet."]
@@ -827,7 +827,7 @@ async def test_selection_is_keyed_by_observation_token_and_clears_on_stale_back_
         import_controller=_ImportController(),
     )
     await controller.check_root("root-1")
-    controller.stage_attention_choice("bind-1", "Keep file")
+    controller.stage_attention_choice("root-1", TOKEN, "bind-1", "Keep file")
     assert controller._selections == {  # noqa: SLF001 - token key is the contract
         (TOKEN, "bind-1"): NotesSyncConflictChoice.KEEP_FILE
     }
@@ -836,16 +836,16 @@ async def test_selection_is_keyed_by_observation_token_and_clears_on_stale_back_
     await controller.check_root("root-1")
     assert controller.snapshot.review.rows[0].selected_choice is None
 
-    controller.stage_attention_choice("bind-1", "Keep note")
+    controller.stage_attention_choice("root-1", TOKEN_2, "bind-1", "Keep note")
     runtime.stale = True
-    await controller.apply_reviewed()
+    await controller.apply_reviewed("root-1", TOKEN_2)
     assert controller.snapshot.review.stale is True
     assert controller.snapshot.review.rows[0].selected_choice is None
 
     runtime.stale = False
     runtime.check_plan = _conflict_plan(root_id="root-2", token=TOKEN)
     await controller.check_root("root-2")
-    controller.stage_attention_choice("bind-1", "Keep both")
+    controller.stage_attention_choice("root-1", TOKEN, "bind-1", "Keep both")
     await controller.abandon_setup()
     assert controller.snapshot.review.rows[0].selected_choice is None
 
@@ -864,17 +864,17 @@ async def test_comparison_return_and_page_change_release_only_comparison() -> No
         import_controller=_ImportController(),
     )
     await controller.check_root("root-1")
-    controller.stage_attention_choice("bind-1", "Keep file")
+    controller.stage_attention_choice("root-1", TOKEN, "bind-1", "Keep file")
 
-    await controller.show_conflict_comparison("bind-1")
+    await controller.show_conflict_comparison("root-1", TOKEN, "bind-1")
     assert controller.snapshot.comparison is not None
-    controller.return_to_conflict_choices()
+    controller.return_to_conflict_choices("root-1", TOKEN, "bind-1")
     assert controller.snapshot.comparison is None
     assert controller.snapshot.review.rows[0].selected_choice is (
         NotesSyncConflictChoice.KEEP_FILE
     )
 
-    await controller.show_conflict_comparison("bind-1")
+    await controller.show_conflict_comparison("root-1", TOKEN, "bind-1")
     controller.set_review_page(2)
     assert controller.snapshot.comparison is None
     controller.set_review_page(1)
@@ -924,11 +924,15 @@ async def test_delayed_comparison_cannot_publish_after_controller_remount_invali
     )
     await controller.check_root("root-1")
 
-    pending = asyncio.create_task(controller.show_conflict_comparison("bind-1"))
+    pending = asyncio.create_task(
+        controller.show_conflict_comparison("root-1", TOKEN, "bind-1")
+    )
     await first_started.wait()
     controller.invalidate_for_remount()
     await controller.check_root("root-1")
-    current = asyncio.create_task(controller.show_conflict_comparison("bind-1"))
+    current = asyncio.create_task(
+        controller.show_conflict_comparison("root-1", TOKEN, "bind-1")
+    )
     await second_started.wait()
     release_second.set()
     await current
@@ -949,9 +953,9 @@ async def test_apply_sends_safe_ids_and_token_typed_conflict_choices() -> None:
         import_controller=_ImportController(),
     )
     await controller.check_root("root-1")
-    controller.stage_attention_choice("bind-1", "Keep note")
+    controller.stage_attention_choice("root-1", TOKEN, "bind-1", "Keep note")
 
-    await controller.apply_reviewed()
+    await controller.apply_reviewed("root-1", TOKEN)
 
     apply_call = next(call for call in runtime.calls if call[0] == "apply_reviewed")
     assert apply_call == (
@@ -997,10 +1001,10 @@ async def test_terminal_subset_projects_receipts_fresh_review_and_one_status_upd
         publish_snapshot=lambda snapshot: statuses.append(snapshot.status_line),
     )
     await controller.check_root("root-1")
-    controller.stage_attention_choice("bind-1", "Keep file")
+    controller.stage_attention_choice("root-1", TOKEN, "bind-1", "Keep file")
     statuses.clear()
 
-    await controller.apply_reviewed()
+    await controller.apply_reviewed("root-1", TOKEN)
 
     assert controller.snapshot.phase == "review"
     assert controller.snapshot.review.observation_token == TOKEN_2
@@ -1036,11 +1040,11 @@ async def test_fresh_fact_failure_clears_applied_selection_and_comparison() -> N
         runtime=runtime, import_controller=_ImportController()
     )
     await controller.check_root("root-1")
-    controller.stage_attention_choice("bind-1", "Keep file")
-    await controller.show_conflict_comparison("bind-1")
+    controller.stage_attention_choice("root-1", TOKEN, "bind-1", "Keep file")
+    await controller.show_conflict_comparison("root-1", TOKEN, "bind-1")
     assert controller.snapshot.comparison is not None
 
-    await controller.apply_reviewed()
+    await controller.apply_reviewed("root-1", TOKEN)
 
     assert controller._selections == {}
     assert controller.snapshot.comparison is None
@@ -1069,9 +1073,9 @@ async def test_nonterminal_apply_routes_to_recovery_without_fresh_review() -> No
         import_controller=_ImportController(),
     )
     await controller.check_root("root-1")
-    controller.stage_attention_choice("bind-1", "Keep file")
+    controller.stage_attention_choice("root-1", TOKEN, "bind-1", "Keep file")
 
-    await controller.apply_reviewed()
+    await controller.apply_reviewed("root-1", TOKEN)
 
     assert controller.snapshot.phase == "roots"
     assert "recovery needs attention" in controller.snapshot.status_line
@@ -1250,6 +1254,8 @@ async def test_remount_and_history_page_generations_reject_out_of_order_results(
         now: int | None = None,
     ) -> tuple[RuntimeConflictHistoryRow, ...]:
         nonlocal calls
+        if limit == 1:
+            return ()
         call = calls
         calls += 1
         started[call].set()
@@ -1685,7 +1691,7 @@ async def test_same_root_receipt_refresh_does_not_drop_apply_or_undo_result() ->
         import_controller=_ImportController(),
     )
     await controller.check_root("root-1")
-    controller.stage_attention_choice("bind-1", "Keep file")
+    controller.stage_attention_choice("root-1", TOKEN, "bind-1", "Keep file")
     apply_started = asyncio.Event()
     release_apply = asyncio.Event()
     original_apply = runtime.apply_reviewed
@@ -1696,7 +1702,7 @@ async def test_same_root_receipt_refresh_does_not_drop_apply_or_undo_result() ->
         return await original_apply(*args, **kwargs)
 
     runtime.apply_reviewed = delayed_apply
-    pending_apply = asyncio.create_task(controller.apply_reviewed())
+    pending_apply = asyncio.create_task(controller.apply_reviewed("root-1", TOKEN))
     await apply_started.wait()
     await controller.refresh_conflict_receipts("root-1")
     release_apply.set()
@@ -1738,7 +1744,7 @@ async def test_new_same_root_check_supersedes_older_apply_view() -> None:
         import_controller=_ImportController(),
     )
     await controller.check_root("root-1")
-    controller.stage_attention_choice("bind-1", "Keep file")
+    controller.stage_attention_choice("root-1", TOKEN, "bind-1", "Keep file")
     started = asyncio.Event()
     release = asyncio.Event()
     original_apply = runtime.apply_reviewed
@@ -1749,7 +1755,7 @@ async def test_new_same_root_check_supersedes_older_apply_view() -> None:
         return await original_apply(*args, **kwargs)
 
     runtime.apply_reviewed = delayed_apply
-    pending = asyncio.create_task(controller.apply_reviewed())
+    pending = asyncio.create_task(controller.apply_reviewed("root-1", TOKEN))
     await started.wait()
     runtime.check_plan = _conflict_plan(token=TOKEN_2)
     await controller.check_root("root-1")
@@ -1772,14 +1778,14 @@ async def test_successful_mutations_use_safe_local_fallback_when_receipts_fail()
         publish_snapshot=lambda snapshot: statuses.append(snapshot.status_line),
     )
     await controller.check_root("root-1")
-    controller.stage_attention_choice("bind-1", "Keep file")
+    controller.stage_attention_choice("root-1", TOKEN, "bind-1", "Keep file")
 
     async def receipt_failure(root_id: str) -> tuple[RuntimeConflictReceipt, ...]:
         raise RuntimeError("projection unavailable")
 
     runtime.active_conflict_receipts = receipt_failure
     statuses.clear()
-    await controller.apply_reviewed()
+    await controller.apply_reviewed("root-1", TOKEN)
     assert controller.snapshot.receipts_unavailable is True
     assert "receipt" in controller.snapshot.status_line.casefold()
     assert statuses == [controller.snapshot.status_line]
@@ -1837,8 +1843,10 @@ async def test_root_activation_clears_choices_and_fences_comparison_on_receipt_s
         import_controller=_ImportController(),
     )
     await controller.check_root("root-1")
-    controller.stage_attention_choice("bind-1", "Keep file")
-    pending = asyncio.create_task(controller.show_conflict_comparison("bind-1"))
+    controller.stage_attention_choice("root-1", TOKEN, "bind-1", "Keep file")
+    pending = asyncio.create_task(
+        controller.show_conflict_comparison("root-1", TOKEN, "bind-1")
+    )
     await runtime.comparison_started.wait()
 
     await controller.refresh_conflict_receipts("root-2")
@@ -1866,7 +1874,7 @@ async def test_invalid_stage_and_comparison_publish_bounded_status_once() -> Non
         publish_snapshot=lambda snapshot: statuses.append(snapshot.status_line),
     )
     statuses.clear()
-    controller.stage_attention_choice("bind-1", "Keep file")
+    controller.stage_attention_choice("root-1", TOKEN, "bind-1", "Keep file")
     assert len(statuses) == 1
     assert (
         "unavailable" in statuses[0].casefold() or "invalid" in statuses[0].casefold()
@@ -1880,7 +1888,7 @@ async def test_invalid_stage_and_comparison_publish_bounded_status_once() -> Non
 
     runtime.compare_conflict = mismatch
     statuses.clear()
-    await controller.show_conflict_comparison("bind-1")
+    await controller.show_conflict_comparison("root-1", TOKEN, "bind-1")
     assert len(statuses) == 1
     assert "unavailable" in statuses[0].casefold()
 
@@ -1904,7 +1912,7 @@ async def test_malformed_comparison_result_publishes_bounded_status_once(
 
     runtime.compare_conflict = malformed_comparison
     statuses.clear()
-    await controller.show_conflict_comparison("bind-1")
+    await controller.show_conflict_comparison("root-1", TOKEN, "bind-1")
 
     assert statuses == [controller.snapshot.status_line]
     assert "comparison unavailable" in controller.snapshot.status_line.casefold()
@@ -1984,7 +1992,7 @@ async def test_failed_recheck_invalidates_prior_review_authority(
     assert controller.snapshot.review.stale is True
     assert controller.snapshot.review.can_apply is False
     calls_before_apply = tuple(runtime.calls)
-    await controller.apply_reviewed()
+    await controller.apply_reviewed("root-1", TOKEN)
     assert tuple(runtime.calls) == calls_before_apply
 
 
@@ -2022,7 +2030,7 @@ async def test_failed_fresh_review_paths_clear_prior_authority(operation: str) -
     assert controller.snapshot.review.stale is True
     assert controller.snapshot.review.can_apply is False
     calls_before_apply = tuple(runtime.calls)
-    await controller.apply_reviewed()
+    await controller.apply_reviewed("root-1", TOKEN)
     assert tuple(runtime.calls) == calls_before_apply
 
 
@@ -2071,7 +2079,7 @@ async def test_same_root_control_supersedes_pending_review_work(
             return await original_apply(*args, **kwargs)
 
         runtime.apply_reviewed = delayed_apply
-        pending = asyncio.create_task(controller.apply_reviewed())
+        pending = asyncio.create_task(controller.apply_reviewed("root-1", TOKEN))
     else:
 
         async def delayed_check(root_id: str) -> ReconciliationPlan:
@@ -2163,8 +2171,8 @@ async def test_undo_invalidates_active_review_but_preserves_receipt_history_cont
     await controller.refresh_conflict_receipts("root-1")
     await controller.show_resolution_history("root-1")
     await controller.check_root("root-1")
-    controller.stage_attention_choice("bind-1", "Keep file")
-    await controller.show_conflict_comparison("bind-1")
+    controller.stage_attention_choice("root-1", TOKEN, "bind-1", "Keep file")
+    await controller.show_conflict_comparison("root-1", TOKEN, "bind-1")
 
     await controller.undo_conflict_resolution("root-1", "operation-1")
 
@@ -2202,7 +2210,7 @@ async def test_undo_supersedes_pending_same_root_review_work(
             return await original_apply(*args, **kwargs)
 
         runtime.apply_reviewed = delayed_apply
-        pending = asyncio.create_task(controller.apply_reviewed())
+        pending = asyncio.create_task(controller.apply_reviewed("root-1", TOKEN))
     else:
 
         async def delayed_check(root_id: str) -> ReconciliationPlan:
@@ -2221,3 +2229,194 @@ async def test_undo_supersedes_pending_same_root_review_work(
 
     assert controller.snapshot == undo_snapshot
     assert controller.snapshot.receipts == ()
+
+
+async def test_review_actions_reject_detached_review_provenance() -> None:
+    runtime = _Runtime()
+    runtime.check_plan = _conflict_plan()
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+    await controller.check_root("root-1")
+    controller.stage_attention_choice("root-1", TOKEN, "bind-1", "Keep file")
+    await controller.show_conflict_comparison("root-1", TOKEN, "bind-1")
+    comparison = controller.snapshot.comparison
+    compare_calls = len(
+        [call for call in runtime.calls if call[0] == "compare_conflict"]
+    )
+
+    controller.stage_attention_choice("root-1", TOKEN_2, "bind-1", "Keep note")
+    await controller.show_conflict_comparison("root-1", TOKEN_2, "bind-1")
+    controller.return_to_conflict_choices("root-1", TOKEN_2, "bind-1")
+    await controller.apply_reviewed("root-1", TOKEN_2)
+
+    assert controller.snapshot.comparison == comparison
+    assert (
+        controller._selections[(TOKEN, "bind-1")] is NotesSyncConflictChoice.KEEP_FILE
+    )
+    assert (TOKEN_2, "bind-1") not in controller._selections
+    assert len([call for call in runtime.calls if call[0] == "compare_conflict"]) == (
+        compare_calls
+    )
+    assert not any(call[0] == "apply_reviewed" for call in runtime.calls)
+
+
+async def test_duplicate_in_flight_apply_provenance_invokes_runtime_once() -> None:
+    runtime = _Runtime()
+    runtime.check_plan = _conflict_plan()
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+    await controller.check_root("root-1")
+    controller.stage_attention_choice("root-1", TOKEN, "bind-1", "Keep file")
+    started = asyncio.Event()
+    release = asyncio.Event()
+    original_apply = runtime.apply_reviewed
+    invocations = 0
+
+    async def delayed_apply(*args: object, **kwargs: object) -> ConflictApplyResult:
+        nonlocal invocations
+        invocations += 1
+        started.set()
+        await release.wait()
+        return await original_apply(*args, **kwargs)
+
+    runtime.apply_reviewed = delayed_apply
+    first = asyncio.create_task(controller.apply_reviewed("root-1", TOKEN))
+    await started.wait()
+    second = asyncio.create_task(controller.apply_reviewed("root-1", TOKEN))
+    await asyncio.sleep(0)
+    assert invocations == 1
+
+    release.set()
+    await asyncio.gather(first, second)
+
+    apply_calls = [call for call in runtime.calls if call[0] == "apply_reviewed"]
+    assert len(apply_calls) == 1
+
+
+async def test_duplicate_apply_stays_fenced_until_fresh_projection_finishes() -> None:
+    runtime = _Runtime()
+    runtime.check_plan = _conflict_plan()
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+    await controller.check_root("root-1")
+    controller.stage_attention_choice("root-1", TOKEN, "bind-1", "Keep file")
+    receipts_started = asyncio.Event()
+    release_receipts = asyncio.Event()
+    original_receipts = runtime.active_conflict_receipts
+
+    async def delayed_receipts(root_id: str) -> tuple[RuntimeConflictReceipt, ...]:
+        receipts_started.set()
+        await release_receipts.wait()
+        return await original_receipts(root_id)
+
+    runtime.active_conflict_receipts = delayed_receipts
+    first = asyncio.create_task(controller.apply_reviewed("root-1", TOKEN))
+    await receipts_started.wait()
+    second = asyncio.create_task(controller.apply_reviewed("root-1", TOKEN))
+    await asyncio.sleep(0)
+
+    assert len([call for call in runtime.calls if call[0] == "apply_reviewed"]) == 1
+
+    release_receipts.set()
+    await asyncio.gather(first, second)
+
+
+@pytest.mark.parametrize(
+    ("row_count", "has_next"),
+    ((99, False), (100, False), (101, True)),
+)
+async def test_history_has_next_uses_exact_sentinel(
+    row_count: int, has_next: bool
+) -> None:
+    runtime = _Runtime()
+    runtime.history[0] = tuple(
+        _history_row(f"operation-{index}", f"Note {index}")
+        for index in range(min(row_count, 100))
+    )
+    if row_count > 100:
+        runtime.history[100] = (_history_row("operation-100", "Note 100"),)
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+
+    await controller.show_resolution_history("root-1")
+
+    assert len(controller.snapshot.history.rows) == min(row_count, 100)
+    assert controller.snapshot.history.has_next is has_next
+    assert ("resolution_history", "root-1", 1, 100) in runtime.calls
+
+
+async def test_history_sentinel_failure_fails_closed() -> None:
+    runtime = _Runtime()
+    runtime.history[0] = (_history_row("operation-1", "Note"),)
+    original = runtime.resolution_history
+
+    async def failing_sentinel(
+        root_id: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        now: int | None = None,
+    ) -> tuple[RuntimeConflictHistoryRow, ...]:
+        if limit == 1 and offset == 100:
+            raise OSError("history unavailable")
+        return await original(root_id, limit=limit, offset=offset, now=now)
+
+    runtime.resolution_history = failing_sentinel
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+
+    await controller.show_resolution_history("root-1")
+
+    assert controller.snapshot.history.unavailable is True
+    assert controller.snapshot.history.rows == ()
+    assert controller.snapshot.history.has_next is False
+
+
+async def test_stale_history_sentinel_cannot_overwrite_newer_page() -> None:
+    runtime = _Runtime()
+    sentinel_started = asyncio.Event()
+    release_sentinel = asyncio.Event()
+
+    async def delayed_sentinel(
+        root_id: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        now: int | None = None,
+    ) -> tuple[RuntimeConflictHistoryRow, ...]:
+        if limit == 1 and offset == 100:
+            sentinel_started.set()
+            await release_sentinel.wait()
+            return (_history_row("operation-old-sentinel", "Old sentinel"),)
+        if limit == 100 and offset == 0:
+            return (_history_row("operation-page-1", "Page one"),)
+        if limit == 100 and offset == 100:
+            return (_history_row("operation-page-2", "Page two"),)
+        return ()
+
+    runtime.resolution_history = delayed_sentinel
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+
+    old = asyncio.create_task(controller.show_resolution_history("root-1", page=1))
+    await sentinel_started.wait()
+    await controller.show_resolution_history("root-1", page=2)
+    current = controller.snapshot
+    release_sentinel.set()
+    await old
+
+    assert controller.snapshot == current
+    assert controller.snapshot.history.page == 2
+    assert controller.snapshot.history.rows[0].item_label == "Page two"

@@ -284,11 +284,13 @@ async def test_conflict_choices_are_keyboard_reachable_and_update_in_place(
         keep_file = app.query_one("#notes-sync-conflict-0-keep-file", Button)
         assert keep_file.name == "bind-1"
         assert not keep_file.disabled
-        assert app.query_one(
-            "#notes-sync-conflict-0-keep-both", Button
-        ).label.plain == (
-            "Keep both — preserve an unbound note copy, then update the bound note."
+        assert (
+            app.query_one("#notes-sync-conflict-0-keep-both", Button).label.plain
+            == "Keep both"
         )
+        painted = _frame(app)
+        assert "preserve an unbound note copy" in painted
+        assert "update the bound note" in painted
         keep_file.focus()
         await pilot.press("enter")
         await _wait_for(
@@ -306,6 +308,10 @@ async def test_conflict_choices_are_keyboard_reachable_and_update_in_place(
         assert (choice_message.binding_id, choice_message.choice) == (
             "bind-1",
             "Keep file",
+        )
+        assert (choice_message.root_id, choice_message.observation_token) == (
+            "root-1",
+            "c" * 64,
         )
 
         updated = replace(
@@ -363,7 +369,12 @@ async def test_queued_choice_keeps_button_binding_identity_across_row_replacemen
                 ),
             ),
         )
-        canvas.sync_state(replace(snapshot, review=replacement))
+        canvas.sync_state(
+            replace(
+                snapshot,
+                review=replace(replacement, observation_token="d" * 64),
+            )
+        )
         await pilot.pause()
 
         canvas._button_pressed(Button.Pressed(original))  # noqa: SLF001 - queued event
@@ -374,7 +385,11 @@ async def test_queued_choice_keeps_button_binding_identity_across_row_replacemen
         for message in app.messages
         if type(message).__name__ == "ChoiceRequested"
     )
-    assert choice.binding_id == "bind-1"
+    assert (choice.root_id, choice.observation_token, choice.binding_id) == (
+        "root-1",
+        "c" * 64,
+        "bind-1",
+    )
 
 
 async def test_collapsed_conflict_labels_are_literal_and_history_is_durably_gated() -> (
@@ -442,6 +457,16 @@ async def test_conflict_comparison_is_literal_scrollable_and_return_restores_vie
             lambda: any(type(m).__name__ == "ViewRequested" for m in app.messages),
             message="View comparison message was not posted",
         )
+        view_message = next(
+            message
+            for message in app.messages
+            if type(message).__name__ == "ViewRequested"
+        )
+        assert (
+            view_message.root_id,
+            view_message.observation_token,
+            view_message.binding_id,
+        ) == ("root-1", "c" * 64, "bind-1")
         canvas.sync_state(replace(snapshot, comparison=comparison))
         await _wait_for(
             pilot,
@@ -478,6 +503,15 @@ async def test_conflict_comparison_is_literal_scrollable_and_return_restores_vie
             lambda: any(type(m).__name__ == "ReturnRequested" for m in app.messages),
             message="Return message was not posted",
         )
+        returned_message = next(
+            message
+            for message in app.messages
+            if type(message).__name__ == "ReturnRequested"
+        )
+        assert (
+            returned_message.root_id,
+            returned_message.observation_token,
+        ) == ("root-1", "c" * 64)
 
 
 async def test_deferred_comparison_focus_rechecks_origin_before_moving(
@@ -900,7 +934,86 @@ async def test_safe_review_apply_posts_only_visible_reviewed_action_ids() -> Non
         assert await pilot.click("#notes-sync-apply")
         await pilot.pause()
 
-    assert any(type(message).__name__ == "ApplyRequested" for message in app.messages)
+    apply = next(
+        message
+        for message in app.messages
+        if type(message).__name__ == "ApplyRequested"
+    )
+    assert (apply.root_id, apply.observation_token) == ("root-1", "c" * 64)
+
+
+async def test_long_history_keeps_paging_actions_pinned_with_scroll_cue() -> None:
+    rows = tuple(
+        LastingSyncHistoryRow(
+            f"operation-{index}",
+            f"Resolution {index}",
+            NotesSyncConflictChoice.KEEP_FILE,
+            "completed",
+            "2026-08-22T12:00:00+00:00",
+            "2026-08-22T12:00:00+00:00",
+            False,
+            "Undo expired",
+        )
+        for index in range(10)
+    )
+    snapshot = replace(
+        initial_lasting_sync_snapshot(lasting_available=True),
+        phase="history",
+        history=LastingSyncHistory("root-1", rows, 2, True),
+    )
+    app = _Host(snapshot)
+
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        body = app.query_one("#notes-sync-body")
+        pinned = app.query_one("#notes-sync-pinned-actions")
+        assert body.max_scroll_y > 0
+        assert "Scroll history" in _frame(app)
+        for selector in (
+            "#notes-sync-history-previous",
+            "#notes-sync-history-next",
+            "#notes-sync-history-return",
+        ):
+            button = app.query_one(selector, Button)
+            assert button in app.screen._compositor.visible_widgets
+            assert pinned.region.contains_region(button.region)
+            assert button.region.right <= 60
+
+
+async def test_queued_apply_keeps_rendered_review_provenance() -> None:
+    review = replace(
+        _conflict_review(selected=NotesSyncConflictChoice.KEEP_FILE),
+        can_apply=True,
+        apply_blocker=LastingSyncApplyBlocker.NONE,
+    )
+    snapshot = replace(
+        initial_lasting_sync_snapshot(lasting_available=True),
+        phase="review",
+        review=review,
+    )
+    app = _Host(snapshot)
+
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        canvas = app.query_one(LibraryNotesAddFromFilesCanvas)
+        original = app.query_one("#notes-sync-apply", Button)
+        canvas.sync_state(
+            replace(
+                snapshot,
+                review=replace(review, observation_token="d" * 64),
+            )
+        )
+        await pilot.pause()
+
+        canvas._button_pressed(Button.Pressed(original))  # noqa: SLF001
+        await pilot.pause()
+
+    apply = next(
+        message
+        for message in app.messages
+        if type(message).__name__ == "ApplyRequested"
+    )
+    assert (apply.root_id, apply.observation_token) == ("root-1", "c" * 64)
 
 
 async def test_activation_review_posts_distinct_activate_message() -> None:

@@ -513,3 +513,21 @@ def test_receipt_unavailable_projection_is_an_exact_boolean() -> None:
     assert replace(snapshot, receipts_unavailable=True).receipts_unavailable is True
     with pytest.raises(TypeError, match="receipts_unavailable"):
         replace(snapshot, receipts_unavailable=1)
+
+
+def test_conflict_review_row_repr_does_not_expose_title_or_relative_path() -> None:
+    row = LastingSyncReviewRow(
+        "bind-1",
+        "attention",
+        "Both file and note changed",
+        ("Keep file",),
+        conflict_eligible=True,
+        conflict_title="Private release title",
+        conflict_relative_path="private/releases/note.md",
+    )
+
+    projected = repr(row)
+
+    assert "Private release title" not in projected
+    assert "private/releases/note.md" not in projected
+    assert projected == "LastingSyncReviewRow(<private>)"

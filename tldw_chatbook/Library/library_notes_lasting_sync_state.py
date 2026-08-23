@@ -152,7 +152,7 @@ class LastingSyncSetup:
         return "LastingSyncSetup(<private root detail>)"
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, repr=False)
 class LastingSyncReviewRow:
     """One path-free, bounded reviewed effect row."""
 
@@ -219,6 +219,11 @@ class LastingSyncReviewRow:
             raise ValueError(
                 "conflict title and relative_path must be projected together"
             )
+
+    def __repr__(self) -> str:
+        """Keep private note labels out of logs and diagnostic projections."""
+
+        return "LastingSyncReviewRow(<private>)"
 
 
 @dataclass(frozen=True, slots=True, repr=False)

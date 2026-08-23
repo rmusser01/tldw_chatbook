@@ -5,11 +5,13 @@ from __future__ import annotations
 import asyncio
 import ast
 from dataclasses import replace
+import inspect
 import json
 import os
 from pathlib import Path
 import subprocess
 import sys
+import textwrap
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -60,7 +62,12 @@ from tldw_chatbook.Notes.note_import_execution_models import (
     ImportSessionState,
 )
 from tldw_chatbook.Notes.notes_device_state_store import NotesDeviceStateStore
-from tldw_chatbook.Notes.notes_sync_conflicts import ConflictComparison
+from tldw_chatbook.Notes.notes_sync_conflicts import (
+    ConflictApplyResult,
+    ConflictComparison,
+    NotesSyncConflictChoice,
+)
+from tldw_chatbook.Notes.notes_sync_executor import NotesSyncExecutionResult
 from tldw_chatbook.Notes.notes_sync_models import NotesSyncOperationState
 from tldw_chatbook.Notes.Notes_Library import NotesInteropService
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
@@ -88,6 +95,7 @@ from tldw_chatbook.Notes.notes_sync_runtime import (
     NotesSyncRootRuntimeSnapshot,
     NotesSyncRuntimeSnapshot,
     RuntimeConflictLabel,
+    RuntimeConflictReceipt,
 )
 from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (
     LibraryFileNotesWorkspace,
@@ -578,10 +586,152 @@ async def test_lasting_conflict_comparison_uses_named_worker_without_stealing_mo
             lambda: screen.focused is view,
             message="Return did not restore the originating View control",
         )
+
+        started.clear()
+        release.clear()
+        view.press()
+        await asyncio.wait_for(started.wait(), timeout=2)
         back = screen.query_one("#notes-sync-back", Button)
         back.press()
         await _wait_for_selector(screen, pilot, "#notes-sync-roots-back")
+        release.set()
+        await pilot.pause()
         assert screen._library_notes_view == "lasting_roots"
+        assert screen._library_notes_sync_controller.snapshot.comparison is None
+        assert not screen.query("#notes-sync-comparison-diff-0")
+
+
+def test_library_unmount_invalidates_lasting_review_before_first_await() -> None:
+    """The screen fence is synchronous; controller races cover late facts."""
+
+    tree = ast.parse(
+        textwrap.dedent(
+            inspect.getsource(library_screen_module.LibraryScreen.on_unmount)
+        )
+    )
+    function = tree.body[0]
+    assert isinstance(function, ast.AsyncFunctionDef)
+    first_statement = function.body[1]
+    assert isinstance(first_statement, ast.Expr)
+    assert isinstance(first_statement.value, ast.Call)
+    call = first_statement.value.func
+    assert isinstance(call, ast.Attribute)
+    assert call.attr == "invalidate_for_remount"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("recovery_action", ("apply", "undo"))
+async def test_lasting_recovery_returns_to_roots_without_blank_add_canvas(
+    recovery_action: str,
+) -> None:
+    token = "c" * 64
+    root = NotesSyncRootRuntimeSnapshot("root-1", "needs_attention", "review_changes")
+    plan = ReconciliationPlan(
+        root_id="root-1",
+        observation_token=token,
+        safe_actions=(
+            NotesSyncAction("action-1", NotesSyncActionKind.UPDATE_NOTE, "bind-1"),
+        ),
+        attention=(),
+        skips=(),
+        managed_placement_effects=(),
+        deletion_groups=(),
+    )
+
+    class _RecoveryRuntime:
+        def __init__(self) -> None:
+            self.receipts: tuple[RuntimeConflictReceipt, ...] = ()
+
+        def snapshot(self) -> NotesSyncRuntimeSnapshot:
+            return NotesSyncRuntimeSnapshot("active", "sync_now", (root,))
+
+        async def check_root(self, root_id: str) -> ReconciliationPlan:
+            assert root_id == "root-1"
+            return plan
+
+        async def conflict_labels(
+            self, root_id: str, observation_token: str
+        ) -> tuple[RuntimeConflictLabel, ...]:
+            assert (root_id, observation_token) == ("root-1", token)
+            return ()
+
+        async def conflict_history_available(self, root_id: str) -> bool:
+            assert root_id == "root-1"
+            return bool(self.receipts)
+
+        async def active_conflict_receipts(
+            self, root_id: str
+        ) -> tuple[RuntimeConflictReceipt, ...]:
+            assert root_id == "root-1"
+            return self.receipts
+
+        async def apply_reviewed(
+            self,
+            root_id: str,
+            observation_token: str,
+            action_ids: tuple[str, ...],
+            selections: tuple[object, ...],
+        ) -> ConflictApplyResult:
+            assert (root_id, observation_token, action_ids, selections) == (
+                "root-1",
+                token,
+                ("action-1",),
+                (),
+            )
+            return ConflictApplyResult((), 0, 0, 0, False, True, True, None)
+
+        async def undo_resolution(
+            self, root_id: str, operation_id: str
+        ) -> NotesSyncExecutionResult:
+            assert (root_id, operation_id) == ("root-1", "operation-1")
+            return NotesSyncExecutionResult(
+                "undo-operation-1", NotesSyncOperationState.VERIFIED, False
+            )
+
+    runtime = _RecoveryRuntime()
+    app = _build_test_app()
+    _seed_conversations(app, [], notes=_two_notes())
+    app.notes_sync_runtime_owner = runtime
+    host = _JourneyHarness(app)
+    async with host.run_test(size=(60, 20)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes", Button).press()
+        manage = await _wait_for_selector(
+            screen, pilot, "#library-notes-manage-sync-folders"
+        )
+        manage.press()
+        review = await _wait_for_selector(screen, pilot, "#notes-sync-root-review-0")
+        review.press()
+        await _wait_for_selector(screen, pilot, "#notes-sync-apply")
+
+        if recovery_action == "apply":
+            screen.query_one("#notes-sync-apply", Button).press()
+        else:
+            runtime.receipts = (
+                RuntimeConflictReceipt(
+                    "operation-1",
+                    "Release note",
+                    NotesSyncConflictChoice.KEEP_FILE,
+                    "completed",
+                    True,
+                ),
+            )
+            controller = screen._library_notes_sync_controller
+            await controller.refresh_conflict_receipts("root-1")
+            controller._state = replace(  # noqa: SLF001 - mounted receipt setup
+                controller.snapshot,
+                phase="receipt",
+                receipt_line="1 applied · durable receipt recorded",
+            )
+            controller._publish()  # noqa: SLF001 - mounted receipt setup
+            undo = await _wait_for_selector(screen, pilot, "#notes-sync-receipt-undo-0")
+            undo.press()
+
+        await _wait_for_selector(screen, pilot, "#notes-sync-roots-back")
+        assert screen._library_notes_view == "lasting_roots"
+        assert not screen.query("#notes-sync-apply")
+        assert screen._library_notes_sync_controller.snapshot.phase == "roots"
 
 
 @pytest.mark.asyncio
