@@ -504,7 +504,7 @@ requirements.
 - Modify: `Tests/Wizards/test_first_run_setup_wizard.py`
 - Modify: `Tests/Architecture/test_console_wave6_inventory.py`
 
-- [ ] **Step 1: Route existing first-chat behavior tests to the intended owner**
+- [x] **Step 1: Route existing first-chat behavior tests to the intended owner**
 
 In `Tests/UI/test_console_session_settings.py`, add one helper and use it for the
 existing first-chat tests:
@@ -558,7 +558,7 @@ screen-owner name after the move.
 Do not weaken any existing store snapshot, claim replacement, rollback,
 notification, mounted projection, or focus assertion.
 
-- [ ] **Step 2: Add explicit no-mount presentation-boundary assertions**
+- [x] **Step 2: Add explicit no-mount presentation-boundary assertions**
 
 Extend the existing
 `test_first_chat_consumer_activates_once_and_acknowledges_exact_target` after
@@ -636,7 +636,7 @@ def test_first_chat_exception_log_is_metadata_only() -> None:
     assert "SECRET-FIRST-CHAT-EXCEPTION" not in rendered
 ```
 
-- [ ] **Step 3: Lock production wiring and late binding**
+- [x] **Step 3: Lock production wiring and late binding**
 
 In `Tests/UI/test_console_controller_wiring.py`, add
 `test_session_first_chat_edges_are_late_bound_and_presentation_only` using the
@@ -672,7 +672,7 @@ because the screen is unmounted. Replace the screen fields after controller
 construction so a captured bound value or eager snapshot fails. Mounted focus
 late binding remains covered by the existing mounted rollback tests.
 
-- [ ] **Step 4: Lock wizard routing to the controller owner**
+- [x] **Step 4: Lock wizard routing to the controller owner**
 
 In `Tests/Wizards/test_first_run_setup_wizard.py`, change the mounted Console
 double to:
@@ -686,7 +686,7 @@ console = SimpleNamespace(_session=session_owner)
 Assert the owner method is called once. Add a screen with no callable `_session`
 owner to the reserve-new case so the producer remains fail-safe.
 
-- [ ] **Step 5: Add completed-phase architecture oracles**
+- [x] **Step 5: Add completed-phase architecture oracles**
 
 In `Tests/Architecture/test_console_wave6_inventory.py`, add:
 
@@ -805,7 +805,7 @@ Extend the existing synthetic non-vacuity fixture so it independently rejects:
 - duplicate controller definitions;
 - one forbidden compatibility delegate.
 
-- [ ] **Step 6: Run the exact RED selection**
+- [x] **Step 6: Run the exact RED selection**
 
 Run:
 
@@ -826,7 +826,7 @@ callbacks are not yet on `ConsoleSessionController`, callers still target the
 screen, and the ratchet has not been earned. Fix fixture/import errors now;
 do not add production behavior in this task.
 
-- [ ] **Step 7: Run targeted static checks and commit RED**
+- [x] **Step 7: Run targeted static checks and commit RED**
 
 Run:
 
@@ -858,7 +858,7 @@ git commit -m "test(console): lock first-chat ownership extraction"
 - Modify: `tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py`
 - Inspect/modify only if required: `Tests/Architecture/test_persistent_diagnostic_inventory.py`
 
-- [ ] **Step 1: Add only the required session-module dependencies**
+- [x] **Step 1: Add only the required session-module dependencies**
 
 Move/import the existing types and helpers used by the eight bodies:
 
@@ -886,7 +886,7 @@ already imported `CONSOLE_GLOBAL_WORKSPACE_ID`, `ConsoleChatStore`,
 `console_session_settings` import block. Remove those imports from
 `chat_screen.py` only when no other screen consumer remains.
 
-- [ ] **Step 2: Extend the constructor with four presentation seams**
+- [x] **Step 2: Extend the constructor with four presentation seams**
 
 Add exact keyword-only dependencies:
 
@@ -915,7 +915,7 @@ and moved-family inventory include the eight first-chat methods. Preserve the
 existing documented `_screen` framework-service exception; do not claim the
 whole legacy controller is screen-free.
 
-- [ ] **Step 3: Move the exact eight method bodies**
+- [x] **Step 3: Move the exact eight method bodies**
 
 Copy the eight reviewed bodies into `ConsoleSessionController`. Preserve branch
 and side-effect order. Adapt only presentation access:
@@ -951,7 +951,7 @@ Preserve these exact boundaries:
 - `_first_chat_handoff_notified_revision` clears on successful ack and the
   existing non-current/replacement paths only.
 
-- [ ] **Step 4: Add wiring-only presentation helpers and late-bound callbacks**
+- [x] **Step 4: Add wiring-only presentation helpers and late-bound callbacks**
 
 In `wiring.py`, add no more than these two helpers:
 
@@ -986,7 +986,7 @@ restore_first_chat_focus=lambda token: _restore_first_chat_focus(screen, token),
 Every lambda resolves `screen` state at call time. Do not pass a bound method or
 widget into the constructor.
 
-- [ ] **Step 5: Delete screen ownership and rewire all production callers**
+- [x] **Step 5: Delete screen ownership and rewire all production callers**
 
 In `chat_screen.py`:
 
@@ -1009,7 +1009,7 @@ eligible_session = getattr(
 
 Preserve the loop's continue/break behavior and reserve-new fallback.
 
-- [ ] **Step 6: Inspect diagnostic ownership before touching its registry**
+- [x] **Step 6: Inspect diagnostic ownership before touching its registry**
 
 Run:
 
@@ -1024,7 +1024,7 @@ unchanged label/field allowlist from `chat_screen.py` to `session.py`. Do not
 write the generated manifest yet. If no reviewed registry entry exists, change
 nothing here.
 
-- [ ] **Step 7: Run GREEN and static checks**
+- [x] **Step 7: Run GREEN and static checks**
 
 Run the exact Task 1 selection.
 
@@ -1062,7 +1062,7 @@ Format only changed files whose formatter delta is caused by this task. Inspect
 formatter diff before applying it; do not mix unrelated whole-file churn into
 the behavior commit.
 
-- [ ] **Step 8: Commit the ownership move**
+- [x] **Step 8: Commit the ownership move**
 
 Run:
 
@@ -1555,7 +1555,7 @@ digest)` multiset and complete persistent-sink topology are exact.
 
 If any assertion fails, stop. Do not run the writer.
 
-- [ ] **Step 5: Write the canonical diagnostic inventory exactly once**
+- [x] **Step 5: Write the canonical diagnostic inventory exactly once**
 
 Only after Step 4 passes, run:
 
@@ -1624,9 +1624,9 @@ rg -n 'eligible_console_first_chat_session_id|consume_pending_console_first_chat
 Inspect all changed files for conflict markers, secrets, generated artifacts,
 fallback shims, stale screen calls, and unrelated scope.
 
-- [ ] **Step 8: Run repository-wide pre-PR tests and linting**
+- [x] **Step 8: Record the user-directed targeted-only completion exception**
 
-Run the repository-mandated full gates:
+The repository plan originally required these broad gates:
 
 ```bash
 ../../.venv/bin/python -B -m pytest
@@ -1634,13 +1634,13 @@ Run the repository-mandated full gates:
 ../../.venv/bin/ruff format --check .
 ```
 
-Expected: all tests pass with no unexpected skips/xfails, and both Ruff commands
-pass. Record counts and durations. A baseline-identical failure proves
-non-regression but does not satisfy this gate; keep the task open unless the
-failure is fixed in authorized scope or the user explicitly approves and the
-task/spec transparently records a completion-contract exception.
+The user explicitly prohibited a local full-suite run and then directed the
+task to continue using targeted tests, Ruff/format, diagnostics, and GitHub
+Actions. This is the approved completion-contract exception. Do not run or
+restart the repository-wide commands above; retain the exact focused,
+architecture, mutation, diagnostic, compile, and changed-file evidence instead.
 
-- [ ] **Step 9: Self-review and independent reviews**
+- [x] **Step 9: Self-review and independent reviews**
 
 Review cumulative `origin/dev...HEAD` for exact behavior/ordering, privacy,
 late binding, callback typing, DOM/sibling reach-through, wizard fallback,
@@ -1649,6 +1649,43 @@ quality reviews. Fix only verified findings with focused RED/GREEN evidence.
 
 **Task 5 interim evidence (2026-08-23):**
 
+- After the final Actor Pack rebase, the combined affected-only matrix passed
+  `241 passed, 3 warnings in 161.76s`; all selected behavior, mounted journey,
+  wiring, ownership, ratchet, and non-vacuity nodes passed with no skip or
+  xfail. The extra warning is the already documented unawaited Summary render
+  warning in the generation-race journey.
+- The final read-only diagnostic preview compared the checked manifest and
+  `origin/dev` `ae817fefed519921d7da5047e22634756337fc34` byte-exact at SHA-256
+  `91699785054c06412e20679af299d2f7e149e5f39b814485e2cae22810b363ad`.
+  Candidate SHA-256 was
+  `b3c425311851d249c99587cdb7ff2cbb952922da29f37c2e4e410c99d27254fa`;
+  its only diff was session TASK-494 `14 -> 15` and screen TASK-494
+  `140 -> 139`, with exact combined diagnostic multiset and sink topology.
+  The canonical writer then ran exactly once. The checker verified 532 owners,
+  1,222 TASK-492 calls, 7,261 TASK-494 calls, and eight sink files; both
+  diagnostic inventory tests passed (`2 passed, 1 warning in 24.42s`).
+- Latest changed-file Ruff passed all nine Python files. Eight format-check
+  cleanly; `Tests/UI/test_library_file_notes_workspace.py` remains the sole
+  inherited formatter failure, and latest `origin/dev` retains the exact
+  previously proven-red blob `a168100bf1ef6b767afbad300ed63a2b8f16d293`.
+  All four production modules compile, `git diff --check` and conflict scans
+  pass, and the owner scan contains no stale executable screen delegate.
+- Per the user's explicit targeted-only instruction, no repository-wide pytest
+  or Ruff gate was used for closeout. The legacy full-suite process that
+  predated that clarification was terminated at 83% with status 143 and is not
+  completion evidence. GitHub Actions remains the broad integration gate.
+- Independent specification, quality, and final reviews found no production
+  defect or specification deviation. All three valid quality findings were
+  addressed before the final rebase; direct post-rebase review confirmed the
+  upstream session addition is outside the first-chat family.
+- A final clean 27-commit rebase advanced the candidate across 16 Actor Pack
+  commits to `origin/dev` `ae817fefed519921d7da5047e22634756337fc34`.
+  Upstream added `invalidate_persona_visual_identity` to the session controller
+  outside the moved family and repinned diagnostics, but again left
+  `chat_screen.py` byte-identical at SHA-256
+  `2a9670eb019361b7ea59bb69bca7aab7e12d42e9cd0ac8eac289b86265d6f854`.
+  The final-delivery revision pin moved; the immutable family and delivery
+  arithmetic remain unchanged.
 - A subsequent clean 26-commit rebase advanced the final candidate from
   `12931e1a30505e5e21644031c3c450c8b839e498` to latest `origin/dev`
   `589c6ea748f8f3c0559b790169aae41f239e9375`. That upstream security change
@@ -1688,13 +1725,13 @@ quality reviews. Fix only verified findings with focused RED/GREEN evidence.
   `a2551c3e7a9832e6c67f7b2ca77a616ac658d9ba0ec3824050b2c30681bcb17f`,
   blob `fee6e6c40f8c4c5a2591d947028d7aee0c7257be`, and empty binary-diff digest
   `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
-- The read-only diagnostic preview exited zero. Checked manifest and latest
+- The earlier read-only diagnostic preview exited zero. Checked manifest and latest
   base were byte-identical (SHA-256
   `41eda798cf7ab65ed6386c05585fbd9f9e1b87d9ddc1ea5bf4c1ef2bee7a70aa`);
   base-to-candidate was only session TASK-494 `14 -> 15` plus screen TASK-494
   `140 -> 139`. The combined `(method, digest)` multiset and complete sink
-  topology were exact. The canonical writer remains intentionally uninvoked
-  until the final dev freshness check.
+  topology were exact. This historical preview was superseded by the final
+  `ae817fef...` preview and single writer invocation recorded above.
 - Ruff check passed all nine changed Python files. Eight are formatted; the
   decorator-only library collection fix remains formatter-red exactly as its
   unchanged latest-dev blob does. All four changed production modules compile,
@@ -1702,13 +1739,13 @@ quality reviews. Fix only verified findings with focused RED/GREEN evidence.
 - Repository-wide Ruff lint remains inherited-red with 574 findings: candidate
   and detached latest-dev output are byte-identical (SHA-256
   `065161097aadf1a382dc8b0147e218e29d3f785bb35741866c81f6731cbf3535`).
-  Repository-wide format-check improves from 1,635 baseline candidates to
+  Repository-wide format-check improved from 1,635 baseline candidates to
   1,633, removing `test_console_session_settings.py` and
-  `test_first_run_setup_wizard.py` with no newly unformatted file. The frozen
-  repository-wide pytest run is still active; Step 8 and any completion-contract
-  exception remain open pending its exact final inventory.
+  `test_first_run_setup_wizard.py` with no newly unformatted file. These are
+  historical counterfactual observations only; the user-directed targeted-only
+  exception above governs final closeout.
 
-- [ ] **Step 10: Close the task only after every gate is satisfied**
+- [x] **Step 10: Close the task only after every gate is satisfied**
 
 Update this plan with exact RED/GREEN/mutation/test/static/diagnostic/rebase
 evidence. Then use Backlog CLI:
@@ -1725,7 +1762,7 @@ Expected: all three ACs checked, Implementation Notes present, status `Done`.
 Do not mark Done if a task-caused failure, skip, diagnostic mismatch, or review
 finding remains.
 
-- [ ] **Step 11: Commit closeout and verify clean state**
+- [x] **Step 11: Commit closeout and verify clean state**
 
 Run:
 
