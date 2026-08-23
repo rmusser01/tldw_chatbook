@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Guard: no two backlog task files may claim the same task id.
+"""Guard: backlog task ids are unique and task paths are Windows-compatible.
 
 Task files are named ``task-<id> - <Title>.md``; subtask ids may be multi-dotted
 (``task-3.1``, ``task-10.6.1``). Two branches minting the same id and merging
@@ -46,6 +46,16 @@ TASK_DIRS = (
 
 FILENAME_ID_RE = re.compile(r"^(task-\d+(?:\.\d+)*) - .*\.md$")
 FRONTMATTER_ID_RE = re.compile(r"^id:\s*(\S+)", re.IGNORECASE)
+WINDOWS_RESERVED_CHARACTERS = frozenset('<>:"/\\|?*')
+WINDOWS_RESERVED_DEVICE_NAMES = frozenset(
+    {"con", "prn", "aux", "nul"}
+    | {f"com{suffix}" for suffix in (*map(str, range(1, 10)), "¹", "²", "³")}
+    | {f"lpt{suffix}" for suffix in (*map(str, range(1, 10)), "¹", "²", "³")}
+)
+WINDOWS_PATH_RESOLUTION = (
+    "Keep punctuation in task content, but rename the task file with a "
+    "Windows-safe spelling and update live path references."
+)
 
 RESOLUTION = (
     "Resolve per the 2026-08-21 owner rule (TASK-19601): the OLDER arrival "
@@ -88,6 +98,36 @@ def _label(path: Path) -> str:
         return path.resolve().as_posix()
 
 
+def windows_incompatible_reason(name: str) -> str | None:
+    """Return why a basename cannot be represented by Win32, else ``None``."""
+    for character in name:
+        if ord(character) <= 0x1F:
+            return f"contains ASCII control U+{ord(character):04X}"
+        if character in WINDOWS_RESERVED_CHARACTERS:
+            return f"contains Windows-reserved character {character!r}"
+    if name.endswith((".", " ")):
+        return "ends with a dot or space"
+    device_stem = name.split(".", 1)[0].casefold()
+    if device_stem in WINDOWS_RESERVED_DEVICE_NAMES:
+        return f"uses reserved Windows device name {device_stem.upper()!r}"
+    return None
+
+
+def windows_incompatible_paths(*task_dirs: Path) -> dict[str, str]:
+    """Return directly contained files whose basenames Win32 rejects."""
+    invalid: dict[str, str] = {}
+    for task_dir in task_dirs:
+        if not task_dir.is_dir():
+            continue
+        for path in sorted(task_dir.iterdir()):
+            if not path.is_file():
+                continue
+            reason = windows_incompatible_reason(path.name)
+            if reason:
+                invalid[_label(path)] = reason
+    return invalid
+
+
 def duplicate_ids(*task_dirs: Path) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
     """Collect ids claimed by more than one task file, across every bucket given.
 
@@ -126,12 +166,18 @@ def _report(label: str, duplicates: dict[str, list[str]]) -> None:
             print(f"  {name}")
 
 
+def _report_windows_incompatible(invalid: dict[str, str]) -> None:
+    print("::error::Windows-incompatible Backlog task paths:")
+    for path, reason in sorted(invalid.items()):
+        print(f"  {path}: {reason}")
+
+
 def main(argv: list[str] | None = None) -> int:
-    """Fail when any task id is claimed twice.
+    """Fail when ids collide or a task path is incompatible with Windows.
 
     Returns:
-        int: ``0`` when every id is unique, ``1`` otherwise (with ``::error::``
-            annotations naming each colliding id and its files).
+        int: ``0`` when ids are unique and paths are Windows-compatible, ``1``
+            otherwise (with ``::error::`` annotations naming each violation).
     """
     # NOTE (Qodo PR #1947 finding 2, "Unvalidated --tasks-dir used"): this is
     # deliberately NOT routed through Utils/path_validation.py. Three reasons:
@@ -173,12 +219,18 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     filename_dupes, frontmatter_dupes = duplicate_ids(*task_dirs)
+    invalid_paths = windows_incompatible_paths(*task_dirs)
     if filename_dupes:
         _report("filenames", filename_dupes)
     if frontmatter_dupes:
         _report("frontmatter id: fields", frontmatter_dupes)
+    if invalid_paths:
+        _report_windows_incompatible(invalid_paths)
     if filename_dupes or frontmatter_dupes:
         print(RESOLUTION, file=sys.stderr)
+    if invalid_paths:
+        print(WINDOWS_PATH_RESOLUTION, file=sys.stderr)
+    if filename_dupes or frontmatter_dupes or invalid_paths:
         return 1
 
     scanned = [task_dir for task_dir in task_dirs if task_dir.is_dir()]
@@ -186,7 +238,7 @@ def main(argv: list[str] | None = None) -> int:
     print(
         f"No duplicate task IDs across {total} task files in "
         f"{', '.join(_label(task_dir) for task_dir in scanned)} "
-        "(filenames + frontmatter)."
+        "(filenames + frontmatter); all task paths are Windows-compatible."
     )
     return 0
 
