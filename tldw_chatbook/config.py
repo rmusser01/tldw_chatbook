@@ -952,6 +952,12 @@ _SETTINGS_CACHE_LOCK = None  # Will be initialized when needed
 #: again, so a plain Lock would deadlock the rebuilding thread against
 #: itself. RLock keeps same-thread reentry behaving exactly as before while
 #: admitting only one *thread* at a time.
+#:
+#: Lock order is ``_CONFIG_FILE_LOCK`` -> ``_SETTINGS_REBUILD_LOCK`` ->
+#: ``_SETTINGS_CACHE_LOCK``. A config mutation retains the file lock while it
+#: publishes through ``load_settings(force_reload=True)``, so every settings
+#: rebuild must enter the file lock first. Reversing those first two locks
+#: deadlocks a background mutation against a concurrent settings reader.
 _SETTINGS_REBUILD_LOCK = None  # Will be initialized when needed
 
 
@@ -1378,10 +1384,12 @@ def load_settings(force_reload: bool = False) -> Dict:
         if cached is not None:
             return cached
 
-    # Miss: serialize the rebuild. Whoever loses the race re-checks the cache
-    # and returns the winner's freshly built settings rather than repeating
-    # the entire rebuild.
-    with _SETTINGS_REBUILD_LOCK:
+    # Miss: take the config-file lock before the rebuild lock. Config writers
+    # retain that first lock while publishing a forced settings rebuild, so
+    # acquiring these in the opposite order can deadlock two threads. Whoever
+    # loses the race re-checks the cache and returns the winner's freshly built
+    # settings rather than repeating the entire rebuild.
+    with _config_file_lock(), _SETTINGS_REBUILD_LOCK:
         if not force_reload:
             cached = _cache_hit()
             if cached is not None:

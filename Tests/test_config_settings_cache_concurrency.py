@@ -22,11 +22,120 @@ returning the raw cell fails here.
 
 from __future__ import annotations
 
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
 import threading
 
 import pytest
 
 import tldw_chatbook.config as config_module
+
+
+def test_settings_rebuild_and_runtime_publication_share_one_lock_order(
+    tmp_path: Path,
+) -> None:
+    """A reader and writer cannot retain opposite config/rebuild locks."""
+    config_path = tmp_path / "config.toml"
+    config_path.write_text('[general]\nusers_name = "lock-order"\n', encoding="utf-8")
+    script = r"""
+import json
+import sys
+import threading
+import traceback
+
+from tldw_chatbook import config as config_module
+
+writer_holds_config = threading.Event()
+reader_attempting_config = threading.Event()
+errors = []
+
+
+class InstrumentedConfigLock:
+    def __init__(self):
+        self._lock = threading.RLock()
+
+    def __enter__(self):
+        if threading.current_thread().name == "settings-reader":
+            reader_attempting_config.set()
+        self._lock.acquire()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback_value):
+        del exc_type, exc_value, traceback_value
+        self._lock.release()
+
+
+config_module._CONFIG_FILE_LOCK = InstrumentedConfigLock()
+config_module._SETTINGS_REBUILD_LOCK = threading.RLock()
+with config_module._SETTINGS_CACHE_LOCK:
+    config_module._SETTINGS_CACHE = None
+    config_module._SETTINGS_CACHE_SOURCE = None
+
+
+def writer():
+    try:
+        with config_module._config_file_lock():
+            writer_holds_config.set()
+            if not reader_attempting_config.wait(timeout=5):
+                raise AssertionError("reader never attempted the config lock")
+            config_module._publish_runtime_config_unlocked()
+    except BaseException as exc:
+        errors.append(f"writer: {exc!r}")
+
+
+def reader():
+    try:
+        if not writer_holds_config.wait(timeout=5):
+            raise AssertionError("writer never acquired the config lock")
+        config_module.load_settings(force_reload=True)
+    except BaseException as exc:
+        errors.append(f"reader: {exc!r}")
+
+
+threads = [
+    threading.Thread(target=writer, name="config-writer", daemon=True),
+    threading.Thread(target=reader, name="settings-reader", daemon=True),
+]
+for thread in threads:
+    thread.start()
+for thread in threads:
+    thread.join(timeout=5)
+
+alive = [thread.name for thread in threads if thread.is_alive()]
+stacks = {}
+if alive:
+    frames = sys._current_frames()
+    for thread in threads:
+        if thread.is_alive() and thread.ident in frames:
+            stacks[thread.name] = [
+                frame.name for frame in traceback.extract_stack(frames[thread.ident])
+            ]
+print(json.dumps({"alive": alive, "errors": errors, "stacks": stacks}))
+raise SystemExit(1 if alive or errors else 0)
+"""
+    environment = os.environ.copy()
+    environment["TLDW_CONFIG_PATH"] = str(config_path)
+    repository_root = Path(__file__).resolve().parents[1]
+    environment["PYTHONPATH"] = os.pathsep.join(
+        filter(None, (str(repository_root), environment.get("PYTHONPATH", "")))
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=repository_root,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=False,
+    )
+
+    evidence = json.loads(completed.stdout.strip().splitlines()[-1])
+    assert completed.returncode == 0, evidence
+    assert evidence == {"alive": [], "errors": [], "stacks": {}}
 
 
 def _invalidate() -> None:
