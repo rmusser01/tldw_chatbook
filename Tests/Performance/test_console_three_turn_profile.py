@@ -36,6 +36,30 @@ REVIEWED_ARTIFACT_NAMES = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _unseal_task5_test_directories(request: pytest.FixtureRequest):
+    """Restore test-only temp permissions so pytest can remove sealed evidence."""
+    yield
+    tmp_path = request.node.funcargs.get("tmp_path")
+    if not isinstance(tmp_path, Path) or not tmp_path.is_dir():
+        return
+    for candidate in tmp_path.iterdir():
+        if not candidate.is_dir() or not (
+            candidate.name.startswith("published")
+            or candidate.name.endswith(".task-20010-stage")
+        ):
+            continue
+        candidate.chmod(0o755)
+        if sys.platform != "darwin":
+            continue
+        for name in REVIEWED_ARTIFACT_NAMES | {
+            "confirmatory-review-receipt.json"
+        }:
+            path = candidate / name
+            if path.is_file() and not path.is_symlink():
+                os.chflags(path, path.stat().st_flags & ~stat.UF_IMMUTABLE)
+
+
 def test_balanced_arm_order_rotates_complete_triples() -> None:
     balanced_arm_order = getattr(profile, "balanced_arm_order", None)
 
@@ -4774,6 +4798,196 @@ def test_approved_receipt_allows_only_minor_findings(tmp_path: Path) -> None:
     assert (tmp_path / "published").is_dir()
 
 
+@pytest.mark.parametrize("later_receipt", (False, True))
+def test_receipt_bytes_and_reviews_directory_are_durable_before_identity_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, later_receipt: bool
+) -> None:
+    campaign, attempt, digest, _raw_sha256 = _prepare_review_attempt(tmp_path)
+    if later_receipt:
+        rejected = _write_review_receipt(
+            attempt,
+            digest,
+            decision="changes_required",
+            filename="review-001.json",
+        )
+        profile.register_review_receipt(campaign, "attempt-0001", rejected)
+        (attempt / "README.md").write_text("# Corrected\n", encoding="utf-8")
+        digest = profile.canonical_artifact_digest(attempt)
+    filename = "review-002.json" if later_receipt else "review-001.json"
+    receipt = _write_review_receipt(attempt, digest, filename=filename)
+    reviews = attempt / "reviews"
+    registry = reviews / ".registered"
+    marker_name = f"{filename}--{hashlib.sha256(receipt.read_bytes()).hexdigest()}"
+    marker = registry / marker_name
+    events: list[str] = []
+    real_file_fsync = profile._fsync_regular_file
+    real_directory_fsync = profile._fsync_directory
+
+    def record_file(path: Path) -> None:
+        if path == receipt:
+            events.append("receipt")
+        elif path == marker:
+            events.append("marker")
+        real_file_fsync(path)
+
+    def record_directory(path: Path) -> None:
+        if path == reviews:
+            events.append("reviews")
+        elif path == registry:
+            events.append("registry")
+        real_directory_fsync(path)
+
+    monkeypatch.setattr(profile, "_fsync_regular_file", record_file)
+    monkeypatch.setattr(profile, "_fsync_directory", record_directory)
+
+    profile.register_review_receipt(campaign, "attempt-0001", receipt)
+
+    assert events[:2] == ["receipt", "reviews"]
+    assert events[-2:] == ["marker", "registry"]
+    assert marker.is_file()
+    assert marker.read_bytes() == b""
+
+
+@pytest.mark.parametrize("later_receipt", (False, True))
+@pytest.mark.parametrize("failure", ("receipt", "reviews"))
+def test_receipt_pre_marker_durability_failure_never_creates_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    later_receipt: bool,
+    failure: str,
+) -> None:
+    campaign, attempt, digest, _raw_sha256 = _prepare_review_attempt(tmp_path)
+    if later_receipt:
+        rejected = _write_review_receipt(
+            attempt,
+            digest,
+            decision="changes_required",
+            filename="review-001.json",
+        )
+        profile.register_review_receipt(campaign, "attempt-0001", rejected)
+        (attempt / "README.md").write_text("# Corrected\n", encoding="utf-8")
+        digest = profile.canonical_artifact_digest(attempt)
+    filename = "review-002.json" if later_receipt else "review-001.json"
+    receipt = _write_review_receipt(attempt, digest, filename=filename)
+    reviews = attempt / "reviews"
+    registry = reviews / ".registered"
+    real_file_fsync = profile._fsync_regular_file
+    real_directory_fsync = profile._fsync_directory
+
+    def fail_file(path: Path) -> None:
+        if failure == "receipt" and path == receipt:
+            raise OSError("injected receipt fsync")
+        real_file_fsync(path)
+
+    def fail_directory(path: Path) -> None:
+        if failure == "reviews" and path == reviews:
+            raise OSError("injected reviews fsync")
+        real_directory_fsync(path)
+
+    monkeypatch.setattr(profile, "_fsync_regular_file", fail_file)
+    monkeypatch.setattr(profile, "_fsync_directory", fail_directory)
+
+    with pytest.raises(RuntimeError, match="^review_receipt_durability_failed$"):
+        profile.register_review_receipt(campaign, "attempt-0001", receipt)
+
+    assert not registry.exists() or not any(
+        path.name.startswith(f"{filename}--") for path in registry.iterdir()
+    )
+
+
+def test_receipt_changed_after_pre_marker_fsync_is_not_registered(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    campaign, attempt, digest, _raw_sha256 = _prepare_review_attempt(tmp_path)
+    receipt = _write_review_receipt(attempt, digest)
+    reviews = attempt / "reviews"
+    real_directory_fsync = profile._fsync_directory
+    mutated = False
+
+    def mutate_after_reviews_fsync(path: Path) -> None:
+        nonlocal mutated
+        real_directory_fsync(path)
+        if path == reviews and not mutated:
+            mutated = True
+            payload = json.loads(receipt.read_bytes())
+            payload["reviewed_at"] = "2026-08-23T00:00:01Z"
+            receipt.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    monkeypatch.setattr(profile, "_fsync_directory", mutate_after_reviews_fsync)
+
+    with pytest.raises(RuntimeError, match="^review_receipt_changed$"):
+        profile.register_review_receipt(campaign, "attempt-0001", receipt)
+
+    assert not (reviews / ".registered").exists()
+
+
+@pytest.mark.parametrize("later_receipt", (False, True))
+@pytest.mark.parametrize("decision", ("approved", "changes_required"))
+def test_receipt_marker_fsync_failure_is_stable_and_preserves_marker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    later_receipt: bool,
+    decision: str,
+) -> None:
+    campaign, attempt, digest, _raw_sha256 = _prepare_review_attempt(tmp_path)
+    if later_receipt:
+        rejected = _write_review_receipt(
+            attempt,
+            digest,
+            decision="changes_required",
+            filename="review-001.json",
+        )
+        profile.register_review_receipt(campaign, "attempt-0001", rejected)
+        (attempt / "README.md").write_text("# Corrected\n", encoding="utf-8")
+        digest = profile.canonical_artifact_digest(attempt)
+    filename = "review-002.json" if later_receipt else "review-001.json"
+    receipt = _write_review_receipt(
+        attempt, digest, decision=decision, filename=filename
+    )
+    registry = attempt / "reviews" / ".registered"
+    marker = registry / (
+        f"{filename}--{hashlib.sha256(receipt.read_bytes()).hexdigest()}"
+    )
+    real_file_fsync = profile._fsync_regular_file
+
+    def fail_marker(path: Path) -> None:
+        if path == marker:
+            raise OSError("injected marker fsync")
+        real_file_fsync(path)
+
+    monkeypatch.setattr(profile, "_fsync_regular_file", fail_marker)
+
+    with pytest.raises(
+        RuntimeError, match="^review_receipt_registry_durability_failed$"
+    ):
+        profile.register_review_receipt(campaign, "attempt-0001", receipt)
+
+    assert marker.is_file()
+    assert marker.read_bytes() == b""
+
+    events: list[str] = []
+
+    def record_file(path: Path) -> None:
+        if path == marker:
+            events.append("marker")
+        real_file_fsync(path)
+
+    real_directory_fsync = profile._fsync_directory
+
+    def record_directory(path: Path) -> None:
+        if path == registry:
+            events.append("registry")
+        real_directory_fsync(path)
+
+    monkeypatch.setattr(profile, "_fsync_regular_file", record_file)
+    monkeypatch.setattr(profile, "_fsync_directory", record_directory)
+
+    assert profile.register_review_receipt(
+        campaign, "attempt-0001", receipt
+    )["decision"] == decision
+    assert events[-2:] == ["marker", "registry"]
+
+
 def test_concurrent_changes_required_registration_has_one_stable_loser(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -5020,6 +5234,11 @@ def test_promotion_boundary_mutation_fails_final_recheck(
 
     def mutate_at_boundary(source: Path, target: Path, **kwargs) -> None:
         staged_readme = source / "README.md"
+        if sys.platform == "darwin":
+            os.chflags(
+                staged_readme,
+                staged_readme.stat().st_flags & ~stat.UF_IMMUTABLE,
+            )
         staged_readme.chmod(0o644)
         staged_readme.write_text("boundary mutation\n", encoding="utf-8")
         original(source, target, **kwargs)
@@ -5051,12 +5270,14 @@ def test_promotion_seals_and_fsyncs_stage_before_atomic_rename(
     real_directory_fsync = profile._fsync_directory
 
     def record_file(path: Path) -> None:
-        assert stat.S_IMODE(path.stat().st_mode) == 0o444
-        events.append(f"file:{path.name}")
+        if path.parent == stage:
+            assert stat.S_IMODE(path.stat().st_mode) == 0o444
+            events.append(f"file:{path.name}")
         real_file_fsync(path)
 
     def record_directory(path: Path) -> None:
         if path == stage:
+            assert stat.S_IMODE(path.stat().st_mode) == 0o555
             events.append("directory:stage")
         elif path == destination.parent and destination.exists():
             events.append("directory:destination-parent")
@@ -5077,6 +5298,61 @@ def test_promotion_seals_and_fsyncs_stage_before_atomic_rename(
         stat.S_IMODE((destination / name).stat().st_mode) == 0o444
         for name in REVIEWED_ARTIFACT_NAMES | {"confirmatory-review-receipt.json"}
     )
+    assert stat.S_IMODE(destination.stat().st_mode) == 0o555
+
+
+def test_sealed_stage_blocks_post_verify_name_replacement_before_native_rename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    campaign, attempt, digest, _raw_sha256 = _prepare_review_attempt(tmp_path)
+    receipt = _write_review_receipt(attempt, digest)
+    destination = tmp_path / "published"
+    stage = destination.parent / f".{destination.name}.task-20010-stage"
+    native_library = profile.ctypes.CDLL(None, use_errno=True)
+    if sys.platform == "darwin":
+        real_native = native_library.renamex_np
+    elif sys.platform.startswith("linux"):
+        real_native = native_library.renameat2
+    else:
+        pytest.skip("native no-replace proof is POSIX-only")
+    attempted = False
+    replaced = False
+
+    class InjectingRename:
+        argtypes = None
+        restype = None
+
+        def __call__(self, *args) -> int:
+            nonlocal attempted, replaced
+            attempted = True
+            staged_readme = stage / "README.md"
+            try:
+                staged_readme.unlink()
+                staged_readme.write_text("post-verify replacement\n", encoding="utf-8")
+                replaced = True
+            except PermissionError:
+                pass
+            return int(real_native(*args))
+
+    class InjectingLibrary:
+        pass
+
+    injected_library = InjectingLibrary()
+    setattr(
+        injected_library,
+        "renamex_np" if sys.platform == "darwin" else "renameat2",
+        InjectingRename(),
+    )
+    monkeypatch.setattr(
+        profile.ctypes, "CDLL", lambda _name, *, use_errno: injected_library
+    )
+
+    profile.promote_reviewed_artifacts(campaign, "attempt-0001", receipt, destination)
+
+    assert attempted
+    assert not replaced
+    assert (destination / "README.md").read_bytes() == b"# Confirmation\n"
+    assert stat.S_IMODE(destination.stat().st_mode) == 0o555
 
 
 @pytest.mark.parametrize("failure", ("file", "stage_directory"))
@@ -5090,10 +5366,17 @@ def test_promotion_pre_rename_fsync_failure_preserves_source_and_stage(
     real_directory_fsync = profile._fsync_directory
 
     if failure == "file":
+        real_file_fsync = profile._fsync_regular_file
+
+        def fail_staged_file(path: Path) -> None:
+            if path.parent == stage:
+                raise OSError("injected file fsync")
+            real_file_fsync(path)
+
         monkeypatch.setattr(
             profile,
             "_fsync_regular_file",
-            lambda _path: (_ for _ in ()).throw(OSError("injected file fsync")),
+            fail_staged_file,
         )
     else:
 
@@ -5111,6 +5394,7 @@ def test_promotion_pre_rename_fsync_failure_preserves_source_and_stage(
 
     assert attempt.is_dir()
     assert stage.is_dir()
+    assert stat.S_IMODE(stage.stat().st_mode) == 0o555
     assert not destination.exists()
     assert not (campaign / ".campaign-lock").exists()
 

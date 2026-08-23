@@ -451,9 +451,9 @@ def _registered_review_receipts(
             not separator
             or not _REVIEW_FILENAME.fullmatch(name)
             or not _SHA256.fullmatch(digest)
-            or not entry.is_dir()
+            or not entry.is_file()
             or entry.is_symlink()
-            or any(entry.iterdir())
+            or entry.stat().st_size != 0
             or not receipt_path.is_file()
             or receipt_path.is_symlink()
         ):
@@ -467,15 +467,20 @@ def _registered_review_receipts(
     return tuple(records)
 
 
-def _register_receipt_identity(attempt_root: Path, receipt_path: Path) -> None:
+def _register_receipt_identity(
+    attempt_root: Path, receipt_path: Path, receipt_sha256: str
+) -> None:
     """Pin one registered receipt's bytes in a content-free marker."""
     registry = attempt_root / "reviews" / ".registered"
-    if registry.exists() or registry.is_symlink():
-        if not registry.is_dir() or registry.is_symlink():
-            raise RuntimeError("review_receipt_registry_invalid")
-    else:
-        _mkdir_namespace(registry)
-    receipt_sha256 = _sha256_review_file(receipt_path)
+    try:
+        if registry.exists() or registry.is_symlink():
+            if not registry.is_dir() or registry.is_symlink():
+                raise RuntimeError("review_receipt_registry_invalid")
+        else:
+            registry.mkdir()
+            _fsync_directory(registry.parent)
+    except OSError as exc:
+        raise RuntimeError("review_receipt_registry_durability_failed") from exc
     prefix = f"{receipt_path.name}--"
     expected_name = f"{prefix}{receipt_sha256}"
     try:
@@ -488,16 +493,23 @@ def _register_receipt_identity(attempt_root: Path, receipt_path: Path) -> None:
             not separator
             or not _REVIEW_FILENAME.fullmatch(name)
             or not _SHA256.fullmatch(digest)
-            or not entry.is_dir()
+            or not entry.is_file()
             or entry.is_symlink()
-            or any(entry.iterdir())
+            or entry.stat().st_size != 0
         ):
             raise RuntimeError("review_receipt_registry_invalid")
     matching = [entry.name for entry in entries if entry.name.startswith(prefix)]
     if matching and matching != [expected_name]:
         raise RuntimeError("review_receipt_changed")
-    if not matching:
-        _mkdir_namespace(registry / expected_name)
+    marker = registry / expected_name
+    try:
+        if not matching:
+            with marker.open("xb"):
+                pass
+        _fsync_regular_file(marker)
+        _fsync_directory(registry)
+    except OSError as exc:
+        raise RuntimeError("review_receipt_registry_durability_failed") from exc
 
 
 def _register_review_receipt_locked(
@@ -561,6 +573,7 @@ def _register_review_receipt_locked(
         "reason_category": "receipt",
     }
     if current_identity_registered and receipt["decision"] == "changes_required":
+        _register_receipt_identity(attempt_root, receipt_path, receipt_sha256)
         if current["state"] == "complete_pending_review":
             append_attempt_state(campaign_root / "attempts.jsonl", changes_event)
         return receipt
@@ -573,7 +586,15 @@ def _register_review_receipt_locked(
         current = changes_event
     if digest in rejected_digests:
         raise RuntimeError("review_artifact_digest_not_changed")
-    _register_receipt_identity(attempt_root, receipt_path)
+    reviews_root = attempt_root / "reviews"
+    try:
+        _fsync_regular_file(receipt_path)
+        _fsync_directory(reviews_root)
+    except OSError as exc:
+        raise RuntimeError("review_receipt_durability_failed") from exc
+    if _sha256_review_file(receipt_path) != receipt_sha256:
+        raise RuntimeError("review_receipt_changed")
+    _register_receipt_identity(attempt_root, receipt_path, receipt_sha256)
     if current["state"] == "changes_required":
         complete_attempt_measurement(
             campaign_root / "attempts.jsonl",
@@ -628,6 +649,11 @@ def _atomic_rename_directory_noreplace(
         raise RuntimeError("review_atomic_noreplace_invalid")
     if verify is not None:
         verify()
+    _native_rename_directory_noreplace(source, target)
+
+
+def _native_rename_directory_noreplace(source: Path, target: Path) -> None:
+    """Perform the platform no-replace rename after sealed verification."""
     if sys.platform == "win32":
         try:
             os.rename(source, target)
@@ -636,6 +662,15 @@ def _atomic_rename_directory_noreplace(
         except OSError as exc:
             raise RuntimeError("review_promotion_rename_failed") from exc
         return
+    original_mode = stat.S_IMODE(source.stat().st_mode)
+    darwin_compatibility_unsealed = sys.platform == "darwin" and not (
+        original_mode & stat.S_IWUSR
+    )
+    if darwin_compatibility_unsealed:
+        # Darwin refuses to rename a non-owner-writable directory. The stage is
+        # private and campaign-locked, and its exact leaves remain UF_IMMUTABLE
+        # throughout this syscall window. Restore the sealed mode afterwards.
+        source.chmod(original_mode | stat.S_IWUSR)
     try:
         library = ctypes.CDLL(None, use_errno=True)
         if sys.platform == "darwin":
@@ -663,11 +698,21 @@ def _atomic_rename_directory_noreplace(
         else:
             raise RuntimeError("review_atomic_noreplace_unsupported")
     except AttributeError as exc:
+        if darwin_compatibility_unsealed:
+            source.chmod(original_mode)
         raise RuntimeError("review_atomic_noreplace_unsupported") from exc
     except OSError as exc:
+        if darwin_compatibility_unsealed and source.exists():
+            source.chmod(original_mode)
         raise RuntimeError("review_atomic_noreplace_unsupported") from exc
-    if result != 0:
-        error_number = ctypes.get_errno()
+    error_number = ctypes.get_errno() if result != 0 else 0
+    renamed = result == 0
+    if darwin_compatibility_unsealed:
+        try:
+            (target if renamed else source).chmod(original_mode)
+        except OSError as exc:
+            raise RuntimeError("review_promotion_rename_failed") from exc
+    if not renamed:
         if error_number in {errno.EEXIST, errno.ENOTEMPTY}:
             raise RuntimeError("review_destination_exists")
         unsupported = {
@@ -720,6 +765,9 @@ def _promote_reviewed_artifacts_locked(
     try:
         for path in staged_paths:
             path.chmod(0o444)
+            if sys.platform == "darwin":
+                os.chflags(path, path.stat().st_flags | stat.UF_IMMUTABLE)
+        stage.chmod(0o555)
     except OSError as exc:
         raise RuntimeError("review_promotion_stage_lockdown_failed") from exc
     # The campaign and stage are private roots. Read-only regular files exclude
@@ -752,7 +800,30 @@ def _promote_reviewed_artifacts_locked(
         if destination.exists() or destination.is_symlink():
             raise RuntimeError("review_destination_exists")
 
-    _atomic_rename_directory_noreplace(stage, destination, verify=verify_final_binding)
+    publication_error: BaseException | None = None
+    try:
+        _atomic_rename_directory_noreplace(
+            stage, destination, verify=verify_final_binding
+        )
+    except BaseException as exc:
+        publication_error = exc
+        raise
+    finally:
+        if sys.platform == "darwin":
+            sealed_root = destination if destination.exists() else stage
+            try:
+                for path in (
+                    *(sealed_root / name for name in REVIEWED_ARTIFACTS),
+                    sealed_root / "confirmatory-review-receipt.json",
+                ):
+                    if path.is_file() and not path.is_symlink():
+                        os.chflags(
+                            path,
+                            path.stat().st_flags & ~stat.UF_IMMUTABLE,
+                        )
+            except OSError as exc:
+                if publication_error is None:
+                    raise RuntimeError("publication_durability_uncertain") from exc
     try:
         _fsync_directory(destination.parent)
     except OSError as exc:
