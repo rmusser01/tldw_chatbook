@@ -522,3 +522,218 @@ Governance/evidence:
 - `backlog/docs/lessons-testing-evidence.md`
 - shared progress ledger
 - this report
+
+## Fix round 2/5 — postcommit interruption recovery
+
+### Review findings and root cause
+
+The round started from clean commit
+`caa6b2b40fe8c780d1a865d5d8740d3e95deb035`. The review findings were
+reproduced through real controller/store/repository paths before the first
+round-2 production edit.
+
+The first root cause was that generic exceptions after durable acceptance only
+released an action claim until the checkpoint-transition effect had completed.
+That left the already-committed owner runtime-active and recovery-hidden, and a
+queued owner could return without its exact restart fence. The only live
+continuation entry point was an internal method; the production Retry action
+instead reconstructed from SQLite and bypassed unfinished queue acknowledgement,
+hooks, history, and preparation publication.
+
+The second root cause was a local boolean around Retry checkpoint transition.
+Settlement failures after a normal return were recoverable, but a wrapper that
+raised after the repository CAS and before the boolean assignment was
+misclassified as pre-CAS. Review then exposed that the first RED matrix began
+after owner publication: failures in `identity_publication` or
+`durable_owner_publication` had no live assistant/recovery projection at all.
+Finally, the first CAS relation compared only selected IDs/state/revision and
+would authenticate an in-memory owner whose frozen authority, destination,
+reconstructability, or message versions had changed.
+
+### Corrected RED evidence
+
+The official two-file RED command, against the round-1 baseline production,
+was:
+
+```text
+../../.venv/bin/python -m pytest -q Tests/Chat/test_console_dispatch_recovery_fix_round2.py Tests/UI/test_console_dispatch_recovery_fix_round2.py --tb=short
+14 failed, 2 passed, 1 warning in 4.69s
+```
+
+Those failures covered seven post-owner effects, manual and queued recovery,
+controller replacement, mounted Retry, and post-CAS success/failure settlement
+faults. The cancellation and pre-CAS refusal controls passed. The mounted
+fixture was corrected before this official run; no fixture/setup failure is
+counted as RED evidence.
+
+Review expanded the matrix to the two first postcommit effects and the exact
+CAS fault boundary. Before the corresponding production changes:
+
+```text
+../../.venv/bin/python -m pytest -q Tests/Chat/test_console_dispatch_recovery_fix_round2.py -k 'identity_publication or durable_owner_publication or retry_exception_after_checkpoint_cas' --tb=short --show-capture=no
+3 failed, 15 deselected, 1 warning in 0.77s
+```
+
+Both early-effect cases had no recovery owner; the CAS-then-local-exception case
+had a committed `dispatch_started` row but runtime-active store truth. A final
+review ratchet changed frozen authority after CAS:
+
+```text
+../../.venv/bin/python -m pytest -q Tests/Chat/test_console_dispatch_recovery_fix_round2.py -k 'retry_does_not_restore_a_checkpoint_mutated_after_cas' --tb=short --show-capture=no
+1 failed, 18 deselected, 1 warning in 0.47s
+```
+
+The incomplete comparator invoked recovery restoration for that changed owner.
+
+### Implementation and contract decisions
+
+- Every exception after durable acceptance now restores the same committed
+  owner as runtime-inactive/recovery-needed, sets BLOCKED truth, force-hydrates
+  a queued fence, and retains the exact queue acceptance before returning.
+- `publish_durable_recovery_owner` hydrates the committed USER/assistant and
+  accepted checkpoint without completing any postcommit ledger effect. This is
+  deliberately distinct from `publish_durable_turn_owners`: failures in either
+  of the first two effects become actionable, while explicit Retry still resumes
+  the failed effect itself and every later unfinished effect in order.
+- The live continuation remains bounded to the existing preparation fingerprint
+  and exact session/assistant/checkpoint/origin/queue owner. Production Retry
+  invokes `resume_durable_postcommit`; a replacement controller that lacks the
+  live continuation fails closed instead of bypassing the ledger or creating
+  another message pair.
+- Queue acknowledgement is not special-cased or skipped. A failed queued
+  acknowledgement retains the claimed head and pauses later work; successful
+  Retry completes it once, atomically settles the assistant/checkpoint, then
+  drains later work once.
+- Retry exception classification authenticates the complete legal CAS relation
+  at catch time. The prior checkpoint must be accepted or dispatch-started; the
+  new bounded attempt must differ; state becomes dispatch-started; checkpoint
+  revision and assistant version increment exactly once; and dataclass equality
+  keeps USER version, all IDs, frozen authority, credential-free destination,
+  reconstructability, origin, and queue owner unchanged. There is no local
+  boolean bypass.
+- Pre-CAS refusal/cancellation only releases the action. Post-CAS provider
+  success, failure, cancellation, settlement exception, or local wrapper
+  exception restores runtime-inactive recovery truth and preserves the queue
+  fence. No second USER/assistant, checkpoint, schema, transaction owner,
+  persistence fallback, or Task-16 continuation/tool behavior was added.
+
+ADR required: no.  ADR path:
+`backlog/decisions/079-console-library-conversation-authority.md`.  Reason: this
+round closes review gaps in ADR-079's already-approved exact-owner recovery and
+does not change storage, sync, provider, or runtime boundaries.
+
+### GREEN and adjacent verification
+
+First GREEN for the original two-file matrix was `16 passed, 1 warning in
+4.65s`. After the early-effect and exact-CAS review expansions, the same focused
+matrix passed:
+
+```text
+../../.venv/bin/python -m pytest -q Tests/Chat/test_console_dispatch_recovery_fix_round2.py Tests/UI/test_console_dispatch_recovery_fix_round2.py --tb=short --show-capture=no
+20 passed, 1 warning in 5.56s
+```
+
+Fresh post-restoration Task-15 focus:
+
+```text
+../../.venv/bin/python -m pytest -q --tb=short --show-capture=no Tests/Chat/test_console_dispatch_recovery.py Tests/Chat/test_console_dispatch_queue_recovery.py Tests/UI/test_console_dispatch_recovery.py Tests/Chat/test_console_dispatch_recovery_fix_round1.py Tests/UI/test_console_dispatch_recovery_fix_round1.py Tests/Chat/test_console_dispatch_recovery_fix_round2.py Tests/UI/test_console_dispatch_recovery_fix_round2.py
+88 passed, 1 warning in 20.85s
+```
+
+Task-14 durable acceptance gate:
+
+```text
+../../.venv/bin/python -m pytest -q --tb=short --show-capture=no Tests/Chat/test_console_durable_turn_acceptance.py Tests/Chat/test_console_durable_turn_fix_round1.py Tests/Chat/test_console_durable_turn_fix_round2.py Tests/Chat/test_console_durable_turn_fix_round3.py Tests/Chat/test_console_durable_turn_fix_round4.py Tests/Chat/test_console_first_send_atomicity.py
+73 passed, 1 warning in 42.13s
+```
+
+Exact Task-13 affected gate:
+
+```text
+../../.venv/bin/python -m pytest -q --tb=short --show-capture=no Tests/Architecture/test_console_wave6_inventory.py Tests/Chat/test_console_automatic_library_preparation.py Tests/Chat/test_console_chat_controller.py Tests/Chat/test_console_chat_store_library_policy.py Tests/Chat/test_console_prompt_queue_coordinator.py Tests/Chat/test_console_turn_library_authority.py Tests/Chat/test_console_turn_execution_context.py Tests/Chat/test_console_turn_preparation.py Tests/Chat/test_library_preparation.py Tests/UI/test_console_auto_rag_on_send.py Tests/UI/test_console_harness_config_honesty.py Tests/UI/test_console_rag_settings_modal.py Tests/UI/test_console_retrieval_controller.py Tests/UI/test_console_controller_wiring.py Tests/test_config_console_defaults.py
+628 passed, 1 warning in 45.91s
+```
+
+Queue and mounted-UI gate:
+
+```text
+../../.venv/bin/python -m pytest -q --tb=short --show-capture=no Tests/Chat/test_console_prompt_queue_coordinator.py Tests/Chat/test_console_prompt_queue.py Tests/UI/test_console_prompt_queue.py Tests/UI/test_console_prompt_queue_modal.py Tests/UI/test_console_dispatch_recovery.py Tests/UI/test_console_dispatch_recovery_fix_round1.py
+98 passed, 1 warning in 21.03s
+```
+
+Repository/transaction/model/hydration/state gate:
+
+```text
+../../.venv/bin/python -m pytest -q --tb=short --show-capture=no Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py Tests/Chat/test_console_transaction_contribution.py Tests/Chat/test_console_chat_models.py Tests/Chat/test_console_conversation_hydration.py Tests/CI/test_textual_runtime_contract.py
+126 passed, 1 warning in 23.50s
+```
+
+No full repository suite, profile database, app launch, provider network, or
+push was used. Every pytest warning above is the inherited environment-level
+requests/urllib3/charset compatibility warning.
+
+### Mutation evidence
+
+Each mutant was applied alone and restored immediately:
+
+```text
+# suppress early exact-owner recovery publication
+2 failed, 17 deselected, 1 warning in 0.68s
+# replace generic recovery restoration with action release
+2 failed, 17 deselected, 1 warning in 0.66s
+# bypass the live postcommit continuation from production Retry
+2 failed, 18 deselected, 1 warning in 4.05s
+# force every post-CAS exception to use the pre-CAS release path
+5 failed, 14 deselected, 1 warning in 1.25s
+# weaken complete checkpoint equality to state/revision/version only
+1 failed, 18 deselected, 1 warning in 0.48s
+```
+
+The final post-restoration Task-15 command is the 88-pass gate above. Source
+inspection found no mutant marker left in production.
+
+### Static, privacy, and self-review
+
+```text
+../../.venv/bin/python -m ruff check tldw_chatbook/Chat/console_chat_controller.py tldw_chatbook/Chat/console_chat_store.py tldw_chatbook/Chat/console_prompt_queue_coordinator.py Tests/Chat/test_console_dispatch_recovery_fix_round2.py Tests/UI/test_console_dispatch_recovery_fix_round2.py
+All checks passed!
+
+../../.venv/bin/python -m ruff format --check Tests/Chat/test_console_dispatch_recovery_fix_round2.py Tests/UI/test_console_dispatch_recovery_fix_round2.py
+2 files already formatted
+
+git diff --check
+(no output, exit 0)
+```
+
+Whole-file format checking remains truthfully qualified: the inherited large
+`console_chat_store.py` drift remains, and `console_chat_controller.py` reports
+one pre-existing round-1 line outside this round's changed ranges;
+`console_prompt_queue_coordinator.py` and both new tests are clean. Scoped diff,
+source, and privacy inspection found no new log statement, credential/API-key,
+prompt/evidence/body serialization, schema/migration, provider-continuation,
+tool-batch, or Task-16 handoff seam.
+
+Self-review checked all exception boundaries, exact equality fields, early
+effect-ledger state, replacement-controller refusal, queue acknowledgement and
+drain ordering, terminal rollback behavior, and message/checkpoint cardinality.
+It found and fixed the two initially omitted early effects and the partial CAS
+relation described above. No unresolved Task-15 product concern remains.
+
+### Files changed in fix round 2
+
+Production:
+
+- `tldw_chatbook/Chat/console_chat_controller.py`
+- `tldw_chatbook/Chat/console_chat_store.py`
+- `tldw_chatbook/Chat/console_prompt_queue_coordinator.py`
+
+Tests:
+
+- `Tests/Chat/test_console_dispatch_recovery_fix_round2.py`
+- `Tests/UI/test_console_dispatch_recovery_fix_round2.py`
+
+Governance/evidence:
+
+- TASK-19900.3 Implementation Notes (status remains In Progress; 22 unchecked)
+- shared progress ledger
+- this report

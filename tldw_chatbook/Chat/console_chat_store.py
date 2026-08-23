@@ -3745,6 +3745,53 @@ class ConsoleChatStore:
     ) -> tuple[ConsoleChatMessage, ConsoleChatMessage]:
         """Hydrate the already-committed USER and assistant live owners."""
 
+        user, assistant = self._hydrate_durable_turn_owner_messages(
+            session_id,
+            commit,
+            terminal_citation_finalizer=terminal_citation_finalizer,
+            defer_terminal_persistence=defer_terminal_persistence,
+        )
+        self.publish_durable_dispatch_checkpoint(
+            session_id,
+            commit.checkpoint,
+            in_flight=False,
+        )
+        return self._snapshot(user), self._snapshot(assistant)
+
+    def publish_durable_recovery_owner(
+        self,
+        session_id: str,
+        commit: ConsoleDurableTurnCommit,
+        *,
+        terminal_citation_finalizer: TerminalCitationFinalizer | None = None,
+        defer_terminal_persistence: bool = False,
+    ) -> tuple[ConsoleChatMessage, ConsoleChatMessage]:
+        """Expose one committed owner without completing a postcommit effect."""
+
+        user, assistant = self._hydrate_durable_turn_owner_messages(
+            session_id,
+            commit,
+            terminal_citation_finalizer=terminal_citation_finalizer,
+            defer_terminal_persistence=defer_terminal_persistence,
+        )
+        self.publish_durable_dispatch_checkpoint(
+            session_id,
+            commit.checkpoint,
+            in_flight=False,
+        )
+        self.mark_dispatch_recovery_needed(session_id, commit.assistant_message_id)
+        return self._snapshot(user), self._snapshot(assistant)
+
+    def _hydrate_durable_turn_owner_messages(
+        self,
+        session_id: str,
+        commit: ConsoleDurableTurnCommit,
+        *,
+        terminal_citation_finalizer: TerminalCitationFinalizer | None,
+        defer_terminal_persistence: bool,
+    ) -> tuple[ConsoleChatMessage, ConsoleChatMessage]:
+        """Hydrate exact committed messages without changing the effect ledger."""
+
         user = self._message_or_raise(commit.user_message_id)
         if self._message_session_index.get(user.id) != session_id:
             raise RuntimeError("Committed USER owner changed sessions.")
@@ -3765,12 +3812,7 @@ class ConsoleChatStore:
         if assistant.role is not ConsoleMessageRole.ASSISTANT:
             raise RuntimeError("Committed assistant owner changed role.")
         assistant.persisted_message_id = commit.assistant_message_id
-        self.publish_durable_dispatch_checkpoint(
-            session_id,
-            commit.checkpoint,
-            in_flight=False,
-        )
-        return self._snapshot(user), self._snapshot(assistant)
+        return user, assistant
 
     def publish_committed_identity(
         self,

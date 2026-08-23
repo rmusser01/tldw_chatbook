@@ -442,6 +442,7 @@ _DEFAULT_SKILL_INSTALL_CONFIRM_TIMEOUT_SECONDS = 0.0
 #: `request_skill_script_confirm`'s own wait loop (fallback used when no
 #: `skill_script_confirm_timeout_seconds` seam is injected).
 _DEFAULT_SKILL_SCRIPT_CONFIRM_TIMEOUT_SECONDS = 0.0
+_DISPATCH_IDENTIFIER_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,199}\Z", re.ASCII)
 #: TASK-1050: synthetic round id `set_run_pending_approval`'s deprecated
 #: boolean shim registers under, internally, so its add/discard composes
 #: safely with the round-keyed `_pending_approvals` accounting (see that
@@ -5934,6 +5935,8 @@ class ConsoleChatController:
                 session_id,
                 commit.assistant_message_id,
             )
+            if continuation.origin is ConsoleSubmissionOrigin.QUEUED:
+                self.prompt_queue_coordinator.retain_durable_acceptance(session_id)
             return ConsoleSubmitResult(
                 True,
                 True,
@@ -5955,19 +5958,21 @@ class ConsoleChatController:
             provider_started = bool(
                 state is not None and "checkpoint_transition" in state.completed
             )
-            if provider_started:
-                self.store.mark_dispatch_recovery_needed(
+            if self.store.dispatch_recovery_for_session(session_id) is None:
+                self.store.publish_durable_recovery_owner(
                     session_id,
-                    commit.assistant_message_id,
+                    commit,
+                    terminal_citation_finalizer=None,
+                    defer_terminal_persistence=(
+                        continuation.citation_repair_session is not None
+                    ),
                 )
-                self._hydrate_dispatch_recovery_queue(session_id, force=True)
-            else:
-                self.store.release_dispatch_recovery_action(
-                    session_id,
-                    commit.assistant_message_id,
-                )
-                if continuation.origin is ConsoleSubmissionOrigin.QUEUED:
-                    self.prompt_queue_coordinator.retain_durable_acceptance(session_id)
+            self._restore_dispatch_recovery_after_settlement_failure(
+                session_id,
+                commit.assistant_message_id,
+            )
+            if continuation.origin is ConsoleSubmissionOrigin.QUEUED:
+                self.prompt_queue_coordinator.retain_durable_acceptance(session_id)
             return ConsoleSubmitResult(
                 True,
                 True,
@@ -6178,7 +6183,19 @@ class ConsoleChatController:
                 if action is not None and action.disabled_reason
                 else "That response recovery action is unavailable.",
             )
+        retry_attempt_id: str | None = None
         try:
+            if self._recovery_has_live_postcommit_continuation(session_id, claimed):
+                preparation_id = claimed.preparation_id
+                if preparation_id is None:  # pragma: no cover - authenticated above
+                    raise _DispatchRecoveryRefusal(
+                        "Committed turn continuation is unavailable."
+                    )
+                result = await self.resume_durable_postcommit(preparation_id)
+                if self.store.dispatch_recovery_for_session(session_id) is not None:
+                    return result
+                await self._settle_recovered_queue_owner(session_id, claimed, result)
+                return result
             context = await self._resolve_dispatch_retry_context(session_id, claimed)
             checkpoint = claimed.checkpoint
             if checkpoint is None:
@@ -6186,6 +6203,7 @@ class ConsoleChatController:
                     "Dispatch recovery checkpoint is unavailable."
                 )
             authority = context.authority
+            retry_attempt_id = authority.attempt_id
             started = self.store.transition_dispatch_recovery_for_retry(
                 session_id,
                 assistant_message_id=claimed.assistant_message_id,
@@ -6211,10 +6229,20 @@ class ConsoleChatController:
                 turn_context=turn_context,
             )
         except asyncio.CancelledError:
-            self.store.release_dispatch_recovery_action(
+            if self._retry_checkpoint_cas_completed(
                 session_id,
-                claimed.assistant_message_id,
-            )
+                claimed,
+                expected_attempt_id=retry_attempt_id,
+            ):
+                self._restore_dispatch_recovery_after_settlement_failure(
+                    session_id,
+                    claimed.assistant_message_id,
+                )
+            else:
+                self.store.release_dispatch_recovery_action(
+                    session_id,
+                    claimed.assistant_message_id,
+                )
             raise
         except _DispatchRecoveryRefusal as exc:
             self.store.release_dispatch_recovery_action(
@@ -6223,15 +6251,25 @@ class ConsoleChatController:
             )
             return ConsoleSubmitResult(False, False, str(exc))
         except Exception:
-            self.store.release_dispatch_recovery_action(
-                session_id,
-                claimed.assistant_message_id,
-            )
             visible_copy = "Response recovery failed. Try again or discard."
-            self._set_run_state(
-                ConsoleRunState(ConsoleRunStatus.BLOCKED, visible_copy),
-                session_id=session_id,
-            )
+            if self._retry_checkpoint_cas_completed(
+                session_id,
+                claimed,
+                expected_attempt_id=retry_attempt_id,
+            ):
+                self._restore_dispatch_recovery_after_settlement_failure(
+                    session_id,
+                    claimed.assistant_message_id,
+                )
+            else:
+                self.store.release_dispatch_recovery_action(
+                    session_id,
+                    claimed.assistant_message_id,
+                )
+                self._set_run_state(
+                    ConsoleRunState(ConsoleRunStatus.BLOCKED, visible_copy),
+                    session_id=session_id,
+                )
             return ConsoleSubmitResult(
                 False,
                 False,
@@ -6250,6 +6288,83 @@ class ConsoleChatController:
             preparation_id=claimed.preparation_id,
             provider_started=True,
         )
+
+    def _retry_checkpoint_cas_completed(
+        self,
+        session_id: str,
+        claimed: Any,
+        *,
+        expected_attempt_id: str | None,
+    ) -> bool:
+        """Detect an exact Retry CAS even if a local wrapper raises afterward."""
+
+        before = claimed.checkpoint
+        current = self.store.dispatch_recovery_for_session(session_id)
+        after = current.checkpoint if current is not None else None
+        if (
+            before is None
+            or after is None
+            or current.assistant_message_id != claimed.assistant_message_id
+            or before.state
+            not in {
+                ConsoleDispatchCheckpointState.ACCEPTED,
+                ConsoleDispatchCheckpointState.DISPATCH_STARTED,
+            }
+            or type(expected_attempt_id) is not str
+            or _DISPATCH_IDENTIFIER_RE.fullmatch(expected_attempt_id) is None
+            or expected_attempt_id == before.attempt_id
+        ):
+            return False
+        return after == replace(
+            before,
+            attempt_id=expected_attempt_id,
+            state=ConsoleDispatchCheckpointState.DISPATCH_STARTED,
+            checkpoint_revision=before.checkpoint_revision + 1,
+            assistant_message_version=before.assistant_message_version + 1,
+        )
+
+    def _recovery_has_live_postcommit_continuation(
+        self,
+        session_id: str,
+        recovery: Any,
+    ) -> bool:
+        """Authenticate an accepted owner against its app-lifetime effect ledger."""
+
+        if recovery.kind is not ConsoleDispatchRecoveryKind.ACCEPTED:
+            return False
+        preparation_id = recovery.preparation_id
+        if preparation_id is None:
+            return False
+        fingerprint = self.store.durable_acceptance_fingerprint_for(preparation_id)
+        if fingerprint is None:
+            # A process restart reconstructs from SQLite and has no live effect
+            # ledger. Its accepted owner follows the ordinary durable Retry path.
+            return False
+        effects = self.store.durable_postcommit_effects_for(
+            preparation_id,
+            fingerprint=fingerprint,
+        )
+        if effects is None or "checkpoint_transition" in effects.completed:
+            return False
+        with self.store.durable_preparation_lock:
+            continuation = self._durable_postcommit_continuations.get(preparation_id)
+            if continuation is None:
+                raise _DispatchRecoveryRefusal(
+                    "Committed turn continuation is unavailable."
+                )
+            self.store.validate_durable_acceptance_fingerprint(continuation.fingerprint)
+            if (
+                continuation.fingerprint != fingerprint
+                or continuation.session_id != session_id
+                or continuation.commit.assistant_message_id
+                != recovery.assistant_message_id
+                or continuation.commit.checkpoint != recovery.checkpoint
+                or continuation.queue_entry_id != recovery.queue_entry_id
+                or continuation.origin.value
+                != getattr(recovery.checkpoint, "origin", "")
+            ):
+                raise _DispatchRecoveryRefusal("Committed turn continuation changed.")
+        return True
 
     async def discard_dispatch_recovery(
         self,

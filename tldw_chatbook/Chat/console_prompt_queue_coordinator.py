@@ -258,6 +258,7 @@ class ConsolePromptQueueCoordinator:
             if paused.status not in {
                 QueueMutationStatus.APPLIED,
                 QueueMutationStatus.UNCHANGED,
+                QueueMutationStatus.LOCKED,
             }:
                 self._dispatch_recoveries.pop(session_id, None)
                 return False
@@ -478,6 +479,19 @@ class ConsolePromptQueueCoordinator:
             QueueMutationStatus.UNCHANGED,
         }:
             return False
+        if session_id in self._dispatch_recoveries:
+            snapshot = self.registry.snapshot(session_id)
+            if snapshot.total_count and snapshot.mode is not PromptQueueMode.PAUSED:
+                paused = self.registry.pause(
+                    session_id,
+                    reason=PromptQueuePauseReason.FAILED,
+                    expected_revision=snapshot.revision,
+                )
+                if paused.status not in {
+                    QueueMutationStatus.APPLIED,
+                    QueueMutationStatus.UNCHANGED,
+                }:
+                    return False
         if chain is not None:
             chain.accepted_live_turn = True
             if chain.current_entry_id == entry_id:
