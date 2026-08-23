@@ -85,15 +85,21 @@ pattern) or function-local lazy.
 `ContentExtractor.extract_text_from_html` (its only use) via
 `_require_beautifulsoup()`, which raises an ImportError naming the package
 and `pip install tldw_chatbook[subscriptions]`; the monitors' existing
-per-check exception handling records that against the subscription, so HTML
-monitors degrade at use time with an actionable message instead of crashing
+per-check exception handling records that against the subscription for single-`url`
+sources (review-verified: the hint survives verbatim into the run's error_msg via
+`record_run_failure`); `url_list`/`sitemap` sources route through
+`_check_url_isolated`, whose task-1394 privacy suppression reduces the ImportError
+to a type-only DEBUG line + DISPOSITION_ERROR with no reason -- degradation is
+still graceful (run completes WITH ERRORS) but the install hint is not
+user-visible on those arms; surfacing permanent ImportErrors there is a filed
+follow-up candidate. HTML monitors degrade at use time instead of crashing
 boot. The module-level `_SELECTOR_PARSE_ERRORS = selector_parse_errors()`
 constant was also retired in favour of calling the (lru_cached) function at
 the except site — it probed soupsieve at import, which would have kept
 soupsieve on the boot path. The other three files got the same guarded
 pattern (module-level try/except keeps the `BeautifulSoup` name defined for
 annotations; every runtime constructor call goes through the raising helper;
-`custom_scraper.validate_rules` reports missing bs4 as itself rather than as
+`custom_scraper.validate_config` reports missing bs4 as itself rather than as
 "invalid CSS selector"). Deliberately did NOT use
 `optional_deps.require_dependency("bs4", "subscriptions")`: its
 `check_dependency` side effect writes `DEPENDENCIES_AVAILABLE["subscriptions"]`
