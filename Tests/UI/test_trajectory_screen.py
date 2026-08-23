@@ -15,10 +15,11 @@ from dataclasses import dataclass
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.containers import VerticalScroll
 from textual.widgets import DataTable, Input, Static
 
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
-from tldw_chatbook.Chat.trajectory import derive_trajectory
+from tldw_chatbook.Chat.trajectory import TrajectoryRecord, derive_trajectory
 from tldw_chatbook.UI.Screens.trajectory_screen import (
     PAGE_SIZE,
     WORKER_THRESHOLD,
@@ -211,6 +212,17 @@ async def _wait_for_rows(pilot, table: DataTable, minimum: int) -> None:
     raise AssertionError(f"ledger never reached {minimum} rows (has {table.row_count})")
 
 
+def _record_key_for_seq(screen: TrajectoryScreen, seq: int) -> str:
+    record = next(
+        record for turn in screen._turns for record in turn.records if record.seq == seq
+    )
+    return screen._record_key(record)
+
+
+def _inspector_content(screen: TrajectoryScreen) -> Static:
+    return screen.query_one("#trajectory-inspector-content", Static)
+
+
 # ---------------------------------------------------------------------------
 # Ledger rendering
 # ---------------------------------------------------------------------------
@@ -222,23 +234,24 @@ async def test_mount_renders_one_row_per_record_plus_turn_headers() -> None:
         table = screen.query_one("#trajectory-table", DataTable)
         # 6 records + 2 turn-header rows.
         assert table.row_count == 8
-        # TrajectoryRecord.seq is the row key (1-based ledger position).
+        # Stable event identity is the row key; seq stays display-only.
         for seq in range(1, 7):
-            assert table.get_row_index(str(seq)) is not None
+            assert table.get_row_index(_record_key_for_seq(screen, seq)) is not None
         # Tool rows are present and nested under the assistant step.
-        tool_row = table.get_row(str(3))
-        assert "tool_call" in str(tool_row[1])
+        tool_row = table.get_row(_record_key_for_seq(screen, 3))
+        assert "Tool call" in str(tool_row[1])
 
 
 @pytest.mark.asyncio
-async def test_title_bar_shows_screen_title_and_conversation_id() -> None:
+async def test_title_bar_shows_trace_and_screen_title_without_raw_id() -> None:
     async with _mounted(
         base_snapshot(), screen_title="My Conversation", conversation_id="conv-42"
     ) as (app, pilot, screen):
         title = screen.query_one("#trajectory-title", Static)
         text = str(title.render())
+        assert text.startswith("Trace")
         assert "My Conversation" in text
-        assert "conv-42" in text
+        assert "conv-42" not in text
 
 
 @pytest.mark.asyncio
@@ -252,8 +265,8 @@ async def test_t_toggles_collapse_of_focused_turn() -> None:
         assert table.row_count == 8 - 4
         # The turn's record rows are gone; the later turn's rows are intact.
         with pytest.raises(Exception):
-            table.get_row_index("1")
-        assert table.get_row_index("6") is not None
+            table.get_row_index(_record_key_for_seq(screen, 1))
+        assert table.get_row_index(_record_key_for_seq(screen, 6)) is not None
         # t again expands it.
         await pilot.press("t")
         await pilot.pause()
@@ -264,13 +277,13 @@ async def test_t_toggles_collapse_of_focused_turn() -> None:
 async def test_t_on_record_row_collapses_its_turn() -> None:
     async with _mounted(base_snapshot()) as (app, pilot, screen):
         table = screen.query_one("#trajectory-table", DataTable)
-        row = table.get_row_index("6")  # a2, second turn
+        row = table.get_row_index(_record_key_for_seq(screen, 6))  # a2, second turn
         table.move_cursor(row=row)
         await pilot.pause()
         await pilot.press("t")
         await pilot.pause()
         assert table.row_count == 8 - 2  # only turn 2's records hidden
-        assert table.get_row_index("1") is not None
+        assert table.get_row_index(_record_key_for_seq(screen, 1)) is not None
 
 
 # ---------------------------------------------------------------------------
@@ -281,7 +294,7 @@ async def test_t_on_record_row_collapses_its_turn() -> None:
 @pytest.mark.asyncio
 async def test_inspector_hidden_until_toggled() -> None:
     async with _mounted(base_snapshot()) as (app, pilot, screen):
-        inspector = screen.query_one("#trajectory-inspector", Static)
+        inspector = screen.query_one("#trajectory-inspector", VerticalScroll)
         assert inspector.display is False
         await pilot.press("i")
         await pilot.pause()
@@ -295,14 +308,14 @@ async def test_inspector_hidden_until_toggled() -> None:
 async def test_enter_shows_inspector_with_usage_timing_model() -> None:
     async with _mounted(base_snapshot()) as (app, pilot, screen):
         table = screen.query_one("#trajectory-table", DataTable)
-        row = table.get_row_index("2")  # assistant record with usage + timing
+        row = table.get_row_index(_record_key_for_seq(screen, 2))
         table.move_cursor(row=row)
         await pilot.pause()
         await pilot.press("enter")
         await pilot.pause()
-        inspector = screen.query_one("#trajectory-inspector", Static)
+        inspector = screen.query_one("#trajectory-inspector", VerticalScroll)
         assert inspector.display is True
-        text = str(inspector.render())
+        text = str(_inspector_content(screen).render())
         # Usage breakdown: uncached input / cache read / cache write / output.
         assert "uncached input 10" in text
         assert "cache read 5" in text
@@ -324,13 +337,13 @@ async def test_enter_shows_inspector_with_usage_timing_model() -> None:
 async def test_inspector_shows_full_tool_payload() -> None:
     async with _mounted(base_snapshot()) as (app, pilot, screen):
         table = screen.query_one("#trajectory-table", DataTable)
-        row = table.get_row_index("3")  # tool_call record
+        row = table.get_row_index(_record_key_for_seq(screen, 3))
         table.move_cursor(row=row)
         await pilot.pause()
         await pilot.press("enter")
         await pilot.pause()
-        inspector = screen.query_one("#trajectory-inspector", Static)
-        text = str(inspector.render())
+        inspector = screen.query_one("#trajectory-inspector", VerticalScroll)
+        text = str(_inspector_content(screen).render())
         assert inspector.display is True
         assert "fs_read" in text
         assert "/tmp/report.txt" in text
@@ -342,13 +355,13 @@ async def test_inspector_shows_full_tool_payload() -> None:
 async def test_inspector_timing_blank_when_null() -> None:
     async with _mounted(base_snapshot()) as (app, pilot, screen):
         table = screen.query_one("#trajectory-table", DataTable)
-        row = table.get_row_index("1")  # user record: no first token/completion
+        row = table.get_row_index(_record_key_for_seq(screen, 1))
         table.move_cursor(row=row)
         await pilot.pause()
         await pilot.press("enter")
         await pilot.pause()
-        inspector = screen.query_one("#trajectory-inspector", Static)
-        text = str(inspector.render())
+        inspector = screen.query_one("#trajectory-inspector", VerticalScroll)
+        text = str(_inspector_content(screen).render())
         assert inspector.display is True
         # Blanks for the missing timing facts; no fabricated durations.
         assert "—" in text
@@ -359,13 +372,12 @@ async def test_inspector_timing_blank_when_null() -> None:
 async def test_inspector_lists_turn_level_superseded_variants() -> None:
     async with _mounted(base_snapshot()) as (app, pilot, screen):
         table = screen.query_one("#trajectory-table", DataTable)
-        row = table.get_row_index("6")  # a2, turn with a variant set
+        row = table.get_row_index(_record_key_for_seq(screen, 6))
         table.move_cursor(row=row)
         await pilot.pause()
         await pilot.press("enter")
         await pilot.pause()
-        inspector = screen.query_one("#trajectory-inspector", Static)
-        text = str(inspector.render())
+        text = str(_inspector_content(screen).render())
         # Variant contents attach at TURN level; the label must say so.
         assert "superseded variants (turn-level)" in text
         assert "old zebra draft one" in text
@@ -388,10 +400,10 @@ async def test_slash_focuses_search_and_filters_rows() -> None:
         await pilot.pause()
         # Only turn 2 survives: header + its 2 matching records.
         assert table.row_count == 3
-        assert table.get_row_index("5") is not None
-        assert table.get_row_index("6") is not None
+        assert table.get_row_index(_record_key_for_seq(screen, 5)) is not None
+        assert table.get_row_index(_record_key_for_seq(screen, 6)) is not None
         with pytest.raises(Exception):
-            table.get_row_index("1")
+            table.get_row_index(_record_key_for_seq(screen, 1))
         # Turn header row survives only because a child matched (it leads
         # the filtered ledger).
         assert table.get_row_index("turn:t2") == 0
@@ -423,12 +435,12 @@ async def test_search_matches_tool_args_and_result_payload() -> None:
         # Args text (beyond the preview's "fs_read -> RRR..." content).
         search.value = "report.txt"
         await pilot.pause()
-        assert table.get_row_index("3") is not None
-        assert table.get_row_index("4") is not None
+        assert table.get_row_index(_record_key_for_seq(screen, 3)) is not None
+        assert table.get_row_index(_record_key_for_seq(screen, 4)) is not None
         # Result text far past the 120-char preview cap.
         search.value = "R" * 200
         await pilot.pause()
-        assert table.get_row_index("3") is not None
+        assert table.get_row_index(_record_key_for_seq(screen, 3)) is not None
 
 
 @pytest.mark.asyncio
@@ -608,3 +620,52 @@ def test_inspector_renders_feedback_payload_not_a_phantom_tool() -> None:
     assert "feedback request-changes" in text
     assert "quote the retry loop" in text
     assert "comment tighten error paths" in text
+
+
+def test_inspector_exposes_causal_privacy_and_source_metadata() -> None:
+    record = TrajectoryRecord(
+        seq=9,
+        kind="subagent_steer",
+        turn_id="turn-9",
+        message_id="message-9",
+        content_preview="Steer the reviewer",
+        usage=None,
+        step_started_at=None,
+        first_token_at=None,
+        completed_at=None,
+        model=None,
+        provider=None,
+        payload=None,
+        variants=(),
+        depth=1,
+        event_id="agent-step:run-9:2",
+        conversation_id="conversation-9",
+        source_seq=2,
+        label="Agent steered",
+        status="accepted",
+        actor_kind="subagent",
+        actor_id="agent-9",
+        run_id="run-9",
+        parent_event_id="spawn-9",
+        source_event_id="source-9",
+        replacement_event_id="replacement-9",
+        observed_at=1_755_165_650.0,
+        field_states={"payload": "redacted"},
+        sensitivity="restricted",
+    )
+
+    text = TrajectoryScreen._inspector_text_for_record(None, record)  # type: ignore[arg-type]
+
+    for expected in (
+        "source sequence 2",
+        "status accepted",
+        "actor subagent agent-9",
+        "run run-9",
+        "parent event spawn-9",
+        "source event source-9",
+        "replacement event replacement-9",
+        "observed",
+        'field states {"payload": "redacted"}',
+        "sensitivity restricted",
+    ):
+        assert expected in text

@@ -27,6 +27,7 @@ from tldw_chatbook.UI.Widgets.trajectory_timeline import TrajectoryTimeline
 from Tests.UI.test_trajectory_screen import (  # noqa: I001
     _T0,
     _mounted,
+    _record_key_for_seq,
     base_snapshot,
     many_records_snapshot,
     msg,
@@ -178,11 +179,11 @@ async def test_brush_filters_ledger_to_active_records() -> None:
         # visible) exactly like the search rule.
         assert table.row_count == 5
         assert table.get_row_index("turn:t1") == 0
-        for seq in ("1", "2", "3", "4"):
-            assert table.get_row_index(seq) is not None
-        for seq in ("5", "6"):
+        for seq in (1, 2, 3, 4):
+            assert table.get_row_index(_record_key_for_seq(screen, seq)) is not None
+        for seq in (5, 6):
             with pytest.raises(Exception):
-                table.get_row_index(seq)
+                table.get_row_index(_record_key_for_seq(screen, seq))
 
 
 @pytest.mark.asyncio
@@ -249,7 +250,7 @@ async def test_bar_select_moves_ledger_cursor_and_highlights() -> None:
         timeline = screen.query_one("#trajectory-timeline", TrajectoryTimeline)
         timeline.post_message(TrajectoryTimeline.TrajectoryBarSelected(3))
         await pilot.pause()
-        assert table.cursor_row == table.get_row_index("3")
+        assert table.cursor_row == table.get_row_index(_record_key_for_seq(screen, 3))
         assert timeline.selected == 3  # mirrored via RowHighlighted
 
 
@@ -270,7 +271,7 @@ async def test_bar_select_clears_brush_but_not_search() -> None:
         assert screen._brush_range is None
         assert table.row_count == 3
         with pytest.raises(Exception):
-            table.get_row_index("2")  # still search-hidden: no cursor move
+            table.get_row_index(_record_key_for_seq(screen, 2))
 
 
 @pytest.mark.asyncio
@@ -280,11 +281,12 @@ async def test_bar_select_pages_in_older_record() -> None:
         table = screen.query_one("#trajectory-table", DataTable)
         timeline = screen.query_one("#trajectory-timeline", TrajectoryTimeline)
         with pytest.raises(Exception):
-            table.get_row_index("1")  # paginated out at mount
+            table.get_row_index(_record_key_for_seq(screen, 1))
         timeline.post_message(TrajectoryTimeline.TrajectoryBarSelected(1))
         await pilot.pause()
-        assert table.get_row_index("1") is not None
-        assert table.cursor_row == table.get_row_index("1")
+        key = _record_key_for_seq(screen, 1)
+        assert table.get_row_index(key) is not None
+        assert table.cursor_row == table.get_row_index(key)
 
 
 @pytest.mark.asyncio
@@ -292,7 +294,7 @@ async def test_ledger_cursor_move_highlights_timeline_bar() -> None:
     async with _mounted(base_snapshot()) as (app, pilot, screen):
         table = screen.query_one("#trajectory-table", DataTable)
         timeline = screen.query_one("#trajectory-timeline", TrajectoryTimeline)
-        table.move_cursor(row=table.get_row_index("6"))
+        table.move_cursor(row=table.get_row_index(_record_key_for_seq(screen, 6)))
         await pilot.pause()
         assert timeline.selected == 6
         table.move_cursor(row=0)  # back to the turn header

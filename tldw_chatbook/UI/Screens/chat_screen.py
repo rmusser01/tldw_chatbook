@@ -1151,7 +1151,7 @@ CONSOLE_WORKBENCH_SHORTCUTS = (
     ("Shift+F6", "previous pane"),
     ("F1", "help"),
     ("Enter", "send / queue"),
-    ("Y", "trajectory"),
+    ("Y", "trace"),
     ("Ctrl+K", "switch session"),
     ("Ctrl+T", "new tab"),
     ("Ctrl+P", "palette"),
@@ -2052,7 +2052,7 @@ class ChatScreen(BaseAppScreen):
         # exactly the surface a trajectory reader comes from. The footer
         # hint is registered via CONSOLE_WORKBENCH_SHORTCUTS like the rest
         # of the Console vocabulary.
-        Binding("y", "open_trajectory_view", "Trajectory", show=True),
+        Binding("y", "open_trajectory_view", "Trace", show=True),
         Binding("alt+m", "open_console_model_popover", "Model", show=True),
         Binding("alt+w", "open_console_workspace_switcher", "Workspace", show=True),
         Binding("alt+v", "paste_clipboard_image", "Paste image", show=True),
@@ -3354,7 +3354,7 @@ class ChatScreen(BaseAppScreen):
         )
 
     def action_open_trajectory_view(self) -> None:
-        """Open the trajectory ledger for the active Console conversation (``y``).
+        """Open Trace for the active Console conversation (``y``).
 
         task-5: the snapshot is built off the UI thread (DB reads); the
         screen is pushed with live tail-follow callables wired to the
@@ -3366,7 +3366,7 @@ class ChatScreen(BaseAppScreen):
         )
         conversation_id = getattr(session, "persisted_conversation_id", None)
         if not conversation_id:
-            self.notify("The active conversation has no persisted trajectory yet.")
+            self.notify("The active conversation has no persisted trace yet.")
             return
         conv_id = str(conversation_id)
         screen_title = str(getattr(session, "title", "") or "Console")
@@ -3404,7 +3404,7 @@ class ChatScreen(BaseAppScreen):
             snapshot = build()
             self.app.call_from_thread(present, snapshot)
 
-        self.notify("Building trajectory…")
+        self.notify("Building trace…")
         self.run_worker(
             build_worker, thread=True, exclusive=True, group="trajectory-launch"
         )

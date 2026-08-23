@@ -53,6 +53,7 @@ dismiss second), and the footer hints line stays 1:1 with ``BINDINGS``
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from collections.abc import Callable
@@ -64,7 +65,7 @@ from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical
+from textual.containers import Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import DataTable, Input, Static
 
@@ -96,16 +97,84 @@ WORKER_THRESHOLD = 5000
 #: DataTable row key of the "load earlier" control row.
 LOAD_EARLIER_ROW_KEY = "__load_earlier__"
 
-_COLUMNS = (
-    ("#", 5),
-    ("Kind", 11),
-    ("Content", 56),
+_NARROW_COLUMNS = (
+    ("#", 4),
+    ("Event", 14),
+    ("Summary", 26),
+    ("State", 10),
+)
+_COMPACT_COLUMNS = _NARROW_COLUMNS + (("Tokens", 10), ("Duration", 10))
+_WIDE_COLUMNS = (
+    ("#", 4),
+    ("Event", 14),
+    ("Summary", 26),
+    ("State", 10),
     ("In", 6),
     ("Cache", 7),
     ("Out", 6),
+    ("Duration", 10),
     ("Start", 9),
     ("Done", 9),
 )
+
+_KIND_LABELS = {
+    "assistant": "Assistant",
+    "capture_failed": "Capture failed",
+    "compaction": "Compaction",
+    "context_compaction": "Context compacted",
+    "model_request": "Model request",
+    "model_response": "Model response",
+    "retrieval": "Retrieval",
+    "retrieval_run": "Retrieval run",
+    "subagent_spawn": "Agent spawned",
+    "subagent_steer": "Agent steered",
+    "subagent_wait": "Agent wait",
+    "tool_call": "Tool call",
+    "tool_result": "Tool result",
+    "user": "User input",
+    "user_feedback": "User feedback",
+}
+
+_STATUS_LABELS = {
+    "accepted": "Accepted",
+    "cancelled": "Cancelled",
+    "completed": "Done",
+    "failed": "Failed",
+    "in_progress": "Running",
+    "pending": "Pending",
+    "rejected": "Rejected",
+    "running": "Running",
+    "succeeded": "Done",
+}
+
+_INCOMPLETE_FIELD_STATES = frozenset(
+    {"capture_failed", "legacy_missing", "missing", "source_unavailable"}
+)
+
+
+def _humanize_kind(kind: str) -> str:
+    """Return one sentence-case user label for every raw event kind."""
+
+    return _KIND_LABELS.get(
+        kind, kind.replace("_", " ").strip().capitalize() or "Event"
+    )
+
+
+class _TraceInspector(VerticalScroll):
+    """Native focusable detail viewport that keeps its fold cue current."""
+
+    def __init__(self, *, on_scroll_changed: Callable[[], None]) -> None:
+        super().__init__(
+            Static("", id="trajectory-inspector-content", markup=False),
+            id="trajectory-inspector",
+            can_focus=True,
+        )
+        self._on_scroll_changed = on_scroll_changed
+
+    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
+        super().watch_scroll_y(old_value, new_value)
+        if old_value != new_value:
+            self._on_scroll_changed()
 
 
 def _fmt_clock(unix: float | None) -> str:
@@ -140,6 +209,8 @@ class TrajectoryScreen(ModalScreen[None]):
         Binding("e", "load_earlier", "Earlier"),
         Binding("/", "focus_search", "Search"),
         Binding("f", "resume_follow", "Follow"),
+        Binding("d", "toggle_detail_full", "Full detail"),
+        Binding("r", "retry", "Retry"),
         Binding("o", "open_trace", "Open trace"),
     ]
 
@@ -152,6 +223,8 @@ class TrajectoryScreen(ModalScreen[None]):
         ("/", "search"),
         ("e", "earlier"),
         ("f", "follow"),
+        ("d", "full detail"),
+        ("r", "retry"),
         ("o", "open"),
     )
 
@@ -171,6 +244,10 @@ class TrajectoryScreen(ModalScreen[None]):
         color: $text;
         background: $panel;
     }
+    #trajectory-state {
+        height: 1;
+        color: $text-muted;
+    }
     #trajectory-search {
         height: 3;
     }
@@ -179,10 +256,35 @@ class TrajectoryScreen(ModalScreen[None]):
         min-height: 3;
     }
     #trajectory-inspector {
-        height: auto;
+        height: 40%;
         max-height: 40%;
         border-top: solid $primary;
         padding: 0 1;
+        overflow-y: auto;
+        scrollbar-gutter: stable;
+    }
+    #trajectory-inspector:focus {
+        border-top: heavy $accent;
+    }
+    #trajectory-inspector-content {
+        width: 100%;
+        height: auto;
+    }
+    #trajectory-inspector-overflow {
+        height: 1;
+        color: $text-muted;
+    }
+    TrajectoryScreen.trace-detail-full #trajectory-search,
+    TrajectoryScreen.trace-detail-full #trajectory-timeline,
+    TrajectoryScreen.trace-detail-full #trajectory-table {
+        display: none;
+    }
+    TrajectoryScreen.trace-inspector-open #trajectory-timeline {
+        display: none;
+    }
+    TrajectoryScreen.trace-detail-full #trajectory-inspector {
+        height: 1fr;
+        max-height: 100%;
     }
     #trajectory-hints {
         height: 1;
@@ -198,19 +300,22 @@ class TrajectoryScreen(ModalScreen[None]):
         conversation_id: str | None = None,
         revision_provider: Callable[[], int] | None = None,
         snapshot_builder: Callable[[], TrajectorySnapshot] | None = None,
+        shared_trace: bool = False,
     ) -> None:
         """Store the projection output; all rendering happens on mount.
 
         Args:
             snapshot: The ``derive_trajectory`` output to render.
             screen_title: Display title (typically the conversation name).
-            conversation_id: Conversation id, shown in the title line.
+            conversation_id: Conversation id, shown in inspector metadata.
             revision_provider: Live-mode callable returning the store's
                 payload revision for this conversation (task-5 tail-follow).
                 When provided together with ``snapshot_builder`` the screen
                 polls it every 0.5s and rebuilds on change.
             snapshot_builder: Live-mode callable rebuilding the snapshot
                 from current persisted state; run in a worker thread.
+            shared_trace: Whether this snapshot came from an imported shared
+                trace and must be visibly presented as read-only.
         """
         super().__init__()
         self._snapshot = snapshot
@@ -218,6 +323,7 @@ class TrajectoryScreen(ModalScreen[None]):
         self._conversation_id = conversation_id
         self._revision_provider = revision_provider
         self._snapshot_builder = snapshot_builder
+        self._shared_trace = shared_trace
         self._last_revision: int | None = None
         #: Tail-follow: True while the reader is at the bottom; scrolling
         #: up suspends it, ``f`` re-enables.
@@ -234,6 +340,11 @@ class TrajectoryScreen(ModalScreen[None]):
         #: Active brush time range from the timeline strip (None = no
         #: time filter); mirrors the widget's brush state.
         self._brush_range: tuple[float, float] | None = None
+        self._width_tier: str | None = None
+        self._detail_full = False
+        self._loading = False
+        self._failure: str | None = None
+        self._retry_target: str | None = None
         #: The always-mounted timeline strip (created here so filters,
         #: pagination growth and selection sync can reach it pre-mount).
         self._timeline = TrajectoryTimeline(id="trajectory-timeline")
@@ -243,11 +354,15 @@ class TrajectoryScreen(ModalScreen[None]):
         self._row_records: dict[str, TrajectoryRecord | None] = {}
         self._row_turn_ids: dict[str, str] = {}
         self._visible_keys: list[str] = []
+        self._ledger_rendered = False
+        self._record_keys: dict[int, str] = {}
+        self._rebuild_record_keys()
         #: Bumped by every ledger render; a worker-built page carries the
         #: generation it was built at and is DROPPED if a newer render
         #: landed first (typing a search or pressing t/e mid-build must
         #: never be overwritten by a stale off-thread snapshot).
         self._render_generation = 0
+        self._pending_restore_key: str | None = None
         #: False once unmounted: a worker-built ledger arriving late is
         #: dropped instead of poking a dead screen. (``Widget.is_mounted``
         #: is still False DURING ``on_mount``, so the flag is explicit.)
@@ -258,22 +373,30 @@ class TrajectoryScreen(ModalScreen[None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="trajectory-screen"):
             yield Static(self._title_text(), id="trajectory-title", markup=False)
-            yield Input(placeholder="Search records…", id="trajectory-search")
+            yield Static("", id="trajectory-state", markup=False)
+            yield Input(placeholder="Search trace events…", id="trajectory-search")
             yield self._timeline  # always mounted: zoom state survives
-            yield DataTable(id="trajectory-table", cursor_type="row")
-            inspector = Static("", id="trajectory-inspector", markup=False)
+            table = DataTable(id="trajectory-table", cursor_type="row")
+            table.cell_padding = 0
+            yield table
+            inspector = _TraceInspector(on_scroll_changed=self._refresh_inspector_cue)
             inspector.display = False  # hidden until toggled (spec)
             yield inspector
+            cue = Static("", id="trajectory-inspector-overflow", markup=False)
+            cue.display = False
+            yield cue
             yield Static("", id="trajectory-hints", markup=False)
 
     def on_mount(self) -> None:
         table = self.query_one("#trajectory-table", DataTable)
-        for label, width in _COLUMNS:
-            table.add_column(label, width=width)
+        self._configure_columns(force=True)
         self._timeline.set_snapshot(self._snapshot)
+        self._refresh_state()
         self._refresh_hints()
         if self._total_records > WORKER_THRESHOLD:
             # Large conversation: build the row specs off the UI thread.
+            self._loading = True
+            self._refresh_state()
             self.run_worker(self._render_worker, thread=True, group="trajectory-ledger")
         else:
             self._render_ledger()
@@ -287,6 +410,148 @@ class TrajectoryScreen(ModalScreen[None]):
 
     def on_unmount(self) -> None:
         self._alive = False
+
+    def on_resize(self) -> None:
+        """Rebuild columns only when the screen crosses a responsive tier."""
+
+        self._configure_columns()
+        try:
+            self.query_one("#trajectory-inspector", VerticalScroll)
+            self._schedule_inspector_cue()
+        except Exception:  # noqa: BLE001 - resize may precede composition
+            pass
+
+    @staticmethod
+    def _tier_for_width(width: int) -> str:
+        if width >= 120:
+            return "wide"
+        if width >= 100:
+            return "compact"
+        return "narrow"
+
+    @staticmethod
+    def _columns_for_tier(tier: str) -> tuple[tuple[str, int], ...]:
+        if tier == "wide":
+            return _WIDE_COLUMNS
+        if tier == "compact":
+            return _COMPACT_COLUMNS
+        return _NARROW_COLUMNS
+
+    def _configure_columns(self, *, force: bool = False) -> None:
+        """Install the current tier's columns without churning within a tier."""
+
+        tier = self._tier_for_width(self.size.width)
+        if not force and tier == self._width_tier:
+            return
+        try:
+            table = self.query_one("#trajectory-table", DataTable)
+        except Exception:  # noqa: BLE001 - resize may arrive before mount
+            self._width_tier = tier
+            return
+        previous_key = self._cursor_key() if self._visible_keys else None
+        table.clear(columns=True)
+        for label, width in self._columns_for_tier(tier):
+            table.add_column(label, width=width)
+        self._width_tier = tier
+        if self._visible_keys:
+            self._pending_restore_key = previous_key
+            self._render_ledger()
+
+    def _rebuild_record_keys(self) -> None:
+        """Build collision-safe deterministic row identities for this snapshot."""
+
+        keys: dict[int, str] = {}
+        occurrences: dict[str, int] = {}
+        for turn in self._turns:
+            for record in turn.records:
+                if record.event_id:
+                    base = record.event_id
+                else:
+                    material = json.dumps(
+                        {
+                            "turn": record.turn_id,
+                            "message": record.message_id,
+                            "seq": record.seq,
+                            "kind": record.kind,
+                            "summary": record.content_preview,
+                        },
+                        sort_keys=True,
+                        ensure_ascii=False,
+                    )
+                    digest = hashlib.sha256(material.encode("utf-8")).hexdigest()[:20]
+                    base = f"legacy:{digest}"
+                occurrence = occurrences.get(base, 0)
+                occurrences[base] = occurrence + 1
+                key = base if occurrence == 0 else f"{base}:collision:{occurrence + 1}"
+                keys[id(record)] = key
+        self._record_keys = keys
+
+    def _record_key(self, record: TrajectoryRecord) -> str:
+        return self._record_keys[id(record)]
+
+    @property
+    def _snapshot_is_incomplete(self) -> bool:
+        for turn in self._turns:
+            for record in turn.records:
+                if record.kind == "capture_failed":
+                    return True
+                if any(
+                    state in _INCOMPLETE_FIELD_STATES
+                    for state in record.field_states.values()
+                ):
+                    return True
+        return False
+
+    @property
+    def _snapshot_has_timing(self) -> bool:
+        return any(
+            record.step_started_at is not None
+            for turn in self._turns
+            for record in turn.records
+        )
+
+    @property
+    def _visible_record_count(self) -> int:
+        return sum(record is not None for record in self._row_records.values())
+
+    def _refresh_state(self) -> None:
+        """Expose mode, completeness, filtering, timing, and recovery in one line."""
+
+        total = self._total_records
+        filtering = bool(self._query) or self._brush_range is not None
+        visible = self._visible_record_count if self._ledger_rendered else total
+        if self._failure is not None:
+            parts = ["FAILED", self._failure, "r retry"]
+        elif self._loading:
+            parts = ["LOADING", "Building trace ledger…"]
+        elif total == 0:
+            parts = ["EMPTY", "No trace events yet"]
+        elif self._shared_trace:
+            parts = ["READ-ONLY SHARED TRACE"]
+        elif self._snapshot_builder is not None:
+            parts = ["LIVE", "FOLLOWING" if self._follow else "PAUSED"]
+            if not self._follow:
+                parts.append("f resume")
+        elif self._snapshot_is_incomplete:
+            parts = ["INCOMPLETE", "Some source events were unavailable"]
+        else:
+            parts = ["READY"]
+
+        if total and self._snapshot_is_incomplete and "INCOMPLETE" not in parts:
+            parts.append("INCOMPLETE")
+        if filtering:
+            if visible:
+                parts.extend(("FILTERED", f"{visible}/{total} events"))
+            else:
+                parts.extend(("NO MATCHES", f"0/{total} events", "/ clear search"))
+        elif total:
+            parts.append(f"{total} events")
+        if total and not self._snapshot_has_timing:
+            parts.extend(("NO TIMING", "Duration unavailable"))
+        try:
+            self.query_one("#trajectory-state", Static).update(" · ".join(parts))
+        except Exception:  # noqa: BLE001 - state can update before mount
+            pass
 
     # -- live tail-follow (task-5) --------------------------------------------
 
@@ -314,7 +579,7 @@ class TrajectoryScreen(ModalScreen[None]):
             exclusive=True,
         )
 
-    def _live_rebuild_worker(self, revision: int) -> None:
+    def _live_rebuild_worker(self, revision: int | None) -> None:
         """Worker-thread half of the live rebuild (video-player pattern)."""
         builder = self._snapshot_builder
         if builder is None:
@@ -327,6 +592,14 @@ class TrajectoryScreen(ModalScreen[None]):
                 "error_type={}",
                 type(exc).__name__,
             )
+            try:
+                self.app.call_from_thread(
+                    self._set_failure,
+                    "Live refresh unavailable.",
+                    "live",
+                )
+            except Exception:  # noqa: BLE001 - screen may have closed
+                pass
             return
         try:
             self.app.call_from_thread(self._apply_live_snapshot, snapshot, revision)
@@ -348,6 +621,9 @@ class TrajectoryScreen(ModalScreen[None]):
             return
         self._snapshot = snapshot
         self._turns = snapshot.turns
+        self._rebuild_record_keys()
+        self._failure = None
+        self._retry_target = None
         self._turn_numbers = {
             turn.turn_id: index + 1 for index, turn in enumerate(self._turns)
         }
@@ -375,6 +651,7 @@ class TrajectoryScreen(ModalScreen[None]):
         except Exception:  # noqa: BLE001 - pre-mount refresh
             pass
         self._refresh_hints()
+        self._refresh_state()
         if self._follow:
             try:
                 table = self.query_one("#trajectory-table", DataTable)
@@ -399,7 +676,10 @@ class TrajectoryScreen(ModalScreen[None]):
             return
         if time.monotonic() < self._follow_grace_until:
             return
-        self._follow = table.scroll_y >= table.max_scroll_y - 1
+        following = table.scroll_y >= table.max_scroll_y - 1
+        if following != self._follow:
+            self._follow = following
+            self._refresh_state()
 
     def action_resume_follow(self) -> None:
         """Re-enable tail-follow and jump to the newest records (``f``)."""
@@ -410,14 +690,13 @@ class TrajectoryScreen(ModalScreen[None]):
             table.call_after_refresh(table.scroll_end, animate=False)
         except Exception:  # noqa: BLE001 - pre-mount refresh
             pass
+        self._refresh_state()
 
     def _title_text(self) -> str:
-        parts = ["Trajectory"]
+        parts = ["Trace"]
         if self._screen_title:
             parts.append(self._screen_title)
-        if self._conversation_id:
-            parts.append(f"conv {self._conversation_id}")
-        parts.append(f"{self._total_records} records")
+        parts.append(f"{self._total_records} events")
         return " · ".join(parts)
 
     # -- ledger rendering ------------------------------------------------------
@@ -446,6 +725,25 @@ class TrajectoryScreen(ModalScreen[None]):
                 "error_type={}",
                 type(exc).__name__,
             )
+            try:
+                self.app.call_from_thread(
+                    self._set_failure,
+                    "Trace ledger could not be rendered.",
+                    "render",
+                )
+            except Exception:  # noqa: BLE001 - screen may have closed
+                pass
+
+    def _set_failure(self, message: str, retry_target: str) -> None:
+        """Show a payload-safe failure with one working recovery action."""
+
+        if not self._alive:
+            return
+        self._loading = False
+        self._failure = message
+        self._retry_target = retry_target
+        self._refresh_state()
+        self._refresh_hints()
 
     def _flat_slice(self) -> list[tuple[TrajectoryTurn, TrajectoryRecord]]:
         """(turn, record) pairs for the mounted window (newest ``visible_count``)."""
@@ -460,17 +758,11 @@ class TrajectoryScreen(ModalScreen[None]):
             specs.append(
                 (
                     LOAD_EARLIER_ROW_KEY,
-                    (
-                        Text(""),
-                        Text(""),
-                        Text(
-                            f"… load earlier ({self._hidden_earlier} older records) — press e",
-                        ),
-                        Text(""),
-                        Text(""),
-                        Text(""),
-                        Text(""),
-                        Text(""),
+                    self._primary_cells(
+                        "",
+                        "Earlier events",
+                        f"{self._hidden_earlier} older events — press e",
+                        "Available",
                     ),
                 )
             )
@@ -540,23 +832,48 @@ class TrajectoryScreen(ModalScreen[None]):
         specs = [
             (
                 header_key,
-                (
-                    Text(""),
-                    Text("turn"),
-                    label,
-                    Text(""),
-                    Text(""),
-                    Text(""),
-                    Text(""),
-                    Text(""),
+                self._primary_cells(
+                    "", "Turn", label, "Collapsed" if collapsed else "Expanded"
                 ),
             )
         ]
         if collapsed and not filtering:
             return specs
         for rec in matching:
-            specs.append((str(rec.seq), self._record_cells(rec)))
+            specs.append((self._record_key(rec), self._record_cells(rec)))
         return specs
+
+    def _primary_cells(
+        self,
+        identity: str | Text,
+        event: str | Text,
+        summary: str | Text,
+        state: str | Text,
+    ) -> tuple[Text, ...]:
+        """Build a tier-sized row with primary facts and blank metrics."""
+
+        primary = tuple(
+            value if isinstance(value, Text) else Text(value)
+            for value in (identity, event, summary, state)
+        )
+        tier = self._width_tier or self._tier_for_width(self.size.width)
+        extra = len(self._columns_for_tier(tier)) - len(primary)
+        return primary + tuple(Text("") for _ in range(extra))
+
+    @staticmethod
+    def _record_state(record: TrajectoryRecord) -> str:
+        if record.status:
+            return _STATUS_LABELS.get(
+                record.status,
+                record.status.replace("_", " ").capitalize(),
+            )
+        if record.kind == "capture_failed":
+            return "Failed"
+        if record.completed_at is not None:
+            return "Complete"
+        if record.step_started_at is not None:
+            return "Observed"
+        return "Recorded"
 
     def _record_cells(self, rec: TrajectoryRecord) -> tuple[Text, ...]:
         usage = rec.usage
@@ -570,13 +887,24 @@ class TrajectoryScreen(ModalScreen[None]):
             )
         indent = "    ↳ " if rec.depth else ""
         content = Text(f"{indent}{rec.content_preview}")
-        return (
+        primary = (
             Text(str(rec.seq)),
-            Text(rec.kind),
+            Text(rec.label or _humanize_kind(rec.kind)),
             content,
-            Text(tokens[0]),
-            Text(tokens[1]),
-            Text(tokens[2]),
+            Text(self._record_state(rec)),
+        )
+        tier = self._width_tier or self._tier_for_width(self.size.width)
+        duration = _fmt_span(rec.step_started_at, rec.completed_at) or "—"
+        if tier == "narrow":
+            return primary
+        if tier == "compact":
+            total = "—" if rec.usage is None else str(rec.usage.total_tokens)
+            return primary + (Text(total), Text(duration))
+        return primary + (
+            Text(tokens[0] or "—"),
+            Text(tokens[1] or "—"),
+            Text(tokens[2] or "—"),
+            Text(duration),
             Text(_fmt_clock(rec.step_started_at)),
             Text(_fmt_clock(rec.completed_at)),
         )
@@ -634,8 +962,9 @@ class TrajectoryScreen(ModalScreen[None]):
         if generation is not None and generation != self._render_generation:
             return
         table = self.query_one("#trajectory-table", DataTable)
-        previous_key: str | None = None
-        if self._visible_keys:
+        previous_key = self._pending_restore_key
+        self._pending_restore_key = None
+        if previous_key is None and self._visible_keys:
             row = table.cursor_row
             if 0 <= row < len(self._visible_keys):
                 previous_key = self._visible_keys[row]
@@ -650,10 +979,12 @@ class TrajectoryScreen(ModalScreen[None]):
                 self._row_turn_ids[key] = key.removeprefix("turn:")
             elif key != LOAD_EARLIER_ROW_KEY:
                 self._row_records[key] = None  # resolved below
+        self._ledger_rendered = True
         for turn in self._turns:
             for rec in turn.records:
-                if str(rec.seq) in self._row_records:
-                    self._row_records[str(rec.seq)] = rec
+                record_key = self._record_key(rec)
+                if record_key in self._row_records:
+                    self._row_records[record_key] = rec
         if self._visible_keys:
             index = 0
             if previous_key is not None:
@@ -669,7 +1000,11 @@ class TrajectoryScreen(ModalScreen[None]):
                 )
         self._refresh_hints()
         self._sync_timeline_selection()
-        if self.query_one("#trajectory-inspector", Static).display:
+        self._loading = False
+        self._failure = None
+        self._retry_target = None
+        self._refresh_state()
+        if self.query_one("#trajectory-inspector", VerticalScroll).display:
             self._refresh_inspector()
 
     # -- footer hints ------------------------------------------------------
@@ -681,11 +1016,23 @@ class TrajectoryScreen(ModalScreen[None]):
         ADR-031 task-1340 refinement: advertised == working in the active
         context; pressing ``e`` then answers with guidance instead).
         """
+        try:
+            inspector_open = self.query_one(
+                "#trajectory-inspector", VerticalScroll
+            ).display
+        except Exception:  # noqa: BLE001 - pre-mount refresh
+            inspector_open = False
+        has_cursor_target = bool(self._visible_keys)
+        has_turn_target = any(key != LOAD_EARLIER_ROW_KEY for key in self._visible_keys)
         pairs = [
             (key, label)
             for key, label in self.TRAJECTORY_SHORTCUTS
-            if (key != "e" or self._hidden_earlier > 0)
+            if (key not in {"enter", "i"} or has_cursor_target)
+            and (key != "t" or has_turn_target)
+            and (key != "e" or self._hidden_earlier > 0)
             and (key != "f" or self._snapshot_builder is not None)
+            and (key != "d" or inspector_open)
+            and (key != "r" or self._failure is not None)
         ]
         text = " · ".join(f"{key} {label}" for key, label in pairs)
         try:
@@ -696,7 +1043,48 @@ class TrajectoryScreen(ModalScreen[None]):
     # -- inspector -----------------------------------------------------------
 
     def _inspector_text_for_record(self, rec: TrajectoryRecord) -> str:
-        lines = [f"#{rec.seq} {rec.kind} · turn {rec.turn_id}"]
+        lines = [
+            f"#{rec.seq} {rec.label or _humanize_kind(rec.kind)} · turn {rec.turn_id}"
+        ]
+        event_id = (
+            self._record_key(rec)
+            if self is not None
+            else (rec.event_id or "legacy event")
+        )
+        lines.append(f"event id {event_id} · raw kind {rec.kind}")
+        conversation_id = (
+            self._conversation_id if self is not None else None
+        ) or rec.conversation_id
+        if conversation_id:
+            lines.append(f"conversation {conversation_id}")
+        if rec.message_id:
+            lines.append(f"message {rec.message_id}")
+        if rec.source_seq is not None:
+            lines.append(f"source sequence {rec.source_seq}")
+        if rec.status:
+            lines.append(f"status {rec.status}")
+        if rec.actor_kind or rec.actor_id:
+            lines.append(
+                "actor "
+                + " ".join(part for part in (rec.actor_kind, rec.actor_id) if part)
+            )
+        if rec.run_id:
+            lines.append(f"run {rec.run_id}")
+        if rec.parent_event_id:
+            lines.append(f"parent event {rec.parent_event_id}")
+        if rec.source_event_id:
+            lines.append(f"source event {rec.source_event_id}")
+        if rec.replacement_event_id:
+            lines.append(f"replacement event {rec.replacement_event_id}")
+        if rec.observed_at is not None:
+            lines.append(f"observed {_fmt_clock(rec.observed_at)}")
+        if rec.field_states:
+            lines.append(
+                "field states "
+                + json.dumps(rec.field_states, sort_keys=True, ensure_ascii=False)
+            )
+        if rec.sensitivity:
+            lines.append(f"sensitivity {rec.sensitivity}")
         model = rec.model or "—"
         provider = rec.provider or "—"
         lines.append(f"model {model} · provider {provider}")
@@ -769,7 +1157,10 @@ class TrajectoryScreen(ModalScreen[None]):
         count = next(
             (len(turn.records) for turn in self._turns if turn.turn_id == turn_id), 0
         )
-        return f"Turn {number} · {count} records · {state} · id {turn_id}"
+        text = f"Turn {number} · {count} events · {state} · id {turn_id}"
+        if self._conversation_id:
+            text += f"\nconversation {self._conversation_id}"
+        return text
 
     def _cursor_key(self) -> str | None:
         if not self._visible_keys:
@@ -794,12 +1185,20 @@ class TrajectoryScreen(ModalScreen[None]):
             if record is None:
                 return
             text = self._inspector_text_for_record(record)
-        self._show_inspector(text)
+        self._show_inspector(text, focus=True)
 
-    def _show_inspector(self, text: str) -> None:
-        inspector = self.query_one("#trajectory-inspector", Static)
-        inspector.update(text)
+    def _show_inspector(self, text: str, *, focus: bool = False) -> None:
+        inspector = self.query_one("#trajectory-inspector", VerticalScroll)
+        content = self.query_one("#trajectory-inspector-content", Static)
+        content.update(text)
         inspector.display = True
+        self.add_class("trace-inspector-open")
+        self.query_one("#trajectory-inspector-overflow", Static).display = True
+        inspector.scroll_home(animate=False)
+        if focus:
+            inspector.focus()
+        self._schedule_inspector_cue()
+        self._refresh_hints()
 
     def _refresh_inspector(self) -> None:
         key = self._cursor_key()
@@ -815,6 +1214,33 @@ class TrajectoryScreen(ModalScreen[None]):
             record = self._row_records.get(key)
             if record is not None:
                 self._show_inspector(self._inspector_text_for_record(record))
+
+    def _refresh_inspector_cue(self) -> None:
+        """Show the fold cue only while inspector content remains below."""
+
+        try:
+            inspector = self.query_one("#trajectory-inspector", VerticalScroll)
+            cue = self.query_one("#trajectory-inspector-overflow", Static)
+        except Exception:  # noqa: BLE001 - layout may be tearing down
+            return
+        if not inspector.display:
+            cue.display = False
+            cue.update("")
+            return
+        cue.display = True
+        has_more = (
+            inspector.max_scroll_y > 0 and inspector.scroll_y < inspector.max_scroll_y
+        )
+        cue.update("▼ more — scroll…" if has_more else "")
+
+    def _schedule_inspector_cue(self) -> None:
+        """Reconcile fold geometry after the class-driven layout has settled."""
+
+        self.call_after_refresh(self._refresh_inspector_cue)
+        # Opening detail also hides the timeline, which may settle in the next
+        # compositor cycle at a responsive boundary. This bounded second pass
+        # prevents a one-frame missing cue without polling or repaint loops.
+        self.set_timer(0.01, self._refresh_inspector_cue)
 
     # -- events -----------------------------------------------------------------
 
@@ -842,7 +1268,7 @@ class TrajectoryScreen(ModalScreen[None]):
         """Cursor moves refresh an OPEN inspector (live follow)."""
         event.stop()
         self._sync_timeline_selection()
-        if self.query_one("#trajectory-inspector", Static).display:
+        if self.query_one("#trajectory-inspector", VerticalScroll).display:
             self._refresh_inspector()
 
     # -- timeline integration (task-16315) -----------------------------------
@@ -878,11 +1304,17 @@ class TrajectoryScreen(ModalScreen[None]):
         if self._brush_range is not None:
             self._brush_range = None
             self._render_ledger()
-        key = str(event.record_key)
+        flat = [record for turn in self._turns for record in turn.records]
+        try:
+            selected_record = next(
+                record for record in flat if record.seq == event.record_key
+            )
+        except StopIteration:
+            return  # unknown record (stale bar from a live snapshot): no-op
+        key = self._record_key(selected_record)
         if key in self._visible_keys:
             self._move_cursor_to_key(key)
             return
-        flat = [record for turn in self._turns for record in turn.records]
         try:
             flat_index = next(
                 i for i, record in enumerate(flat) if record.seq == event.record_key
@@ -936,12 +1368,37 @@ class TrajectoryScreen(ModalScreen[None]):
 
     def action_toggle_inspector(self) -> None:
         """`i`: show/hide the inspector pane."""
-        inspector = self.query_one("#trajectory-inspector", Static)
+        inspector = self.query_one("#trajectory-inspector", VerticalScroll)
+        cue = self.query_one("#trajectory-inspector-overflow", Static)
         if inspector.display:
             inspector.display = False
+            cue.display = False
+            cue.update("")
+            self._detail_full = False
+            self.remove_class("trace-detail-full")
+            self.remove_class("trace-inspector-open")
+            self.query_one("#trajectory-table", DataTable).focus()
         else:
             self._refresh_inspector()
             inspector.display = True
+            cue.display = True
+            inspector.focus()
+            self._schedule_inspector_cue()
+        self._refresh_hints()
+
+    def action_toggle_detail_full(self) -> None:
+        """`d`: expand an open inspector to a reversible full-detail pane."""
+
+        inspector = self.query_one("#trajectory-inspector", VerticalScroll)
+        if not inspector.display:
+            self._inspect_cursor()
+            inspector = self.query_one("#trajectory-inspector", VerticalScroll)
+        if not inspector.display:
+            return
+        self._detail_full = not self._detail_full
+        self.set_class(self._detail_full, "trace-detail-full")
+        inspector.focus()
+        self._schedule_inspector_cue()
 
     def action_load_earlier(self) -> None:
         """`e`: mount one more page of older records (guidance when exhausted)."""
@@ -954,6 +1411,33 @@ class TrajectoryScreen(ModalScreen[None]):
     def action_focus_search(self) -> None:
         """`/`: focus the search box."""
         self.query_one("#trajectory-search", Input).focus()
+
+    def action_retry(self) -> None:
+        """`r`: retry only the failed render or live-refresh operation."""
+
+        target = self._retry_target
+        if target is None:
+            return
+        self._failure = None
+        self._loading = True
+        self._refresh_state()
+        self._refresh_hints()
+        if target == "live" and self._snapshot_builder is not None:
+            revision = self._last_revision
+            if revision is None and self._revision_provider is not None:
+                try:
+                    revision = self._revision_provider()
+                except Exception:  # noqa: BLE001 - external revision seam
+                    revision = None
+            self.run_worker(
+                lambda: self._live_rebuild_worker(revision),
+                thread=True,
+                group="trajectory-live",
+                exclusive=True,
+            )
+            return
+        self._render_generation += 1
+        self.run_worker(self._render_worker, thread=True, group="trajectory-ledger")
 
     # -- import (task-16320: open shared traces read-only) ----------------------
 
@@ -978,7 +1462,8 @@ class TrajectoryScreen(ModalScreen[None]):
         self.app.push_screen(
             TrajectoryScreen(
                 snapshot,
-                screen_title=f"Imported trace — {path.stem} (read-only)",
+                screen_title=f"Shared trace — {path.stem}",
+                shared_trace=True,
             )
         )
 
@@ -992,9 +1477,9 @@ class TrajectoryScreen(ModalScreen[None]):
         from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen
 
         picker = EnhancedFileOpen(
-            title="Open trajectory trace",
+            title="Open shared trace",
             filters=Filters(
-                ("Trajectory traces", lambda p: p.name.lower().endswith(".json")),
+                ("Trace files", lambda p: p.name.lower().endswith(".json")),
                 ("All Files", lambda p: True),
             ),
             context="trajectory_import",

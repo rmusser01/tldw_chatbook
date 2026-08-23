@@ -23,7 +23,7 @@ from tldw_chatbook.Chat.trajectory_export import (
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.UI.Screens.trajectory_screen import TrajectoryScreen
 from Tests.Chat.test_trajectory_export import _seed_conversation
-from Tests.UI.test_trajectory_screen import base_snapshot
+from Tests.UI.test_trajectory_screen import base_snapshot, _record_key_for_seq
 
 
 class _Harness(App[None]):
@@ -85,11 +85,13 @@ async def test_o_mounts_imported_readonly_screen_with_records(tmp_path) -> None:
         assert isinstance(imported, TrajectoryScreen)
         assert imported is not screen  # a NEW screen, not a mutation
         title = str(imported.query_one("#trajectory-title", Static).render())
-        assert "Imported trace — shared-trace (read-only)" in title
+        assert "Trace · Shared trace — shared-trace" in title
+        state = str(imported.query_one("#trajectory-state", Static).render())
+        assert "READ-ONLY SHARED TRACE" in state
         # The seeded conversation renders: 7 records + 2 turn-header rows.
         table = imported.query_one("#trajectory-table", DataTable)
         assert table.row_count == 9
-        assert table.get_row_index("7") is not None  # compaction record
+        assert table.get_row_index(_record_key_for_seq(imported, 7)) is not None
 
 
 @pytest.mark.asyncio
@@ -220,7 +222,7 @@ async def test_import_through_the_screen_never_writes_the_db(tmp_path) -> None:
         await pilot.press("o")
         await pilot.pause()
         # The imported view really rendered someone else's trace.
-        title = str(app.screen.query_one("#trajectory-title", Static).render())
-        assert "read-only" in title
+        state = str(app.screen.query_one("#trajectory-state", Static).render())
+        assert "READ-ONLY SHARED TRACE" in state
 
     assert _row_counts(db) == before

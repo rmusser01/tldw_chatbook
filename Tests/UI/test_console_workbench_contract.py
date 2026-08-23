@@ -1549,13 +1549,13 @@ async def test_console_registers_footer_workbench_shortcuts():
         assert footer.shortcut_text == (
             # task-15512: "/ queue" was added by 14cc326e4 (visible prompt
             # queue); the shortcut genuinely does both now.
-            # task-5 (trajectory view): "Y trajectory" launches the ledger.
+            # Trace is the canonical Console label; `y` launches the ledger.
             # task-18812 (focus mode): the registration always carries the
             # Ctrl+Shift+F toggle pair PREPENDED — AppFooterStatus drops
             # trailing hints first when width runs out, and the focus
             # toggle is the only exit affordance visible in focus mode.
             "Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | "
-            "Enter send / queue | Y trajectory | Ctrl+K switch session | Ctrl+T new "
+            "Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+T new "
             "tab | Ctrl+P palette | Ctrl+Q quit"
         )
 
