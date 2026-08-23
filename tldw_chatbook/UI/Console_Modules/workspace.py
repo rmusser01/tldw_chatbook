@@ -320,10 +320,7 @@ class ConsoleWorkspaceController:
         self._workspace_membership_rows: dict[
             str, tuple[ConsoleConversationBrowserInputRow, ...]
         ] = {}
-        self._canonical_owner_observation_generation = 0
-        self._canonical_owner_observations: dict[
-            str, tuple[int, ConsoleConversationBrowserInputRow]
-        ] = {}
+        self._canonical_owner_observations: dict[str, str] = {}
 
         # Canonical flat-browser state. Legacy workspace-search names below are
         # aliases/projections, never a second writer or backing row store.
@@ -1034,16 +1031,12 @@ class ConsoleWorkspaceController:
     def _record_canonical_owner_rows(
         self, rows: Iterable[ConsoleConversationBrowserInputRow]
     ) -> None:
-        observed = tuple(row for row in rows if str(row.conversation_id or "").strip())
-        if not observed:
-            return
-        self._canonical_owner_observation_generation += 1
-        generation = self._canonical_owner_observation_generation
-        for row in observed:
-            self._canonical_owner_observations[str(row.conversation_id)] = (
-                generation,
-                row,
-            )
+        for row in rows:
+            conversation_id = str(row.conversation_id or "").strip()
+            if conversation_id:
+                self._canonical_owner_observations[conversation_id] = (
+                    self._canonical_owner_id(row)
+                )
 
     def _rows_with_latest_canonical_owner(
         self, rows: Iterable[ConsoleConversationBrowserInputRow]
@@ -1058,7 +1051,7 @@ class ConsoleWorkspaceController:
                 )
             )
             is None
-            or self._canonical_owner_id(row) == self._canonical_owner_id(observed[1])
+            or self._canonical_owner_id(row) == observed
         )
 
     async def _fetch_workspace_tree_page(
@@ -1156,20 +1149,50 @@ class ConsoleWorkspaceController:
             for conversation_id in current_tokens[workspace_id]:
                 owner_by_conversation.setdefault(conversation_id, workspace_id)
         canonical_by_conversation: dict[str, ConsoleConversationBrowserInputRow] = {}
+        canonical_by_owner: dict[
+            tuple[str, str], ConsoleConversationBrowserInputRow
+        ] = {}
         for row in canonical_rows:
             conversation_id = str(row.conversation_id or "").strip()
             if not conversation_id:
                 continue
-            workspace_id = str(row.workspace_id or "").strip()
-            owner_id = (
-                DEFAULT_WORKSPACE_ID
-                if row.scope_type == "global"
-                or workspace_id in ("", DEFAULT_WORKSPACE_ID)
-                else workspace_id
-            )
+            owner_id = self._canonical_owner_id(row)
             owner_by_conversation[conversation_id] = owner_id
             canonical_by_conversation[conversation_id] = row
+            canonical_by_owner[conversation_id, owner_id] = row
             labels.setdefault(owner_id, str(row.workspace_label or owner_id))
+
+        if complete:
+            complete_owners: dict[str, str] = {}
+            for workspace_id in sorted(current_tokens):
+                for conversation_id in current_tokens[workspace_id]:
+                    complete_owners.setdefault(conversation_id, workspace_id)
+            complete_workspace_ids = set(current_tokens)
+            for conversation_id, owner_id in tuple(
+                self._canonical_owner_observations.items()
+            ):
+                if (
+                    owner_id in complete_workspace_ids
+                    and conversation_id not in complete_owners
+                ):
+                    self._canonical_owner_observations.pop(conversation_id, None)
+            self._canonical_owner_observations.update(complete_owners)
+            for conversation_id, owner_id in tuple(owner_by_conversation.items()):
+                if (
+                    owner_id in complete_workspace_ids
+                    and conversation_id not in complete_owners
+                ):
+                    owner_by_conversation.pop(conversation_id, None)
+            owner_by_conversation.update(complete_owners)
+        for conversation_id, owner_id in self._canonical_owner_observations.items():
+            owner_by_conversation[conversation_id] = owner_id
+            canonical_row = canonical_by_owner.get((conversation_id, owner_id))
+            if canonical_row is not None:
+                canonical_by_conversation[conversation_id] = canonical_row
+            labels.setdefault(
+                owner_id,
+                "Default" if owner_id == DEFAULT_WORKSPACE_ID else owner_id,
+            )
 
         changed_workspaces: set[str] = set()
         for workspace_id, attempt in self._workspace_page_attempts.items():
@@ -1226,8 +1249,13 @@ class ConsoleWorkspaceController:
                 if owner_id == workspace_id:
                     retained.append(row)
                 elif owner_id == DEFAULT_WORKSPACE_ID:
+                    canonical_row = canonical_by_conversation.get(conversation_id)
+                    if canonical_row is not None and (
+                        self._canonical_owner_id(canonical_row) != owner_id
+                    ):
+                        canonical_row = None
                     moved_rows.setdefault(owner_id, []).append(
-                        canonical_by_conversation.get(conversation_id)
+                        canonical_row
                         or replace(
                             row,
                             workspace_id=owner_id,
@@ -1235,8 +1263,13 @@ class ConsoleWorkspaceController:
                         )
                     )
                 elif owner_id in labels and owner_id != DEFAULT_WORKSPACE_ID:
+                    canonical_row = canonical_by_conversation.get(conversation_id)
+                    if canonical_row is not None and (
+                        self._canonical_owner_id(canonical_row) != owner_id
+                    ):
+                        canonical_row = None
                     moved_rows.setdefault(owner_id, []).append(
-                        canonical_by_conversation.get(conversation_id)
+                        canonical_row
                         or replace(
                             row,
                             workspace_id=owner_id,
@@ -1272,10 +1305,6 @@ class ConsoleWorkspaceController:
             )
             attempt.rows = self._merge_page_rows(attempt.rows, rows)
             attempt.membership_token = current_tokens[workspace_id]
-        if complete:
-            self._record_canonical_owner_rows(
-                row for rows in moved_rows.values() for row in rows
-            )
 
     def _mark_workspace_membership_unknown(self, workspace_id: str) -> None:
         attempt = self._workspace_page_attempts.get(workspace_id)
@@ -1987,6 +2016,9 @@ class ConsoleWorkspaceController:
             and self._console_persisted_rows_refresh_key != refresh_key
         ):
             return result
+        rows, _total, error = result
+        if not error:
+            self._record_canonical_owner_rows(rows)
         self._console_persisted_rows_cache = result
         self._console_persisted_rows_cache_key = (query, current_conversation_id)
         self._console_persisted_rows_cache_at = time.monotonic()
@@ -2035,8 +2067,10 @@ class ConsoleWorkspaceController:
         current_conversation_id: str | None = None,
     ) -> tuple[tuple[ConsoleConversationBrowserInputRow, ...], int | None, str]:
         """Return current grouped browser rows plus optional search metadata."""
+        native_rows = self._native_console_browser_rows(current_conversation_id)
+        self._record_canonical_owner_rows(native_rows)
         local_rows = self._merge_console_browser_rows(
-            self._native_console_browser_rows(current_conversation_id),
+            native_rows,
             *self._workspace_membership_rows.values(),
         )
         persisted_rows, persisted_total, sync_error = (
@@ -2209,12 +2243,7 @@ class ConsoleWorkspaceController:
         for conversation_id in tuple(self._canonical_owner_observations):
             if conversation_id not in materialized_ids:
                 self._canonical_owner_observations.pop(conversation_id, None)
-        observed_rows = tuple(
-            observation[1]
-            for conversation_id, observation in self._canonical_owner_observations.items()
-            if conversation_id in materialized_ids
-        )
-        canonical_rows = (*rows, *workspace_rows, *observed_rows)
+        canonical_rows = (*rows, *workspace_rows)
         canonical_memberships: dict[str, list[str]] = {}
         canonical_labels: dict[str, str] = {}
         for row in canonical_rows:
@@ -2230,6 +2259,12 @@ class ConsoleWorkspaceController:
             )
             canonical_memberships.setdefault(owner_id, []).append(conversation_id)
             canonical_labels.setdefault(owner_id, str(row.workspace_label or owner_id))
+        for conversation_id, owner_id in self._canonical_owner_observations.items():
+            canonical_memberships.setdefault(owner_id, []).append(conversation_id)
+            canonical_labels.setdefault(
+                owner_id,
+                "Default" if owner_id == DEFAULT_WORKSPACE_ID else owner_id,
+            )
         if canonical_memberships:
             self.apply_workspace_membership_snapshot(
                 {

@@ -1354,6 +1354,172 @@ async def test_production_publish_reconciles_fresh_named_search_owner_before_fla
     assert membership_calls == []
 
 
+@pytest.mark.asyncio
+async def test_ordinary_refresh_supersedes_cleared_named_search_owner() -> None:
+    controller = _workspace_controller(
+        app_instance=SimpleNamespace(
+            workspace_registry_service=SimpleNamespace(
+                list_workspaces=lambda: (
+                    SimpleNamespace(
+                        workspace_id="workspace-7", name="Seven", archived=False
+                    ),
+                )
+            )
+        )
+    )
+
+    async def named_search(_query):
+        return ((_browser_row("moving", "Old named owner"),), 1)
+
+    controller._load_workspace_tree_search_rows = named_search
+    await controller.refresh_workspace_tree_search("owner")
+    controller.transition_workspace_tree_search("", disabled=False)
+
+    default_row = _browser_row(
+        "moving",
+        "Fresh Default owner",
+        workspace_id=DEFAULT_WORKSPACE_ID,
+    )
+
+    async def ordinary_rows(_query, current_conversation_id=None):
+        del current_conversation_id
+        return [default_row], 1, ""
+
+    controller._persisted_console_browser_rows = ordinary_rows
+    await controller._refresh_console_persisted_rows_cache()
+
+    state = controller._with_console_conversation_browser_state(_workspace_state())
+    assert state.conversation_browser is not None
+    owners = [
+        *(
+            node.workspace_id
+            for node in state.workspace_tree
+            for row in node.conversations
+            if row.conversation_id == "moving"
+        ),
+        *(
+            "flat"
+            for section in state.conversation_browser.sections
+            for row in section.rows
+            if row.conversation_id == "moving"
+        ),
+    ]
+
+    assert owners == ["flat"]
+
+
+@pytest.mark.asyncio
+async def test_current_native_row_supersedes_cleared_named_search_owner() -> None:
+    session = SimpleNamespace(
+        id="session-moving",
+        persisted_conversation_id="moving",
+        workspace_id="global",
+        title="Fresh native Default owner",
+        updated_at="2026-08-22T18:00:00Z",
+    )
+    store = SimpleNamespace(
+        active_session_id="session-moving",
+        sessions=lambda: (session,),
+    )
+    controller = _workspace_controller(
+        app_instance=SimpleNamespace(
+            workspace_registry_service=SimpleNamespace(
+                list_workspaces=lambda: (
+                    SimpleNamespace(
+                        workspace_id="workspace-7", name="Seven", archived=False
+                    ),
+                )
+            )
+        ),
+        current_chat_store_accessor=lambda: store,
+    )
+
+    async def named_search(_query):
+        return ((_browser_row("moving", "Old named owner"),), 1)
+
+    controller._load_workspace_tree_search_rows = named_search
+    await controller.refresh_workspace_tree_search("owner")
+    controller.transition_workspace_tree_search("", disabled=False)
+
+    state = controller._with_console_conversation_browser_state(_workspace_state())
+    assert state.conversation_browser is not None
+    owners = [
+        *(
+            node.workspace_id
+            for node in state.workspace_tree
+            for row in node.conversations
+            if row.conversation_id == "moving"
+        ),
+        *(
+            "flat"
+            for section in state.conversation_browser.sections
+            for row in section.rows
+            if row.conversation_id == "moving"
+        ),
+    ]
+
+    assert owners == ["flat"]
+
+
+@pytest.mark.asyncio
+async def test_complete_default_snapshot_supersedes_named_observation_without_move() -> (
+    None
+):
+    controller = _workspace_controller(
+        app_instance=SimpleNamespace(
+            workspace_registry_service=SimpleNamespace(
+                list_workspaces=lambda: (
+                    SimpleNamespace(
+                        workspace_id="workspace-7", name="Seven", archived=False
+                    ),
+                )
+            )
+        )
+    )
+    default_row = _browser_row(
+        "moving",
+        "Fresh Default owner",
+        workspace_id=DEFAULT_WORKSPACE_ID,
+    )
+
+    async def ordinary_rows(_query, current_conversation_id=None):
+        del current_conversation_id
+        return [default_row], 1, ""
+
+    controller._persisted_console_browser_rows = ordinary_rows
+    await controller._refresh_console_persisted_rows_cache()
+
+    async def named_search(_query):
+        return ((_browser_row("moving", "Old named owner"),), 1)
+
+    controller._load_workspace_tree_search_rows = named_search
+    await controller.refresh_workspace_tree_search("owner")
+
+    controller.apply_workspace_membership_snapshot(
+        {DEFAULT_WORKSPACE_ID: ("moving",), "workspace-7": ()},
+        complete=True,
+    )
+
+    state = controller._with_console_conversation_browser_state(_workspace_state())
+    assert state.conversation_browser is not None
+    owners = [
+        *(
+            node.workspace_id
+            for node in state.workspace_tree
+            for row in node.conversations
+            if row.conversation_id == "moving"
+        ),
+        *(
+            "flat"
+            for section in state.conversation_browser.sections
+            for row in section.rows
+            if row.conversation_id == "moving"
+        ),
+    ]
+
+    assert owners == ["flat"]
+
+
 def test_partial_production_owner_observation_preserves_unobserved_page_members() -> (
     None
 ):
