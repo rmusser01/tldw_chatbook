@@ -122,6 +122,7 @@ REVIEWED_ARTIFACTS = (
     "real-provider-three-turn.summary.json",
     "real-provider-three-turn-summary.md",
 )
+_ACQUISITION_NAMESPACES = frozenset({"candidate", "control", "samples"})
 _REVIEW_RECEIPT_FIELDS = frozenset(
     {
         "artifact_set_sha256",
@@ -282,6 +283,22 @@ def _sha256_review_file(path: Path) -> str:
         os.close(descriptor)
 
 
+def _validate_empty_acquisition_namespace(path: Path) -> None:
+    """Require one retained acquisition namespace to contain directories only."""
+    pending = [path]
+    try:
+        while pending:
+            current = pending.pop()
+            if current.is_symlink() or not current.is_dir():
+                raise RuntimeError("review_artifact_set_invalid")
+            for child in current.iterdir():
+                if child.is_symlink() or not child.is_dir():
+                    raise RuntimeError("review_artifact_set_invalid")
+                pending.append(child)
+    except OSError as exc:
+        raise RuntimeError("review_artifact_set_invalid") from exc
+
+
 def canonical_artifact_hashes(
     root: Path,
     artifact_paths: Sequence[str | Path] = REVIEWED_ARTIFACTS,
@@ -303,9 +320,11 @@ def canonical_artifact_hashes(
     allowed_entries = set(REVIEWED_ARTIFACTS) | {
         "reviews",
         "confirmatory-review-receipt.json",
-    }
+    } | _ACQUISITION_NAMESPACES
     if not set(entries).issubset(allowed_entries):
         raise RuntimeError("review_artifact_set_invalid")
+    for name in _ACQUISITION_NAMESPACES.intersection(entries):
+        _validate_empty_acquisition_namespace(entries[name])
     reviews = entries.get("reviews")
     if reviews is not None and (reviews.is_symlink() or not reviews.is_dir()):
         raise RuntimeError("review_artifact_set_invalid")

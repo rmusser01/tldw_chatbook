@@ -4444,6 +4444,65 @@ def test_canonical_artifact_digest_allows_receipts_outside_reviewed_set(
     assert profile.canonical_artifact_digest(root) == before
 
 
+def _write_empty_acquisition_namespaces(root: Path) -> None:
+    (root / "control").mkdir()
+    (root / "candidate").mkdir()
+    samples = root / "samples"
+    samples.mkdir()
+    (samples / "000-warmup--1-control").mkdir()
+    nested = samples / "001-measured-0-enabled"
+    nested.mkdir()
+    (nested / "retained-empty-tombstone").mkdir()
+
+
+def test_canonical_artifact_digest_excludes_empty_acquisition_namespaces(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "attempt"
+    values = _write_reviewed_artifacts(root)
+    expected_hashes = {
+        name: hashlib.sha256(value).hexdigest()
+        for name, value in sorted(values.items())
+    }
+    expected_digest = profile.canonical_artifact_digest(root)
+    _write_empty_acquisition_namespaces(root)
+
+    assert profile.canonical_artifact_hashes(root) == expected_hashes
+    assert profile.canonical_artifact_digest(root) == expected_digest
+
+
+@pytest.mark.parametrize(
+    "problem",
+    (
+        "namespace_file",
+        "namespace_symlink",
+        "nested_file",
+        "nested_symlink",
+        "unknown_directory",
+    ),
+)
+def test_canonical_artifact_digest_rejects_invalid_acquisition_namespaces(
+    tmp_path: Path, problem: str
+) -> None:
+    root = tmp_path / "attempt"
+    _write_reviewed_artifacts(root)
+    if problem == "namespace_file":
+        (root / "samples").write_text("not a directory", encoding="utf-8")
+    elif problem == "namespace_symlink":
+        (root / "samples").symlink_to(root / "reviews", target_is_directory=True)
+    elif problem == "nested_file":
+        (root / "samples").mkdir()
+        (root / "samples" / "residue.txt").write_text("residue", encoding="utf-8")
+    elif problem == "nested_symlink":
+        (root / "samples").mkdir()
+        (root / "samples" / "residue").symlink_to(root / "README.md")
+    else:
+        (root / "unexpected").mkdir()
+
+    with pytest.raises(RuntimeError, match="^review_artifact_set_invalid$"):
+        profile.canonical_artifact_digest(root)
+
+
 def test_canonical_artifact_hashes_reject_absolute_artifact_paths(
     tmp_path: Path,
 ) -> None:
