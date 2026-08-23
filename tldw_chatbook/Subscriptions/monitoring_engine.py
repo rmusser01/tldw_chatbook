@@ -34,7 +34,6 @@ except ImportError:
     logger.warning(
         "defusedxml not available, using standard xml.etree. Install defusedxml for better security."
     )
-from bs4 import BeautifulSoup
 from loguru import logger
 
 #
@@ -76,11 +75,37 @@ from .security import SecurityValidator
 #
 ########################################################################################################################
 
-# Resolved once at import: this module hard-imports bs4, so soupsieve is
-# certainly present here. Kept in `noise_defaults` rather than inline so the
-# extraction guard and the two UI save-path validators share one definition of
-# "the selector is malformed" -- see `selector_parse_errors`.
-_SELECTOR_PARSE_ERRORS = selector_parse_errors()
+# bs4 is extras-only (`[subscriptions]` among others) while this module is
+# imported eagerly at boot via the scheduler handlers (app.py ->
+# Scheduling/scheduler/handlers -> here), so a module-level
+# `from bs4 import BeautifulSoup` made an install without the extra unable to
+# import the app at all, and made every install pay the bs4+soupsieve import
+# at boot (TASK-21104). BeautifulSoup is therefore resolved lazily at first
+# HTML extraction; a missing install degrades to a per-check ImportError that
+# the monitors' existing exception handling records against the subscription.
+_BS4_INSTALL_HINT = (
+    "beautifulsoup4 is required to extract text from HTML for "
+    "watchlist/subscription monitoring, but it is not installed. "
+    "Install it with: pip install tldw_chatbook[subscriptions]"
+)
+
+
+def _require_beautifulsoup() -> type:
+    """Resolve the ``BeautifulSoup`` class lazily (TASK-21104).
+
+    Returns:
+        The ``bs4.BeautifulSoup`` class.
+
+    Raises:
+        ImportError: When beautifulsoup4 is not installed; the message names
+            the feature and the exact install command so the per-check error
+            surfaced on the subscription is actionable.
+    """
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError as exc:
+        raise ImportError(_BS4_INSTALL_HINT) from exc
+    return BeautifulSoup
 
 
 class FetchBlockedError(SubscriptionError):
@@ -209,7 +234,7 @@ class ContentExtractor:
         Returns:
             Extracted text
         """
-        soup = BeautifulSoup(html, "html.parser")
+        soup = _require_beautifulsoup()(html, "html.parser")
 
         # Remove script and style elements
         for script in soup(["script", "style"]):
@@ -227,7 +252,12 @@ class ContentExtractor:
             for selector in ignore_selectors:
                 try:
                     matches = soup.select(selector)
-                except _SELECTOR_PARSE_ERRORS as exc:
+                # `selector_parse_errors()` is lru_cached and shared with the
+                # two UI save-path validators (`noise_defaults`) so the
+                # definition of "the selector is malformed" cannot drift.
+                # Called here rather than resolved at module import because it
+                # probes soupsieve, which is extras-only like bs4 (TASK-21104).
+                except selector_parse_errors() as exc:
                     # One line per bad selector per extraction: named, so the
                     # log says which rule to fix, not merely that one is broken.
                     logger.warning(
