@@ -504,6 +504,60 @@ def test_round_trip_preserves_order_identity_lineage_timing_usage_and_missing() 
         imported.snapshot = _snapshot()  # type: ignore[misc]
 
 
+@pytest.mark.parametrize(
+    ("field", "state"),
+    [
+        ("query", "not_available"),
+        ("result", "capture_failed"),
+        ("task", "redacted"),
+        ("event_id", "redacted"),
+    ],
+)
+def test_round_trip_accounts_for_every_source_non_observed_field_state(
+    field: str, state: str
+) -> None:
+    """Projection-level field states must agree with inventory and provenance."""
+    payload = _build(_snapshot(_record(field_states={field: state})))
+
+    imported = trajectory_import.load_imported_trace(payload)
+    event = payload["events"][0]
+    assert event["field_provenance"][field] == {
+        "state": state,
+        "reason": f"source_{state}",
+        "sensitivity": "diagnostic",
+    }
+    assert {
+        "event_id": event["event_id"],
+        "field": field,
+        "state": state,
+        "reason": f"source_{state}",
+    } in payload["manifest"]["redaction_provenance"]
+    if state in {"not_available", "capture_failed"}:
+        assert payload["manifest"]["privacy_inventory"][state] == 1
+        assert payload["manifest"]["privacy_inventory"]["missing"] == 1
+    else:
+        assert payload["manifest"]["privacy_inventory"][state] >= 1
+    assert imported.privacy_inventory == payload["manifest"]["privacy_inventory"]
+
+
+@pytest.mark.parametrize(
+    "exported_at",
+    ["password=EXPORT-TIMESTAMP-SECRET", "not-a-timestamp"],
+)
+def test_builder_rejects_non_iso_or_credential_bearing_export_timestamp(
+    exported_at: str,
+) -> None:
+    snapshot = _snapshot()
+    preflight = trajectory_export.preflight_trace_export(snapshot)
+
+    with pytest.raises(trajectory_export.TrajectoryExportError, match="ISO 8601"):
+        trajectory_export.build_trace_export(
+            snapshot,
+            preflight=preflight,
+            exported_at=exported_at,
+        )
+
+
 def test_canonical_digest_is_deterministic_and_detects_tampering() -> None:
     snapshot = _snapshot()
     one = _build(snapshot)

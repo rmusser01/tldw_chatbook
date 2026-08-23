@@ -278,6 +278,7 @@ _CONTENT_KEYS = frozenset(
     {"args", "arguments", "body", "content", "input", "output", "prompt", "result"}
 )
 _CREDENTIAL_SAFE_KEYS = frozenset({"first_token_at"})
+_CREDENTIAL_REDACTION_VALUES = frozenset({"[credential redacted]"})
 _IDENTIFIER_KEY_RE = re.compile(r"(?:^|[_-])(?:id|identifier|uuid)s?$", re.IGNORECASE)
 
 
@@ -309,6 +310,30 @@ def _has_credential(value: Any, key: str = "") -> bool:
         return any(_has_credential(item, str(name)) for name, item in value.items())
     if isinstance(value, (list, tuple)):
         return any(_has_credential(item) for item in value)
+    return isinstance(value, str) and _credential_text(value)[1]
+
+
+def _has_credential_material(value: Any) -> bool:
+    """Detect unsanitized credential material in an already-governed document."""
+    if isinstance(value, Mapping):
+        for name, item in value.items():
+            key = str(name)
+            if _credential_text(key)[1]:
+                return True
+            if (
+                key.lower() not in _CREDENTIAL_SAFE_KEYS
+                and _CREDENTIAL_KEY_RE.search(key)
+                and (
+                    not isinstance(item, str)
+                    or item not in _CREDENTIAL_REDACTION_VALUES
+                )
+            ):
+                return True
+            if _has_credential_material(item):
+                return True
+        return False
+    if isinstance(value, (list, tuple)):
+        return any(_has_credential_material(item) for item in value)
     return isinstance(value, str) and _credential_text(value)[1]
 
 
@@ -700,6 +725,38 @@ def preflight_trace_export(
                 }
                 event_provenance.append(entry)
                 provenance.append(entry)
+        for field, state in event["field_states"].items():
+            if state == "observed" or field in field_provenance:
+                continue
+            if state not in _NON_OBSERVED_STATES:
+                raise TrajectoryExportError(
+                    f"Invalid Trace field state {state!r} for {field!r}"
+                )
+            reason = f"source_{state}"
+            field_provenance[field] = {
+                "state": state,
+                "reason": reason,
+                "sensitivity": record.sensitivity or "unspecified",
+            }
+            entry = {
+                "event_id": str(event["event_id"]),
+                "field": str(field),
+                "state": str(state),
+                "reason": reason,
+            }
+            event_provenance.append(entry)
+            provenance.append(entry)
+            decisions.append(
+                TraceFieldDecision(
+                    str(event["event_id"]),
+                    str(field),
+                    str(state),
+                    reason,
+                    bool(record.sensitivity)
+                    or state in {"redacted", "truncated", "omitted"},
+                    str(state),
+                )
+            )
         event["field_provenance"] = field_provenance
         event["redaction_provenance"] = event_provenance
         event, credential_provenance = _scrub_event_credentials(event)
@@ -842,7 +899,18 @@ def build_trace_export(
             else exported_at
         ).isoformat()
     else:
-        timestamp = str(exported_at)
+        raw_timestamp = str(exported_at)
+        try:
+            parsed_timestamp = datetime.fromisoformat(
+                raw_timestamp.replace("Z", "+00:00")
+            )
+        except ValueError as exc:
+            raise TrajectoryExportError(
+                "Invalid Trace exported_at: expected an ISO 8601 datetime"
+            ) from exc
+        if parsed_timestamp.tzinfo is None:
+            parsed_timestamp = parsed_timestamp.replace(tzinfo=timezone.utc)
+        timestamp = parsed_timestamp.isoformat()
 
     events = [
         json.loads(json.dumps(event, ensure_ascii=False))
@@ -931,6 +999,10 @@ def build_trace_export(
         "lineage": _lineage(events),
         "integrity": {"algorithm": "sha256", "authenticity": False},
     }
+    if _has_credential_material(payload):
+        raise TrajectoryExportError(
+            "Trace export blocked: the final bundle still contains credential material"
+        )
     payload["integrity"]["digest"] = _trace_digest(payload)
     return payload
 
