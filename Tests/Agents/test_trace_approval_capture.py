@@ -241,6 +241,11 @@ def test_lifecycle_capture_failure_is_contained_and_diagnosed_when_writable(
                 step for step in durable_steps if step["kind"] == "capture_failed"
             )
             assert diagnostic["field_states"]["payload"] == "capture_failed"
+            event_ids = {
+                f"agent-step:{run_id}:{step['index']}" for step in durable_steps
+            } | {f"agent-run:{run_id}"}
+            assert diagnostic["parent_event_id"] in event_ids
+            assert diagnostic["source_event_id"] is None
         assert "SECRET_CAPTURE_FAILURE" not in repr(db.get_run(run_id))
     finally:
         db.close()

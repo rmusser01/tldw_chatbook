@@ -1445,7 +1445,12 @@ def test_agent_lifecycle_capture_failure_is_contained_and_diagnosed(db, monkeypa
 
     assert outcome.status == RUN_DONE
     steps = db.get_run(run_id)["steps"]
-    assert any(step["kind"] == "capture_failed" for step in steps)
+    diagnostic = next(step for step in steps if step["kind"] == "capture_failed")
+    event_ids = {
+        f"agent-step:{run_id}:{step['index']}" for step in steps
+    } | {f"agent-run:{run_id}"}
+    assert diagnostic["parent_event_id"] in event_ids
+    assert diagnostic["source_event_id"] is None
     assert any(step["kind"] == "agent_run_started" for step in steps)
     assert any(step["kind"] == "agent_run_completed" for step in steps)
 
@@ -1529,17 +1534,18 @@ def test_project_instruction_service_error_has_durable_causal_identity(
     reopened.close()
 
 
-def test_service_error_capture_recovers_idempotently_before_failed_lifecycle(
+def test_service_error_capture_recovers_once_before_failed_lifecycle(
     db, monkeypatch
 ):
     original_insert = db.insert_steps_at_indices
     failed_once = False
+    attempts = 0
 
     def fail_service_error_once(run_id, indexed_steps):
-        nonlocal failed_once
-        if not failed_once and any(
-            step["kind"] == "error" for _index, step in indexed_steps
-        ):
+        nonlocal attempts, failed_once
+        has_error = any(step["kind"] == "error" for _index, step in indexed_steps)
+        attempts += int(has_error)
+        if not failed_once and has_error:
             failed_once = True
             raise RuntimeError("simulated service error capture failure")
         return original_insert(run_id, indexed_steps)
@@ -1556,28 +1562,65 @@ def test_service_error_capture_recovers_idempotently_before_failed_lifecycle(
         api_endpoint="llama_cpp",
     )
     assert outcome.status == RUN_ERROR
-    assert not any(step["kind"] == "error" for step in db.get_run(run_id)["steps"])
-    assert not any(
-        step["kind"] == "agent_run_failed"
-        for step in db.get_run(run_id)["steps"]
-    )
-
-    service._persist(run_id, outcome)
-    service._persist(run_id, outcome)
-    steps = db.get_run(run_id)["steps"]
-    error = next(step for step in steps if step["kind"] == "error")
-    failed = [step for step in steps if step["kind"] == "agent_run_failed"]
-    assert len(failed) == 1
-    error_event_id = f"agent-step:{run_id}:{error['index']}"
-    assert failed[0]["parent_event_id"] == error_event_id
-    assert failed[0]["source_event_id"] == error_event_id
+    assert attempts == 2
 
     path = db.db_path
     db.close()
     reopened = AgentRunsDB(path, client_id="error-recovery-reload")
     reloaded = reopened.get_run(run_id)["steps"]
-    assert sum(step["kind"] == "error" for step in reloaded) == 1
-    assert sum(step["kind"] == "agent_run_failed" for step in reloaded) == 1
+    errors = [step for step in reloaded if step["kind"] == "error"]
+    failed = [step for step in reloaded if step["kind"] == "agent_run_failed"]
+    assert len(errors) == len(failed) == 1
+    error_event_id = f"agent-step:{run_id}:{errors[0]['index']}"
+    assert failed[0]["owner_seq"] == errors[0]["owner_seq"] + 1
+    assert failed[0]["parent_event_id"] == error_event_id
+    assert failed[0]["source_event_id"] == error_event_id
+    reopened.close()
+
+
+def test_persistent_service_error_capture_is_diagnosed_without_dangling_links(
+    db, monkeypatch
+):
+    original_insert = db.insert_steps_at_indices
+    attempts = 0
+
+    def fail_service_error(run_id, indexed_steps):
+        nonlocal attempts
+        if any(step["kind"] == "error" for _index, step in indexed_steps):
+            attempts += 1
+            raise RuntimeError("persistent service error capture failure")
+        return original_insert(run_id, indexed_steps)
+
+    monkeypatch.setattr(db, "insert_steps_at_indices", fail_service_error)
+    service, _ = make_service(
+        db,
+        [lambda: (_ for _ in ()).throw(RuntimeError("provider failed"))],
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="persistent-error-capture",
+        messages=[{"role": "user", "content": "q"}],
+        config=CFG,
+        api_endpoint="llama_cpp",
+    )
+    assert outcome.status == RUN_ERROR
+    assert attempts == 2
+
+    path = db.db_path
+    db.close()
+    reopened = AgentRunsDB(path, client_id="persistent-error-reload")
+    row = reopened.get_run(run_id)
+    assert row["status"] == RUN_ERROR
+    assert not any(step["kind"] == "error" for step in row["steps"])
+    assert not any(step["kind"] == "agent_run_failed" for step in row["steps"])
+    diagnostic = next(step for step in row["steps"] if step["kind"] == "capture_failed")
+    event_ids = {
+        f"agent-step:{run_id}:{step['index']}" for step in row["steps"]
+    } | {f"agent-run:{run_id}"}
+    assert diagnostic["status"] == "incomplete"
+    assert diagnostic["field_states"]["payload"] == "capture_failed"
+    for step in row["steps"]:
+        assert step["parent_event_id"] in event_ids
+        assert step["source_event_id"] is None or step["source_event_id"] in event_ids
     reopened.close()
 
 

@@ -2372,6 +2372,26 @@ class AgentService:
         except Exception:  # noqa: BLE001 — capture never gates execution
             return 0
 
+    def _latest_durable_event_id(self, run_id: str) -> str:
+        """Return the latest actually stored observation, or the run owner."""
+        try:
+            durable = self.db.get_run(run_id)["steps"]
+            latest = max(
+                durable,
+                key=lambda step: (
+                    int(step["owner_seq"])
+                    if step.get("owner_seq") is not None
+                    else -1,
+                    int(step.get("index", -1)),
+                ),
+                default=None,
+            )
+            if latest is not None:
+                return f"agent-step:{run_id}:{latest['index']}"
+        except Exception:  # noqa: BLE001 — capture never gates execution
+            pass
+        return f"agent-run:{run_id}"
+
     def _append_run_lifecycle(
         self,
         run_id: str,
@@ -2424,7 +2444,7 @@ class AgentService:
                 created_at=step.created_at,
                 status="incomplete",
                 owner_seq=sequence,
-                source_event_id=f"agent-step:{run_id}:{index}",
+                parent_event_id=self._latest_durable_event_id(run_id),
                 field_states={"payload": "capture_failed"},
                 sensitivity="diagnostic",
             )
@@ -2478,19 +2498,7 @@ class AgentService:
             < AGENT_LIFECYCLE_INDEX_BASE
         ]
         index = max((int(step["index"]) for step in runtime), default=-1) + 1
-        prior = max(
-            durable,
-            key=lambda step: (
-                int(step["owner_seq"])
-                if step.get("owner_seq") is not None
-                else -1,
-                int(step.get("index", -1)),
-            ),
-            default=None,
-        )
-        prior_event_id = (
-            f"agent-step:{run_id}:{prior['index']}" if prior is not None else None
-        )
+        prior_event_id = self._latest_durable_event_id(run_id)
         return AgentStep(
             index=index,
             kind=STEP_ERROR,
@@ -2536,8 +2544,13 @@ class AgentService:
             default=None,
         )
         terminal_event_id = None
+        expected = None
         if terminal_step is not None:
             expected = dict(step_dicts).get(terminal_step.index)
+
+        def exact_terminal_event_id() -> str | None:
+            if terminal_step is None or expected is None:
+                return None
             try:
                 stored = next(
                     step
@@ -2545,11 +2558,54 @@ class AgentService:
                     if step["index"] == terminal_step.index
                 )
                 if stored == expected:
-                    terminal_event_id = (
-                        f"agent-step:{run_id}:{terminal_step.index}"
-                    )
+                    return f"agent-step:{run_id}:{terminal_step.index}"
             except (KeyError, StopIteration, TypeError):
-                terminal_event_id = None
+                pass
+            return None
+
+        terminal_event_id = exact_terminal_event_id()
+        if terminal_step is not None and expected is not None and not terminal_event_id:
+            try:
+                self.db.insert_steps_at_indices(
+                    run_id, [(terminal_step.index, expected)]
+                )
+            except Exception as exc:  # noqa: BLE001 — one bounded recovery attempt
+                logger.warning(
+                    "could not recover terminal agent step "
+                    "run_id={} step_index={} error_type={}",
+                    run_id,
+                    terminal_step.index,
+                    _safe_exception_type(exc),
+                )
+            terminal_event_id = exact_terminal_event_id()
+            if terminal_event_id is None:
+                diagnostic = AgentStep(
+                    index=(
+                        AGENT_LIFECYCLE_INDEX_BASE
+                        + 200
+                        + (terminal_step.index % 100)
+                    ),
+                    kind="capture_failed",
+                    summary="Terminal agent step capture failed",
+                    created_at=safe_utc_timestamp(self.wall_clock),
+                    status="incomplete",
+                    owner_seq=terminal_step.owner_seq,
+                    parent_event_id=self._latest_durable_event_id(run_id),
+                    field_states={"payload": "capture_failed"},
+                    sensitivity="diagnostic",
+                )
+                try:
+                    self.db.insert_steps_at_indices(
+                        run_id,
+                        [
+                            (
+                                diagnostic.index,
+                                _safe_agent_step_record(run_id, diagnostic),
+                            )
+                        ],
+                    )
+                except Exception:  # noqa: BLE001 — non-recursive containment
+                    logger.warning("could not persist terminal capture diagnostic")
         self.db.set_status(
             run_id, outcome.status, result=_safe_terminal_result(outcome.final_text)
         )
@@ -4825,7 +4881,7 @@ class AgentService:
                     created_at=step.created_at,
                     status="incomplete",
                     owner_seq=step.owner_seq,
-                    source_step_index=step.index,
+                    parent_event_id=self._latest_durable_event_id(run_id),
                     field_states={"payload": "capture_failed"},
                     sensitivity="diagnostic",
                 )
