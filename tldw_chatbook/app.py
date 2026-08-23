@@ -12569,6 +12569,44 @@ class TldwCli(
             self._console_image_edit_shutdown_task = task
         await asyncio.shield(task)
 
+    async def _flush_persona_buddy_geometry(self) -> None:
+        """Land any debounced Buddy geometry before admission closes.
+
+        TASK-21122: the mounted view coalesces geometry writes behind a
+        250 ms debounce. Because `_shutdown_persona_buddy` ends the
+        controller BEFORE Textual unmounts screens, a nudge inside that
+        window would reach `persist_preferences_revision` after admission
+        closed and be refused -- silently losing the user's last move.
+        Draining every mounted view here, while the controller is still
+        accepting writes, is what keeps it durable.
+        """
+        screens: list[Any] = []
+        stacks = getattr(self, "_screen_stacks", None)
+        if isinstance(stacks, dict):
+            for stack in stacks.values():
+                screens.extend(stack or ())
+        else:
+            try:
+                screens.extend(self.screen_stack)
+            except Exception:
+                return
+        seen: set[int] = set()
+        for screen in screens:
+            if id(screen) in seen:
+                continue
+            seen.add(id(screen))
+            flush = getattr(screen, "flush_persona_buddy_geometry", None)
+            if not callable(flush):
+                continue
+            try:
+                pending = flush()
+                if inspect.isawaitable(pending):
+                    await pending
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.debug("persona_buddy_geometry_flush_failed")
+
     async def _shutdown_persona_buddy(self) -> None:
         """Drain the app-owned Buddy before profile database teardown.
 
@@ -12582,6 +12620,9 @@ class TldwCli(
             controller = self._persona_buddy_controller
             if controller is None:
                 return
+            # Debounced geometry must land while the controller still
+            # accepts writes (TASK-21122).
+            await self._flush_persona_buddy_geometry()
             task = asyncio.create_task(
                 controller.shutdown(),
                 name="shutdown_persona_buddy",
