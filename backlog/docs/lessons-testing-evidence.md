@@ -6783,3 +6783,28 @@ usually writes the *same* value the outer statement did and its emitter's
 statement supplies a different timestamp — which means probing the natural path
 alone would have concluded, wrongly, that there was no same-version content
 row. Construct the hostile input; the friendly one hid the bug.
+
+---
+
+## A Pilot-driven latency probe can measure the harness, not the app
+
+**What happened (2026-08-22, holistic perf review of dev `35d4bf3a1`).** A live message
+census attributed **~940 posted `Callback` messages per keypress** in the configured Console —
+looking exactly like an app-side message storm, and superficially contradicting the static
+lane's verdict that the keystroke path was clean. Attribution by callback qualname (patching
+`MessagePump.call_later`/`call_next`) showed 18,640 of 18,648 were
+`Pilot._wait_for_screen.<locals>.decrement_counter`: Textual's `pilot.pause()` posts **one
+callback per mounted widget per pause**, so every `press()+pause()` latency median in the
+probe (82–226 ms) was harness-inflated, and the "storm" was the probe itself. The app-side
+per-key work was ~7 widget refreshes — the static read had been right all along.
+
+**Rules.**
+- Never quote an absolute latency measured through `pilot.press()+pause()`; use that shape
+  only for A/B comparisons where the pause overhead is identical on both arms.
+- Before believing any message/callback storm, attribute the POSTERS by qualname — counting
+  message types alone cannot distinguish app traffic from harness traffic.
+- When a live probe contradicts a careful static read, suspect the probe's harness before the
+  static read; resolve by attribution, not by majority.
+
+Full disclosure section: `Docs/Design/2026-08-22-holistic-perf-review.md`
+("Measurement-artifact disclosure").
