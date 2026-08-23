@@ -31,6 +31,7 @@ from tldw_chatbook.Chat import console_chat_controller as controller_mod
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Chat.console_chat_controller import (
     ConsoleChatController,
+    ConsoleRunStatus,
     ProjectInstructionBindingRecovery,
     build_project_instruction_dispatch_notice,
     commit_project_instruction_dispatch_decision,
@@ -1045,3 +1046,72 @@ def test_disabled_session_does_not_consult_registry(tmp_path):
         )
         is None
     )
+
+
+@pytest.mark.asyncio
+async def test_project_instruction_disable_terminalizes_and_allows_retry():
+    """Disabling unavailable instructions must not strand the Console run."""
+
+    store = ConsoleChatStore()
+    session = store.create_session(workspace_id="w1")
+    store.set_session_project_instruction_state(
+        session.id,
+        ProjectInstructionControlState(
+            project_instructions_enabled=True,
+            working_folder_binding_id="removed-binding",
+            working_folder_locator_fingerprint="f" * 64,
+        ),
+    )
+    provider_calls = []
+    bridge_calls = []
+
+    class Gateway:
+        async def resolve_for_send(self, _selection):
+            provider_calls.append(True)
+            return ConsoleProviderResolution(
+                provider="OpenAI",
+                base_url="http://127.0.0.1:18991/v1",
+                model="gpt-4o-mini",
+                ready=True,
+                readiness_key="openai",
+                execution_key="openai",
+                max_tokens=128,
+            )
+
+    class Bridge:
+        def run_reply(self, **_kwargs):
+            bridge_calls.append(True)
+            return "run-1", RunOutcome(status=RUN_DONE, steps=[], final_text="done")
+
+    async def disable(_session_id, _options, _recovery_code):
+        return "disable", None
+
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=Gateway(),
+        provider="openai",
+        model="gpt-4o-mini",
+        agent_bridge=Bridge(),
+        agent_runtime_enabled=True,
+        select_project_instruction_binding=disable,
+    )
+    controller.app = SimpleNamespace(
+        workspace_registry_service=_BindingRegistry([]),
+        call_from_thread=lambda callback: callback(),
+    )
+
+    first = await controller.submit_draft("first")
+
+    assert first.accepted is False
+    assert first.visible_copy == "project_instructions_disabled"
+    assert session.project_instruction_state == (
+        ProjectInstructionControlState.legacy_disabled()
+    )
+    assert controller.run_state_for(session.id).status is ConsoleRunStatus.BLOCKED
+    assert bridge_calls == []
+
+    second = await controller.submit_draft("second")
+
+    assert second.accepted is True
+    assert bridge_calls == [True]
+    assert len(provider_calls) == 2

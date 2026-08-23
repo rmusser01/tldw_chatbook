@@ -124,6 +124,7 @@ async def test_restart_restores_selection_open_collapsed_and_geometry(
                 revision=3,
             )
         )
+        await pilot.pause()
         await pilot.app.workers.wait_for_complete()
     await controller.shutdown()
 
@@ -160,6 +161,7 @@ async def test_restart_restores_selection_open_collapsed_and_geometry(
                 revision=3,
             )
         )
+        await pilot.pause()
         await pilot.app.workers.wait_for_complete()
     await restarted.shutdown()
 

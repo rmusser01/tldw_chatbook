@@ -1356,3 +1356,21 @@ after clean exit. For tracked generated artifacts, compare the body as well as
 the header before deciding whether a delta belongs to the task. Restore a
 timestamp-only runtime rebuild to the pre-UAT content; regenerate and commit it
 only when its source modules actually changed.
+
+## A recovery modal can complete while the owning run stays non-terminal (TASK-20941, 2026-08-22)
+
+**What happened.** Persona Buddy full-app UAT sent a real Console prompt through
+a disposable loopback provider. Console first opened the project-instructions
+folder recovery modal because the scratch profile had no eligible workspace
+binding. Choosing **Disable** dismissed the modal and updated the session, but
+the controller returned a raw rejected result without replacing its earlier
+`VALIDATING` run state. The transcript, Console header, composer, and Buddy then
+remained stuck at `Running` / `thinking`; no provider request was made. Unit
+coverage had verified the setup decision and session mutation separately, so it
+never observed the owning run after the modal completed.
+
+**What to do.** For every modal or async recovery branch that rejects an active
+run, assert both the domain mutation and the owner-facing terminal state, then
+retry through the same controller. A dismissed modal or a returned failure value
+is not sufficient evidence: the run-state ledger, composer admission, dependent
+UI state, and retry path must all be terminal/current together.

@@ -6992,7 +6992,6 @@ any hit that is missing from the wheel as guilty until explained. That sweep is
 surfaced both. Filter the noise by hand — generic names (`README.md`,
 `LICENSE`, `pyproject.toml`, `.DS_Store`) match string literals all over the
 tree — 15 raw hits, 3 real.
-
 ## A "prefer the new accessor" getattr order silently bypasses injected test doubles on MagicMock apps (TASK-21103, 2026-08-23)
 
 Converting the eager `persona_buddy_controller` to a lazy property needed an
@@ -7099,8 +7098,6 @@ shutdown), not on which methods were called — that is the only shape that
 catches a probe, a shutdown hook, or a migrator quietly creating the file.
 This recurs for every store queued in TASK-21105 (seven more feature DBs to
 be made first-use-lazy).
-
-
 ## A "safe_" local that only reaches the error message is not protection — mutate it to prove which value the query saw (TASK-19558, 2026-08-23)
 
 Three `ChaChaNotes_DB` search methods computed `safe_search_term = f'"{term}"'`
@@ -7265,7 +7262,6 @@ run against the merge-base AND the branch in the same process — `git show
 location` under a dotted name inside the real package resolves its relative
 imports fine, so both versions can be seeded and queried side by side without a
 second worktree. Closure probes alone never move on any of those rows.
-
 ## A lazy package facade protects nothing that consumers import directly, and deferring at the CONSUMER can move the cost instead of removing it (TASK-21200, 2026-08-23)
 
 TASK-21103 removed PIL and `Persona_Visual` from the `import tldw_chatbook.app`
@@ -7318,3 +7314,22 @@ silently shrank cannot pass that; and re-probe import ordering in fresh
 subprocesses (submodule-first, package-first, heavy-dep-first), because
 TASK-21160 shipped a live regression when a lazy facade unmasked a cycle the
 eager init had been front-loading in a safe order.
+
+---
+
+## A resting compact screenshot does not prove focused control geometry (TASK-21000, 2026-08-22)
+
+**What happened.** Persona Buddy's 10-column fallback looked correct at rest with
+two three-cell icon buttons. Preserving a two-cell lower-right resize grip moved
+Close left, but focusing it still expanded `×` to the seven-cell native `Close`
+button. That expansion overlapped and visually replaced Fold even though resting
+screenshots, hit tests, and keyboard tests were green. An earlier repair that let
+the resize corner override Close was also false evidence: both operations existed,
+but some cells inside a control secretly resized instead of activating the control.
+
+**What to do.** For terminal overlays, test the complete interaction-state geometry,
+not just the resting glyphs: focus every control, assert regions remain disjoint,
+assert each visible control cell resolves to that control, and exercise activation
+and resize through distinct cells. Add up the cell budget before promising transient
+labels; if controls plus required hit regions cannot fit, define the constrained
+fallback explicitly instead of creating ambiguous overlap priority.
