@@ -288,7 +288,11 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
                     "No conversations",
                 )
             )
-        if workspace.next_cursor is not None and not workspace.loading:
+        if (
+            workspace.next_cursor is not None
+            and not workspace.loading
+            and not workspace.error
+        ):
             specs.append(
                 WorkspaceTreeNodeData.auxiliary(
                     "load-more",

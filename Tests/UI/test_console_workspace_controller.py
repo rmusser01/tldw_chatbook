@@ -47,6 +47,7 @@ from tldw_chatbook.Workspaces import (
     CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
     DEFAULT_WORKSPACE_ID,
     ConsoleConversationBrowserInputRow,
+    WorkspaceRecord,
 )
 from tldw_chatbook.Workspaces.display_state import (
     ConsoleWorkspaceContextState,
@@ -248,7 +249,7 @@ def test_clearing_workspace_search_settles_visible_loading_immediately() -> None
     assert state.workspace_loading is False
 
 
-def test_expanding_unloaded_non_active_workspace_schedules_one_loading_page() -> None:
+def test_expanding_each_unloaded_named_workspace_schedules_one_loading_page() -> None:
     screen = _NoMountScreen()
     registry = SimpleNamespace(
         ensure_default_workspace=lambda: SimpleNamespace(workspace_id="active"),
@@ -267,15 +268,118 @@ def test_expanding_unloaded_non_active_workspace_schedules_one_loading_page() ->
     controller.transition_workspace_tree_expansion("other", expanded=True)
     controller.transition_workspace_tree_expansion("active", expanded=True)
 
-    assert len(screen.workers) == 1
-    attempt = controller._workspace_page_attempts["other"]
-    assert attempt.loading is True
+    assert len(screen.workers) == 2
+    assert controller._workspace_page_attempts["other"].loading is True
+    assert controller._workspace_page_attempts["active"].loading is True
     projected = {
         workspace.workspace_id: workspace
         for workspace in controller.workspace_tree_projection()
     }
     assert projected["other"].loading is True
     assert projected["other"].conversations == ()
+    assert projected["active"].loading is True
+    assert projected["active"].conversations == ()
+
+
+def test_active_named_workspace_memberships_wait_for_the_bounded_page_lane() -> None:
+    registry = SimpleNamespace(
+        ensure_default_workspace=lambda: SimpleNamespace(workspace_id="workspace-7"),
+        list_workspaces=lambda: (
+            SimpleNamespace(workspace_id="workspace-7", name="Seven", archived=False),
+        ),
+    )
+    controller = _workspace_controller(
+        app_instance=SimpleNamespace(workspace_registry_service=registry)
+    )
+    legacy_rows = tuple(
+        ConsoleWorkspaceConversationRow(
+            conversation_id=f"conversation-{index}",
+            title=f"Conversation {index}",
+        )
+        for index in range(100)
+    )
+    state = replace(
+        _workspace_state(),
+        workspace_name="Seven",
+        workspace_label="Workspace: Seven",
+        active_workspace_id="workspace-7",
+        conversation_rows=legacy_rows,
+    )
+
+    projected = controller._with_console_conversation_browser_state(state)
+
+    assert len(projected.workspace_tree) == 1
+    assert projected.workspace_tree[0].active is True
+    assert projected.workspace_tree[0].conversations == ()
+
+
+def test_workspace_context_state_build_does_not_enumerate_active_memberships() -> None:
+    membership_reads: list[str] = []
+    workspace = WorkspaceRecord(
+        workspace_id="workspace-7",
+        name="Seven",
+        archived=False,
+    )
+    registry = SimpleNamespace(
+        get_active_workspace=lambda: workspace,
+        ensure_default_workspace=lambda: workspace,
+        list_workspaces=lambda: (workspace,),
+        list_runtime_bindings=lambda _workspace_id: (),
+        list_workspace_memberships=lambda _workspace_id: (),
+        list_workspace_conversations=lambda workspace_id: (
+            membership_reads.append(workspace_id) or ()
+        ),
+    )
+    controller = _workspace_controller(
+        app_instance=SimpleNamespace(workspace_registry_service=registry),
+        native_session_rows_accessor=lambda state: state,
+    )
+
+    state = controller._build_console_workspace_context_state()
+
+    assert state.active_workspace_id == "workspace-7"
+    assert membership_reads == []
+
+
+@pytest.mark.asyncio
+async def test_workspace_search_exhausts_every_service_page() -> None:
+    items = [
+        {
+            "id": f"conversation-{index}",
+            "title": f"Needle {index}",
+            "scope_type": "workspace",
+            "workspace_id": "workspace-7",
+        }
+        for index in range(80)
+    ]
+    offsets: list[int] = []
+
+    async def list_conversations(**kwargs):
+        offset = int(kwargs["offset"])
+        limit = int(kwargs["limit"])
+        offsets.append(offset)
+        return {"items": items[offset : offset + limit], "total": len(items)}
+
+    controller = _workspace_controller(
+        app_instance=SimpleNamespace(
+            workspace_registry_service=SimpleNamespace(
+                list_workspaces=lambda: (
+                    SimpleNamespace(
+                        workspace_id="workspace-7", name="Seven", archived=False
+                    ),
+                )
+            ),
+            chat_conversation_scope_service=SimpleNamespace(
+                list_conversations=list_conversations
+            ),
+        )
+    )
+
+    await controller.refresh_workspace_tree_search("needle")
+
+    assert offsets == [0, CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT]
+    assert controller._workspace_tree_search.total == 80
+    assert len(controller._workspace_tree_search.rows) == 80
 
 
 @pytest.mark.asyncio

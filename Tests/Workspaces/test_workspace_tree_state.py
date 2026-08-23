@@ -84,6 +84,28 @@ def test_named_and_default_unassigned_rows_have_exclusive_owners() -> None:
     ]
 
 
+def test_named_workspace_keeps_unsaved_native_session_by_stable_row_key() -> None:
+    row = ConsoleConversationBrowserInputRow(
+        row_key="native:session-7",
+        conversation_id=None,
+        native_session_id="session-7",
+        title="Unsaved roleplay",
+        scope_type="workspace",
+        workspace_id="w1",
+        workspace_label="Workspace One",
+        source_kind="native",
+    )
+
+    tree = build_workspace_tree_state(
+        workspaces=(("w1", "Workspace One"),),
+        rows=(row,),
+    )
+
+    assert [conversation.conversation_id for conversation in tree[0].conversations] == [
+        "native:session-7"
+    ]
+
+
 def test_tree_sorts_starred_first_then_recency_and_preserves_markers() -> None:
     tree = build_workspace_tree_state(
         workspaces=(("w1", "Workspace"),),

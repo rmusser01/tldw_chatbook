@@ -873,18 +873,34 @@ class ConsoleWorkspaceController:
     async def _load_workspace_tree_search_rows(
         self, query: str
     ) -> tuple[tuple[ConsoleConversationBrowserInputRow, ...], int | None]:
-        rows, _total, error = await self._persisted_console_browser_rows(
-            query,
-            scopes=(("all", None),),
-        )
-        if error:
-            raise RuntimeError(error)
-        named_rows = tuple(
-            row
-            for row in rows
-            if row.scope_type == "workspace"
-            and row.workspace_id not in (None, DEFAULT_WORKSPACE_ID)
-        )
+        request_key = self._workspace_tree_search.request_key
+        offset = 0
+        named_rows: tuple[ConsoleConversationBrowserInputRow, ...] = ()
+        while True:
+            rows, total, error = await self._persisted_console_browser_rows(
+                query,
+                scopes=(("all", None),),
+                offset=offset,
+            )
+            if error:
+                raise RuntimeError(error)
+            named_rows = self._merge_console_browser_rows(
+                named_rows,
+                (
+                    row
+                    for row in rows
+                    if row.scope_type == "workspace"
+                    and row.workspace_id not in (None, DEFAULT_WORKSPACE_ID)
+                ),
+            )
+            if (
+                request_key is not None
+                and not self._workspace_search_attempt_is_current(request_key)
+            ):
+                return (), None
+            offset += CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT
+            if total is None or offset >= total:
+                break
         return named_rows, len(named_rows)
 
     async def _load_flat_conversation_search_rows(
@@ -1048,13 +1064,7 @@ class ConsoleWorkspaceController:
             return
         if expanded:
             self._collapsed_workspace_ids.discard(target)
-            active_workspace_id = (
-                self._current_console_workspace_context().active_workspace_id
-            )
-            if (
-                target != active_workspace_id
-                and target not in self._workspace_page_attempts
-            ):
+            if target not in self._workspace_page_attempts:
                 self.request_workspace_tree_page(target, 0)
             return
         self._collapsed_workspace_ids.add(target)
@@ -1080,20 +1090,34 @@ class ConsoleWorkspaceController:
     def activate_workspace_id(self, workspace_id: str) -> None:
         """Activate a workspace selected from the native Tree."""
 
+        self._switch_console_workspace(workspace_id)
+
+    def _switch_console_workspace(self, workspace_id: str) -> bool:
+        """Switch registry, session, controller, rail, and native UI together."""
+
         target = str(workspace_id or "").strip()
         service = getattr(self.app_instance, "workspace_registry_service", None)
         if not target or service is None:
-            return
+            return False
         try:
             service.set_active_workspace(target)
-            self._ensure_console_chat_store().set_workspace_context(
-                self._current_console_workspace_context()
-            )
-            self._sync_console_workspace_context()
         except Exception:
-            logger.opt(exception=True).warning(
-                "Unable to activate Console workspace from Tree"
+            logger.opt(exception=True).warning("Unable to switch Console workspace")
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify("Workspace could not be selected.", severity="error")
+            return False
+        self._sync_console_chat_core_state()
+        self._activate_console_session_for_workspace(target)
+        self._sync_console_workspace_context()
+        native_sync = self._sync_native_console_chat_ui()
+        if inspect.isawaitable(native_sync):
+            self.run_worker(
+                native_sync,
+                exclusive=True,
+                group="console-sync",
             )
+        return True
 
     def _settle_workspace_page_attempt(
         self,
@@ -1913,6 +1937,7 @@ class ConsoleWorkspaceController:
         current_conversation_id: str | None = None,
         *,
         scopes: tuple[tuple[str, str | None], ...] | None = None,
+        offset: int = 0,
     ) -> tuple[list[ConsoleConversationBrowserInputRow], int | None, str]:
         """Return persisted global/workspace rows for grouped browser search."""
         services: list[tuple[Any, bool]] = []
@@ -1964,7 +1989,7 @@ class ConsoleWorkspaceController:
                     "scope_type": scope_type,
                     "workspace_id": workspace_id,
                     "limit": CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
-                    "offset": 0,
+                    "offset": max(0, int(offset)),
                 }
                 if include_mode:
                     list_kwargs["mode"] = "local"
@@ -2389,7 +2414,14 @@ class ConsoleWorkspaceController:
             )
             for row in legacy_state.conversation_rows
         )
-        rows = self._merge_console_browser_rows(rows, legacy_membership_rows)
+        rows = self._merge_console_browser_rows(
+            rows,
+            (
+                row
+                for row in legacy_membership_rows
+                if self._row_belongs_to_flat_projection(row)
+            ),
+        )
         workspace_rows = (
             self._workspace_tree_search.settled_rows
             if self._workspace_tree_search.error
@@ -2399,6 +2431,7 @@ class ConsoleWorkspaceController:
             str(row.conversation_id)
             for group in (
                 rows,
+                legacy_membership_rows,
                 workspace_rows,
                 *(attempt.rows for attempt in self._workspace_page_attempts.values()),
                 *self._workspace_membership_rows.values(),
@@ -2409,7 +2442,7 @@ class ConsoleWorkspaceController:
         for conversation_id in tuple(self._canonical_owner_observations):
             if conversation_id not in materialized_ids:
                 self._canonical_owner_observations.pop(conversation_id, None)
-        canonical_rows = (*rows, *workspace_rows)
+        canonical_rows = (*rows, *legacy_membership_rows, *workspace_rows)
         canonical_memberships: dict[str, list[str]] = {}
         canonical_labels: dict[str, str] = {}
         for row in canonical_rows:
@@ -2736,25 +2769,7 @@ class ConsoleWorkspaceController:
         )
 
         def _switch_to(workspace_id: str) -> None:
-            try:
-                registry_service.set_active_workspace(workspace_id)
-            except Exception:
-                logger.opt(exception=True).warning(
-                    "Unable to switch Console workspace",
-                )
-                self.app_instance.notify(
-                    "Workspace could not be selected.",
-                    severity="error",
-                )
-                return
-            self._sync_console_chat_core_state()
-            self._activate_console_session_for_workspace(workspace_id)
-            self._sync_console_workspace_context()
-            self.run_worker(
-                self._sync_native_console_chat_ui(),
-                exclusive=True,
-                group="console-sync",
-            )
+            self._switch_console_workspace(workspace_id)
 
         def _apply_workspace_switch(
             result: tuple[str, str] | None,
@@ -3517,6 +3532,7 @@ class ConsoleWorkspaceController:
                 self.app_instance, "workspace_registry_service", None
             ),
             current_conversation=current_conversation,
+            conversations=(),
             server_adapter_state=getattr(
                 self.app_instance,
                 "workspace_server_adapter_state",

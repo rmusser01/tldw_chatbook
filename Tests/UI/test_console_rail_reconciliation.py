@@ -301,15 +301,23 @@ async def test_native_tree_restores_persisted_disclosure_and_exposes_pointer_sta
         await _settle(pilot)
         tree = app.query_one(ConsoleWorkspaceTree)
         workspace = tree.workspace_nodes["workspace-1"]
+        action_row = app.query_one("#console-workspace-context-action-row")
+        bounded = app.query_one(
+            "#console-bounded-section-workspace", ConsoleBoundedSection
+        )
+        assert action_row.display is False
         assert workspace.is_collapsed
 
         workspace.expand()
-        await pilot.pause()
+        await _settle(pilot)
         assert writes == [frozenset({"workspace-1"})]
+        hidden_demand = bounded.desired_content_lines
 
         tree.move_cursor(tree.conversation_nodes["conversation-1"])
-        await pilot.pause()
+        await _settle(pilot)
         star = app.query_one("#console-workspace-tree-star", Button)
+        assert action_row.display is True
+        assert bounded.desired_content_lines == hidden_demand + 1
         assert star.disabled is False
         assert str(star.label) == "Star"
 
@@ -321,6 +329,11 @@ async def test_native_tree_restores_persisted_disclosure_and_exposes_pointer_sta
         assert len(app.star_requests) == 1
         assert app.star_requests[0].conversation_id == "conversation-1"
         assert app.star_requests[0].starred is False
+
+        tree.move_cursor(workspace)
+        await _settle(pilot)
+        assert action_row.display is False
+        assert bounded.desired_content_lines == hidden_demand
 
         tree.set_search_active(True, forced_workspace_ids={"workspace-1"})
         workspace.collapse()

@@ -124,6 +124,30 @@ def test_native_configuration_and_literal_unicode_labels() -> None:
     assert tree.workspace_nodes["w"].data.raw_label == raw_workspace
 
 
+def test_failed_page_offers_retry_without_a_competing_load_more_action() -> None:
+    tree = ConsoleWorkspaceTree()
+    tree.sync_projection(
+        (
+            _workspace(
+                "w",
+                "Workspace",
+                ("c", "Settled"),
+                error="Workspace conversations are unavailable.",
+                next_cursor=75,
+            ),
+        ),
+        expanded_workspace_ids={"w"},
+    )
+
+    kinds = tuple(
+        child.data.kind
+        for child in tree.workspace_nodes["w"].children
+        if child.data is not None
+    )
+    assert "retry" in kinds
+    assert "load-more" not in kinds
+
+
 def test_ascii_mode_uses_only_ascii_tree_icons_and_guides(monkeypatch) -> None:
     monkeypatch.setattr(tree_module, "ascii_glyph_mode", lambda: True)
     tree = ConsoleWorkspaceTree()

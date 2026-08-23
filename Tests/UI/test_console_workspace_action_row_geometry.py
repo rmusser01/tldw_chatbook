@@ -49,7 +49,6 @@ async def test_workspace_action_buttons_fit_inside_their_rows(terminal_size) -> 
             ("#console-workspace-action-row", "#console-change-workspace"),
             ("#console-workspace-action-row", "#console-new-workspace"),
             ("#console-workspace-action-row", "#console-workspace-rag-scope-open"),
-            ("#console-workspace-context-action-row", "#console-workspace-tree-star"),
         ]
         for row_selector, button_selector in checks:
             row = console.query_one(row_selector)

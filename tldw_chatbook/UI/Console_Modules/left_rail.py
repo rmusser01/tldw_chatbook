@@ -1236,11 +1236,15 @@ class ConsoleLeftRail(Vertical):
                 pass
             else:
                 cursor = tree.cursor_node
-                workspace_tray.sync_workspace_tree_context(
+                visibility_changed = workspace_tray.sync_workspace_tree_context(
                     cursor.data
                     if cursor is not None and cursor is not tree.root
                     else None
                 )
+                if visibility_changed:
+                    self.call_after_refresh(
+                        self._reconcile_workspace_context_action_geometry
+                    )
             try:
                 bounded = self.query_one(
                     "#console-bounded-section-workspace", ConsoleBoundedSection
@@ -1756,6 +1760,7 @@ class ConsoleLeftRail(Vertical):
         if not button_id.startswith(RAIL_SECTION_TOGGLE_PREFIX):
             return
         event.stop()
+        self.screen.set_focus(event.button)
         section_id = button_id.removeprefix(RAIL_SECTION_TOGGLE_PREFIX)
         try:
             header = self.query_one(
@@ -1767,6 +1772,20 @@ class ConsoleLeftRail(Vertical):
         else:
             opened = not header.open
         self.post_message(self.SectionToggled(section_id=section_id, opened=opened))
+        self.call_after_refresh(self._restore_section_toggle_focus, button_id)
+
+    def _restore_section_toggle_focus(self, button_id: str) -> None:
+        """Retain pointer focus after the toggle's layout reconciliation."""
+
+        focused = self.app.focused
+        if focused is not self and getattr(focused, "id", None) != button_id:
+            return
+        try:
+            button = self.query_one(f"#{button_id}", Button)
+        except (NoMatches, QueryError):
+            return
+        if self._is_enabled_focus_target(button):
+            self.screen.set_focus(button)
 
     def on_workspace_tree_context_changed(
         self, event: WorkspaceTreeContextChanged
@@ -1780,7 +1799,20 @@ class ConsoleLeftRail(Vertical):
             )
         except (NoMatches, QueryError):
             return
-        tray.sync_workspace_tree_context(event.data)
+        if tray.sync_workspace_tree_context(event.data):
+            self.call_after_refresh(self._reconcile_workspace_context_action_geometry)
+
+    def _reconcile_workspace_context_action_geometry(self) -> None:
+        """Reallocate after the contextual action row's tray fit has settled."""
+
+        try:
+            bounded = self.query_one(
+                "#console-bounded-section-workspace", ConsoleBoundedSection
+            )
+        except (NoMatches, QueryError):
+            return
+        bounded.request_reconcile()
+        self.request_allocation_reconcile()
 
     def on_workspace_tree_focus_recovery_requested(
         self, event: WorkspaceTreeFocusRecoveryRequested

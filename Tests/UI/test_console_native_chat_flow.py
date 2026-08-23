@@ -89,6 +89,7 @@ from tldw_chatbook.Widgets.Console import (
     ConsoleTranscript,
     ConsoleWorkspaceContextTray,
     ConsoleWorkspaceTree,
+    WorkspaceTreeWorkspaceSelected,
 )
 from tldw_chatbook.Widgets.Prompts.prompt_block_editor import PromptBlockEditor
 from tldw_chatbook.Widgets.Console.console_workspace_details import (
@@ -3396,6 +3397,48 @@ async def test_console_send_after_workspace_switch_persists_to_selected_workspac
         assert [row.title for row in workspace_b_conversations] == [
             active_session.title
         ]
+
+
+@pytest.mark.asyncio
+async def test_tree_workspace_selection_switches_session_and_visible_transcript():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    service = app.workspace_registry_service
+    service.create_workspace(workspace_id="ws-a", name="Workspace A")
+    service.create_workspace(workspace_id="ws-b", name="Workspace B")
+    service.set_active_workspace("ws-a")
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session(title="Workspace A Chat", workspace_id="ws-a")
+        store.append_message(
+            first.id,
+            role=ConsoleMessageRole.USER,
+            content="Workspace A transcript",
+        )
+        second = store.create_session(title="Workspace B Chat", workspace_id="ws-b")
+        store.append_message(
+            second.id,
+            role=ConsoleMessageRole.USER,
+            content="Workspace B transcript",
+        )
+        store.switch_session(first.id)
+        await console._sync_native_console_chat_ui()
+        await _wait_for_text(console, pilot, "Workspace A transcript")
+
+        tree = console.query_one("#console-workspace-tree", ConsoleWorkspaceTree)
+        tree.post_message(WorkspaceTreeWorkspaceSelected("ws-b"))
+        await _wait_for_active_session(store, pilot, second.id)
+        await _wait_for_text(console, pilot, "Workspace B transcript")
+
+        assert service.get_active_workspace().workspace_id == "ws-b"
+        assert store.workspace_context.active_workspace_id == "ws-b"
+        assert store.active_session_id == second.id
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        assert "Workspace A transcript" not in _visible_text(transcript)
 
 
 @pytest.mark.asyncio
@@ -7031,12 +7074,13 @@ async def test_console_browser_selecting_non_default_workspace_persisted_row_swi
         role="workspace-thread",
         title="Workspace B saved",
     )
-    app.chat_conversation_scope_service = StaticConversationTreeService(
+    app.chat_conversation_scope_service = SearchableConversationService(
         {
             "persisted-ws-b": {
                 "conversation": {
                     "id": "persisted-ws-b",
                     "title": "Workspace B saved",
+                    "workspace_id": "ws-b",
                 },
                 "root_threads": [
                     {

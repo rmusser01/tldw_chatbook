@@ -72,7 +72,7 @@ def build_workspace_tree_state(
     }
     seen_conversation_ids: set[str] = set()
     for row in rows:
-        conversation_id = str(row.conversation_id or "").strip()
+        conversation_id = str(row.conversation_id or row.row_key or "").strip()
         if not conversation_id or conversation_id in seen_conversation_ids:
             continue
         seen_conversation_ids.add(conversation_id)
@@ -101,7 +101,7 @@ def build_workspace_tree_state(
                 label=label,
                 conversations=tuple(
                     WorkspaceTreeConversation(
-                        conversation_id=str(row.conversation_id),
+                        conversation_id=str(row.conversation_id or row.row_key),
                         title=str(row.title or ""),
                         starred=bool(row.starred),
                         updated_sort=str(row.updated_sort or ""),

@@ -1241,12 +1241,12 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             )
             scope_button.tooltip = "RAG Scope: narrow retrieval to this workspace"
             yield self._record_composed_node(scope_button)
-        with self._record_composed_node(
-            Horizontal(
-                id="console-workspace-context-action-row",
-                classes="console-workspace-context-action-row",
-            )
-        ):
+        context_action_row = Horizontal(
+            id="console-workspace-context-action-row",
+            classes="console-workspace-context-action-row",
+        )
+        context_action_row.display = False
+        with self._record_composed_node(context_action_row):
             star_button = Button(
                 "Star",
                 id="console-workspace-tree-star",
@@ -1302,13 +1302,16 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 )
             )
 
-    def sync_workspace_tree_context(self, data: Any | None) -> None:
-        """Update the compact pointer action for the native Tree cursor."""
+    def sync_workspace_tree_context(self, data: Any | None) -> bool:
+        """Update the compact Tree action and report a visibility change."""
 
         try:
             button = self.query_one("#console-workspace-tree-star", Button)
+            action_row = self.query_one(
+                "#console-workspace-context-action-row", Horizontal
+            )
         except NoMatches:
-            return
+            return False
         is_conversation = bool(
             data is not None
             and getattr(data, "kind", None) == "conversation"
@@ -1317,6 +1320,16 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             and self.state.workspace_marks_available
         )
         starred = bool(getattr(data, "starred", False)) if is_conversation else False
+        visibility_changed = action_row.display != is_conversation
+        action_row.display = is_conversation
+        if visibility_changed:
+            current_height = int(self.region.height)
+            if current_height > 0:
+                self.styles.height = max(
+                    1,
+                    current_height + (1 if is_conversation else -1),
+                )
+            self.refresh(layout=True)
         button.label = "Unstar" if starred else "Star"
         button.disabled = not is_conversation
         button.workspace_id = (
@@ -1326,6 +1339,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             getattr(data, "conversation_id", None) if is_conversation else None
         )
         button.starred = starred
+        return visibility_changed
 
     def _compose_session_context(
         self,
