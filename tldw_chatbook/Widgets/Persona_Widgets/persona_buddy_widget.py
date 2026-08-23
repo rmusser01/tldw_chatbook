@@ -583,8 +583,8 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         collapse = self.query_one("#persona-buddy-collapse", Button)
         close = self.query_one("#persona-buddy-close", Button)
         collapse_action = "Open" if collapsed else "Fold"
-        collapse.tooltip = collapse_action
-        close.tooltip = "Close"
+        if collapse.tooltip != collapse_action:
+            collapse.tooltip = collapse_action
         collapse.label = (
             collapse_action
             if self.app.focused is collapse

@@ -440,6 +440,26 @@ async def test_icon_controls_have_exact_labels_tooltips_and_hit_regions():
 
 
 @pytest.mark.asyncio
+async def test_unchanged_refresh_does_not_reset_native_tooltips(monkeypatch):
+    controller = _FakeController()
+    app = _BuddyApp(controller)
+    async with app.run_test(size=(80, 24)):
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        await _wait_until(lambda: "BUDDY-A" in _compositor_text(app.screen))
+        tooltip_updates = []
+        monkeypatch.setattr(
+            app.screen,
+            "_update_tooltip",
+            lambda widget: tooltip_updates.append(widget),
+        )
+
+        buddy.refresh_from_controller()
+        buddy.refresh_from_controller()
+
+        assert tooltip_updates == []
+
+
+@pytest.mark.asyncio
 async def test_keyboard_focus_exposes_only_exact_action_label():
     controller = _FakeController()
     app = _BuddyApp(controller)
@@ -460,6 +480,13 @@ async def test_keyboard_focus_exposes_only_exact_action_label():
         focused = _compositor_text(app.screen)
         assert "Close" in focused
         assert "Fold" not in focused
+
+        app.screen.query_one("#focus-probe", Input).focus(scroll_visible=False)
+        await pilot.pause()
+        assert (str(collapse.label), str(close.label)) == ("▾", "×")
+        unfocused = _compositor_text(app.screen)
+        assert "Fold" not in unfocused
+        assert "Close" not in unfocused
 
         focus_rule = PersonaBuddyWidget.BUNDLED_CSS.split(
             "PersonaBuddyWidget .persona-buddy-control:focus {", 1
@@ -721,10 +748,12 @@ async def test_icon_buttons_click_without_starting_drag_and_reopen_collapsed():
         await _wait_until(lambda: buddy.region.width == 28)
         await _wait_until(lambda: "BUDDY-A" in _compositor_text(app.screen))
         await pilot.pause()
+        collapse = buddy.query_one("#persona-buddy-collapse", Button)
+        assert collapse.tooltip == "Fold"
         await pilot.click("#persona-buddy-collapse")
         await _wait_until(lambda: controller.preferences.collapsed)
         assert app.mouse_captured is None
-        reopen = buddy.query_one("#persona-buddy-collapse", Button)
+        reopen = collapse
         assert str(reopen.label) == "Open"
         assert reopen.tooltip == "Open"
         assert reopen.display
@@ -741,6 +770,8 @@ async def test_icon_buttons_click_without_starting_drag_and_reopen_collapsed():
         assert target is reopen
         await pilot.click("#persona-buddy-collapse")
         await _wait_until(lambda: not controller.preferences.collapsed)
+        await _wait_until(lambda: collapse.tooltip == "Fold")
+        assert str(collapse.label) == "Fold"
         await pilot.click("#persona-buddy-close")
         await _wait_until(lambda: not controller.preferences.open)
         assert app.mouse_captured is None
