@@ -2390,6 +2390,8 @@ class NotesSyncExecutor:
         if operation.state is not NotesSyncOperationState.NEEDS_ATTENTION:
             raise RuntimeError("operation_needs_attention")
         recovery = self._store.load_operation_recovery(operation_id)
+        if operation.kind in _RESOLUTION_JOURNAL_ACTIONS:
+            self._require_recovery_envelope(operation, recovery)
         metadata = self._recovery_metadata(recovery)
         if metadata.get("cleanup_pending") is not True:
             raise RuntimeError("recovery_authority_changed")
@@ -2971,6 +2973,12 @@ class NotesSyncExecutor:
                 self._stage(NotesSyncOperationState.RECOVERY_ADMITTED)
             else:
                 admitted = True
+                if (
+                    operation.state is NotesSyncOperationState.COMPLETED
+                    and request.journal_kind is not None
+                ):
+                    self._validate_resolution_operation_identity(request, operation)
+                    return self._result(request.operation_id, operation.state)
                 self._validate_operation(request, operation)
                 if operation.state is NotesSyncOperationState.COMPLETED:
                     return self._result(
@@ -3083,9 +3091,10 @@ class NotesSyncExecutor:
                 self._stage(NotesSyncOperationState.RECOVERY_ADMITTED)
             else:
                 admitted = True
-                self._validate_operation(request, operation)
                 if operation.state is NotesSyncOperationState.COMPLETED:
+                    self._validate_resolution_operation_identity(request, operation)
                     return self._result(request.operation_id, operation.state)
+                self._validate_operation(request, operation)
                 self._validate_keep_both_recovery(request)
                 if operation.state is NotesSyncOperationState.NEEDS_ATTENTION:
                     if not allow_attention:
@@ -3832,20 +3841,43 @@ class NotesSyncExecutor:
         request: NotesSyncExecutionRequest,
         operation: NotesSyncOperationRecord,
     ) -> None:
-        expected_file_digest = operation.expected_file_digest
         if request.journal_kind is not None:
+            self._validate_resolution_operation_identity(request, operation)
             recovery = self._store.load_operation_recovery(operation.operation_id)
             self._require_recovery_envelope(operation, recovery)
-            expected_file_digest = self._reviewed_file_representation_digest(
+            if self._reviewed_file_representation_digest(
                 self._recovery_metadata(recovery)
-            )
+            ) != _file_representation_digest(request.file):
+                raise RuntimeError("stale_operation_token")
+            return
         if (
             operation.root_id != request.root_id
             or operation.binding_id != request.binding_id
-            or operation.kind != (request.journal_kind or request.action_kind.value)
+            or operation.kind != request.action_kind.value
             or operation.observation_token != request.observation_token
             or operation.expected_note_version != request.note.version
-            or expected_file_digest != _file_representation_digest(request.file)
+            or operation.expected_file_digest
+            != _file_representation_digest(request.file)
+        ):
+            raise RuntimeError("stale_operation_token")
+
+    @staticmethod
+    def _validate_resolution_operation_identity(
+        request: NotesSyncExecutionRequest,
+        operation: NotesSyncOperationRecord,
+    ) -> None:
+        note = request.note
+        if type(note) is not NotesSyncNoteSnapshot:
+            raise RuntimeError("stale_operation_token")
+        if (
+            request.journal_kind not in _RESOLUTION_JOURNAL_ACTIONS
+            or operation.root_id != request.root_id
+            or operation.binding_id != request.binding_id
+            or operation.kind != request.journal_kind
+            or operation.observation_token != request.observation_token
+            or operation.expected_note_version
+            != cast(NotesSyncNoteSnapshot, note).version
+            or operation.expected_file_digest is None
         ):
             raise RuntimeError("stale_operation_token")
 

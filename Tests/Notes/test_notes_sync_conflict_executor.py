@@ -18,9 +18,12 @@ from Tests.Notes.test_notes_sync_executor import (
     FakeFilesystem,
     FakeNoteAuthority,
     InjectedCrash,
+    PartialFilesystem,
     _execution_store,
     _file,
     _note,
+    _operation,
+    _recovery,
     _request,
 )
 from tldw_chatbook.Notes.notes_device_state_store import (
@@ -2986,6 +2989,197 @@ async def test_source_projection_labels_require_valid_recovery_envelope(
         == request.operation_id[:8]
     )
     assert "Evil!" not in repr(projection)
+
+
+@pytest.mark.asyncio
+async def test_resolution_cleanup_rejects_corrupt_anchored_authority_before_dispatch(
+    tmp_path: Path,
+) -> None:
+    store, database = _execution_store(tmp_path)
+    note = _note(content="after", version=4)
+    notes = FakeNoteAuthority(note)
+    files = PartialFilesystem(_file(content="before"))
+    request = replace(
+        _request(
+            action=NotesSyncActionKind.UPDATE_FILE, note=note, file=files.snapshot
+        ),
+        journal_kind="resolve_keep_note",
+    )
+    executor = NotesSyncExecutor(store, notes, files, recovery_capacity_bytes=65_536)
+    first = await executor.execute(request)
+    assert first.state is NotesSyncOperationState.NEEDS_ATTENTION
+    assert first.reason_code == "replacement_cleanup_pending"
+    recovery = store.load_operation_recovery(request.operation_id)
+    metadata = json.loads(recovery.metadata)
+    metadata["cleanup_relative_path"] = ".notes-sync-private-recoverx"
+    metadata["cleanup_identity"] = [7, 12, 1]
+    replacement = json.dumps(metadata, separators=(",", ":"), sort_keys=True).encode()
+    assert len(replacement) == len(recovery.metadata)
+    with store.transaction(immediate=True) as connection:
+        connection.execute(
+            "UPDATE notes_sync_recovery SET metadata = ? WHERE operation_id = ?",
+            (replacement, request.operation_id),
+        )
+
+    reopened = NotesSyncExecutor(
+        NotesDeviceStateStore(database),
+        notes,
+        files,
+        recovery_capacity_bytes=65_536,
+    )
+    with pytest.raises(RuntimeError, match="^recovery_authority_changed$") as raised:
+        await reopened.resolve_filesystem_cleanup(request.operation_id)
+
+    assert files.cleanup_calls == []
+    operation = store.get_operation(request.operation_id)
+    assert operation.state is NotesSyncOperationState.NEEDS_ATTENTION
+    assert operation.reason_code == "replacement_cleanup_pending"
+    assert ".notes-sync-private-recoverx" not in str(raised.value)
+
+
+@pytest.mark.asyncio
+async def test_valid_anchored_resolution_cleanup_survives_reopen(
+    tmp_path: Path,
+) -> None:
+    store, database = _execution_store(tmp_path)
+    note = _note(content="after", version=4)
+    notes = FakeNoteAuthority(note)
+    files = PartialFilesystem(_file(content="before"))
+    request = replace(
+        _request(
+            action=NotesSyncActionKind.UPDATE_FILE, note=note, file=files.snapshot
+        ),
+        journal_kind="resolve_keep_note",
+    )
+    assert (
+        await NotesSyncExecutor(
+            store, notes, files, recovery_capacity_bytes=65_536
+        ).execute(request)
+    ).reason_code == "replacement_cleanup_pending"
+
+    reopened_store = NotesDeviceStateStore(database)
+    result = await NotesSyncExecutor(
+        reopened_store,
+        notes,
+        files,
+        recovery_capacity_bytes=65_536,
+    ).resolve_filesystem_cleanup(request.operation_id)
+    metadata = json.loads(
+        reopened_store.load_operation_recovery(request.operation_id).metadata
+    )
+
+    assert result.state is NotesSyncOperationState.NEEDS_ATTENTION
+    assert len(files.cleanup_calls) == 1
+    assert metadata["cleanup_pending"] is False
+    assert "cleanup_relative_path" not in metadata
+
+
+@pytest.mark.parametrize("recovery_state", ("deleted", "expired"))
+@pytest.mark.parametrize(
+    ("journal_kind", "action"),
+    (
+        ("resolve_keep_file", NotesSyncActionKind.UPDATE_NOTE),
+        ("resolve_keep_note", NotesSyncActionKind.UPDATE_FILE),
+        ("resolve_keep_both", NotesSyncActionKind.UPDATE_NOTE),
+    ),
+)
+@pytest.mark.asyncio
+async def test_completed_resolution_redelivery_needs_no_ephemeral_recovery(
+    tmp_path: Path,
+    recovery_state: str,
+    journal_kind: str,
+    action: NotesSyncActionKind,
+) -> None:
+    store, _database = _execution_store(tmp_path)
+    note = _note(content="note side", version=4)
+    files = _PathPreservingFilesystem(_file(content="file side"))
+    if journal_kind == "resolve_keep_both":
+        notes: FakeNoteAuthority = _KeepBothAuthority(note)
+        request = _keep_both_request(note, files.snapshot)
+    else:
+        notes = FakeNoteAuthority(note)
+        request = replace(
+            _request(action=action, note=note, file=files.snapshot),
+            journal_kind=journal_kind,
+        )
+    executor = NotesSyncExecutor(store, notes, files, recovery_capacity_bytes=65_536)
+    assert (await executor.execute(request)).state is NotesSyncOperationState.COMPLETED
+
+    if recovery_state == "deleted":
+        with store.transaction(immediate=True) as connection:
+            connection.execute(
+                "DELETE FROM notes_sync_recovery WHERE operation_id = ?",
+                (request.operation_id,),
+            )
+    else:
+        with store.transaction(immediate=True) as connection:
+            connection.execute(
+                "UPDATE notes_sync_recovery SET expires_at = 1 WHERE operation_id = ?",
+                (request.operation_id,),
+            )
+        assert store.admit_operation_recovery(
+            _operation("operation-2"),
+            _recovery("operation-2", payload=b"x", metadata=b"y"),
+            capacity_bytes=65_536,
+        ).admitted
+        assert store.find_operation_recovery(request.operation_id) is None
+
+    duplicate = await executor.execute(request)
+
+    assert duplicate.state is NotesSyncOperationState.COMPLETED
+    assert duplicate.reason_code is None
+    assert store.get_operation(request.operation_id).state is (
+        NotesSyncOperationState.COMPLETED
+    )
+
+
+@pytest.mark.parametrize(
+    "mismatch", ("root", "binding", "kind", "observation", "note_version")
+)
+@pytest.mark.asyncio
+async def test_completed_resolution_without_recovery_rejects_wrong_identity(
+    tmp_path: Path,
+    mismatch: str,
+) -> None:
+    store, _database = _execution_store(tmp_path)
+    note = _note(content="note side", version=4)
+    notes = FakeNoteAuthority(note)
+    files = _PathPreservingFilesystem(_file(content="file side"))
+    request = replace(
+        _request(
+            action=NotesSyncActionKind.UPDATE_NOTE, note=note, file=files.snapshot
+        ),
+        journal_kind="resolve_keep_file",
+    )
+    executor = NotesSyncExecutor(store, notes, files, recovery_capacity_bytes=65_536)
+    assert (await executor.execute(request)).state is NotesSyncOperationState.COMPLETED
+    with store.transaction(immediate=True) as connection:
+        connection.execute(
+            "DELETE FROM notes_sync_recovery WHERE operation_id = ?",
+            (request.operation_id,),
+        )
+    if mismatch == "root":
+        duplicate = replace(request, root_id="root-other")
+    elif mismatch == "binding":
+        duplicate = replace(request, binding_id="binding-other")
+    elif mismatch == "kind":
+        duplicate = replace(
+            request,
+            action_kind=NotesSyncActionKind.UPDATE_FILE,
+            journal_kind="resolve_keep_note",
+        )
+    elif mismatch == "observation":
+        duplicate = replace(request, observation_token="observation-other")
+    else:
+        duplicate = replace(request, note=replace(note, version=note.version + 1))
+
+    rejected = await executor.execute(duplicate)
+
+    assert rejected.state is NotesSyncOperationState.NEEDS_ATTENTION
+    assert rejected.reason_code == "stale_operation_token"
+    assert store.get_operation(request.operation_id).state is (
+        NotesSyncOperationState.COMPLETED
+    )
 
 
 @pytest.mark.parametrize(
