@@ -293,3 +293,59 @@ TASK-19900.3 remains In Progress with all 22 criteria unchecked. Task 15 still
 owns restart recovery, queue reconciliation, actions/UI, terminal settlement,
 checkpoint deletion, and Discard; the transitional live checkpoint remains
 honestly `dispatch_started`.
+
+## Review fix round 4
+
+The exception owner previously removed its tokenized commit reservation under
+the preparation RLock, released that lock, and only then used the public CAS to
+move COMMITTING to PAUSED(PERSISTENCE). A Retry contender could reserve and
+commit in that unlocked interval; the old owner then paused the contender's now
+durable preparation, leaving one checkpoint beside PAUSED and wedging postcommit
+publication.
+
+Round 4 adds one private lock-only cleanup composite. It validates the exact
+reservation object, live session, by-ID and by-session preparation identity,
+COMMITTING state, attempt/origin/queue owner, and staged conversation/USER/
+assistant IDs. Only then does it derive PAUSED(PERSISTENCE), remove that exact
+reservation, and replace both preparation indexes under the same RLock. It runs
+no callbacks or database work. A foreign refusal, superseded token, or owner
+already removed by legitimate session close changes nothing. The store no longer
+implicitly resumes PAUSED work: the existing controller continuation must win the
+explicit PAUSED(PERSISTENCE) to COMMITTING transition before installing a new
+reservation.
+
+The deterministic real-v45 RED produced 2 failed/1 control passed. The first
+case raised from acceptance canonicalization; the second injected a deferred
+foreign-key violation into the actual outer SQLite COMMIT. In both cases the old
+owner was held exactly after reservation removal and before its public pause CAS,
+and the contender committed a checkpoint. The final three-case round-4 file
+proves direct retry refusal while PAUSED, explicit Retry CAS followed by one
+commit, cached commit reuse, COMMITTING to ACCEPTED postcommit publication, and
+legitimate close without state resurrection.
+
+Fresh restored verification:
+
+- Task 14: 73 passed;
+- exact Task 13: 628 passed;
+- queue/runtime/UI companions: 100 passed;
+- DB/migration/generation-state/persistence companions: 126 passed.
+
+Every completed gate emitted only the inherited Requests dependency warning; no
+full repository sweep ran. The required mutant moved pause publication back
+outside the lock. Its named canonicalizer race failed with
+`checkpoint_count=1, preparation_state=paused`, then the composite was restored
+and the round-4 file passed 3.
+
+Scoped Ruff passes for the changed Store and four affected test files. All four
+test files are Ruff-format clean. The Store retains its documented pre-existing
+whole-file formatting drift; `ruff format --check --diff` emitted no hunk across
+the changed atomic-cleanup range. The new reservation-cleanup state contains only
+existing durable identifiers and enums, performs no content/error logging, and
+adds no checkpoint field. Privacy/source inspection and `git diff --check` pass.
+
+ADR required: no. ADR path:
+`backlog/decisions/079-console-library-conversation-authority.md`. This correction
+is wholly inside ADR-079's accepted in-process durable owner. TASK-19900.3 remains
+In Progress with all 22 criteria unchecked; Task 15 still owns restart hydration,
+recovery actions/UI, queue restart reconciliation, terminal settlement/checkpoint
+deletion, and Discard.

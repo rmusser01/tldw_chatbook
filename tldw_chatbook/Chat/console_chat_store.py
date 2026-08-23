@@ -2668,6 +2668,61 @@ class ConsoleChatStore:
             assistant_access=snapshot.assistant_access,
         )
 
+    def _pause_failed_durable_commit_locked(
+        self,
+        *,
+        reservation: _ConsoleDurableCommitReservation,
+    ) -> bool:
+        """Atomically release and pause the exact failed commit owner.
+
+        The caller holds ``_preparation_lock``.  This method performs no
+        callback or persistence work; it only validates and replaces the exact
+        in-memory owner guarded by that lock.
+        """
+
+        preparation_id = reservation.preparation_id
+        if self._durable_commit_in_flight.get(preparation_id) is not reservation:
+            return False
+        preparation = self._preparations_by_id.get(preparation_id)
+        if (
+            preparation is None
+            or self._preparations_by_session.get(reservation.session_id)
+            is not preparation
+            or reservation.session_id not in self._sessions
+            or preparation.session_id != reservation.session_id
+            or preparation.attempt_id != reservation.attempt_id
+            or preparation.origin != reservation.origin
+            or preparation.queue_entry_id != reservation.queue_entry_id
+            or preparation.state is not ConsoleTurnPreparationState.COMMITTING
+        ):
+            return False
+        identity = self._durable_identity_by_preparation.get(preparation_id)
+        owners = self._durable_owner_ids_by_preparation.get(preparation_id)
+        if (
+            identity is None
+            or identity.conversation_id != reservation.conversation_id
+            or owners is None
+            or owners.user_message_id != reservation.user_message_id
+            or owners.assistant_message_id != reservation.assistant_message_id
+        ):
+            return False
+        paused = apply_preparation_transition(
+            preparation,
+            ConsolePreparationTransition(
+                preparation_id=preparation_id,
+                expected_state=ConsoleTurnPreparationState.COMMITTING,
+                new_state=ConsoleTurnPreparationState.PAUSED,
+                pause_kind=ConsolePreparationPauseKind.PERSISTENCE,
+                new_attempt_id=None,
+            ),
+        )
+        if paused is preparation:
+            return False
+        self._durable_commit_in_flight.pop(preparation_id)
+        self._preparations_by_session[reservation.session_id] = paused
+        self._preparations_by_id[preparation_id] = paused
+        return True
+
     def commit_durable_turn(
         self, acceptance: ConsoleDurableTurnAcceptance
     ) -> ConsoleDurableTurnCommit:
@@ -2739,20 +2794,6 @@ class ConsoleChatStore:
                     or identity.conversation_id != acceptance.conversation_id
                 ):
                     raise RuntimeError("Durable acceptance identity changed.")
-                if preparation.state is ConsoleTurnPreparationState.PAUSED:
-                    resumed = self.compare_and_set_preparation(
-                        session.id,
-                        ConsolePreparationTransition(
-                            preparation_id=preparation.preparation_id,
-                            expected_state=ConsoleTurnPreparationState.PAUSED,
-                            new_state=ConsoleTurnPreparationState.COMMITTING,
-                            pause_kind=None,
-                            new_attempt_id=None,
-                        ),
-                    )
-                    if resumed is None:
-                        raise RuntimeError("Durable preparation changed before retry.")
-                    preparation = resumed
                 if preparation.state is not ConsoleTurnPreparationState.COMMITTING:
                     raise RuntimeError("Durable preparation is not committing.")
                 scope_type, workspace_id = self._persistence_scope(session)
@@ -2908,24 +2949,11 @@ class ConsoleChatStore:
             if reservation is None:
                 raise
             with self._preparation_lock:
-                owns_reservation = (
-                    self._durable_commit_in_flight.get(acceptance.preparation_id)
-                    is reservation
+                owner_paused = self._pause_failed_durable_commit_locked(
+                    reservation=reservation,
                 )
-                if owns_reservation:
-                    self._durable_commit_in_flight.pop(acceptance.preparation_id, None)
-            if not owns_reservation:
+            if not owner_paused:
                 raise
-            self.compare_and_set_preparation(
-                session.id,
-                ConsolePreparationTransition(
-                    preparation_id=preparation.preparation_id,
-                    expected_state=ConsoleTurnPreparationState.COMMITTING,
-                    new_state=ConsoleTurnPreparationState.PAUSED,
-                    pause_kind=ConsolePreparationPauseKind.PERSISTENCE,
-                    new_attempt_id=None,
-                ),
-            )
             logger.bind(
                 session_id=session.id,
                 preparation_id=preparation.preparation_id,

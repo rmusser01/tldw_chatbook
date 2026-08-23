@@ -34,6 +34,7 @@ from tldw_chatbook.Chat.console_turn_context import (
 )
 from tldw_chatbook.Chat.console_turn_preparation import (
     ConsolePreparationPauseKind,
+    ConsolePreparationTransition,
     ConsoleTurnPreparation,
     ConsoleTurnPreparationState,
     preparation_actions,
@@ -294,6 +295,26 @@ def _memory_snapshot(
     )
 
 
+def _resume_persistence_retry(
+    store: ConsoleChatStore,
+    preparation: ConsoleTurnPreparation,
+) -> ConsoleTurnPreparation:
+    """Model the explicit controller Retry CAS before durable reservation."""
+
+    committing = store.compare_and_set_preparation(
+        preparation.session_id,
+        ConsolePreparationTransition(
+            preparation_id=preparation.preparation_id,
+            expected_state=ConsoleTurnPreparationState.PAUSED,
+            new_state=ConsoleTurnPreparationState.COMMITTING,
+            pause_kind=None,
+            new_attempt_id=None,
+        ),
+    )
+    assert committing is not None
+    return committing
+
+
 def _install_failure(
     db: CharactersRAGDB,
     service: ChatPersistenceService,
@@ -392,6 +413,7 @@ def test_every_new_conversation_write_or_commit_failure_rolls_back_exactly_and_r
     assert preparation_actions(paused) == ("retry", "cancel")
     cleanup()
 
+    _resume_persistence_retry(store, paused)
     committed = store.commit_durable_turn(acceptance)
 
     assert committed.identity.conversation_id == acceptance.conversation_id

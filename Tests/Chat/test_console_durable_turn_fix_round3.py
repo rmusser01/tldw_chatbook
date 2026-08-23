@@ -12,6 +12,7 @@ import pytest
 from Tests.Chat.test_console_durable_turn_acceptance import (
     _database_snapshot,
     _ready_store,
+    _resume_persistence_retry,
 )
 from tldw_chatbook.Chat.console_turn_preparation import (
     ConsolePreparationPauseKind,
@@ -130,6 +131,7 @@ def test_fingerprint_canonicalization_owner_clears_reservation_for_clean_retry(
     assert paused.pause_kind is ConsolePreparationPauseKind.PERSISTENCE
     assert preparation_actions(paused) == ("retry", "cancel")
 
+    _resume_persistence_retry(store, paused)
     committed = store.commit_durable_turn(acceptance)
 
     assert committed.user_message_id == owners.user_message_id

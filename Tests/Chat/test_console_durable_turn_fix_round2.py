@@ -18,6 +18,7 @@ from Tests.Chat.test_console_durable_turn_acceptance import (
     _database_snapshot,
     _install_failure,
     _ready_store,
+    _resume_persistence_retry,
 )
 from Tests.Chat.test_console_first_send_atomicity import _controller
 from tldw_chatbook.Chat.console_chat_models import (
@@ -205,6 +206,7 @@ def test_fingerprint_failure_returns_committing_owner_to_persistence_pause(
         and paused.pause_kind is ConsolePreparationPauseKind.PERSISTENCE
     )
 
+    _resume_persistence_retry(store, paused)
     with pytest.raises(RuntimeError, match="fingerprint"):
         store.commit_durable_turn(replace(acceptance, user_content="forged body"))
 
