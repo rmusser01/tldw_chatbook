@@ -225,7 +225,13 @@ Key sections:
 
 ## Project-Specific Gotchas
 
-1. **Schema migrations** - Always increment version, add to migrations/
+1. **Schema migrations** - Always increment version, add to migrations/. Read
+   `tldw_chatbook/DB/migrations/README.md` first: a `CREATE TABLE` also
+   requires a `VALID_TABLES['chachanotes']` entry in `DB/sql_validation.py`
+   and a `CREATE INDEX` also requires an `EXPECTED_CHACHANOTES_INDEXES` entry,
+   both in the same commit. `./scripts/preflight.sh` checks the first and
+   prints the lines to paste (TASK-20971: that allowlist went stale, was
+   repaired, and went stale again 14.5 hours later).
 2. **Optional deps** - Check with `optional_deps.py` before importing
 3. **Thread safety** - Use transaction() context manager
 4. **Tab constants** - Must match IDs in compose()

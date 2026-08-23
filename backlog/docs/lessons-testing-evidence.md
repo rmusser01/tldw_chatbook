@@ -6808,3 +6808,60 @@ per-key work was ~7 widget refreshes — the static read had been right all alon
 
 Full disclosure section: `Docs/Design/2026-08-22-holistic-perf-review.md`
 ("Measurement-artifact disclosure").
+
+## Which hand-maintained literal an author updates is decided by DISCOVERY PATH, not by importance (TASK-20971, 2026-08-22)
+
+**What happened.** `VALID_TABLES['chachanotes']` in `DB/sql_validation.py` is a
+hand-maintained allowlist; `validate_table_name()` rejects anything not in it,
+so a forgotten table makes every generic CRUD helper raise for that table.
+TASK-864 filed it when 9 of ~47 tables were listed. TASK-19568 repaired it
+after it went stale again — merged `aaec11812`, 2026-08-22 **00:16** -0700.
+TASK-19057 added two Actor Pack tables in a v44→v45 migration and broke it
+again — merged `2fe6ca20f`, **14:51** the same day. **Fourteen and a half
+hours** between "repaired" and "red again."
+
+**The instructive part is what that same author *did* update.** They correctly
+added `idx_actor_pack_persona_intents_state` to
+`Tests/ChaChaNotesDB/test_index_census.py` — an equally hand-maintained
+literal, guarding the same migration, with the same "nothing connects the
+migration to the literal" weakness. And they correctly bumped three
+schema-version pins under `Tests/DB/`. Measured on that branch
+(`git diff b593f853d 09b768239`), both were reachable by something the author
+actually did:
+
+* the index census sits in `Tests/ChaChaNotesDB/`, the directory where they had
+  just written `test_actor_pack_migration.py` — running that directory turned
+  it red; and
+* the version pins contain the schema version number, which a grep for the
+  constant finds.
+
+`VALID_TABLES` is reachable by neither. It names no schema version, and nothing
+else in `Tests/DB/test_sql_validation.py` mentions the feature. **Its guard had
+been surviving by geography, and stopped the first time a migration landed from
+a directory that did not happen to sit next to it.** Nothing about the
+allowlist's importance, its comment block, or the correctness of its pin
+mattered — the pin was right and it did report; it reported after the merge.
+
+**What to do.** When you add a hand-maintained literal as a guard, ask what
+*discovery path* connects the change to the literal, and assume the author will
+have only two: (a) they run the directory their new test lives in, and (b) they
+grep for a token their change forces them to touch. If the literal is in
+neither, the guard depends on memory and will decay on a schedule set by how
+often work lands from elsewhere. Give it a path: put the check where the author
+already runs (here, `scripts/preflight.sh`, which is stdlib-only and ~0.1 s for
+this check), and make its failure message print the exact lines to paste rather
+than only the names of what drifted.
+
+**Do not "fix" it by generating the literal.** TASK-19045's rule stands: a
+census that re-derives its expectation from the artifact it guards is the
+identity function on the defect class it exists to catch. The way out is a
+*different* artifact. Here the schema's own `CREATE TABLE` text —
+`DB/migrations/chachanotes_*.sql` plus the SQL string literals in
+`ChaChaNotes_DB.py` — is independent of `VALID_TABLES` and was already
+authoritative. Two details made that scan trustworthy: parse the `.py` sources
+through `ast` and read only string constants (a raw-text scan reports three
+phantom tables — `IF`, `column`, `as` — from prose in `#` comments that says
+"CREATE TABLE", and a guard that reports phantoms gets muted), and prove the
+new oracle against the old one rather than asserting it alone: the static scan
+and a live fully-migrated `CharactersRAGDB(":memory:")` agree exactly, 69
+substantive tables, symmetric difference empty.

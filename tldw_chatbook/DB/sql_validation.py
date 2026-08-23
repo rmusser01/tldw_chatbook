@@ -34,8 +34,29 @@ from loguru import logger
 # removes a table fails the test immediately instead of surfacing as a user
 # hitting an unconditional ``ValueError`` the next time they touch the new
 # table through a generic CRUD helper.
+#
+# IF YOU ARE ADDING A TABLE IN A MIGRATION, ADD IT HERE IN THE SAME COMMIT.
+# NOTE (TASK-20971): that runtime test is correct and it *has* been repaired
+# twice. It is not enough on its own, because it only reports after someone
+# runs it, and the full suite has produced no CI verdict since 2026-06-26.
+# Timeline: TASK-864 found 9 of ~47 tables listed. TASK-19568 repaired the
+# entry at 2026-08-22 00:16 -0700. TASK-19057 added two Actor Pack tables and
+# broke it again at 14:51 the same day -- fourteen and a half hours. The
+# authoring-time guard is therefore
+# ``scripts/check_schema_table_allowlist.py``, run by ``scripts/preflight.sh``
+# and by the required ``derived-artifacts`` CI job: it statically scans the
+# ``CREATE TABLE`` statements in ``DB/migrations/chachanotes_*.sql`` and in the
+# SQL string literals of ``ChaChaNotes_DB.py``, and prints the exact lines to
+# paste below. It needs no database, no install, and ~milliseconds. Its
+# expectation comes from the migration SQL, never from this set (TASK-19045's
+# rule: a census that re-derives its expectation from what it guards is the
+# identity function on the defect it exists to catch).
 VALID_TABLES = {
     "chachanotes": {
+        # TASK-19057 (v44->v45): the two Actor Pack tables. Their absence here
+        # is what TASK-20971 was filed for.
+        "actor_pack_persona_intents",
+        "actor_portable_identities",
         "character_cards",
         "character_expression_images",
         "chat_dictionaries",

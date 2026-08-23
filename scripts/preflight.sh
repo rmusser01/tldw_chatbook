@@ -1,11 +1,18 @@
 #!/usr/bin/env bash
 # Run every derived-artifact guard the CI job runs, locally, in one command.
 #
-# TASK-19572. These four checks are the only ones that have reliably caught
-# real drift, and until now the burn-down workflow was "remember four separate
+# TASK-19572. These checks are the only ones that have reliably caught real
+# drift, and until now the burn-down workflow was "remember several separate
 # commands" -- which is why the same diagnostic-inventory drift was
 # rediscovered by hand in four separate tasks. This is the same list, in the
 # same order, as .github/workflows/derived-artifacts.yml.
+#
+# TASK-20971 added the fifth: VALID_TABLES['chachanotes'] went stale, was
+# repaired, and went stale again fourteen and a half hours later when the next
+# migration added two tables. Its runtime pin (Tests/DB/test_sql_validation.py)
+# was correct both times and reported both times -- after the merge. This is
+# the same class of problem TASK-19572 built this file for: a guard that only
+# lives in a suite nobody runs locally is not an authoring-time guard.
 #
 # Deliberately NOT a git hook: at ~33 s a pre-commit hook is punitive at this
 # repo's commit rate, is bypassable with `git commit -n`, and does not survive
@@ -48,6 +55,8 @@ run_check "production diagnostic inventory" \
   "$PYTHON" scripts/check_persistent_diagnostic_inventory.py
 run_check "backlog task ids" \
   "$PYTHON" scripts/check_backlog_task_ids.py
+run_check "chachanotes table allowlist" \
+  "$PYTHON" scripts/check_schema_table_allowlist.py
 
 echo
 if [ ${#failed[@]} -eq 0 ]; then
