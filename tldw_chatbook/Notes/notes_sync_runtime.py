@@ -1126,8 +1126,8 @@ class NotesSyncRuntimeOwner:
                 pass
         return fallback or NotesSyncUndoProjection(
             False,
-            "Changed since resolution",
-            "completed",
+            "Unavailable",
+            "unavailable",
             None,
             None,
         )
@@ -1155,7 +1155,7 @@ class NotesSyncRuntimeOwner:
             )
         return NotesSyncUndoProjection(
             False,
-            "Changed since resolution",
+            "Unavailable",
             record.state.value,
             None,
             None,
@@ -2049,11 +2049,15 @@ class NotesSyncRuntimeOwner:
     ) -> bool:
         durable = _DURABLE_BLOCKED_STATUS.get(root.last_status_code or "")
         if operation.state is NotesSyncOperationState.NEEDS_ATTENTION:
-            status = "needs_attention"
-            action = (
-                "resolve_cleanup"
-                if operation.reason_code == "replacement_cleanup_pending"
-                else "review_changes"
+            if operation.kind == "undo_resolution" and not block_pending:
+                return False
+            status, action = (
+                "needs_attention",
+                (
+                    "resolve_cleanup"
+                    if operation.reason_code == "replacement_cleanup_pending"
+                    else "review_changes"
+                ),
             )
         elif durable is not None:
             status, action = durable
@@ -2124,7 +2128,11 @@ class NotesSyncRuntimeOwner:
                     self._blocked_roots.add(current_root.root_id)
                     await self._publish(
                         current_root.root_id,
-                        "failed",
+                        (
+                            "needs_attention"
+                            if operation.kind == "undo_resolution"
+                            else "failed"
+                        ),
                         "review_changes",
                         action_id=operation.operation_id,
                     )

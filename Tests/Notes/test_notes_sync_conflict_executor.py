@@ -2359,6 +2359,59 @@ async def test_undo_projection_is_fresh_at_expiry_drift_partial_and_completion(
 
 
 @pytest.mark.asyncio
+async def test_undo_projection_reports_read_failure_without_false_change_or_leak(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, _database = _execution_store(tmp_path)
+    note = _note(content="note side", version=4)
+    file = _file(content="file side")
+    notes = FakeNoteAuthority(note)
+    files = _PathPreservingFilesystem(file)
+    request = replace(
+        _request(action=NotesSyncActionKind.UPDATE_NOTE, note=note, file=file),
+        journal_kind="resolve_keep_file",
+    )
+    executor = NotesSyncExecutor(store, notes, files, recovery_capacity_bytes=65_536)
+    assert (await executor.execute(request)).state is NotesSyncOperationState.COMPLETED
+    expiry = store.load_operation_recovery(request.operation_id).expires_at
+    original_observe = notes.observe
+    secret = "binding-1 /absolute/private.md content-hash backend-secret"
+
+    async def fail_observe(_note_id: str) -> NotesSyncNoteSnapshot:
+        raise RuntimeError(secret)
+
+    monkeypatch.setattr(notes, "observe", fail_observe)
+    unavailable = await executor.inspect_resolution_undo(
+        "root-1", request.operation_id, now=expiry - 1
+    )
+    expired = await executor.inspect_resolution_undo(
+        "root-1", request.operation_id, now=expiry
+    )
+
+    assert unavailable.state == "unavailable"
+    assert unavailable.undo_available is False
+    assert unavailable.undo_reason == "Unavailable"
+    assert secret not in repr(unavailable)
+    assert unavailable.note_title is None
+    assert unavailable.relative_path is None
+    assert expired.undo_reason == "Undo expired"
+
+    monkeypatch.setattr(notes, "observe", original_observe)
+    assert (
+        await executor.undo_resolution("root-1", request.operation_id)
+    ).state is NotesSyncOperationState.COMPLETED
+    monkeypatch.setattr(notes, "observe", fail_observe)
+    undone = await executor.inspect_resolution_undo(
+        "root-1", request.operation_id, now=expiry
+    )
+
+    assert undone.state == "undone"
+    assert undone.undo_reason == "Undone"
+    assert secret not in repr(undone)
+
+
+@pytest.mark.asyncio
 async def test_linked_undo_restart_never_reads_deleted_source_recovery(
     tmp_path: Path,
 ) -> None:

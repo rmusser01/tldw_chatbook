@@ -5,15 +5,30 @@ from __future__ import annotations
 import asyncio
 import gc
 import hashlib
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from Tests.Notes.test_notes_sync_executor import (
+    FakeFilesystem,
+    FakeNoteAuthority,
+    _execution_store,
+    _file,
+    _note,
+    _request,
+)
+from Tests.Notes.test_notes_sync_runtime import (
+    _Coordinator as _StartupCoordinator,
+    _Watcher as _StartupWatcher,
+)
 from tldw_chatbook.Notes.notes_device_state_store import (
+    NotesDeviceStateStore,
     NotesSyncResolutionHistoryRecord,
     NotesSyncRootRecord,
+    NotesSyncStoreSetting,
 )
 from tldw_chatbook.Notes.notes_sync_conflicts import (
     ConflictApplyResult,
@@ -25,6 +40,7 @@ from tldw_chatbook.Notes.notes_sync_conflicts import (
     conflict_copy_note_id,
     conflict_resolution_operation_id,
     conflict_root_folder_id,
+    linked_undo_operation_id,
 )
 from tldw_chatbook.Notes.notes_sync_authority import NotesSyncNoteSnapshot
 from tldw_chatbook.Notes.notes_sync_filesystem import NotesSyncFileSnapshot
@@ -57,6 +73,7 @@ from tldw_chatbook.Notes.notes_sync_executor import (
     NotesSyncDirectionOverride,
     NotesSyncExecutionRequest,
     NotesSyncExecutionResult,
+    NotesSyncExecutor,
     NotesSyncKeepBothAuthority,
 )
 from tldw_chatbook.Notes.sync_paths import SafeSyncBytes, SafeSyncFileIdentity
@@ -187,6 +204,7 @@ class _Executor:
         self.undo_release = asyncio.Event()
         self.undo_release.set()
         self.undo_projections: dict[str, SimpleNamespace] = {}
+        self.undo_projection_errors: dict[str, Exception] = {}
         self.inspected_undo: list[tuple[str, str, int | None]] = []
 
     async def execute(self, _request: object) -> object:
@@ -243,6 +261,9 @@ class _Executor:
         now: int | None = None,
     ) -> SimpleNamespace:
         self.inspected_undo.append((root_id, source_operation_id, now))
+        error = self.undo_projection_errors.get(source_operation_id)
+        if error is not None:
+            raise error
         return self.undo_projections.get(
             source_operation_id,
             SimpleNamespace(
@@ -308,6 +329,33 @@ class _Adapter:
     def release_observation(self, observation_token: str) -> None:
         self.released.append(observation_token)
         self.live_bundles.discard(observation_token)
+
+
+class _StartupUndoAdapter(_Adapter):
+    def __init__(
+        self,
+        store: NotesDeviceStateStore,
+        notes: FakeNoteAuthority,
+        files: FakeFilesystem,
+    ) -> None:
+        super().__init__(_input(file_digest=_A, note_digest=_A))
+        self._store = store
+        self._notes = notes
+        self._files = files
+
+    def executor_for(
+        self,
+        _root: object,
+        *,
+        after_stage: Callable[[NotesSyncOperationState], None],
+    ) -> NotesSyncExecutor:
+        return NotesSyncExecutor(
+            self._store,
+            self._notes,
+            self._files,
+            recovery_capacity_bytes=65_536,
+            after_stage=after_stage,
+        )
 
 
 class _SubsetExecutor:
@@ -613,6 +661,169 @@ async def test_startup_recovery_and_reviewed_apply_share_root_lock() -> None:
     assert adapter.observe_calls == ["root-1"]
     assert adapter.executor.mutations == 1
     assert isinstance(results[1], ValueError)
+
+
+@pytest.mark.parametrize(
+    "failure_state",
+    (
+        NotesSyncOperationState.RECOVERY_ADMITTED,
+        NotesSyncOperationState.FIRST_AUTHORITY_APPLIED,
+        NotesSyncOperationState.SECOND_AUTHORITY_APPLIED,
+        NotesSyncOperationState.BINDING_UPDATED,
+        NotesSyncOperationState.VERIFIED,
+    ),
+)
+@pytest.mark.asyncio
+async def test_production_startup_resumes_transient_linked_undo_attention(
+    tmp_path: Path,
+    failure_state: NotesSyncOperationState,
+) -> None:
+    store, database = _execution_store(tmp_path)
+    note = _note(content="note side", version=4)
+    notes = FakeNoteAuthority(note)
+    files = FakeFilesystem(_file(content="file side"))
+    request = replace(
+        _request(
+            action=NotesSyncActionKind.UPDATE_NOTE,
+            note=note,
+            file=files.snapshot,
+        ),
+        journal_kind="resolve_keep_file",
+    )
+    assert (
+        await NotesSyncExecutor(
+            store, notes, files, recovery_capacity_bytes=65_536
+        ).execute(request)
+    ).state is NotesSyncOperationState.COMPLETED
+    failed = False
+
+    def fail_once(state: NotesSyncOperationState) -> None:
+        nonlocal failed
+        if state is failure_state and not failed:
+            failed = True
+            raise RuntimeError("transient_startup_test_failure")
+
+    first = await NotesSyncExecutor(
+        store,
+        notes,
+        files,
+        recovery_capacity_bytes=65_536,
+        after_stage=fail_once,
+    ).undo_resolution("root-1", request.operation_id)
+    linked = linked_undo_operation_id("root-1", request.operation_id)
+    assert first.state is NotesSyncOperationState.NEEDS_ATTENTION
+    effects_before_startup = notes.replace_calls
+    reopened = NotesDeviceStateStore(database)
+    reopened.set_setting(
+        NotesSyncStoreSetting("cutover_marker", "notes-sync-cutover-v1")
+    )
+    adapter = _StartupUndoAdapter(reopened, notes, files)
+    watcher = _StartupWatcher()
+    owner = NotesSyncRuntimeOwner(
+        store=reopened,
+        migrate_legacy=lambda: None,
+        coordinator=_StartupCoordinator(),
+        adapter=adapter,
+        watcher_factory=lambda _schedule_hint: watcher,
+        cutover_admitted=True,
+        profile_process_is_sole=True,
+    )
+
+    try:
+        await owner.start()
+
+        assert reopened.get_operation(linked).state is NotesSyncOperationState.COMPLETED
+        assert notes.snapshot.content == "note side"
+        assert files.snapshot.text == "file side"
+        assert notes.replace_calls == 2
+        assert notes.replace_calls - effects_before_startup in {0, 1}
+        assert files.replace_calls == 0
+    finally:
+        await owner.shutdown()
+
+
+@pytest.mark.parametrize("damage", ("missing", "corrupt"))
+@pytest.mark.asyncio
+async def test_production_startup_blocks_invalid_linked_undo_recovery(
+    tmp_path: Path,
+    damage: str,
+) -> None:
+    store, database = _execution_store(tmp_path)
+    note = _note(content="note side", version=4)
+    notes = FakeNoteAuthority(note)
+    files = FakeFilesystem(_file(content="file side"))
+    request = replace(
+        _request(
+            action=NotesSyncActionKind.UPDATE_NOTE,
+            note=note,
+            file=files.snapshot,
+        ),
+        journal_kind="resolve_keep_file",
+    )
+    assert (
+        await NotesSyncExecutor(
+            store, notes, files, recovery_capacity_bytes=65_536
+        ).execute(request)
+    ).state is NotesSyncOperationState.COMPLETED
+
+    def fail_after_admission(state: NotesSyncOperationState) -> None:
+        if state is NotesSyncOperationState.RECOVERY_ADMITTED:
+            raise RuntimeError("transient_startup_test_failure")
+
+    assert (
+        await NotesSyncExecutor(
+            store,
+            notes,
+            files,
+            recovery_capacity_bytes=65_536,
+            after_stage=fail_after_admission,
+        ).undo_resolution("root-1", request.operation_id)
+    ).state is NotesSyncOperationState.NEEDS_ATTENTION
+    linked = linked_undo_operation_id("root-1", request.operation_id)
+    with store.transaction(immediate=True) as connection:
+        if damage == "missing":
+            connection.execute(
+                "DELETE FROM notes_sync_recovery WHERE operation_id = ?", (linked,)
+            )
+        else:
+            connection.execute(
+                "UPDATE notes_sync_recovery SET metadata = ? WHERE operation_id = ?",
+                (b"private-binding-id /absolute/private.md backend-secret", linked),
+            )
+    reopened = NotesDeviceStateStore(database)
+    reopened.set_setting(
+        NotesSyncStoreSetting("cutover_marker", "notes-sync-cutover-v1")
+    )
+    adapter = _StartupUndoAdapter(reopened, notes, files)
+    watcher = _StartupWatcher()
+    owner = NotesSyncRuntimeOwner(
+        store=reopened,
+        migrate_legacy=lambda: None,
+        coordinator=_StartupCoordinator(),
+        adapter=adapter,
+        watcher_factory=lambda _schedule_hint: watcher,
+        cutover_admitted=True,
+        profile_process_is_sole=True,
+    )
+
+    try:
+        await owner.start()
+
+        assert reopened.get_operation(linked).state is (
+            NotesSyncOperationState.NEEDS_ATTENTION
+        )
+        root = owner.snapshot().roots[0]
+        assert (root.status, root.next_action, root.action_id) == (
+            "needs_attention",
+            "review_changes",
+            linked,
+        )
+        assert notes.replace_calls == 1
+        assert files.replace_calls == 0
+        assert "private-binding-id" not in repr(root)
+        assert "backend-secret" not in repr(root)
+    finally:
+        await owner.shutdown()
 
 
 @pytest.mark.asyncio
@@ -1835,6 +2046,31 @@ async def test_active_receipts_use_fresh_bounded_authority_and_remove_undone() -
 
 
 @pytest.mark.asyncio
+async def test_active_receipt_read_failure_is_unavailable_without_leakage() -> None:
+    adapter = _Adapter(_input())
+    owner = _owner(adapter, _root())
+    operation_id = "receipt-unavailable-operation"
+    owner._remember_conflict_receipt(
+        "root-1",
+        "private-binding-id",
+        operation_id,
+        NotesSyncConflictChoice.KEEP_FILE,
+    )
+    secret = "private-binding-id /absolute/private.md content-hash backend-secret"
+    adapter.executor.undo_projection_errors[operation_id] = RuntimeError(secret)
+
+    receipts = await owner.active_conflict_receipts("root-1")
+
+    assert len(receipts) == 1
+    assert receipts[0].item_label == operation_id[:8]
+    assert receipts[0].state == "unavailable"
+    assert receipts[0].undo_available is False
+    assert receipts[0].undo_reason == "Unavailable"
+    assert secret not in repr(receipts)
+    assert "private-binding-id" not in repr(receipts)
+
+
+@pytest.mark.asyncio
 async def test_resolution_history_uses_fresh_status_labels_and_fallback() -> None:
     adapter = _Adapter(_input())
     store = _Store(_root())
@@ -1925,6 +2161,40 @@ async def test_resolution_history_uses_fresh_status_labels_and_fallback() -> Non
     ]
     assert all("binding-1" not in repr(row) for row in rows)
     assert repr(rows[0]) == "RuntimeConflictHistoryRow(<private>)"
+
+
+@pytest.mark.asyncio
+async def test_resolution_history_read_failure_is_unavailable_without_leakage() -> None:
+    adapter = _Adapter(_input())
+    store = _Store(_root())
+    owner = _owner(adapter, _root(), store=store)
+    operation_id = "history-unavailable-operation"
+    store.history = [
+        NotesSyncResolutionHistoryRecord(
+            operation_id=operation_id,
+            binding_id="private-binding-id",
+            kind="resolve_keep_note",
+            state=NotesSyncOperationState.COMPLETED,
+            reason_code=None,
+            completed_at=2,
+            updated_at=3,
+            recovery_expires_at=999,
+            undo_state=None,
+            undo_reason_code=None,
+        )
+    ]
+    secret = "private-binding-id /absolute/private.md content-hash backend-secret"
+    adapter.executor.undo_projection_errors[operation_id] = RuntimeError(secret)
+
+    rows = await owner.resolution_history("root-1", now=100)
+
+    assert len(rows) == 1
+    assert rows[0].item_label == operation_id[:8]
+    assert rows[0].state == "completed"
+    assert rows[0].undo_available is False
+    assert rows[0].undo_reason == "Unavailable"
+    assert secret not in repr(rows)
+    assert "private-binding-id" not in repr(rows)
 
 
 @pytest.mark.asyncio

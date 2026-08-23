@@ -964,7 +964,11 @@ class NotesSyncExecutor:
                     title,
                     relative_path,
                 )
-            except Exception:
+            except Exception as error:
+                if not self._undo_inspection_proves_change(error):
+                    return NotesSyncUndoProjection(
+                        False, "Unavailable", "unavailable", None, None
+                    )
                 title, relative_path = await self._projection_labels(
                     source_operation_id
                 )
@@ -998,7 +1002,11 @@ class NotesSyncExecutor:
             return NotesSyncUndoProjection(
                 True, None, source.state.value, note.title, relative_path
             )
-        except Exception:
+        except Exception as error:
+            if not self._undo_inspection_proves_change(error):
+                return NotesSyncUndoProjection(
+                    False, "Unavailable", "unavailable", None, None
+                )
             title, relative_path = await self._projection_labels(source_operation_id)
             return NotesSyncUndoProjection(
                 False,
@@ -1007,6 +1015,21 @@ class NotesSyncExecutor:
                 title,
                 relative_path,
             )
+
+    @staticmethod
+    def _undo_inspection_proves_change(error: Exception) -> bool:
+        if type(error) is RuntimeError:
+            return str(error) == "changed_since_resolution"
+        if isinstance(error, NotesSyncAuthorityError):
+            return error.reason_code in {
+                "note_identity_changed",
+                "note_missing",
+                "note_scope_changed",
+            }
+        return (
+            isinstance(error, NotesSyncFilesystemError)
+            and error.reason_code == "missing_target"
+        )
 
     async def _projection_labels(
         self, source_operation_id: str
