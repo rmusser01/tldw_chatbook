@@ -28,7 +28,8 @@ interfaces so common behavior can be extracted after both real consumers exist.
 
 ## Current state
 
-Phase 1 of the 2026-08-05 reader-first design is implemented:
+The reader-first phases and nested-pagination follow-up are implemented on the approved
+`origin/dev` base:
 
 - Read is the landing tab.
 - Tree scopes drive item loading.
@@ -37,16 +38,17 @@ Phase 1 of the 2026-08-05 reader-first design is implemented:
 - Navigation, Feed Items, Reader, and Inspector are represented by `RegionLayout` and rebuilt by
   `WatchlistsWorkbench` factories.
 - The Reader safely converts captured HTML into readable text.
+- Read uses `ArticleListPane` with contextual rows, effective-date groups, 50-row pagination, and
+  separate list/Reader scroll ownership.
+- All Unread, Today, and Starred Smart Feeds, scoped search, refresh-all/new-items feedback,
+  star/unstar, and safe Open in browser actions are shipped.
 
-The remaining gaps are presentation and capability exposure:
+The remaining gap is the pane-layout foundation:
 
-- Feed Items is still a `DataTable`, not a contextual article list.
-- There are no All Unread, Today, or Starred Smart Feeds.
-- `subscription_items.is_flagged` and its index exist, but no star action or Starred query uses
-  them.
-- The FTS5 table and maintenance triggers exist, but Read has no scoped full-text search path.
 - Reader can still be collapsed, even though the selected article is the purpose of the screen.
-- Collapsed regions render generic headers instead of persistent edge grips.
+- Feed Items and Reader are vertically stacked inside a scrollable centre rather than arranged as
+  NetNewsWire-style list and Reader columns.
+- Collapsed regions render generic 16-column headers instead of persistent five-column edge grips.
 - Responsive layout and persisted manual preference are not distinct state concepts.
 
 ## Goals
@@ -67,6 +69,9 @@ The remaining gaps are presentation and capability exposure:
 - Reworking OPML folder round-tripping in this slice.
 - Adding enclosure playback, images, or web-page rendering inside Reader.
 - Creating a shared application-wide split-pane framework in parallel with Media Library work.
+- Reimplementing or changing the shipped ArticleListPane, Smart Feed, scoped search, pagination,
+  refresh, item-status, star, or browser-action data contracts except where layout regression
+  compatibility requires it.
 
 ## Information architecture
 
@@ -450,12 +455,12 @@ Focus, background refresh, tab switching, and selection changes never do.
 
 ## Delivery isolation
 
-Planning and implementation must not proceed in the current dirty
-`feat/task-3401-video-generation-foundation` worktree. Before Slice 1 starts, create a dedicated
-Watchlists branch/worktree from the user-approved integration base and transplant the Watchlists
-documentation commits into it. Do not rewrite, reset, clean, or otherwise disturb the unrelated video
-branch or its uncommitted files. The implementation plan records the chosen base and transplanted
-commit ids before any code change.
+Planning and implementation proceed in the dedicated
+`codex/task-21281-watchlists-collapsible-reader-layout` branch at
+`.worktrees/task-21281-watchlists-collapsible-reader-layout`, based on `origin/dev` commit
+`527152ad3`. The approved Watchlists documentation was transplanted as commits `ade0a5ab7`,
+`6af8780f5`, `4561c4199`, and `730d908d2`. The unrelated dirty
+`feat/task-3401-video-generation-foundation` worktree remains untouched.
 
 ## Security and accessibility
 
@@ -489,30 +494,18 @@ Read retains or adds:
 
 ## Implementation decomposition
 
-This specification is one UX programme, not one atomic pull request. Planning and Backlog work must
-split it into the following dependency-ordered, independently verifiable slices:
+On the approved `origin/dev` base, the former contextual-list, Smart Feed/search, and
+refresh/pagination slices are already shipped under tasks 3072, 3791, and their nested-pagination
+follow-up. The remaining programme work is one atomic, independently verifiable slice:
 
 1. **Layout foundation and grips.** Make Reader/management canvas the permanent centre host; add
    Watchlists-local ASCII grips; introduce preferred/effective/Article Focus state, responsive
-   resolution, shared Inspector behavior, and versioned layout normalization. This slice delivers
-   the requested collapse behavior across all Watchlists tabs without changing item presentation.
-2. **Contextual Feed Items and Reader actions.** Replace the Read `DataTable` with the snapshot-bounded,
-   date-grouped contextual list; add the shared effective-date helper, semantic restoration,
-   deterministic keyset ordering and seen-id guard, Star/Unstar, protected-status `m`, off-loop Open
-   in browser, and the three-action Reader header. Depends on slice 1's permanent host and
-   state-restoration seams.
-3. **Smart Feeds and scoped search.** Add normalized Smart Feed scopes/counts, the shared date and
-   predicate contracts, Starred/Today/All Unread navigation, FTS search, and bounded fallback;
-   reuse slice 2's effective-date helper for Today. Depends on slice 2's article list and star
-   writer.
-4. **Scoped refresh and stable-arrival polish.** Add concurrency-limited scope refresh, aggregate
-   completion feedback, high-water-mark arrival counting, the new-items affordance, narrow-width
-   live polish, and programme-level regression/documentation close-out. Depends on slices 1–3.
+   resolution, shared Inspector behavior, and versioned layout normalization. Preserve the shipped
+   ArticleListPane, Smart Feed, search, refresh, pagination, item-action semantics, selection, and
+   scroll contracts while changing their host geometry and simplifying Reader's visible action row
+   to the approved three core actions.
 
-Each slice receives its own atomic Backlog task, acceptance criteria, implementation plan, tests,
-and review. The writing-plans transition after this design reviews the sequence and writes the
-detailed plan for slice 1 first; later slice plans must not be treated as if one pull request owns
-the whole programme.
+This slice receives Backlog task 21281, its own detailed implementation plan, tests, and review.
 
 ## Verification
 
