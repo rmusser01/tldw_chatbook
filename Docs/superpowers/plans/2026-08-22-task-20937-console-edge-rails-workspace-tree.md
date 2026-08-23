@@ -336,6 +336,9 @@ Close TASK-20937.2 with exact counts and no speed claim.
 - Modify: `Tests/UI/test_console_keyboard_trust.py`
 - Modify: `Tests/UI/test_non_obscuring_focus_contract.py`
 - Modify: `Tests/UI/test_console_internals_decomposition.py`
+- Modify: `Tests/UI/test_console_composer_collapse.py`
+- Modify: `tldw_chatbook/Chat/console_rail_state.py` (comment only)
+- Modify: `tldw_chatbook/UI/Console_Modules/transcript.py` (comment only)
 - Create: `Tests/UI/test_console_edge_rail_geometry.py`
 - Modify: `Tests/UI/test_css_build_integrity.py`
 - Modify: `backlog/tasks/task-20937.3 - Move-Console-rails-to-the-application-edges.md`
@@ -397,6 +400,14 @@ implementation intentionally invalidates their old border contract; leaving
 them unchanged would make the approved behavior fail the broader focused gate.
 Add same-pilot resize compositor coverage across 150 → 120 → 100 and short
 height, plus focused collapsed-handle and transcript title-cue coverage.
+
+Spec re-review surfaced a sixth obsolete full-frame assertion in the existing
+composer-collapse regression plus stale frame-cost commentary in the rail-state
+policy and transcript region module. The test belongs in Task 3 because its
+composer-collapse intent remains valid while its transcript side-frame focus
+expectation directly contradicts ADR-081. The two production modules are
+comment-only corrections: ADR-043 thresholds and transcript runtime behavior do
+not change.
 
 - [ ] **Step 5: Mutation-check and commit**
 

@@ -947,10 +947,10 @@ def test_console_transcript_focus_uses_stable_border_geometry():
     """task-17651: no border in either state — stable geometry at zero rows.
 
     The transcript's own frame is gone at every size (the compact-mode
-    drop generalized); its focus indicator is the region's inline column
-    recolor (the TASK-359 pane-stop painter), plus a scrollbar accent
-    here. Neither state may reintroduce a border or outline, which would
-    cost the rows the flattening reclaimed.
+    drop generalized); its stable title carries the non-color focus cue,
+    while the transcript keeps only a scrollbar accent here. Neither state
+    may reintroduce a border or outline, which would cost the rows the
+    flattening reclaimed.
     """
     for _, text in (
         ("_agentic_terminal.tcss", AGENTIC.read_text(encoding="utf-8")),
