@@ -459,7 +459,10 @@ was the same defect class round 1 was convened to fix.** When no MATCH
 expression could be built, the code appended `"0"` to a `" AND ".join`ed
 condition list, so the whole query returned nothing even though the LIKE legs
 beside it could still express the intent. Measured on a five-row corpus, the
-merge-base (`736359202`) and this branch in one process:
+merge-base and this branch loaded side by side in one process (`git show
+<merge-base>:…/Client_Media_DB_v2.py` imported under a dotted name inside the
+real package, so its relative imports resolve without a second worktree);
+re-run unchanged after the final rebase onto `12931e1a3`:
 
 | input | dev (merge-base) | branch as reviewed | now |
 |---|---|---|---|
@@ -561,19 +564,29 @@ statement with no cross-statement invariant. This branch did not change its
 transaction shape; wrapping only this one would be inconsistency, not
 compliance.
 
-**Diagnostic inventory: deliberately NOT regenerated.** The rebuild reports
-four drifted rows — `chachanotes_fts_backfill.py` +3 and `app.py` +3 (dev's
-TASK-21100), `ChaChaNotes_DB.py` +3 (same), `Console_Modules/workspace.py`
-same-count-changed-digest (dev's TASK-21118). Read with `--statements`: between
-this branch's inventory commit and the working tree, **zero** diagnostic
-statements changed in any of them, so none of the drift is ours. Regenerating
-would silently absorb dev's unreviewed drift into this PR.
+**Diagnostic inventory: held, then regenerated once it was only ours.** On
+the first rebase (onto `736359202`) the rebuild reported four drifted rows —
+`chachanotes_fts_backfill.py` +3, `app.py` +3, `ChaChaNotes_DB.py` +3 (all
+dev's TASK-21100) and `Console_Modules/workspace.py` same-count-changed-digest
+(dev's TASK-21118). Read with `--statements`: **zero** diagnostic statements
+had changed in any of them on our side, so regenerating would have absorbed
+dev's unreviewed drift into this PR, and the pin was left alone. Dev then
+merged `12931e1a3` ("re-pin the inventory after TASK-21100's FTS backfill"),
+which conflicted with ours; the conflict was resolved to dev's re-pinned
+baseline and the rebuild rerun. It now names exactly two rows, both ours and
+both read before writing: `Subscriptions/watchlist_opml_service.py` +1 (the
+defusedxml-fallback `logger.warning`, a static string with no interpolation)
+and `ChaChaNotes_DB.py` same-count-changed-digest (two `logger.error` strings
+that now interpolate `match_expression` / `safe_search_query` where they used
+to interpolate `safe_search_term` / `search_query` — the same user-query text
+either way, no secret, path or URL newly exposed). `./scripts/preflight.sh`:
+all five derived-artifact checks green.
 
-**Test counts (round 2, rebased onto `736359202`).**
-`Tests/DB` + `Tests/ChaChaNotesDB` + `Tests/Utils`: **2415 passed / 1 skipped
-/ 0 failed** (round 1: 2388/1).
-`Tests/Subscriptions` + `Tests/Prompts_DB`: **1178 passed / 1 skipped / 0
-failed** (unchanged).
+**Test counts (round 2, rebased onto `12931e1a3`).**
+`Tests/DB` + `Tests/ChaChaNotesDB` + `Tests/Utils` + `Tests/Subscriptions` +
+`Tests/Prompts_DB`: **3593 passed / 2 skipped / 0 failed** (the same five
+directories split as 2415/1 and 1178/1 on the intermediate base; round 1 was
+2388/1 and 1178/1).
 `Tests/Media_DB`: **78 passed / 1 failed** —
 `test_reading_progress_reopens_through_versioned_migration`, a DEV red:
 the v5→v6 migration (`ALTER TABLE UnvectorizedMediaChunks ADD COLUMN
