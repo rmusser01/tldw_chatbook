@@ -103,6 +103,12 @@ def test_cleanup_failure_stays_tombstoned_for_later_dispose_retry(
     manager = ConsoleScratchSpaceManager(temp_parent=tmp_path)
     snapshot = manager.snapshot("session")
     cleanup_attempted = threading.Event()
+    warnings: list[str] = []
+    sink_id = scratch_module.logger.add(
+        lambda message: warnings.append(str(message)),
+        format="{message}",
+        level="WARNING",
+    )
     real_rmtree = scratch_module.shutil.rmtree
 
     def fail_cleanup(path: Path) -> None:
@@ -110,13 +116,20 @@ def test_cleanup_failure_stays_tombstoned_for_later_dispose_retry(
         raise OSError("simulated cleanup failure")
 
     monkeypatch.setattr(scratch_module.shutil, "rmtree", fail_cleanup)
-    manager.close("session")
+    try:
+        manager.close("session")
 
-    assert cleanup_attempted.wait(timeout=2.0)
-    assert not manager.wait_for_cleanup(timeout_seconds=0.01)
-    with pytest.raises(ConsoleScratchSpaceUnavailable):
-        with manager.lease(snapshot):
-            pass
+        assert cleanup_attempted.wait(timeout=2.0)
+        assert not manager.wait_for_cleanup(timeout_seconds=0.01)
+        with pytest.raises(ConsoleScratchSpaceUnavailable):
+            with manager.lease(snapshot):
+                pass
+    finally:
+        scratch_module.logger.remove(sink_id)
+
+    warning_text = "".join(warnings)
+    assert "Console scratch cleanup deferred" in warning_text
+    assert snapshot.token not in warning_text
 
     monkeypatch.setattr(scratch_module.shutil, "rmtree", real_rmtree)
     assert manager.dispose(timeout_seconds=2.0)

@@ -105,6 +105,9 @@ LOCAL_GATE_ERROR_REFUSAL = (
 LOCAL_ROOT_CHANGED_REFUSAL = (
     "Selected workspace root changed after dispatch started; the tool was not run."
 )
+LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL = (
+    "Private scratch space is unavailable; the tool was not run."
+)
 
 _PATH_AUTHORITY_LOCAL_NAMES = frozenset(
     {
@@ -343,7 +346,11 @@ class LocalToolProvider:
 
     @property
     def workspace_root(self) -> Path:
-        """Return the canonical confinement root for this provider."""
+        """Return the canonical confinement root for this provider.
+
+        Returns:
+            The resolved local-tool confinement root.
+        """
         return Path(self._root).resolve()
 
     def list_catalog(self) -> list[ToolCatalogEntry]:
@@ -777,7 +784,7 @@ class LocalToolProvider:
                     with self._authority_scope():
                         return _invoke_allowed()
                 except Exception:  # noqa: BLE001 - lease failure is fail-closed
-                    return ToolResult.blocked(LOCAL_ROOT_CHANGED_REFUSAL)
+                    return ToolResult.blocked(LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL)
             return _invoke_allowed()
         if verdict == "timeout":
             self._record_decision_safe(self.hub_tool_for(name), "denied-timeout")

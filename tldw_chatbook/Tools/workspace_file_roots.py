@@ -331,7 +331,15 @@ def current_run_workspace_id() -> str | None:
 
 @contextmanager
 def run_file_sandbox(root: Path | None) -> Iterator[None]:
-    """Bind one run's private file-tool sandbox without changing global config."""
+    """Bind one run's private file-tool sandbox without changing global config.
+
+    Args:
+        root: Private sandbox root for the current run, or ``None`` to clear
+            an inherited binding within the scope.
+
+    Yields:
+        None. The wrapped block executes with ``root`` as its sandbox binding.
+    """
 
     resolved = Path(root).resolve() if root is not None else None
     token = _RUN_FILE_SANDBOX_ROOT.set(resolved)
@@ -342,7 +350,12 @@ def run_file_sandbox(root: Path | None) -> Iterator[None]:
 
 
 def current_run_sandbox_root() -> Path | None:
-    """Return the private sandbox root bound to the current run, if any."""
+    """Return the private sandbox root bound to the current run, if any.
+
+    Returns:
+        The resolved sandbox root for the current run, or ``None`` when no
+        sandbox is bound.
+    """
 
     return _RUN_FILE_SANDBOX_ROOT.get()
 

@@ -809,12 +809,21 @@ class BuiltinToolProvider:
 
     @property
     def sandbox_root(self) -> Path | None:
-        """Return this provider's explicit run sandbox, when one was bound."""
+        """Return this provider's explicit run sandbox, when one was bound.
+
+        Returns:
+            The resolved per-run sandbox root, or ``None`` when absent.
+        """
         return self._sandbox_root
 
     @property
     def sandbox_lease(self) -> Callable[[], ContextManager[Path]] | None:
-        """Return the lease factory paired with the explicit run sandbox."""
+        """Return the lease factory paired with the explicit run sandbox.
+
+        Returns:
+            A context-manager factory that leases the sandbox generation, or
+            ``None`` when the provider has no explicit sandbox authority.
+        """
         return self._sandbox_lease
 
     @contextmanager

@@ -772,7 +772,21 @@ class RunLogWriter:
         status: str = "",
         call_id: str = "",
     ) -> int | None:
-        """Append one record while holding the configured file authority."""
+        """Append one record while holding the configured file authority.
+
+        Args:
+            run_id: Identifier of the parent or child run.
+            kind: Run kind, such as ``primary`` or ``subagent``.
+            type: Record type, such as ``model`` or ``tool_result``.
+            content: Full record content before the configured byte cap.
+            tool: Tool name when the record describes a tool operation.
+            status: Tool or run status when applicable.
+            call_id: Provider tool-call identifier when applicable.
+
+        Returns:
+            The assigned record number, or ``None`` when logging is inactive
+            or file authority cannot be acquired.
+        """
         if not self._active or self.log_dir is None:
             return None
         try:

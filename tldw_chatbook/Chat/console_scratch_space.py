@@ -148,7 +148,15 @@ class ConsoleScratchSpaceManager:
                 self._condition.notify_all()
 
     def is_live(self, snapshot: ConsoleScratchSnapshot) -> bool:
-        """Return whether a capability is current and safe to lease."""
+        """Return whether a capability is current and safe to lease.
+
+        Args:
+            snapshot: Capability previously issued by this manager.
+
+        Returns:
+            ``True`` when the capability still identifies the current private
+            directory generation and its filesystem identity is unchanged.
+        """
 
         with self._condition:
             record = self._matching_record_locked(snapshot)
@@ -160,7 +168,11 @@ class ConsoleScratchSpaceManager:
             return False
 
     def close(self, session_id: str) -> None:
-        """Revoke one live session and schedule cleanup after its leases drain."""
+        """Revoke one live session and schedule cleanup after its leases drain.
+
+        Args:
+            session_id: Process-local identifier for the live Console session.
+        """
 
         with self._condition:
             record = self._by_session.pop(str(session_id), None)
@@ -182,7 +194,14 @@ class ConsoleScratchSpaceManager:
             self._condition.notify_all()
 
     def wait_for_cleanup(self, timeout_seconds: float) -> bool:
-        """Wait up to ``timeout_seconds`` for every revoked record to retire."""
+        """Wait up to ``timeout_seconds`` for every revoked record to retire.
+
+        Args:
+            timeout_seconds: Maximum number of seconds to wait.
+
+        Returns:
+            ``True`` when every record retired before the deadline.
+        """
 
         deadline = time.monotonic() + max(0.0, timeout_seconds)
         with self._condition:
@@ -194,7 +213,14 @@ class ConsoleScratchSpaceManager:
             return True
 
     def dispose(self, timeout_seconds: float = 2.0) -> bool:
-        """Revoke all spaces, retry deferred cleanup, and wait for a bounded time."""
+        """Revoke all spaces, retry deferred cleanup, and wait for a bounded time.
+
+        Args:
+            timeout_seconds: Maximum number of seconds to wait for cleanup.
+
+        Returns:
+            ``True`` when every scratch record retired before the deadline.
+        """
 
         self.tombstone_all()
         deadline = time.monotonic() + max(0.0, timeout_seconds)
@@ -271,8 +297,7 @@ class ConsoleScratchSpaceManager:
                         self._records.pop(record.snapshot.token, None)
                 else:
                     logger.warning(
-                        "Console scratch cleanup deferred token={} category={}",
-                        record.snapshot.token,
+                        "Console scratch cleanup deferred category={}",
                         category,
                     )
                 self._condition.notify_all()
