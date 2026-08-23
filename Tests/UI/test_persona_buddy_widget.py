@@ -1019,6 +1019,67 @@ async def test_keyboard_focus_exposes_only_exact_action_label():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(("collapsed", "glyph"), [(False, "▾"), (True, "▴")])
+async def test_compact_focus_keeps_both_glyph_controls_clear_of_resize_grip(
+    collapsed: bool, glyph: str
+):
+    controller = _FakeController(collapsed=collapsed)
+    app = _BuddyApp(controller)
+    async with app.run_test(size=(10, 2)) as pilot:
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        await _wait_until(
+            lambda: (
+                buddy.has_class("persona-buddy-compact")
+                and buddy.region.size == (10, 1)
+            )
+        )
+        collapse = buddy.query_one("#persona-buddy-collapse", Button)
+        close = buddy.query_one("#persona-buddy-close", Button)
+
+        def assert_compact_controls(focused: Button) -> None:
+            assert [
+                control.id for control in buddy.query(Button) if control.display
+            ] == ["persona-buddy-collapse", "persona-buddy-close"]
+            assert (str(collapse.label), str(close.label)) == (glyph, "×")
+            assert (collapse.tooltip, close.tooltip) == (
+                "Open" if collapsed else "Fold",
+                "Close",
+            )
+            assert collapse.region.right <= close.region.x
+            assert close.region.right <= buddy.region.right - 2
+            assert "focus" in focused.pseudo_classes
+            assert focused.styles.text_style.bold
+            assert focused.styles.text_style.underline
+            text = _compositor_text(app.screen)
+            assert glyph in text
+            assert "×" in text
+            assert "Fold" not in text
+            assert "Open" not in text
+            assert "Close" not in text
+            for control in (collapse, close):
+                assert control.display
+                for x in range(control.region.x, control.region.right):
+                    target, _ = app.screen.get_widget_at(x, control.region.y)
+                    assert target is control
+
+        collapse.focus(scroll_visible=False)
+        await pilot.pause()
+        assert_compact_controls(collapse)
+        await pilot.press("enter")
+        await _wait_until(lambda: controller.preferences.collapsed is not collapsed)
+
+        close.focus(scroll_visible=False)
+        await pilot.pause()
+        glyph = "▴" if controller.preferences.collapsed else "▾"
+        collapsed = controller.preferences.collapsed
+        assert_compact_controls(close)
+        await pilot.press("enter")
+        await _wait_until(lambda: not controller.preferences.open)
+        assert buddy._interaction is None
+        assert app.mouse_captured is None
+
+
+@pytest.mark.asyncio
 async def test_pet_surface_drags_but_icon_buttons_do_not():
     controller = _FakeController(
         frames=("PET",),
