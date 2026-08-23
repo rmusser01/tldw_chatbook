@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 import uuid
 from pathlib import Path
 
@@ -12,7 +14,10 @@ from tldw_chatbook.Actor_Packs.persona_coordinator import (
     PersonaActorPackCoordinator,
     PersonaActorPackCoordinatorError,
 )
-from tldw_chatbook.Actor_Packs.repository import ActorPackRepository
+from tldw_chatbook.Actor_Packs.repository import (
+    ActorPackRepository,
+    ActorPackRepositoryError,
+)
 from tldw_chatbook.Character_Chat.local_character_persona_service import (
     LocalCharacterPersonaService,
 )
@@ -319,6 +324,112 @@ def test_unknown_store_digest_is_quarantined_without_guessing(components) -> Non
     result = coordinator.recover()
     assert result.quarantined == 1
     assert store.read_text(encoding="utf-8") == '{"profiles":[],"external":true}'
+
+
+# --- task-21106: once-per-app-session recovery gate ------------------------
+# Startup recovery moved out of TldwCli.__init__; `ensure_recovered` is the
+# idempotent, thread-safe seam every affected surface now goes through.
+
+
+def test_ensure_recovered_runs_recovery_once_per_session(components) -> None:
+    coordinator, repository, _service, _store = components
+    calls = {"count": 0}
+    original = repository.list_persona_intents
+
+    def counting():
+        calls["count"] += 1
+        return original()
+
+    repository.list_persona_intents = counting
+
+    first = coordinator.ensure_recovered()
+    second = coordinator.ensure_recovered()
+
+    assert calls["count"] == 1
+    assert first is second and first is not None
+    assert coordinator.recovery_attempted is True
+    assert coordinator.recovery_error is None
+
+
+def test_ensure_recovered_records_failure_and_consumes_the_attempt(
+    components,
+) -> None:
+    coordinator, repository, _service, _store = components
+    calls = {"count": 0}
+
+    def failing():
+        calls["count"] += 1
+        raise ActorPackRepositoryError("actor_pack_repository_read_failed")
+
+    repository.list_persona_intents = failing
+
+    assert coordinator.ensure_recovered() is None
+    assert coordinator.recovery_error == "actor_pack_recovery_failed"
+    # A broken store must not retry-loop: the single attempt is consumed.
+    assert coordinator.ensure_recovered() is None
+    assert calls["count"] == 1
+
+
+def test_ensure_recovered_is_single_flight_across_threads(components) -> None:
+    coordinator, repository, _service, _store = components
+    calls = {"count": 0}
+    count_lock = threading.Lock()
+    original = repository.list_persona_intents
+
+    def slow():
+        with count_lock:
+            calls["count"] += 1
+        time.sleep(0.05)
+        return original()
+
+    repository.list_persona_intents = slow
+
+    workers = [
+        threading.Thread(target=coordinator.ensure_recovered) for _ in range(6)
+    ]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(timeout=10)
+
+    assert calls["count"] == 1
+    assert coordinator.recovery_attempted is True
+
+
+def test_create_persona_runs_recovery_before_admitting_the_mutation(
+    components,
+) -> None:
+    """A create must reconcile stale intents itself — no caller ordering needed.
+
+    Seeds the third-authority crash shape (prepared intent, identity already
+    at the new UUID, store still old): recovery quarantines it, so the very
+    first `create_persona` of the session must surface
+    ``actor_pack_creation_blocked`` without anyone having called `recover()`.
+    Before task-21106 this depended on `TldwCli.__init__` having run recovery;
+    with an unrecovered coordinator the create sailed straight past the
+    quarantine check.
+    """
+    coordinator, repository, service, _store = components
+    plan = service._actor_pack_plan_persona_profile(_profile(), operation="create")
+    intent = repository.prepare_persona_intent(
+        persona_id="guide",
+        operation="create",
+        old_profile=None,
+        new_profile=_profile(),
+        old_store_sha256=plan.old_store_sha256,
+        new_store_sha256=plan.new_store_sha256,
+        old_registry_uuid=None,
+        new_registry_uuid=UUID_A,
+        intent_id="f" * 32,
+    )
+    repository.assign_identity("persona", "guide")
+
+    with pytest.raises(PersonaActorPackCoordinatorError) as excinfo:
+        coordinator.create_persona(_profile(), portable_uuid=UUID_A)
+
+    assert excinfo.value.category == "actor_pack_creation_blocked"
+    assert coordinator.blocked_intent_ids == (intent.intent_id,)
+    assert coordinator.recovery_attempted is True
 
 
 def test_store_plan_preserves_unrelated_sections(tmp_path: Path) -> None:

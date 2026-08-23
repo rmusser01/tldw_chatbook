@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -56,12 +57,28 @@ class PersonaActorPackCoordinator:
         self.repository = repository
         self.local_service = local_service
         self._blocked_intent_ids: tuple[str, ...] = ()
+        self._recovery_lock = threading.Lock()
+        self._recovery_attempted = False
+        self._recovery_error: str | None = None
+        self._recovery_result: PersonaActorPackRecoveryResult | None = None
 
     @property
     def blocked_intent_ids(self) -> tuple[str, ...]:
         """Return opaque quarantined intent identifiers."""
 
         return self._blocked_intent_ids
+
+    @property
+    def recovery_attempted(self) -> bool:
+        """Return whether `ensure_recovered` has already run recovery."""
+
+        return self._recovery_attempted
+
+    @property
+    def recovery_error(self) -> str | None:
+        """Return the recovery failure category recorded by `ensure_recovered`."""
+
+        return self._recovery_error
 
     def create_persona(
         self,
@@ -76,6 +93,10 @@ class PersonaActorPackCoordinator:
     ) -> PersonaActorPackCreationResult:
         """Create/update one pack-ready Persona with compensating rollback."""
 
+        # task-21106: recovery no longer runs during TldwCli.__init__, so a
+        # mutation must never race ahead of the once-per-session reconcile.
+        # Idempotent and cached, so the steady-state cost is one lock hop.
+        self.ensure_recovered()
         if self._blocked_intent_ids:
             raise PersonaActorPackCoordinatorError("actor_pack_creation_blocked")
         try:
@@ -164,6 +185,37 @@ class PersonaActorPackCoordinator:
         except (ActorPackRepositoryError, ValueError):
             return PersonaActorPackCreationResult(identity, cleanup_pending=True)
         return PersonaActorPackCreationResult(identity, cleanup_pending=False)
+
+    def ensure_recovered(self) -> PersonaActorPackRecoveryResult | None:
+        """Run `recover` at most once per coordinator lifetime, from any thread.
+
+        task-21106 moved startup recovery out of `TldwCli.__init__`; this is
+        the idempotent gate every affected surface goes through instead.
+        Screens are never cached in this app (Personas re-mounts on every
+        visit), so the once-flag lives here — per app session — not per mount.
+        A concurrent caller blocks on the lock until the first run finishes,
+        which is exactly the "reconcile before the surface reads" contract.
+
+        Returns:
+            The cached recovery summary, or None when recovery failed. A
+            coordination failure (`actor_pack_recovery_failed`) is recorded on
+            `recovery_error` rather than raised, matching how app startup has
+            always absorbed it; unexpected exceptions propagate but still
+            consume the single attempt so a broken store cannot retry-loop.
+        """
+
+        with self._recovery_lock:
+            if self._recovery_attempted:
+                return self._recovery_result
+            self._recovery_attempted = True
+            try:
+                self._recovery_result = self.recover()
+            except PersonaActorPackCoordinatorError as exc:
+                self._recovery_error = exc.category
+            except BaseException:
+                self._recovery_error = "actor_pack_recovery_failed"
+                raise
+            return self._recovery_result
 
     def recover(self) -> PersonaActorPackRecoveryResult:
         """Reconcile all intents before affected application surfaces mount."""

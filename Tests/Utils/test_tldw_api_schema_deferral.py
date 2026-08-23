@@ -100,6 +100,14 @@ def test_app_import_schema_submodule_set_is_within_allowlist(tmp_path):
         f"tldw_api submodules loaded by `import tldw_chatbook.app` beyond the "
         f"phase-2 allowlist: {sorted(extra)}"
     )
+    # task-21106: `Actor_Packs/creation.py` (on app.py's own import chain)
+    # regressed to a module-scope import of this 79-model schema module,
+    # defeating the lazy facade. Pin the exact module by name so the next
+    # regression reads as itself, not just an allowlist diff.
+    assert "tldw_chatbook.tldw_api.character_persona_schemas" not in loaded, (
+        "`import tldw_chatbook.app` loaded character_persona_schemas eagerly "
+        "(task-21106 regression — check Actor_Packs/creation.py first)"
+    )
 
 
 def test_server_chat_grammars_service_defers_schema_import_then_fails_gracefully():
