@@ -58,8 +58,13 @@ covers a creation style:
 
 * **DDL whose table name is not a literal.** ``"CREATE TABLE {} ...".format(n)``,
   ``f"CREATE TABLE {n} ..."`` and ``"CREATE TABLE " + n`` all hide the name from
-  the regex -- and, worse, the optional ``IF NOT EXISTS`` group then captures
-  the phantom table ``IF``. Keep schema DDL a literal string.
+  the regex. A dead-end fragment like the literal half of the last example
+  (``"CREATE TABLE IF NOT EXISTS "``, with the name arriving later via ``+``)
+  used to make the regex backtrack out of its optional ``IF NOT EXISTS``
+  group and report a phantom table named ``IF``; ``CREATE_TABLE_RE`` now
+  matches that clause as an all-or-nothing unit (TASK-20971 Qodo round), so
+  this shape simply is not reported, like the rest of this bullet. Keep
+  schema DDL a literal string.
 * **A ``.sql`` file whose name does not match a glob in ``SCHEMAS``.**
   ``migrations/add_sync_fields_to_notes.sql`` is exactly that shape today (it
   is unreferenced, and its two tables happen to be declared inline in
@@ -111,9 +116,21 @@ MIGRATIONS_DIR = REPO_ROOT / "tldw_chatbook" / "DB" / "migrations"
 #: ``CREATE [VIRTUAL|TEMP|TEMPORARY] TABLE [IF NOT EXISTS] [schema.]name``.
 #: The modifier is captured rather than skipped so virtual/temp declarations can
 #: be classified instead of silently swallowed by an over-broad pattern.
+#:
+#: The ``IF NOT EXISTS`` clause is matched as an all-or-nothing unit --
+#: ``(?:IF\s+NOT\s+EXISTS\s+|(?!IF\s+NOT\s+EXISTS\b))`` -- rather than a bare
+#: ``(?:...)?``. A plain optional group backtracks: when the clause is present
+#: but the text ends right after it (the interpolated-DDL shape in the module
+#: docstring's WHAT THIS CANNOT SEE section, e.g. the literal half of
+#: ``"CREATE TABLE IF NOT EXISTS " + table_name``), the engine falls back to
+#: matching zero-width and then reads the leftover word ``IF`` as the table
+#: name. The alternation's second branch is a negative lookahead for the same
+#: clause, so it only succeeds when the clause genuinely is not there --
+#: closing the backtrack path without needing atomic groups (unavailable in
+#: Python's ``re`` before 3.11; this script also runs under 3.9).
 CREATE_TABLE_RE = re.compile(
     r"\bCREATE\s+(?:(?P<modifier>VIRTUAL|TEMP|TEMPORARY)\s+)?TABLE\s+"
-    r"(?:IF\s+NOT\s+EXISTS\s+)?"
+    r"(?:IF\s+NOT\s+EXISTS\s+|(?!IF\s+NOT\s+EXISTS\b))"
     r"(?:[A-Za-z_][A-Za-z_0-9]*\s*\.\s*)?"
     r"[\"'`\[]?(?P<name>[A-Za-z_][A-Za-z_0-9]*)",
     re.IGNORECASE,
@@ -180,6 +197,71 @@ def _sql_fragments(path: Path) -> Iterable[tuple[str, str]]:
             yield node.value, f"{label}:{node.lineno}"
 
 
+def _strip_sql_comments(text: str) -> str:
+    """Remove ``--`` line comments and ``/* ... */`` block comments from SQL.
+
+    Without this, a migration comment like ``-- CREATE TABLE ghost(...)`` or
+    a historical note inside a ``/* ... */`` block reads as a real
+    declaration to ``CREATE_TABLE_RE`` and fails preflight/CI spuriously --
+    the same phantom-table failure mode the ``.py`` side already avoids by
+    scanning through ``ast`` instead of raw text (see ``_sql_fragments``).
+
+    A comment opener inside a string literal is not a comment: SQL escapes a
+    quote by doubling it (``'it''s'``), so this walks the text tracking
+    whether it is inside a ``'``/``"``/`` ` `` -delimited literal and only
+    treats ``--``/``/*`` as comment openers outside of one -- a stripper that
+    mangles a real string literal (e.g. a ``DEFAULT`` value containing
+    ``--``) would be worse than the bug it fixes.
+
+    Args:
+        text: Raw SQL text -- a whole ``.sql`` file, or one SQL string
+            literal pulled out of a ``.py`` source by ``_sql_fragments``.
+
+    Returns:
+        ``text`` with every comment removed and every string literal intact.
+        A line comment is replaced by a bare newline (so a line's contents
+        after ``--`` are gone but the newline, and therefore any ``lineno``
+        computed from later text, is unaffected); a block comment -- even one
+        spanning multiple lines -- is removed entirely.
+    """
+    out: list[str] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch in ("'", '"', "`"):
+            out.append(ch)
+            i += 1
+            while i < n:
+                out.append(text[i])
+                if text[i] == ch:
+                    if i + 1 < n and text[i + 1] == ch:
+                        # Doubled quote: an escaped quote character, still
+                        # inside the string literal.
+                        out.append(text[i + 1])
+                        i += 2
+                        continue
+                    i += 1
+                    break
+                i += 1
+            continue
+        if text[i : i + 2] == "--":
+            j = text.find("\n", i)
+            if j == -1:
+                i = n
+            else:
+                out.append("\n")
+                i = j + 1
+            continue
+        if text[i : i + 2] == "/*":
+            j = text.find("*/", i + 2)
+            i = n if j == -1 else j + 2
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
 def _is_substantive(name: str) -> bool:
     """Whether a declared table is one ``VALID_TABLES`` is meant to allowlist.
 
@@ -214,7 +296,7 @@ def declared_tables(schema: SchemaSources) -> dict[str, list[str]]:
     found: dict[str, set[str]] = {}
     for path in files:
         for text, origin in _sql_fragments(path):
-            for match in CREATE_TABLE_RE.finditer(text):
+            for match in CREATE_TABLE_RE.finditer(_strip_sql_comments(text)):
                 if match.group("modifier"):
                     # VIRTUAL (the FTS tables) and TEMP tables are not
                     # allowlist targets; _is_substantive drops the FTS names
@@ -250,15 +332,28 @@ def allowlisted_tables(key: str) -> set[str]:
     """
     tree = ast.parse(SQL_VALIDATION.read_text(encoding="utf-8"), filename=str(SQL_VALIDATION))
     for node in tree.body:
-        if not isinstance(node, ast.Assign):
+        # ``VALID_TABLES = {...}`` (ast.Assign, possibly multiple/chained
+        # targets) and ``VALID_TABLES: dict[str, set[str]] = {...}``
+        # (ast.AnnAssign, exactly one target) are both semantics-preserving
+        # ways to write this literal; a refactor from the first to the second
+        # must not make this guard unable to find it.
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+            value = node.value
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+            value = node.value
+        else:
+            continue
+        if value is None:  # bare "VALID_TABLES: dict[...]" with no RHS yet
             continue
         if not any(
             isinstance(target, ast.Name) and target.id == "VALID_TABLES"
-            for target in node.targets
+            for target in targets
         ):
             continue
         try:
-            table_map = ast.literal_eval(node.value)
+            table_map = ast.literal_eval(value)
         except (ValueError, SyntaxError) as exc:  # pragma: no cover - defensive
             raise SystemExit(
                 f"::error::VALID_TABLES in {SQL_VALIDATION} is no longer a "
@@ -324,6 +419,20 @@ def _report(schema: SchemaSources, declared: dict[str, list[str]], allowed: set[
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the allowlist check for every schema in ``SCHEMAS`` (or a subset).
+
+    Args:
+        argv: Command-line arguments, excluding the program name (e.g.
+            ``["--schema", "chachanotes"]``). ``None`` (the default) makes
+            ``argparse`` read from ``sys.argv`` itself.
+
+    Returns:
+        ``0`` if every selected schema's declared tables match its
+        ``VALID_TABLES`` entry exactly (see ``_report``); ``1`` if any
+        schema has an unlisted table, a phantom allowlist entry, or an empty
+        scan (a moved/renamed schema source, which would otherwise pass this
+        guard vacuously).
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--schema",

@@ -21,6 +21,21 @@ The shipped-tree assertion at the end is the belt to that braces: the static
 scan must agree, name for name, with a real fully-migrated
 ``CharactersRAGDB(":memory:")``. Two independent oracles that agree are
 evidence; one oracle asserted against itself is not.
+
+PR #1983's Qodo round found three more traps in the checker itself, each
+pinned below: raw ``.sql`` text was scanned without stripping SQL comments,
+so a migration comment containing ``CREATE TABLE`` failed CI spuriously
+(``test_sql_line_comment_does_not_produce_a_phantom_table``,
+``test_sql_block_comment_does_not_produce_a_phantom_table``, plus a direct
+unit test of the stripper proving it does not mangle a string literal that
+happens to contain ``--`` or ``/*``); the same bare ``CREATE_TABLE_RE``
+backtracked into reading the word ``IF`` as a phantom table name for
+interpolated DDL (``test_if_not_exists_backtracking_does_not_produce_a_phantom_if_table``);
+and ``allowlisted_tables()`` recognised only ``ast.Assign``, so annotating
+``VALID_TABLES: dict[str, set[str]] = {...}`` -- a semantics-preserving
+refactor -- broke the guard (``test_allowlisted_tables_reads_annotated_assignment``,
+plus a companion pinning that a genuinely-missing assignment still fails
+loudly rather than passing vacuously).
 """
 
 from __future__ import annotations
@@ -30,6 +45,8 @@ import subprocess
 import sys
 import textwrap
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHECKER = REPO_ROOT / "scripts" / "check_schema_table_allowlist.py"
@@ -164,6 +181,135 @@ def test_comment_prose_is_never_read_as_a_table_declaration(tmp_path, capsys):
     module = _fake_tree(tmp_path, migration_sql=_FIXTURE_SQL, allowlisted=_FIXTURE_TABLES)
     assert module.main([]) == 0
     assert "phantom_from_a_comment" not in capsys.readouterr().out
+
+
+def test_sql_line_comment_does_not_produce_a_phantom_table(tmp_path):
+    """AC: a ``-- CREATE TABLE ghost(...)`` comment is not a declaration.
+
+    Unlike the ``.py`` side (immune via ``ast``, see the test above), the
+    ``.sql`` side reads raw file text, so before Qodo's round-2 review this
+    regex-scanned comment prose exactly like a real ``CREATE TABLE`` and
+    failed CI/preflight spuriously.
+    """
+    sql = (
+        "-- CREATE TABLE ghost_table(id INTEGER PRIMARY KEY);\n"
+        "CREATE TABLE real_table(id INTEGER PRIMARY KEY);\n"
+    )
+    module = _fake_tree(
+        tmp_path, migration_sql=sql, allowlisted=["real_table", "from_python_literal"]
+    )
+    declared = module.declared_tables(module.SCHEMAS[0])
+    assert "ghost_table" not in declared
+    assert "real_table" in declared
+
+
+def test_sql_block_comment_does_not_produce_a_phantom_table(tmp_path):
+    """AC: a ``/* ... */`` comment -- including a multi-line one -- is inert too."""
+    sql = (
+        "/* legacy note:\n"
+        "CREATE TABLE ghost_table(id INTEGER PRIMARY KEY);\n"
+        "kept for history */\n"
+        "CREATE TABLE real_table(id INTEGER PRIMARY KEY);\n"
+    )
+    module = _fake_tree(
+        tmp_path, migration_sql=sql, allowlisted=["real_table", "from_python_literal"]
+    )
+    declared = module.declared_tables(module.SCHEMAS[0])
+    assert "ghost_table" not in declared
+    assert "real_table" in declared
+
+
+def test_strip_sql_comments_preserves_string_literals():
+    """The stripper must not treat ``--``/``/*`` inside a string as a comment opener.
+
+    A comment-stripper that mangles real SQL (e.g. eating a DEFAULT value
+    that happens to contain ``--``) would be worse than the phantom-table bug
+    it fixes.
+    """
+    module = _load_checker()
+    text = (
+        "CREATE TABLE t (\n"
+        "    note TEXT DEFAULT 'a -- not a comment',\n"
+        "    tag TEXT DEFAULT '/* also not a comment */'\n"
+        ");\n"
+        "-- real comment CREATE TABLE ghost(id INTEGER);\n"
+    )
+    stripped = module._strip_sql_comments(text)
+    assert "a -- not a comment" in stripped
+    assert "/* also not a comment */" in stripped
+    assert "ghost" not in stripped
+
+
+def test_strip_sql_comments_handles_escaped_quotes_in_strings():
+    """SQL escapes a quote by doubling it; that doubled quote must not end the string early."""
+    module = _load_checker()
+    text = "INSERT INTO t VALUES ('it''s -- not a comment');\n-- actual comment\n"
+    stripped = module._strip_sql_comments(text)
+    assert "it''s -- not a comment" in stripped
+    assert "actual comment" not in stripped
+
+
+def test_if_not_exists_backtracking_does_not_produce_a_phantom_if_table(tmp_path):
+    """Interpolated DDL must not surface a phantom table literally named ``IF``.
+
+    ``sql = "CREATE TABLE IF NOT EXISTS " + table_name + " (...)"`` is one of
+    the documented WHAT THIS CANNOT SEE shapes: the real table name is hidden
+    behind string concatenation, so the checker is allowed to simply miss it
+    (fail safe, like the rest of that list). Before Qodo's round-2 review, the
+    bare optional ``(?:IF\\s+NOT\\s+EXISTS\\s+)?`` group backtracked out of a
+    dead-end match and read the leftover word ``IF`` as the table name
+    instead -- an active false positive, not a miss.
+    """
+    module = _fake_tree(tmp_path, migration_sql=_FIXTURE_SQL, allowlisted=_FIXTURE_TABLES)
+    db_module = module.SCHEMAS[0].python_files[0]
+    db_module.write_text(
+        'sql = "CREATE TABLE IF NOT EXISTS " + table_name + " (id INTEGER PRIMARY KEY)"\n',
+        encoding="utf-8",
+    )
+    declared = module.declared_tables(module.SCHEMAS[0])
+    assert "IF" not in declared
+
+
+def test_allowlisted_tables_reads_annotated_assignment(tmp_path):
+    """A semantics-preserving refactor to an annotated assignment must not break the guard.
+
+    ``allowlisted_tables()`` used to filter on ``ast.Assign`` only; if
+    ``sql_validation.py`` were ever refactored to
+    ``VALID_TABLES: dict[str, set[str]] = {...}`` (``ast.AnnAssign``), the
+    checker could no longer find the literal at all.
+    """
+    module = _load_checker()
+    module.SQL_VALIDATION = tmp_path / "sql_validation.py"
+    module.SQL_VALIDATION.write_text(
+        'VALID_TABLES: dict[str, set[str]] = {\n    "chachanotes": {"a", "b"},\n}\n',
+        encoding="utf-8",
+    )
+    assert module.allowlisted_tables("chachanotes") == {"a", "b"}
+
+
+def test_allowlisted_tables_still_reads_the_plain_assignment(tmp_path):
+    """The original, un-annotated form (``ast.Assign``) keeps working."""
+    module = _load_checker()
+    module.SQL_VALIDATION = tmp_path / "sql_validation.py"
+    module.SQL_VALIDATION.write_text(
+        'VALID_TABLES = {\n    "chachanotes": {"a", "b"},\n}\n',
+        encoding="utf-8",
+    )
+    assert module.allowlisted_tables("chachanotes") == {"a", "b"}
+
+
+def test_allowlisted_tables_still_fails_loudly_when_the_assignment_is_gone(tmp_path):
+    """Accepting AnnAssign must not weaken the loud-failure case for a real 'it's gone'.
+
+    A silent empty set here would turn the guard off, so a file with no
+    ``VALID_TABLES`` assignment at all -- annotated or not -- must still
+    raise ``SystemExit``, exactly as it did before this fix.
+    """
+    module = _load_checker()
+    module.SQL_VALIDATION = tmp_path / "sql_validation.py"
+    module.SQL_VALIDATION.write_text("SOMETHING_ELSE = 1\n", encoding="utf-8")
+    with pytest.raises(SystemExit):
+        module.allowlisted_tables("chachanotes")
 
 
 def test_empty_scan_fails_instead_of_passing_vacuously(tmp_path, capsys):
