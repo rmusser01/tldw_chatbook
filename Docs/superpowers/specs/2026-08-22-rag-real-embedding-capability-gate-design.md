@@ -21,9 +21,19 @@ swallowed egress attempts.
 
 Use the existing `TLDW_RUN_REAL_EMBEDDINGS` capability switch to gate the real
 performance benchmark before its body requests `real_transformers_session`.
-The gate is a collection/setup-time `pytest.mark.skipif` marker in
-`Tests/RAG_Search/conftest.py` beside the existing embedding dependency markers
-and is consumed by `Tests/RAG_Search/test_embeddings_performance.py`.
+The gate is a combined collection/setup-time `requires_real_embeddings`
+`pytest.mark.skipif` marker in `Tests/RAG_Search/conftest.py`. Its condition
+covers both the existing embedding dependency check and the explicit capability
+switch; its reason remains `Embeddings dependencies not available` when the
+dependency is missing and otherwise identifies the disabled
+`TLDW_RUN_REAL_EMBEDDINGS` capability. The benchmark replaces its existing
+`requires_embeddings` marker with this combined marker, avoiding stacked and
+potentially ambiguous skip reasons.
+
+The benchmark also receives `pytest.mark.integration`, matching the existing
+real-embedding integration suite and satisfying the task's explicit
+integration-classification requirement. The integration marker labels the
+test; `requires_real_embeddings` is the behavior that prevents initialization.
 
 The default run therefore performs no transformer warm-up and no real model
 construction. It reports the benchmark as an explicit capability skip. When
@@ -36,8 +46,8 @@ other twelve inventory nodes.
 
 ## Error and Capability Behavior
 
-- Missing embedding dependencies continue to skip with the existing dependency
-  reason.
+- Missing embedding dependencies continue to skip with the existing
+  `Embeddings dependencies not available` reason.
 - Available dependencies without `TLDW_RUN_REAL_EMBEDDINGS=1` skip before any
   real-model fixture or background initialization begins.
 - An explicitly enabled benchmark can run from an already-populated local model
@@ -51,14 +61,17 @@ other twelve inventory nodes.
 
 Use the current failing node as the TDD regression:
 
-1. Confirm it reaches teardown with recorded `huggingface.co` attempts before
-   the capability gate.
+1. With `TLDW_RUN_REAL_EMBEDDINGS` and `TLDW_TEST_ALLOW_HF_DOWNLOADS`
+   explicitly absent from the command environment, confirm the benchmark
+   reaches teardown with recorded `huggingface.co` attempts before the
+   capability gate.
 2. Add the minimal gate and confirm the node becomes an explicit capability
    skip with no guard error.
 3. Run all thirteen exact TASK-19520 inventory nodes together under the default
-   blocked-network guard. Expected outcome: all thirteen complete without
-   errors—twelve passed, one explicit capability skip—and no guard-reported
-   network attempts.
+   blocked-network guard, again explicitly removing both capability/download
+   environment variables from the command environment. Expected outcome: all
+   thirteen complete without errors—twelve passed, one explicit capability
+   skip—and no guard-reported network attempts.
 4. Run Ruff and whitespace checks only for the modified test files and revision
    range.
 
