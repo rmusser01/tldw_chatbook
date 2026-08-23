@@ -20,18 +20,39 @@ CLONE_TIMEOUT_SECONDS = 900
 # Phase-1 file set (spec §5.1); excludes #2/#3/#6-deferred modules and
 # upstream's own __init__.py (chatbook-authored instead, §5.1).
 VENDORED = [
-    "base.py", "chunker.py", "constants.py", "exceptions.py", "error_policy.py",
-    "option_utils.py", "regex_safety.py", "security_logger.py",
-    "multilingual.py", "llm_context.py",
-    "process_text/__init__.py", "process_text/models.py", "process_text/options.py",
-    "process_text/preparation.py", "process_text/dispatch.py",
-    "process_text/pipeline.py", "process_text/metadata.py",
-    "splitters/__init__.py", "splitters/regex.py", "splitters/blingfire.py",
-    "strategies/__init__.py", "strategies/words.py", "strategies/sentences.py",
-    "strategies/paragraphs.py", "strategies/tokens.py", "strategies/json_xml.py",
-    "strategies/ebook_chapters.py", "strategies/ebook_chapters_patch.py",
-    "strategies/structure_aware.py", "strategies/code.py", "strategies/code_ast.py",
-    "strategies/fixed_size.py", "strategies/semantic.py",
+    "base.py",
+    "chunker.py",
+    "constants.py",
+    "exceptions.py",
+    "error_policy.py",
+    "option_utils.py",
+    "regex_safety.py",
+    "security_logger.py",
+    "multilingual.py",
+    "llm_context.py",
+    "process_text/__init__.py",
+    "process_text/models.py",
+    "process_text/options.py",
+    "process_text/preparation.py",
+    "process_text/dispatch.py",
+    "process_text/pipeline.py",
+    "process_text/metadata.py",
+    "splitters/__init__.py",
+    "splitters/regex.py",
+    "splitters/blingfire.py",
+    "strategies/__init__.py",
+    "strategies/words.py",
+    "strategies/sentences.py",
+    "strategies/paragraphs.py",
+    "strategies/tokens.py",
+    "strategies/json_xml.py",
+    "strategies/ebook_chapters.py",
+    "strategies/ebook_chapters_patch.py",
+    "strategies/structure_aware.py",
+    "strategies/code.py",
+    "strategies/code_ast.py",
+    "strategies/fixed_size.py",
+    "strategies/semantic.py",
     "strategies/rolling_summarize.py",
     "utils/metrics.py",
 ]
@@ -111,14 +132,12 @@ ASYNC_GUARD = (
     "{i}# async_chunker depends on server-only http_client/exceptions modules\n"
     "{i}# and is deferred to sub-project #6 (spec §5.1 deferrals).\n"
     "{i}pytest.importorskip(\n"
-    "{i}    \"tldw_chatbook.Chunking.engine.async_chunker\",\n"
-    "{i}    reason=\"async_chunker deferred to #6 (server http_client/exceptions deps)\",\n"
+    '{i}    "tldw_chatbook.Chunking.engine.async_chunker",\n'
+    '{i}    reason="async_chunker deferred to #6 (server http_client/exceptions deps)",\n'
     "{i})\n"
 )
 
-TOK_HELPER_IMPORT = (
-    "from Tests.Chunking.conftest import real_hf_cache  # noqa: F401\n"
-)
+TOK_HELPER_IMPORT = "from Tests.Chunking.conftest import real_hf_cache  # noqa: F401\n"
 
 TOK_USEFIXTURES = (
     "    # --- Ported (chunking-engine-parity Task 4) -------------------------\n"
@@ -167,52 +186,52 @@ def _patch_chunker_v2(text: str) -> str:
     # metrics registry is server-side: skip the whole class
     text = _replace_once(
         text,
-        'class TestChunkerMetrics:\n'
+        "class TestChunkerMetrics:\n"
         '    """Ensure chunker-specific metrics are registered and populated."""\n',
-        'class TestChunkerMetrics:\n'
+        "class TestChunkerMetrics:\n"
         '    """Ensure chunker-specific metrics are registered and populated."""\n'
-        '\n'
-        '    # --- Ported (chunking-engine-parity Task 4) -----------------------\n'
-        '    # The server\'s Metrics registry is not vendored; the engine degrades\n'
-        '    # gracefully to no-op metrics, so there is no registry to assert\n'
-        '    # against in chatbook. Re-enable when a Metrics shim lands.\n'
-        '    pytestmark = [\n'
-        '        pytest.mark.skip(\n'
+        "\n"
+        "    # --- Ported (chunking-engine-parity Task 4) -----------------------\n"
+        "    # The server's Metrics registry is not vendored; the engine degrades\n"
+        "    # gracefully to no-op metrics, so there is no registry to assert\n"
+        "    # against in chatbook. Re-enable when a Metrics shim lands.\n"
+        "    pytestmark = [\n"
+        "        pytest.mark.skip(\n"
         '            reason="server Metrics registry not vendored; engine degrades to no-op metrics"\n'
-        '        )\n'
-        '    ]\n',
+        "        )\n"
+        "    ]\n",
         name,
     )
     # async_chunker test
     text = _replace_once(
         text,
-        '    async def test_async_chunker_preserves_language_per_task(self):\n'
-        '        from tldw_chatbook.Chunking.engine.async_chunker import AsyncChunker\n',
-        '    async def test_async_chunker_preserves_language_per_task(self):\n'
+        "    async def test_async_chunker_preserves_language_per_task(self):\n"
+        "        from tldw_chatbook.Chunking.engine.async_chunker import AsyncChunker\n",
+        "    async def test_async_chunker_preserves_language_per_task(self):\n"
         + ASYNC_GUARD.format(i="        ")
-        + '        from tldw_chatbook.Chunking.engine.async_chunker import AsyncChunker\n',
+        + "        from tldw_chatbook.Chunking.engine.async_chunker import AsyncChunker\n",
         name,
     )
     # tokenizer-cache-dependent tests: real_hf_cache fixture (offline read of
     # the real cache; skip only if gpt2 is genuinely absent on this machine)
     for anchor in (
-        '    def test_process_text_tokenizer_override(self):\n'
+        "    def test_process_text_tokenizer_override(self):\n"
         '        """tokenizer_name_or_path should use per-call strategy without mutating cached tokens."""\n',
-        '    def test_tokens_basic_chunking(self):\n'
+        "    def test_tokens_basic_chunking(self):\n"
         '        """Test basic token-based chunking."""\n',
-        '    def test_tokens_preserve_leading_indentation_when_chunking_mid_block(self):\n'
+        "    def test_tokens_preserve_leading_indentation_when_chunking_mid_block(self):\n"
         '        """Token chunks must retain leading whitespace to keep code formatting intact."""\n',
     ):
         text = _replace_once(text, anchor, TOK_USEFIXTURES + anchor, name)
     text = _replace_once(
         text,
-        'def test_hierarchical_tokens_offsets_map_to_source():\n'
+        "def test_hierarchical_tokens_offsets_map_to_source():\n"
         '    """Hierarchical tokens path must map local spans to global offsets and preserve exact source slices."""\n',
-        '# --- Ported (chunking-engine-parity Task 4) -----------------------------\n'
-        '# Loads the real gpt2 tokenizer; the real_hf_cache fixture forces an\n'
-        '# offline read of the real cache (no network).\n'
+        "# --- Ported (chunking-engine-parity Task 4) -----------------------------\n"
+        "# Loads the real gpt2 tokenizer; the real_hf_cache fixture forces an\n"
+        "# offline read of the real cache (no network).\n"
         "@pytest.mark.usefixtures('real_hf_cache')\n"
-        'def test_hierarchical_tokens_offsets_map_to_source():\n'
+        "def test_hierarchical_tokens_offsets_map_to_source():\n"
         '    """Hierarchical tokens path must map local spans to global offsets and preserve exact source slices."""\n',
         name,
     )
@@ -224,17 +243,17 @@ def _patch_chunker_v2(text: str) -> str:
     for fn in ("improved_chunking_process", "chunk_for_embedding"):
         text = _replace_once(
             text,
-            f'    def test_{fn}(self):\n',
-            f'    def test_{fn}(self):\n'
-            f'        # --- Ported (chunking-engine-parity Task 4) ---------------------\n'
-            f'        # Upstream\'s {fn} is part of the server package init, which chatbook\n'
-            f'        # deliberately does not vendor (spec §5.1); the compat equivalent\n'
-            f'        # lives in the Chunk_Lib shim (behavioral coverage:\n'
-            f'        # Tests/Chunking/test_shim_backcompat.py, M3).\n'
-            f'        pytest.skip(\n'
+            f"    def test_{fn}(self):\n",
+            f"    def test_{fn}(self):\n"
+            f"        # --- Ported (chunking-engine-parity Task 4) ---------------------\n"
+            f"        # Upstream's {fn} is part of the server package init, which chatbook\n"
+            f"        # deliberately does not vendor (spec §5.1); the compat equivalent\n"
+            f"        # lives in the Chunk_Lib shim (behavioral coverage:\n"
+            f"        # Tests/Chunking/test_shim_backcompat.py, M3).\n"
+            f"        pytest.skip(\n"
             f'            "{fn} lives in the Chunk_Lib shim, not the engine package "\n'
             f'            "(spec §5.1); behavioral coverage in test_shim_backcompat.py"\n'
-            f'        )\n',
+            f"        )\n",
             name,
         )
     return text
@@ -259,13 +278,13 @@ def _patch_security(text: str) -> str:
     name = "test_security.py"
     return _replace_once(
         text,
-        '    def test_concurrent_request_limits(self):\n'
+        "    def test_concurrent_request_limits(self):\n"
         '        """Test that concurrent requests are limited."""\n'
-        '        from tldw_chatbook.Chunking.engine.async_chunker import AsyncChunker\n',
-        '    def test_concurrent_request_limits(self):\n'
+        "        from tldw_chatbook.Chunking.engine.async_chunker import AsyncChunker\n",
+        "    def test_concurrent_request_limits(self):\n"
         '        """Test that concurrent requests are limited."""\n'
         + ASYNC_GUARD.format(i="        ")
-        + '        from tldw_chatbook.Chunking.engine.async_chunker import AsyncChunker\n',
+        + "        from tldw_chatbook.Chunking.engine.async_chunker import AsyncChunker\n",
         name,
     )
 
@@ -274,13 +293,13 @@ def _patch_security_fixed(text: str) -> str:
     name = "test_security_fixed.py"
     return _replace_once(
         text,
-        '    async def test_concurrent_request_limits(self):\n'
+        "    async def test_concurrent_request_limits(self):\n"
         '        """Test that concurrent requests are handled properly."""\n'
-        '        from tldw_chatbook.Chunking.engine.async_chunker import AsyncChunker\n',
-        '    async def test_concurrent_request_limits(self):\n'
+        "        from tldw_chatbook.Chunking.engine.async_chunker import AsyncChunker\n",
+        "    async def test_concurrent_request_limits(self):\n"
         '        """Test that concurrent requests are handled properly."""\n'
         + ASYNC_GUARD.format(i="        ")
-        + '        from tldw_chatbook.Chunking.engine.async_chunker import AsyncChunker\n',
+        + "        from tldw_chatbook.Chunking.engine.async_chunker import AsyncChunker\n",
         name,
     )
 
@@ -291,7 +310,7 @@ def _patch_thread_safety(text: str) -> str:
         text, "import pytest\n", "import pytest\n\n" + TOK_HELPER_IMPORT, name
     )
     anchor = (
-        '    def test_tokenizer_property_concurrent_initialization(self):\n'
+        "    def test_tokenizer_property_concurrent_initialization(self):\n"
         '        """Test concurrent tokenizer property access is thread-safe."""\n'
     )
     return _replace_once(
@@ -301,8 +320,7 @@ def _patch_thread_safety(text: str) -> str:
         "    # Loads the real gpt2 tokenizer; the real_hf_cache fixture points the\n"
         "    # HF stack at the real (pre-sandbox) cache with offline mode forced, so\n"
         "    # no network is touched. Skips if gpt2 is genuinely not cached.\n"
-        "    @pytest.mark.usefixtures('real_hf_cache')\n"
-        + anchor,
+        "    @pytest.mark.usefixtures('real_hf_cache')\n" + anchor,
         name,
     )
 
@@ -388,6 +406,7 @@ def patch_ported_test(name: str, text: str) -> str:
 # diagnostic call sites; behavior changes belong upstream (spec §5.2's
 # shim/subclass rule still applies to anything beyond log-record content).
 # ---------------------------------------------------------------------------
+
 
 def _patch_chunker_stream_diagnostics(text: str) -> str:
     """TASK-19321 (ADR-029): chunk_file_stream diagnostics must not record
@@ -584,8 +603,8 @@ import threading
 
     def clear_events(self) -> None:
 ''',
-        '''    def clear_events(self) -> None:
-''',
+        """    def clear_events(self) -> None:
+""",
         name,
     )
     return text
@@ -608,22 +627,25 @@ def patch_vendored_file(rel: str, text: str) -> str:
 
 def rewrite_imports(src: str) -> str:
     # Mechanical, order matters: the Chunking-specific rule first.
-    src = src.replace("tldw_Server_API.app.core.Chunking",
-                      "tldw_chatbook.Chunking.engine")
-    src = src.replace("tldw_Server_API.app.core",
-                      "tldw_chatbook.Chunking._shims")
+    src = src.replace(
+        "tldw_Server_API.app.core.Chunking", "tldw_chatbook.Chunking.engine"
+    )
+    src = src.replace("tldw_Server_API.app.core", "tldw_chatbook.Chunking._shims")
     # Slashed (filesystem-path) form of the same mapping, e.g. upstream
     # chunker.py's docstring pointer at its own README; keeps the vendored
     # tree free of any `tldw_Server_API` text (spec §0/§5.2, test contract).
-    src = src.replace("tldw_Server_API/app/core/Chunking",
-                      "tldw_chatbook/Chunking/engine")
+    src = src.replace(
+        "tldw_Server_API/app/core/Chunking", "tldw_chatbook/Chunking/engine"
+    )
     return src
 
 
 def git_show(worktree: Path, path: str) -> str:
     r = subprocess.run(
         ["git", "-C", str(worktree), "show", f"{PIN}:{UPSTREAM_ROOT}/{path}"],
-        capture_output=True, text=True)
+        capture_output=True,
+        text=True,
+    )
     if r.returncode != 0:
         sys.exit(f"FATAL: {path} not found at pinned SHA {PIN}: {r.stderr}")
     return r.stdout
@@ -631,11 +653,16 @@ def git_show(worktree: Path, path: str) -> str:
 
 def verify_clean(worktree: Path) -> None:
     """Wrong-tree hazard (spec §0): the source must match the pin exactly."""
-    r = subprocess.run(["git", "-C", str(worktree), "rev-parse", "HEAD"],
-                       capture_output=True, text=True)
+    r = subprocess.run(
+        ["git", "-C", str(worktree), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+    )
     if r.stdout.strip() != PIN:
-        sys.exit(f"FATAL: worktree HEAD {r.stdout.strip()[:8]} != pin {PIN[:8]}; "
-                 f"checkout the pinned SHA first (git checkout {PIN})")
+        sys.exit(
+            f"FATAL: worktree HEAD {r.stdout.strip()[:8]} != pin {PIN[:8]}; "
+            f"checkout the pinned SHA first (git checkout {PIN})"
+        )
 
 
 def _sync_worktree(worktree: Path) -> int:
@@ -647,51 +674,77 @@ def _sync_worktree(worktree: Path) -> int:
         if dst.exists():
             if rel == "__init__.py":
                 continue  # chatbook-authored, never touched by sync
-            expected = patch_vendored_file(rel, rewrite_imports(git_show(worktree, rel)))
+            expected = patch_vendored_file(
+                rel, rewrite_imports(git_show(worktree, rel))
+            )
             if dst.read_text() != expected:
-                sys.exit(f"FATAL: local modification to vendored file {rel}; "
-                         f"revert it or move the change to a shim/subclass")
+                sys.exit(
+                    f"FATAL: local modification to vendored file {rel}; "
+                    f"revert it or move the change to a shim/subclass"
+                )
 
     # 2. Copy + rewrite + chatbook-side engine patches
     for rel in VENDORED:
         dst = TARGET_ROOT / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
-        dst.write_text(patch_vendored_file(rel, rewrite_imports(git_show(worktree, rel))))
+        dst.write_text(
+            patch_vendored_file(rel, rewrite_imports(git_show(worktree, rel)))
+        )
 
     # 3. Manifest + licence (GPLv3 §4: licence text ships in-subtree)
     for rel in EXTRA_FILES:
         dst = TARGET_ROOT / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.write_bytes(
-            subprocess.run(["git", "-C", str(worktree), "show", f"{PIN}:{rel}"],
-                           capture_output=True).stdout)
+            subprocess.run(
+                ["git", "-C", str(worktree), "show", f"{PIN}:{rel}"],
+                capture_output=True,
+            ).stdout
+        )
     print(f"Synced {len(VENDORED)} files from {REPO} @ {PIN}")
 
     # 4. Tests (spec §10.1): port with the same import rewrite + chatbook-side
     # patches (see TESTS_MODULE_SKIPPED / TEST_PATCHES above) so a re-sync
     # reproduces the ported tree exactly.
     r = subprocess.run(
-        ["git", "-C", str(worktree), "ls-tree", "-r", "--name-only", PIN,
-         f"{UPSTREAM_TESTS_ROOT}/"],
-        capture_output=True, text=True)
+        [
+            "git",
+            "-C",
+            str(worktree),
+            "ls-tree",
+            "-r",
+            "--name-only",
+            PIN,
+            f"{UPSTREAM_TESTS_ROOT}/",
+        ],
+        capture_output=True,
+        text=True,
+    )
     if r.returncode != 0:
         sys.exit(f"FATAL: could not list upstream tests at {PIN}: {r.stderr}")
     upstream_tests = sorted(
-        line[len(UPSTREAM_TESTS_ROOT) + 1:]
+        line[len(UPSTREAM_TESTS_ROOT) + 1 :]
         for line in r.stdout.splitlines()
-        if line.startswith(f"{UPSTREAM_TESTS_ROOT}/") and "/test_" in line
-        and line.endswith(".py") and line.split("/")[-1].startswith("test_")
+        if line.startswith(f"{UPSTREAM_TESTS_ROOT}/")
+        and "/test_" in line
+        and line.endswith(".py")
+        and line.split("/")[-1].startswith("test_")
     )
     to_port = [t for t in upstream_tests if t.split("/")[-1] not in TESTS_EXCLUDED]
     for rel in to_port:
         rel_path = Path(rel)
         dst_name = TEST_RENAMES.get(rel_path.name, rel_path.name)
-        dst = TARGET_TESTS_ROOT / rel_path.parent / dst_name if rel_path.parent != Path(".") \
+        dst = (
+            TARGET_TESTS_ROOT / rel_path.parent / dst_name
+            if rel_path.parent != Path(".")
             else TARGET_TESTS_ROOT / dst_name
+        )
         dst.parent.mkdir(parents=True, exist_ok=True)
         src = subprocess.run(
             ["git", "-C", str(worktree), "show", f"{PIN}:{UPSTREAM_TESTS_ROOT}/{rel}"],
-            capture_output=True, text=True)
+            capture_output=True,
+            text=True,
+        )
         if src.returncode != 0:
             sys.exit(f"FATAL: {rel} not found at pinned SHA {PIN}: {src.stderr}")
         dst.write_text(patch_ported_test(rel_path.name, rewrite_imports(src.stdout)))

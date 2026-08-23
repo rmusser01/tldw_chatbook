@@ -66,7 +66,9 @@ def _run_sync() -> subprocess.CompletedProcess:
 
 def test_manifest_pins_upstream():
     manifest = tomllib.loads((ENGINE / "VENDOR_MANIFEST.toml").read_text())
-    assert manifest["upstream"]["repo"] == "https://github.com/rmusser01/tldw_server.git"
+    assert (
+        manifest["upstream"]["repo"] == "https://github.com/rmusser01/tldw_server.git"
+    )
     assert manifest["upstream"]["branch"] == "dev"
     assert manifest["upstream"]["commit"] == PIN
     assert "chunker.py" in " ".join(manifest["files"]["vendored"])
@@ -86,26 +88,38 @@ def test_engine_tree_complete():
     assert "GNU GENERAL PUBLIC LICENSE" in gpl
     assert "Version 3, 29 June 2007" in gpl
     # excluded-by-design files must NOT exist
-    for rel in ("templates.py", "template_initialization.py", "auto_planner.py",
-                "async_chunker.py", "auto_boundary_assistant.py",
-                "strategies/propositions.py", "utils/proposition_eval.py"):
+    for rel in (
+        "templates.py",
+        "template_initialization.py",
+        "auto_planner.py",
+        "async_chunker.py",
+        "auto_boundary_assistant.py",
+        "strategies/propositions.py",
+        "utils/proposition_eval.py",
+    ):
         assert not (ENGINE / rel).exists(), f"deferred file vendored: {rel}"
     # upstream's own __init__ must not be vendored (chatbook-authored instead)
     assert "load_and_log_configs" not in (ENGINE / "__init__.py").read_text()
 
 
 def manifest_vendored():
-    return tomllib.loads((ENGINE / "VENDOR_MANIFEST.toml").read_text())["files"]["vendored"]
+    return tomllib.loads((ENGINE / "VENDOR_MANIFEST.toml").read_text())["files"][
+        "vendored"
+    ]
 
 
 def manifest_extra():
-    return tomllib.loads((ENGINE / "VENDOR_MANIFEST.toml").read_text())["files"]["extra"]
+    return tomllib.loads((ENGINE / "VENDOR_MANIFEST.toml").read_text())["files"][
+        "extra"
+    ]
 
 
 def test_no_server_imports_remain():
     for py in ENGINE.rglob("*.py"):
         src = py.read_text()
-        assert "tldw_Server_API" not in src, f"{py.name} still references upstream package"
+        assert "tldw_Server_API" not in src, (
+            f"{py.name} still references upstream package"
+        )
         assert "from app.core" not in src, f"{py.name} still references app.core"
 
 
@@ -204,7 +218,7 @@ def test_owned_temporary_clone_is_removed(monkeypatch, tmp_path, sync_fails):
 
     monkeypatch.setattr(sync_helper.tempfile, "mkdtemp", fake_mkdtemp)
     monkeypatch.setattr(sync_helper.subprocess, "run", fake_run)
-    monkeypatch.setattr(sync_helper, "_sync_worktree", fake_sync, raising=False)
+    monkeypatch.setattr(sync_helper, "_sync_worktree", fake_sync)
 
     if sync_fails:
         with pytest.raises(RuntimeError, match="injected sync failure"):
@@ -222,7 +236,7 @@ def test_supplied_source_is_never_removed(monkeypatch, tmp_path):
     supplied_source.mkdir()
 
     monkeypatch.setattr(sync_helper, "verify_clean", lambda source: None)
-    monkeypatch.setattr(sync_helper, "_sync_worktree", lambda source: 0, raising=False)
+    monkeypatch.setattr(sync_helper, "_sync_worktree", lambda source: 0)
 
     assert sync_helper._run_with_source(str(supplied_source)) == 0
     assert supplied_source.exists()
