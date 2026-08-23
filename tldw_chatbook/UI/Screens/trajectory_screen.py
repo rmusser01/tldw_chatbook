@@ -54,6 +54,7 @@ actions that work in the focused context.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import time
@@ -360,6 +361,7 @@ class TrajectoryScreen(ModalScreen[None]):
         self._failure: str | None = None
         self._retry_target: str | None = None
         self._retry_in_flight = False
+        self._import_in_flight = False
         #: The always-mounted timeline strip (created here so filters,
         #: pagination growth and selection sync can reach it pre-mount).
         self._timeline = TrajectoryTimeline(id="trajectory-timeline")
@@ -455,11 +457,20 @@ class TrajectoryScreen(ModalScreen[None]):
 
         self._configure_columns()
         self._filter_bar.set_compact(self.size.width < 100)
+        self._apply_height_budget()
         try:
             self.query_one("#trajectory-inspector", VerticalScroll)
             self._schedule_inspector_cue()
         except Exception:  # noqa: BLE001 - resize may precede composition
             pass
+
+    def _apply_height_budget(self) -> None:
+        """Keep state, timeline, ledger, and both hint rows reachable at 18 rows."""
+        try:
+            timeline = self.query_one("#trajectory-timeline", TrajectoryTimeline)
+        except Exception:  # noqa: BLE001 - resize can precede composition
+            return
+        timeline.styles.height = 4 if self.size.height <= 18 else 6
 
     @staticmethod
     def _tier_for_width(width: int) -> str:
@@ -626,7 +637,7 @@ class TrajectoryScreen(ModalScreen[None]):
             search_focused = False
         parts: list[str] = []
         if self._shared_trace:
-            parts.append("READ-ONLY SHARED TRACE")
+            parts.extend(("READ-ONLY SHARED TRACE", "NOT SAVED"))
         if self._imported_trace is not None:
             manifest = self._imported_trace.manifest
             version = manifest.get("format_version") or manifest.get("schema_version")
@@ -634,21 +645,24 @@ class TrajectoryScreen(ModalScreen[None]):
             parts.append(f"v{version} {profile}")
             integrity = self._imported_trace.integrity
             parts.append(
-                "INTEGRITY VERIFIED"
+                "DIGEST VALID"
                 if integrity.get("verified")
-                else "INTEGRITY NOT PROVIDED (v1)"
+                else "DIGEST NOT PROVIDED (v1)"
             )
+            parts.append("SOURCE NOT AUTHENTICATED")
             inventory = self._imported_trace.privacy_inventory
             if inventory:
                 parts.append(
-                    f"privacy {inventory.get('redacted', 0)} redacted / "
-                    f"{inventory.get('omitted', 0)} omitted / "
-                    f"{inventory.get('truncated', 0)} truncated"
+                    f"privacy fields R{inventory.get('redacted', 0)} / "
+                    f"O{inventory.get('omitted', 0)} / "
+                    f"T{inventory.get('truncated', 0)}"
                 )
         if self._snapshot_builder is not None:
             parts.extend(("LIVE", "FOLLOWING" if self._follow else "PAUSED"))
             if not self._follow:
                 parts.append("f resume")
+        if self._import_in_flight:
+            parts.extend(("IMPORTING", "Validating shared Trace…"))
         if self._retry_in_flight:
             parts.extend(("RETRYING", "Retry in progress…"))
         elif self._failure is not None:
@@ -1218,12 +1232,20 @@ class TrajectoryScreen(ModalScreen[None]):
             lines = [" · ".join(recovery) if recovery else "o import trace"]
         else:
             lines = ["n/p match · j/k err · u/y tool · v/b feedback · a/s child"]
-            core = [
-                "enter inspect",
-                "i close" if inspector_open else "i detail",
-                "g filters",
-                "w export trace",
-            ]
+            if self.size.width < 80:
+                core = [
+                    "↵ inspect",
+                    "i close" if inspector_open else "i info",
+                    "g filters",
+                    "w export",
+                ]
+            else:
+                core = [
+                    "enter inspect",
+                    "i close" if inspector_open else "i detail",
+                    "g filters",
+                    "w export trace",
+                ]
             contextual = False
             if self._hidden_earlier > 0:
                 core.append("e earlier")
@@ -1879,13 +1901,24 @@ class TrajectoryScreen(ModalScreen[None]):
         Import failures surface as an error notification carrying the
         actionable message from the shared validator.
         """
+        if self._import_in_flight:
+            return
         path = await self._pick_trace_file()
         if path is None:
             return  # picker dismissed: no-op, stay on the current screen
+        self._import_in_flight = True
+        self._refresh_state()
         try:
-            imported = load_imported_trace(path)
+            imported = await asyncio.to_thread(load_imported_trace, path)
         except TrajectoryImportError as exc:
-            self.app.notify(str(exc), title="Import failed", severity="error")
+            if self._alive:
+                self.app.notify(str(exc), title="Import failed", severity="error")
+            return
+        finally:
+            self._import_in_flight = False
+            if self._alive:
+                self._refresh_state()
+        if not self._alive:
             return
         self.app.push_screen(
             TrajectoryScreen(
@@ -1911,6 +1944,7 @@ class TrajectoryScreen(ModalScreen[None]):
                 ("All Files", lambda p: True),
             ),
             context="trajectory_import",
+            select_button="Import",
         )
         selected = await self.app.push_screen_wait(picker)
         return None if selected is None else Path(str(selected))

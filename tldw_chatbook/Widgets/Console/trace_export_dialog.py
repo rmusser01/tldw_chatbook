@@ -72,12 +72,14 @@ class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
         text-style: bold;
     }
     #trace-export-intro,
+    #trace-export-profile-copy {
+        height: auto;
+        margin-top: 1;
+    }
     #trace-export-policy,
-    #trace-export-profile-copy,
     #trace-export-inventory,
     #trace-export-status {
         height: auto;
-        margin-top: 1;
     }
     #trace-export-policy {
         color: $warning;
@@ -87,12 +89,12 @@ class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
         margin-top: 1;
     }
     #trace-export-path {
-        margin-top: 1;
+        margin-top: 0;
     }
     #trace-export-actions {
         height: 3;
         min-height: 3;
-        margin-top: 1;
+        margin-top: 0;
         align-horizontal: right;
     }
     #trace-export-actions Button {
@@ -117,10 +119,16 @@ class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="trace-export-dialog"):
+            yield Static("Export shared Trace", id="trace-export-title", markup=False)
+            yield Static(
+                "Analyzing privacy inventory…", id="trace-export-inventory"
+            )
+            yield Static(
+                "Credentials are always blocked in every profile.",
+                id="trace-export-policy",
+                markup=False,
+            )
             with VerticalScroll(id="trace-export-body"):
-                yield Static(
-                    "Export shared Trace", id="trace-export-title", markup=False
-                )
                 yield Static(
                     "Review exactly what will leave this machine before writing a portable JSON bundle.",
                     id="trace-export-intro",
@@ -135,20 +143,12 @@ class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
                     )
                     yield RadioButton("Full trace", id="trace-export-profile-full")
                 yield Static("", id="trace-export-profile-copy", markup=False)
-                yield Static(
-                    "Analyzing privacy inventory…", id="trace-export-inventory"
-                )
-                yield Static(
-                    "Credentials are always blocked in every profile.",
-                    id="trace-export-policy",
-                    markup=False,
-                )
-                yield Input(
-                    value=str(Path.cwd() / "trace-export.json"),
-                    placeholder="Destination .json path",
-                    id="trace-export-path",
-                )
-                yield Static("", id="trace-export-status", markup=False)
+            yield Input(
+                value=str(Path.cwd() / "trace-export.json"),
+                placeholder="Destination .json path",
+                id="trace-export-path",
+            )
+            yield Static("", id="trace-export-status", markup=False)
             with Horizontal(id="trace-export-actions"):
                 yield Button("Browse…", id="trace-export-browse")
                 yield Button("Cancel", id="trace-export-cancel")
@@ -161,6 +161,7 @@ class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
 
     async def on_mount(self) -> None:
         await self.select_profile(self._selected_profile)
+        self.query_one("#trace-export-profiles", RadioSet).focus()
 
     async def select_profile(self, profile: TraceExportProfile) -> None:
         """Recompute the single-pass preflight off the UI thread."""
@@ -187,7 +188,7 @@ class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
         self._preflight = preflight
         inventory = preflight.privacy_inventory
         self.query_one("#trace-export-inventory", Static).update(
-            f"{preflight.event_count} events · {inventory['sensitive']} sensitive · "
+            f"{preflight.event_count} events · {inventory['sensitive']} sensitive fields · "
             f"{inventory['redacted']} redacted · {inventory['omitted']} omitted · "
             f"{inventory['truncated']} truncated · {inventory['missing']} unavailable"
         )
@@ -255,6 +256,25 @@ class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
         event.stop()
         self.run_worker(self._export_flow(), group="trace-export-write", exclusive=True)
 
+    @on(Input.Submitted, "#trace-export-path")
+    def _submit_path(self, event: Input.Submitted) -> None:
+        event.stop()
+        self.run_worker(self._export_flow(), group="trace-export-write", exclusive=True)
+
+    async def _confirm_overwrite(self, destination: Path) -> bool:
+        return bool(
+            await self.app.push_screen_wait(
+                ConfirmationDialog(
+                    title="Replace existing Trace?",
+                    message=(
+                        f"{destination.name} already exists. Replacing it cannot be undone."
+                    ),
+                    confirm_label="Replace file",
+                    cancel_label="Keep existing",
+                )
+            )
+        )
+
     async def _export_flow(self) -> None:
         if self._writing or self._preflight is None:
             return
@@ -267,6 +287,9 @@ class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
                 self._set_status("Full export cancelled; review the profile or path.")
                 return
         destination = Path(raw_path)
+        if destination.exists() and not await self._confirm_overwrite(destination):
+            self._set_status("Export cancelled; the existing file was kept.")
+            return
         self._writing = True
         self._set_controls_disabled(True)
         self._set_status("Writing privacy-governed bundle…")

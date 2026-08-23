@@ -422,6 +422,7 @@ async def test_compact_contextual_hints_fit_without_duplicate_navigation_copy() 
         assert "n/p match" in lines[0]
         assert "n next match" not in "\n".join(lines)
         assert "g filters" in lines[1]
+        assert "w export" in lines[1]
 
 
 @pytest.mark.asyncio

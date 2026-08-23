@@ -21,6 +21,7 @@ from tldw_chatbook.Chat.trajectory_export import (
     write_trajectory_export,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.UI.Screens.trajectory_screen import TrajectoryScreen
 from Tests.Chat.test_trajectory_export import _seed_conversation
 from Tests.UI.test_trajectory_screen import base_snapshot, _record_key_for_seq
@@ -93,7 +94,9 @@ async def test_o_mounts_imported_readonly_screen_with_records(tmp_path) -> None:
         table = imported.query_one("#trajectory-table", DataTable)
         assert table.row_count == 11
         assert table.get_row_index(_record_key_for_seq(imported, 7)) is not None
-        assert "INTEGRITY NOT PROVIDED (v1)" in state
+        assert "DIGEST NOT PROVIDED (v1)" in state
+        assert "SOURCE NOT AUTHENTICATED" in state
+        assert "NOT SAVED" in state
 
 
 @pytest.mark.asyncio
@@ -192,6 +195,7 @@ def _row_counts(database: CharactersRAGDB) -> dict[str, int]:
         "messages",
         "message_trajectory_metadata",
         "console_auxiliary_attempts",
+        "transcript_annotations",
     ):
         counts[table] = database.execute_query(
             f"SELECT COUNT(*) FROM {table}"  # noqa: S608 - static table name
@@ -210,8 +214,12 @@ async def test_import_through_the_screen_never_writes_the_db(tmp_path) -> None:
     """
     db = CharactersRAGDB(tmp_path / "local-app.db", client_id="local")
     _seed_conversation(db)  # local app data the import must not touch
+    agent_runs_path = tmp_path / "local-agent-runs.db"
+    agent_runs = AgentRunsDB(agent_runs_path, client_id="local")
+    agent_runs.close()
     trace = _build_trace(tmp_path)  # from its own separate source DB
     before = _row_counts(db)
+    agent_runs_before = agent_runs_path.read_bytes()
     assert before["messages"] > 0
     assert before["message_trajectory_metadata"] > 0
 
@@ -228,3 +236,4 @@ async def test_import_through_the_screen_never_writes_the_db(tmp_path) -> None:
         assert "READ-ONLY SHARED TRACE" in state
 
     assert _row_counts(db) == before
+    assert agent_runs_path.read_bytes() == agent_runs_before

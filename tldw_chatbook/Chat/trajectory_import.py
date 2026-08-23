@@ -1031,7 +1031,10 @@ def _snapshot_from_events(events: Sequence[Mapping[str, Any]]) -> TrajectorySnap
 
 
 def _import_operation(
-    manifest: Mapping[str, Any], integrity: Mapping[str, Any], event_count: int
+    manifest: Mapping[str, Any],
+    integrity: Mapping[str, Any],
+    privacy_inventory: Mapping[str, int],
+    event_count: int,
 ) -> TrajectoryRecord:
     digest = str(integrity.get("digest") or "legacy")
     return TrajectoryRecord(
@@ -1047,8 +1050,9 @@ def _import_operation(
         model=None,
         provider=None,
         payload={
-            "profile": manifest.get("profile"),
-            "integrity_verified": bool(integrity.get("verified")),
+            "manifest": dict(manifest),
+            "integrity": dict(integrity),
+            "privacy_inventory": dict(privacy_inventory),
         },
         variants=(),
         depth=0,
@@ -1080,6 +1084,9 @@ def load_imported_trace(source: Path | str | Mapping) -> ImportedTrace:
             "authenticity": False,
             "verified": True,
             "verdict": "valid",
+            "notice": (
+                "SHA-256 digest valid; source authenticity not established."
+            ),
         }
         privacy = dict(manifest["privacy_inventory"])
     else:
@@ -1098,11 +1105,15 @@ def load_imported_trace(source: Path | str | Mapping) -> ImportedTrace:
             "authenticity": False,
             "verified": False,
             "verdict": "not_provided_v1",
+            "notice": (
+                "No integrity digest provided; source authenticity not established."
+            ),
         }
         privacy = {}
     operation = _import_operation(
         manifest,
         integrity,
+        privacy,
         sum(len(turn.records) for turn in snapshot.turns),
     )
     return ImportedTrace(snapshot, manifest, integrity, privacy, operation)

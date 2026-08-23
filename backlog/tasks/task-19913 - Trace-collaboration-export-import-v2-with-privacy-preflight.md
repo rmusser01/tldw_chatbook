@@ -41,7 +41,7 @@ Make sharing a first-class, privacy-safe Trace workflow with a versioned causal 
 2. Implement the smallest stdlib-only TraceExportProfile/TraceExportPreflight, canonical v2 builder/writer, and version-dispatched ImportedTrace reader using the existing atomic writer and pure snapshot boundary.
 3. Mutation-check integrity verification, run the focused Chat export/import suite, then obtain independent specification review followed by code-quality/privacy review and resolve all findings.
 4. Add RED production-CSS Pilot tests for the export preflight, default profile, explicit full confirmation, cancel/no-write, write failure, read-only shared title/metadata, error states, and zero persistence writes.
-5. Implement the smallest responsive Textual dialog and screen integration, with x export trace and o import trace bindings governed by ADR-031; preserve ephemeral import and never attach database owners.
+5. Implement the smallest responsive Textual dialog and screen integration, preserving x clear filters and adding w export trace plus o import trace under ADR-031; preserve ephemeral import and never attach database owners.
 6. Run the focused UI/round-trip/privacy suites, one batched 60/80/100/120-column compositor pass with at most one correction, one post-UI Impeccable detector pass, then independent specification and Sr HCI/code-quality reviews until both are Ready Yes.
 7. Refresh and integrate latest origin/dev, run full Trace collaboration verification and static checks, update docs/task notes, and close only when all five AC are proven.
 

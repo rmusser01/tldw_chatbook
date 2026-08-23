@@ -103,8 +103,9 @@ confirmation; credentials remain excluded regardless.
 
 - [ ] **Step 4: Add ADR-031 bindings**
 
-Use `x export trace` and rename `o open` to `o import trace`; keep the custom hint line
-exactly aligned with implemented non-Escape bindings.
+Preserve `x clear filters` as the critical recovery action, add `w export trace`,
+and rename `o open` to `o import trace`; keep the custom hint line exactly aligned
+with implemented non-Escape bindings.
 
 - [ ] **Step 5: Preserve ephemeral import**
 

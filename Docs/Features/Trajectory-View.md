@@ -140,24 +140,39 @@ records in.
 Traces can be exported to a single portable JSON file and opened on
 another machine (or attached to a bug report):
 
-- **Export** produces a versioned `tldw-trajectory` document containing
-  everything the view renders. **Tool payloads are redacted by default** —
-  only the tool name and short previews travel unless full payloads are
-  explicitly opted in (they can contain file contents). The document-level
-  `redacted` flag records the mode.
-- **Import**: press **`o`** in Trace to open a trace file. It
-  renders as `Shared trace — <name>` with `READ-ONLY SHARED TRACE`. Imported traces never
-  write anything into your local database — messages, sidecar data, and
-  sync state are untouched. Malformed files, unknown versions, and JSON
-  errors are reported with actionable messages.
+- **Export**: press **`w`** in Trace. The privacy preflight stays visible while
+  you choose one of three profiles and a destination:
+  - **Safe summary** keeps causal structure, state, and coarse timing while
+    omitting payload bodies.
+  - **Redacted diagnostic** is the recommended default. It keeps useful
+    debugging context while governing paths, identifiers, and sensitive values.
+  - **Full trace** keeps ordinary captured detail and requires a second explicit
+    warning confirmation.
+- The preflight reports event and field-level sensitive, redacted, omitted,
+  truncated, and unavailable counts before any file is written. Credentials are
+  prohibited in every profile. Existing files require a separate Replace
+  confirmation.
+- Export writes a versioned `tldw-trace` v2 JSON bundle with stable event
+  identity/order, causal lineage, timing, missing-data reasons, privacy
+  provenance, and a canonical SHA-256 digest.
+- **Import**: press **`o`** in Trace and choose **Import**. Validation runs in
+  the background, then opens `Shared trace — <name>` with
+  `READ-ONLY SHARED TRACE · NOT SAVED`. Imported traces are ephemeral and never
+  write messages, annotations, trajectory metadata, or agent-run data locally.
+  The synthetic final `Trace import` event exposes the safe manifest, complete
+  privacy inventory, digest verdict, and source-authenticity limitation.
+- `DIGEST VALID` means the bundle content matches its included SHA-256 digest;
+  it does **not** verify the sender. The screen therefore also states
+  `SOURCE NOT AUTHENTICATED`. Malformed files, unknown versions, tampering, and
+  credential-bearing bundles fail closed with actionable errors. Legacy v1
+  `tldw-trajectory` files remain importable and say that no digest was provided.
 
-The export API lives in `tldw_chatbook/Chat/trajectory_export.py`
-(`build_trajectory_export`, `write_trajectory_export`); import in
-`Chat/trajectory_import.py`. The format contract is
-[ADR-067](../../backlog/decisions/067-trajectory-export-format.md).
-
-> **Note:** an export button in the UI is not wired yet (task-16813 landed
-> the format and writer as a library). Import via `o` is wired.
+The v2 export API lives in `tldw_chatbook/Chat/trajectory_export.py`
+(`preflight_trace_export`, `build_trace_export`, `write_trajectory_export`);
+version-dispatched import lives in `Chat/trajectory_import.py`. The current
+collaboration contract is [ADR-080](../../backlog/decisions/080-trace-v2-exhaustive-event-projection-and-collaboration.md);
+[ADR-067](../../backlog/decisions/067-trajectory-export-format.md) remains the
+legacy v1 contract.
 
 ## What older conversations show
 
@@ -183,6 +198,7 @@ shows its `no timing data` placeholder. New turns get the full treatment.
 | `r` | Retry a failed render or live refresh |
 | `g` (or `enter` on the compact filter row) | Open structured filters |
 | `x` | Clear search, structured filters, and timeline range |
+| `w` | Export with privacy preflight |
 | `o` | Open an imported trace file (read-only) |
 | `n` / `p` | Next / previous visible match |
 | `j` / `k` | Next / previous error (or timed event with timeline focus) |
@@ -201,4 +217,5 @@ the footer only advertises keys that work in the current context.
 
 - Design spec: `Docs/superpowers/specs/2026-08-14-console-trajectory-view-design.md`
 - Sidecar schema and view architecture: `backlog/decisions/066-console-trajectory-view-and-trace-metadata.md`
-- Export format: `backlog/decisions/067-trajectory-export-format.md`
+- Collaboration export/import v2: `backlog/decisions/080-trace-v2-exhaustive-event-projection-and-collaboration.md`
+- Legacy export format v1: `backlog/decisions/067-trajectory-export-format.md`
