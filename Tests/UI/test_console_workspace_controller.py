@@ -652,13 +652,121 @@ async def test_page_completion_from_prior_screen_lifecycle_is_discarded_and_sett
     controller._fetch_workspace_tree_page = fetch
     page = asyncio.create_task(controller.load_workspace_tree_page("workspace-7", 75))
     await started.wait()
+    loading_sync_count = len(syncs)
     identities["lifecycle"] = object()
     release.set()
     await page
 
     assert [row.conversation_id for row in attempt.rows] == ["settled"]
     assert attempt.loading is False
-    assert syncs
+    assert len(syncs) > loading_sync_count
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal", ["owner", "cancel", "membership"])
+async def test_page_terminal_paths_settle_loading_and_allow_retry(
+    terminal: str,
+) -> None:
+    identities = {"owner": object(), "lifecycle": object()}
+    memberships = ["settled", "late"]
+    syncs: list[str] = []
+    fetch_calls = 0
+    controller = _workspace_controller(
+        app_instance=SimpleNamespace(
+            workspace_registry_service=SimpleNamespace(
+                list_workspace_conversations=lambda _workspace_id: tuple(
+                    SimpleNamespace(item_id=conversation_id)
+                    for conversation_id in memberships
+                )
+            )
+        ),
+        workspace_tree_owner_accessor=lambda: identities["owner"],
+        screen_lifecycle_token_accessor=lambda: identities["lifecycle"],
+        sync_workspace_context=lambda: syncs.append("sync"),
+    )
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def blocked_fetch(_workspace_id, _cursor):
+        nonlocal fetch_calls
+        fetch_calls += 1
+        started.set()
+        await release.wait()
+        return (_browser_row("late", "Late"),), None
+
+    controller._fetch_workspace_tree_page = blocked_fetch
+    page = asyncio.create_task(controller.load_workspace_tree_page("workspace-7", 75))
+    await started.wait()
+    loading_sync_count = len(syncs)
+    if terminal == "owner":
+        identities["owner"] = object()
+    elif terminal == "membership":
+        memberships[:] = ["settled"]
+    else:
+        page.cancel()
+    release.set()
+    if terminal == "cancel":
+        with pytest.raises(asyncio.CancelledError):
+            await page
+    else:
+        await page
+
+    attempt = controller._workspace_page_attempts["workspace-7"]
+    assert attempt.loading is False
+    if terminal == "owner":
+        assert len(syncs) == loading_sync_count
+    else:
+        assert len(syncs) > loading_sync_count
+
+    async def retry_fetch(_workspace_id, _cursor):
+        nonlocal fetch_calls
+        fetch_calls += 1
+        return (_browser_row("retry", "Retry"),), None
+
+    controller._fetch_workspace_tree_page = retry_fetch
+    await controller.load_workspace_tree_page("workspace-7", 75)
+    assert fetch_calls == 2
+    assert attempt.loading is False
+
+
+@pytest.mark.asyncio
+async def test_stale_page_terminal_does_not_settle_newer_attempt() -> None:
+    controller = _workspace_controller(
+        app_instance=SimpleNamespace(
+            workspace_registry_service=_membership_registry("same")
+        )
+    )
+    started = [asyncio.Event(), asyncio.Event()]
+    release = [asyncio.Event(), asyncio.Event()]
+    calls = 0
+
+    async def fetch(_workspace_id, _cursor):
+        nonlocal calls
+        index = calls
+        calls += 1
+        started[index].set()
+        await release[index].wait()
+        return (_browser_row("same", f"Attempt {index}"),), None
+
+    controller._fetch_workspace_tree_page = fetch
+    old_page = asyncio.create_task(
+        controller.load_workspace_tree_page("workspace-7", 75)
+    )
+    await started[0].wait()
+    attempt = controller._workspace_page_attempts["workspace-7"]
+    attempt.loading = False
+    new_page = asyncio.create_task(
+        controller.load_workspace_tree_page("workspace-7", 75)
+    )
+    await started[1].wait()
+
+    release[0].set()
+    await old_page
+    assert attempt.loading is True
+
+    release[1].set()
+    await new_page
+    assert attempt.loading is False
 
 
 @pytest.mark.asyncio
@@ -1132,7 +1240,8 @@ def test_production_state_build_uses_canonical_membership_without_fanout() -> No
     assert controller._workspace_page_attempts["workspace-49"] is untouched
 
 
-def test_production_publish_reconciles_fresh_default_owner_before_both_projections() -> (
+@pytest.mark.asyncio
+async def test_production_publish_reconciles_fresh_default_owner_before_both_projections() -> (
     None
 ):
     membership_calls: list[str] = []
@@ -1154,12 +1263,21 @@ def test_production_publish_reconciles_fresh_default_owner_before_both_projectio
     attempt = controller._new_workspace_page_state(rows=(stale_named,), next_cursor=75)
     attempt.membership_token = ("moving",)
     controller._workspace_page_attempts["workspace-7"] = attempt
-    fresh_default = _browser_row(
-        "moving",
-        "Fresh Default owner",
-        workspace_id=DEFAULT_WORKSPACE_ID,
-    )
-    controller._console_conversation_browser_rows = (fresh_default,)
+
+    async def fresh_flat(_query):
+        return (
+            (
+                _browser_row(
+                    "moving",
+                    "Fresh Default owner",
+                    workspace_id=DEFAULT_WORKSPACE_ID,
+                ),
+            ),
+            1,
+        )
+
+    controller._load_flat_conversation_search_rows = fresh_flat
+    await controller.refresh_flat_conversation_search("owner")
 
     state = controller._with_console_conversation_browser_state(_workspace_state())
     assert state.conversation_browser is not None
@@ -1180,6 +1298,95 @@ def test_production_publish_reconciles_fresh_default_owner_before_both_projectio
 
     assert owners == ["flat"]
     assert membership_calls == []
+
+
+@pytest.mark.asyncio
+async def test_production_publish_reconciles_fresh_named_search_owner_before_flat() -> (
+    None
+):
+    membership_calls: list[str] = []
+    controller = _workspace_controller(
+        app_instance=SimpleNamespace(
+            workspace_registry_service=SimpleNamespace(
+                list_workspaces=lambda: (
+                    SimpleNamespace(
+                        workspace_id="workspace-7", name="Seven", archived=False
+                    ),
+                ),
+                list_workspace_conversations=lambda workspace_id: (
+                    membership_calls.append(workspace_id) or ()
+                ),
+            )
+        )
+    )
+    controller._workspace_membership_rows[DEFAULT_WORKSPACE_ID] = (
+        _browser_row(
+            "moving",
+            "Stale Default owner",
+            workspace_id=DEFAULT_WORKSPACE_ID,
+        ),
+    )
+
+    async def fresh_named(_query):
+        return ((_browser_row("moving", "Fresh named owner"),), 1)
+
+    controller._load_workspace_tree_search_rows = fresh_named
+    await controller.refresh_workspace_tree_search("owner")
+
+    state = controller._with_console_conversation_browser_state(_workspace_state())
+    assert state.conversation_browser is not None
+    owners = [
+        *(
+            node.workspace_id
+            for node in state.workspace_tree
+            for row in node.conversations
+            if row.conversation_id == "moving"
+        ),
+        *(
+            "flat"
+            for section in state.conversation_browser.sections
+            for row in section.rows
+            if row.conversation_id == "moving"
+        ),
+    ]
+
+    assert owners == ["workspace-7"]
+    assert membership_calls == []
+
+
+def test_partial_production_owner_observation_preserves_unobserved_page_members() -> (
+    None
+):
+    controller = _workspace_controller(
+        app_instance=SimpleNamespace(
+            workspace_registry_service=SimpleNamespace(
+                list_workspaces=lambda: (
+                    SimpleNamespace(
+                        workspace_id="workspace-7", name="Seven", archived=False
+                    ),
+                )
+            )
+        )
+    )
+    attempt = controller._new_workspace_page_state(
+        rows=(_browser_row("a", "A"), _browser_row("b", "B")),
+        next_cursor=75,
+    )
+    attempt.membership_token = ("a", "b")
+    attempt.generation = 4
+    controller._workspace_page_attempts["workspace-7"] = attempt
+    controller._console_conversation_browser_rows = (_browser_row("a", "Fresh A"),)
+
+    state = controller._with_console_conversation_browser_state(_workspace_state())
+
+    assert [
+        row.conversation_id
+        for node in state.workspace_tree
+        for row in node.conversations
+    ] == ["a", "b"]
+    assert attempt.membership_token == ("a", "b")
+    assert attempt.next_cursor == 75
+    assert attempt.generation == 4
 
 
 def test_active_workspace_search_overlays_current_star_selection_and_run_marker() -> (
@@ -1276,7 +1483,8 @@ def test_active_workspace_search_overlays_full_native_marker_truth_without_queri
         _browser_row("approval", "Approval"),
         replace(_browser_row("cleared", "Cleared"), run_marker="✗"),
         _browser_row("unseen", "Unseen"),
-        replace(_browser_row("missing", "Missing"), run_marker="✓"),
+        replace(_browser_row("closed", "Closed session"), run_marker="●"),
+        replace(_browser_row("acknowledged", "Acknowledged"), run_marker="◈"),
     )
     controller._workspace_tree_search.query = "seven"
     controller._workspace_tree_search.rows = rows
@@ -1297,7 +1505,8 @@ def test_active_workspace_search_overlays_full_native_marker_truth_without_queri
     assert projected["unseen"].run_marker == resolve_glyph(
         CONSOLE_RUN_MARKER_GLYPHS[ConsoleRunMarker.SUBAGENT_UNSEEN]
     )
-    assert projected["missing"].run_marker == "✓"
+    assert projected["closed"].run_marker == ""
+    assert projected["acknowledged"].run_marker == ""
     assert (projected["running"].starred, projected["running"].selected) == (
         True,
         True,
