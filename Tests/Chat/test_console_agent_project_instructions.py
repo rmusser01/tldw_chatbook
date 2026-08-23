@@ -1054,6 +1054,14 @@ async def test_project_instruction_disable_terminalizes_and_allows_retry():
 
     store = ConsoleChatStore()
     session = store.create_session(workspace_id="w1")
+    store.set_session_project_instruction_state(
+        session.id,
+        ProjectInstructionControlState(
+            project_instructions_enabled=True,
+            working_folder_binding_id="removed-binding",
+            working_folder_locator_fingerprint="f" * 64,
+        ),
+    )
     provider_calls = []
     bridge_calls = []
 
