@@ -51,6 +51,9 @@ to govern STT artifact and runtime behavior.
 
 ## Global constraints
 
+- Run commands from the repository root with the project development
+  environment activated, so `python` resolves an interpreter with pytest and
+  Ruff installed.
 - Run no repository-wide local suite and no unrelated test directory.
 - Do not change `.github/scripts/task602_platform_smoke.py`; the bug is the
   test's process-global patch.
@@ -98,7 +101,7 @@ Expected: the commit succeeds and status is empty before Task 1 begins.
 Run:
 
 ```bash
-/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q \
+python -m pytest -q \
   Tests/STT/test_task602_platform_smoke.py::test_run_smoke_returns_only_bounded_allowlisted_observations \
   --tb=long
 ```
@@ -111,7 +114,7 @@ product failure.
 Run:
 
 ```bash
-/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q Tests/STT/test_task602_platform_smoke.py --tb=long
+python -m pytest -q Tests/STT/test_task602_platform_smoke.py --tb=long
 ```
 
 Expected: `20 passed` before the repair.
@@ -123,7 +126,7 @@ after the test installs its current `smoke.time.monotonic` patch and leaves no
 file behind:
 
 ```bash
-/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -c 'exec("""import importlib.util
+python -c 'exec("""import importlib.util
 import tempfile
 import time
 import traceback
@@ -204,7 +207,7 @@ immediately after it.
 Run:
 
 ```bash
-/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q \
+python -m pytest -q \
   Tests/STT/test_task602_platform_smoke.py::test_run_smoke_returns_only_bounded_allowlisted_observations \
   --tb=short
 ```
@@ -255,7 +258,7 @@ git commit -m "test(stt): isolate task 602 smoke clock"
 - [ ] **Step 1: Run the task-owned test files**
 
 ```bash
-/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q \
+python -m pytest -q \
   Tests/STT/test_task602_platform_smoke.py \
   Tests/CI/test_task602_platform_evidence.py \
   --tb=short
@@ -296,8 +299,8 @@ Expected: `1 passed` four times.
 - [ ] **Step 4: Run scoped static checks**
 
 ```bash
-/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff check Tests/STT/test_task602_platform_smoke.py
-/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff format --check Tests/STT/test_task602_platform_smoke.py
+python -m ruff check Tests/STT/test_task602_platform_smoke.py
+python -m ruff format --check Tests/STT/test_task602_platform_smoke.py
 git diff --check origin/dev...HEAD
 git status --short
 ```
@@ -510,15 +513,15 @@ task19642_run_id="$(gh run list \
   | head -n 1)"
 test -n "${task19642_run_id}"
 task19642_evidence_dir="/tmp/task-19642-4-native-evidence-${task19642_run_id}"
-/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python .github/scripts/task602_platform_evidence.py --validate \
+python .github/scripts/task602_platform_evidence.py --validate \
   "${task19642_evidence_dir}/task-602-platform-linux-x86_64/task-602-platform-evidence.json"
-/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python .github/scripts/task602_platform_evidence.py --validate \
+python .github/scripts/task602_platform_evidence.py --validate \
   "${task19642_evidence_dir}/task-602-platform-linux-aarch64/task-602-platform-evidence.json"
-/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python .github/scripts/task602_platform_evidence.py --validate \
+python .github/scripts/task602_platform_evidence.py --validate \
   "${task19642_evidence_dir}/task-602-platform-windows-x86_64/task-602-platform-evidence.json"
-/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python .github/scripts/task602_platform_evidence.py --validate \
+python .github/scripts/task602_platform_evidence.py --validate \
   "${task19642_evidence_dir}/task-602-platform-macos-arm64/task-602-platform-evidence.json"
-/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python .github/scripts/task602_platform_evidence.py --validate \
+python .github/scripts/task602_platform_evidence.py --validate \
   "${task19642_evidence_dir}/task-602-platform-macos-x86_64/task-602-platform-evidence.json"
 ```
 
@@ -536,14 +539,14 @@ task19642_run_id="$(gh run list \
   | head -n 1)"
 test -n "${task19642_run_id}"
 task19642_evidence_dir="/tmp/task-19642-4-native-evidence-${task19642_run_id}"
-/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python .github/scripts/task602_platform_evidence.py --aggregate \
+python .github/scripts/task602_platform_evidence.py --aggregate \
   "${task19642_evidence_dir}/task-602-platform-linux-x86_64/task-602-platform-evidence.json" \
   "${task19642_evidence_dir}/task-602-platform-linux-aarch64/task-602-platform-evidence.json" \
   "${task19642_evidence_dir}/task-602-platform-windows-x86_64/task-602-platform-evidence.json" \
   "${task19642_evidence_dir}/task-602-platform-macos-arm64/task-602-platform-evidence.json" \
   "${task19642_evidence_dir}/task-602-platform-macos-x86_64/task-602-platform-evidence.json" \
   --output Docs/STT_Evaluation/task-602/platform-evidence.json
-/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python .github/scripts/task602_platform_evidence.py \
+python .github/scripts/task602_platform_evidence.py \
   --validate-aggregate Docs/STT_Evaluation/task-602/platform-evidence.json
 ```
 
@@ -612,14 +615,14 @@ malformed CLI artifact.
 - [ ] **Step 4: Verify final evidence and documentation**
 
 ```bash
-/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest -q \
+python -m pytest -q \
   Tests/STT/test_task602_platform_smoke.py \
   Tests/CI/test_task602_platform_evidence.py \
   --tb=short
-/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python .github/scripts/task602_platform_evidence.py \
+python .github/scripts/task602_platform_evidence.py \
   --validate-aggregate Docs/STT_Evaluation/task-602/platform-evidence.json
-/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff check Tests/STT/test_task602_platform_smoke.py
-/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff format --check Tests/STT/test_task602_platform_smoke.py
+python -m ruff check Tests/STT/test_task602_platform_smoke.py
+python -m ruff format --check Tests/STT/test_task602_platform_smoke.py
 git diff --check origin/dev...HEAD
 git diff --check
 ```
