@@ -21,9 +21,9 @@ swallowed egress attempts.
 
 Use the existing `TLDW_RUN_REAL_EMBEDDINGS` capability switch to gate the real
 performance benchmark before its body requests `real_transformers_session`.
-The gate belongs in `Tests/RAG_Search/conftest.py` beside the existing embedding
-dependency markers and is consumed by
-`Tests/RAG_Search/test_embeddings_performance.py`.
+The gate is a collection/setup-time `pytest.mark.skipif` marker in
+`Tests/RAG_Search/conftest.py` beside the existing embedding dependency markers
+and is consumed by `Tests/RAG_Search/test_embeddings_performance.py`.
 
 The default run therefore performs no transformer warm-up and no real model
 construction. It reports the benchmark as an explicit capability skip. When
@@ -40,8 +40,12 @@ other twelve inventory nodes.
   reason.
 - Available dependencies without `TLDW_RUN_REAL_EMBEDDINGS=1` skip before any
   real-model fixture or background initialization begins.
-- An explicitly enabled benchmark retains its existing model-unavailable skip
-  behavior after attempting the real initialization path.
+- An explicitly enabled benchmark can run from an already-populated local model
+  cache. On a cold cache, the unchanged repository network guard still blocks
+  Hugging Face egress and reports the attempt at teardown even if the benchmark
+  catches the model-load exception and skips. Download authorization and a
+  capable integration environment are separate from this offline-default task;
+  this change deliberately does not add `allow_network` or weaken that guard.
 
 ## Verification
 
@@ -52,8 +56,9 @@ Use the current failing node as the TDD regression:
 2. Add the minimal gate and confirm the node becomes an explicit capability
    skip with no guard error.
 3. Run all thirteen exact TASK-19520 inventory nodes together under the default
-   blocked-network guard. Expected outcome: twelve passed, one explicit
-   capability skip, and no guard-reported network attempts.
+   blocked-network guard. Expected outcome: all thirteen complete without
+   errors—twelve passed, one explicit capability skip—and no guard-reported
+   network attempts.
 4. Run Ruff and whitespace checks only for the modified test files and revision
    range.
 
