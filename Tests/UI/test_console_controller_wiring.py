@@ -35,6 +35,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from textual.css.query import QueryError
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.UI.test_destination_shells import _build_test_app
@@ -455,6 +456,56 @@ def test_hands_free_reads_dictation_state_through_the_screen_at_call_time():
     screen._dictation = SimpleNamespace(_console_dictation_state=sentinel)
 
     assert screen._hands_free._dictation_state_accessor() is sentinel
+
+
+@pytest.mark.asyncio
+async def test_hands_free_auto_speak_edges_are_late_bound_and_mount_safe(monkeypatch):
+    """Wave 6 keeps policy on HandsFree without freezing its sibling edge."""
+    screen = _unmounted_console()
+    controller = screen._hands_free
+    requests: list[tuple[str, object | None]] = []
+    screen._console_auto_speak = SimpleNamespace(
+        request_enabled=lambda enabled: requests.append(("enabled", enabled)),
+        request_resume=lambda: requests.append(("resume", None)),
+        request_retry=lambda: requests.append(("retry", None)),
+    )
+
+    controller.on_console_auto_speak_changed(SimpleNamespace(enabled=True))
+    controller.on_console_auto_speak_resume_requested(SimpleNamespace())
+    controller.on_console_auto_speak_retry_requested(SimpleNamespace())
+
+    destination = object()
+
+    async def resolve_destination(assistant_kind, character_ref):
+        assert assistant_kind == "character"
+        assert character_ref is None
+        return destination
+
+    async def ensure_handler():
+        return SimpleNamespace(
+            resolve_console_speech_destination=resolve_destination,
+        )
+
+    screen.app_instance._ensure_tts_handler = ensure_handler
+    assert (
+        await controller._resolve_console_auto_speak_destination("character", None)
+        is destination
+    )
+
+    # Both presentation paths must remain harmless before the screen mounts.
+    controller._sync_console_auto_speak_controls(True, False, False)
+    controller._sync_hands_free_switch(True)
+
+    # Teardown can leave a stale query root that raises a broader QueryError.
+    monkeypatch.setattr(screen, "query_one", MagicMock(side_effect=QueryError()))
+    controller._sync_console_auto_speak_controls(False, True, True)
+    controller._sync_hands_free_switch(False)
+
+    assert requests == [
+        ("enabled", True),
+        ("resume", None),
+        ("retry", None),
+    ]
 
 
 def test_prompts_resolves_the_session_sibling_at_call_time():
