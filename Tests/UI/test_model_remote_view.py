@@ -292,9 +292,7 @@ def _variant_resolved() -> ResolvedRemoteModel:
         repository="owner/repository",
         commit=_COMMIT,
         license_id="apache-2.0",
-        review_url=(
-            f"https://huggingface.co/owner/repository/tree/{_COMMIT}"
-        ),
+        review_url=(f"https://huggingface.co/owner/repository/tree/{_COMMIT}"),
         candidates=candidates,
         total_candidate_count=len(candidates),
         warnings=(),
@@ -368,9 +366,7 @@ def _memory_snapshot(
         accelerator_state=accelerator_state,
         total_bytes=total_gib * GIB if has_capacity else None,
         available_bytes=(
-            available_gib * GIB
-            if has_capacity and available_gib is not None
-            else None
+            available_gib * GIB if has_capacity and available_gib is not None else None
         ),
         memory_kind=memory_kind if has_capacity else MemoryKind.UNKNOWN,
         accelerators=accelerators,
@@ -479,6 +475,7 @@ async def test_machine_memory_update_preserves_candidate_identity_and_focus() ->
         candidate = view.query_one(".remote-candidate", Button)
         outcome = view.query_one("#remote-fit-outcome-0", Static)
         details = view.query_one("#remote-fit-details-0", Static)
+        advisory = view.query_one("#remote-fit-advisory-0", Static)
         candidate.focus()
         view.apply_machine_memory_state(
             _memory_presentation(snapshot),
@@ -489,14 +486,17 @@ async def test_machine_memory_update_preserves_candidate_identity_and_focus() ->
         assert view.query_one(".remote-candidate", Button) is candidate
         assert view.query_one("#remote-fit-outcome-0", Static) is outcome
         assert view.query_one("#remote-fit-details-0", Static) is details
+        assert view.query_one("#remote-fit-advisory-0", Static) is advisory
         assert app.focused is candidate
         assert "64K scenario within RAM budget" in _text(view)
         assert "64K may need more free RAM now" in _text(view)
-        assert "model-context support and runtime compatibility remain unverified" in _text(
-            view
+        assert (
+            "model-context support and runtime compatibility remain unverified"
+            in _text(view)
         )
         assert outcome._render_markup is False
         assert details._render_markup is False
+        assert advisory._render_markup is False
 
 
 @pytest.mark.asyncio
@@ -542,7 +542,9 @@ async def test_memory_scenario_panel_recheck_and_details_toggle_are_explicit() -
 
 
 @pytest.mark.asyncio
-async def test_memory_scenario_unavailable_and_retained_failure_copy_is_rendered() -> None:
+async def test_memory_scenario_unavailable_and_retained_failure_copy_is_rendered() -> (
+    None
+):
     """Flattening failure states would make a retained estimate look freshly observed."""
     view = _view(
         adapter_factory=lambda: _Adapter(resolved=_resolved()),
@@ -707,7 +709,9 @@ async def test_drill_down_at_71_cells_restores_exact_repository_focus() -> None:
 
 
 @pytest.mark.asyncio
-async def test_drill_down_new_search_returns_to_results_and_details_start_collapsed() -> None:
+async def test_drill_down_new_search_returns_to_results_and_details_start_collapsed() -> (
+    None
+):
     """Retaining detail on a new narrow search would hide the new result set."""
     adapter = _Adapter(
         search_result=(_summary(),),
@@ -739,6 +743,107 @@ async def test_drill_down_new_search_returns_to_results_and_details_start_collap
         await pilot.pause()
         assert view.query_one(".remote-results-pane").display is True
         assert view.query_one(".remote-detail-pane").display is False
+
+
+@pytest.mark.asyncio
+async def test_memory_scenario_pressure_advisory_stays_visible_when_71_details_collapse() -> (
+    None
+):
+    """Collapsing exact inputs must not hide a current free-memory warning."""
+    view = _view(
+        adapter_factory=lambda: _Adapter(resolved=_memory_resolved()),
+        resolver_factory=lambda: _Resolver([]),
+    )
+    app = _RemoteApp(view)
+    snapshot = _memory_snapshot(available_gib=10)
+
+    async with app.run_test(size=(71, 35)) as pilot:
+        await _submit(app, pilot, "owner/repository")
+        view.apply_machine_memory_state(_memory_presentation(snapshot), snapshot)
+        await pilot.pause()
+        exact_inputs = view.query_one("#remote-fit-details-0", Static)
+        advisory = view.query_one("#remote-fit-advisory-0", Static)
+
+        assert exact_inputs.display is False
+        assert advisory.display is True
+        assert "64K may need more free RAM now" in str(advisory.renderable)
+
+
+@pytest.mark.asyncio
+async def test_memory_scenario_retained_failure_stays_visible_when_71_details_collapse() -> (
+    None
+):
+    """Collapsing exact inputs must not hide that a refresh used retained facts."""
+    view = _view(
+        adapter_factory=lambda: _Adapter(resolved=_memory_resolved()),
+        resolver_factory=lambda: _Resolver([]),
+    )
+    app = _RemoteApp(view)
+    snapshot = _memory_snapshot(available_gib=32)
+
+    async with app.run_test(size=(71, 35)) as pilot:
+        await _submit(app, pilot, "owner/repository")
+        view.apply_machine_memory_state(
+            _memory_presentation(
+                snapshot,
+                observed_at_label="09:41",
+                failure=ProbeReason.MEMORY_UNAVAILABLE,
+            ),
+            snapshot,
+        )
+        await pilot.pause()
+        exact_inputs = view.query_one("#remote-fit-details-0", Static)
+        advisory = view.query_one("#remote-fit-advisory-0", Static)
+
+        assert exact_inputs.display is False
+        assert advisory.display is True
+        assert "Recheck failed · using memory observed at 09:41" in str(
+            advisory.renderable
+        )
+
+
+@pytest.mark.asyncio
+async def test_memory_scenario_new_71_search_resets_expanded_details_to_collapsed() -> (
+    None
+):
+    """A prior repository's toggle choice must not expand a new narrow result."""
+    adapter = _Adapter(
+        search_result=(_summary(),),
+        resolved=_memory_resolved(),
+    )
+    view = _view(
+        adapter_factory=lambda: adapter,
+        resolver_factory=lambda: _Resolver([]),
+    )
+    app = _RemoteApp(view)
+    snapshot = _memory_snapshot()
+
+    async with app.run_test(size=(71, 40)) as pilot:
+        await _submit(app, pilot, "first model")
+        view.query_one(".remote-result", Button).press()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        view.apply_machine_memory_state(_memory_presentation(snapshot), snapshot)
+        await pilot.pause()
+        toggle = view.query_one("#remote-machine-details-toggle", Button)
+        toggle.press()
+        await pilot.pause()
+        assert view.query_one("#remote-fit-details-0", Static).display is True
+
+        query = view.query_one("#remote-model-query", Input)
+        query.value = "second model"
+        view.query_one("#remote-model-search", Button).press()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        view.query_one(".remote-result", Button).press()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert view.query_one("#remote-fit-details-0", Static).display is False
+        assert (
+            str(view.query_one("#remote-machine-details-toggle", Button).label)
+            == "Show estimate details"
+        )
 
 
 @pytest.mark.asyncio
@@ -805,7 +910,9 @@ async def test_two_pane_layout_starts_at_72_cells_with_details_expanded() -> Non
         assert not view.has_class("-single-pane")
         assert view.query_one(".remote-results-pane").display is True
         assert view.query_one(".remote-detail-pane").display is True
-        assert view.query_one("#remote-machine-estimate-details", Static).display is True
+        assert (
+            view.query_one("#remote-machine-estimate-details", Static).display is True
+        )
         assert (
             str(view.query_one("#remote-machine-details-toggle", Button).label)
             == "Hide estimate details"
@@ -1091,15 +1198,12 @@ async def test_variant_rows_explain_filename_derived_guidance_without_fit_claims
     )
     assert "Filename-derived general guidance" in rendered
     assert (
-        "model-context support and runtime compatibility remain unverified"
-        in rendered
+        "model-context support and runtime compatibility remain unverified" in rendered
     )
     assert "Quantization: Q4_K_M · 1 file · 40.0 MiB" in rendered
     assert "Quantization: Not identified · 1 file · 60.0 MiB" in rendered
     assert "No recognized quantization token in the filename" in rendered
-    assert rendered.index("Available GGUF files") < rendered.index(
-        "Source review page"
-    )
+    assert rendered.index("Available GGUF files") < rendered.index("Source review page")
 
 
 @pytest.mark.asyncio
@@ -1120,9 +1224,7 @@ async def test_variant_rows_use_exact_file_authority_for_long_paths_and_shards()
         ),
         RemoteGGUFCandidate(
             label="owner/repository · nested/model-Q5_K_M",
-            files=tuple(
-                RemoteGGUFFile(path, 50, _DIGEST) for path in shard_paths
-            ),
+            files=tuple(RemoteGGUFFile(path, 50, _DIGEST) for path in shard_paths),
             total_bytes=100,
         ),
     )
@@ -1130,9 +1232,7 @@ async def test_variant_rows_use_exact_file_authority_for_long_paths_and_shards()
         repository="owner/repository",
         commit=_COMMIT,
         license_id="apache-2.0",
-        review_url=(
-            f"https://huggingface.co/owner/repository/tree/{_COMMIT}"
-        ),
+        review_url=(f"https://huggingface.co/owner/repository/tree/{_COMMIT}"),
         candidates=candidates,
         total_candidate_count=2,
         warnings=(),
@@ -1198,18 +1298,14 @@ async def test_variant_filter_is_local_and_clears_a_hidden_selection() -> None:
         assert view._selected_candidate is None
         assert view.query_one("#remote-model-install", Button).disabled is True
         assert app.focused is variant_filter
-        assert adapter.resolve_calls == [
-            (resolved.repository, "configured-token")
-        ]
+        assert adapter.resolve_calls == [(resolved.repository, "configured-token")]
 
         variant_filter.value = "does-not-exist"
         await pilot.pause()
 
         assert "No GGUF variants match this filter" in _text(view)
         assert list(view.query(".remote-candidate").results(Button)) == []
-        assert adapter.resolve_calls == [
-            (resolved.repository, "configured-token")
-        ]
+        assert adapter.resolve_calls == [(resolved.repository, "configured-token")]
 
 
 @pytest.mark.asyncio
@@ -2116,7 +2212,9 @@ async def test_finish_install_clears_the_indicator_progress_and_shows_the_given_
 
 
 @pytest.mark.asyncio
-async def test_successful_install_exposes_provider_attributed_adoption_actions() -> None:
+async def test_successful_install_exposes_provider_attributed_adoption_actions() -> (
+    None
+):
     """A verified Remote download ends in explicit next actions, not another install."""
     from tldw_chatbook.Model_Artifacts.service import ArtifactRef
 

@@ -333,6 +333,7 @@ class RemoteView(Widget):
 
     RemoteView .remote-fit-outcome,
     RemoteView .remote-fit-details,
+    RemoteView .remote-fit-advisory,
     RemoteView .remote-variant-filename {
         width: 100%;
         height: auto;
@@ -345,6 +346,10 @@ class RemoteView(Widget):
 
     RemoteView .remote-fit-details {
         color: $text-muted;
+    }
+
+    RemoteView .remote-fit-advisory {
+        color: $warning;
     }
 
     RemoteView .remote-variant-controls {
@@ -977,19 +982,18 @@ class RemoteView(Widget):
         self,
         source_index: int,
         candidate: RemoteGGUFCandidate,
-    ) -> tuple[Static, Static]:
+    ) -> tuple[Static, Static, Static]:
         presentation = self._candidate_memory_presentation(candidate)
-        detail_lines = tuple(
+        advisory_lines = tuple(
             line
             for line in (
-                presentation.details,
                 presentation.pressure,
                 self._machine_presentation.failure_line,
             )
             if line
         )
         details = Static(
-            "\n".join(detail_lines),
+            presentation.details,
             id=f"remote-fit-details-{source_index}",
             classes="remote-fit-details",
             markup=False,
@@ -1003,6 +1007,12 @@ class RemoteView(Widget):
                 markup=False,
             ),
             details,
+            Static(
+                "\n".join(advisory_lines),
+                id=f"remote-fit-advisory-{source_index}",
+                classes="remote-fit-advisory",
+                markup=False,
+            ),
         )
 
     def apply_machine_memory_state(
@@ -1048,21 +1058,20 @@ class RemoteView(Widget):
             return
         for source_index, candidate in enumerate(self._resolved.candidates):
             try:
-                outcome = self.query_one(
-                    f"#remote-fit-outcome-{source_index}", Static
-                )
-                details = self.query_one(
-                    f"#remote-fit-details-{source_index}", Static
+                outcome = self.query_one(f"#remote-fit-outcome-{source_index}", Static)
+                details = self.query_one(f"#remote-fit-details-{source_index}", Static)
+                advisory = self.query_one(
+                    f"#remote-fit-advisory-{source_index}", Static
                 )
             except NoMatches:
                 continue
             presentation = self._candidate_memory_presentation(candidate)
             outcome.update(presentation.outcome)
-            details.update(
+            details.update(presentation.details)
+            advisory.update(
                 "\n".join(
                     line
                     for line in (
-                        presentation.details,
                         presentation.pressure,
                         self._machine_presentation.failure_line,
                     )
@@ -1122,9 +1131,7 @@ class RemoteView(Widget):
             return
         disabled = self._operation_reference is not None
         variant_list.remove_children()
-        variant_list.mount(
-            *self._variant_widgets(self._resolved, disabled=disabled)
-        )
+        variant_list.mount(*self._variant_widgets(self._resolved, disabled=disabled))
 
     def _set_status(self, message: str) -> None:
         self.query_one("#remote-model-status", Static).update(message)
@@ -1185,6 +1192,9 @@ class RemoteView(Widget):
             return
         query = self.query_one("#remote-model-query", Input).value.strip()
         self._query_value = query
+        self._machine_details_touched = False
+        self._machine_details_expanded = not self.has_class("-single-pane")
+        self._apply_machine_details_visibility()
         self._show_repository_results(restore_focus=False)
         self.post_message(self.DiscoveryStarted(query))
         was_completed = self._completed_reference is not None
@@ -1520,9 +1530,7 @@ class RemoteView(Widget):
             and self._selected_candidate not in visible_candidates
         ):
             self._selected_candidate = None
-            self._set_status(
-                "Variant filter changed. Choose a visible variant."
-            )
+            self._set_status("Variant filter changed. Choose a visible variant.")
             self.query_one("#remote-model-selection", Static).update(
                 self._selection_summary()
             )
@@ -1681,9 +1689,7 @@ class RemoteView(Widget):
         """
         self._operation_reference = None
         self._completed_reference = (
-            completed_reference
-            if type(completed_reference) is ArtifactRef
-            else None
+            completed_reference if type(completed_reference) is ArtifactRef else None
         )
         self._progress = None
         try:
