@@ -175,6 +175,17 @@ _REFERENCE_FIELDS = (
     "source_event_id",
     "replacement_event_id",
 )
+_IDENTITY_FIELDS = frozenset(
+    {
+        "event_id",
+        "conversation_id",
+        "turn_id",
+        "message_id",
+        "actor_id",
+        "run_id",
+        *_REFERENCE_FIELDS,
+    }
+)
 _SHA256_RE = re.compile(r"[0-9a-f]{64}")
 _FIELD_STATES = frozenset(
     {"observed", "redacted", "truncated", "omitted", "not_available", "capture_failed"}
@@ -576,6 +587,14 @@ def _validate_v2(document: Mapping) -> tuple[dict[str, Any], list[Mapping[str, A
             "Invalid Trace v2 bundle: export operation payload does not match manifest"
         )
     source_events = events[:-1]
+    for index, event in enumerate(events):
+        for field in _REFERENCE_FIELDS:
+            target = event.get(field)
+            if target and target not in ids:
+                raise TrajectoryImportError(
+                    f"Invalid Trace v2 bundle: dangling {field} {target!r} "
+                    f"at events[{index}]"
+                )
     for index, event in enumerate(source_events):
         field_states = event["field_states"]
         missing_material = sorted(_MATERIAL_FIELDS - set(field_states))
@@ -583,6 +602,15 @@ def _validate_v2(document: Mapping) -> tuple[dict[str, Any], list[Mapping[str, A
             raise TrajectoryImportError(
                 f"Invalid Trace v2 bundle: 'events[{index}]' is missing material "
                 f"field_states coverage for {', '.join(missing_material)}"
+            )
+        required_identities = {
+            field for field in _IDENTITY_FIELDS if event.get(field) not in {None, ""}
+        }
+        missing_identities = sorted(required_identities - set(field_states))
+        if missing_identities:
+            raise TrajectoryImportError(
+                f"Invalid Trace v2 bundle: 'events[{index}]' is missing populated "
+                f"identity field_states coverage for {', '.join(missing_identities)}"
             )
         if set(event["field_provenance"]) != set(field_states):
             raise TrajectoryImportError(
@@ -600,14 +628,6 @@ def _validate_v2(document: Mapping) -> tuple[dict[str, Any], list[Mapping[str, A
         raise TrajectoryImportError(
             "Invalid Trace v2 manifest: source.conversation_ids does not match events"
         )
-    for index, event in enumerate(events):
-        for field in _REFERENCE_FIELDS:
-            target = event.get(field)
-            if target and target not in ids:
-                raise TrajectoryImportError(
-                    f"Invalid Trace v2 bundle: dangling {field} {target!r} "
-                    f"at events[{index}]"
-                )
 
     def validate_provenance(entries: list[Any], where: str) -> list[dict[str, str]]:
         validated: list[dict[str, str]] = []
@@ -711,6 +731,22 @@ def _validate_v2(document: Mapping) -> tuple[dict[str, Any], list[Mapping[str, A
             raise TrajectoryImportError(
                 f"Invalid Trace v2 manifest privacy_decisions[{index}]: state "
                 f"does not match event field_provenance.{field}"
+            )
+        expected_classification = event.get("sensitivity") or "unspecified"
+        if detail.get("sensitivity") != expected_classification:
+            raise TrajectoryImportError(
+                f"Invalid Trace v2 manifest privacy_decisions[{index}]: sensitivity "
+                f"classification does not match event field_provenance.{field}"
+            )
+        expected_sensitive = expected_classification != "unspecified" or state in {
+            "redacted",
+            "truncated",
+            "omitted",
+        }
+        if decision["sensitive"] is not expected_sensitive:
+            raise TrajectoryImportError(
+                f"Invalid Trace v2 manifest privacy_decisions[{index}]: sensitive "
+                "must match field classification and privacy state"
             )
         validated_decisions.append(dict(decision))
 

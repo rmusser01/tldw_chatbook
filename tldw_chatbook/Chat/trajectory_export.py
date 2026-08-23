@@ -903,6 +903,18 @@ def preflight_trace_export(
                     ),
                 ),
             )
+        event_id = str(event["event_id"])
+        for index, decision in enumerate(decisions):
+            if decision.event_id != event_id:
+                continue
+            detail = event["field_provenance"][decision.field]
+            expected_sensitive = detail[
+                "sensitivity"
+            ] != "unspecified" or decision.state in {"redacted", "truncated", "omitted"}
+            if decision.sensitive != expected_sensitive:
+                decisions[index] = dataclasses.replace(
+                    decision, sensitive=expected_sensitive
+                )
         prepared_events.append(event)
 
     states = [decision.state for decision in decisions]

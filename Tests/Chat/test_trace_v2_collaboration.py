@@ -690,6 +690,74 @@ def test_resigned_bundle_requires_exact_decision_field_state_coverage() -> None:
         trajectory_import.load_imported_trace(payload)
 
 
+def test_resigned_bundle_cannot_mark_transformed_fields_insensitive() -> None:
+    payload = _build(_snapshot())
+    for decision in payload["manifest"]["privacy_decisions"]:
+        decision["sensitive"] = False
+    payload["manifest"]["privacy_inventory"]["sensitive"] = 0
+    payload["events"][-1]["payload"]["privacy_inventory"]["sensitive"] = 0
+    _resign(payload)
+
+    with pytest.raises(
+        trajectory_import.TrajectoryImportError,
+        match="sensitive.*field classification|sensitive.*state",
+    ):
+        trajectory_import.load_imported_trace(payload)
+
+
+def test_resigned_bundle_cannot_strip_populated_identity_privacy_coverage() -> None:
+    payload = _build(_snapshot())
+    event = payload["events"][0]
+    identity_fields = {
+        "event_id",
+        "conversation_id",
+        "turn_id",
+        "message_id",
+        "actor_id",
+        "run_id",
+    }
+    for field in identity_fields:
+        event["field_states"].pop(field)
+        event["field_provenance"].pop(field)
+    event["redaction_provenance"] = [
+        item
+        for item in event["redaction_provenance"]
+        if item["field"] not in identity_fields
+    ]
+    payload["manifest"]["redaction_provenance"] = list(event["redaction_provenance"])
+    payload["manifest"]["privacy_decisions"] = [
+        decision
+        for decision in payload["manifest"]["privacy_decisions"]
+        if decision["field"] not in identity_fields
+    ]
+    redacted = {
+        (item["event_id"], item["field"], item["state"])
+        for item in event["redaction_provenance"]
+        if item["state"] == "redacted"
+    }
+    inventory = payload["manifest"]["privacy_inventory"]
+    inventory["redacted"] = len(redacted)
+    inventory["sensitive"] = sum(
+        decision["sensitive"] for decision in payload["manifest"]["privacy_decisions"]
+    )
+    inventory["included"] = sum(
+        decision["state"] not in {"not_available", "capture_failed", "omitted"}
+        for decision in payload["manifest"]["privacy_decisions"]
+    )
+    inventory["observed"] = sum(
+        decision["source_state"] == "observed"
+        for decision in payload["manifest"]["privacy_decisions"]
+    )
+    payload["events"][-1]["payload"]["privacy_inventory"] = dict(inventory)
+    _resign(payload)
+
+    with pytest.raises(
+        trajectory_import.TrajectoryImportError,
+        match="identity field_states",
+    ):
+        trajectory_import.load_imported_trace(payload)
+
+
 def test_resigned_bundle_narrowly_identifies_export_operation_exception() -> None:
     payload = _build(_snapshot())
     payload["manifest"]["export_operation_event_id"] = payload["events"][0]["event_id"]
