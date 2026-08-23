@@ -14,8 +14,15 @@ must start from a fresh output directory; do not treat an existing checkout
   Only three lists name files on purpose, each for a reason recorded beside
   it in `pyproject.toml`: `Config_Files/rag_pipelines.toml` (a `*.toml` glob
   would ship the forbidden example TOML), `TTS/audio_cpp_artifact_manifest.json`
-  (one pinned manifest), and the vendored `LICENSE` notices. Adding a new
+  (one pinned manifest), and the licence notices. Adding a new
   runtime asset to one of those three means adding its name too.
+- [x] The licence list is complete, not merely explicit. The reason it stays
+  enumerated — one fixed obligation per subtree — is also what makes an
+  omission a licence breach, and it had two: `LLM_Calls/LICENSE` and
+  `tldw_api/LICENSE` (Apache-2.0 subtrees whose modules ship) were in no
+  artifact. Re-derive it by listing every `LICEN*`/`NOTICE`/`COPYING` file
+  under `tldw_chatbook/` and diffing against the built archives, not by
+  reading `pyproject.toml`.
 - [x] The project license uses the `AGPL-3.0-or-later` SPDX expression and
   declares `LICENSE`.
 
@@ -26,7 +33,9 @@ must start from a fresh output directory; do not treat an existing checkout
   source-only `stats_screen.css` input, and project/vendored licenses.
 - [x] The wheel contains the compiled CSS bundle, RAG pipeline configuration,
   eval configuration, configuration resources, **every** `.sql` file under
-  `tldw_chatbook/DB/migrations/`, and both vendored license notices.
+  `tldw_chatbook/DB/migrations/`, **every** `.json` under
+  `tldw_chatbook/Evals/eval_datasets/` (read at runtime by the bundled
+  research template), and every license notice.
 - [x] The wheel excludes source-only CSS, example TOML, development Markdown,
   the namespace-discovered chunking example, tests, caches, and OS metadata.
 - [x] Wheel and sdist metadata use Core Metadata 2.4 and declare the project

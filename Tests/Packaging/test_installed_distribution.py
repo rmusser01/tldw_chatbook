@@ -65,6 +65,33 @@ SOURCE_MIGRATION_PATHS = _source_migration_paths(REPO_ROOT)
 RUNTIME_MIGRATION_PATHS = _runtime_migration_paths(
     (REPO_ROOT / CHACHANOTES_DB_MODULE_PATH).read_text(encoding="utf-8")
 )
+# The migrations were not the only runtime read of a non-.py asset that the
+# packaging config had missed (task-19860 review). `Evals/eval_templates/
+# research.py` builds an absolute path into this directory and hands it to the
+# runner as `dataset_name`; `eval_runner.py` then does `Path(...).exists()`, so
+# an absent file degrades the bundled template silently instead of raising.
+# Derived from the directory, never listed, for the same reason.
+EVAL_DATASETS_PREFIX = "tldw_chatbook/Evals/eval_datasets/"
+
+
+def _source_eval_dataset_paths(repo_root: Path) -> frozenset[str]:
+    """Return every bundled eval dataset present in a checkout."""
+    directory = repo_root / "tldw_chatbook" / "Evals" / "eval_datasets"
+    return frozenset(
+        f"{EVAL_DATASETS_PREFIX}{path.name}" for path in directory.glob("*.json")
+    )
+
+
+SOURCE_EVAL_DATASET_PATHS = _source_eval_dataset_paths(REPO_ROOT)
+# Subtrees this project re-licenses under Apache-2.0 (see the README in each).
+# Their modules ship in the wheel, so §4(a) requires the licence text to ship
+# with them; both were absent from every artifact until task-19860's review.
+APACHE_SUBTREE_LICENSE_PATHS = frozenset(
+    {
+        "tldw_chatbook/LLM_Calls/LICENSE",
+        "tldw_chatbook/tldw_api/LICENSE",
+    }
+)
 SAMIRA_RESOURCE_ROOT = "tldw_chatbook/assets/characters/samira"
 SAMIRA_REACTION_LABELS = (
     "admiration",
@@ -1533,6 +1560,7 @@ def test_built_artifacts_match_distribution_contract(
             "tldw_chatbook/Evals/config/eval_config.yaml",
             "tldw_chatbook/Third_Party/aider/LICENSE.txt",
             "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
+            *APACHE_SUBTREE_LICENSE_PATHS,
             AUDIO_CPP_ARTIFACT_MANIFEST_PATH,
         }
         | SAMIRA_RESOURCE_PATHS
@@ -1544,6 +1572,7 @@ def test_built_artifacts_match_distribution_contract(
             "tldw_chatbook/Evals/config/eval_config.yaml",
             "tldw_chatbook/Third_Party/aider/LICENSE.txt",
             "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
+            *APACHE_SUBTREE_LICENSE_PATHS,
             AUDIO_CPP_ARTIFACT_MANIFEST_PATH,
         }
         | SAMIRA_RESOURCE_PATHS
@@ -1890,6 +1919,54 @@ def test_built_artifact_ships_the_migrations_its_own_code_opens(
         f"the {archive_kind}'s own ChaChaNotes_DB.py opens "
         f"{len(missing)} script(s) the {archive_kind} does not carry:\n  "
         + "\n  ".join(missing)
+    )
+
+
+@pytest.mark.parametrize("archive_kind", ["wheel", "sdist"])
+def test_built_artifact_contains_every_bundled_eval_dataset(
+    built_distributions: BuiltDistributions,
+    archive_kind: str,
+) -> None:
+    """The other runtime-read asset directory, held to the same rule.
+
+    ``Evals/eval_templates/research.py`` resolves a path into
+    ``Evals/eval_datasets/`` and passes it to the runner as ``dataset_name``;
+    the runner probes it with ``Path(...).exists()``, so a file missing from
+    the artifact costs the bundled template its dataset with no error at all.
+    That silence is why it outlived the migrations defect (task-19860 review).
+    """
+    assert SOURCE_EVAL_DATASET_PATHS, "no eval datasets found in the checkout"
+    members = (
+        _wheel_members(built_distributions.wheel)
+        if archive_kind == "wheel"
+        else _sdist_members(built_distributions.sdist)
+    )
+
+    missing = sorted(SOURCE_EVAL_DATASET_PATHS - members)
+
+    assert not missing, (
+        f"{len(missing)} bundled eval dataset(s) present in the source tree "
+        f"are absent from the {archive_kind}:\n  " + "\n  ".join(missing)
+    )
+
+
+@pytest.mark.parametrize("archive_kind", ["wheel", "sdist"])
+def test_built_artifact_carries_apache_subtree_licences(
+    built_distributions: BuiltDistributions,
+    archive_kind: str,
+) -> None:
+    """Apache-2.0 §4(a): the licence ships wherever its modules ship."""
+    members = (
+        _wheel_members(built_distributions.wheel)
+        if archive_kind == "wheel"
+        else _sdist_members(built_distributions.sdist)
+    )
+
+    missing = sorted(APACHE_SUBTREE_LICENSE_PATHS - members)
+
+    assert not missing, (
+        f"the {archive_kind} ships Apache-2.0 licensed modules without their "
+        f"licence text:\n  " + "\n  ".join(missing)
     )
 
 

@@ -10,6 +10,7 @@ include requirements.txt
 # Include explicit runtime and source-distribution data
 recursive-include tldw_chatbook/Config_Files *.json *.md rag_pipelines.toml
 recursive-include tldw_chatbook/Evals/config *.yaml
+recursive-include tldw_chatbook/Evals/eval_datasets *.json
 recursive-include tldw_chatbook/Image_Generation/workflows *.json
 recursive-include tldw_chatbook/Video_Generation/workflows *.json
 recursive-include tldw_chatbook/css *.tcss *.css
@@ -21,6 +22,10 @@ include tldw_chatbook/TTS/audio_cpp_artifact_manifest.json
 recursive-include tldw_chatbook/DB/migrations *.sql
 include tldw_chatbook/Third_Party/aider/LICENSE.txt
 include tldw_chatbook/Third_Party/textual_fspicker/LICENSE
+# Apache-2.0 re-licensed subtrees: their modules ship, so their licence text
+# must ship with them (task-19860 review).
+include tldw_chatbook/LLM_Calls/LICENSE
+include tldw_chatbook/tldw_api/LICENSE
 
 # Exclude tests and development artifacts
 recursive-exclude Tests *

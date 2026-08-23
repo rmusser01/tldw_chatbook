@@ -9,23 +9,22 @@ methods in the matching `DB/*.py` module. Filenames are
 1. Bump `_CURRENT_SCHEMA_VERSION` in the owning DB module.
 2. Add `<db>_v<n>_to_v<n+1>_<what>.sql` here **and** the
    `_migrate_from_v<n>_to_v<n+1>` step that runs it.
-3. If the step reads the `.sql` at runtime (`migration_path.read_text(...)`),
-   list the file **by name in all four** of `MANIFEST.in`,
-   `[tool.setuptools.package-data]` in `pyproject.toml`,
-   `Packaging/check_manifest.py`, and `Tests/Packaging/
-   test_installed_distribution.py`. There is no wildcard;
-   `include-package-data` is `false`. A migration missing from the built
-   distribution raises `OSError` at upgrade time and pins installed users below
-   that version.
+3. Packaging: **nothing to do** (TASK-19860). `pyproject.toml` matches
+   `migrations/*.sql` and `MANIFEST.in` does `recursive-include
+   tldw_chatbook/DB/migrations *.sql`, so a new script ships the moment it
+   lands. Do not re-introduce a per-file list, and do not add a fifth one.
 
-   This step is a known trap rather than a good design — hand enumeration
-   trails reality, and it already has: measured 2026-08-22, of the 15 migration
-   files read at runtime, `chachanotes_v40_to_v41_persona_visual.sql` and
-   `chachanotes_v45_to_v46_sync_log_retention.sql` are in none of the four
-   lists, so an installed distribution walls at v40. **TASK-19860 owns
-   replacing all four enumerations with a glob plus a test that asserts against
-   the built artifact.** When it lands, this step becomes "nothing to do";
-   delete it then rather than adding a sixth list.
+   The four hand-written lists this replaced (`MANIFEST.in`,
+   `[tool.setuptools.package-data]`, `Packaging/check_manifest.py`, and
+   `Tests/Packaging/test_installed_distribution.py`) agreed with each other
+   and with nothing else: of the 32 files present they named 13, 11, 13 and
+   13, and two files the schema runner actually reads —
+   `chachanotes_v40_to_v41_persona_visual.sql` and
+   `chachanotes_v45_to_v46_sync_log_retention.sql` — were in none of them, so
+   a `pip install` walled at V40 with a `SchemaError` and the app did not
+   start. Both checkers now *derive* the requirement (from the `.sql` files in
+   the checkout, and from the `.sql` names the artifact's own
+   `ChaChaNotes_DB.py` opens) and assert it against the built wheel and sdist.
 4. **If the migration contains `CREATE TABLE`, add every new table name to
    `VALID_TABLES['chachanotes']` in `DB/sql_validation.py`, in the same
    commit.** See below — this is the step that keeps getting missed.

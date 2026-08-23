@@ -93,6 +93,9 @@ REQUIRED_SDIST_PATHS = {
     "tldw_chatbook/Evals/config/eval_config.yaml",
     "tldw_chatbook/Third_Party/aider/LICENSE.txt",
     "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
+    # Apache-2.0 re-licensed subtrees whose modules ship (task-19860 review).
+    "tldw_chatbook/LLM_Calls/LICENSE",
+    "tldw_chatbook/tldw_api/LICENSE",
 } | SAMIRA_RESOURCE_PATHS
 
 REQUIRED_WHEEL_PATHS = {
@@ -103,6 +106,9 @@ REQUIRED_WHEEL_PATHS = {
     "tldw_chatbook/Evals/config/eval_config.yaml",
     "tldw_chatbook/Third_Party/aider/LICENSE.txt",
     "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
+    # Apache-2.0 re-licensed subtrees whose modules ship (task-19860 review).
+    "tldw_chatbook/LLM_Calls/LICENSE",
+    "tldw_chatbook/tldw_api/LICENSE",
 } | SAMIRA_RESOURCE_PATHS
 
 REQUIRED_SDIST_GLOBS = {
@@ -114,6 +120,8 @@ REQUIRED_SDIST_GLOBS = {
     "tldw_chatbook/Config_Files/*.json",
     "tldw_chatbook/Config_Files/*.md",
     "tldw_chatbook/Evals/config/*.yaml",
+    # Runtime eval datasets: matched, never enumerated (task-19860 review).
+    "tldw_chatbook/Evals/eval_datasets/*.json",
 }
 
 REQUIRED_WHEEL_GLOBS = {
@@ -125,6 +133,8 @@ REQUIRED_WHEEL_GLOBS = {
     "tldw_chatbook/Config_Files/*.json",
     "tldw_chatbook/Config_Files/*.md",
     "tldw_chatbook/Evals/config/*.yaml",
+    # Runtime eval datasets: matched, never enumerated (task-19860 review).
+    "tldw_chatbook/Evals/eval_datasets/*.json",
 }
 
 FORBIDDEN_WHEEL_PATHS = {

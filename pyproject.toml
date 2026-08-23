@@ -503,7 +503,13 @@ exclude = [
 "tldw_chatbook.Config_Files" = ["*.json", "*.md", "rag_pipelines.toml"]
 # Runtime chunking templates are DB rows now (spec §8.1.2): the deleted
 # Chunking/templates/ file store ships in neither artifact.
-"tldw_chatbook.Evals" = ["config/*.yaml"]
+# `eval_datasets/*.json` is RUNTIME data, not a sample: `Evals/eval_templates/
+# research.py` hands its absolute path to the runner as `dataset_name`, and
+# `eval_runner.py` does `Path(dataset_name).exists()` -- absent from the
+# artifact, the bundled "Research Report Self-Eval" template silently loses its
+# dataset. Found by the task-19860 reviewer sweep for runtime reads of non-.py
+# assets; it was the second instance of the same defect class.
+"tldw_chatbook.Evals" = ["config/*.yaml", "eval_datasets/*.json"]
 "tldw_chatbook.Image_Generation" = ["workflows/*.json"]
 "tldw_chatbook.Video_Generation" = ["workflows/*.json"]
 # One pinned artifact manifest, named ON PURPOSE (audited in task-19860):
@@ -522,9 +528,16 @@ exclude = [
 "tldw_chatbook.DB" = ["migrations/*.sql"]
 # Preserve the licenses for vendored packages. Named ON PURPOSE (audited in
 # task-19860): a licence notice is a fixed legal obligation per vendored
-# package, not a growing asset directory.
+# package, not a growing asset directory. The obligation is what makes the
+# list's COMPLETENESS load-bearing -- `LLM_Calls/` and `tldw_api/` re-license
+# their own modules under Apache-2.0 (see the README in each), those modules
+# ship in the wheel, and §4(a) requires the licence text to travel with them;
+# both were missing until the task-19860 reviewer diffed the tree against the
+# artifact.
 "tldw_chatbook.Third_Party.aider" = ["LICENSE.txt"]
 "tldw_chatbook.Third_Party.textual_fspicker" = ["LICENSE"]
+"tldw_chatbook.LLM_Calls" = ["LICENSE"]
+"tldw_chatbook.tldw_api" = ["LICENSE"]
 # Engine is vendored from tldw_server (GPL-3.0-only): GPLv3 §4 requires the
 # licence text itself to ship, so the scope map and the GPL text both travel
 # with the package.
