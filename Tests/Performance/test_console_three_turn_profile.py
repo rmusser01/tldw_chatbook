@@ -34,6 +34,40 @@ REVIEWED_ARTIFACT_NAMES = {
     "real-provider-three-turn.summary.json",
     "real-provider-three-turn-summary.md",
 }
+TASK5_PUBLISHED_NAMES = REVIEWED_ARTIFACT_NAMES | {
+    "confirmatory-review-receipt.json"
+}
+
+
+def _write_immutable_foreign_publication(
+    root: Path, *, root_mode: int = 0o711
+) -> dict[str, tuple[bytes, int, int]]:
+    root.mkdir()
+    state: dict[str, tuple[bytes, int, int]] = {}
+    for name in TASK5_PUBLISHED_NAMES:
+        path = root / name
+        path.write_bytes(f"foreign:{name}".encode())
+        path.chmod(0o640)
+        os.chflags(path, path.stat().st_flags | stat.UF_IMMUTABLE)
+        metadata = path.stat()
+        state[name] = (
+            path.read_bytes(),
+            stat.S_IMODE(metadata.st_mode),
+            metadata.st_flags,
+        )
+    root.chmod(root_mode)
+    return state
+
+
+def _publication_state(root: Path) -> dict[str, tuple[bytes, int, int]]:
+    return {
+        name: (
+            (root / name).read_bytes(),
+            stat.S_IMODE((root / name).stat().st_mode),
+            (root / name).stat().st_flags,
+        )
+        for name in TASK5_PUBLISHED_NAMES
+    }
 
 
 @pytest.fixture(autouse=True)
@@ -52,9 +86,7 @@ def _unseal_task5_test_directories(request: pytest.FixtureRequest):
         candidate.chmod(0o755)
         if sys.platform != "darwin":
             continue
-        for name in REVIEWED_ARTIFACT_NAMES | {
-            "confirmatory-review-receipt.json"
-        }:
+        for name in TASK5_PUBLISHED_NAMES:
             path = candidate / name
             if path.is_file() and not path.is_symlink():
                 os.chflags(path, path.stat().st_flags & ~stat.UF_IMMUTABLE)
@@ -5405,6 +5437,163 @@ def test_failed_native_rename_never_clears_foreign_destination_flags(
         name: ((destination / name).read_bytes(), (destination / name).stat().st_flags)
         for name in foreign_names
     } == foreign_state
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Darwin immutable flags only")
+def test_post_syscall_destination_swap_fails_without_mutating_foreign_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    campaign, attempt, digest, _raw_sha256 = _prepare_review_attempt(tmp_path)
+    receipt = _write_review_receipt(attempt, digest)
+    destination = tmp_path / "published"
+    detached = tmp_path / "published-detached"
+    native_library = profile.ctypes.CDLL(None, use_errno=True)
+    real_native = native_library.renamex_np
+    foreign_state: dict[str, tuple[bytes, int, int]] = {}
+
+    class SwappingRename:
+        argtypes = None
+        restype = None
+
+        def __call__(self, *args) -> int:
+            result = int(real_native(*args))
+            assert result == 0
+            destination.rename(detached)
+            foreign_state.update(_write_immutable_foreign_publication(destination))
+            return result
+
+    class SwappingLibrary:
+        renamex_np = SwappingRename()
+
+    monkeypatch.setattr(
+        profile.ctypes, "CDLL", lambda _name, *, use_errno: SwappingLibrary()
+    )
+
+    with pytest.raises(RuntimeError, match="^publication_durability_uncertain$"):
+        profile.promote_reviewed_artifacts(
+            campaign, "attempt-0001", receipt, destination
+        )
+
+    assert _publication_state(destination) == foreign_state
+    assert stat.S_IMODE(destination.stat().st_mode) == 0o711
+    assert stat.S_IMODE(detached.stat().st_mode) == 0o555
+    assert all(
+        not ((detached / name).stat().st_flags & stat.UF_IMMUTABLE)
+        for name in TASK5_PUBLISHED_NAMES
+    )
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Darwin immutable flags only")
+def test_failed_native_rename_stage_root_swap_mutates_only_owned_fds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    campaign, attempt, digest, _raw_sha256 = _prepare_review_attempt(tmp_path)
+    receipt = _write_review_receipt(attempt, digest)
+    destination = tmp_path / "published"
+    stage = destination.parent / f".{destination.name}.task-20010-stage"
+    detached = tmp_path / "published-detached"
+    native_library = profile.ctypes.CDLL(None, use_errno=True)
+    real_native = native_library.renamex_np
+    foreign_stage_state: dict[str, tuple[bytes, int, int]] = {}
+
+    class SwappingRename:
+        argtypes = None
+        restype = None
+
+        def __call__(self, *args) -> int:
+            stage.rename(detached)
+            foreign_stage_state.update(
+                _write_immutable_foreign_publication(stage, root_mode=0o701)
+            )
+            destination.mkdir()
+            return int(real_native(*args))
+
+    class SwappingLibrary:
+        renamex_np = SwappingRename()
+
+    monkeypatch.setattr(
+        profile.ctypes, "CDLL", lambda _name, *, use_errno: SwappingLibrary()
+    )
+
+    with pytest.raises(RuntimeError, match="^review_destination_exists$"):
+        profile.promote_reviewed_artifacts(
+            campaign, "attempt-0001", receipt, destination
+        )
+
+    assert _publication_state(stage) == foreign_stage_state
+    assert stat.S_IMODE(stage.stat().st_mode) == 0o701
+    assert stat.S_IMODE(detached.stat().st_mode) == 0o555
+    assert all(
+        not ((detached / name).stat().st_flags & stat.UF_IMMUTABLE)
+        for name in TASK5_PUBLISHED_NAMES
+    )
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Darwin immutable flags only")
+@pytest.mark.parametrize("native_success", (False, True))
+def test_failed_native_rename_leaf_swap_never_mutates_foreign_leaf(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, native_success: bool
+) -> None:
+    campaign, attempt, digest, _raw_sha256 = _prepare_review_attempt(tmp_path)
+    receipt = _write_review_receipt(attempt, digest)
+    destination = tmp_path / "published"
+    stage = destination.parent / f".{destination.name}.task-20010-stage"
+    detached = tmp_path / "published-detached"
+    native_library = profile.ctypes.CDLL(None, use_errno=True)
+    real_native = native_library.renamex_np
+    foreign_readme_state: tuple[bytes, int, int] | None = None
+
+    class SwappingRename:
+        argtypes = None
+        restype = None
+
+        def __call__(self, *args) -> int:
+            nonlocal foreign_readme_state
+            detached.mkdir()
+            readme = stage / "README.md"
+            os.chflags(readme, readme.stat().st_flags & ~stat.UF_IMMUTABLE)
+            readme.rename(detached / "README.md")
+            readme.write_bytes(b"foreign leaf")
+            readme.chmod(0o620)
+            os.chflags(readme, readme.stat().st_flags | stat.UF_IMMUTABLE)
+            metadata = readme.stat()
+            foreign_readme_state = (
+                readme.read_bytes(),
+                stat.S_IMODE(metadata.st_mode),
+                metadata.st_flags,
+            )
+            if not native_success:
+                destination.mkdir()
+            return int(real_native(*args))
+
+    class SwappingLibrary:
+        renamex_np = SwappingRename()
+
+    monkeypatch.setattr(
+        profile.ctypes, "CDLL", lambda _name, *, use_errno: SwappingLibrary()
+    )
+
+    expected_error = (
+        "publication_durability_uncertain"
+        if native_success
+        else "review_destination_exists"
+    )
+    with pytest.raises(RuntimeError, match=f"^{expected_error}$"):
+        profile.promote_reviewed_artifacts(
+            campaign, "attempt-0001", receipt, destination
+        )
+
+    assert foreign_readme_state is not None
+    readme = (destination if native_success else stage) / "README.md"
+    metadata = readme.stat()
+    assert (
+        readme.read_bytes(),
+        stat.S_IMODE(metadata.st_mode),
+        metadata.st_flags,
+    ) == foreign_readme_state
+    owned_readme = detached / "README.md"
+    assert owned_readme.read_bytes() == b"# Confirmation\n"
+    assert not (owned_readme.stat().st_flags & stat.UF_IMMUTABLE)
 
 
 @pytest.mark.parametrize("failure", ("file", "stage_directory"))

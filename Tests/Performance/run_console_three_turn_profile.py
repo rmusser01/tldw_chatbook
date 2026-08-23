@@ -37,6 +37,9 @@ from urllib.parse import urlsplit, urlunsplit
 from urllib.request import Request
 
 
+_DARWIN_LIBC = (
+    ctypes.CDLL(None, use_errno=True) if sys.platform == "darwin" else None
+)
 ARMS = ("control", "disabled", "enabled")
 CONTROL_SHA = "5f720a40417eaa78f33619d5cbc82effc470104b"
 ORIGINAL_HARNESS_SHA = "eb8225a32f88ea43c337aff99804d360384e7668"
@@ -643,16 +646,19 @@ def _atomic_rename_directory_noreplace(
     target: Path,
     *,
     verify: Callable[[], None] | None = None,
+    source_fd: int | None = None,
 ) -> None:
     """Verify then atomically rename one sibling directory without replacement."""
     if source.parent != target.parent:
         raise RuntimeError("review_atomic_noreplace_invalid")
     if verify is not None:
         verify()
-    _native_rename_directory_noreplace(source, target)
+    _native_rename_directory_noreplace(source, target, source_fd=source_fd)
 
 
-def _native_rename_directory_noreplace(source: Path, target: Path) -> None:
+def _native_rename_directory_noreplace(
+    source: Path, target: Path, *, source_fd: int | None = None
+) -> None:
     """Perform the platform no-replace rename after sealed verification."""
     if sys.platform == "win32":
         try:
@@ -662,7 +668,15 @@ def _native_rename_directory_noreplace(source: Path, target: Path) -> None:
         except OSError as exc:
             raise RuntimeError("review_promotion_rename_failed") from exc
         return
-    original_mode = stat.S_IMODE(source.stat().st_mode)
+    try:
+        source_metadata = (
+            os.fstat(source_fd)
+            if source_fd is not None
+            else source.stat(follow_symlinks=False)
+        )
+    except OSError as exc:
+        raise RuntimeError("review_promotion_rename_failed") from exc
+    original_mode = stat.S_IMODE(source_metadata.st_mode)
     darwin_compatibility_unsealed = sys.platform == "darwin" and not (
         original_mode & stat.S_IWUSR
     )
@@ -670,7 +684,13 @@ def _native_rename_directory_noreplace(source: Path, target: Path) -> None:
         # Darwin refuses to rename a non-owner-writable directory. The stage is
         # private and campaign-locked, and its exact leaves remain UF_IMMUTABLE
         # throughout this syscall window. Restore the sealed mode afterwards.
-        source.chmod(original_mode | stat.S_IWUSR)
+        try:
+            if source_fd is not None:
+                os.fchmod(source_fd, original_mode | stat.S_IWUSR)
+            else:
+                source.chmod(original_mode | stat.S_IWUSR)
+        except OSError as exc:
+            raise RuntimeError("review_promotion_rename_failed") from exc
     try:
         library = ctypes.CDLL(None, use_errno=True)
         if sys.platform == "darwin":
@@ -699,17 +719,26 @@ def _native_rename_directory_noreplace(source: Path, target: Path) -> None:
             raise RuntimeError("review_atomic_noreplace_unsupported")
     except AttributeError as exc:
         if darwin_compatibility_unsealed:
-            source.chmod(original_mode)
+            if source_fd is not None:
+                os.fchmod(source_fd, original_mode)
+            else:
+                source.chmod(original_mode)
         raise RuntimeError("review_atomic_noreplace_unsupported") from exc
     except OSError as exc:
-        if darwin_compatibility_unsealed and source.exists():
-            source.chmod(original_mode)
+        if darwin_compatibility_unsealed:
+            if source_fd is not None:
+                os.fchmod(source_fd, original_mode)
+            elif source.exists():
+                source.chmod(original_mode)
         raise RuntimeError("review_atomic_noreplace_unsupported") from exc
     error_number = ctypes.get_errno() if result != 0 else 0
     renamed = result == 0
     if darwin_compatibility_unsealed:
         try:
-            (target if renamed else source).chmod(original_mode)
+            if source_fd is not None:
+                os.fchmod(source_fd, original_mode)
+            else:
+                (target if renamed else source).chmod(original_mode)
         except OSError as exc:
             raise RuntimeError("review_promotion_rename_failed") from exc
     if not renamed:
@@ -755,8 +784,6 @@ def _promote_reviewed_artifacts_locked(
         raise RuntimeError("review_receipt_binding_mismatch")
 
     _mkdir_namespace(stage)
-    stage_metadata = stage.stat(follow_symlinks=False)
-    stage_identity = (stage_metadata.st_dev, stage_metadata.st_ino)
     for name in REVIEWED_ARTIFACTS:
         shutil.copy2(attempt_root / name, stage / name)
     copied_receipt = stage / "confirmatory-review-receipt.json"
@@ -764,22 +791,42 @@ def _promote_reviewed_artifacts_locked(
 
     staged_paths = [stage / name for name in REVIEWED_ARTIFACTS]
     staged_paths.append(copied_receipt)
+    stage_fd: int | None = None
+    staged_descriptors: list[tuple[str, int, int, int, int]] = []
     try:
+        stage_fd = os.open(
+            stage,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+        )
+        stage_metadata = os.fstat(stage_fd)
+        if not stat.S_ISDIR(stage_metadata.st_mode):
+            raise OSError(errno.EINVAL, "stage is not a directory")
+        stage_identity = (stage_metadata.st_dev, stage_metadata.st_ino)
         for path in staged_paths:
-            path.chmod(0o444)
-            if sys.platform == "darwin":
-                os.chflags(path, path.stat().st_flags | stat.UF_IMMUTABLE)
-        stage.chmod(0o555)
+            descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+            try:
+                metadata = os.fstat(descriptor)
+                if not stat.S_ISREG(metadata.st_mode):
+                    raise OSError(errno.EINVAL, "staged artifact is not regular")
+            except BaseException:
+                os.close(descriptor)
+                raise
+            staged_descriptors.append(
+                (
+                    path.name,
+                    descriptor,
+                    metadata.st_dev,
+                    metadata.st_ino,
+                    getattr(metadata, "st_flags", 0),
+                )
+            )
     except OSError as exc:
+        for _name, descriptor, _dev, _ino, _flags in staged_descriptors:
+            os.close(descriptor)
+        if stage_fd is not None:
+            os.close(stage_fd)
         raise RuntimeError("review_promotion_stage_lockdown_failed") from exc
-    # The campaign and stage are private roots. Read-only regular files exclude
-    # cooperative writers; hostile same-UID permission changes are out of scope.
-    try:
-        for path in staged_paths:
-            _fsync_regular_file(path)
-        _fsync_directory(stage)
-    except OSError as exc:
-        raise RuntimeError("review_promotion_stage_fsync_failed") from exc
+    assert stage_fd is not None
 
     def verify_final_binding() -> None:
         if (
@@ -802,53 +849,132 @@ def _promote_reviewed_artifacts_locked(
         if destination.exists() or destination.is_symlink():
             raise RuntimeError("review_destination_exists")
 
+    def restore_owned_stage() -> None:
+        assert stage_fd is not None
+        os.fchmod(stage_fd, 0o555)
+        if sys.platform == "darwin":
+            for _name, descriptor, _dev, _ino, original_flags in staged_descriptors:
+                _fchflags(descriptor, original_flags)
+
     publication_error: BaseException | None = None
-    rename_succeeded = False
+    ownership_restored = False
+    published_fd: int | None = None
+    published_leaf_fds: list[int] = []
     try:
+        try:
+            for _name, descriptor, _dev, _ino, original_flags in staged_descriptors:
+                os.fchmod(descriptor, 0o444)
+                if sys.platform == "darwin":
+                    _fchflags(descriptor, original_flags | stat.UF_IMMUTABLE)
+            os.fchmod(stage_fd, 0o555)
+        except OSError as exc:
+            raise RuntimeError("review_promotion_stage_lockdown_failed") from exc
+        # The campaign and stage are private roots. Read-only regular files exclude
+        # cooperative writers; hostile same-UID permission changes are out of scope.
+        try:
+            for path in staged_paths:
+                _fsync_regular_file(path)
+            _fsync_directory(stage)
+        except OSError as exc:
+            raise RuntimeError("review_promotion_stage_fsync_failed") from exc
         _atomic_rename_directory_noreplace(
-            stage, destination, verify=verify_final_binding
+            stage,
+            destination,
+            verify=verify_final_binding,
+            source_fd=stage_fd,
         )
-        rename_succeeded = True
+        try:
+            published_fd = os.open(
+                destination,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+            )
+            published_metadata = os.fstat(published_fd)
+            published_path_metadata = destination.stat(follow_symlinks=False)
+        except OSError as exc:
+            raise RuntimeError("publication_durability_uncertain") from exc
+        if (
+            not stat.S_ISDIR(published_metadata.st_mode)
+            or (published_metadata.st_dev, published_metadata.st_ino)
+            != stage_identity
+            or (
+                published_path_metadata.st_dev,
+                published_path_metadata.st_ino,
+            )
+            != stage_identity
+        ):
+            raise RuntimeError("publication_durability_uncertain")
+        expected_names = {name for name, *_identity in staged_descriptors}
+        try:
+            if {path.name for path in destination.iterdir()} != expected_names:
+                raise RuntimeError("publication_durability_uncertain")
+            for name, _owned_fd, device, inode, _flags in staged_descriptors:
+                published_path = destination / name
+                descriptor = os.open(
+                    published_path,
+                    os.O_RDONLY | os.O_NOFOLLOW,
+                )
+                published_leaf_fds.append(descriptor)
+                metadata = os.fstat(descriptor)
+                path_metadata = published_path.stat(follow_symlinks=False)
+                if (
+                    not stat.S_ISREG(metadata.st_mode)
+                    or (metadata.st_dev, metadata.st_ino) != (device, inode)
+                    or (path_metadata.st_dev, path_metadata.st_ino)
+                    != (device, inode)
+                ):
+                    raise RuntimeError("publication_durability_uncertain")
+        except OSError as exc:
+            raise RuntimeError("publication_durability_uncertain") from exc
+        restore_owned_stage()
+        ownership_restored = True
+        try:
+            _fsync_directory(destination.parent)
+            final_path_metadata = destination.stat(follow_symlinks=False)
+        except OSError as exc:
+            raise RuntimeError("publication_durability_uncertain") from exc
+        if (
+            final_path_metadata.st_dev,
+            final_path_metadata.st_ino,
+        ) != stage_identity:
+            raise RuntimeError("publication_durability_uncertain")
+        try:
+            if {path.name for path in destination.iterdir()} != expected_names:
+                raise RuntimeError("publication_durability_uncertain")
+            for name, _owned_fd, device, inode, _flags in staged_descriptors:
+                metadata = (destination / name).stat(follow_symlinks=False)
+                if (metadata.st_dev, metadata.st_ino) != (device, inode):
+                    raise RuntimeError("publication_durability_uncertain")
+        except OSError as exc:
+            raise RuntimeError("publication_durability_uncertain") from exc
+        return reviewed_digest
     except BaseException as exc:
         publication_error = exc
         raise
     finally:
-        if sys.platform == "darwin":
-            owned_metadata: os.stat_result | None = None
+        cleanup_error: OSError | None = None
+        if not ownership_restored:
             try:
-                owned_root = destination if rename_succeeded else stage
-                owned_metadata = owned_root.stat(follow_symlinks=False)
-            except FileNotFoundError:
-                pass
+                restore_owned_stage()
             except OSError as exc:
-                if publication_error is None:
-                    raise RuntimeError("publication_durability_uncertain") from exc
-            if (
-                owned_metadata is not None
-                and stat.S_ISDIR(owned_metadata.st_mode)
-                and (owned_metadata.st_dev, owned_metadata.st_ino)
-                == stage_identity
-            ):
-                try:
-                    for path in (
-                        *(owned_root / name for name in REVIEWED_ARTIFACTS),
-                        owned_root / "confirmatory-review-receipt.json",
-                    ):
-                        if path.is_file() and not path.is_symlink():
-                            os.chflags(
-                                path,
-                                path.stat().st_flags & ~stat.UF_IMMUTABLE,
-                            )
-                except OSError as exc:
-                    if publication_error is None:
-                        raise RuntimeError(
-                            "publication_durability_uncertain"
-                        ) from exc
-    try:
-        _fsync_directory(destination.parent)
-    except OSError as exc:
-        raise RuntimeError("publication_durability_uncertain") from exc
-    return reviewed_digest
+                cleanup_error = exc
+        descriptors_to_close = [
+            *(
+                descriptor
+                for _name, descriptor, _dev, _ino, _flags in staged_descriptors
+            ),
+            *published_leaf_fds,
+            stage_fd,
+        ]
+        if published_fd is not None:
+            descriptors_to_close.append(published_fd)
+        for descriptor in descriptors_to_close:
+            try:
+                os.close(descriptor)
+            except OSError as exc:
+                if cleanup_error is None:
+                    cleanup_error = exc
+        if cleanup_error is not None and publication_error is None:
+            raise RuntimeError("publication_durability_uncertain") from cleanup_error
 
 
 def promote_reviewed_artifacts(
@@ -2345,6 +2471,21 @@ def _fsync_regular_file(path: Path) -> None:
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
+
+
+def _fchflags(descriptor: int, flags: int) -> None:
+    """Apply Darwin file flags to an already verified descriptor."""
+    if _DARWIN_LIBC is None:
+        raise OSError(errno.ENOTSUP, "descriptor flags unsupported")
+    try:
+        function = _DARWIN_LIBC.fchflags
+    except AttributeError as exc:
+        raise OSError(errno.ENOTSUP, "descriptor flags unsupported") from exc
+    function.argtypes = [ctypes.c_int, ctypes.c_uint]
+    function.restype = ctypes.c_int
+    if function(descriptor, flags) != 0:
+        error_number = ctypes.get_errno()
+        raise OSError(error_number, os.strerror(error_number))
 
 
 def _mkdir_namespace(
