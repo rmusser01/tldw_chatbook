@@ -784,6 +784,34 @@ def test_private_root_locator_is_redacted_from_local_tool_errors(tmp_path):
     assert "workspace root (.)" in result.error
 
 
+def test_private_root_locator_is_redacted_before_error_length_cap(tmp_path):
+    from tldw_chatbook.Agents.local_tool_provider import LocalToolSpec
+
+    private_root = tmp_path / ("PRIVATE_LOCATOR_" + ("x" * 350))
+
+    def fail(_args):
+        raise RuntimeError(f"{private_root}/marker.txt")
+
+    provider = make_provider(
+        root=tmp_path,
+        specs=[
+            LocalToolSpec(
+                name="fail",
+                description="fails with a long private locator",
+                parameters={},
+                handler=fail,
+            )
+        ],
+        result_redaction_root=private_root,
+    )
+
+    result = provider.invoke("local:fail", {})
+
+    assert not result.ok
+    assert "PRIVATE_LOCATOR" not in result.error
+    assert result.error == "marker.txt"
+
+
 # -- session approvals + persistence seams (Task 5) ---------------------------
 
 

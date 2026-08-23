@@ -760,12 +760,13 @@ class LocalToolProvider:
                         ),
                     )
                 except Exception as exc:  # noqa: BLE001 — protocol boundary
+                    error = redact_root_locator(
+                        str(exc) or repr(exc),
+                        self._result_redaction_root,
+                    )
                     return ToolResult(
                         ok=False,
-                        error=redact_root_locator(
-                            (str(exc) or repr(exc))[:_MAX_ERROR_CHARS],
-                            self._result_redaction_root,
-                        ),
+                        error=error[:_MAX_ERROR_CHARS],
                     )
 
             if (
