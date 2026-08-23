@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
 
 from tldw_chatbook.Agents.agent_models import ContinuationEventContext, ToolBatchReady
+from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
+from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
+from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat import console_chat_controller as controller_module
 from tldw_chatbook.Chat.console_chat_controller import (
@@ -48,6 +52,7 @@ from tldw_chatbook.Chat.provider_continuation import (
 )
 from tldw_chatbook.Chat.console_prompt_queue import PromptQueueReservation
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
 def _policy(
@@ -117,6 +122,39 @@ class _RecordingGateway:
     async def stream_chat(self, _resolution, _messages, **_kwargs):
         self.stream_calls += 1
         yield "reply"
+
+
+class _SubmittedAgentGateway(_RecordingGateway):
+    """Resolve normally, then drive one fence-protocol production agent run."""
+
+    def __init__(self, events: list[str]) -> None:
+        super().__init__(events)
+        self.scripts = [
+            [
+                f"{FENCE_OPEN}\n"
+                f"{json.dumps({'name': 'library_list_notes', 'arguments': {}})}\n"
+                "```"
+            ],
+            ["blocked final"],
+        ]
+        self.tools_seen: list[object] = []
+        self.messages_seen: list[list[dict]] = []
+
+    async def stream_chat(self, _resolution, messages, tools=None, **_kwargs):
+        self.stream_calls += 1
+        self.tools_seen.append(tools)
+        self.messages_seen.append([dict(message) for message in messages])
+        for chunk in self.scripts.pop(0):
+            yield chunk
+
+
+class _SubmittedLibraryService:
+    def __init__(self) -> None:
+        self.invoke_calls: list[tuple[str, dict]] = []
+
+    def invoke(self, name, arguments):
+        self.invoke_calls.append((name, dict(arguments)))
+        return {"items": [], "total": 0}
 
 
 class _DestinationSequenceGateway:
@@ -200,6 +238,8 @@ def _execution_configuration(
     session_id: str,
     *,
     direct: bool = True,
+    native_tools: bool = True,
+    agent_runtime: bool = False,
 ) -> ConsoleTurnConfigurationSnapshot:
     return ConsoleTurnConfigurationSnapshot.capture(
         session_id=session_id,
@@ -209,8 +249,9 @@ def _execution_configuration(
             base_url="https://api.openai.com/v1",
         ),
         tool_configuration={
-            "agent_runtime_enabled": False,
+            "agent_runtime_enabled": agent_runtime,
             "direct_library_tools": direct,
+            "native_tool_calls_enabled": native_tools,
         },
     )
 
@@ -438,6 +479,117 @@ async def test_real_execution_capture_defeats_stale_allowed_and_freezes_current_
             ConsoleAssistantLibraryAccess.BLOCKED
         )
         assert controller._library_provider_for_context(next_turn) is None
+    finally:
+        if second_db is not None:
+            second_db.close_connection()
+        first_db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_second_store_blocked_commit_defeats_stale_allowed_at_submitted_agent(
+    tmp_path,
+) -> None:
+    """A second persistence stack wins at the real controller/bridge boundary."""
+    path = tmp_path / "submitted-agent-authority.sqlite"
+    first_db = CharactersRAGDB(path, "submitted-agent-first")
+    second_db = None
+    try:
+        conversation_id = first_db.add_conversation({"title": "submitted agent"})
+        assert conversation_id is not None
+        first_persistence = ChatPersistenceService(first_db)
+        assert first_persistence.console_library_policy_repository.insert(
+            conversation_id,
+            _allowed_candidate(allowed=True),
+        ).status is ConsoleLibraryPolicyWriteStatus.COMMITTED
+        first_store = ConsoleChatStore(persistence=first_persistence)
+        first_session = first_store.restore_persisted_session(
+            title="first process",
+            workspace_id=None,
+            persisted_conversation_id=conversation_id,
+            all_nodes=(),
+        )
+        await first_store.hydrate_session_library_policy(first_session.id)
+
+        second_db = CharactersRAGDB(path, "submitted-agent-second")
+        second_store = ConsoleChatStore(
+            persistence=ChatPersistenceService(second_db)
+        )
+        second_session = second_store.restore_persisted_session(
+            title="second process",
+            workspace_id=None,
+            persisted_conversation_id=conversation_id,
+            all_nodes=(),
+        )
+        await second_store.hydrate_session_library_policy(second_session.id)
+        second_store.stage_session_library_policy(
+            second_session.id,
+            _allowed_candidate(allowed=False),
+        )
+        committed = await second_store.save_session_library_policy(
+            second_session.id
+        )
+        assert committed.status is ConsoleLibraryPolicyWriteStatus.COMMITTED
+        assert committed.snapshot.policy_revision == 2
+        # A separate coordinator cannot publish into the first process holder.
+        assert first_session.library_policy_holder.snapshot.policy_revision == 1
+        assert first_session.library_policy_holder.snapshot.assistant_access is (
+            ConsoleAssistantLibraryAccess.ALLOWED
+        )
+
+        gateway = _SubmittedAgentGateway([])
+        bridge = ConsoleAgentBridge(
+            agent_runs_db=AgentRunsDB(tmp_path / "submitted-agent-runs.sqlite", "t"),
+            store=first_store,
+            provider_gateway=gateway,
+            native_tools_enabled=lambda: False,
+        )
+        service = _SubmittedLibraryService()
+        factory_calls: list[ConsoleTurnExecutionContext] = []
+
+        def provider_factory(context: ConsoleTurnExecutionContext):
+            factory_calls.append(context)
+            return LibraryToolProvider(service)
+
+        observed: list[ConsoleTurnExecutionContext] = []
+
+        async def capture_rag(_draft, turn_context=None, **_kwargs):
+            assert isinstance(turn_context, ConsoleTurnExecutionContext)
+            observed.append(turn_context)
+            return SimpleNamespace(context=None)
+
+        controller = ConsoleChatController(
+            store=first_store,
+            provider_gateway=gateway,
+            agent_runtime_enabled=True,
+            agent_bridge=bridge,
+            library_provider_factory=provider_factory,
+            turn_context_provider=lambda sid: _execution_configuration(
+                sid, native_tools=False, agent_runtime=True
+            ),
+            rag_capture_provider=capture_rag,
+        )
+
+        submitted = await controller.submit_draft(
+            "try Library",
+            session_id=first_session.id,
+        )
+
+        assert submitted.accepted is True
+        assert observed[0].library_authority.policy.policy_revision == 2
+        assert observed[0].library_authority.policy.assistant_access is (
+            ConsoleAssistantLibraryAccess.BLOCKED
+        )
+        assert first_session.library_policy_holder.snapshot == committed.snapshot
+        assert factory_calls == []
+        assert service.invoke_calls == []
+        first_schema_names = {
+            schema["function"]["name"] for schema in (gateway.tools_seen[0] or ())
+        }
+        assert "library_list_notes" not in first_schema_names
+        assert any(
+            "not permitted" in str(message.get("content", "")).lower()
+            for message in gateway.messages_seen[1]
+        )
     finally:
         if second_db is not None:
             second_db.close_connection()
@@ -735,13 +887,172 @@ async def test_submit_draft_observes_resolved_destination_at_real_dispatch_bound
         assert gateway.snapshots[1].resolved_destination.endpoint_identity == (
             "external/unknown"
         )
-        assert "on-device" not in repr(gateway.snapshots[1]).lower()
+        # Task 20 owns future UI copy.  This production runtime projection is
+        # the current category boundary, and Unknown must stay non-local here.
+        assert gateway.snapshots[1].resolved_destination.egress_class is not (
+            ConsoleEgressClass.ON_DEVICE
+        )
+        if gateway.snapshots[1].disclosure is not None:
+            assert (
+                gateway.snapshots[1].disclosure.resolved_destination.egress_class
+                is ConsoleEgressClass.UNKNOWN
+            )
     assert (gateway.snapshots[1].disclosure is not None) is expects_disclosure
     assert gateway.snapshots[1].owner_attempt_id is not None
     assert gateway.snapshots[1].owner_message_id == second.assistant_message_id
     assert session.library_destination_runtime.owner_attempt_id is None
     assert session.library_destination_runtime.owner_message_id is None
     assert session.library_policy_holder.snapshot == holder_before
+
+
+@pytest.mark.asyncio
+async def test_first_submitted_external_destination_has_no_invented_disclosure() -> (
+    None
+):
+    """The first observed external send has no fabricated local baseline."""
+    store = ConsoleChatStore()
+    session = store.create_session()
+    store.library_policy_coordinator = _RecordingCoordinator(
+        [],
+        _policy(
+            auto_retrieve=ConsoleAutoRetrieve.AUTOMATIC,
+            assistant_access=ConsoleAssistantLibraryAccess.ALLOWED,
+        ),
+    )
+    gateway = _DestinationSequenceGateway(
+        store,
+        session.id,
+        [
+            ConsoleResolvedDestination(
+                provider="openai",
+                model="model-a",
+                endpoint_identity="https://api.openai.com",
+                egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
+            )
+        ],
+    )
+    gateway.block_streams = True
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        agent_runtime_enabled=False,
+    )
+
+    submitted = asyncio.create_task(
+        controller.submit_draft("first external", session_id=session.id)
+    )
+    await gateway.starts[0].wait()
+
+    live = gateway.snapshots[0]
+    assert live.resolved_destination is not None
+    assert live.resolved_destination.egress_class is ConsoleEgressClass.PUBLIC_NETWORK
+    assert live.disclosure is None
+    assert live.owner_attempt_id is not None
+    assert live.owner_message_id is not None
+    gateway.releases[0].set()
+    result = await submitted
+    assert result.accepted is True
+    assert session.library_destination_runtime.disclosure is None
+    assert session.library_destination_runtime.owner_attempt_id is None
+    assert session.library_destination_runtime.owner_message_id is None
+
+
+@pytest.mark.asyncio
+async def test_submitted_destination_owners_settle_exactly_and_isolate_sessions() -> (
+    None
+):
+    """Live production sends retain exact attempt ownership per session."""
+    store = ConsoleChatStore()
+    session_a = store.create_session(title="Session A")
+    session_b = store.create_session(title="Session B")
+    store.library_policy_coordinator = _RecordingCoordinator(
+        [],
+        _policy(
+            auto_retrieve=ConsoleAutoRetrieve.AUTOMATIC,
+            assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+        ),
+    )
+    gateway_a = _DestinationSequenceGateway(
+        store,
+        session_a.id,
+        _local_then_destination(ConsoleEgressClass.PUBLIC_NETWORK),
+    )
+    gateway_b = _DestinationSequenceGateway(
+        store,
+        session_b.id,
+        _local_then_destination(ConsoleEgressClass.PRIVATE_NETWORK),
+    )
+    controller_a = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway_a,
+        agent_runtime_enabled=False,
+    )
+    controller_b = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway_b,
+        agent_runtime_enabled=False,
+    )
+    assert (
+        await controller_a.submit_draft("local a", session_id=session_a.id)
+    ).accepted
+    assert (
+        await controller_b.submit_draft("local b", session_id=session_b.id)
+    ).accepted
+    gateway_a.block_streams = True
+    gateway_b.block_streams = True
+
+    external_a = asyncio.create_task(
+        controller_a.submit_draft("external a", session_id=session_a.id)
+    )
+    external_b = asyncio.create_task(
+        controller_b.submit_draft("external b", session_id=session_b.id)
+    )
+    await asyncio.gather(gateway_a.starts[1].wait(), gateway_b.starts[1].wait())
+
+    live_a = session_a.library_destination_runtime
+    live_b = session_b.library_destination_runtime
+    assert live_a.disclosure is not None
+    assert live_b.disclosure is not None
+    assert live_a.owner_attempt_id is not None
+    assert live_b.owner_attempt_id is not None
+    assert live_a.owner_attempt_id != live_b.owner_attempt_id
+    assert live_a.owner_message_id is not None
+    assert live_b.owner_message_id is not None
+    assert live_a.owner_message_id != live_b.owner_message_id
+
+    wrong_attempt = store.settle_session_library_destination(
+        session_a.id,
+        expected_attempt_id=live_b.owner_attempt_id,
+        expected_message_id=live_a.owner_message_id,
+    )
+    wrong_message = store.settle_session_library_destination(
+        session_a.id,
+        expected_attempt_id=live_a.owner_attempt_id,
+        expected_message_id=live_b.owner_message_id,
+    )
+    assert wrong_attempt.disclosure == live_a.disclosure
+    assert wrong_message.disclosure == live_a.disclosure
+
+    gateway_b.releases[1].set()
+    result_b = await external_b
+    assert result_b.accepted is True
+    assert session_b.library_destination_runtime.disclosure is None
+    assert session_b.library_destination_runtime.owner_attempt_id is None
+    assert session_b.library_destination_runtime.owner_message_id is None
+    assert session_a.library_destination_runtime.disclosure == live_a.disclosure
+    assert session_a.library_destination_runtime.owner_attempt_id == (
+        live_a.owner_attempt_id
+    )
+    assert session_a.library_destination_runtime.owner_message_id == (
+        live_a.owner_message_id
+    )
+
+    gateway_a.releases[1].set()
+    result_a = await external_a
+    assert result_a.accepted is True
+    assert session_a.library_destination_runtime.disclosure is None
+    assert session_a.library_destination_runtime.owner_attempt_id is None
+    assert session_a.library_destination_runtime.owner_message_id is None
 
 
 @pytest.mark.asyncio
