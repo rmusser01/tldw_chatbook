@@ -10989,6 +10989,7 @@ class TldwCli(
             not catalog_settings.refresh_consent_recorded
         ):
             self._startup_model_catalog_refresh_scheduled = True
+            self._startup_model_catalog_consent_required = True
             self.call_after_refresh(self._push_model_catalog_consent_modal)
             return True
 
@@ -11414,9 +11415,6 @@ class TldwCli(
         else:
             return
 
-        if completed is True:
-            self._schedule_startup_model_catalog_refresh(after_setup_completion=True)
-
         # Dismissing a rerun over Console already uncovers that same mounted
         # Console. Replacing it here would interrupt first-chat rollback and
         # focus resync. Other destinations still remount to refresh their state.
@@ -11433,11 +11431,29 @@ class TldwCli(
                 )
                 if callable(apply_chrome):
                     apply_chrome()
+            self._schedule_startup_model_catalog_refresh(after_setup_completion=True)
             return
 
         from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 
-        self.post_message(NavigateToScreen(exit_route, screen_context))
+        if completed is not True:
+            self.post_message(NavigateToScreen(exit_route, screen_context))
+            return
+
+        async def navigate_then_schedule_catalog_consent() -> None:
+            await self.handle_screen_navigation(
+                NavigateToScreen(exit_route, screen_context)
+            )
+            self._schedule_startup_model_catalog_refresh(
+                after_setup_completion=True
+            )
+
+        self.run_worker(
+            navigate_then_schedule_catalog_consent(),
+            group="first-run-exit-navigation",
+            exclusive=True,
+            exit_on_error=False,
+        )
 
     def handle_first_run_wizard_result(self, result: dict | None) -> None:
         """Public alias for ``_handle_first_run_wizard_result``.
@@ -11535,7 +11551,13 @@ class TldwCli(
             self._maybe_warn_second_instance()
         except Exception as e:
             logger.error(f"Second-instance warning failed: {e}")
-        if not wizard_offered:
+
+        # Schedule after splash and the initial screen, before optional startup
+        # offers; ADR-020 consent owns this launch when it is still required.
+        self._schedule_startup_model_catalog_refresh()
+        if not wizard_offered and not getattr(
+            self, "_startup_model_catalog_consent_required", False
+        ):
             # Spec 2026-08-17 §5.4: wizard wins; .SKILLS offer defers to next launch.
             self._maybe_offer_project_skills_import()
         try:
@@ -11545,10 +11567,6 @@ class TldwCli(
                 "Config load failure warning failed (error_type=%s)",
                 type(e).__name__,
             )
-
-        # Schedule after splash, initial screen, and startup offers; ADR-020
-        # still keeps setup as the owner of startup networking until completion.
-        self._schedule_startup_model_catalog_refresh()
 
     async def _run_no_splash_post_mount_setup(self) -> None:
         """Run screen startup and post-mount setup when the splash screen is disabled."""
