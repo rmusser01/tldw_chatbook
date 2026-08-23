@@ -206,6 +206,7 @@ class _Executor:
         self.undo_projections: dict[str, SimpleNamespace] = {}
         self.undo_projection_errors: dict[str, Exception] = {}
         self.inspected_undo: list[tuple[str, str, int | None]] = []
+        self.undo_input = _input(generation=2, file_digest=_A, note_digest=_A)
 
     async def execute(self, _request: object) -> object:
         self.entered.set()
@@ -243,9 +244,7 @@ class _Executor:
         await self.undo_release.wait()
         self.undo_calls.append((root_id, source_operation_id))
         self.mutations += 1
-        self.adapter.inputs[root_id] = _input(
-            generation=2, file_digest=_A, note_digest=_A
-        )
+        self.adapter.inputs[root_id] = self.undo_input
         return NotesSyncExecutionResult(
             operation_id=f"undo-{source_operation_id}",
             state=NotesSyncOperationState.COMPLETED,
@@ -2329,6 +2328,53 @@ async def test_undo_resolution_is_root_serialized_refreshes_and_dismisses_receip
     assert await owner.active_conflict_receipts("root-1") == ()
     assert adapter.observe_calls == ["root-1"]
     assert owner._reviews["root-1"] == plan_reconciliation(adapter.inputs["root-1"])
+
+
+@pytest.mark.parametrize(
+    ("fresh_input", "expected_status", "expected_action", "blocked"),
+    (
+        (
+            _input(generation=2, file_digest=_B, note_digest=_C),
+            "needs_attention",
+            "review_changes",
+            True,
+        ),
+        (
+            _input(generation=2, file_digest=_B, note_digest=_A),
+            "changes_available",
+            "review_changes",
+            False,
+        ),
+        (
+            _input(generation=2, file_digest=_A, note_digest=_A),
+            "up_to_date",
+            "sync_now",
+            False,
+        ),
+    ),
+)
+@pytest.mark.asyncio
+async def test_completed_undo_publishes_fresh_plan_status_once(
+    fresh_input: ReconciliationInput,
+    expected_status: str,
+    expected_action: str,
+    blocked: bool,
+) -> None:
+    adapter = _Adapter(_input())
+    adapter.executor.undo_input = fresh_input
+    owner = _owner(adapter, _root())
+
+    result = await owner.undo_resolution("root-1", "source-operation")
+
+    assert result.state is NotesSyncOperationState.COMPLETED
+    assert adapter.observe_calls == ["root-1"]
+    snapshot = owner.snapshot().roots[0]
+    assert (snapshot.status, snapshot.next_action) == (
+        expected_status,
+        expected_action,
+    )
+    assert ("root-1" in owner._blocked_roots) is blocked
+    assert owner._reviews["root-1"] == plan_reconciliation(fresh_input)
 
 
 @pytest.mark.asyncio

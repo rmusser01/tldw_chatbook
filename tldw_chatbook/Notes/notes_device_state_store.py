@@ -164,6 +164,59 @@ _UNDO_SUBSTAGES = (
     "copy_cleanup_complete",
     "verified",
 )
+_RECOVERY_ENVELOPE_SUBSTAGE_FIELDS = {
+    "resolve_keep_both": frozenset({"conflict_substage", "conflict_substage_padding"}),
+    "undo_resolution": frozenset({"undo_substage", "undo_substage_padding"}),
+}
+_RECOVERY_ENVELOPE_KINDS = frozenset(
+    {"resolve_keep_file", "resolve_keep_note", "resolve_keep_both", "undo_resolution"}
+)
+
+
+def notes_sync_recovery_envelope_digest(
+    kind: str,
+    payload: bytes,
+    metadata: bytes,
+) -> str:
+    """Digest one immutable recovery envelope independently of its row."""
+
+    if kind not in _RECOVERY_ENVELOPE_KINDS:
+        raise NotesDeviceStateError("The recovery envelope kind is invalid.")
+    if type(payload) is not bytes or type(metadata) is not bytes:
+        raise TypeError("recovery payload and metadata must be bytes.")
+    try:
+        decoded = json.loads(metadata.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise NotesDeviceStateError("The recovery envelope is corrupt.") from None
+    if not isinstance(decoded, dict):
+        raise NotesDeviceStateError("The recovery envelope is corrupt.")
+    for field in _RECOVERY_ENVELOPE_SUBSTAGE_FIELDS.get(kind, ()):
+        decoded.pop(field, None)
+    canonical = json.dumps(
+        decoded,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    digest = hashlib.sha256()
+    digest.update(b"tldw.notes-sync.recovery-envelope.v1\0")
+    for value in (kind.encode("ascii"), payload, canonical):
+        digest.update(len(value).to_bytes(8, "big"))
+        digest.update(value)
+    return digest.hexdigest()
+
+
+def _require_recovery_envelope_anchor(
+    kind: str,
+    payload: bytes,
+    metadata: bytes,
+    anchor: object,
+) -> None:
+    if (
+        type(anchor) is not str
+        or notes_sync_recovery_envelope_digest(kind, payload, metadata) != anchor
+    ):
+        raise NotesDeviceStateError("The recovery envelope authority changed.")
 
 
 def _now() -> int:
@@ -1216,6 +1269,13 @@ class NotesDeviceStateStore:
                 or required_source_expires_after <= 0
             ):
                 raise ValueError("required_source_expires_after must be positive.")
+        if operation.kind in _RECOVERY_ENVELOPE_KINDS:
+            _require_recovery_envelope_anchor(
+                operation.kind,
+                recovery.payload,
+                recovery.metadata,
+                operation.expected_file_digest,
+            )
 
         required = len(recovery.payload) + len(recovery.metadata)
         with self.transaction(immediate=True) as connection:
@@ -1400,7 +1460,8 @@ class NotesDeviceStateStore:
             raise ValueError("expected_metadata_length must be positive.")
         with self.transaction(immediate=True) as connection:
             row = connection.execute(
-                "SELECT operation.kind, operation.state, recovery.metadata "
+                "SELECT operation.kind, operation.state, operation.expected_file_digest, "
+                "recovery.payload, recovery.metadata "
                 "FROM notes_sync_operations AS operation "
                 "JOIN notes_sync_recovery AS recovery "
                 "ON recovery.operation_id = operation.operation_id "
@@ -1409,7 +1470,7 @@ class NotesDeviceStateStore:
             ).fetchone()
             if row is None:
                 raise NotesDeviceStateError("The resolution recovery does not exist.")
-            kind, state, metadata = row
+            kind, state, anchor, payload, metadata = row
             if (
                 kind
                 not in {
@@ -1418,10 +1479,12 @@ class NotesDeviceStateStore:
                     "resolve_keep_both",
                 }
                 or state not in {"verified", "completed"}
+                or type(payload) is not bytes
                 or type(metadata) is not bytes
                 or len(metadata) != expected_metadata_length
             ):
                 raise NotesDeviceStateError("The resolution recovery is corrupt.")
+            _require_recovery_envelope_anchor(kind, payload, metadata, anchor)
             try:
                 decoded = json.loads(metadata.decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError):
@@ -1449,12 +1512,20 @@ class NotesDeviceStateStore:
             ).encode("utf-8")
             if len(replacement) != expected_metadata_length:
                 raise NotesDeviceStateError("The resolution recovery length drifted.")
+            replacement_anchor = notes_sync_recovery_envelope_digest(
+                kind, payload, replacement
+            )
             changed = connection.execute(
                 "UPDATE notes_sync_recovery SET metadata = ? "
                 "WHERE operation_id = ? AND metadata = ?",
                 (replacement, operation_id, metadata),
             ).rowcount
-            if changed != 1:
+            anchored = connection.execute(
+                "UPDATE notes_sync_operations SET expected_file_digest = ?, "
+                "updated_at = ? WHERE operation_id = ? AND expected_file_digest = ?",
+                (replacement_anchor, _now(), operation_id, anchor),
+            ).rowcount
+            if changed != 1 or anchored != 1:
                 raise NotesDeviceStateError("The resolution authority is stale.")
 
     def find_operation(self, operation_id: str) -> NotesSyncOperationRecord | None:
@@ -1705,7 +1776,8 @@ class NotesDeviceStateStore:
         longest = max(map(len, _CONFLICT_SUBSTAGES))
         with self.transaction(immediate=True) as connection:
             row = connection.execute(
-                "SELECT operation.kind, operation.state, recovery.payload, "
+                "SELECT operation.kind, operation.state, operation.expected_file_digest, "
+                "recovery.payload, "
                 "recovery.metadata FROM notes_sync_operations AS operation "
                 "JOIN notes_sync_recovery AS recovery "
                 "ON recovery.operation_id = operation.operation_id "
@@ -1716,7 +1788,7 @@ class NotesDeviceStateStore:
                 raise NotesDeviceStateError(
                     "The requested conflict recovery does not exist."
                 )
-            kind, state, payload, metadata = row
+            kind, state, anchor, payload, metadata = row
             if (
                 kind != "resolve_keep_both"
                 or state != expected_operation_state.value
@@ -1726,6 +1798,7 @@ class NotesDeviceStateStore:
                 or hashlib.sha256(payload).hexdigest() != expected_payload_digest
             ):
                 raise NotesDeviceStateError("The conflict recovery is corrupt.")
+            _require_recovery_envelope_anchor(kind, payload, metadata, anchor)
             try:
                 decoded = json.loads(metadata.decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError):
@@ -1855,6 +1928,9 @@ class NotesDeviceStateStore:
             ).encode("utf-8")
             if len(replacement) != expected_metadata_length:
                 raise NotesDeviceStateError("The conflict recovery length drifted.")
+            replacement_anchor = notes_sync_recovery_envelope_digest(
+                kind, payload, replacement
+            )
             updated = connection.execute(
                 "UPDATE notes_sync_recovery SET metadata = ? "
                 "WHERE recovery_id = ? AND operation_id = ? AND metadata = ?",
@@ -1862,12 +1938,15 @@ class NotesDeviceStateStore:
             ).rowcount
             advanced = connection.execute(
                 "UPDATE notes_sync_operations SET state = ?, reason_code = NULL, "
-                "updated_at = ? WHERE operation_id = ? AND state = ?",
+                "expected_file_digest = ?, updated_at = ? WHERE operation_id = ? "
+                "AND state = ? AND expected_file_digest = ?",
                 (
                     next_state.value,
+                    replacement_anchor,
                     _now(),
                     operation_id,
                     expected_operation_state.value,
+                    anchor,
                 ),
             ).rowcount
             if updated != 1 or advanced != 1:
@@ -1941,7 +2020,8 @@ class NotesDeviceStateStore:
         longest = max(map(len, _UNDO_SUBSTAGES))
         with self.transaction(immediate=True) as connection:
             row = connection.execute(
-                "SELECT operation.kind, recovery.payload, recovery.metadata "
+                "SELECT operation.kind, operation.expected_file_digest, "
+                "recovery.payload, recovery.metadata "
                 "FROM notes_sync_operations AS operation "
                 "JOIN notes_sync_recovery AS recovery "
                 "ON recovery.operation_id = operation.operation_id "
@@ -1950,7 +2030,7 @@ class NotesDeviceStateStore:
             ).fetchone()
             if row is None:
                 raise NotesDeviceStateError("The linked Undo recovery does not exist.")
-            kind, payload, metadata = row
+            kind, anchor, payload, metadata = row
             if (
                 kind != "undo_resolution"
                 or type(payload) is not bytes
@@ -1958,6 +2038,7 @@ class NotesDeviceStateStore:
                 or len(metadata) != expected_metadata_length
             ):
                 raise NotesDeviceStateError("The linked Undo recovery is corrupt.")
+            _require_recovery_envelope_anchor(kind, payload, metadata, anchor)
             try:
                 decoded = json.loads(metadata.decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError):
@@ -1996,12 +2077,20 @@ class NotesDeviceStateStore:
             ).encode("utf-8")
             if len(replacement) != expected_metadata_length:
                 raise NotesDeviceStateError("The linked Undo recovery length drifted.")
+            replacement_anchor = notes_sync_recovery_envelope_digest(
+                kind, payload, replacement
+            )
             changed = connection.execute(
                 "UPDATE notes_sync_recovery SET metadata = ? "
                 "WHERE recovery_id = ? AND operation_id = ? AND metadata = ?",
                 (replacement, recovery_id, operation_id, metadata),
             ).rowcount
-            if changed != 1:
+            anchored = connection.execute(
+                "UPDATE notes_sync_operations SET expected_file_digest = ?, "
+                "updated_at = ? WHERE operation_id = ? AND expected_file_digest = ?",
+                (replacement_anchor, _now(), operation_id, anchor),
+            ).rowcount
+            if changed != 1 or anchored != 1:
                 raise NotesDeviceStateError("The linked Undo substage is stale.")
 
     def mark_operation_partial_attention(
@@ -2027,14 +2116,27 @@ class NotesDeviceStateStore:
         with self.transaction(immediate=True) as connection:
             current = connection.execute(
                 """
-                SELECT length(metadata) FROM notes_sync_recovery
-                WHERE recovery_id = ? AND operation_id = ?
+                SELECT operation.kind, operation.expected_file_digest,
+                       recovery.payload, recovery.metadata
+                FROM notes_sync_operations AS operation
+                JOIN notes_sync_recovery AS recovery
+                  ON recovery.operation_id = operation.operation_id
+                WHERE recovery.recovery_id = ? AND operation.operation_id = ?
                 """,
                 (recovery_id, operation_id),
             ).fetchone()
             if current is None:
                 raise NotesDeviceStateError(
                     "The requested recovery record does not exist."
+                )
+            kind, anchor, payload, current_metadata = current
+            replacement_anchor = anchor
+            if kind in _RECOVERY_ENVELOPE_KINDS:
+                _require_recovery_envelope_anchor(
+                    kind, payload, current_metadata, anchor
+                )
+                replacement_anchor = notes_sync_recovery_envelope_digest(
+                    kind, payload, metadata
                 )
             used = int(
                 connection.execute(
@@ -2044,24 +2146,26 @@ class NotesDeviceStateStore:
                     """
                 ).fetchone()[0]
             )
-            if used - int(current[0]) + len(metadata) > capacity_bytes:
+            if used - len(current_metadata) + len(metadata) > capacity_bytes:
                 raise NotesDeviceStateError(
                     "The private recovery capacity cannot admit cleanup authority."
                 )
             updated = connection.execute(
                 """
                 UPDATE notes_sync_recovery SET metadata = ?
-                WHERE recovery_id = ? AND operation_id = ?
+                WHERE recovery_id = ? AND operation_id = ? AND metadata = ?
                 """,
-                (metadata, recovery_id, operation_id),
+                (metadata, recovery_id, operation_id, current_metadata),
             ).rowcount
             fenced = connection.execute(
                 """
                 UPDATE notes_sync_operations
-                SET state = 'needs_attention', reason_code = ?, updated_at = ?
+                SET state = 'needs_attention', reason_code = ?,
+                    expected_file_digest = ?, updated_at = ?
                 WHERE operation_id = ? AND state != 'completed'
+                  AND expected_file_digest IS ?
                 """,
-                (selected_reason, _now(), operation_id),
+                (selected_reason, replacement_anchor, _now(), operation_id, anchor),
             ).rowcount
             if updated != 1 or fenced != 1:
                 raise NotesDeviceStateError(

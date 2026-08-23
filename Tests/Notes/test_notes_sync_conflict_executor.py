@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import json
 import threading
@@ -28,6 +29,7 @@ from tldw_chatbook.Notes.notes_device_state_store import (
     NotesSyncOperationRecord,
     NotesSyncRecoveryRecord,
     NotesSyncRootRecord,
+    notes_sync_recovery_envelope_digest,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
@@ -50,6 +52,7 @@ from tldw_chatbook.Notes.notes_sync_executor import (
 )
 from tldw_chatbook.Notes.notes_sync_conflicts import linked_undo_operation_id
 from tldw_chatbook.Notes.notes_sync_filesystem import (
+    NotesSyncFilesystemError,
     NotesSyncFileSnapshot,
     PosixNotesSyncFilesystem,
 )
@@ -1214,7 +1217,7 @@ def test_keep_both_folders_checkpoint_records_authority_without_byte_growth(
             None,
             "observation-1",
             4,
-            "a" * 64,
+            notes_sync_recovery_envelope_digest("resolve_keep_both", payload, metadata),
         ),
         NotesSyncRecoveryRecord(
             "recovery-operation-1",
@@ -1509,7 +1512,9 @@ def test_keep_both_substage_cas_is_capacity_neutral_and_exactly_forward(
             reason_code=None,
             observation_token="observation-1",
             expected_note_version=4,
-            expected_file_digest="a" * 64,
+            expected_file_digest=notes_sync_recovery_envelope_digest(
+                "resolve_keep_both", payload, metadata
+            ),
         ),
         NotesSyncRecoveryRecord(
             recovery_id="recovery-keep-both",
@@ -1607,7 +1612,7 @@ def test_keep_both_substage_cas_rejects_unknown_skip_and_backward(
             None,
             "observation-1",
             4,
-            "a" * 64,
+            notes_sync_recovery_envelope_digest("resolve_keep_both", payload, metadata),
         ),
         NotesSyncRecoveryRecord(
             "recovery-keep-both",
@@ -1652,7 +1657,7 @@ def test_keep_both_substage_cas_rejects_padding_length_digest_and_state_drift(
             None,
             "observation-1",
             4,
-            "a" * 64,
+            notes_sync_recovery_envelope_digest("resolve_keep_both", payload, metadata),
         ),
         NotesSyncRecoveryRecord(
             "recovery-keep-both",
@@ -2752,10 +2757,19 @@ async def test_undo_rejects_same_length_source_recovery_corruption_before_effect
     )
     executor = NotesSyncExecutor(store, notes, files, recovery_capacity_bytes=65_536)
     assert (await executor.execute(request)).state is NotesSyncOperationState.COMPLETED
+    corrupted_payload = b"evil side"
+    recovery = store.load_operation_recovery(request.operation_id)
+    metadata = json.loads(recovery.metadata)
+    metadata["recovery_payload_digest"] = hashlib.sha256(corrupted_payload).hexdigest()
     with store.transaction(immediate=True) as connection:
         connection.execute(
-            "UPDATE notes_sync_recovery SET payload = ? WHERE operation_id = ?",
-            (b"evil side", request.operation_id),
+            "UPDATE notes_sync_recovery SET payload = ?, metadata = ? "
+            "WHERE operation_id = ?",
+            (
+                corrupted_payload,
+                json.dumps(metadata, separators=(",", ":"), sort_keys=True).encode(),
+                request.operation_id,
+            ),
         )
     note_effects = notes.replace_calls
     file_effects = files.replace_calls
@@ -2766,6 +2780,213 @@ async def test_undo_rejects_same_length_source_recovery_corruption_before_effect
     assert result.reason_code == "changed_since_resolution"
     assert notes.replace_calls == note_effects
     assert files.replace_calls == file_effects
+
+
+@pytest.mark.asyncio
+async def test_linked_undo_rejects_colocated_embedded_source_metadata_corruption(
+    tmp_path: Path,
+) -> None:
+    store, database = _execution_store(tmp_path)
+    note = _note(content="note side", version=4)
+    notes = FakeNoteAuthority(note)
+    files = _PathPreservingFilesystem(_file(content="file side"))
+    request = replace(
+        _request(
+            action=NotesSyncActionKind.UPDATE_NOTE, note=note, file=files.snapshot
+        ),
+        journal_kind="resolve_keep_file",
+    )
+    executor = NotesSyncExecutor(store, notes, files, recovery_capacity_bytes=65_536)
+    assert (await executor.execute(request)).state is NotesSyncOperationState.COMPLETED
+
+    def fail_after_admission(state: NotesSyncOperationState) -> None:
+        if state is NotesSyncOperationState.RECOVERY_ADMITTED:
+            raise RuntimeError("transient_test_failure")
+
+    assert (
+        await NotesSyncExecutor(
+            store,
+            notes,
+            files,
+            recovery_capacity_bytes=65_536,
+            after_stage=fail_after_admission,
+        ).undo_resolution("root-1", request.operation_id)
+    ).state is NotesSyncOperationState.NEEDS_ATTENTION
+    linked = linked_undo_operation_id("root-1", request.operation_id)
+    recovery = store.load_operation_recovery(linked)
+    metadata = json.loads(recovery.metadata)
+    source_metadata = json.loads(
+        base64.b64decode(metadata["source_metadata"], validate=True)
+    )
+    source_metadata["recovery_title"] = "Evil!"
+    metadata["source_metadata"] = base64.b64encode(
+        json.dumps(source_metadata, separators=(",", ":"), sort_keys=True).encode()
+    ).decode()
+    replacement = json.dumps(metadata, separators=(",", ":"), sort_keys=True).encode()
+    assert len(replacement) == len(recovery.metadata)
+    with store.transaction(immediate=True) as connection:
+        connection.execute(
+            "DELETE FROM notes_sync_recovery WHERE operation_id = ?",
+            (request.operation_id,),
+        )
+        connection.execute(
+            "UPDATE notes_sync_recovery SET metadata = ? WHERE operation_id = ?",
+            (replacement, linked),
+        )
+    note_effects = notes.replace_calls
+    file_effects = files.replace_calls
+
+    result = await NotesSyncExecutor(
+        NotesDeviceStateStore(database),
+        notes,
+        files,
+        recovery_capacity_bytes=65_536,
+    ).undo_resolution("root-1", request.operation_id)
+
+    assert result.state is NotesSyncOperationState.NEEDS_ATTENTION
+    assert result.reason_code == "changed_since_resolution"
+    assert notes.replace_calls == note_effects
+    assert files.replace_calls == file_effects
+    assert "Evil!" not in notes.snapshot.title
+
+
+@pytest.mark.parametrize(
+    "field",
+    ("conflict_parent_actual_folder_id", "resolution_post_authority_digest"),
+)
+@pytest.mark.asyncio
+async def test_undo_rejects_final_keep_both_envelope_corruption(
+    tmp_path: Path,
+    field: str,
+) -> None:
+    store, _database = _execution_store(tmp_path)
+    note = _note(content="note side", version=4)
+    notes = _KeepBothAuthority(note)
+    files = _PathPreservingFilesystem(_file(content="file side"))
+    request = _keep_both_request(note, files.snapshot)
+    executor = NotesSyncExecutor(store, notes, files, recovery_capacity_bytes=65_536)
+    assert (await executor.execute(request)).state is NotesSyncOperationState.COMPLETED
+    recovery = store.load_operation_recovery(request.operation_id)
+    metadata = json.loads(recovery.metadata)
+    original = metadata[field]
+    assert isinstance(original, str) and original
+    metadata[field] = ("x" if original[0] != "x" else "y") + original[1:]
+    replacement = json.dumps(metadata, separators=(",", ":"), sort_keys=True).encode()
+    assert len(replacement) == len(recovery.metadata)
+    with store.transaction(immediate=True) as connection:
+        connection.execute(
+            "UPDATE notes_sync_recovery SET metadata = ? WHERE operation_id = ?",
+            (replacement, request.operation_id),
+        )
+    note_effects = notes.replace_calls
+    file_effects = files.replace_calls
+
+    result = await executor.undo_resolution("root-1", request.operation_id)
+
+    assert result.state is NotesSyncOperationState.NEEDS_ATTENTION
+    assert result.reason_code == "changed_since_resolution"
+    assert notes.replace_calls == note_effects
+    assert files.replace_calls == file_effects
+
+
+@pytest.mark.parametrize(
+    ("authority", "reason_code"),
+    (
+        ("note", "note_missing"),
+        ("note", "note_identity_changed"),
+        ("note", "note_scope_changed"),
+        ("file", "missing_target"),
+    ),
+)
+@pytest.mark.asyncio
+async def test_undo_maps_typed_missing_or_replaced_authority_to_changed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    authority: str,
+    reason_code: str,
+) -> None:
+    store, _database = _execution_store(tmp_path)
+    note = _note(content="note side", version=4)
+    notes = FakeNoteAuthority(note)
+    files = _PathPreservingFilesystem(_file(content="file side"))
+    request = replace(
+        _request(
+            action=NotesSyncActionKind.UPDATE_NOTE, note=note, file=files.snapshot
+        ),
+        journal_kind="resolve_keep_file",
+    )
+    executor = NotesSyncExecutor(store, notes, files, recovery_capacity_bytes=65_536)
+    assert (await executor.execute(request)).state is NotesSyncOperationState.COMPLETED
+    if authority == "note":
+
+        async def fail_note(_note_id: str) -> NotesSyncNoteSnapshot:
+            raise NotesSyncAuthorityError(reason_code)
+
+        monkeypatch.setattr(notes, "observe", fail_note)
+    else:
+
+        def fail_file(_relative_path: str) -> NotesSyncFileSnapshot:
+            raise NotesSyncFilesystemError(reason_code)
+
+        monkeypatch.setattr(files, "observe", fail_file)
+
+    result = await executor.undo_resolution("root-1", request.operation_id)
+
+    assert result.state is NotesSyncOperationState.NEEDS_ATTENTION
+    assert result.reason_code == "changed_since_resolution"
+    assert (
+        store.find_operation(linked_undo_operation_id("root-1", request.operation_id))
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    ("authority", "error"),
+    (
+        ("note", NotesSyncAuthorityError("note_observation_failed")),
+        ("file", NotesSyncFilesystemError("root_unavailable")),
+    ),
+)
+@pytest.mark.asyncio
+async def test_undo_maps_true_observation_failure_to_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    authority: str,
+    error: Exception,
+) -> None:
+    store, _database = _execution_store(tmp_path)
+    note = _note(content="note side", version=4)
+    notes = FakeNoteAuthority(note)
+    files = _PathPreservingFilesystem(_file(content="file side"))
+    request = replace(
+        _request(
+            action=NotesSyncActionKind.UPDATE_NOTE, note=note, file=files.snapshot
+        ),
+        journal_kind="resolve_keep_file",
+    )
+    executor = NotesSyncExecutor(store, notes, files, recovery_capacity_bytes=65_536)
+    assert (await executor.execute(request)).state is NotesSyncOperationState.COMPLETED
+    if authority == "note":
+
+        async def fail_note(_note_id: str) -> NotesSyncNoteSnapshot:
+            raise error
+
+        monkeypatch.setattr(notes, "observe", fail_note)
+    else:
+
+        def fail_file(_relative_path: str) -> NotesSyncFileSnapshot:
+            raise error
+
+        monkeypatch.setattr(files, "observe", fail_file)
+
+    result = await executor.undo_resolution("root-1", request.operation_id)
+
+    assert result.state is NotesSyncOperationState.NEEDS_ATTENTION
+    assert result.reason_code == "unavailable"
+    assert (
+        store.find_operation(linked_undo_operation_id("root-1", request.operation_id))
+        is None
+    )
 
 
 @pytest.mark.asyncio

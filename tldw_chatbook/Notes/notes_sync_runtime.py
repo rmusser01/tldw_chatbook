@@ -1034,6 +1034,7 @@ class NotesSyncRuntimeOwner:
                     self.dismiss_conflict_receipt(root_id, source_operation_id)
                     fresh = await self._fresh_authority(root)
                     self._reviews[root_id] = fresh.plan
+                    await self._publish_post_apply_status(root_id, fresh.plan)
                 return result
         finally:
             self._finish_task(root_id, task)
@@ -1495,6 +1496,25 @@ class NotesSyncRuntimeOwner:
             return "unsupported", "review_settings"
         return None
 
+    async def _publish_post_apply_status(
+        self,
+        root_id: str,
+        plan: ReconciliationPlan,
+    ) -> bool:
+        """Publish one freshly observed post-mutation plan classification."""
+
+        blocked = self._blocked_plan_status(plan)
+        if blocked is not None:
+            self._blocked_roots.add(root_id)
+            await self._publish(root_id, *blocked)
+            return True
+        self._blocked_roots.discard(root_id)
+        if any(action.kind in _EXECUTABLE_ACTIONS for action in plan.safe_actions):
+            await self._publish(root_id, "changes_available", "review_changes")
+        else:
+            await self._publish(root_id, "up_to_date", "sync_now")
+        return False
+
     async def _review_candidate(self, root: NotesSyncRootRecord) -> ReconciliationPlan:
         """Build a complete mutation-free plan for a pending or migrated root."""
 
@@ -1901,24 +1921,9 @@ class NotesSyncRuntimeOwner:
                     fresh_plan = fresh.plan
                     self._reviews[root_id] = fresh_plan
                     unresolved = len(self._eligible_conflicts(fresh_plan))
-                    blocked = self._blocked_plan_status(fresh_plan)
-                    fresh_safe_actions = tuple(
-                        action
-                        for action in fresh_plan.safe_actions
-                        if action.kind in _EXECUTABLE_ACTIONS
+                    attention_remains = await self._publish_post_apply_status(
+                        root_id, fresh_plan
                     )
-                    attention_remains = blocked is not None
-                    if blocked is not None:
-                        self._blocked_roots.add(root_id)
-                        await self._publish(root_id, *blocked)
-                    elif fresh_safe_actions:
-                        self._blocked_roots.discard(root_id)
-                        await self._publish(
-                            root_id, "changes_available", "review_changes"
-                        )
-                    else:
-                        self._blocked_roots.discard(root_id)
-                        await self._publish(root_id, "up_to_date", "sync_now")
                 return ConflictApplyResult(
                     results=results,
                     safe_completed=safe_completed,
