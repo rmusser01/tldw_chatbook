@@ -6,6 +6,7 @@ import asyncio
 from enum import Enum
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import replace
+from functools import partial
 from typing import Any, Hashable, Optional
 
 from loguru import logger
@@ -742,14 +743,27 @@ class LibraryLocalRagSearchService:
             return SeamState.UNAVAILABLE, []
 
         async def run_match(fts_query: str) -> list[dict[str, Any]]:
+            # Pre-built MATCH string, same as the notes/media/prompts seams.
+            # TASK-19558: this used to arrive through the plain-text
+            # `search_query` parameter and work only because that argument
+            # was bound to MATCH raw. It now goes through the explicit
+            # `fts_match_query` seam the siblings already used, so the
+            # plain-text parameter can quote what it is given.
             if getattr(db, "is_memory_db", False):
                 # In-memory SQLite connections are thread-local and only the
                 # thread that created the database has the migrated schema;
                 # offloading to a worker thread would hit a blank connection.
-                raw_results = db.search_conversations_by_content(fts_query, top_k)
+                raw_results = db.search_conversations_by_content(
+                    query, top_k, fts_match_query=fts_query
+                )
             else:
                 raw_results = await asyncio.to_thread(
-                    db.search_conversations_by_content, fts_query, top_k
+                    partial(
+                        db.search_conversations_by_content,
+                        query,
+                        top_k,
+                        fts_match_query=fts_query,
+                    )
                 )
             return [
                 _conversation_row(item)

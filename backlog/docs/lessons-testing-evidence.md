@@ -7055,3 +7055,169 @@ shutdown), not on which methods were called — that is the only shape that
 catches a probe, a shutdown hook, or a migrator quietly creating the file.
 This recurs for every store queued in TASK-21105 (seven more feature DBs to
 be made first-use-lazy).
+
+
+## A "safe_" local that only reaches the error message is not protection — mutate it to prove which value the query saw (TASK-19558, 2026-08-23)
+
+Three `ChaChaNotes_DB` search methods computed `safe_search_term = f'"{term}"'`
+and then bound the RAW term. The quoted value was interpolated into the
+`logger.error` f-string in the `except` block and nowhere else. It had survived
+every review of those methods because a reader who sees `safe_search_term` two
+lines above a query stops reading — the NAME is the assertion, and the name was
+free.
+
+The evidence that settles it is a **mutation, not a reading**. Replace the
+computed value with an absurd string
+(`"ZZZ_MUTATED_NEVER_MATCHES_ANYTHING_ZZZ"`) and run the real method against a
+real database: at base all three returned byte-identical results
+(`['Zed the Hunter'] / ['Talk about dragons'] / ['hello world']`), which is only
+possible if the value never reached SQLite. Apply the same mutation to the fixed
+code and all three return `[]`. Two directions, one probe each; no amount of
+staring at the diff produces that.
+
+Generalise it: **whenever a sanitizer's output is a local rather than an
+expression at the call site, the sanitizer might not be wired.** The shape is
+cheap to census — a local named `safe_*`/`quoted_*`/`escaped_*` whose every AST
+`Name` load sits inside a `logger.*` call is, by construction, decorative. That
+census (`Tests/Utils/test_fts5_quoting_adoption_census.py`) run against the base
+blob rediscovers exactly those three and nothing else, and it ships as a test so
+the rediscovery is repeatable rather than a claim in a PR description.
+
+A third face turned up in review, and it is the one to remember: the FIX for
+a dead store can be a dead store. Round one replaced the unbound
+`safe_search_term` with a bound whole-query phrase -- correct, protective, and
+quietly halving multi-word recall at eight seams (see the recall lesson below).
+Binding the sanitized value is necessary, not sufficient; you still have to
+show the query means what it meant before.
+
+The same shape has a second face, met later in the same task. The review had
+asked for `("reads",)` risk tags on the read-only local agent tools "so they are
+floored to ask". Measured: local tools resolve through
+`permission_store.resolve_effective_state`, whose floor set is
+`HIGH_RISK_TAGS = {"mutates", "process"}`; `"reads"` is in
+`BUILTIN_HIGH_RISK_TAGS`, which only `resolve_builtin_state` consults, and that
+function never serves the `local:__local__` server key. Adding the tag would
+have produced a marking that reads as protection in review and floors nothing —
+the `safe_search_term` defect, re-created while fixing it. **Before adding a
+marking because a sibling has it, run the resolver that consumes it and show
+the verdict change.** If the verdict does not change, the honest deliverable is
+the written-down mechanism plus a test that demonstrates the inertness, not the
+tag.
+
+## Sanitizing a search box can NARROW it, and nothing red will tell you (TASK-19558 review, 2026-08-23)
+
+Quoting fixed an injection at fourteen search seams. It also quoted each seam's
+whole query as ONE FTS5 phrase, and an FTS5 phrase requires the words to be
+CONTIGUOUS. `dragon lore` stopped matching a record named "lore of the dragon
+reversed": recall halved at eight seams, on the Console conversation search,
+the Study flashcard box and the prompt picker. Every test passed. The injection
+tests passed *harder* — a narrower query closes more.
+
+The trap is that **the security assertion and the recall assertion point the
+same way.** "Returns 0 rows for `x" OR col:"y`" is satisfied by a fix and by
+an over-fix alike, so a suite made only of closure tests cannot distinguish
+"safe" from "broken in the user's favour of nothing". This repo had already
+paid for it once: `rag_service._escape_fts5_query`'s docstring records
+TASK-3995 finding that whole-query phrase quoting "is strictly stronger than
+AND-of-terms, not equivalent to it", verified against a real corpus document.
+The fix was re-derived from scratch three years later by someone who had read
+that docstring while working in the same file.
+
+Two things to actually do:
+
+1. **Pair every closure probe with a recall probe on the same corpus.** Seed
+   two records per seam — one where the query's words are adjacent, one where
+   they are split — and assert BOTH are returned. One extra fixture row turns
+   an invisible regression into a red test. A before/after table across both
+   halves is the evidence; a table of only closures is not.
+2. **When a "safety" change touches an expression language, name the semantics
+   you are picking.** Phrase, AND-of-terms and prefix are three different
+   queries, all of them injection-safe. Write down which one each seam had
+   BEFORE — here the rule turned out to be mechanical (*a seam that bound RAW
+   had implicit AND; a seam that bound a quoted phrase had a phrase*), and
+   that rule, once stated, decided all fourteen seams and stopped the fix from
+   smuggling in unmeasured behaviour changes beside the measured one.
+
+A third, cheaper lesson from the same round: **a NUL byte is not just another
+character to a quoting fix.** `sqlite3` passes a bound TEXT parameter as a C
+string, so SQLite truncates at the first NUL *after* you quoted — the closing
+quote is on the far side of the cut, and `unterminated string` is raised no
+matter how correct the escape was. Raw binds had survived it by luck. If you
+are adding quoting to anything that reaches SQLite, test `"a\x00b"`.
+
+## An FTS5 search box quietly has two contracts, and quoting one breaks the other (TASK-19558, 2026-08-23)
+
+Fixing the quoting above broke five Library tests, and the reason generalises to
+any "sanitize at the boundary" sweep. `search_conversations_by_content` had two
+kinds of caller: the Console/UI seams passing PLAIN user text (which must be
+quoted), and `library_local_rag_search_service._search_conversations` passing a
+pre-built, plural/singular-widened FTS5 MATCH expression (which must not be).
+The second only worked BECAUSE the argument was bound raw — the defect was load
+bearing. Its three sibling seams (notes, media, prompts) had already been given
+an explicit `fts_match_query` parameter for exactly this; the conversations seam
+had never been converted, and nothing marked it as the odd one out.
+
+So: before quoting a parameter, **enumerate its callers and split them by what
+they are actually passing**, and give the expression-supplying callers a
+separate, named parameter rather than overloading one argument with two
+contracts. A single parameter that means "plain text OR a MATCH expression,
+depending on who is calling" cannot be made safe — every fix for one caller is a
+regression for the other.
+
+Two smaller traps from the same sweep, both worth a line:
+
+- **A length test measured on the wrong string silently retires a branch.**
+  `search_media_db` widened 1-2 character queries to a prefix match
+  (`len(effective_fts_query) <= 2`). Quoting adds two characters, so testing the
+  quoted string's length would have made that branch dead code with no test
+  failing. Measure such predicates on the RAW input and say so in the comment.
+- **A test asserting that bad input raises can be pinning the bug.**
+  `test_search_with_invalid_fts_syntax_raises_error` asserted that typing
+  `invalid "syntax` into the prompt search box raises `DatabaseError`. That was
+  never a contract; it was the symptom of the raw bind, written down as if it
+  were one. When a fix turns such a test red, read what the test is asserting
+  about the USER before assuming the fix is wrong.
+
+## "No rows" is not the safe default for an unparseable query — and an AND-joined false leg poisons the whole WHERE (TASK-19558 review round 2, 2026-08-23)
+
+The round-one fix above had a second half nobody measured. When the new quoting
+could not build a MATCH expression at all — punctuation-only input, whitespace,
+a NUL — `search_media_db` answered `conditions.append("0")`. The conditions are
+`" AND ".join`ed, so that one leg forced the ENTIRE query to zero rows,
+including the LIKE predicates sitting right beside it that could still express
+what the user typed. Measured against the merge-base on a five-row corpus:
+`!!!` → 0 rows (LIKE would have found "Alert!!! urgent dragon"), `-` → 0
+("well-known dashes"), `***` → 0, `""` → 0. The comment above the line even
+argued for it — "simply DROPPING the condition would widen the result set" —
+which is true of a query whose ONLY filter is that leg and false of this one.
+
+Three things this generalises to:
+
+1. **A false predicate is not a no-op, it is a veto over its siblings.** Before
+   writing `1=0` / `"0"` / `AND FALSE` into a conjunction, look at what else is
+   in the conjunction. If any sibling can still answer the question, the leg
+   must be DROPPED, not falsified. Symmetrically, dropping is only safe when a
+   sibling survives — with no other text predicate, dropping returns everything.
+2. **Branch on the REASON the builder returned empty, not on the fact that it
+   did.** Three reasons arrived at the same line and want three answers: a
+   caller-supplied expression that came out blank means "no rows" by that seam's
+   own contract (and its LIKE legs are deliberately not built, so dropping
+   returns the whole table); a NUL means the LIKE fallback is *wider* than what
+   was asked for, because SQLite truncates the bound parameter at the NUL and
+   `%dragon\x00lore%` reaches it as `%dragon` (measured: it returned the dragon
+   row at the merge-base); punctuation-only means LIKE is exactly right. One
+   `if` per reason, each with the measurement in the comment.
+3. **Whitespace-only input is an EMPTY search, and padding is not part of the
+   query.** `"   "` should mean "I typed nothing", not "find me three spaces".
+   The same strip also fixed a pre-existing narrowing nobody had noticed: the
+   LIKE leg is AND-ed with the FTS leg, so `"  dragon  "` matched `MATCH` and
+   was then vetoed by `LIKE '%  dragon  %'` — 1 row for `dragon`, 0 for the
+   padded spelling, on dev.
+
+The evidence shape that catches this class: a before/after table over the
+AWKWARD inputs (`!!!`, `   `, `""`, `-`, `***`, empty, plus a normal control),
+run against the merge-base AND the branch in the same process — `git show
+<merge-base>:path/to/module.py` loaded via `importlib.util.spec_from_file_
+location` under a dotted name inside the real package resolves its relative
+imports fine, so both versions can be seeded and queried side by side without a
+second worktree. Closure probes alone never move on any of those rows.

@@ -52,6 +52,10 @@ from .sql_logging import preview_params
 from .private_sqlite import backup_connection_to_private, connect_private_sqlite
 from ..Metrics.metrics_logger import log_counter, log_histogram
 from tldw_chatbook.Utils.private_paths import PrivatePathError, lexical_path
+from tldw_chatbook.Utils.fts5_match_forms import (
+    build_and_match_query,
+    quote_fts5_token,
+)
 #
 ########################################################################################################################
 #
@@ -3287,12 +3291,17 @@ class PromptsDatabase:
 
     @classmethod
     def _library_prompt_fts_query(cls, raw_query: str) -> Optional[str]:
-        """Build a safe FTS5 MATCH query from raw user text (operators inert)."""
+        """Build a safe FTS5 MATCH query from raw user text (operators inert).
+
+        The AND-of-quoted-tokens form, not a phrase: each token is
+        double-quoted and they are space-joined, which is FTS5's implicit
+        AND. Returns None when the input contains no usable tokens.
+        """
         tokens = re.findall(r"\w+", raw_query, flags=re.UNICODE)
         if not tokens:
             return None
         tokens = tokens[: cls._LIBRARY_PROMPT_FTS_TOKEN_LIMIT]
-        return " ".join(f'"{token}"' for token in tokens)
+        return " ".join(quote_fts5_token(token) for token in tokens)
 
     def _library_keywords_for_prompts(
         self, conn: sqlite3.Connection, prompt_ids: List[int]
@@ -3744,9 +3753,16 @@ class PromptsDatabase:
         """Searches prompts using FTS.
 
         Args:
-            search_query: Plain user search text. Also used verbatim as the
-                MATCH clause against ``prompts_fts``/``prompt_keywords_fts``
-                when ``fts_match_query`` is not provided.
+            search_query: Plain user search text. Every token must appear
+                in ``prompts_fts``/``prompt_keywords_fts``
+                (TASK-19558 -- each token is quoted with
+                ``Utils.fts5_match_forms.build_and_match_query``, NOT used
+                verbatim as a MATCH clause; FTS5 operators typed into it are
+                inert, and a typed ``"`` no longer raises). The AND-of-tokens
+                form, not a whole-query phrase: a prompt named "lore of the
+                dragon reversed" is still found by ``dragon lore``.
+                Unsearchable text -- ``None``, punctuation-only, or
+                containing a NUL -- matches nothing instead of raising.
             search_fields: Fields to search; defaults to the standard text
                 fields when ``search_query`` is set.
             page: 1-indexed page number.
@@ -3756,8 +3772,8 @@ class PromptsDatabase:
                 Library keyword search's plural/singular-widened query,
                 see ``library_fts_query.build_fts_match_query``) that
                 overrides the MATCH clause built from ``search_query``.
-                When omitted, ``search_query`` keeps its legacy behavior
-                unchanged.
+                This is the ONLY seam through which a caller may supply
+                FTS5 syntax; it must already be injection-safe.
         """
         start_time = time.time()
 
@@ -3802,10 +3818,23 @@ class PromptsDatabase:
                 "system_prompt",
                 "user_prompt",
             }
-            # Forward the caller-built MATCH expression only when provided
-            # so existing callers/test fakes without the parameter keep the
-            # legacy raw-`search_query` MATCH behavior unchanged.
-            effective_match_query = fts_match_query if fts_match_query else search_query
+            # Forward the caller-built MATCH expression when provided;
+            # otherwise quote each of the user's tokens and AND them.
+            # TASK-19558: the else-branch used to bind `search_query` RAW,
+            # so a typed `"` raised OperationalError('unterminated string')
+            # and a typed column filter/`OR` executed as FTS5 syntax.
+            effective_match_query = (
+                fts_match_query
+                if fts_match_query
+                else build_and_match_query(search_query)
+            )
+            # "" means the text cannot be searched at all (punctuation only,
+            # or containing a NUL that SQLite truncates the bound parameter
+            # at). `MATCH ''` is an FTS5 syntax error, so skip both FTS legs
+            # and let the id-set stay empty rather than raising into the
+            # prompt search box.
+            if not effective_match_query:
+                return [], 0
 
             # Search in prompt text fields
             if any(field in text_search_fields for field in search_fields):
@@ -4429,7 +4458,10 @@ class PromptsDatabase:
         Searches in: name, author, details, system_prompt, user_prompt
 
         Args:
-            search_text: The text to search for
+            search_text: Plain user text. Every token is quoted individually
+                and the tokens are AND-ed (``build_and_match_query``), so all
+                of them must appear but they need not be adjacent -- NOT a
+                phrase, and FTS5 operators in it are inert.
             include_deleted: Whether to include soft-deleted prompts
 
         Returns:
@@ -4440,9 +4472,16 @@ class PromptsDatabase:
 
         try:
             # Use FTS to find matching prompt IDs
+            # TASK-19558: `search_text` is plain user text; quote each of
+            # its tokens and AND them rather than binding it as an FTS5
+            # expression (and rather than one whole-query phrase, which
+            # would halve recall -- see `build_and_match_query`).
+            match_expression = build_and_match_query(search_text)
+            if not match_expression:
+                return []
             cursor = self.execute_query(
                 "SELECT rowid FROM prompts_fts WHERE prompts_fts MATCH ?",
-                (search_text,),
+                (match_expression,),
             )
             matching_ids = [row["rowid"] for row in cursor.fetchall()]
 

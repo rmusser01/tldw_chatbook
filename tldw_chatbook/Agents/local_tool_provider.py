@@ -130,7 +130,57 @@ _MAX_ERROR_CHARS = 300
 
 @dataclass(frozen=True)
 class LocalToolSpec:
-    """One local tool: schema plus its sync handler (args dict -> text)."""
+    """One local tool: schema plus its sync handler (args dict -> text).
+
+    **Why the read-only tools carry ``tags=()`` while their in-process
+    builtin equivalents carry ``("reads",)``** (TASK-19558 asked this
+    explicitly; the answer is a mechanism, not a preference, and it is
+    written here because the next reader will look at the spec list, not at
+    ``MCP/permission_store.py``):
+
+    There are two floors in this app, and local tools are only ever
+    resolved by ONE of them. ``Chat/console_chat_controller`` wires this
+    provider's ``resolve_state`` to ``UnifiedControlPlaneService.
+    gate_tool_test``, i.e. to ``permission_store.resolve_effective_state``
+    -- the MCP resolver, whose floor set is ``HIGH_RISK_TAGS =
+    {"mutates", "process"}``. The ``("reads",)`` / ``("network",)`` floor
+    lives in ``BUILTIN_HIGH_RISK_TAGS``, which only
+    ``resolve_builtin_state`` consults, and that function resolves
+    in-process ``Tools/`` builtins under ``agent:builtin`` -- never the
+    ``local:__local__`` server key.
+
+    So tagging ``fs_read``/``fs_glob``/``fs_grep``/``web_*``/
+    ``watchlists_*`` with ``("reads",)`` would floor **nothing**: it would
+    be a marking that reads as protection in review and provides none --
+    the same shape as the ``safe_search_term`` dead stores TASK-19558
+    removed from ``ChaChaNotes_DB``. Copying the builtin vocabulary here
+    without moving the floor with it is therefore the wrong fix, and the
+    tag is deliberately withheld rather than added cosmetically.
+
+    What actually protects these tools today, in order:
+
+    1. ``local:__local__`` has no entry in a fresh permission store, so
+       every local tool inherits ``global_default`` = ``"ask"`` and already
+       raises an approval card per call. The floor only ever matters for a
+       user who has explicitly set the local server (or global) default to
+       ``allow`` -- i.e. who has said "stop asking me about local tools".
+    2. The read tools are confined to the workspace root and refuse
+       denylisted paths at ``Tools/local_tool_impls._resolve_in_workspace``
+       (TASK-19551/19800), which is a hard refusal rather than a prompt.
+
+    Changing this means widening the MCP resolver's floor set or routing
+    local tools through a resolver of their own -- a permission-model
+    change with its own blast radius (it would start prompting on any
+    remote MCP server that happens to list "network" among its
+    capabilities; see ``BUILTIN_HIGH_RISK_TAGS``' comment for why that was
+    rejected once already), not a one-line tags edit. ``Tests/Agents/
+    test_local_tool_provider.py`` pins the mechanism so the inertness is
+    demonstrated rather than asserted.
+
+    ``("mutates",)`` IS applied where it applies (``fs_write``/``fs_edit``/
+    ``fs_patch``/``todo_create``/``todo_update``) precisely because that tag
+    is in the set the local resolver does consult.
+    """
 
     name: str
     description: str

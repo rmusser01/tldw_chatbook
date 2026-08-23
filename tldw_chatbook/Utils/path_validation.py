@@ -485,6 +485,17 @@ def validate_path_multi(
     unchanged). The rejection message names every consulted root so a
     denial is actionable.
 
+    Every attempt is made with ``redact_paths=True`` (TASK-19558). This is
+    the choke point for the agent file-tool family (``ReadFileTool`` /
+    ``WriteFileTool`` / ``ListDirectoryTool`` / ``EditFileTool``, via
+    ``Tools/file_operation_tools.py``), so ``user_path`` here is
+    MODEL-supplied and prompt-injection-reachable; without redaction a
+    single traversal probe wrote attacker-chosen text AND the user's real
+    directory layout into the log once PER ROOT. The refusal below is
+    unaffected -- it is built here, from ``user_path``, and still names the
+    path and every consulted root, because that message goes to the model
+    as a recovery route rather than into diagnostics.
+
     Args:
         user_path: The path provided by the user or model.
         roots: Allowed base directories, in priority order.
@@ -503,7 +514,7 @@ def validate_path_multi(
         if index > 0 and not candidate.is_absolute():
             continue  # relative paths anchor to the primary root only
         try:
-            return validate_path(user_path, root)
+            return validate_path(user_path, root, redact_paths=True)
         except ValueError:
             continue
     consulted = ", ".join(str(root.resolve()) for root in root_list)

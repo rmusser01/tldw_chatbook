@@ -485,6 +485,56 @@ class TestSinkRedaction:
         """`max-tokens` normalizes to `max_tokens`, which is still not `_token`."""
         assert sanitize_string("max-tokens=4096") == "max-tokens=4096"
 
+    @pytest.mark.parametrize(
+        "header",
+        ["Ocp-Apim-Subscription-Key", "X-Subscription-Token"],
+    )
+    def test_task_19558_probe_headers_stay_recognised(self, header: str) -> None:
+        """TASK-19558 named three probe keys; TASK-19555's repair covers two.
+
+        Re-asserted here (not merely assumed from the parametrized case
+        above) because the finding named these exact header names and they
+        are the ones live provider request logging produces.
+        """
+        line = f"{header}: DONOTUSEEXAMPLEONLYzz9911"
+        assert "DONOTUSEEXAMPLEONLYzz9911" not in sanitize_string(line)
+
+    def test_a_bare_key_label_is_treated_as_secret_bearing(self) -> None:
+        """The third probe key, and the one still live at TASK-19558.
+
+        A bare `key` matches none of `is_sensitive_config_key`'s rules --
+        its `_key` rule is an underscore-SUFFIX match and `api-key` a
+        containment one -- and bare `key` is exactly how Google's Custom
+        Search credential travels (`?key=<API key>`). Probed before the fix:
+        the whole URL passed through `sanitize_string` unchanged. Fixed in
+        `_LOG_ONLY_SENSITIVE_FIELDS` rather than in the shared config
+        predicate, which also drives config encryption.
+        """
+        url = (
+            "https://www.googleapis.com/customsearch/v1"
+            "?key=AIzaSyDONOTUSEEXAMPLEONLY12345&cx=abc"
+        )
+        sanitized = sanitize_string(url)
+        assert "AIzaSyDONOTUSEEXAMPLEONLY12345" not in sanitized
+        assert sanitize_dict({"key": "AIzaSyDONOTUSEEXAMPLEONLY12345"}) == {
+            "key": "***REDACTED***"
+        }
+
+    def test_the_bare_key_rule_did_not_leak_into_config_encryption(self) -> None:
+        """Scope of the fix, pinned.
+
+        `is_sensitive_config_key` also decides which config fields get
+        ENCRYPTED and how many the Privacy & Security screen counts as
+        protected. Widening it for a logging-only reason would silently
+        change both, so `key` was added to the log-only set instead.
+        """
+        from tldw_chatbook.Utils.sensitive_config_keys import (
+            is_sensitive_config_key,
+        )
+
+        assert is_sensitive_config_key("key") is False
+        assert is_sensitive_config_key("openai_api_key") is True
+
     def test_home_directory_collapses_to_tilde(self) -> None:
         """The account name is a real-name identifier; the path shape is not."""
         from tldw_chatbook.Utils.log_sanitizer import redact_user_paths

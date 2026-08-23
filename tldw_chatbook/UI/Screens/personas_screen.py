@@ -75,6 +75,7 @@ from ...Character_Chat.world_book_manager import CHARACTER_WORLD_BOOKS_KEY
 from ...Actor_Packs.contracts import ActorPackValidationError, validate_actor_portrait
 from ...Actor_Packs.creation import ActorPackCreationError, ActorPackCreationResult
 from ...Chat.chat_handoff_models import ChatHandoffPayload
+from ...Utils.fts5_match_forms import quote_fts5_prefix
 from ...Chat.console_expression_state import EXPRESSION_IMAGE_STATES
 from ...Constants import TAB_STTS
 from ...DB.ChaChaNotes_DB import ConflictError
@@ -1828,8 +1829,7 @@ class PersonasScreen(BaseAppScreen):
         term = (self.state.search_query or "").strip()
         if not term:
             return None
-        escaped = term.replace('"', '""')
-        return f'"{escaped}"*'
+        return quote_fts5_prefix(term)
 
     def _active_server_target(self) -> str | None:
         """Return the exact active configured-target ID, when usable."""
