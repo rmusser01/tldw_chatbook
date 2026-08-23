@@ -314,3 +314,71 @@ def test_app_owns_creation_only_after_recovery_and_before_surfaces() -> None:
     creation = wiring.index("ActorPackCreationService(")
     scope = wiring.index("CharacterPersonaScopeService(")
     assert recovery < creation < scope
+
+
+def test_app_wires_live_actor_pack_services_when_the_database_opens(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """TASK-20970 review: the *open-database* half of the new wiring branch.
+
+    The sibling above asserts source-text ordering, which a behaviour-only
+    regression walks straight past: nulling all three services at the end of
+    the ``else`` branch leaves that assertion (and every other test in
+    `Tests/Actor_Packs`, `Tests/App`, `Tests/UI/test_actor_pack_creation_
+    workflow.py`) green, because `TASK-20970`'s own coverage only pins the
+    *degraded* side and the shared app factory patches
+    `get_chachanotes_db_lazy` to `None` for every app-building test in the
+    repo. Nothing behavioural asserted that a working database still yields
+    working Actor Pack services. This does.
+    """
+
+    from unittest.mock import Mock
+
+    from tldw_chatbook import app as app_module
+
+    database = CharactersRAGDB(tmp_path / "wiring.db", client_id="wiring")
+    try:
+        monkeypatch.setattr(
+            app_module.ServerCharacterPersonaService,
+            "from_server_context_provider",
+            Mock(return_value=Mock()),
+        )
+        monkeypatch.setattr(
+            app_module.ServerChatDictionaryService,
+            "from_server_context_provider",
+            Mock(return_value=Mock()),
+        )
+
+        fake_app = Mock()
+        fake_app.chachanotes_db = database
+        fake_app.service_policy_enforcer = object()
+        fake_app.server_context_provider = object()
+
+        app_module.TldwCli._wire_character_persona_services(fake_app)
+
+        assert isinstance(fake_app.actor_pack_repository, ActorPackRepository)
+        assert fake_app.actor_pack_repository.db is database
+        assert isinstance(
+            fake_app.persona_actor_pack_coordinator, PersonaActorPackCoordinator
+        )
+        assert (
+            fake_app.persona_actor_pack_coordinator.repository
+            is fake_app.actor_pack_repository
+        )
+        assert isinstance(
+            fake_app.actor_pack_creation_service, ActorPackCreationService
+        )
+        assert fake_app.actor_pack_creation_service.database is database
+        assert (
+            fake_app.actor_pack_creation_service.repository
+            is fake_app.actor_pack_repository
+        )
+        assert (
+            fake_app.actor_pack_creation_service.persona_coordinator
+            is fake_app.persona_actor_pack_coordinator
+        )
+        # Recovery ran and found nothing to reconcile: no fixed category is
+        # recorded, so the degraded/blocked/failed states stay distinguishable.
+        assert fake_app.actor_pack_recovery_error is None
+    finally:
+        database.close_connection()
