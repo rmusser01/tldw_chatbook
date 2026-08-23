@@ -11,6 +11,8 @@ dependencies: []
 documentation:
   - >-
     Docs/superpowers/specs/2026-08-22-task-97-notes-sync-conflict-resolution-design.md
+  - >-
+    Docs/superpowers/plans/2026-08-22-task-97-notes-sync-conflict-resolution.md
 ---
 
 ## Description
@@ -31,3 +33,22 @@ Replace the retired ASK-engine modal concept with reviewed inline conflict resol
 - [ ] #8 Comparison content and private authority never enter persistent diagnostics or logs, and unsupported filesystem writes remain fail-closed
 - [ ] #9 The inline choices, comparison, receipts, and history are keyboard reachable, communicate state without color alone, preserve focus during staged updates, and remain usable at 60x20
 <!-- AC:END -->
+
+## Implementation Plan
+
+Execute the reviewed plan in
+`Docs/superpowers/plans/2026-08-22-task-97-notes-sync-conflict-resolution.md`
+task by task, preserving the existing runtime, executor, device-state, Library
+controller, and Textual ownership boundaries described in the approved design.
+
+ADR required: no new ADR.
+
+Existing ADRs:
+
+- `backlog/decisions/055-library-destructive-action-reversibility-rule.md`
+- `backlog/decisions/059-notes-folder-import-and-device-local-sync-ownership.md`
+- `backlog/decisions/073-notes-sync-round-trip-and-interoperability-constraints.md`
+
+Reason: this task directly implements those existing recovery, ownership,
+privacy, and round-trip decisions without introducing a new persistence or
+authority boundary.
