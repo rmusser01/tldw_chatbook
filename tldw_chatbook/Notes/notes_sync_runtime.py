@@ -1808,6 +1808,15 @@ class NotesSyncRuntimeOwner:
                     continue
                 self._leases.pop(root_id, None)
                 self._admissions.pop(root_id, None)
+        # Release the store's held per-thread connections (task-21101); the
+        # store transparently re-opens if a later start() needs it again.
+        # getattr-guarded like close_adapter above: tests supply fake stores.
+        close_store = getattr(self._store, "close", None)
+        if callable(close_store):
+            try:
+                await asyncio.to_thread(close_store)
+            except Exception:
+                pass
         if close_failed:
             self._status = "failed"
             self._next_action = "review_settings"

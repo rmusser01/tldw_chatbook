@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
+import threading
+from contextlib import closing
 from dataclasses import asdict
 from pathlib import Path
 
@@ -509,8 +511,8 @@ def test_root_and_child_lifecycle_propagation_rolls_back_together(
     store.create_binding(_binding())
     original_connect = store._connect
 
-    def rejecting_connect(*, read_only: bool = False, must_exist: bool = False):
-        connection = original_connect(read_only=read_only, must_exist=must_exist)
+    def rejecting_connect(**kwargs):
+        connection = original_connect(**kwargs)
 
         def authorize(
             action: int,
@@ -527,11 +529,13 @@ def test_root_and_child_lifecycle_propagation_rolls_back_together(
         return connection
 
     monkeypatch.setattr(store, "_connect", rejecting_connect)
+    store.close()  # force the next operation to reconnect through the seam
 
     with pytest.raises(sqlite3.DatabaseError):
         store.transition_root("root-1", NotesSyncRootState.PAUSED)
 
     monkeypatch.setattr(store, "_connect", original_connect)
+    store.close()
     assert store.get_root("root-1").state is NotesSyncRootState.ACTIVE
     assert store.get_binding("binding-1").state is NotesSyncBindingState.ACTIVE
 
@@ -1041,6 +1045,134 @@ def test_store_settings_accept_canonical_values_and_fail_closed_on_corrupt_rows(
 
     with pytest.raises(ValueError, match="setting"):
         store.get_setting("recovery_capacity")
+
+
+def test_held_connection_reads_back_wal_normal_and_true_autocommit(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "notes-sync.sqlite3"
+    store = NotesDeviceStateStore(database)
+    store.initialize()
+
+    with store.transaction() as connection:
+        held = connection
+    with store.transaction() as connection:
+        assert connection is held
+
+    assert held.isolation_level is None
+    assert held.execute("PRAGMA journal_mode").fetchone() == ("wal",)
+    assert held.execute("PRAGMA synchronous").fetchone() == (1,)
+    assert held.execute("PRAGMA foreign_keys").fetchone() == (1,)
+    with closing(sqlite3.connect(database)) as independent:
+        assert independent.execute("PRAGMA journal_mode").fetchone() == ("wal",)
+
+
+def test_schema_census_runs_once_per_connection_lifetime_not_per_transaction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    census_calls = 0
+    real_initialize = notes_device_state_schema.initialize_notes_device_schema
+
+    def counting_initialize(connection: sqlite3.Connection) -> None:
+        nonlocal census_calls
+        census_calls += 1
+        real_initialize(connection)
+
+    monkeypatch.setattr(
+        notes_device_state_schema,
+        "initialize_notes_device_schema",
+        counting_initialize,
+    )
+    store = NotesDeviceStateStore(tmp_path / "notes-sync.sqlite3")
+    store.initialize()
+    assert census_calls == 1
+
+    store.create_root(_root())
+    store.get_root("root-1")
+    store.list_root_summaries()
+    with store.transaction() as connection:
+        held = connection
+    assert census_calls == 1
+
+    statements: list[str] = []
+    held.set_trace_callback(statements.append)
+    try:
+        store.get_root("root-1")
+    finally:
+        held.set_trace_callback(None)
+    assert 1 <= len(statements) <= 5
+    joined = "\n".join(statements).upper()
+    assert "SQLITE_SCHEMA" not in joined
+    assert "CREATE INDEX" not in joined
+
+
+def test_each_thread_holds_its_own_connection_and_work_is_visible_across_threads(
+    tmp_path: Path,
+) -> None:
+    store = NotesDeviceStateStore(tmp_path / "notes-sync.sqlite3")
+    store.initialize()
+    with store.transaction() as connection:
+        main_thread_connection = connection
+
+    worker_connections: list[sqlite3.Connection] = []
+
+    def create_in_worker() -> None:
+        store.create_root(_root())
+        with store.transaction() as connection:
+            worker_connections.append(connection)
+        with store.transaction() as connection:
+            worker_connections.append(connection)
+
+    worker = threading.Thread(target=create_in_worker)
+    worker.start()
+    worker.join()
+
+    assert len(worker_connections) == 2
+    assert worker_connections[0] is worker_connections[1]
+    assert worker_connections[0] is not main_thread_connection
+    assert store.get_root("root-1").state is NotesSyncRootState.PENDING
+
+
+def test_close_releases_held_connections_of_every_thread_and_the_store_reopens(
+    tmp_path: Path,
+) -> None:
+    store = NotesDeviceStateStore(tmp_path / "notes-sync.sqlite3")
+    store.create_root(_root())
+    with store.transaction() as connection:
+        main_thread_connection = connection
+    worker_connections: list[sqlite3.Connection] = []
+
+    def observe_in_worker() -> None:
+        with store.transaction() as connection:
+            worker_connections.append(connection)
+
+    worker = threading.Thread(target=observe_in_worker)
+    worker.start()
+    worker.join()
+
+    store.close()
+
+    with pytest.raises(sqlite3.ProgrammingError):
+        main_thread_connection.execute("SELECT 1")
+    with pytest.raises(sqlite3.ProgrammingError):
+        worker_connections[0].execute("SELECT 1")
+    assert store.get_root("root-1").state is NotesSyncRootState.PENDING
+    store.close()
+
+
+def test_refused_foreign_database_is_never_switched_to_wal(tmp_path: Path) -> None:
+    database = tmp_path / "notes-sync.sqlite3"
+    with closing(sqlite3.connect(database)) as connection:
+        connection.execute("CREATE TABLE unrelated_private_owner (value TEXT)")
+        connection.commit()
+    database.chmod(0o600)
+
+    with pytest.raises(NotesDeviceStateError, match="incompatible"):
+        NotesDeviceStateStore(database).initialize()
+
+    with closing(sqlite3.connect(database)) as connection:
+        assert connection.execute("PRAGMA journal_mode").fetchone() == ("delete",)
 
 
 def test_read_only_connect_requires_existing_database_and_cannot_write(

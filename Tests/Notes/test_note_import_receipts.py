@@ -227,12 +227,13 @@ def test_effect_transition_loads_only_the_affected_dependency_subgraph(
 
     monkeypatch.setattr(repository, "_load_dependency_snapshot", capture)
 
-    def traced_connect():
-        connection = original_connect()
+    def traced_connect(**kwargs):
+        connection = original_connect(**kwargs)
         connection.set_trace_callback(statements.append)
         return connection
 
     monkeypatch.setattr(repository._store, "_connect", traced_connect)
+    repository._store.close()  # force the reconnect through the traced seam
     repository.transition_effects(
         _APPROVAL_ID,
         (
@@ -269,12 +270,13 @@ def test_effect_transition_loads_only_the_affected_dependency_subgraph(
     small_statements: list[str] = []
     small_connect = small._store._connect
 
-    def traced_small_connect():
-        connection = small_connect()
+    def traced_small_connect(**kwargs):
+        connection = small_connect(**kwargs)
         connection.set_trace_callback(small_statements.append)
         return connection
 
     monkeypatch.setattr(small._store, "_connect", traced_small_connect)
+    small._store.close()  # force the reconnect through the traced seam
     small.transition_effects(
         small_id,
         (
@@ -706,8 +708,8 @@ def test_prior_observation_lookup_uses_bounded_large_input_query_count(
     statements: list[str] = []
     original_connect = repository._store._connect
 
-    def traced_connect():
-        connection = original_connect()
+    def traced_connect(**kwargs):
+        connection = original_connect(**kwargs)
         connection.set_trace_callback(statements.append)
         return connection
 
@@ -765,8 +767,8 @@ def test_prior_observation_lookup_respects_a_lowered_sqlite_variable_limit(
     statements: list[str] = []
     original_connect = repository._store._connect
 
-    def limited_connect():
-        connection = original_connect()
+    def limited_connect(**kwargs):
+        connection = original_connect(**kwargs)
         connection.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 10)
         connection.set_trace_callback(statements.append)
         return connection
