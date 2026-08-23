@@ -168,9 +168,20 @@ the one-row-each extension point.
 `migrations/chachanotes_v45_to_v46_sync_log_retention.sql` at runtime, and that
 filename is absent from `MANIFEST.in`, `[tool.setuptools.package-data]`, and
 `Packaging/check_manifest.py` — all three of which list migrations by name with
-no wildcard (`include-package-data = false`). As shipped, an installed
-distribution cannot migrate past v45. This is TASK-19564 residue; flagged for
-filing.
+no wildcard (`include-package-data = false`). This is TASK-19564 residue;
+flagged for filing.
+
+*Reviewer correction to that finding:* there is a **fourth** hand-enumerated
+list, `Tests/Packaging/test_installed_distribution.py`, which also stops at
+v44→v45, so nothing tests for the omission either. And the consequence is worse
+than "cannot migrate past v45": of the 15 migration files read at runtime,
+`chachanotes_v40_to_v41_persona_visual.sql` is missing from all four lists too,
+so an installed distribution walls at **v40**. That first wall is TASK-19860's
+already-filed case; the v45→v46 file is the same defect, newly added *after*
+19860 was filed, which is itself the evidence that enumeration keeps trailing.
+19860's acceptance criteria are artifact-content based ("a wheel … contains
+every `.sql` file present under `tldw_chatbook/DB/migrations/`"), so its fix
+covers this file automatically — it does not need naming.
 
 **Files:** added `scripts/check_schema_table_allowlist.py`,
 `Tests/DB/test_schema_table_allowlist_guard.py`,
@@ -183,7 +194,48 @@ filing.
 skipped**. Repo-wide `--collect-only -q`: **56,532 collected**, 5 collection
 errors, all pre-existing dev reds not touched here (4 × `Tests/UI/
 test_settings_*` = TASK-20970, `Tests/UI/test_library_file_notes_workspace.py`
-= TASK-20972). `./scripts/preflight.sh` green on all five checks. Note the
-`preflight.sh` default `python3` may be below the repo's 3.11 floor (it is 3.9
-here, which breaks three of the other four checks); run it with
-`PYTHON=.venv/bin/python`.
+= TASK-20972). `./scripts/preflight.sh` green on all five checks.
+
+## Independent review (2026-08-22)
+
+Re-ran every claim. The mechanism holds: the checker never imports
+`tldw_chatbook` (verified by inspecting `sys.modules` after a `runpy` execution,
+not only by the AST assertion), runs in 0.14 s, and the identity-function
+property was proven on the **real** tree in both directions — holding the
+migration SQL fixed and moving only `VALID_TABLES` flips the verdict 0→1
+(phantom) and 1→0 (unlisted). The three phantom tables (`IF`, `column`, `as`)
+were reproduced exactly. The empty-scan guard bites, including the fully
+vacuous case (no sources *and* an empty allowlist). Gates re-run:
+`Tests/DB/` + `Tests/ChaChaNotesDB/` **1479 passed, 1 skipped**; guard suite 8
+passed; repo-wide collect **56,532 / 5 known errors**. Two fixes were added by
+the reviewer:
+
+1. **`Tests/CI/test_derived_artifacts_workflow.py` was left red by this
+   branch.** Its `CHECKERS` tuple enumerates the required job's steps, and
+   `test_checker_steps_survive_an_earlier_failure` asserts the step count
+   matches it — adding the fifth step made it `5 == 4`. Green at the merge-base
+   `80248f3e4`, red at `5f2e89c71`. Fixed by adding the new checker to the
+   tuple. This is the task's own thesis recurring inside the task: the author
+   ran `Tests/DB/` and `Tests/ChaChaNotesDB/` (their geography) while the guard
+   for the file they edited lives in `Tests/CI/`.
+2. **`scripts/preflight.sh` defaulted to `python3`**, which on macOS is the
+   system 3.9 — below the repo's `requires-python = ">=3.11"` floor — under
+   which three of the other four checks die on unrelated tracebacks
+   (`list[str] | None` at runtime, `enum.StrEnum`, `ast.parse` of `except*`).
+   Since this branch's entire remedy is "put the guard where the author already
+   runs", a seam that reports three false FAILEDs to anyone invoking it the
+   obvious way is the same defect class the task is about. `preflight.sh` now
+   selects an interpreter that meets the floor (repo `.venv` first, then
+   `python3.14`…`python3.11`, then `python3`), verifies an explicitly-set
+   `$PYTHON` and fails in one line rather than three tracebacks, and prints
+   which interpreter it used.
+
+Documented limitations added to the checker's docstring, each demonstrated
+against a fixture tree: it cannot see DDL whose table name is interpolated
+(`.format`/f-string/`+`, which additionally yields a phantom `IF`), a `.sql`
+file not matching a `SCHEMAS` glob, a table created from a `.py` module not in
+`SCHEMAS` or from DDL read at runtime, or `DROP TABLE` / `ALTER TABLE … RENAME
+TO`. None exists in the `chachanotes` sources today. The removal case is the
+sharp one: retiring a table would make this checker and the runtime pin demand
+opposite things, with no `VALID_TABLES` contents satisfying both — worth a
+follow-up before the first table is ever dropped.

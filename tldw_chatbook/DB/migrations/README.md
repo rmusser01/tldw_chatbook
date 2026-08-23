@@ -10,11 +10,22 @@ methods in the matching `DB/*.py` module. Filenames are
 2. Add `<db>_v<n>_to_v<n+1>_<what>.sql` here **and** the
    `_migrate_from_v<n>_to_v<n+1>` step that runs it.
 3. If the step reads the `.sql` at runtime (`migration_path.read_text(...)`),
-   list the file **by name in all three** of `MANIFEST.in`,
-   `[tool.setuptools.package-data]` in `pyproject.toml`, and
-   `Packaging/check_manifest.py`. There is no wildcard; `include-package-data`
-   is `false`. A migration missing from the built distribution raises `OSError`
-   at upgrade time and pins installed users below that version.
+   list the file **by name in all four** of `MANIFEST.in`,
+   `[tool.setuptools.package-data]` in `pyproject.toml`,
+   `Packaging/check_manifest.py`, and `Tests/Packaging/
+   test_installed_distribution.py`. There is no wildcard;
+   `include-package-data` is `false`. A migration missing from the built
+   distribution raises `OSError` at upgrade time and pins installed users below
+   that version.
+
+   This step is a known trap rather than a good design — hand enumeration
+   trails reality, and it already has: measured 2026-08-22, of the 15 migration
+   files read at runtime, `chachanotes_v40_to_v41_persona_visual.sql` and
+   `chachanotes_v45_to_v46_sync_log_retention.sql` are in none of the four
+   lists, so an installed distribution walls at v40. **TASK-19860 owns
+   replacing all four enumerations with a glob plus a test that asserts against
+   the built artifact.** When it lands, this step becomes "nothing to do";
+   delete it then rather than adding a sixth list.
 4. **If the migration contains `CREATE TABLE`, add every new table name to
    `VALID_TABLES['chachanotes']` in `DB/sql_validation.py`, in the same
    commit.** See below — this is the step that keeps getting missed.

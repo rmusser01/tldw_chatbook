@@ -49,6 +49,39 @@ difference empty -- and the static scan reproduces the drift the runtime pin
 reported (``actor_pack_persona_intents``, ``actor_portable_identities``)
 without opening a database.
 
+WHAT THIS CANNOT SEE (measured, not assumed -- each case was run against a
+fixture tree using this exact script). None of these shapes exists in the
+``chachanotes`` sources today, which is why the static scan and a live
+``sqlite_master`` agree exactly; they are the ways that could stop being true,
+and they matter because an authoring-time guard is trusted whether or not it
+covers a creation style:
+
+* **DDL whose table name is not a literal.** ``"CREATE TABLE {} ...".format(n)``,
+  ``f"CREATE TABLE {n} ..."`` and ``"CREATE TABLE " + n`` all hide the name from
+  the regex -- and, worse, the optional ``IF NOT EXISTS`` group then captures
+  the phantom table ``IF``. Keep schema DDL a literal string.
+* **A ``.sql`` file whose name does not match a glob in ``SCHEMAS``.**
+  ``migrations/add_sync_fields_to_notes.sql`` is exactly that shape today (it
+  is unreferenced, and its two tables happen to be declared inline in
+  ``ChaChaNotes_DB.py`` as well, so nothing is currently missed).
+* **A table created from a ``.py`` module not listed in ``SCHEMAS``**, or from
+  DDL loaded from a file at runtime and ``executescript``-ed.
+* **``DROP TABLE`` and ``ALTER TABLE ... RENAME TO``.** The scan is
+  append-only: it reads every historical ``CREATE TABLE`` and has no notion of
+  a table being removed or renamed later. Retiring a table would put this
+  checker (which would demand the name stay allowlisted) in direct conflict
+  with the runtime pin (which would demand it be removed) -- one of the two
+  must be taught about the removal in the same commit, and until then there is
+  no combination of ``VALID_TABLES`` contents that satisfies both.
+
+The first three fail *safe* in the sense that the missed table simply is not
+reported -- the runtime pin still catches it, i.e. the guard degrades to the
+status quo rather than lying. The backstop for all of them is
+``Tests/DB/test_schema_table_allowlist_guard.py::
+test_shipped_static_scan_matches_the_live_chachanotes_schema``, which asserts
+this scan equals a live fully-migrated database name for name; if a future
+migration uses one of these shapes, that test is what says so.
+
 Scope: ``chachanotes`` only, deliberately. The ``media`` and ``prompts``
 entries of the same allowlist have drifted in both directions and are owned by
 TASK-19867; wiring them in here before that task lands would make preflight
