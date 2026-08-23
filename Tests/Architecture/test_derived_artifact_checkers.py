@@ -259,7 +259,9 @@ def test_next_steps_sends_the_reader_to_statements_not_git_diff():
     as changed and a line diff buries it in unrelated edits."""
     assert "--statements" in inventory.NEXT_STEPS
     assert "--since" in inventory.NEXT_STEPS
-    assert "git diff" not in inventory.NEXT_STEPS.replace("Do NOT reach for `git diff`", "")
+    assert "git diff" not in inventory.NEXT_STEPS.replace(
+        "Do NOT reach for `git diff`", ""
+    )
 
 
 _MOVED_BEFORE = """
@@ -302,10 +304,13 @@ def test_a_re_indented_statement_is_reported_as_needing_no_review():
 def test_an_added_statement_is_printed_in_full_for_reading():
     """The whole point: the pin cannot carry statement text, and the
     interpolation check needs it."""
-    after = _MOVED_AFTER + """
+    after = (
+        _MOVED_AFTER
+        + """
 def other(path):
     logger.error(f"export failed for {path}")
 """
+    )
     report = inventory.render_statement_diff(_MOVED_AFTER, after, "m.py")
 
     assert "added: 1" in report
@@ -379,7 +384,9 @@ def test_duplicate_task_ids_are_caught_across_buckets(tmp_path):
 
     assert set(by_filename) == {"task-9"}
     assert set(by_frontmatter) == {"task-9"}
-    assert backlog_ids.main(["--tasks-dir", str(tasks), "--tasks-dir", str(archive)]) == 1
+    assert (
+        backlog_ids.main(["--tasks-dir", str(tasks), "--tasks-dir", str(archive)]) == 1
+    )
 
 
 @pytest.mark.parametrize("character", '<>:"/\\|?*')
@@ -527,7 +534,8 @@ def test_main_reports_windows_paths_without_duplicate_ids(
 def test_default_scope_is_every_bucket_the_cli_resolves():
     """Pin the scope: narrowing it back to tasks/ is the bug this guard had."""
     assert {
-        path.relative_to(backlog_ids.REPO_ROOT).as_posix() for path in backlog_ids.TASK_DIRS
+        path.relative_to(backlog_ids.REPO_ROOT).as_posix()
+        for path in backlog_ids.TASK_DIRS
     } == {"backlog/tasks", "backlog/completed", "backlog/archive/tasks"}
 
 
@@ -537,7 +545,12 @@ def test_an_absent_optional_bucket_is_not_an_error(tmp_path):
     tasks.mkdir()
     (tasks / "task-1 - A.md").write_text("id: TASK-1\n", encoding="utf-8")
 
-    assert backlog_ids.main(["--tasks-dir", str(tasks), "--tasks-dir", str(tmp_path / "absent")]) == 0
+    assert (
+        backlog_ids.main(
+            ["--tasks-dir", str(tasks), "--tasks-dir", str(tmp_path / "absent")]
+        )
+        == 0
+    )
 
 
 def test_unique_task_ids_pass(tmp_path):
@@ -548,9 +561,9 @@ def test_unique_task_ids_pass(tmp_path):
 
 
 def test_repo_relative_accepts_a_relative_path_inside_the_repo():
-    assert inventory._repo_relative(
+    assert inventory._repo_relative("scripts/check_backlog_task_ids.py") == Path(
         "scripts/check_backlog_task_ids.py"
-    ) == Path("scripts/check_backlog_task_ids.py")
+    )
 
 
 def test_repo_relative_accepts_an_absolute_path_inside_the_repo():
