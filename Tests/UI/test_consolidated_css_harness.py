@@ -169,3 +169,73 @@ def test_tie_aware_stylesheet_arms_reparse_when_a_tie_breaker_lowers():
             "tie-breaker lowering (upstream leaves the stale parse in place; "
             "the subclass exists to arm the reparse)"
         )
+        # Review fix round (TASK-21115): arming _require_parse alone is a
+        # half-fix. `Stylesheet.apply` reads the `rules_map` property BEFORE
+        # `self.rules`; `rules_map` short-circuits on a non-None `_rules_map`
+        # without honoring the armed reparse, and the reparse `self.rules`
+        # then performs replaces the re-tied source's RuleSet OBJECTS (the
+        # parse cache is keyed on tie_breaker) -- so `limit_rules`, built
+        # from the STALE map, filters the fresh rules out entirely for that
+        # apply. Upstream's own new-source path sets BOTH flags; so must the
+        # lowering path.
+        sheet._rules_map = {"seeded": []}
+        sheet.add_source(
+            "X { height: 1; }", read_from=("probe", "X"), tie_breaker=-2
+        )
+        if expect_armed:
+            assert sheet._rules_map is None, (
+                f"{cls.__name__}: a tie-breaker lowering must also null "
+                "_rules_map -- an armed reparse behind a stale map makes "
+                "apply() filter the freshly parsed rules out (see "
+                "css/tie_aware_stylesheet.py)"
+            )
+        else:
+            assert sheet._rules_map is not None, (
+                "upstream Stylesheet is expected to leave the stale map in "
+                "place -- if this changed, the subclass may be obsolete"
+            )
+
+
+@pytest.mark.asyncio
+async def test_dynamic_first_mount_keeps_inherited_base_defaults():
+    """Review fix round (TASK-21115): the shape the first fix missed.
+
+    `test_dynamic_first_mount_of_a_consolidated_class_keeps_its_geometry`
+    covers a class whose consolidated block RESTATES width/height
+    (ConsoleSelectionMenu), so a stale ``_rules_map`` was masked there: the
+    sheet's own rules were already in the map. A Vertical subclass that does
+    NOT restate geometry -- live shape: ``ConsoleInspectorRail``, whose
+    BUNDLED_CSS styles only descendant text -- relies on INHERITING Textual's
+    ``Vertical { width: 1fr; height: 1fr }`` defaults. On its dynamic first
+    mount the tie-breaker lowering arms the reparse, but with ``_rules_map``
+    left non-None ``apply()`` builds ``limit_rules`` from the STALE map while
+    ``self.rules`` reparses to NEW RuleSet objects (the parse cache is keyed
+    on tie_breaker), so the fresh Vertical default rules are filtered out and
+    the widget mounts with NO base geometry at all. Red on the arm-only fix;
+    green once the lowering also nulls ``_rules_map``.
+    """
+    from textual.containers import Vertical
+
+    class _InheritingRail(Vertical):
+        """No own CSS anywhere -- geometry must come from Vertical's defaults."""
+
+    class _BootApp(ConsolidatedCSSApp):
+        def compose(self):
+            yield Vertical(id="boot-time-vertical")
+
+    app = _BootApp()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        await app.mount(_InheritingRail())
+        await pilot.pause()
+        rail = app.query_one(_InheritingRail)
+        assert str(rail.styles.width) == "1fr" and str(rail.styles.height) == "1fr", (
+            f"rail resolved {rail.styles.width}x{rail.styles.height} -- the "
+            "inherited Vertical defaults were filtered out of its first "
+            "apply() by a stale _rules_map (see css/tie_aware_stylesheet.py)"
+        )
+        # Both flow children split the screen: the base defaults really applied.
+        assert rail.region.height == 12, (
+            f"rail region {rail.region} -- expected the 1fr split of a "
+            "24-row screen shared with the boot-time Vertical"
+        )

@@ -49,6 +49,12 @@ class TieAwareStylesheet(Stylesheet):
     rides the consolidated `BUNDLED_CSS` sheets can first-mount against a
     stale parse in which a base class's default rules still carry a
     tie-breaker of 0 and shadow the sheet's rules for that class.
+
+    "As a CSS change" means exactly what upstream's own new-source path does:
+    set `_require_parse` AND null `_rules_map` together. Arming the reparse
+    while leaving the map is worse than doing nothing -- `apply()` consults
+    the stale map first and then filters the freshly reparsed rules against
+    it, dropping the re-tied source's rules from that apply altogether.
     """
 
     def add_source(
@@ -88,5 +94,18 @@ class TieAwareStylesheet(Stylesheet):
         ):
             # Upstream lowered the stored tie-breaker (it keeps the minimum)
             # without flagging a reparse; the parsed rules would keep the old
-            # value until an unrelated new source forces one.
+            # value until an unrelated new source forces one. Mirror
+            # upstream's own new-source path, which sets BOTH flags: arming
+            # `_require_parse` alone is a half-fix, because `apply()` reads
+            # the `rules_map` property BEFORE `self.rules`, and `rules_map`
+            # short-circuits on a non-None `_rules_map` without honoring the
+            # armed reparse -- the reparse `self.rules` then performs
+            # replaces the re-tied source's RuleSet objects (the parse cache
+            # is keyed on tie_breaker), so `limit_rules`, built from the
+            # STALE map, filters the freshly parsed rules out of that apply
+            # entirely. Measured (review fix round): a Vertical subclass
+            # that does not restate width/height -- live shape:
+            # ConsoleInspectorRail -- first-mounted dynamically resolved
+            # width/height None/None instead of inheriting 1fr/1fr.
             self._require_parse = True
+            self._rules_map = None

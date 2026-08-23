@@ -84,6 +84,12 @@ def _register_like_first_mount(app, cls) -> int:
 
 #: Textual's parse cache capacity and the repo's soft guard limit -- see
 #: Tests/UI/test_widget_css_consolidation.py for the cliff mechanics.
+#: NOTE (review, TASK-21115): the live source COUNT is a lower bound on
+#: parse-cache entries, not an equality -- the cache key includes
+#: tie_breaker (and scope), so a source re-offered at a lowered tie-breaker
+#: occupies a fresh cache slot while its old entry ages out. The soft
+#: limit's headroom below the cliff absorbs that slack; do not treat
+#: "sources == cache entries" as exact when reasoning about the margin.
 _PARSE_CACHE_CAPACITY = 64
 _SOFT_LIMIT = 56
 
