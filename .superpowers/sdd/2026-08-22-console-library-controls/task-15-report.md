@@ -737,3 +737,211 @@ Governance/evidence:
 - TASK-19900.3 Implementation Notes (status remains In Progress; 22 unchecked)
 - shared progress ledger
 - this report
+
+## Fix round 3/5 — bounded teardown and prerequisite-safe Discard
+
+### Review findings and root cause
+
+This round started at clean commit
+`df47189ddd7fc24b12fc4c0a3128e23c4bc03523`. The Task-15 brief/report,
+ADR-079/spec/plan, TASK-19900.3, reviewer findings, and testing/live/backlog
+lessons were reread before test authoring. The exact round-2 baseline was:
+
+```text
+../../.venv/bin/python -m pytest -q Tests/Chat/test_console_dispatch_recovery_fix_round2.py Tests/UI/test_console_dispatch_recovery_fix_round2.py --tb=short --show-capture=no
+20 passed, 1 warning in 5.99s
+```
+
+The first root cause was the no-task early return in `shutdown()`: permanent app
+disposal did not retire a live durable postcommit continuation or the store's
+two content-bearing durable caches. The volatile preparation could also remain
+COMMITTING. The second root cause was that continuation retirement never
+released a prepared explicit-evidence lease. The release lookup also depended
+on the current mounted retrieval hook, but real `ConsoleRuntime.dispose()`
+detaches that hook before controller shutdown, so teardown could not release
+the original owner. The third root cause was that Discard atomically settled
+the checkpoint immediately, bypassing unfinished identity/owner/input/queue/
+hook/history/preparation effects and then dropping the only live continuation.
+An early failure could therefore orphan the committed conversation and leave a
+COMMITTING preparation that wedged the next send.
+
+### RED evidence
+
+The complete initial round-3 matrix was authored before the first production
+edit and failed only at the intended production assertions:
+
+```text
+../../.venv/bin/python -m pytest -q Tests/Chat/test_console_dispatch_recovery_fix_round3.py --tb=short --show-capture=no
+8 failed, 1 warning in 1.67s
+```
+
+Those eight failures cover no-task app-disposal retention; four real
+identity/owner/staged-clear/preparation-publication Discard boundaries;
+prerequisite failure retention and later action retry; alien-controller
+fail-closed behavior; exact draft/session identity cleanup; COMMITTING owner
+retirement; next-send admission; and exact evidence identity/replacement/
+idempotence.
+
+The runtime-lifecycle companion then exposed one further real boundary: after
+`dispose()` detached the retrieval hook, the newly required app-teardown
+retirement had no way to release its exact frozen evidence owner. That
+additional ratchet was RED before the release-capability change:
+
+```text
+../../.venv/bin/python -m pytest -q Tests/Chat/test_console_dispatch_recovery_fix_round3.py --tb=short --show-capture=no
+1 failed, 8 passed, 1 warning in 1.92s
+```
+
+The failure was the exact original frozen launch remaining unreleased; it was
+not a fixture or setup failure.
+
+Self-review then injected a raising exact-release callback at the real app
+disposal boundary. Before the final cleanup guard, the callback exception
+prevented durable-cache retirement:
+
+```text
+../../.venv/bin/python -m pytest -q Tests/Chat/test_console_dispatch_recovery_fix_round3.py -k release_raises --tb=short --show-capture=no
+1 failed, 9 deselected, 1 warning in 0.47s
+```
+
+The final retirement helper treats that already-terminal/app-disposal UI fault
+as non-retryable, scrubs the lease references, and continues body/cache cleanup.
+
+### Implementation and contract decisions
+
+- Permanent controller shutdown now retires every remaining live durable
+  postcommit continuation after task teardown, including the prior no-task
+  early-return path. It removes the exact volatile preparation/outcome/sidecar,
+  releases evidence, and retires content-bearing store caches into the existing
+  bounded body-free tombstone. The durable accepted checkpoint remains for
+  restart recovery and no provider is invoked.
+- The live-only evidence lease binds the original retrieval owner's exact
+  release capability at admission. Release therefore survives navigation and
+  app-view detachment, targets only the frozen launch, preserves a newer launch,
+  and is idempotent. After successful release the lease clears its launch,
+  capture result, and callback references immediately.
+- A live pretransition Discard authenticates the same fingerprint/session/
+  assistant/checkpoint/origin/queue continuation, resumes every unfinished
+  required postcommit effect through `preparation_publication`, and stops before
+  checkpoint CAS/provider entry. It then reclaims the exact recovery owner and
+  uses the existing atomic assistant/checkpoint settlement. No USER, assistant,
+  checkpoint, provider call, persistence fallback, or Task-16 continuation is
+  created.
+- A prerequisite failure restores the same blocked actionable recovery and
+  queue fence; a later Discard retries unfinished idempotent effects. A
+  replacement controller lacking the live continuation fails closed. Successful
+  prerequisite publication moves the volatile preparation out of COMMITTING so
+  retirement removes it and the next send is not wedged.
+- The shutdown lifecycle documentation now states the production ownership
+  truth: `ConsoleRuntime.leave_console` is ordinary navigation and reuses the
+  app-owned controller; `shutdown()` is permanent app disposal.
+
+ADR required: no. ADR path:
+`backlog/decisions/079-console-library-conversation-authority.md`. Reason: this
+round closes exact-owner teardown and settlement gaps within ADR-079's existing
+app-runtime recovery boundary; it adds no schema, sync, provider, or Task-16
+contract.
+
+### GREEN and adjacent verification
+
+The initial matrix first reached `8 passed, 1 warning in 1.81s`; after the
+exact teardown-release and self-review fault expansions, final round-3 focus
+was `10 passed, 1 warning in 2.10s`. Fresh post-restoration gates were:
+
+```text
+# Task 15 focus (base, queue, UI, fix rounds 1-3)
+../../.venv/bin/python -m pytest -q --tb=short --show-capture=no Tests/Chat/test_console_dispatch_recovery.py Tests/Chat/test_console_dispatch_queue_recovery.py Tests/UI/test_console_dispatch_recovery.py Tests/Chat/test_console_dispatch_recovery_fix_round1.py Tests/UI/test_console_dispatch_recovery_fix_round1.py Tests/Chat/test_console_dispatch_recovery_fix_round2.py Tests/UI/test_console_dispatch_recovery_fix_round2.py Tests/Chat/test_console_dispatch_recovery_fix_round3.py
+98 passed, 1 warning in 21.84s
+
+# Task 14 durable acceptance gate
+../../.venv/bin/python -m pytest -q --tb=short --show-capture=no Tests/Chat/test_console_durable_turn_acceptance.py Tests/Chat/test_console_durable_turn_fix_round1.py Tests/Chat/test_console_durable_turn_fix_round2.py Tests/Chat/test_console_durable_turn_fix_round3.py Tests/Chat/test_console_durable_turn_fix_round4.py Tests/Chat/test_console_first_send_atomicity.py
+73 passed, 1 warning in 36.10s
+
+# Exact Task 13 affected gate
+../../.venv/bin/python -m pytest -q --tb=short --show-capture=no Tests/Architecture/test_console_wave6_inventory.py Tests/Chat/test_console_automatic_library_preparation.py Tests/Chat/test_console_chat_controller.py Tests/Chat/test_console_chat_store_library_policy.py Tests/Chat/test_console_prompt_queue_coordinator.py Tests/Chat/test_console_turn_library_authority.py Tests/Chat/test_console_turn_execution_context.py Tests/Chat/test_console_turn_preparation.py Tests/Chat/test_library_preparation.py Tests/UI/test_console_auto_rag_on_send.py Tests/UI/test_console_harness_config_honesty.py Tests/UI/test_console_rag_settings_modal.py Tests/UI/test_console_retrieval_controller.py Tests/UI/test_console_controller_wiring.py Tests/test_config_console_defaults.py
+628 passed, 1 warning in 39.51s
+
+# Queue and mounted UI
+../../.venv/bin/python -m pytest -q --tb=short --show-capture=no Tests/Chat/test_console_prompt_queue_coordinator.py Tests/Chat/test_console_prompt_queue.py Tests/UI/test_console_prompt_queue.py Tests/UI/test_console_prompt_queue_modal.py Tests/UI/test_console_dispatch_recovery.py Tests/UI/test_console_dispatch_recovery_fix_round1.py
+98 passed, 1 warning in 17.19s
+
+# Repository/transaction/model/hydration/state
+../../.venv/bin/python -m pytest -q --tb=short --show-capture=no Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py Tests/Chat/test_console_transaction_contribution.py Tests/Chat/test_console_chat_models.py Tests/Chat/test_console_conversation_hydration.py Tests/CI/test_textual_runtime_contract.py
+126 passed, 1 warning in 18.94s
+```
+
+The inherited warning in each successful command is the environment-level
+Requests/urllib3/charset compatibility warning. No full repository suite,
+profile database, app launch, network provider, or push was used.
+
+The additional runtime companion command produced `24 passed, 1 failed, 7
+warnings in 25.87s`; the one node reproduced alone as a two-second timeout
+because its app shutdown task raised `AttributeError` for the fixture's missing
+`notes_sync_runtime_owner` before entering Console disposal. The 24 actual
+runtime/controller lifecycle nodes passed. This independently stale fixture is
+kept visible and was not changed, deselected, or counted as product GREEN.
+
+### Mutation evidence
+
+Each mutant was applied alone and restored immediately:
+
+```text
+# remove no-task shutdown continuation retirement
+1 failed, 7 deselected, 1 warning in 0.46s
+
+# remove the exact frozen evidence release capability
+2 failed, 7 deselected, 1 warning in 0.66s
+
+# bypass live Discard prerequisite authentication/resumption
+6 failed, 3 deselected, 1 warning in 1.32s
+```
+
+After restoration, the round-3 file passed 10 tests and source inspection
+confirmed `release = lease.release` was restored with no `False and` or mutant
+marker in production. The two `lease.release = None` assignments are the
+intentional post-release/fault-path privacy scrubs, not the forced-release
+mutant.
+
+### Static, privacy, and self-review
+
+```text
+../../.venv/bin/python -m ruff check tldw_chatbook/Chat/console_chat_controller.py Tests/Chat/test_console_dispatch_recovery_fix_round3.py
+All checks passed!
+
+../../.venv/bin/python -m ruff format --check Tests/Chat/test_console_dispatch_recovery_fix_round3.py
+1 file already formatted
+
+git diff --check
+(no output, exit 0)
+
+git diff -U0 -- tldw_chatbook/Chat/console_chat_controller.py | rg '^\\+.*(logger\\.|print\\(|api[_-]?key|authorization|bearer|credential|CREATE (TABLE|INDEX|TRIGGER)|ALTER TABLE|tool[_-]?batch|continuation_active)'
+(no output, exit 1)
+```
+
+Whole-file controller format remains truthfully qualified: Ruff reports only
+the inherited round-1 wrapping drift at the pre-existing submission-gate copy;
+the round-3 production ranges and new test file are formatter-clean. Self-review
+checked the durable fingerprint/owner relation, effect ordering, queue
+acknowledgement before settlement, checkpoint/provider exclusion, settlement
+failure retention, preparation removal, exact evidence callback lifetime,
+callback-fault cleanup, body-free teardown, database/message cardinality, and
+Task-14/16 boundaries.
+No new logger, request/prompt/evidence body metadata, credential, DDL, provider
+fallback, or continuation/tool handoff was added. No unresolved round-3 product
+concern remains.
+
+### Files changed in fix round 3
+
+Production:
+
+- `tldw_chatbook/Chat/console_chat_controller.py`
+
+Tests:
+
+- `Tests/Chat/test_console_dispatch_recovery_fix_round3.py`
+
+Governance/evidence:
+
+- TASK-19900.3 Implementation Notes (status remains In Progress; 22 unchecked)
+- shared progress ledger
+- this report

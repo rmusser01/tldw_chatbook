@@ -1688,6 +1688,7 @@ class _PreparedEvidenceLease:
     """Live-only exact staged launch held until the turn is accepted."""
 
     launch: Any
+    release: Callable[[Any, Any], None] | None = None
     capture_result: Any | None = None
     released: bool = False
 
@@ -4086,17 +4087,21 @@ class ConsoleChatController:
         except Exception:
             return None
 
-    def _snapshot_staged_evidence(self) -> tuple[bool, Any | None]:
+    def _snapshot_staged_evidence(
+        self,
+    ) -> tuple[bool, Any | None, Callable[[Any, Any], None] | None]:
         """Freeze the production retrieval owner's current live launch, if any."""
 
         owner = getattr(self._rag_capture_provider, "__self__", None)
         snapshot = getattr(owner, "_snapshot_console_staged_evidence", None)
+        release = getattr(owner, "_release_frozen_console_staged_rag", None)
+        release_callback = release if callable(release) else None
         if not callable(snapshot):
-            return False, None
+            return False, None, None
         try:
-            return True, snapshot()
+            return True, snapshot(), release_callback
         except Exception:
-            return True, None
+            return True, None, release_callback
 
     @staticmethod
     def _ordinary_library_text(
@@ -4908,7 +4913,11 @@ class ConsoleChatController:
             frozen_prefill, frozen_prefill_from_one_shot = self._resolve_submit_prefill(
                 session.id
             )
-            staged_evidence_frozen, staged_evidence = self._snapshot_staged_evidence()
+            (
+                staged_evidence_frozen,
+                staged_evidence,
+                staged_evidence_release,
+            ) = self._snapshot_staged_evidence()
             preparation = ConsoleTurnPreparation(
                 preparation_id=str(uuid4()),
                 attempt_id=library_authority.attempt_id,
@@ -4978,7 +4987,10 @@ class ConsoleChatController:
                     ),
                     staged_evidence_frozen=staged_evidence_frozen,
                     staged_evidence=(
-                        _PreparedEvidenceLease(staged_evidence)
+                        _PreparedEvidenceLease(
+                            staged_evidence,
+                            release=staged_evidence_release,
+                        )
                         if staged_evidence is not None
                         else None
                     ),
@@ -5675,9 +5687,18 @@ class ConsoleChatController:
         return await self.resume_durable_postcommit(preparation.preparation_id)
 
     async def resume_durable_postcommit(
-        self, preparation_id: str
+        self,
+        preparation_id: str,
+        *,
+        continue_to_provider: bool = True,
     ) -> ConsoleSubmitResult:
-        """Resume missing postcommit effects without allocating another turn."""
+        """Resume missing postcommit effects without allocating another turn.
+
+        ``continue_to_provider=False`` is the Discard prerequisite path. It
+        completes the accepted turn's required local publication effects, but
+        deliberately stops before checkpoint CAS/provider entry so Discard can
+        settle the still-accepted durable owner atomically.
+        """
 
         with self.store.durable_preparation_lock:
             continuation = self._durable_postcommit_continuations.get(preparation_id)
@@ -5903,6 +5924,27 @@ class ConsoleChatController:
                 publish_preparation,
                 fingerprint=fingerprint,
             )
+            if not continue_to_provider:
+                self._restore_dispatch_recovery_after_settlement_failure(
+                    session_id,
+                    commit.assistant_message_id,
+                )
+                if continuation.origin is ConsoleSubmissionOrigin.QUEUED:
+                    self.prompt_queue_coordinator.retain_durable_acceptance(session_id)
+                return ConsoleSubmitResult(
+                    True,
+                    False,
+                    "Accepted turn prerequisites completed.",
+                    session_id=session_id,
+                    user_message_id=commit.user_message_id,
+                    assistant_message_id=commit.assistant_message_id,
+                    terminal_status=ConsoleRunStatus.BLOCKED,
+                    origin=continuation.origin,
+                    queue_entry_id=continuation.queue_entry_id,
+                    committed_context_epoch=continuation.committed_context_epoch,
+                    preparation_id=preparation_id,
+                    provider_started=False,
+                )
             await self._run_durable_postcommit_effect(
                 preparation_id,
                 "checkpoint_transition",
@@ -5995,6 +6037,7 @@ class ConsoleChatController:
             if current is None or current.fingerprint != fingerprint:
                 raise RuntimeError("Durable continuation owner changed.")
             self._durable_postcommit_continuations.pop(preparation_id, None)
+            self._release_retired_prepared_evidence(current)
             self.store.retire_durable_acceptance(preparation_id, fingerprint)
         if not isinstance(stream_result, ConsoleSubmitResult):
             stream_result = ConsoleSubmitResult(True, True)
@@ -6382,6 +6425,57 @@ class ConsoleChatController:
                 False,
                 "That response recovery action is unavailable.",
             )
+        try:
+            if self._recovery_has_live_postcommit_continuation(session_id, claimed):
+                preparation_id = claimed.preparation_id
+                if preparation_id is None:  # pragma: no cover - authenticated above
+                    raise _DispatchRecoveryRefusal(
+                        "Committed turn continuation is unavailable."
+                    )
+                prerequisite_result = await self.resume_durable_postcommit(
+                    preparation_id,
+                    continue_to_provider=False,
+                )
+                fingerprint = self.store.durable_acceptance_fingerprint_for(
+                    preparation_id
+                )
+                effects = (
+                    self.store.durable_postcommit_effects_for(
+                        preparation_id,
+                        fingerprint=fingerprint,
+                    )
+                    if fingerprint is not None
+                    else None
+                )
+                if (
+                    effects is None
+                    or "preparation_publication" not in effects.completed
+                ):
+                    return ConsoleSubmitResult(
+                        False,
+                        False,
+                        prerequisite_result.visible_copy
+                        or "Accepted turn is retained for recovery.",
+                    )
+                reclaimed = self.store.claim_dispatch_recovery_action(
+                    session_id,
+                    ConsoleDispatchRecoveryActionId.DISCARD,
+                )
+                if (
+                    reclaimed is None
+                    or reclaimed.assistant_message_id != claimed.assistant_message_id
+                    or reclaimed.preparation_id != claimed.preparation_id
+                ):
+                    raise _DispatchRecoveryRefusal(
+                        "Committed turn continuation changed."
+                    )
+                claimed = reclaimed
+        except _DispatchRecoveryRefusal as exc:
+            self.store.release_dispatch_recovery_action(
+                session_id,
+                claimed.assistant_message_id,
+            )
+            return ConsoleSubmitResult(False, False, str(exc))
         if not self.store.settle_dispatch_recovery(
             session_id,
             assistant_message_id=claimed.assistant_message_id,
@@ -6432,8 +6526,57 @@ class ConsoleChatController:
                 None,
             )
             if continuation is not None:
+                self._release_retired_prepared_evidence(continuation)
                 self.store.retire_durable_acceptance(
                     preparation_id,
+                    continuation.fingerprint,
+                )
+
+    def _release_retired_prepared_evidence(
+        self,
+        continuation: _DurablePostcommitContinuation,
+    ) -> None:
+        """Release an exact frozen evidence lease once at owner retirement."""
+
+        prepared = continuation.prepared
+        lease = prepared.staged_evidence if prepared is not None else None
+        if lease is not None and not lease.released:
+            try:
+                self._release_prepared_evidence(prepared)
+            except Exception:
+                # Settlement/app disposal has already made this lease
+                # non-retryable. A view cleanup failure must not retain the
+                # accepted request body or its bound UI owner indefinitely.
+                lease.released = True
+                lease.launch = None
+                lease.capture_result = None
+                lease.release = None
+
+    def _retire_all_live_recovery_continuations(self) -> None:
+        """Bound app-lifetime accepted-turn content at permanent teardown."""
+
+        with self.store.durable_preparation_lock:
+            continuations = tuple(self._durable_postcommit_continuations.values())
+            for continuation in continuations:
+                current = self._durable_postcommit_continuations.get(
+                    continuation.preparation_id
+                )
+                if current is not continuation:
+                    continue
+                preparation = self._preparation_by_id(continuation.preparation_id)
+                if preparation is not None:
+                    self._drop_preparation(
+                        continuation.preparation_id,
+                        expected_states=frozenset({preparation.state}),
+                    )
+                self._preparation_outcomes.pop(continuation.preparation_id, None)
+                self._prepared_send_continuations.pop(continuation.preparation_id, None)
+                self._durable_postcommit_continuations.pop(
+                    continuation.preparation_id, None
+                )
+                self._release_retired_prepared_evidence(continuation)
+                self.store.retire_durable_acceptance(
+                    continuation.preparation_id,
                     continuation.fingerprint,
                 )
 
@@ -9222,13 +9365,10 @@ class ConsoleChatController:
         rather than reusing ``stop_active_run`` itself, which by contract
         only ever resolves the active session.
 
-        Callers: real process exit (owner app teardown) is one caller, but
-        NOT the only one -- ``ChatScreen.on_unmount`` also awaits this on
-        every ordinary navigation AWAY from the Console screen (switching
-        tabs unmounts the outgoing screen), which is far more frequent
-        than process exit. Any docstring here or in ``_is_session_
-        cancelled`` that called ``_shutdown_requested`` "real process
-        teardown" was describing only one of its two callers.
+        Production caller: app-owned :class:`ConsoleRuntime` disposal at
+        application exit. Ordinary Console navigation calls
+        ``ConsoleRuntime.leave_console`` instead; that runtime and this
+        controller survive unmount/remount and are reused by the next view.
 
         F5 fix (Qodo wave): sets ``_shutdown_requested`` unconditionally
         and FIRST -- before the no-tasks early return below -- so a
@@ -9247,20 +9387,10 @@ class ConsoleChatController:
         directly, closing that gap so this paragraph is accurate for
         every caller.
 
-        Correction (review, TASK-1052): setting ``_shutdown_requested``
-        unconditionally here is safe NOT because this method only ever
-        runs at real process exit (it doesn't -- see "Callers" above), but
-        because it is scoped to THIS controller instance, and
-        ``ChatScreen`` never reuses an instance after unmounting it:
-        ``_ensure_console_chat_controller`` only ever (re)builds a fresh
-        ``ConsoleChatController`` lazily, and ``on_unmount`` both awaits
-        this method AND drops the screen's reference to the instance
-        before that lazy rebuild can ever fire again. A round still armed
-        on an instance whose ``shutdown()`` already ran cannot be resolved
-        through a UI that no longer exists regardless of this flag, and a
-        LATER Console visit's rounds run against a brand-new instance with
-        its own, unset ``_shutdown_requested`` -- so the permanently-set
-        flag on the old instance can never poison it.
+        Setting ``_shutdown_requested`` unconditionally is safe because this
+        is the permanent app-disposal boundary. Navigation never calls it;
+        ``leave_console`` supplies the reversible per-visit cancellation
+        boundary for the same app-owned controller.
         """
         self.begin_shutdown()
         for message_id in tuple(self._original_attempts):
@@ -9269,6 +9399,7 @@ class ConsoleChatController:
         stream_tasks = dict(self._active_stream_tasks)
         tasks = set(submit_tasks) | set(stream_tasks.values())
         if not tasks:
+            self._retire_all_live_recovery_continuations()
             if self._owns_scratch_spaces:
                 await asyncio.to_thread(self._scratch_spaces.dispose)
             return
@@ -9322,6 +9453,8 @@ class ConsoleChatController:
                 self._active_cancel_events.pop(session_id, None)
         for task in submit_tasks:
             self._unregister_submit_task(task)
+        if current not in tasks:
+            self._retire_all_live_recovery_continuations()
         if self._owns_scratch_spaces:
             await asyncio.to_thread(self._scratch_spaces.dispose)
 
@@ -12345,12 +12478,14 @@ class ConsoleChatController:
         lease = continuation.staged_evidence if continuation is not None else None
         if lease is None or lease.released or lease.capture_result is None:
             return
-        owner = getattr(self._rag_capture_provider, "__self__", None)
-        release = getattr(owner, "_release_frozen_console_staged_rag", None)
+        release = lease.release
         if not callable(release):
             return
         release(lease.launch, lease.capture_result)
         lease.released = True
+        lease.launch = None
+        lease.capture_result = None
+        lease.release = None
 
     @staticmethod
     def _normalize_rag_capture(
