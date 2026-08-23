@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-22'
-updated_date: '2026-08-23 15:58'
+updated_date: '2026-08-23 16:49'
 labels:
   - performance
   - console
@@ -62,10 +62,11 @@ enumerated where it is maintained):
 | --- | --- |
 | `on_mount` | full (owner demand) |
 | rail `Resize` | full (owner demand) |
-| section local reconcile - collapse/expand or content growth in the staged-context tray, changed-files section, run inspector, settings summary (`on_reconcile`) | full (owner demand) |
+| section-widget state sync - the staged-context tray, changed-files section, run inspector and settings summary each call the `on_reconcile` callback this rail hands them at compose time when a new display state lands | full (owner demand) |
+| the screen's live-work card swap (`chat_screen.py:4963`, the one external `request_outer_reconcile` caller) | full (owner demand) |
 | focus-recovery scheduling / retry | full (owner demand) |
 | body `Resize` | full (geometry only) |
-| body `_size_updated` - committed size or virtual-size change, incl. a section hiding, growing, being replaced | full (geometry only) |
+| body `_size_updated` - any committed size or virtual-size change. **This is the route a `ConsoleBoundedSection` collapse/expand or content growth actually takes** - geometry only, not owner demand (`ConsoleBoundedSection` has no `on_reconcile` of its own) | full (geometry only) |
 | hint display-toggle continuation | full (geometry only) |
 | body `scroll_y` change - wheel, keys, `scroll_to`, reveal | **pure scroll** |
 
@@ -94,9 +95,7 @@ Measured (production Console shell at 160x45, 4-notch wheel gesture down + back 
 
 The last row is why the fold copy is now painted with `Static.update(..., layout=False)`:
 `update()` defaults to `layout=True`, so a two-character repaint of a slot whose height is
-pinned at compose time still scheduled a view layout (11 -> 9 of the drop above). A test holds
-that pinned geometry to account (`hint.region` unchanged across the gesture, copy re-asserted
-against the compositor) so the assumption cannot rot.
+pinned at compose time still scheduled a view layout (11 -> 9 of the drop above).
 
 Tests: three added to `Tests/UI/test_console_rail_reconciliation.py` -
 `test_pure_inspector_scroll_never_relayouts_the_rail` (red on base: "8 pure wheel frames
@@ -109,4 +108,58 @@ stop measuring its subject).
 
 Modified: `tldw_chatbook/UI/Console_Modules/right_rail.py`,
 `Tests/UI/test_console_rail_reconciliation.py`, `backlog/docs/lessons-textual.md`.
+
+### Review fix round
+
+Whole-branch review probed every fold input across a full gesture and returned two fix-first
+items; both are addressed here.
+
+**MAJOR (test coverage, not runtime) - the `layout=False` repaint and the unchanged-copy skip
+were completely unguarded.** The reviewer replaced the whole `_paint_outer_hint` body with
+base's `hint.update(text)` and all three new tests still passed: the `hint.region ==
+hint_region` assertion pins the PRECONDITION (the slot's height is pinned) and not the
+optimization, so the measured 11 -> 9 layout-pass win could regress silently. The first test now
+wraps `hint.update` for the whole 12-frame gesture and asserts (a) every scroll-path write
+passes `layout=False`, (b) at most 4 writes occur. Both halves are proven to bite: dropping
+`layout=False` reds (a) with `[('', True), ('▼ more sections — scroll', True), ('', True)]`;
+dropping the skip reds (b) with `12 scroll frames wrote the fold copy 12 times`. Shipped code
+writes 3 times, all `layout=False`.
+
+**MINOR (doc accuracy, and it was my own safety argument) - the trigger table conflated two
+distinct full-path routes.** The row credited "section local reconcile ... collapse/expand or
+content growth" to owner demand via `on_reconcile`. `on_reconcile` does exist -- but as a
+constructor kwarg on four *section widgets* (tray, changed-files, run inspector, settings
+summary; wired at right_rail.py:1083/1121/1139/1144), fired on a display-state SYNC.
+`ConsoleBoundedSection` has no such callback, and the reviewer's mutation proved a section
+collapse reaches the fold through the body's `_size_updated` -- geometry only. The docstring
+and the table above now separate the two routes and name the live-work card swap as the one
+external owner-demand caller. Also softened the `clamp=True` docstring: `validate_scroll_y`
+clamps every assignment, so that clamp is defensive symmetry, not load-bearing.
+
+Inventory gate (`scripts/check_persistent_diagnostic_inventory.py`): red, exit 1, but NOT from
+this change and deliberately not regenerated. It names `DB/ChaChaNotes_DB.py`,
+`DB/chachanotes_fts_backfill.py` and `app.py`; `git diff --name-only 30c7e1fe9 HEAD` shows this
+branch touches none of them, and `right_rail.py` contains zero logging statements, so it cannot
+contribute a row. This base (30c7e1fe9) predates dev's repair of that drift, so running
+`--write` here would pin an inventory rebuilt from a stale tree and could clobber the repair on
+merge.
+
+Also added `test-logs/` to `.gitignore` (9.4 MB of teed evidence logs that were untracked and
+not ignored -- one stray `git add -A` from committing). No prior convention existed: nothing
+under that name has ever been tracked and no other worktree carries one.
+
+Review-round re-run: `test_console_rail_reconciliation.py` + `test_consolidated_css_harness.py`
+= 47 passed (21115's geometry contract holds).
+
+One red appeared in the first review-round re-run and was chased down rather than re-run away:
+`test_overflow_focus_order_and_recovery_stay_within_context_section` (a left-rail `_RailHarness`
+focus-order test that this change cannot reach -- that harness mounts no Inspector). It then
+failed once more in isolation while base passed, which looked like a regression; repeated
+sampling showed it is a PRE-EXISTING FLAKE, and not one this branch worsens:
+
+    isolated runs, this branch:   10 pass / 0 fail
+    isolated runs, base 30c7e1fe9: 7 pass / 3 fail
+
+Worth filing separately -- it went green in all three large runs (baseline, after-run,
+full-file) and only misbehaves in isolation, so the ordinary suite hides it.
 <!-- SECTION:NOTES:END -->

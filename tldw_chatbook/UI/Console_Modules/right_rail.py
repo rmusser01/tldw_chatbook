@@ -186,13 +186,19 @@ class ConsoleInspectorRail(Vertical):
 
     * ``on_mount`` — full (owner demand)
     * rail ``Resize`` — full (owner demand)
-    * section local reconcile, i.e. collapse/expand or content growth in the
-      staged-context tray, changed-files section, run inspector, or settings
-      summary (their ``on_reconcile``) — full (owner demand)
+    * section-widget state sync: the staged-context tray, changed-files
+      section, run inspector, and settings summary each call the
+      ``on_reconcile`` callback this rail hands them at compose time when a new
+      display state lands — full (owner demand)
+    * the screen's live-work card swap (``chat_screen.py``, the one external
+      ``request_outer_reconcile`` caller) — full (owner demand)
     * focus-recovery scheduling/retry — full (owner demand)
     * body ``Resize`` — full (geometry only)
-    * body ``_size_updated``: committed size or virtual-size change, including
-      a section hiding, growing, or being replaced — full (geometry only)
+    * body ``_size_updated``: any committed size or virtual-size change. This
+      is the route a ``ConsoleBoundedSection`` collapse/expand or content
+      growth actually takes — geometry only, *not* owner demand;
+      ``ConsoleBoundedSection`` has no ``on_reconcile`` of its own — full
+      (geometry only)
     * hint display-toggle continuation — full (geometry only)
     * body ``scroll_y`` change: wheel, keys, ``scroll_to``, reveal — pure
       scroll
@@ -442,8 +448,13 @@ class ConsoleInspectorRail(Vertical):
         """Paint copy only while actual outer content remains below.
 
         Args:
-            clamp: Also re-clamp the outer offset. The full reconcile clamps
-                before it measures, so only the pure-scroll path asks for it.
+            clamp: Re-clamp the outer offset, for symmetry with the full
+                reconcile, which clamps before it measures. Defensive rather
+                than load-bearing: ``Widget.validate_scroll_y`` already clamps
+                every assignment, and the one case that can leave an offset
+                past the end — the viewport shrinking with no scroll
+                assignment — arrives on the geometry path and is clamped by
+                ``_reconcile_outer_fold``.
         """
 
         try:

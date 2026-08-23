@@ -2288,6 +2288,18 @@ async def test_pure_inspector_scroll_never_relayouts_the_rail(
         # while the slot's height is pinned: hold that geometry to account.
         hint_region = hint.region
         assert hint_region.height == 1
+        # Record what the scroll path writes to the slot. Both halves of the
+        # repaint -- layout=False, and the skip when the copy is unchanged --
+        # are measured optimizations, so assert them instead of trusting the
+        # source to keep saying so.
+        hint_writes: list[tuple[str, object]] = []
+        original_hint_update = hint.update
+
+        def recording_update(content: object = "", **kwargs: object):
+            hint_writes.append((str(content), kwargs.get("layout", True)))
+            return original_hint_update(content, **kwargs)
+
+        monkeypatch.setattr(hint, "update", recording_update)
 
         notches = await _wheel_to_bottom(pilot, outer)
         assert notches >= 2, "the probe must cover several wheel frames"
@@ -2329,6 +2341,18 @@ async def test_pure_inspector_scroll_never_relayouts_the_rail(
 
         assert inspector._outer_owner_reconcile_count == owner_passes
         assert inspector._outer_reconcile_scheduled is False
+
+        # The fold copy is the only thing the scroll path writes.
+        frames = 3 * notches
+        assert hint_writes, "the gesture must repaint the fold copy at least once"
+        assert all(layout is False for _copy, layout in hint_writes), (
+            "the scroll path must repaint the fold copy without a layout pass "
+            f"(the slot's height is pinned): {hint_writes}"
+        )
+        assert len(hint_writes) <= 4, (
+            f"{frames} scroll frames wrote the fold copy {len(hint_writes)} "
+            f"times -- the unchanged-copy skip is gone: {hint_writes}"
+        )
 
 
 @pytest.mark.asyncio
