@@ -982,6 +982,106 @@ async def test_keep_both_restart_rejects_changed_copy_or_placement_authority(
     reopened_database.close_connection()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "crash_substage",
+    (
+        "copy_verified",
+        "bound_note_updated",
+        "file_reverified",
+        "binding_updated",
+        "verified",
+    ),
+)
+@pytest.mark.parametrize("authority_drift", ("copy_version", "placement_version"))
+async def test_keep_both_restart_verifies_conflict_pair_before_every_later_effect(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    crash_substage: str,
+    authority_drift: str,
+) -> None:
+    if not PosixNotesSyncFilesystem.supports_writes():
+        pytest.skip("guarded POSIX replacement is unavailable")
+    (
+        notes_path,
+        state_path,
+        sync_root,
+        store,
+        database,
+        authority,
+        request,
+    ) = await _prepare_real_keep_both(tmp_path)
+    await _crash_real_keep_both_at_substage(
+        store=store,
+        authority=authority,
+        sync_root=sync_root,
+        request=request,
+        crash_substage=crash_substage,
+        monkeypatch=monkeypatch,
+    )
+    if authority_drift == "copy_version":
+        copy = database.get_note_by_id("conflict-copy-note")
+        assert copy is not None
+        assert database.update_note(
+            "conflict-copy-note",
+            {"title": "Title", "content": "changed"},
+            int(copy["version"]),
+        )
+        assert database.update_note(
+            "conflict-copy-note",
+            {"title": "Title", "content": "before"},
+            int(copy["version"]) + 1,
+        )
+    else:
+        repository = LocalNoteFolderRepository(database)
+        placement = repository.get_exact_manual_membership(
+            folder_id="conflict-child",
+            note_id="conflict-copy-note",
+        )
+        assert placement is not None
+        assert repository.detach_manual(
+            folder_id=placement[0].folder_id,
+            note_id=placement[0].note_id,
+            expected_version=placement[0].version,
+        )
+        revived = repository.attach_manual(
+            folder_id=placement[0].folder_id,
+            note_id=placement[0].note_id,
+            expected_note_version=1,
+        )
+        assert revived.membership_id == placement[0].membership_id
+        assert revived.version == placement[0].version + 2
+    expected_effects = _keep_both_database_effects(database)
+    expected_binding = store.get_binding(request.binding_id)
+    database.close_connection()
+
+    reopened_store = NotesDeviceStateStore(state_path)
+    reopened_database = CharactersRAGDB(notes_path, client_id="pair-drift")
+    fresh_authority = _BlockingKeepBothAuthority(
+        _real_keep_both_authority(reopened_database),
+        reopened_store,
+        "never",
+    )
+    with PosixNotesSyncFilesystem(sync_root) as fresh_filesystem:
+        executor = NotesSyncExecutor(
+            reopened_store,
+            fresh_authority,
+            fresh_filesystem,
+            recovery_capacity_bytes=65_536,
+        )
+        reconstructed = await executor.reconstruct_request(request.operation_id)
+        result = await executor.resume(reconstructed)
+
+    assert result.state is NotesSyncOperationState.NEEDS_ATTENTION
+    assert result.reason_code == "recovery_authority_changed"
+    assert not any(call.startswith("pause:") for call in fresh_authority.calls)
+    assert reopened_store.get_binding(request.binding_id) == expected_binding
+    assert _keep_both_database_effects(reopened_database) == expected_effects
+    recovery = reopened_store.load_operation_recovery(request.operation_id)
+    assert json.loads(recovery.metadata)["conflict_substage"] == crash_substage
+    reopened_database.close_connection()
+
+
 def test_keep_both_folders_checkpoint_records_authority_without_byte_growth(
     tmp_path: Path,
 ) -> None:

@@ -2654,6 +2654,8 @@ class NotesSyncExecutor:
             await self._require_keep_both_stage_owner(request, stage)
             if stage != "recovery_admitted":
                 await self._verify_checkpointed_conflict_folders(request)
+            if stage in {"copy_verified", "bound_note_updated", "file_reverified"}:
+                await self._verify_conflict_copy_pair(request, checkpoint=False)
             cancelled = False
             if stage == "recovery_admitted":
                 _, cancelled = await self._joined_thread_call(
