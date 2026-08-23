@@ -192,11 +192,22 @@ class LLMScreen(LabScreen):
     and re-synced on every ``refresh_lab_status()`` pass.
     """
 
-    def __init__(self, app_instance: "TldwCli", **kwargs: Any) -> None:
+    def __init__(
+        self,
+        app_instance: "TldwCli",
+        *,
+        machine_memory_wall_clock: Callable[[], datetime] | None = None,
+        machine_memory_monotonic_clock: Callable[[], float] | None = None,
+        **kwargs: Any,
+    ) -> None:
         """Create the Models screen.
 
         Args:
             app_instance: The running application.
+            machine_memory_wall_clock: Injectable local wall clock for the fixed
+                accepted-observation label.
+            machine_memory_monotonic_clock: Injectable monotonic clock retained
+                with accepted machine facts.
             kwargs: Forwarded to ``LabScreen``.
         """
         super().__init__(app_instance, "llm", **kwargs)
@@ -336,6 +347,10 @@ class LLMScreen(LabScreen):
         self._machine_memory_worker: Worker | None = None
         self._machine_memory_active = False
         self._machine_memory_failure: ProbeReason | None = None
+        self._machine_memory_wall_clock = machine_memory_wall_clock or datetime.now
+        self._machine_memory_monotonic_clock = (
+            machine_memory_monotonic_clock or time.monotonic
+        )
         self._machine_memory_probe_factory: (
             Callable[[], MachineMemorySnapshot] | None
         ) = None
@@ -631,8 +646,12 @@ class LLMScreen(LabScreen):
         )
         if accepted:
             self._machine_memory_snapshot = result
-            self._machine_memory_observed_label = datetime.now().strftime("%H:%M")
-            self._machine_memory_observed_monotonic = time.monotonic()
+            self._machine_memory_observed_label = (
+                self._machine_memory_wall_clock().strftime("%H:%M")
+            )
+            self._machine_memory_observed_monotonic = (
+                self._machine_memory_monotonic_clock()
+            )
             self._machine_memory_failure = None
         elif current_is_valid:
             self._machine_memory_failure = (

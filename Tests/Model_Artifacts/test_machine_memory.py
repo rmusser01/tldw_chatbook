@@ -58,7 +58,7 @@ def _estimate(
     model_bytes: int = 4 * GIB,
     runtime_allowance_bytes: int = GIB,
     context_allowance_bytes: int,
-    ram_working_budget_bytes: int = 25 * GIB,
+    ram_working_budget_bytes: int = 26_214 * MIB,
     total_physical_bytes: int = 32 * GIB,
 ) -> ContextMemoryEstimate:
     return ContextMemoryEstimate(
@@ -111,6 +111,108 @@ def test_empty_partial_accelerator_exception_stays_darwin_non_arm_only() -> None
             accelerator_state=AcceleratorState.PARTIAL,
             accelerator_reason=ProbeReason.UNSUPPORTED_PLATFORM,
         )
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {
+            "system_state": SystemMemoryState.PARTIAL,
+            "available_bytes": None,
+            "system_reason": None,
+        },
+        {"accelerator_reason": ProbeReason.PERMISSION_DENIED},
+        {"accelerator_reason": ProbeReason.SYSFS_PERMISSION_DENIED},
+        {"accelerator_reason": ProbeReason.UNSUPPORTED_PLATFORM},
+        {"accelerator_reason": ProbeReason.MEMORY_UNAVAILABLE},
+    ],
+    ids=[
+        "partial-system-without-fixed-reason",
+        "not-observed-with-generic-permission-denied",
+        "not-observed-with-sysfs-permission-denied",
+        "not-observed-with-unsupported-reason",
+        "not-observed-with-system-only-reason",
+    ],
+)
+def test_snapshot_rejects_contradictory_state_reason_pairs(
+    overrides: dict[str, object],
+) -> None:
+    """A caller must not relabel denied, unsupported, or partial evidence."""
+    with pytest.raises(ValueError, match="reason"):
+        _snapshot(**overrides)  # type: ignore[arg-type]
+
+
+def _apple_marker(
+    *,
+    vendor: str = "apple",
+    label: str = "Apple unified memory",
+) -> AcceleratorMemoryObservation:
+    return AcceleratorMemoryObservation(
+        vendor=vendor,
+        label=label,
+        total_bytes=None,
+        shared=True,
+        source=AcceleratorSource.APPLE_UNIFIED,
+    )
+
+
+def _nvidia_marker() -> AcceleratorMemoryObservation:
+    return AcceleratorMemoryObservation(
+        vendor="nvidia",
+        label="NVIDIA RTX",
+        total_bytes=24 * GIB,
+        shared=False,
+        source=AcceleratorSource.NVIDIA_SMI,
+    )
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"architecture": "x86_64"},
+        {
+            "accelerator_state": AcceleratorState.PARTIAL,
+            "accelerator_reason": ProbeReason.COMMAND_TIMEOUT,
+        },
+        {"accelerators": (_apple_marker(), _nvidia_marker())},
+        {
+            "accelerators": (
+                _apple_marker(),
+                _apple_marker(label="Apple unified memory duplicate"),
+            )
+        },
+        {"memory_kind": MemoryKind.SYSTEM},
+        {"accelerators": (_apple_marker(vendor="amd"),)},
+    ],
+    ids=[
+        "non-apple-silicon-architecture",
+        "partial-accelerator-state",
+        "discrete-fact-double-count",
+        "multiple-shared-markers",
+        "shared-marker-with-system-kind",
+        "apple-source-with-wrong-vendor",
+    ],
+)
+def test_snapshot_rejects_invalid_apple_unified_mixtures(
+    overrides: dict[str, object],
+) -> None:
+    """Unified RAM is exactly one observed Apple Silicon shared pool."""
+    values: dict[str, object] = {
+        "platform": "darwin",
+        "architecture": "arm64",
+        "system_state": SystemMemoryState.OBSERVED,
+        "accelerator_state": AcceleratorState.OBSERVED,
+        "total_bytes": 32 * GIB,
+        "available_bytes": 20 * GIB,
+        "memory_kind": MemoryKind.UNIFIED,
+        "accelerators": (_apple_marker(),),
+        "system_reason": None,
+        "accelerator_reason": None,
+    }
+    values.update(overrides)
+
+    with pytest.raises(ValueError, match="unified|apple_unified"):
+        MachineMemorySnapshot(**values)  # type: ignore[arg-type]
 
 
 def test_projection_uses_exact_32768_and_65536_scenarios() -> None:
@@ -268,6 +370,51 @@ def test_context_estimate_rejects_float_context_tokens() -> None:
 
 
 @pytest.mark.parametrize(
+    ("field", "value", "estimated_bytes"),
+    [
+        ("runtime_allowance_bytes", GIB + 1, 9 * GIB + 1),
+        ("context_allowance_bytes", 4 * GIB + 1, 9 * GIB + 1),
+        ("ram_working_budget_bytes", 26_214 * MIB - 1, 9 * GIB),
+    ],
+)
+def test_context_estimate_rejects_non_policy_allowance_or_budget(
+    field: str,
+    value: int,
+    estimated_bytes: int,
+) -> None:
+    """One-byte deviations must not masquerade as trusted policy estimates."""
+    values = {
+        "context_tokens": 32_768,
+        "model_bytes": 4 * GIB,
+        "runtime_allowance_bytes": GIB,
+        "context_allowance_bytes": 4 * GIB,
+        "estimated_bytes": estimated_bytes,
+        "ram_working_budget_bytes": 26_214 * MIB,
+        "total_physical_bytes": 32 * GIB,
+        "capacity_state": CapacityState.WITHIN_BUDGET,
+    }
+    values[field] = value
+
+    with pytest.raises(ValueError, match=field):
+        ContextMemoryEstimate(**values)  # type: ignore[arg-type]
+
+
+def test_projection_rejects_directly_forged_current_pressure() -> None:
+    """Only the projector has available-RAM evidence to derive volatile pressure."""
+    trusted = project_gguf_memory(4 * GIB, _snapshot(available_bytes=20 * GIB))
+
+    with pytest.raises(TypeError):
+        GGUFMemoryProjection()
+    with pytest.raises(TypeError):
+        GGUFMemoryProjection(
+            context_32k=trusted.context_32k,
+            context_64k=trusted.context_64k,
+            primary_state=trusted.primary_state,
+            current_pressure=CurrentPressure.NEEDS_MORE_FOR_BOTH,
+        )
+
+
+@pytest.mark.parametrize(
     "context_64k",
     [
         _estimate(
@@ -277,27 +424,17 @@ def test_context_estimate_rejects_float_context_tokens() -> None:
         ),
         _estimate(
             context_tokens=65_536,
-            runtime_allowance_bytes=2 * GIB,
-            context_allowance_bytes=8 * GIB,
-        ),
-        _estimate(
-            context_tokens=65_536,
-            context_allowance_bytes=8 * GIB,
-            ram_working_budget_bytes=24 * GIB,
-        ),
-        _estimate(
-            context_tokens=65_536,
             context_allowance_bytes=8 * GIB,
             total_physical_bytes=31 * GIB,
+            ram_working_budget_bytes=25_395 * MIB,
         ),
-        _estimate(context_tokens=65_536, context_allowance_bytes=6 * GIB),
     ],
 )
 def test_projection_rejects_mismatched_paired_scenario_facts(
     context_64k: ContextMemoryEstimate,
 ) -> None:
     """Paired scenarios must share model/machine facts and double the 32K allowance."""
-    with pytest.raises(ValueError):
+    with pytest.raises(TypeError):
         GGUFMemoryProjection(
             context_32k=_estimate(
                 context_tokens=32_768,

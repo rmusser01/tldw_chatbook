@@ -73,23 +73,33 @@ sheet was regenerated from existing source, narrow machine actions now stack,
 and completion reapplies the existing pane visibility policy after its internal
 recompose. No new architecture decision was required beyond accepted ADR-080.
 
+The final-review fix wave removed the blocking command-reader thread in favor
+of deadline-polled owned-pipe reads and bounded both child-reap waits; completed
+the snapshot state/reason/source/unified-memory matrix; made projection creation
+policy-owned while validating exact estimate allowances and RAM budget; removed
+duplicate AMD/NVIDIA prefixes at the real probe/presenter boundary; added exact
+LLMScreen wall/monotonic clock seams that survive failed refresh and real
+recomposition; and replaced the long-filename hidden-text oracle with exact
+painted compositor evidence in both rail states. Full RED/GREEN details are in
+`.superpowers/sdd/2026-08-22-remote-model-machine-fit-implementation/final-review-fix-report.md`.
+
 Authoritative targeted evidence (run from the feature worktree):
 
 ```text
 ../../.venv/bin/pytest -q Tests/test_probe_import_provenance.py -s
-1 passed; imports resolved from this worktree
+1 passed, 1 dependency warning; imports resolved from this worktree
 
 ../../.venv/bin/pytest -q Tests/Model_Artifacts/test_machine_memory.py Tests/Model_Artifacts/test_machine_memory_probe.py Tests/UI/test_model_memory_presenter.py Tests/UI/test_model_remote_view.py
-187 passed, 1 dependency warning
+205 passed, 1 dependency warning
 
-../../.venv/bin/pytest -q Tests/UI/test_llm_screen_lab_adoption.py -k "machine_memory or remote_drill_down_install_action or remote_memory_scenarios_survive_recompose or remote_completion"
-13 passed, 126 deselected, 1 dependency warning
+../../.venv/bin/pytest -q Tests/UI/test_llm_screen_lab_adoption.py -k "machine_memory or memory_clocks or remote_drill_down_install_action or remote_memory_scenarios_survive_recompose or remote_completion"
+14 passed, 126 deselected, 1 dependency warning
 
 ../../.venv/bin/pytest -q Tests/UI/test_llm_screen_lab_adoption.py::test_remote_memory_scenarios_survive_recompose_at_80_columns
 1 passed, 1 dependency warning
 
 ../../.venv/bin/pytest -q Tests/UI/test_widget_css_consolidation.py
-31 passed, 2 existing warnings
+31 passed, 1 existing dependency warning
 
 ../../.venv/bin/python tldw_chatbook/css/check_bundle_sync.py
 passed; all five generated CSS artifacts reproduce from source

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import threading
 import time
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -141,6 +142,9 @@ def _machine_screen() -> LLMScreen:
     screen = LLMScreen.__new__(LLMScreen)
     screen._machine_memory_snapshot = None
     screen._machine_memory_observed_label = None
+    screen._machine_memory_observed_monotonic = None
+    screen._machine_memory_wall_clock = lambda: datetime(2032, 4, 5, 9, 41)
+    screen._machine_memory_monotonic_clock = lambda: 8_765.25
     screen._machine_memory_generation = 0
     screen._machine_memory_worker = None
     screen._machine_memory_active = False
@@ -302,6 +306,64 @@ def test_machine_memory_worker_returns_bounded_result_on_event_thread(
         7,
         result,
     )
+
+
+@pytest.mark.asyncio
+async def test_injected_memory_clocks_survive_failed_refresh_and_real_recompose() -> (
+    None
+):
+    """Global time or view-owned timestamps would drift or disappear on remount."""
+    from tldw_chatbook.UI.Screens.model_remote_view import RemoteView
+
+    observed_wall = datetime(2032, 4, 5, 9, 41, 37)
+    observed_monotonic = 8_765.25
+    app = _app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        screen = LLMScreen(
+            app,
+            machine_memory_wall_clock=lambda: observed_wall,
+            machine_memory_monotonic_clock=lambda: observed_monotonic,
+        )
+        await app.push_screen(screen)
+        assert await _wait_for(lambda: bool(screen.query(RemoteView)), pilot)
+        accepted = _machine_snapshot(total_gib=32)
+        screen._machine_memory_generation = 1
+
+        screen._apply_machine_memory_result(1, accepted)
+
+        assert screen._machine_memory_observed_label == "09:41"
+        assert screen._machine_memory_observed_monotonic == observed_monotonic
+
+        screen._machine_memory_generation = 2
+        screen._apply_machine_memory_result(
+            2,
+            _machine_snapshot(
+                system_state=SystemMemoryState.UNAVAILABLE,
+                system_reason=ProbeReason.MEMORY_UNAVAILABLE,
+                available_gib=None,
+            ),
+        )
+        assert screen._machine_memory_snapshot is accepted
+        assert screen._machine_memory_observed_label == "09:41"
+        assert screen._machine_memory_observed_monotonic == observed_monotonic
+
+        old_remote = screen.query_one(RemoteView)
+        await screen.recompose()
+        assert await _wait_for(
+            lambda: (
+                bool(screen.query(RemoteView))
+                and screen.query_one(RemoteView) is not old_remote
+                and screen.query_one(RemoteView)._machine_snapshot is accepted
+            ),
+            pilot,
+            attempts=500,
+        )
+        fresh_remote = screen.query_one(RemoteView)
+        assert fresh_remote._machine_presentation.failure_line == (
+            "Recheck failed · using memory observed at 09:41"
+        )
+        assert screen._machine_memory_observed_label == "09:41"
+        assert screen._machine_memory_observed_monotonic == observed_monotonic
 
 
 @pytest.mark.asyncio
@@ -1053,6 +1115,57 @@ async def test_remote_memory_scenarios_survive_recompose_at_80_columns():
             )
             assert expected_text in str(widget.renderable)
 
+    async def assert_exact_filename_painted(parent, pilot, app) -> None:
+        """Read the current filename from painted compositor cells, not widget state."""
+        from textual.strip import Strip
+
+        filename_widget = remote.query_one(".remote-variant-filename", Static)
+        viewport = remote.query_one("#remote-model-details")
+        filename_widget.scroll_visible(
+            animate=False,
+            immediate=True,
+            force=True,
+            top=True,
+        )
+
+        def painted_region():
+            clipped = filename_widget.content_region.intersection(
+                viewport.content_region
+            )
+            return clipped.intersection(parent.content_region)
+
+        assert await _wait_for(
+            lambda: (
+                remote.query_one(".remote-variant-filename", Static) is filename_widget
+                and filename_widget in app.screen._compositor.visible_widgets
+                and painted_region().width > 0
+                and painted_region().height > 0
+            ),
+            pilot,
+        )
+        clipped = painted_region()
+        assert clipped == filename_widget.content_region
+        assert clipped.height > 1
+        assert clipped.x >= viewport.content_region.x
+        assert clipped.right <= viewport.content_region.right
+        assert clipped.x >= parent.content_region.x
+        assert clipped.right <= parent.content_region.right
+
+        update = app.screen._compositor.render_full_update()
+        painted_rows: list[str] = []
+        for screen_y in range(clipped.y, clipped.bottom):
+            line = Strip.join(update.strips[screen_y - update.region.y])
+            painted_rows.append(
+                line.crop(
+                    clipped.x - update.region.x,
+                    clipped.right - update.region.x,
+                ).text.rstrip()
+            )
+        assert all(painted_rows)
+        painted_filename = "".join(painted_rows)
+        assert "…" not in painted_filename
+        assert painted_filename == filename
+
     def current_candidate_ready(remote) -> bool:
         candidates = list(remote.query(".remote-candidate").results(Button))
         return (
@@ -1130,7 +1243,6 @@ async def test_remote_memory_scenarios_survive_recompose_at_80_columns():
             assert "Machine memory: Checking local memory…" in _remote_text(remote)
             assert "Memory scenario: Checking local memory…" in _remote_text(remote)
             assert repository in _remote_text(remote)
-            assert filename in _remote_text(remote)
 
             back = remote.query_one("#remote-back-to-results", Button)
             await assert_painted(back, parent, pilot, app)
@@ -1177,6 +1289,7 @@ async def test_remote_memory_scenarios_survive_recompose_at_80_columns():
             assert adapter.search_calls == ["memory model"]
             assert adapter.resolve_calls == [repository, repository]
             assert probe_calls == [0]
+            await assert_exact_filename_painted(parent, pilot, app)
 
             back = remote.query_one("#remote-back-to-results", Button)
             await assert_painted(back, parent, pilot, app)
@@ -1293,6 +1406,8 @@ async def test_remote_memory_scenarios_survive_recompose_at_80_columns():
             assert collapsed_candidate is candidate
             assert collapsed_selection is selection
             assert collapsed_install is install
+
+            await assert_exact_filename_painted(parent, pilot, app)
 
             await assert_scroll_section_painted(
                 collapsed_panel,

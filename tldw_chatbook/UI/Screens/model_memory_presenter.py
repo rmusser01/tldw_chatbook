@@ -322,11 +322,19 @@ def _observed_accelerator_copy(
 
 def _accelerator_fact(accelerator: AcceleratorMemoryObservation) -> str:
     vendor = {"nvidia": "NVIDIA", "amd": "AMD"}.get(
-        accelerator.vendor, accelerator.vendor.upper()
+        accelerator.vendor.casefold(), accelerator.vendor.upper()
     )
+    normalized_label = accelerator.label.casefold()
+    normalized_vendor = vendor.casefold()
+    label_has_vendor = normalized_label == normalized_vendor or (
+        normalized_label.startswith(normalized_vendor)
+        and len(accelerator.label) > len(vendor)
+        and not accelerator.label[len(vendor)].isalnum()
+    )
+    fact = accelerator.label if label_has_vendor else f"{vendor} {accelerator.label}"
     if accelerator.total_bytes is None:
-        return f"{vendor} {accelerator.label}"
-    return f"{vendor} {accelerator.label} {format_gib(accelerator.total_bytes)}"
+        return fact
+    return f"{fact} {format_gib(accelerator.total_bytes)}"
 
 
 def _retained_failure_copy(

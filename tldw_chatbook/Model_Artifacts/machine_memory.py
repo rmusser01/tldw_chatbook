@@ -93,6 +93,46 @@ class ProbeReason(StrEnum):
     SYSFS_MALFORMED = "sysfs_malformed"
 
 
+_SYSTEM_PARTIAL_REASONS = frozenset(
+    {ProbeReason.MEMORY_UNAVAILABLE, ProbeReason.INVALID_MEMORY_VALUE}
+)
+_ACCELERATOR_BRANCH_FAILURE_REASONS = frozenset(
+    {
+        ProbeReason.PERMISSION_DENIED,
+        ProbeReason.UNTRUSTED_EXECUTABLE,
+        ProbeReason.COMMAND_TIMEOUT,
+        ProbeReason.COMMAND_FAILED,
+        ProbeReason.OUTPUT_TOO_LARGE,
+        ProbeReason.MALFORMED_OUTPUT,
+        ProbeReason.TOO_MANY_DEVICES,
+        ProbeReason.DUPLICATE_DEVICE,
+        ProbeReason.SYSFS_PERMISSION_DENIED,
+        ProbeReason.SYSFS_UNTRUSTED_PATH,
+        ProbeReason.SYSFS_MALFORMED,
+    }
+)
+_ACCELERATOR_NOT_OBSERVED_REASONS = frozenset(
+    {
+        None,
+        ProbeReason.EXECUTABLE_NOT_FOUND,
+        ProbeReason.UNTRUSTED_EXECUTABLE,
+        ProbeReason.COMMAND_TIMEOUT,
+        ProbeReason.COMMAND_FAILED,
+        ProbeReason.OUTPUT_TOO_LARGE,
+        ProbeReason.MALFORMED_OUTPUT,
+        ProbeReason.TOO_MANY_DEVICES,
+        ProbeReason.DUPLICATE_DEVICE,
+        ProbeReason.SYSFS_UNTRUSTED_PATH,
+        ProbeReason.SYSFS_MALFORMED,
+    }
+)
+_ACCELERATOR_VENDOR_BY_SOURCE = {
+    AcceleratorSource.APPLE_UNIFIED: "apple",
+    AcceleratorSource.NVIDIA_SMI: "nvidia",
+    AcceleratorSource.LINUX_DRM: "amd",
+}
+
+
 def _require_enum(value: object, enum_type: type[StrEnum], name: str) -> None:
     if type(value) is not enum_type:
         raise ValueError(f"{name} must be a {enum_type.__name__}")
@@ -202,11 +242,7 @@ class MachineMemorySnapshot:
             _require_bytes(self.total_bytes, "total_bytes")
             if self.available_bytes is not None:
                 raise ValueError("partial system memory omits available_bytes")
-            if self.system_reason not in {
-                None,
-                ProbeReason.MEMORY_UNAVAILABLE,
-                ProbeReason.INVALID_MEMORY_VALUE,
-            }:
+            if self.system_reason not in _SYSTEM_PARTIAL_REASONS:
                 raise ValueError("partial system memory needs a partial-memory reason")
             return
         if self.total_bytes is not None or self.available_bytes is not None:
@@ -232,6 +268,11 @@ class MachineMemorySnapshot:
             if label_key in labels:
                 raise ValueError("duplicate accelerator label")
             labels.add(label_key)
+            expected_vendor = _ACCELERATOR_VENDOR_BY_SOURCE[observation.source]
+            if observation.vendor.casefold() != expected_vendor:
+                raise ValueError(
+                    f"{observation.source.value} requires {expected_vendor} vendor"
+                )
         if self.accelerator_state is AcceleratorState.OBSERVED:
             if not self.accelerators or self.accelerator_reason is not None:
                 raise ValueError("observed accelerators need facts and no reason")
@@ -245,12 +286,19 @@ class MachineMemorySnapshot:
             )
             if empty_darwin_fallback:
                 return
-            if not self.accelerators or self.accelerator_reason is None:
+            if (
+                not self.accelerators
+                or self.accelerator_reason not in _ACCELERATOR_BRANCH_FAILURE_REASONS
+            ):
                 raise ValueError("partial accelerators need facts and a reason")
             return
         if self.accelerators:
             raise ValueError("unavailable accelerators may not have observations")
         if self.accelerator_state is AcceleratorState.NOT_OBSERVED:
+            if self.accelerator_reason not in _ACCELERATOR_NOT_OBSERVED_REASONS:
+                raise ValueError(
+                    "not-observed accelerators need a settled branch-failure reason"
+                )
             return
         if self.accelerator_state is AcceleratorState.PERMISSION_DENIED:
             if self.accelerator_reason not in {
@@ -263,6 +311,13 @@ class MachineMemorySnapshot:
             raise ValueError("unsupported accelerators need unsupported_platform")
 
     def _validate_memory_kind(self) -> None:
+        apple_observations = tuple(
+            observation
+            for observation in self.accelerators
+            if observation.source is AcceleratorSource.APPLE_UNIFIED
+        )
+        if self.memory_kind is not MemoryKind.UNIFIED and apple_observations:
+            raise ValueError("apple_unified observations require unified memory_kind")
         if self.memory_kind is MemoryKind.UNKNOWN:
             if self.total_bytes is not None:
                 raise ValueError("unknown memory_kind has no total_bytes")
@@ -271,10 +326,12 @@ class MachineMemorySnapshot:
             raise ValueError("known memory_kind requires total_bytes")
         if self.memory_kind is MemoryKind.SYSTEM:
             return
-        if self.platform != "darwin":
-            raise ValueError("unified memory_kind is only supported on darwin")
-        if not any(observation.shared for observation in self.accelerators):
-            raise ValueError("unified memory_kind requires a shared observation")
+        if self.platform != "darwin" or self.architecture not in {"arm64", "aarch64"}:
+            raise ValueError("unified memory_kind requires Darwin arm64 or aarch64")
+        if self.accelerator_state is not AcceleratorState.OBSERVED:
+            raise ValueError("unified memory_kind requires observed accelerator state")
+        if len(self.accelerators) != 1 or len(apple_observations) != 1:
+            raise ValueError("unified memory_kind requires exactly one Apple marker")
 
 
 @dataclass(frozen=True, slots=True)
@@ -349,9 +406,36 @@ class ContextMemoryEstimate:
         )
         if self.capacity_state is not expected_state:
             raise ValueError("capacity_state does not match estimate boundaries")
+        expected_runtime = max(
+            GIB,
+            _ceil_percent_mib(self.model_bytes, 10),  # type: ignore[arg-type]
+        )
+        if self.runtime_allowance_bytes != expected_runtime:
+            raise ValueError("runtime_allowance_bytes does not match policy")
+        expected_32k_allowance = max(
+            4 * GIB,
+            _ceil_percent_mib(self.model_bytes, 25),  # type: ignore[arg-type]
+        )
+        expected_context_allowance = (
+            expected_32k_allowance
+            if self.context_tokens == CONTEXT_32K
+            else _bounded_sum(expected_32k_allowance, expected_32k_allowance)
+        )
+        if self.context_allowance_bytes != expected_context_allowance:
+            raise ValueError("context_allowance_bytes does not match policy")
+        expected_reserve = max(
+            2 * GIB,
+            _ceil_percent_mib(self.total_physical_bytes, 20),  # type: ignore[arg-type]
+        )
+        expected_budget = max(
+            0,
+            self.total_physical_bytes - expected_reserve,  # type: ignore[operator]
+        )
+        if self.ram_working_budget_bytes != expected_budget:
+            raise ValueError("ram_working_budget_bytes does not match policy")
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class GGUFMemoryProjection:
     """Paired 32K/64K scenarios and their stable plus volatile outcomes."""
 
@@ -359,6 +443,9 @@ class GGUFMemoryProjection:
     context_64k: ContextMemoryEstimate
     primary_state: CapacityState
     current_pressure: CurrentPressure
+
+    def __init__(self) -> None:
+        raise TypeError("GGUFMemoryProjection is created by project_gguf_memory")
 
     def __post_init__(self) -> None:
         if type(self.context_32k) is not ContextMemoryEstimate:
@@ -466,12 +553,30 @@ def _unknown_projection() -> GGUFMemoryProjection:
         total_physical_bytes=None,
         capacity_state=CapacityState.UNKNOWN,
     )
-    return GGUFMemoryProjection(
+    return _create_projection(
         context_32k=unknown_32k,
         context_64k=unknown_64k,
         primary_state=CapacityState.UNKNOWN,
         current_pressure=CurrentPressure.UNKNOWN,
     )
+
+
+def _create_projection(
+    *,
+    context_32k: ContextMemoryEstimate,
+    context_64k: ContextMemoryEstimate,
+    primary_state: CapacityState,
+    current_pressure: CurrentPressure,
+) -> GGUFMemoryProjection:
+    """Create one policy-owned projection after validating its paired facts."""
+
+    projection = object.__new__(GGUFMemoryProjection)
+    object.__setattr__(projection, "context_32k", context_32k)
+    object.__setattr__(projection, "context_64k", context_64k)
+    object.__setattr__(projection, "primary_state", primary_state)
+    object.__setattr__(projection, "current_pressure", current_pressure)
+    projection.__post_init__()
+    return projection
 
 
 def _build_estimate(
@@ -549,7 +654,7 @@ def project_gguf_memory(
         current_pressure = CurrentPressure.NEEDS_MORE_FOR_64K
     else:
         current_pressure = CurrentPressure.NEEDS_MORE_FOR_BOTH
-    return GGUFMemoryProjection(
+    return _create_projection(
         context_32k=context_32k,
         context_64k=context_64k,
         primary_state=primary_state,

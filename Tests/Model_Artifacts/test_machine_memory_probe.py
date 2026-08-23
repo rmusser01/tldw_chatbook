@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import os
 import stat
 import subprocess
+import tempfile
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
@@ -707,35 +710,36 @@ def test_windows_nvidia_permission_denied_has_independent_denied_state() -> None
 
 class _ChunkStream:
     def __init__(self, chunks: list[bytes]) -> None:
-        self._buffer = b"".join(chunks)
+        self._stream = tempfile.TemporaryFile()
+        self._stream.write(b"".join(chunks))
+        self._stream.seek(0)
         self.max_requested = 0
         self.closed = False
-        self.reader: threading.Thread | None = None
 
-    def read(self, size: int) -> bytes:
-        self.reader = threading.current_thread()
-        self.max_requested = max(self.max_requested, size)
-        chunk, self._buffer = self._buffer[:size], self._buffer[size:]
-        return chunk
+    def fileno(self) -> int:
+        return self._stream.fileno()
 
     def close(self) -> None:
         self.closed = True
+        self._stream.close()
 
 
 class _BlockingStream:
     def __init__(self, release: threading.Event) -> None:
+        self._read_fd, self._write_fd = os.pipe()
         self._release = release
         self.closed = False
-        self.reader: threading.Thread | None = None
 
-    def read(self, _size: int) -> bytes:
-        self.reader = threading.current_thread()
-        self._release.wait(1)
-        return b""
+    def fileno(self) -> int:
+        return self._read_fd
 
     def close(self) -> None:
+        if self.closed:
+            return
         self.closed = True
         self._release.set()
+        os.close(self._write_fd)
+        os.close(self._read_fd)
 
 
 class _FakeProcess:
@@ -751,18 +755,24 @@ class _FakeProcess:
         self.survive_terminate = survive_terminate
         self.events: list[object] = []
         self.release = threading.Event()
+        self.running = True
+
+    def poll(self) -> int | None:
+        return None if self.running else self.returncode
 
     def terminate(self) -> None:
         self.events.append("terminate")
 
     def kill(self) -> None:
         self.events.append("kill")
+        self.running = False
         self.release.set()
 
     def wait(self, timeout: float | None = None) -> int:
         self.events.append(("wait", timeout))
         if timeout == TERMINATE_GRACE_SECONDS and self.survive_terminate:
             raise subprocess.TimeoutExpired("private-command", timeout)
+        self.running = False
         self.release.set()
         return self.returncode
 
@@ -776,9 +786,156 @@ class _LateExitProcess(_FakeProcess):
         return self.returncode
 
 
-class _UnstartableThread:
-    def start(self) -> None:
-        raise RuntimeError("private thread failure")
+class _TemporaryOutputStream:
+    """Real descriptor-backed output without invoking a host executable."""
+
+    def __init__(self, output: bytes) -> None:
+        self._stream = tempfile.TemporaryFile()
+        self._stream.write(output)
+        self._stream.seek(0)
+        self.closed = False
+
+    def fileno(self) -> int:
+        return self._stream.fileno()
+
+    def close(self) -> None:
+        self.closed = True
+        self._stream.close()
+
+
+class _CloseIgnoringBlockingStream:
+    """Readable pipe whose writer and descriptor survive the public close call."""
+
+    def __init__(self, release: threading.Event) -> None:
+        self._read_fd, self._write_fd = os.pipe()
+        self._release = release
+        self.closed = False
+        self.reader: threading.Thread | None = None
+
+    def fileno(self) -> int:
+        return self._read_fd
+
+    def read(self, _size: int) -> bytes:
+        self.reader = threading.current_thread()
+        self._release.wait()
+        return b""
+
+    def close(self) -> None:
+        self.closed = True
+
+    def cleanup(self) -> None:
+        os.close(self._write_fd)
+        os.close(self._read_fd)
+
+
+class _UnreapableProcess(_FakeProcess):
+    """Fake a platform wait that ignores both terminate and kill until released."""
+
+    def __init__(self, release: threading.Event) -> None:
+        super().__init__(_TemporaryOutputStream(b""), survive_terminate=True)
+        self._wait_release = release
+
+    def wait(self, timeout: float | None = None) -> int:
+        self.events.append(("wait", timeout))
+        if timeout is not None:
+            raise subprocess.TimeoutExpired("private-command", timeout)
+        self._wait_release.wait()
+        return self.returncode
+
+
+def test_bounded_runner_has_no_reader_thread_when_close_cannot_release_pipe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A held inherited writer must not defeat the command deadline or leak a reader."""
+    release = threading.Event()
+    stream = _CloseIgnoringBlockingStream(release)
+    process = _FakeProcess(stream, survive_terminate=False)
+    monkeypatch.setattr(probe.subprocess, "Popen", Mock(return_value=process))
+    result_box: list[CommandResult] = []
+
+    caller = threading.Thread(
+        target=lambda: result_box.append(
+            probe._run_bounded_command(
+                LINUX_NVIDIA_SMI,
+                NVIDIA_ARGV,
+                0.01,
+                MAX_COMMAND_OUTPUT_BYTES,
+            )
+        ),
+        name="bounded-runner-test",
+        daemon=True,
+    )
+    started = time.monotonic()
+    caller.start()
+    caller.join(timeout=0.5)
+    elapsed = time.monotonic() - started
+    returned_by_bound = not caller.is_alive()
+    surviving_readers = [
+        thread
+        for thread in threading.enumerate()
+        if thread.name == "machine-memory-probe-reader" and thread.is_alive()
+    ]
+
+    release.set()
+    caller.join(timeout=1.0)
+    for reader in surviving_readers:
+        reader.join(timeout=1.0)
+    stream.cleanup()
+
+    assert returned_by_bound, "the command runner outlived its bounded deadline"
+    assert elapsed < 0.5
+    assert surviving_readers == []
+    assert result_box == [CommandResult(None, b"", ProbeReason.COMMAND_TIMEOUT)]
+
+
+def test_bounded_runner_does_not_construct_a_blocking_reader_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reintroducing a pipe-reader thread would restore an unjoinable cleanup path."""
+    stream = _TemporaryOutputStream(b"0, GPU, 8192\n")
+    process = _FakeProcess(stream, survive_terminate=False)
+    process.running = False
+    monkeypatch.setattr(probe.subprocess, "Popen", Mock(return_value=process))
+    monkeypatch.setattr(
+        threading,
+        "Thread",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("reader thread must not be constructed")
+        ),
+    )
+
+    result = probe._run_bounded_command(
+        LINUX_NVIDIA_SMI, NVIDIA_ARGV, 2.0, MAX_COMMAND_OUTPUT_BYTES
+    )
+
+    assert result == CommandResult(0, b"0, GPU, 8192\n", None)
+    assert stream.closed is True
+
+
+def test_terminate_and_reap_never_uses_an_unbounded_final_wait() -> None:
+    """An uncooperative post-kill wait must not block the observation forever."""
+    release = threading.Event()
+    process = _UnreapableProcess(release)
+    caller = threading.Thread(
+        target=probe._terminate_and_reap,
+        args=(process,),
+        daemon=True,
+    )
+    caller.start()
+    caller.join(timeout=0.75)
+    returned_by_bound = not caller.is_alive()
+
+    release.set()
+    caller.join(timeout=1.0)
+    process.stdout.close()
+
+    assert returned_by_bound, "final child cleanup used an unbounded wait"
+    assert process.events == [
+        "terminate",
+        ("wait", TERMINATE_GRACE_SECONDS),
+        "kill",
+        ("wait", TERMINATE_GRACE_SECONDS),
+    ]
 
 
 def test_bounded_runner_rejects_oversize_before_full_accumulation(
@@ -789,6 +946,13 @@ def test_bounded_runner_rejects_oversize_before_full_accumulation(
     process = _FakeProcess(stream, survive_terminate=False)
     popen = Mock(return_value=process)
     monkeypatch.setattr(probe.subprocess, "Popen", popen)
+    real_read = os.read
+
+    def tracking_read(descriptor: int, size: int) -> bytes:
+        stream.max_requested = max(stream.max_requested, size)
+        return real_read(descriptor, size)
+
+    monkeypatch.setattr(probe.os, "read", tracking_read)
 
     result = probe._run_bounded_command(
         LINUX_NVIDIA_SMI, NVIDIA_ARGV, 2.0, MAX_COMMAND_OUTPUT_BYTES
@@ -798,9 +962,6 @@ def test_bounded_runner_rejects_oversize_before_full_accumulation(
     assert stream.max_requested <= 8192
     assert process.events == ["terminate", ("wait", TERMINATE_GRACE_SECONDS)]
     assert stream.closed is True
-    assert stream.reader is not None
-    stream.reader.join(timeout=0.1)
-    assert stream.reader.is_alive() is False
     popen.assert_called_once_with(
         [str(LINUX_NVIDIA_SMI), *NVIDIA_ARGV],
         stdout=subprocess.PIPE,
@@ -809,17 +970,19 @@ def test_bounded_runner_rejects_oversize_before_full_accumulation(
     )
 
 
-def test_bounded_runner_reaps_child_when_reader_cannot_start(
+def test_bounded_runner_reaps_child_when_stdout_cannot_be_prepared(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A local thread-start failure must not leak the already-created child or pipe."""
+    """A local descriptor failure must not leak the already-created child or pipe."""
     stream = _ChunkStream([b"output"])
     process = _FakeProcess(stream, survive_terminate=False)
     monkeypatch.setattr(probe.subprocess, "Popen", Mock(return_value=process))
     monkeypatch.setattr(
-        probe.threading,
-        "Thread",
-        lambda **_kwargs: _UnstartableThread(),
+        probe,
+        "_prepare_nonblocking_stdout",
+        lambda _stdout: (_ for _ in ()).throw(
+            RuntimeError("private descriptor failure")
+        ),
     )
 
     result = probe._run_bounded_command(
@@ -849,12 +1012,9 @@ def test_bounded_runner_timeout_terminates_kills_and_reaps_in_order(
         "terminate",
         ("wait", TERMINATE_GRACE_SECONDS),
         "kill",
-        ("wait", None),
+        ("wait", TERMINATE_GRACE_SECONDS),
     ]
     assert stream.closed is True
-    assert stream.reader is not None
-    stream.reader.join(timeout=0.1)
-    assert stream.reader.is_alive() is False
 
 
 def test_bounded_runner_returns_nonzero_without_raw_output_reason(
@@ -896,7 +1056,7 @@ def test_bounded_runner_times_out_if_stdout_closes_before_process_exits(
         "terminate",
         ("wait", TERMINATE_GRACE_SECONDS),
         "kill",
-        ("wait", None),
+        ("wait", TERMINATE_GRACE_SECONDS),
     ]
 
 

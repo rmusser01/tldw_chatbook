@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import stat
 from dataclasses import FrozenInstanceError
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -17,6 +20,11 @@ from tldw_chatbook.Model_Artifacts.machine_memory import (
     ProbeReason,
     SystemMemoryState,
     project_gguf_memory,
+)
+from tldw_chatbook.Model_Artifacts.machine_memory_probe import (
+    CommandResult,
+    MachineProbeSources,
+    observe_machine_memory,
 )
 from tldw_chatbook.UI.Screens.model_memory_presenter import (
     build_candidate_memory_presentation,
@@ -493,6 +501,76 @@ def test_observed_and_partial_vram_are_informational_only() -> None:
     assert partial.evidence_lines[-1] == (
         "VRAM observed: NVIDIA RTX 4090 24.0 GiB · other accelerator evidence incomplete · not used in this rating"
     )
+
+
+def _present_probed_accelerator(
+    *, nvidia_output: bytes | None, include_amd: bool
+) -> tuple[str, ...]:
+    trusted_stat = SimpleNamespace(
+        st_mode=stat.S_IFREG | 0o755,
+        st_uid=0,
+        st_file_attributes=0,
+    )
+    card = Path("/sys/class/drm/card0")
+
+    def lstat_path(_path: Path) -> object:
+        if nvidia_output is None:
+            raise FileNotFoundError
+        return trusted_stat
+
+    def resolve_path(path: Path) -> Path:
+        if path == card / "device":
+            return Path("/sys/devices/pci/card0")
+        return path
+
+    def read_bounded(path: Path, _limit: int) -> bytes:
+        return b"0x1002\n" if path.name == "vendor" else b"8589934592\n"
+
+    snapshot = observe_machine_memory(
+        sources=MachineProbeSources(
+            platform_name=lambda: "linux",
+            architecture=lambda: "x86_64",
+            virtual_memory=lambda: SimpleNamespace(
+                total=32 * GIB,
+                available=20 * GIB,
+            ),
+            lstat_path=lstat_path,
+            resolve_path=resolve_path,
+            read_bounded=read_bounded,
+            drm_cards=lambda: (card,) if include_amd else (),
+            run_command=lambda *_args: CommandResult(0, nvidia_output or b"", None),
+        )
+    )
+    return build_machine_memory_presentation(snapshot).accelerator_detail_lines
+
+
+@pytest.mark.parametrize(
+    ("nvidia_output", "include_amd", "expected"),
+    [
+        (None, True, "AMD DRM-reported VRAM 1 8.0 GiB"),
+        (
+            b"0, NVIDIA RTX 4090, 24576\n",
+            False,
+            "NVIDIA RTX 4090 24.0 GiB",
+        ),
+        (b"0, RTX 4090, 24576\n", False, "NVIDIA RTX 4090 24.0 GiB"),
+    ],
+    ids=["amd-vendor-label", "nvidia-vendor-label", "vendorless-label"],
+)
+def test_probe_to_presenter_emits_exactly_one_vendor_prefix(
+    nvidia_output: bytes | None,
+    include_amd: bool,
+    expected: str,
+) -> None:
+    """Probe-owned labels must not duplicate or omit the normalized vendor token."""
+    detail_lines = _present_probed_accelerator(
+        nvidia_output=nvidia_output,
+        include_amd=include_amd,
+    )
+
+    assert detail_lines == (expected,)
+    assert "AMD AMD" not in detail_lines[0]
+    assert "NVIDIA NVIDIA" not in detail_lines[0]
 
 
 def test_overflow_accelerators_stay_bounded_behind_details_toggle() -> None:

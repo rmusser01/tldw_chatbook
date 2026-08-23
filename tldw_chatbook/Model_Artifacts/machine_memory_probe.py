@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import os
 import platform
-import queue
 import stat
 import subprocess
-import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -43,6 +41,8 @@ COMMAND_TIMEOUT_SECONDS = 2.0
 TERMINATE_GRACE_SECONDS = 0.25
 MAX_COMMAND_OUTPUT_BYTES = 64 * 1024
 MAX_SYSFS_READ_BYTES = 64
+_PIPE_POLL_INTERVAL_SECONDS = 0.005
+_WINDOWS_BROKEN_PIPE_ERRORS = frozenset({109, 232})
 
 
 @dataclass(frozen=True, slots=True)
@@ -568,52 +568,16 @@ def _run_bounded_command(
         return CommandResult(None, b"", ProbeReason.COMMAND_FAILED)
 
     stdout = process.stdout
-    messages: queue.Queue[tuple[bool, bytes]] = queue.Queue(maxsize=1)
-    cancelled = threading.Event()
-
-    def publish(message: tuple[bool, bytes]) -> bool:
-        while not cancelled.is_set():
-            try:
-                messages.put(message, timeout=0.01)
-                return True
-            except queue.Full:
-                continue
-        return False
-
-    def read_stdout() -> None:
-        try:
-            while not cancelled.is_set():
-                chunk = stdout.read(min(8192, output_limit + 1))
-                if not publish((True, chunk)) or not chunk:
-                    return
-        except Exception:
-            publish((False, b""))
-
-    reader = threading.Thread(
-        target=read_stdout,
-        name="machine-memory-probe-reader",
-        daemon=False,
-    )
     try:
-        reader.start()
+        stdout_fd = _prepare_nonblocking_stdout(stdout)
     except Exception:
-        cancelled.set()
         _terminate_and_reap(process)
-        try:
-            stdout.close()
-        except Exception:
-            pass
+        _close_command_stdout(stdout)
         return CommandResult(None, b"", ProbeReason.COMMAND_FAILED)
 
     def abort(reason: ProbeReason) -> CommandResult:
-        _finish_command_reader(
-            process,
-            stdout,
-            cancelled,
-            messages,
-            reader,
-            terminate_process=True,
-        )
+        _terminate_and_reap(process)
+        _close_command_stdout(stdout)
         return CommandResult(None, b"", reason)
 
     output = bytearray()
@@ -623,58 +587,100 @@ def _run_bounded_command(
         if remaining <= 0:
             return abort(ProbeReason.COMMAND_TIMEOUT)
         try:
-            succeeded, chunk = messages.get(timeout=remaining)
-        except queue.Empty:
-            return abort(ProbeReason.COMMAND_TIMEOUT)
-        if not succeeded:
+            read_limit = min(8192, output_limit - len(output) + 1)
+            chunk, reached_eof = _read_command_stdout_nowait(stdout_fd, read_limit)
+        except Exception:
             return abort(ProbeReason.COMMAND_FAILED)
-        if not chunk:
+        if chunk:
+            if len(output) + len(chunk) > output_limit:
+                return abort(ProbeReason.OUTPUT_TOO_LARGE)
+            output.extend(chunk)
+            continue
+        try:
+            return_code = process.poll()
+        except Exception:
+            return abort(ProbeReason.COMMAND_FAILED)
+        if return_code is not None:
             break
-        if len(output) + len(chunk) > output_limit:
-            return abort(ProbeReason.OUTPUT_TOO_LARGE)
-        output.extend(chunk)
-    remaining = deadline - time.monotonic()
-    if remaining <= 0:
-        return abort(ProbeReason.COMMAND_TIMEOUT)
-    try:
-        return_code = process.wait(timeout=remaining)
-    except subprocess.TimeoutExpired:
-        return abort(ProbeReason.COMMAND_TIMEOUT)
-    except Exception:
-        return abort(ProbeReason.COMMAND_FAILED)
-    _finish_command_reader(
-        process,
-        stdout,
-        cancelled,
-        messages,
-        reader,
-        terminate_process=False,
-    )
+        if reached_eof:
+            try:
+                return_code = process.wait(timeout=remaining)
+            except subprocess.TimeoutExpired:
+                return abort(ProbeReason.COMMAND_TIMEOUT)
+            except Exception:
+                return abort(ProbeReason.COMMAND_FAILED)
+            break
+        time.sleep(min(_PIPE_POLL_INTERVAL_SECONDS, remaining))
+
+    _close_command_stdout(stdout)
     return CommandResult(return_code, bytes(output), None)
 
 
-def _finish_command_reader(
-    process: subprocess.Popen[bytes],
-    stdout: object,
-    cancelled: threading.Event,
-    messages: queue.Queue[tuple[bool, bytes]],
-    reader: threading.Thread,
-    *,
-    terminate_process: bool,
-) -> None:
-    cancelled.set()
-    if terminate_process:
-        _terminate_and_reap(process)
+def _prepare_nonblocking_stdout(stdout: object) -> int:
+    """Return a descriptor that the collector can poll without blocking."""
+
+    descriptor = stdout.fileno()  # type: ignore[attr-defined]
+    if type(descriptor) is not int or descriptor < 0:
+        raise ValueError("stdout descriptor is invalid")
+    if os.name != "nt":
+        os.set_blocking(descriptor, False)
+    return descriptor
+
+
+def _read_command_stdout_nowait(
+    descriptor: int, maximum_bytes: int
+) -> tuple[bytes, bool]:
+    """Read only bytes known to be ready, returning whether the pipe reached EOF."""
+
+    if maximum_bytes <= 0:
+        return b"", False
+    if os.name == "nt":
+        available, reached_eof = _windows_pipe_status(descriptor)
+        if reached_eof or available == 0:
+            return b"", reached_eof
+        maximum_bytes = min(maximum_bytes, available)
+    try:
+        chunk = os.read(descriptor, maximum_bytes)
+    except BlockingIOError:
+        return b"", False
+    except InterruptedError:
+        return b"", False
+    return chunk, chunk == b""
+
+
+def _windows_pipe_status(descriptor: int) -> tuple[int, bool]:
+    """Return available Windows pipe bytes without issuing a blocking read."""
+
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    available = wintypes.DWORD()
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    peek_named_pipe = kernel32.PeekNamedPipe
+    peek_named_pipe.argtypes = (
+        wintypes.HANDLE,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        ctypes.POINTER(wintypes.DWORD),
+        wintypes.LPVOID,
+    )
+    peek_named_pipe.restype = wintypes.BOOL
+    handle = msvcrt.get_osfhandle(descriptor)
+    if peek_named_pipe(handle, None, 0, None, ctypes.byref(available), None):
+        return int(available.value), False
+    error_code = ctypes.get_last_error()
+    if error_code in _WINDOWS_BROKEN_PIPE_ERRORS:
+        return 0, True
+    raise OSError(error_code, "PeekNamedPipe failed")
+
+
+def _close_command_stdout(stdout: object) -> None:
     try:
         stdout.close()  # type: ignore[attr-defined]
     except Exception:
         pass
-    while True:
-        try:
-            messages.get_nowait()
-        except queue.Empty:
-            break
-    reader.join()
 
 
 def _terminate_and_reap(process: subprocess.Popen[bytes]) -> None:
@@ -694,6 +700,8 @@ def _terminate_and_reap(process: subprocess.Popen[bytes]) -> None:
     except Exception:
         pass
     try:
-        process.wait()
+        process.wait(timeout=TERMINATE_GRACE_SECONDS)
+    except subprocess.TimeoutExpired:
+        pass
     except Exception:
         pass
