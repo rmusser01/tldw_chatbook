@@ -31,17 +31,30 @@ on:
 # buys nothing here, because the job is ~90 s: just run it. If you are tempted
 # to add `paths:` below, you are about to brick merges -- don't.
 
-# One run per workflow per ref: a new push supersedes the previous run instead of
-# queueing another alongside it. Without this, every push to `dev` stacked a full
-# run - 50+ obsolete runs accumulated, all competing for scarce macOS runners.
-# The event name is part of the group so different trigger types (push,
-# pull_request, schedule) never cancel each other, and `main` is never cancelled
-# so its history stays complete. Cancellation is safe for a required check: a
-# merge is gated on the HEAD commit's checks, and the newest run is the one that
-# reports for HEAD.
+# One run per workflow per ref for PUSH events: a new push to `dev` supersedes
+# the previous run instead of queueing another alongside it. Without this, every
+# push to `dev` stacked a full run - 50+ obsolete runs accumulated, all competing
+# for scarce macOS runners. The event name is part of the group so different
+# trigger types never cancel each other, and `main` is never cancelled so its
+# history stays complete.
+#
+# TASK-21250: pull_request runs are deliberately NOT cancelled. The original rule
+# reasoned that cancelling is safe because "the newest run is the one that reports
+# for HEAD" - true, but it assumed the newest run gets to FINISH. For a
+# pull_request event `github.ref` is `refs/pull/N/merge`, and GitHub recreates
+# that merge ref every time the BASE branch moves. On a repo absorbing 23-50
+# merges/day, every open PR's gate was therefore cancelled repeatedly without
+# anyone touching the PR, and because queue time for the shared pool runs
+# 4-59 minutes (vs ~33 s of actual work), the newest run rarely survived long
+# enough to report. Measured over 60 consecutive runs before this change:
+# 45 cancelled / 14 success / 1 failure - a 23% success rate for a REQUIRED
+# check, i.e. merges to `dev` were blocked at random for everyone.
+#
+# The cost of not cancelling is a few redundant ~90 s ubuntu runs on a
+# rapidly-updated PR. That is the cheaper failure mode by a wide margin.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  cancel-in-progress: ${{ github.event_name == 'push' && github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
