@@ -1649,6 +1649,13 @@ quality reviews. Fix only verified findings with focused RED/GREEN evidence.
 
 **Task 5 interim evidence (2026-08-23):**
 
+- A subsequent clean 26-commit rebase advanced the final candidate from
+  `12931e1a30505e5e21644031c3c450c8b839e498` to latest `origin/dev`
+  `589c6ea748f8f3c0559b790169aae41f239e9375`. That upstream security change
+  did not modify `chat_screen.py`: its old/new file SHA-256 remained
+  `2a9670eb019361b7ea59bb69bca7aab7e12d42e9cd0ac8eac289b86265d6f854`.
+  The final-delivery base pin therefore moved to the new revision while all
+  line, method, family membership, span, and digest constants remained exact.
 - A clean 24-commit rebase moved the task from frozen base
   `0f9638cef395b74861ad29937b58023994002a12` to then-latest `origin/dev`
   `12931e1a30505e5e21644031c3c450c8b839e498`; range-diff paired every
