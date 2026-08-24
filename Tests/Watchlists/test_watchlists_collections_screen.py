@@ -10,8 +10,9 @@ from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Input, Static, TextArea
 
-from Tests.UI.test_destination_shells import DestinationHarness, _static_text
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.test_destination_shells import DestinationHarness, _static_text
 from tldw_chatbook.UI.Screens.watchlists_collections_screen import WatchlistsCollectionsScreen
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import (
@@ -93,6 +94,19 @@ class _InspectorActionsApp(App[None]):
 
     def on_view_snapshot_requested(self, message: ViewSnapshotRequested) -> None:
         self.snapshot_requests.append(message)
+
+
+class _PreMountServerReadHarness(ConsolidatedCSSApp):
+    """Mount Watchlists after applying the Server Read deep link."""
+
+    def __init__(self, app_instance) -> None:
+        super().__init__()
+        self.app_instance = app_instance
+
+    async def on_mount(self) -> None:
+        screen = WatchlistsCollectionsScreen(self.app_instance)
+        screen.apply_navigation_context({"section": "items", "backend": "server"})
+        await self.push_screen(screen)
 
 
 @pytest.mark.parametrize("content_kind", ["article", "change"])
@@ -252,6 +266,58 @@ async def test_the_read_tab_is_the_default_section():
         assert screen.active_section == "items"
         assert screen.query_one("#wl-tab-items").has_class("is-active")
         assert screen.query_one("#watchlists-items-pane")
+
+
+@pytest.mark.asyncio
+async def test_pre_mount_server_read_is_query_free_and_enters_recovery(
+    monkeypatch,
+) -> None:
+    """A cold Server Read deep link never starts local Reader navigation."""
+    app = _build_test_app()
+    scope_service = app.watchlist_scope_service
+    local_async_spies = {}
+    for name in ("list_watch_items", "list_items"):
+        spy = AsyncMock(wraps=getattr(scope_service, name))
+        monkeypatch.setattr(scope_service, name, spy)
+        local_async_spies[name] = spy
+
+    bundle = app.watchlist_bundle_service
+    local_sync_spies = {}
+    for name in (
+        "list_watchlists",
+        "list_source_rows",
+        "list_all_source_rows",
+        "list_unassigned_source_rows",
+        "get_watchlist_item_counts",
+        "get_flagged_items_count",
+        "get_unread_items_count_since",
+        "get_source_item_counts",
+    ):
+        spy = Mock(wraps=getattr(bundle, name))
+        monkeypatch.setattr(bundle, name, spy)
+        local_sync_spies[name] = spy
+
+    host = _PreMountServerReadHarness(app)
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.4)
+        await host.workers.wait_for_complete()
+        screen = host.screen_stack[-1]
+
+        assert screen.active_section == "items"
+        assert screen.runtime_backend == "server"
+        assert screen._read_recovery_active is True
+        assert screen.query("#watchlists-read-local-only")
+        assert screen.query("#watchlists-read-recovery-status")
+        assert not screen.query("#watchlists-content-pane")
+        for name, spy in local_async_spies.items():
+            local_calls = [
+                call
+                for call in spy.await_args_list
+                if call.kwargs.get("runtime_backend") == "local"
+            ]
+            assert not local_calls, name
+        for name, spy in local_sync_spies.items():
+            assert spy.call_count == 0, name
 
 
 @pytest.mark.asyncio
@@ -515,7 +581,7 @@ async def test_failed_switch_to_local_retries_the_normal_load_path() -> None:
         assert not screen.query_one(
             "#watchlists-items-pane", ArticleListPane
         ).items
-        assert not screen._tree_watchlists
+        assert screen._tree_watchlists[0]["name"] == "Recovery local watchlist"
         failed_render = host.export_screenshot()
         assert "Recovery local watchlist" not in failed_render
         assert "Recovery local source" not in failed_render
@@ -660,7 +726,7 @@ async def test_same_tab_switch_to_server_replaces_local_reader_without_queries(
 
 
 @pytest.mark.asyncio
-async def test_entering_server_read_clears_local_reader_navigation_without_queries(
+async def test_entering_server_read_hides_local_reader_navigation_without_queries(
     monkeypatch,
 ) -> None:
     """Sources -> Server -> Read cannot retain any local Reader state."""
@@ -711,6 +777,23 @@ async def test_entering_server_read_clears_local_reader_navigation_without_queri
         assert "1" in str(screen.query_one("#wl-tree-node-all", Button).label)
         assert screen.query("#watchlists-content-pane")
         assert screen.query_one("#watchlists-items-pane", ArticleListPane).items
+        screen.query_one(f"#wl-tree-expand-{watchlist['id']}", Button).press()
+        screen.post_message(
+            TreeScopeChanged(
+                TreeScope(kind="watchlist", watchlist_id=watchlist["id"])
+            )
+        )
+        assert await _wait_until(
+            pilot,
+            lambda: bool(
+                screen.query(
+                    f"#wl-tree-node-source-{watchlist['id']}-{source_id}"
+                )
+            ),
+        )
+        await host.workers.wait_for_complete()
+        assert screen._wc_loaded is True
+        assert screen._local_watchlist_count == 1
 
         screen.post_message(ItemsFilterChanged("unread", "local query"))
         await pilot.pause(0.4)
@@ -718,6 +801,9 @@ async def test_entering_server_read_clears_local_reader_navigation_without_queri
         screen._items_page_index = 2
         screen._items_has_next = True
         screen._push_items_pager_state()
+        parked_watchlists = list(screen._tree_watchlists)
+        parked_snapshot = screen._local_watchlist_records
+        parked_snapshot_count = screen._local_watchlist_count
 
         list_items = AsyncMock(wraps=screen._controller.list_items)
         get_item_content = AsyncMock(wraps=screen._controller.get_item_content)
@@ -754,9 +840,12 @@ async def test_entering_server_read_clears_local_reader_navigation_without_queri
         assert pane.selected_item is None
         assert screen._loaded_items == []
         assert screen._selected_content_item is None
-        assert screen._tree_counts == {}
-        assert screen._tree_source_counts == {}
-        assert not screen._tree_watchlists
+        assert screen._tree_watchlists == parked_watchlists
+        assert screen._tree_counts
+        assert screen._tree_source_counts
+        assert screen._local_watchlist_records == parked_snapshot
+        assert screen._local_watchlist_count == parked_snapshot_count
+        assert screen._wc_loaded is True
         assert not screen.query(f"#wl-tree-node-watchlist-{watchlist['id']}")
         assert not screen.query(
             f"#wl-tree-node-source-{watchlist['id']}-{source_id}"
@@ -782,6 +871,57 @@ async def test_entering_server_read_clears_local_reader_navigation_without_queri
         for name, spy in local_spies.items():
             assert spy.call_count == 0, name
         assert screen._items_page_loading is False
+
+        screen.active_section = "sources"
+        assert await _wait_until(
+            pilot, lambda: bool(screen.query("#watchlists-sources-pane"))
+        )
+        await host.workers.wait_for_complete()
+        assert await _wait_until(
+            pilot,
+            lambda: bool(screen.query(f"#wl-tree-node-watchlist-{watchlist['id']}"))
+        )
+        assert await _wait_until(
+            pilot,
+            lambda: bool(
+                screen.query(
+                    f"#wl-tree-node-source-{watchlist['id']}-{source_id}"
+                )
+            ),
+        )
+        assert screen.query("#wc-watchlists-summary")
+
+        watchlist_node = screen.query_one(
+            f"#wl-tree-node-watchlist-{watchlist['id']}", Button
+        )
+        source_node = screen.query_one(
+            f"#wl-tree-node-source-{watchlist['id']}-{source_id}", Button
+        )
+        assert "Cross-tab local watchlist" in str(watchlist_node.label)
+        assert "Local counted feed" in str(source_node.label)
+        assert _static_text(screen.query_one("#wc-watchlists-summary", Static)) == (
+            "Local Watchlists snapshot: Cross-tab local watchlist (1 source)"
+        )
+        assert not screen.query("#wc-loading-state")
+        list_items.assert_not_awaited()
+        get_item_content.assert_not_awaited()
+
+        for spy in local_spies.values():
+            spy.reset_mock()
+        screen.active_section = "items"
+        assert await _wait_until(
+            pilot, lambda: bool(screen.query("#watchlists-read-local-only"))
+        )
+        await host.workers.wait_for_complete()
+
+        recovery_render = host.export_screenshot()
+        assert "Cross-tab local watchlist" not in recovery_render
+        assert "Local counted feed" not in recovery_render
+        assert "Local Watchlists snapshot" not in recovery_render
+        list_items.assert_not_awaited()
+        get_item_content.assert_not_awaited()
+        for name, spy in local_spies.items():
+            assert spy.call_count == 0, name
 
 
 # --- Task 7: scope-driven scoped rows, with real seeded data ---------------

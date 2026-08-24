@@ -1156,13 +1156,20 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # `_apply_layout` performs for anything that genuinely did change.
         self._rendered_section = self.active_section
         self._recompute_effective_layout()
-        self._refresh_local_wc_snapshot()
-        self._refresh_overview_data()
-        self._load_active_section_data()
-        self._load_tree_data()
-        self.set_timer(
-            WC_SNAPSHOT_TIMEOUT_SECONDS, self._apply_snapshot_timeout_if_still_loading
+        server_read = (
+            self.active_section == "items" and self.runtime_backend != "local"
         )
+        if server_read:
+            self._enter_server_read_recovery()
+        else:
+            self._refresh_local_wc_snapshot()
+            self._load_active_section_data()
+            self._load_tree_data()
+            self.set_timer(
+                WC_SNAPSHOT_TIMEOUT_SECONDS,
+                self._apply_snapshot_timeout_if_still_loading,
+            )
+        self._refresh_overview_data()
 
     def on_resize(self, _event: events.Resize) -> None:
         """Re-derive responsive state without changing the preference."""
@@ -1186,6 +1193,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self.active_section = section
         finally:
             self._applying_navigation_context = False
+
+        if not self.is_mounted and section == "items" and requested_backend != "local":
+            # Compose precedes on_mount. Arm recovery now so the cold
+            # workbench factories use their query-free empty models.
+            self._enter_server_read_recovery()
 
         run_id = context.get(WATCHLISTS_NAV_CONTEXT_RUN_ID)
         self._pending_navigation_run_id = (
@@ -2438,7 +2450,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._push_items_pager_state()
 
     def _enter_server_read_recovery(self) -> None:
-        """Clear local Read state before presenting the Server recovery UI."""
+        """Clear item-specific state before presenting Server Read recovery."""
         self._read_recovery_active = True
         self._reset_items_paging_for_context(loading=False)
         self._items_status_filter = "all"
@@ -2447,23 +2459,6 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._selected_content_page_key = None
         self._loaded_items = []
         self._selected_content_item = None
-        self._tree_watchlists = []
-        self._tree_counts = {}
-        self._tree_source_counts = {}
-        self._tree_expanded = frozenset()
-        self._tree_active_tag = None
-        self._breadcrumb_labels = []
-        self.set_reactive(
-            WatchlistsCollectionsScreen.tree_scope, TreeScope(kind="all")
-        )
-        self.set_reactive(
-            WatchlistsCollectionsScreen.selected_scope, TreeScope(kind="all")
-        )
-        self._local_watchlist_records = ()
-        self._local_watchlist_count = 0
-        self._wc_lookup_error = None
-        self._wc_lookup_recovery_state = None
-        self._wc_loaded = False
         try:
             pane = self.query_one("#watchlists-items-pane", ArticleListPane)
         except NoMatches:
@@ -4666,8 +4661,23 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # a stale `True` would wrongly refuse a legitimate `z`/`Z` on the
         # new tab (task-1344 fix wave, Qodo correctness).
         self._focus_in_centre_header = False
+        leaving_read_recovery = (
+            self.active_section != "items" and self._read_recovery_active
+        )
         if self.active_section != "items":
             self._article_focus_active = False
+            if self._read_recovery_active:
+                self._read_recovery_active = False
+                if self.is_mounted and not self._wc_loaded:
+                    # A cold Server Read deliberately skipped these local
+                    # management models. Load them only if the user leaves
+                    # recovery for a management tab.
+                    self._refresh_local_wc_snapshot()
+                    self._load_tree_data()
+                    self.set_timer(
+                        WC_SNAPSHOT_TIMEOUT_SECONDS,
+                        self._apply_snapshot_timeout_if_still_loading,
+                    )
         self._recompute_effective_layout(request_workbench=False)
         if self.active_section == "overview":
             self.selected_entity = None
@@ -4694,7 +4704,13 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # than run here because it swaps `#wl-centre-status`, the same
             # widget `_SURFACE_HEADER` swaps -- see `_SURFACE_SECTION`.
             self._sync_backend_header_bar()
-            self._request_surface_refresh(self._SURFACE_SECTION)
+            surfaces = [self._SURFACE_SECTION]
+            if leaving_read_recovery:
+                # Recovery replaced the live rail with an empty model. The
+                # ordinary section swap deliberately rebuilds only centre
+                # surfaces, so restore the parked navigation explicitly.
+                surfaces.append(self._SURFACE_RAIL)
+            self._request_surface_refresh(*surfaces)
             if not self._applying_navigation_context:
                 self._load_active_section_data()
 
