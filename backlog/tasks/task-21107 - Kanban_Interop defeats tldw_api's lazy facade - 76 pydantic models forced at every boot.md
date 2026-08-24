@@ -53,3 +53,13 @@ pattern already exists — `local_kanban_service.py:336,430,558` do function-loc
 `from ..tldw_api import Kanban...`. This also requires updating the allowlist test. That is a
 larger and riskier change than the original filing implies; treat it as such, and if it does not
 justify ~19 ms for a feature with no UI consumers, close this instead.
+
+## Closure recommendation (2026-08-24, burn-down close-out)
+
+**Recommend closing without work.** ~19 ms warm, not ~44 ms, and the prescribed fix cannot compile: KANBAN_OPERATION_SPECS stores the schema classes as runtime values, two siblings read that dict at module scope, and Tests/Utils/test_tldw_api_schema_deferral.py already allowlists the import as "a genuine module-scope need, not an oversight". A real fix means a lazy spec table plus editing that allowlist test -- a larger, riskier change than ~19 ms for a feature with no UI consumers justifies.
+
+Left open rather than closed unilaterally: retiring a filed finding is the owner's call. The
+evidence above is what a re-verification pass measured against dev before dispatch; if it is
+accepted, close this as "retired on evidence" rather than "won't fix", because the mechanism was
+real and only the cost or the prescribed fix was wrong.
+

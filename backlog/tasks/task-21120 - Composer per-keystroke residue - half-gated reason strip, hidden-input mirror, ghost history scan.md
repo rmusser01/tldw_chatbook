@@ -59,3 +59,13 @@ Blink interval is 0.53 s, not 0.5, and the timer is paused unless the composer i
 arms a full layout pass ~2x/second while merely focused and idle. Filed separately as TASK-21692.
 
 **Action**: rewrite this task down to the ghost-scan cap, or close it and keep only 21692.
+
+## Closure recommendation (2026-08-24, burn-down close-out)
+
+**Recommend closing without work.** Mis-stated on all three legs. Leg 1's gate claim is false (there is no ARIA announcement) and the ungated part folds into a layout pass already armed on the same keystroke. Leg 2's prescribed "skip unchanged text" can never fire while typing. Only the ghost-scan cap survives, and the real cost found in this file -- the blink tick arming a full reflow ~2x/second -- already shipped as TASK-21692.
+
+Left open rather than closed unilaterally: retiring a filed finding is the owner's call. The
+evidence above is what a re-verification pass measured against dev before dispatch; if it is
+accepted, close this as "retired on evidence" rather than "won't fix", because the mechanism was
+real and only the cost or the prescribed fix was wrong.
+

@@ -56,3 +56,13 @@ managed membership under a deleted ancestor.
 
 **Recommendation**: cancel, or downgrade to a "clean this up when someone is next in this file"
 note. This is a correctness-of-shape improvement, not a performance fix.
+
+## Closure recommendation (2026-08-24, burn-down close-out)
+
+**Recommend closing without work.** Effectively free for the default user. The recursion walks UPWARD, so it is bounded by managed folders x tree depth, not by the folder tree; with no sync owners the anchor is empty and served by a partial index. It is already off the event loop via asyncio.to_thread. The rewrite is a query INVERSION, not a filter, and equivalence hinges on a quirk (deleted parents enter the result set but cannot recurse) that a naive downward rewrite would not reproduce.
+
+Left open rather than closed unilaterally: retiring a filed finding is the owner's call. The
+evidence above is what a re-verification pass measured against dev before dispatch; if it is
+accepted, close this as "retired on evidence" rather than "won't fix", because the mechanism was
+real and only the cost or the prescribed fix was wrong.
+
