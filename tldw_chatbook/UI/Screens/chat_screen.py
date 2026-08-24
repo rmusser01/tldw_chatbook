@@ -332,6 +332,7 @@ from ...Chat.console_paste_attach import (
 from ...Chat.console_rail_state import (
     CONSOLE_INSPECTOR_AUTO_OPEN_MAX_COLUMNS,
     CONSOLE_INSPECTOR_AUTO_OPEN_MIN_COLUMNS,
+    CONSOLE_INSPECTOR_MORE_DISCLOSURE_ID,
     CONSOLE_RAIL_LEFT_OPEN_EXPLICIT_KEY,
     CONSOLE_RAIL_PREFERENCE_DISCLOSURE_IDS,
     CONSOLE_RAIL_SECTION_IDS,
@@ -410,6 +411,7 @@ from ...Widgets.Console import (
     ConsoleRailHandle,
     ConsoleRetrievalScopeRow,
     ConsoleRunInspector,
+    ConsoleSendAuthoritySummary,
     ConsoleSessionSurface,
     ConsoleSettingsModal,
     ConsoleSettingsSummary,
@@ -2487,6 +2489,18 @@ class ChatScreen(BaseAppScreen):
         event.stop()
         self._set_console_rail_preference(right_open=True)
 
+    @on(ConsoleRunInspector.MoreToggled)
+    def on_console_inspector_more_toggled(
+        self, event: ConsoleRunInspector.MoreToggled
+    ) -> None:
+        """Persist a deliberate Inspector More disclosure change."""
+
+        event.stop()
+        self._set_console_rail_preference(
+            section_updates={CONSOLE_INSPECTOR_MORE_DISCLOSURE_ID: event.open},
+            notify_on_failure=False,
+        )
+
     @on(Button.Pressed, "#console-inspector-dictionaries-attach")
     def on_console_inspector_dictionaries_attach(self, event: Button.Pressed) -> None:
         """Open the attach-dictionary picker for the active Console conversation."""
@@ -3155,6 +3169,24 @@ class ChatScreen(BaseAppScreen):
                 *shortcut_groups,
                 ("Inspector", (("n / p", "next / previous section"),)),
             )
+        focused = self.app.focused
+        if isinstance(focused, Widget):
+            authority_summary = next(
+                (
+                    candidate
+                    for candidate in focused.ancestors_with_self
+                    if isinstance(candidate, ConsoleSendAuthoritySummary)
+                ),
+                None,
+            )
+            if authority_summary is not None:
+                shortcut_groups = (
+                    *shortcut_groups,
+                    (
+                        "What happens if I send now?",
+                        authority_summary.contextual_help_rows(),
+                    ),
+                )
         if isinstance(self.app.focused, ConsoleWorkspaceTree):
             try:
                 tray = self.query_one(
@@ -10752,6 +10784,14 @@ class ChatScreen(BaseAppScreen):
             pass
         else:
             left_rail.sync_sections(rail_state)
+        try:
+            inspector = self.query_one(
+                "#console-run-inspector-state", ConsoleRunInspector
+            )
+        except (NoMatches, QueryError):
+            pass
+        else:
+            inspector.set_more_open(rail_state.inspector_more_open)
         for selector, label, badge in (
             (
                 "#console-context-rail-handle",
@@ -11254,6 +11294,7 @@ class ChatScreen(BaseAppScreen):
                 else False
             ),
             ephemeral=self._console_active_session_is_ephemeral(),
+            staged_source_count=console_staged_source_count(pending_launch),
         )
         setup_blocker_copy = self._console_provider_blocker_copy()
         if setup_blocker_copy:
@@ -13373,6 +13414,7 @@ class ChatScreen(BaseAppScreen):
                             else self._build_console_live_work_source_readiness_card()
                         )
                     ),
+                    inspector_more_open=rail_state.inspector_more_open,
                 )
                 right_rail.can_focus = True
                 right_rail.styles.width = "4fr"
@@ -17285,9 +17327,17 @@ class ChatScreen(BaseAppScreen):
             )
         except QueryError:
             inspector = None
+        try:
+            authority_summary = self.query_one(
+                "#console-send-authority-summary", ConsoleSendAuthoritySummary
+            )
+        except QueryError:
+            authority_summary = None
         inspector_state = self._build_console_inspector_state(
             self._pending_console_launch_context
         )
+        if authority_summary is not None:
+            authority_summary.sync_state(inspector_state)
         if inspector is not None:
             # The child owns all group-body and rail invalidation.
             inspector.sync_state(inspector_state)

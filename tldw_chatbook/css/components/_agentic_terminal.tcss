@@ -3452,6 +3452,53 @@ with stray left-edge border fragments), and padding 0 1 so the full
     scrollbar-color-active: $ds-action-focus;
 }
 
+#console-send-authority-summary {
+    width: 100%;
+    min-width: 0;
+    height: 6;
+    min-height: 6;
+    max-height: 6;
+    padding: 0 1;
+    overflow: hidden;
+}
+
+#console-send-authority-summary:focus {
+    outline: heavy $ds-action-focus;
+}
+
+#console-send-authority-heading {
+    text-style: bold;
+    color: $ds-text-primary;
+}
+
+.console-send-authority-row {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+#console-inspector-more,
+#console-inspector-more-body {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 0;
+}
+
+#console-inspector-more-toggle {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    margin: 1 0 0 0;
+    padding: 0 1;
+    text-align: left;
+}
+
 #console-main-column {
     width: 13fr;
     min-width: 60;

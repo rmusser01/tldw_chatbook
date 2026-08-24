@@ -55,6 +55,10 @@ from tldw_chatbook.Widgets.Console.console_conversation_inspector import (
 )
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.Widgets.Console.console_run_inspector import ConsoleRunInspector
+from tldw_chatbook.Widgets.Console.console_send_authority_summary import (
+    ConsoleSendAuthoritySummary,
+)
+from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel
 
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
@@ -121,6 +125,7 @@ async def _wait_for_right_rail_condition(
 
 _EXPECTED_BOUNDARY_ANCHORS = (
     ("console-project-instruction-status", "Project Instructions"),
+    ("console-send-authority-summary", "Next send authority"),
     ("console-staged-context-tray", "Sources"),
     ("console-retrieval-scope-row", "Scope"),
     ("console-changed-files-section", "Changed Files"),
@@ -195,14 +200,13 @@ def _mounted_boundary_ids(rail) -> tuple[str, ...]:
     """Read semantic boundaries from the mounted production hierarchy."""
     body = rail.query_one("#console-inspector-rail-body")
     direct_children = tuple(child.id for child in body.children)
-    assert direct_children[:5] == (
-        "console-project-instruction-status",
+    assert direct_children[:4] == (
         "console-staged-context-tray",
         "console-retrieval-scope-row",
         "console-changed-files-section",
         "console-run-inspector",
     )
-    assert len(direct_children) == 6
+    assert len(direct_children) == 5
     assert direct_children[-1] == "console-live-work-section"
 
     run_wrapper = rail.query_one("#console-run-inspector")
@@ -230,7 +234,9 @@ def _mounted_boundary_ids(rail) -> tuple[str, ...]:
         child_id for child_id in expected_inspector_children if child_id in boundary_ids
     )
     return (
-        *direct_children[:4],
+        "console-project-instruction-status",
+        "console-send-authority-summary",
+        *direct_children[:3],
         *inspector_boundaries,
         run_wrapper_children[-1],
         next(card_id for card_id in _LIVE_WORK_IDS if list(rail.query(f"#{card_id}"))),
@@ -242,6 +248,7 @@ def test_inspector_boundary_inventory_has_approved_order_and_specialized_owners(
         "Live Work",
     ) == (
         "Project Instructions",
+        "Next send authority",
         "Sources",
         "Scope",
         "Changed Files",
@@ -260,10 +267,11 @@ def test_inspector_boundary_inventory_has_approved_order_and_specialized_owners(
         "Session Settings",
         "Live Work",
     )
-    assert dict(_EXPECTED_BOUNDARY_ANCHORS[:5]) | {
+    assert dict(_EXPECTED_BOUNDARY_ANCHORS[:6]) | {
         "console-settings-summary": "Session Settings",
     } | {live_id: "Live Work" for live_id in _LIVE_WORK_IDS} == {
         "console-project-instruction-status": "Project Instructions",
+        "console-send-authority-summary": "Next send authority",
         "console-staged-context-tray": "Sources",
         "console-retrieval-scope-row": "Scope",
         "console-changed-files-section": "Changed Files",
@@ -835,17 +843,125 @@ async def test_inspector_header_is_one_full_width_collapse_button() -> None:
 
 
 @pytest.mark.asyncio
-async def test_inspector_root_reserves_outer_hint_as_third_child() -> None:
-    async with make_console_pilot() as pilot:
+@pytest.mark.parametrize("size", [(140, 45), (235, 52)])
+async def test_inspector_root_pins_project_and_authority_above_outer_body(
+    size,
+) -> None:
+    async with make_console_pilot(size=size) as pilot:
         await pilot.click("#console-inspector-rail-open")
         await pilot.pause()
 
         rail = pilot.app.screen.query_one("#console-right-rail")
         assert tuple(child.id for child in rail.children) == (
-            None,
+            "console-inspector-rail-header",
+            "console-project-instruction-status",
+            "console-send-authority-summary",
             "console-inspector-rail-body",
             "console-inspector-outer-scroll-hint",
         )
+        summary = rail.query_one("#console-send-authority-summary")
+        body = rail.query_one("#console-inspector-rail-body")
+        assert summary.parent is rail
+        assert summary not in tuple(body.query("*"))
+        assert summary.region.height == 6
+        assert rail.content_region.contains_region(summary.region)
+
+        region_before = summary.region
+        body.scroll_end(animate=False)
+        await pilot.pause()
+        assert summary.region == region_before
+
+
+@pytest.mark.asyncio
+async def test_control_sync_shares_one_inspector_snapshot_with_both_consumers(
+    monkeypatch,
+) -> None:
+    async with make_console_pilot() as pilot:
+        await pilot.click("#console-inspector-rail-open")
+        await pilot.pause()
+
+        screen = pilot.app.screen
+        summary = screen.query_one(
+            "#console-send-authority-summary", ConsoleSendAuthoritySummary
+        )
+        inspector = screen.query_one(
+            "#console-run-inspector-state", ConsoleRunInspector
+        )
+        rail_state = screen._current_console_rail_state()
+        snapshot = screen._build_console_inspector_state(
+            screen._pending_console_launch_context
+        )
+        builds: list[object] = []
+        summary_states: list[object] = []
+        inspector_states: list[object] = []
+        monkeypatch.setattr(
+            screen,
+            "_build_console_inspector_state",
+            lambda _launch: builds.append(snapshot) or snapshot,
+        )
+        monkeypatch.setattr(summary, "sync_state", summary_states.append)
+        monkeypatch.setattr(inspector, "sync_state", inspector_states.append)
+
+        screen._sync_console_control_bar(rail_state)
+
+        assert builds == [snapshot]
+        assert summary_states == [snapshot]
+        assert inspector_states == [snapshot]
+        assert summary_states[0] is inspector_states[0]
+
+
+@pytest.mark.asyncio
+async def test_authority_focus_f1_discloses_all_five_complete_facts() -> None:
+    async with make_console_pilot() as pilot:
+        await pilot.click("#console-inspector-rail-open")
+        await pilot.pause()
+
+        screen = pilot.app.screen
+        summary = screen.query_one(
+            "#console-send-authority-summary", ConsoleSendAuthoritySummary
+        )
+        expected = summary.contextual_help_rows()
+        summary.focus()
+        await pilot.pause()
+        await screen.action_show_workbench_help()
+        await pilot.pause()
+
+        panel = pilot.app.screen
+        assert isinstance(panel, WorkbenchHelpPanel)
+        rendered = panel.state.render_text()
+        assert "What happens if I send now?" in rendered
+        for label, value in expected:
+            assert f"{label}: {value}" in rendered
+
+
+@pytest.mark.asyncio
+async def test_more_toggle_persists_without_programmatic_repost() -> None:
+    async with make_console_pilot() as pilot:
+        await pilot.click("#console-inspector-rail-open")
+        await pilot.pause()
+
+        screen = pilot.app.screen
+        body = screen.query_one("#console-inspector-more-body")
+        assert body.display is False
+        toggle = screen.query_one("#console-inspector-more-toggle", Button)
+        toggle.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause(0.2)
+        assert body.display is True
+        stored = next(
+            iter(screen.app_instance.app_config["console"]["rail_state"].values())
+        )
+        assert stored["inspector_more_open"] is True
+
+        rail_state = replace(
+            screen._current_console_rail_state(), inspector_more_open=False
+        )
+        screen._sync_console_rail_visibility(rail_state)
+        await pilot.pause()
+
+        assert body.display is False
+        assert stored["inspector_more_open"] is True
 
 
 @pytest.mark.asyncio

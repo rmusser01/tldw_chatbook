@@ -48,6 +48,7 @@ from .console_project_instructions import (
 from .console_rename_session_modal import ConsoleRenameSessionModal
 from .console_retrieval_scope_row import ConsoleRetrievalScopeRow
 from .console_run_inspector import ConsoleRunInspector
+from .console_send_authority_summary import ConsoleSendAuthoritySummary
 from .console_save_as_modal import ConsoleSaveAsModal
 from .console_session_surface import ConsoleSessionSurface
 from .console_settings_modal import ConsoleSettingsModal
@@ -105,6 +106,7 @@ __all__ = [
     "ConsoleRenameSessionModal",
     "ConsoleRetrievalScopeRow",
     "ConsoleRunInspector",
+    "ConsoleSendAuthoritySummary",
     "ConsoleSaveAsModal",
     "ConsoleSessionSurface",
     "ConsoleSettingsModal",
