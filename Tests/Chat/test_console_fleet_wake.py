@@ -50,6 +50,7 @@ from Tests.Chat.test_console_agent_bridge import (
     _run,
 )
 from Tests.Chat.test_fleet_attention import _AppStub
+from Tests.console_provider_doubles import provider_resolution
 from tldw_chatbook.Chat import console_fleet_wake
 from tldw_chatbook.Chat.console_agent_bridge import (
     ConsoleAgentBridge,
@@ -122,13 +123,7 @@ class _RecordingWakeGateway:
         self.on_stream: object | None = None
 
     async def resolve_for_send(self, selection):
-        return SimpleNamespace(
-            ready=self.ready,
-            provider="llama_cpp",
-            model="test-model",
-            base_url=None,
-            visible_copy="" if self.ready else "WIP: provider warming up",
-        )
+        return provider_resolution(ready=self.ready)
 
     async def stream_chat(self, resolution, messages, **kwargs):
         self.payloads.append([dict(m) for m in messages])

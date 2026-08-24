@@ -18,6 +18,7 @@ import pytest
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from Tests.console_provider_doubles import provider_resolution
 
 
 def _store_with_answer():
@@ -100,11 +101,7 @@ class _ScriptedGateway:
         self._chunks = list(chunks)
 
     async def resolve_for_send(self, selection):
-        class _R:  # noqa: D401 - tiny stub
-            ready = True
-            visible_copy = ""
-
-        return _R()
+        return provider_resolution()
 
     async def stream_chat(self, resolution, messages, **kwargs):
         for chunk in self._chunks:
@@ -210,11 +207,7 @@ async def test_regenerate_stop_mid_stream_leaves_anchor_untouched_new_sibling_st
             self.release = asyncio.Event()
 
         async def resolve_for_send(self, selection):
-            class _R:  # noqa: D401 - tiny stub
-                ready = True
-                visible_copy = ""
-
-            return _R()
+            return provider_resolution()
 
         async def stream_chat(self, resolution, messages, **kwargs):
             self.started.set()
@@ -268,13 +261,7 @@ class _UsageEmittingScriptedGateway(_ScriptedGateway):
     attribution)."""
 
     async def resolve_for_send(self, selection):
-        class _R:  # noqa: D401 - tiny stub
-            ready = True
-            visible_copy = ""
-            provider = "llama_cpp"
-            model = "test-model"
-
-        return _R()
+        return provider_resolution()
 
     async def stream_chat(self, resolution, messages, **kwargs):
         signals = kwargs.get("signals")

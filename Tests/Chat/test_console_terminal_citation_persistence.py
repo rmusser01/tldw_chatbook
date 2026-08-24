@@ -54,6 +54,7 @@ from tldw_chatbook.Chat.console_chat_models import (
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from Tests.console_provider_doubles import provider_resolution
 
 
 _MISSING = object()
@@ -219,13 +220,7 @@ class _RealDirectGateway:
         self.chunks = chunks
 
     async def resolve_for_send(self, _selection: object) -> SimpleNamespace:
-        return SimpleNamespace(
-            ready=True,
-            visible_copy="",
-            provider="llama_cpp",
-            model="test-model",
-            max_tokens=128,
-        )
+        return provider_resolution(max_tokens=128)
 
     async def stream_chat(
         self,
