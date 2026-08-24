@@ -43,6 +43,13 @@ conflict handling, and a durable receipt.
    `Local` cannot imply that processing stays on-device.
 7. Keep canonical content in existing owners. Use workspace memberships and
    presentation adapters rather than a second universal artifact database.
+8. Make both side panes explicitly collapsible with fixed-width ASCII arrow
+   controls. Responsive collapse is an effective layout state and must not
+   overwrite the user's stored pane preferences.
+9. Research ingestion creates or reuses a canonical item in the selected
+   authority's general Library/Media catalog, then records a stable workspace
+   association. A human-readable workspace tag may be projected for search,
+   but is never the ownership, eligibility, or authority boundary.
 
 ## Goals
 
@@ -197,18 +204,42 @@ At 150 columns or wider:
 Sources and Studio have explicit collapse controls. Chat is the dominant pane
 and may not resolve below 58 columns. Sources targets at least 32 columns and
 Studio at least 42 columns. Borders and gutters consume the remaining budget.
+When both side panes are collapsed, Chat takes the available width.
+
+The visible controls use these exact four-character labels:
+
+| Pane state | Sources, left edge | Studio, right edge |
+| --- | --- | --- |
+| Expanded: collapse outward | `<---` | `--->` |
+| Collapsed: reveal inward | `--->` | `<---` |
+
+Each arrow has an accessible label and tooltip: `Collapse Sources pane`,
+`Expand Sources pane`, `Collapse Studio pane`, or `Expand Studio pane`. The
+arrow is the visible compact affordance; it is not the accessible name.
+
+The controller keeps the user's preferred open state separate from the
+width-driven effective state, following ADR-043. Responsive reflow may force a
+pane closed but must not rewrite its preference. When width returns, the
+stored preference is restored. Collapsing a pane while focus is inside it moves
+focus to its reveal arrow. Expanding a pane moves focus to the revealed pane's
+root/heading. Hidden panes and controls do not remain in the focus cycle.
 
 ### Medium layout
 
-From 100 through 149 columns, render Chat plus one companion pane. The mode
+From 100 through 149 columns, render Chat plus at most one companion pane. The mode
 strip remains visible:
 
 ```text
 [Sources (12)] [Chat] [Studio (2)]
 ```
 
-Sources is the default companion until the user explicitly opens Studio. The
-preferred companion is persistent and is restored when width permits.
+On first use, Sources is the default companion. Thereafter, use the preferred
+companion when its stored open preference is true, otherwise the other open
+side pane, otherwise Chat alone. The preferred companion is persistent and is
+restored when width permits. An explicit reveal of one companion visibly
+replaces the other companion without rewriting the hidden pane's stored
+wide-layout preference; a toggle must never become a silent no-op because of
+the responsive override.
 
 ### Narrow layout
 
@@ -216,6 +247,11 @@ Below 100 columns, mount exactly one pane at a time. Do not leave hidden panes
 in the focus cycle. The mode strip shows counts and blocked state in text.
 At 60 columns the active pane's essential action, status, and recovery must
 remain painted and reachable.
+
+The one-pane mode strip is the narrow-layout equivalent of the side-arrow
+controls. Separate reveal rails are not painted when only one pane can exist;
+selecting Sources, Chat, or Studio visibly reveals that pane and preserves the
+stored wide-layout preferences.
 
 ### Short-height layout
 
@@ -357,6 +393,39 @@ The UI builds `WorkspaceOutputRef` values from canonical records and memberships
 It does not persist a parallel output row merely to make a unified list.
 Versioning, deletion, and retry follow the canonical owner.
 
+Research source ingestion always has two ordered, independently reportable
+outcomes:
+
+1. create or reuse a canonical item in the selected authority's general
+   Library/Media catalog; then
+2. associate that canonical identity with the captured workspace.
+
+In Local mode, the canonical item is a local Library record and the
+authoritative association is `WorkspaceMembership` with role `source`. In
+Server mode, the canonical item is server Media and the authoritative
+association is the server workspace-source row. Server ingestion does not
+create a local Library item, and Local ingestion does not create a server Media
+item. Crossing that boundary still requires the explicit Copy workflow.
+
+The association target is a durable, qualified identity captured at submission
+(`data source`, server/profile and principal when applicable, and workspace
+ID), because ingestion may complete after navigation or restart. Completion
+must not attach to whichever workspace happens to be visible later. Duplicate
+detection reuses the canonical Library/Media item and idempotently attaches it;
+it does not create another payload merely to obtain workspace membership.
+
+A derived keyword such as `workspace:<slug>` may be written as best-effort
+search/display metadata, alongside stable workspace-ID/origin metadata where
+the owner supports it. Such projections may drift when names change and are
+never used to authorize, qualify, or delete an association. They must not
+contain secrets or private path data.
+
+Removing a source from a workspace removes its association and selected RAG
+scope only. `Delete from Library/Media` is a separate, owner-routed destructive
+action; if an item belongs to multiple workspaces, it identifies the affected
+workspaces before deletion. A successful Library/Media write is never rolled
+back merely because association or indexing failed.
+
 For the primary five, the implementation plan must include a field-level
 mapping for owner IDs, versions, provenance, generation configuration,
 reopen target, and deletion behavior before code is written.
@@ -369,7 +438,8 @@ workbench-specific client state:
 
 - source folders and membership within those folders;
 - source annotations;
-- per-qualified-workspace pane preference and collapsed state;
+- per-qualified-workspace preferred side-pane state and preferred companion;
+  width-driven effective collapse is not persisted;
 - recent and pinned server workspaces;
 - banner and split/pane presentation preferences;
 - durable Deep Research launch/return context for server workspaces.
@@ -488,6 +558,22 @@ The modal changes vocabulary and behavior by data source:
 Both authorities support batch URLs, progress, filtering, pagination, and
 batch attachment where their adapters report capability. Local operations
 reuse Library ingestion; Server operations use server APIs.
+
+Submission records the qualified workspace-association intent durably before
+the background ingest begins. The completion coordinator resolves the
+canonical item ID, creates the authority-appropriate association, records the
+desired selected-source state when that type is supported, and exposes it to
+retrieval only when readiness permits. The operation does not reach Completed
+until its catalog and association stages are terminal; replay resumes from the
+stored canonical item ID and idempotent association key. Its receipt reports
+Library/Media, workspace association, and index/readiness outcomes separately
+and offers retry from the failed stage.
+
+Choosing an existing Local Library or server My Media item uses the same
+association stage but reuses the selected canonical identity immediately.
+Import/Upload, URL, and Paste run the catalog-ingest stage first. All intake
+paths therefore converge on the same membership, receipt, removal, and
+readiness contract.
 
 ### Source list
 
@@ -762,6 +848,10 @@ authority. The footer advertises only working actions in the current context.
 | Archived workspace | Read-only status with Restore where permitted |
 | Source missing | Identify exact source and allow remove/relink |
 | Parsing/indexing failed | Status detail, retry/re-add, and unaffected-source continuation |
+| Existing canonical item matched | Reuse it and idempotently attach it; identify the result as Matched/Reused |
+| Library/Media saved, association failed | Keep the canonical item; report `Added to Library/Media, not linked to workspace`; Retry link |
+| Association saved, indexing failed | Keep the attachment with failed readiness; Retry indexing; do not claim grounded-ready |
+| Remove from workspace | Unlink association and selected scope only; do not delete the canonical Library/Media item |
 | Vector runtime unavailable | Explicit FTS-only mode; no Hybrid claim |
 | Provider/model unavailable | Preserve prompt/options; change processing route |
 | Remote inference not approved | Block send; show egress preflight |
@@ -790,6 +880,10 @@ reason and never discard drafts.
 - F6/Shift+F6 cycle visible pane roots. Tab/Shift+Tab stay within the active
   pane's ordinary focus order.
 - Medium/narrow mode buttons are focusable and announce counts and state.
+- Side-pane arrows retain the exact visible ASCII labels while exposing full
+  text names/tooltips; responsive collapse preserves stored preferences.
+- Collapse moves focus to the surviving reveal arrow; expand moves focus into
+  the revealed pane; hidden panes never retain focus.
 - Source reorder, pane resizing/collapse, mind maps, slides, audio, and data
   tables have keyboard and textual alternatives.
 - Async loading, completion, failure, authority changes, and focus relocation
@@ -832,6 +926,13 @@ reason and never discard drafts.
   terminal states.
 - Overlay isolation, bounds, corruption recovery, and private atomic writes.
 - Overlay revision conflicts and multi-process recovery choices.
+- Side-pane arrow/state matrix, explicit-toggle feedback, preferred-versus-
+  effective collapse state, and focus relocation across resize thresholds.
+- Local and Server ingestion create/reuse only their own general Library/Media
+  item and then idempotently record the authority-specific workspace
+  association; no call reaches the other adapter.
+- Duplicate reuse, durable captured association intent, navigation/restart
+  completion, association retry, indexing retry, and unlink-without-delete.
 - Server optimistic-conflict, quota, and interrupted-migration recovery.
 - Deep Research launch identity and idempotent bundle import.
 
@@ -855,9 +956,13 @@ reasons, and mode-tab navigation between separate screens.
 
 - Local workspace/source/note/chat/output round trip through real temporary
   SQLite/JSON stores.
+- Local ingest round trip proves the item appears in the general Library and
+  through its `WorkspaceMembership`; association failure preserves the item.
 - Server adapter contract tests for workspace CRUD, source status/preview,
   selection/reorder, notes, artifacts, chat, capabilities, export, sharing, and
   diagnostics.
+- Server ingest round trip proves the item appears in server Media and through
+  its workspace-source row without creating a local Library record.
 - Server unavailable/auth-expired behavior proves no Local calls occur.
 - Local remote-provider preflight proves no request leaves before consent.
 - Primary five outputs reopen through their canonical owners.
@@ -880,8 +985,10 @@ independent Backlog tasks and plans in dependency order:
 1. **Research shell and authority foundation** — destination, two real routes,
    stable shortcuts, header/mode bar, qualified identities, adapters, and
    fail-closed read-only catalogs.
-2. **Sources and Quick Notes** — attach/search/preview/readiness/selection,
-   overlays, Local ingestion, server APIs, and notes CRUD.
+2. **Sources and Quick Notes** — general-Library/Media ingest followed by
+   durable authority-specific association, association retry/unlink,
+   attach/search/preview/readiness/selection, overlays, Local ingestion, server
+   APIs, and notes CRUD.
 3. **Grounded Chat** — local/server conversation persistence, retrieval modes,
    citations, diagnostics, processing-route consent, and message actions.
 4. **Primary Studio outputs** — Summary, Flashcards, Quiz, Report, Compare
@@ -908,6 +1015,11 @@ The design is satisfied when:
 - Every audited server control has a documented classification and owner.
 - Canonical content owners remain authoritative; no universal duplicate output
   store is introduced.
+- Every ingested source appears in the selected authority's general
+  Library/Media catalog and is associated by stable identity with the captured
+  workspace; tags are optional projections, not the relationship.
+- Sources and Studio are independently collapsible with the specified ASCII
+  arrows, deterministic focus, and responsive preference restoration.
 - Device-only overlays are isolated and honestly labeled.
 - Copy is manual, idempotent, resumable, and receipted.
 - Deep Research remains separately owned and returns through explicit import.

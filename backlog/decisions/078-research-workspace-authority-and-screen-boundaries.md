@@ -8,8 +8,9 @@
   contextual workspace quick actions while Settings remains the full manager)
 - **Related:** ADR-005 (Console workspace server-readiness), ADR-027 (Default
   workspace chat grouping), ADR-028 (Settings workspace and folder-root
-  ownership), ADR-029 (local private data), ADR-031 (TUI keybindings), ADR-068
-  (local research engine), ADR-070 (research run durability)
+  ownership), ADR-029 (local private data), ADR-031 (TUI keybindings), ADR-043
+  (explicit rail preferences versus responsive collapse), ADR-068 (local
+  research engine), ADR-070 (research run durability)
 
 ## Context
 
@@ -103,6 +104,21 @@ owner, that storage decision requires its own ADR or an explicit amendment.
 Server mode uses canonical server workspace, source, note, artifact, chat,
 sharing, and operation APIs.
 
+Research ingestion first creates or reuses an item in the selected authority's
+general catalog and then associates its stable identity with the captured
+workspace. Local uses a Library item plus `WorkspaceMembership(role=source)`;
+Server uses a server Media item plus a server workspace-source row. The
+qualified association intent is durable across navigation and restart. It may
+never attach to the other authority or to the workspace visible when a late
+completion happens to arrive.
+
+A name-derived workspace keyword may be projected for search/display parity,
+but it is not the association or authority boundary: names and tags are
+editable and can drift. Removing a workspace association does not delete the
+canonical item. If catalog ingestion succeeds and association or indexing
+fails, the item remains in the general catalog and the failed stage is
+independently retryable.
+
 ### 5. Server folders and annotations are explicit device-only overlays
 
 The server has no canonical Research Workspace folder or annotation APIs.
@@ -161,6 +177,21 @@ The complete audited server namespace remains mapped, but owner links,
 contextual menu actions, capability-gated actions, and planned labels do not
 compete with the core source-to-answer-to-output loop.
 
+### 10. Side-pane collapse follows the shared rail contract
+
+Sources and Studio are independently collapsible. The exact visible labels are
+`<---` to collapse Sources, `--->` to reveal Sources, `--->` to collapse
+Studio, and `<---` to reveal Studio. Full textual accessible names and tooltips
+describe the action.
+
+As in ADR-043, stored user preference is distinct from width-driven effective
+collapse. Responsive layout may force panes closed but does not overwrite the
+preference. Explicit toggles always produce a visible result, focus moves to a
+surviving reveal control on collapse and into the revealed pane on expansion,
+and hidden panes leave the focus cycle. At medium width an explicit reveal
+switches the companion pane without rewriting wide-layout preferences. At
+narrow width the single-pane mode strip is the equivalent reveal mechanism.
+
 ## Alternatives considered
 
 ### Two top-level Research destinations
@@ -204,6 +235,25 @@ second Artifacts system.
 Rejected. No canonical server API supports that claim. Honest device-only
 overlay labeling preserves the useful WebUI behavior without fabricating sync.
 
+### Use a workspace tag as the source relationship
+
+Rejected. Human-readable tags and workspace names are mutable, may not be
+renamed together, and cannot safely carry authority or deletion semantics.
+Stable local membership/server workspace-source identities are authoritative;
+tags are optional projections.
+
+### Attach from an in-memory screen callback after ingestion
+
+Rejected. Library/Media ingestion can outlive the visible screen or app
+session. A durable qualified association target and app-level completion stage
+prevent attachment to a newly visible workspace and support retry.
+
+### Roll back the canonical item when association fails
+
+Rejected. The general Library/Media item is independently useful and may be a
+reused duplicate or belong to other workspaces. Preserve it and retry the
+failed association or indexing stage.
+
 ### Automatically import completed Research bundles
 
 Rejected. It crosses screen and authority boundaries, can duplicate artifacts,
@@ -220,8 +270,13 @@ preserves control and provenance.
 - Processing-route disclosure closes the privacy gap where Local data uses
   cloud inference.
 - Existing stores remain canonical, reducing schema and reconciliation work.
+- Ingested sources remain discoverable in the selected authority's general
+  catalog while stable workspace associations provide eligibility and
+  provenance.
 - Complete server parity remains discoverable without overwhelming the primary
   flow.
+- Side-pane controls share the app's tested preference, responsive-collapse,
+  and focus behavior while using the requested compact ASCII labels.
 - Device-only behavior is useful but cannot be mistaken for server sharing.
 - Deep Research integrates without weakening its durable execution contract.
 
@@ -235,6 +290,9 @@ preserves control and provenance.
 - Output history requires owner-specific resolvers rather than one simple
   generic table.
 - Every asynchronous operation must carry qualified context and fencing.
+- Ingestion receipts/coordinators must distinguish catalog, association, and
+  readiness outcomes, and Local needs an explicit unlink operation that never
+  deletes the Library item.
 - The feature must ship in multiple independently testable tasks; no single PR
   should attempt the whole design.
 
