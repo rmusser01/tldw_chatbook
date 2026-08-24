@@ -7,6 +7,7 @@ from playwright.async_api import async_playwright
 
 async def run_verification():
     print("Starting verification (assuming server is running)...")
+    os.makedirs("output", exist_ok=True)
     
     # Start the server
     print("Starting textual serve on port 8005...")
@@ -62,7 +63,7 @@ async def run_verification():
             # 1. Verify Chat Screen Layout
             print("Verifying Chat Screen...")
             await page.wait_for_selector("#chat-main-content")
-            await page.screenshot(path="verification_chat.png")
+            await page.screenshot(path="output/verification_chat.png")
             
             sidebar = await page.query_selector("#chat-enhanced-sidebar")
             main = await page.query_selector("#chat-main-content")
@@ -98,7 +99,7 @@ async def run_verification():
                     print("Could not find CCP/Conversation tab")
             
             await page.wait_for_timeout(2000)
-            await page.screenshot(path="verification_ccp.png")
+            await page.screenshot(path="output/verification_ccp.png")
             
             # Check for buttons in editor actions
             # We look for buttons with specific text or classes
@@ -118,7 +119,7 @@ async def run_verification():
                 print("Could not find Ingest tab")
                 
             await page.wait_for_timeout(2000)
-            await page.screenshot(path="verification_ingest.png")
+            await page.screenshot(path="output/verification_ingest.png")
             
             # Check if content is visible (not blank)
             # Look for "Select Files" or "Remote" text
@@ -130,7 +131,7 @@ async def run_verification():
 
         except Exception as e:
             print(f"Verification failed: {e}")
-            await page.screenshot(path="verification_error.png")
+            await page.screenshot(path="output/verification_error.png")
         
         finally:
             await browser.close()
