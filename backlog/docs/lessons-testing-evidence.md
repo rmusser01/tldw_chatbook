@@ -7720,3 +7720,107 @@ began discriminating once every writer parked on a barrier inside the version ch
 then the mutant failed 5/5. Before trusting either kind of assertion, **run it against
 a deliberately broken implementation**; one that still passes is measuring the double,
 not the subject.
+## A `_maybe_await(service.call(...))` seam cannot be fixed by wrapping the VALUE — and the layer you were told to fix may not be the layer that blocks (TASK-21125, 2026-08-23)
+
+**What happened.** The finding said the Writing screen "runs all SQLite on the
+event loop" and the fix was "route the controller calls through
+`asyncio.to_thread`". `WritingController` really is where the calls start, and
+every one of them read
+`await self._maybe_await(service.method(...))`. Two things make that shape a
+trap:
+
+- **The value is already computed.** `_maybe_await` receives a *result*, not a
+  callable, so the synchronous work happened before the `await`. Anything you
+  wrap around `_maybe_await` offloads nothing. (Findings 21126 and 21127 name
+  the same seam in two other services — the pattern is repo-wide.)
+- **The controller's callee was async, so offloading THERE would have moved
+  zero work.** `WritingScopeService`'s ~70 methods are all `async def`; the
+  controller awaits them on the loop and the blocking SQLite call happens one
+  level down, inside the scope service. A controller-level `to_thread` would
+  have passed a thread-assert against a *synchronous* test fake and still left
+  the shipped app opening 180 connections on the loop.
+
+The fix that actually worked was to wrap the *backend object* at the scope
+service's single `_service_for_mode` dispatch point with a proxy whose
+`__getattr__` returns `asyncio.to_thread(bound_method, ...)` for non-coroutine
+callables (async backends pass straight through). One edit covered ~70 call
+sites, every `_maybe_await` kept working unchanged, and `scope.local_service`
+kept its identity — which a packaging test asserts.
+
+**What to do.**
+
+- Before writing a `to_thread`, follow the call one layer further and ask *which
+  frame is actually synchronous*. An `async def` wrapper around a blocking call
+  hides the blocking from the caller, not from the loop.
+- Prove it with a connection/statement counter that records
+  `threading.current_thread().name`, driven through the REAL object graph
+  (controller → scope service → real `LocalWritingService` on a tmp file), not
+  through the fake the UI tests use. Before: 180 opens, all on `MainThread`.
+  After: 0 opens and every statement on `asyncio_0`.
+- When a seam takes a value, change it to take the callable
+  (`_call(method, *args)`), or wrap the object. Do not wrap the seam.
+
+**Adjacent finding worth knowing (now TASK-21295).** `WritingController` calls
+**seven** methods — `get_project_structure`, `autosave_scene`, `search_project`,
+`assign_chapter`, `move_scene`, `reorder_items`,
+`restore_version_to_working_state` — that exist on **none** of
+`WritingScopeService`, `LocalWritingService` or `ServerWritingService`, none of
+which defines `__getattr__`. The first is on the live, **unguarded** click path
+(`Writing_Window._handle_project_selected` → `load_project_structure`, neither
+with a try/except), so an `AttributeError` escapes a Textual handler and the
+outline — the screen's whole purpose — cannot be loaded in the shipped app. It
+is invisible because `Tests/UI/test_writing_screen.py` drives everything through
+`FakeWritingScopeService`, which implements all seven.
+
+I first found six of these and left them in this footnote. That was two
+mistakes. **A green mounted-app test proves the controller talks to *a* service
+correctly; it does not prove that service is the one the app wires** — so when a
+perf task makes you read a screen's real object graph, diff the caller's
+expected API against the wired backend's actual API, in both directions. And a
+user-facing dead path belongs in a task file, not a lessons footnote: the
+footnote does not get triaged.
+
+## Moving work off the loop removes the serialization the loop was silently providing (TASK-21125 review, 2026-08-23)
+
+**What happened.** The held-connection + `to_thread` change for the Writing
+service was measured, mutation-tested and green — and it introduced a
+near-certain silent lost update. `_update_row` reads the row and checks
+`expected_version` in one committed transaction, then UPDATEs in the next. That
+check-then-write split is **pre-existing and was harmless**: every scope call ran
+inline on the event loop, so two writes could not interleave. Dispatching the
+backend on the default thread pool made the window real — a reviewer's A/B
+through the identical async graph measured **0/60 lost updates on base, 59/60
+after**. Both writers were told they succeeded, `version` advanced once, one
+writer's content vanished, and nothing downstream noticed.
+
+Two more defects came from the same "make it concurrent" step, both in
+scaffolding rather than the hot path: `close()` was called synchronously from an
+async `on_unmount`, freezing the loop for the whole 5 s settle timeout (a 50 ms
+ticker fired **zero** times) and then starving the very operation it waited for,
+which surfaced as `Task exception was never retrieved`. And a dead-thread reaper
+for the connection map never fired (recycled OS thread ids meant new threads took
+the reuse branch) while its liveness test — absence from `threading.enumerate()`
+— could not see a `_thread.start_new_thread` worker, so when it did fire it could
+close a **live** connection.
+
+**What to do.**
+
+- Before offloading anything, ask what the single-threaded loop was **implicitly
+  guaranteeing**. Ordering is the usual answer. Any check-then-act split in the
+  code you are about to parallelise is now a race, whether or not you wrote it.
+- The cheap durable fix is often a **single-thread executor**, not a lock or a
+  merged transaction: it restores the exact ordering the loop gave you and keeps
+  the whole latency win, because the point was getting off the loop, not going
+  wide. (Merging check+write into one transaction here would have needed
+  `BEGIN IMMEDIATE` too — with `isolation_level=None` and a deferred BEGIN the
+  reviewer measured `OperationalError: database is locked`, because SQLite's busy
+  handler does not retry `BUSY_SNAPSHOT`.)
+- Make the race deterministic in the test or it will not hold. A plain
+  `gather` of 8 same-version writers passed 3/3 runs against a deliberately
+  broken 8-worker pool; parking every writer on a `threading.Barrier` **inside
+  the version check** made the mutant fail every time with `assert 8 == 1`.
+- A blocking `close()` called from async teardown needs `await
+  asyncio.to_thread(...)`, and a settle timeout must **leave a busy thread's
+  connection open** rather than closing it anyway — closing it converts a slow
+  shutdown into `ProgrammingError: Cannot operate on a closed database` inside
+  live work, which is the exact defect the settle wait existed to prevent.

@@ -8,9 +8,12 @@ import uuid
 import json
 import hashlib
 import re
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
+
+from loguru import logger
 
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 
@@ -18,6 +21,19 @@ from .writing_normalizers import normalize_writing_record, normalize_writing_str
 
 
 _UNSET = object()
+
+# How long close() waits for operations still running on other threads, and how
+# long a new operation waits out an in-flight close. Bounded so a wedged
+# operation degrades to a warning instead of hanging application shutdown.
+_LIFECYCLE_SETTLE_TIMEOUT = 5.0
+
+# Held connections are keyed by thread id and released by close(). There is no
+# dead-thread reaper: the scope service dispatches every backend call onto ONE
+# executor thread (see writing_scope_service._backend_executor), so the map
+# holds one entry for all UI-driven work. A reaper was tried and removed in
+# review -- "dead" via threading.enumerate() cannot see a
+# _thread.start_new_thread worker, so it could close a LIVE connection, and
+# recycled OS thread ids meant its own trigger never fired.
 
 _ENTITY_TABLES = {
     "project": ("writing_projects", "project"),
@@ -51,6 +67,7 @@ class LocalWritingService:
 
     def __init__(self, db_path: str | Path):
         self.db_path = Path(db_path)
+        self._is_memory = str(self.db_path) == ":memory:"
         self._memory_conn: sqlite3.Connection | None = None
         # TASK-21105: file-backed schema creation is deferred to first use.
         # Construction resolves the path only -- no file create, WAL setup,
@@ -58,10 +75,26 @@ class LocalWritingService:
         # itself is still captured eagerly (test harnesses patch
         # get_writing_db_path only around app construction). ``:memory:``
         # stays eager: it costs no disk I/O and its single cached connection
-        # must stay bound to the constructing thread, exactly as before.
+        # is created up front, exactly as before.
         self._schema_ready = False
         self._schema_lock = threading.Lock()
-        if str(self.db_path) == ":memory:":
+        # TASK-21125: one held connection per thread, keyed by thread id so
+        # close() can reach connections it does not own. A ``threading.local``
+        # cannot be cleared from another thread, which is what shutdown needs.
+        self._connections: dict[int, sqlite3.Connection] = {}
+        # Lifecycle gate: operations register here and close() waits for them
+        # to settle before it touches any connection.
+        self._lifecycle = threading.Condition()
+        self._active_operations: dict[int, int] = {}
+        self._closing = False
+        # Re-entrancy: a nested _transaction() joins the transaction its caller
+        # already opened instead of issuing a second BEGIN.
+        self._tx_state = threading.local()
+        # ``:memory:`` shares one connection across threads, so its
+        # transactions must be serialised; file-backed threads each hold
+        # their own connection and never contend here.
+        self._memory_tx_lock = threading.RLock()
+        if self._is_memory:
             self._init_schema()
             self._schema_ready = True
 
@@ -82,8 +115,49 @@ class LocalWritingService:
             self._schema_ready = True
 
     def _connect(self) -> sqlite3.Connection:
+        """Return this thread's held connection, opening it on first use.
+
+        TASK-21125: the service used to open (and GC-leak) a fresh connection
+        per operation -- ~9 opens for a single outline click, each paying the
+        private seam's artifact verifications. Callers now share one connection
+        per thread for the life of the service.
+        """
         self._ensure_schema()
-        return self._open_connection()
+        if self._is_memory:
+            # close() drops the connection AND clears _schema_ready, so the
+            # _ensure_schema() above has already rebuilt both. The fallback is
+            # defensive only.
+            conn = self._memory_conn
+            if conn is None:
+                conn = self._open_connection()
+            return conn
+
+        ident = threading.get_ident()
+        with self._lifecycle:
+            held = self._connections.get(ident)
+            if held is not None:
+                return held
+
+        opened = self._open_connection()
+        superseded: sqlite3.Connection | None = None
+        with self._lifecycle:
+            existing = self._connections.get(ident)
+            if existing is not None:
+                superseded = opened
+                opened = existing
+            else:
+                self._connections[ident] = opened
+        if superseded is not None:
+            self._close_quietly(superseded)
+        return opened
+
+    def _discard_connection(self, conn: sqlite3.Connection) -> None:
+        """Detach a connection this thread can no longer use, and close it."""
+        ident = threading.get_ident()
+        with self._lifecycle:
+            if self._connections.get(ident) is conn:
+                self._connections.pop(ident, None)
+        self._close_quietly(conn)
 
     def _open_connection(self) -> sqlite3.Connection:
         """Open a raw connection without the first-use schema ensure.
@@ -91,12 +165,20 @@ class LocalWritingService:
         ``_init_schema`` must use this directly: it runs inside
         ``_ensure_schema``'s lock, and going through ``_connect`` there
         would deadlock on the non-reentrant lock.
+
+        ``check_same_thread=False`` because held connections are handed to
+        whichever worker thread ``asyncio.to_thread`` picked, and
+        ``isolation_level=None`` because ``_transaction`` issues explicit
+        BEGIN/COMMIT rather than relying on sqlite3's implicit transactions
+        (the sanctioned template; exemplar ``DB/Library_Ingest_Jobs_DB.py``).
         """
-        if str(self.db_path) == ":memory:":
+        if self._is_memory:
             if self._memory_conn is None:
                 self._memory_conn = connect_private_sqlite(
                     "writing.local",
                     self.db_path,
+                    check_same_thread=False,
+                    isolation_level=None,
                 )
                 self._memory_conn.row_factory = sqlite3.Row
                 # synchronous is harmless (and a no-op performance-wise) on an
@@ -104,22 +186,206 @@ class LocalWritingService:
                 # branch below (task-15465).
                 self._memory_conn.execute("PRAGMA synchronous = NORMAL")
             return self._memory_conn
-        conn = connect_private_sqlite("writing.local", self.db_path)
+        conn = connect_private_sqlite(
+            "writing.local",
+            self.db_path,
+            check_same_thread=False,
+            isolation_level=None,
+        )
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode = WAL")
         # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
         # lose the last commit, acceptable for this local writing-suite
-        # store) and avoids an fsync per commit. This DB opens a fresh
-        # connection per operation, so synchronous must be re-applied on
-        # every open, not just the first (task-15465).
+        # store) and avoids an fsync per commit (task-15465).
         conn.execute("PRAGMA synchronous = NORMAL")
         return conn
 
+    @contextmanager
+    def _transaction(self) -> Iterator[sqlite3.Connection]:
+        """Run one explicit transaction on this thread's held connection.
+
+        Replaces the old ``with self._connect() as conn:`` form. sqlite3's
+        connection context manager is a *transaction* manager, not a closer, so
+        that form both leaked the connection and depended on implicit
+        transaction control; this issues BEGIN/COMMIT/ROLLBACK itself.
+
+        A rollback that fails is swallowed (type name only) so it can never
+        mask the exception that caused it.
+        """
+        state = self._tx_state
+        if getattr(state, "depth", 0):
+            # Nested use joins the open transaction: a second BEGIN on the same
+            # connection is an error, and splitting the commit would break the
+            # caller's atomicity.
+            yield state.conn
+            return
+
+        self._begin_operation()
+        try:
+            serialise = self._memory_tx_lock if self._is_memory else None
+            if serialise is not None:
+                serialise.acquire()
+            try:
+                conn = self._begin()
+                state.depth = 1
+                state.conn = conn
+                try:
+                    yield conn
+                    conn.execute("COMMIT")
+                except BaseException:
+                    self._rollback_quietly(conn)
+                    raise
+                finally:
+                    state.depth = 0
+                    state.conn = None
+            finally:
+                if serialise is not None:
+                    serialise.release()
+        finally:
+            self._end_operation()
+
+    def _begin(self) -> sqlite3.Connection:
+        """Open a transaction on this thread's connection, healing it if needed.
+
+        Two states can outlive an operation and would otherwise poison the held
+        connection for the rest of the process:
+
+        - the connection was closed by ``close()`` between operations -- the
+          store re-arms, so the stale handle is dropped and a fresh one opened;
+        - a transaction was left open because a COMMIT *and* its ROLLBACK both
+          failed -- rolling back here clears it instead of failing every later
+          operation on this thread with "within a transaction".
+
+        Both heal once and then retry; a second failure propagates.
+        """
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN")
+            return conn
+        except sqlite3.ProgrammingError:
+            self._discard_connection(conn)
+            conn = self._connect()
+        except sqlite3.OperationalError as exc:
+            if "within a transaction" not in str(exc):
+                raise
+            logger.debug(
+                "Local writing store found a transaction left open; clearing it"
+            )
+            self._rollback_quietly(conn)
+        conn.execute("BEGIN")
+        return conn
+
+    def _begin_operation(self) -> None:
+        """Admit one operation, waiting out an in-flight close()."""
+        ident = threading.get_ident()
+        with self._lifecycle:
+            if self._closing and not self._lifecycle.wait_for(
+                lambda: not self._closing, timeout=_LIFECYCLE_SETTLE_TIMEOUT
+            ):
+                logger.warning(
+                    "Local writing store close() did not settle in "
+                    f"{_LIFECYCLE_SETTLE_TIMEOUT}s; proceeding with the operation"
+                )
+            self._active_operations[ident] = self._active_operations.get(ident, 0) + 1
+
+    def _end_operation(self) -> None:
+        ident = threading.get_ident()
+        with self._lifecycle:
+            remaining = self._active_operations.get(ident, 0) - 1
+            if remaining > 0:
+                self._active_operations[ident] = remaining
+            else:
+                self._active_operations.pop(ident, None)
+            self._lifecycle.notify_all()
+
+    @staticmethod
+    def _rollback_quietly(conn: sqlite3.Connection) -> None:
+        try:
+            conn.execute("ROLLBACK")
+        except Exception as exc:
+            # Type name only: rollback failures must never mask (or leak the
+            # message of) the error that triggered them.
+            logger.debug(f"Local writing store rollback failed: {type(exc).__name__}")
+
+    @staticmethod
+    def _close_quietly(conn: sqlite3.Connection) -> None:
+        try:
+            conn.close()
+        except Exception as exc:
+            logger.debug(
+                f"Local writing store connection close failed: {type(exc).__name__}"
+            )
+
     def close(self) -> None:
-        """Close the persistent in-memory connection, when present."""
-        if self._memory_conn is not None:
-            self._memory_conn.close()
-            self._memory_conn = None
+        """Close every held connection once in-flight operations have settled.
+
+        TASK-21125: shutdown must not close a connection out from under an
+        autosave running on a worker thread, so this waits for operations owned
+        by other threads before it touches anything. The store re-arms: a later
+        operation transparently reopens.
+
+        If the wait expires, the still-busy threads KEEP their connections
+        (review fix: closing them anyway produced ``ProgrammingError: Cannot
+        operate on a closed database`` inside the wedged operation, surfacing as
+        an unretrieved-task traceback). Those connections are released when the
+        operation finishes and the process exits; committed data is already
+        durable under WAL and an open transaction rolls back on exit.
+
+        Blocking: this waits up to ``_LIFECYCLE_SETTLE_TIMEOUT``. Callers on the
+        event loop must run it through ``asyncio.to_thread`` -- see
+        ``TldwCli._close_local_writing_service``.
+        """
+        ident = threading.get_ident()
+        with self._lifecycle:
+            if self._closing:
+                # Another thread is already closing; let it finish.
+                self._lifecycle.wait_for(
+                    lambda: not self._closing, timeout=_LIFECYCLE_SETTLE_TIMEOUT
+                )
+                return
+            self._closing = True
+
+        try:
+            with self._lifecycle:
+                settled = self._lifecycle.wait_for(
+                    lambda: (
+                        not any(owner != ident for owner in self._active_operations)
+                    ),
+                    timeout=_LIFECYCLE_SETTLE_TIMEOUT,
+                )
+                busy = {owner for owner in self._active_operations if owner != ident}
+                connections = [
+                    conn
+                    for owner, conn in list(self._connections.items())
+                    if owner not in busy
+                ]
+                for owner in list(self._connections):
+                    if owner not in busy:
+                        self._connections.pop(owner, None)
+                # The shared in-memory connection can only be released when no
+                # other thread is mid-transaction on it.
+                memory_conn = None
+                if not busy:
+                    memory_conn = self._memory_conn
+                    self._memory_conn = None
+                    if self._is_memory:
+                        # The in-memory database dies with its connection, so
+                        # the re-armed store has to rebuild the schema.
+                        self._schema_ready = False
+            if not settled:
+                logger.warning(
+                    f"Local writing store left {len(busy)} connection(s) open: "
+                    "operations were still in flight after "
+                    f"{_LIFECYCLE_SETTLE_TIMEOUT}s"
+                )
+            for conn in connections:
+                self._close_quietly(conn)
+            if memory_conn is not None:
+                self._close_quietly(memory_conn)
+        finally:
+            with self._lifecycle:
+                self._closing = False
+                self._lifecycle.notify_all()
 
     @staticmethod
     def _now() -> str:
@@ -211,8 +477,12 @@ class LocalWritingService:
         return self._normalize_aux_record(kind, row)
 
     def _init_schema(self) -> None:
-        # Raw connection: runs under _ensure_schema's lock (TASK-21105).
-        with self._open_connection() as conn:
+        # Raw connection: runs under _ensure_schema's lock (TASK-21105), and is
+        # closed here rather than left to the garbage collector (TASK-21125).
+        # ``executescript`` disregards isolation_level and commits as it goes,
+        # exactly as it did under the old ``with conn:`` form.
+        conn = self._open_connection()
+        try:
             conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS writing_projects (
@@ -471,6 +741,9 @@ class LocalWritingService:
                 """
             )
             self._ensure_direct_scene_schema(conn)
+        finally:
+            if conn is not self._memory_conn:
+                self._close_quietly(conn)
 
     def _ensure_direct_scene_schema(self, conn: sqlite3.Connection) -> None:
         columns = {
@@ -521,7 +794,7 @@ class LocalWritingService:
             conn.execute("ALTER TABLE writing_scenes ADD COLUMN manuscript_id TEXT")
 
     def _fetch_one(self, table: str, item_id: str) -> dict[str, Any] | None:
-        with self._connect() as conn:
+        with self._transaction() as conn:
             row = conn.execute(
                 f"SELECT * FROM {table} WHERE id = ? AND deleted = 0",
                 (item_id,),
@@ -547,7 +820,7 @@ class LocalWritingService:
         return row
 
     def _fetch_deleted_one(self, table: str, item_id: str) -> dict[str, Any] | None:
-        with self._connect() as conn:
+        with self._transaction() as conn:
             row = conn.execute(
                 f"SELECT * FROM {table} WHERE id = ? AND deleted = 1",
                 (item_id,),
@@ -586,7 +859,7 @@ class LocalWritingService:
         updates["last_modified"] = self._now()
         updates["version"] = int(row["version"]) + 1
         assignments = ", ".join(f"{key} = ?" for key in updates)
-        with self._connect() as conn:
+        with self._transaction() as conn:
             conn.execute(
                 f"UPDATE {table} SET {assignments} WHERE id = ?",
                 (*updates.values(), item_id),
@@ -598,7 +871,7 @@ class LocalWritingService:
     ) -> bool:
         row = self._require_one(table, item_id, label)
         self._check_version(row, expected_version)
-        with self._connect() as conn:
+        with self._transaction() as conn:
             conn.execute(
                 f"UPDATE {table} SET deleted = 1, last_modified = ?, version = ? WHERE id = ?",
                 (self._now(), int(row["version"]) + 1, item_id),
@@ -689,7 +962,7 @@ class LocalWritingService:
         }
 
     def _next_version_number(self, entity_type: str, entity_id: str) -> int:
-        with self._connect() as conn:
+        with self._transaction() as conn:
             current = conn.execute(
                 """
                 SELECT MAX(version_number) AS max_version
@@ -708,7 +981,7 @@ class LocalWritingService:
         now = self._now()
         version_number = self._next_version_number(entity_type, entity_id)
         payload = self._version_payload_for(entity_type, entity_id)
-        with self._connect() as conn:
+        with self._transaction() as conn:
             conn.execute(
                 """
                 INSERT INTO writing_versions (
@@ -729,7 +1002,7 @@ class LocalWritingService:
 
     def list_versions(self, entity_type: str, entity_id: str) -> list[dict[str, Any]]:
         self._validate_version_entity_type(entity_type)
-        with self._connect() as conn:
+        with self._transaction() as conn:
             rows = conn.execute(
                 """
                 SELECT * FROM writing_versions
@@ -744,7 +1017,7 @@ class LocalWritingService:
         self, entity_type: str, entity_id: str, version_number: int
     ) -> dict[str, Any]:
         self._validate_version_entity_type(entity_type)
-        with self._connect() as conn:
+        with self._transaction() as conn:
             row = conn.execute(
                 """
                 SELECT * FROM writing_versions
@@ -806,7 +1079,7 @@ class LocalWritingService:
             else [(kind, *table_info) for kind, table_info in _ENTITY_TABLES.items()]
         )
         records: list[dict[str, Any]] = []
-        with self._connect() as conn:
+        with self._transaction() as conn:
             for kind, table, _label in entity_items:
                 rows = conn.execute(
                     f"SELECT * FROM {table} WHERE deleted = 1 ORDER BY last_modified DESC"
@@ -826,7 +1099,7 @@ class LocalWritingService:
         table, label = self._validate_entity_type(entity_type)
         row = self._require_deleted_one(table, entity_id, label)
         self._check_version(row, expected_version)
-        with self._connect() as conn:
+        with self._transaction() as conn:
             conn.execute(
                 f"UPDATE {table} SET deleted = 0, last_modified = ?, version = ? WHERE id = ?",
                 (self._now(), int(row["version"]) + 1, entity_id),
@@ -914,7 +1187,7 @@ class LocalWritingService:
     def create_project(self, *, title: str, **kwargs: Any) -> dict[str, Any]:
         project_id = kwargs.get("id") or self._new_id()
         now = self._now()
-        with self._connect() as conn:
+        with self._transaction() as conn:
             conn.execute(
                 """
                 INSERT INTO writing_projects (
@@ -951,7 +1224,7 @@ class LocalWritingService:
             params.append(status)
         sql += " ORDER BY last_modified DESC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
-        with self._connect() as conn:
+        with self._transaction() as conn:
             rows = conn.execute(sql, params).fetchall()
         return [normalize_writing_record("local", "project", dict(row)) for row in rows]
 
@@ -984,7 +1257,7 @@ class LocalWritingService:
         self._require_one("writing_projects", project_id, "project")
         manuscript_id = kwargs.get("id") or self._new_id()
         now = self._now()
-        with self._connect() as conn:
+        with self._transaction() as conn:
             conn.execute(
                 """
                 INSERT INTO writing_manuscripts (
@@ -1008,7 +1281,7 @@ class LocalWritingService:
         )
 
     def list_manuscripts(self, project_id: str) -> list[dict[str, Any]]:
-        with self._connect() as conn:
+        with self._transaction() as conn:
             rows = conn.execute(
                 """
                 SELECT * FROM writing_manuscripts
@@ -1061,7 +1334,7 @@ class LocalWritingService:
             self._require_one("writing_manuscripts", manuscript_id, "manuscript")
         chapter_id = kwargs.get("id") or self._new_id()
         now = self._now()
-        with self._connect() as conn:
+        with self._transaction() as conn:
             conn.execute(
                 """
                 INSERT INTO writing_chapters (
@@ -1096,7 +1369,7 @@ class LocalWritingService:
             sql += " AND manuscript_id = ?"
             params.append(manuscript_id)
         sql += " ORDER BY sort_order ASC, created_at ASC"
-        with self._connect() as conn:
+        with self._transaction() as conn:
             rows = conn.execute(sql, params).fetchall()
         return [normalize_writing_record("local", "chapter", dict(row)) for row in rows]
 
@@ -1153,7 +1426,7 @@ class LocalWritingService:
             project_id = manuscript["project_id"]
         scene_id = kwargs.get("id") or self._new_id()
         now = self._now()
-        with self._connect() as conn:
+        with self._transaction() as conn:
             conn.execute(
                 """
                 INSERT INTO writing_scenes (
@@ -1206,7 +1479,7 @@ class LocalWritingService:
                 ORDER BY sort_order ASC, created_at ASC
                 """
             params = (manuscript_id,)
-        with self._connect() as conn:
+        with self._transaction() as conn:
             rows = conn.execute(sql, params).fetchall()
         return [normalize_writing_record("local", "scene", dict(row)) for row in rows]
 
@@ -1264,7 +1537,7 @@ class LocalWritingService:
         self._require_one("writing_projects", project_id, "project")
         character_id = kwargs.get("id") or self._new_id()
         now = self._now()
-        with self._connect() as conn:
+        with self._transaction() as conn:
             conn.execute(
                 """
                 INSERT INTO writing_characters (
@@ -1312,7 +1585,7 @@ class LocalWritingService:
             sql += " AND cast_group = ?"
             params.append(cast_group)
         sql += " ORDER BY sort_order ASC, created_at ASC"
-        with self._connect() as conn:
+        with self._transaction() as conn:
             rows = conn.execute(sql, params).fetchall()
         return [self._normalize_aux_record("character", dict(row)) for row in rows]
 
@@ -1359,7 +1632,7 @@ class LocalWritingService:
         )
         relationship_id = fields.get("id") or self._new_id()
         now = self._now()
-        with self._connect() as conn:
+        with self._transaction() as conn:
             conn.execute(
                 """
                 INSERT INTO writing_relationships (
@@ -1385,7 +1658,7 @@ class LocalWritingService:
         )
 
     def list_relationships(self, project_id: str) -> list[dict[str, Any]]:
-        with self._connect() as conn:
+        with self._transaction() as conn:
             rows = conn.execute(
                 """
                 SELECT * FROM writing_relationships
@@ -1414,7 +1687,7 @@ class LocalWritingService:
             )
         item_id = kwargs.get("id") or self._new_id()
         now = self._now()
-        with self._connect() as conn:
+        with self._transaction() as conn:
             conn.execute(
                 """
                 INSERT INTO writing_world_info (
@@ -1447,7 +1720,7 @@ class LocalWritingService:
             sql += " AND kind = ?"
             params.append(kind)
         sql += " ORDER BY sort_order ASC, created_at ASC"
-        with self._connect() as conn:
+        with self._transaction() as conn:
             rows = conn.execute(sql, params).fetchall()
         return [self._normalize_aux_record("world_info", dict(row)) for row in rows]
 
@@ -1490,7 +1763,7 @@ class LocalWritingService:
         self._require_one("writing_projects", project_id, "project")
         plot_line_id = kwargs.get("id") or self._new_id()
         now = self._now()
-        with self._connect() as conn:
+        with self._transaction() as conn:
             conn.execute(
                 """
                 INSERT INTO writing_plot_lines (
@@ -1513,7 +1786,7 @@ class LocalWritingService:
         return self.get_plot_line(plot_line_id)
 
     def list_plot_lines(self, project_id: str) -> list[dict[str, Any]]:
-        with self._connect() as conn:
+        with self._transaction() as conn:
             rows = conn.execute(
                 """
                 SELECT * FROM writing_plot_lines
@@ -1571,7 +1844,7 @@ class LocalWritingService:
         self._validate_plot_event_refs(project_id, kwargs)
         plot_event_id = kwargs.get("id") or self._new_id()
         now = self._now()
-        with self._connect() as conn:
+        with self._transaction() as conn:
             conn.execute(
                 """
                 INSERT INTO writing_plot_events (
@@ -1599,7 +1872,7 @@ class LocalWritingService:
         )
 
     def list_plot_events(self, plot_line_id: str) -> list[dict[str, Any]]:
-        with self._connect() as conn:
+        with self._transaction() as conn:
             rows = conn.execute(
                 """
                 SELECT * FROM writing_plot_events
@@ -1657,7 +1930,7 @@ class LocalWritingService:
         self._validate_plot_hole_refs(project_id, kwargs)
         plot_hole_id = kwargs.get("id") or self._new_id()
         now = self._now()
-        with self._connect() as conn:
+        with self._transaction() as conn:
             conn.execute(
                 """
                 INSERT INTO writing_plot_holes (
@@ -1696,7 +1969,7 @@ class LocalWritingService:
             sql += " AND status = ?"
             params.append(status)
         sql += " ORDER BY created_at ASC"
-        with self._connect() as conn:
+        with self._transaction() as conn:
             rows = conn.execute(sql, params).fetchall()
         return [self._normalize_aux_record("plot_hole", dict(row)) for row in rows]
 
@@ -1737,7 +2010,7 @@ class LocalWritingService:
             "writing_characters", character_id, "character", scene["project_id"]
         )
         now = self._now()
-        with self._connect() as conn:
+        with self._transaction() as conn:
             conn.execute(
                 """
                 INSERT INTO writing_scene_characters (
@@ -1752,7 +2025,7 @@ class LocalWritingService:
         return self.list_scene_characters(scene_id)
 
     def list_scene_characters(self, scene_id: str) -> list[dict[str, Any]]:
-        with self._connect() as conn:
+        with self._transaction() as conn:
             rows = conn.execute(
                 """
                 SELECT l.scene_id, l.character_id, l.is_pov, c.name, c.role
@@ -1769,7 +2042,7 @@ class LocalWritingService:
         ]
 
     def unlink_scene_character(self, scene_id: str, character_id: str) -> bool:
-        with self._connect() as conn:
+        with self._transaction() as conn:
             conn.execute(
                 "DELETE FROM writing_scene_characters WHERE scene_id = ? AND character_id = ?",
                 (scene_id, character_id),
@@ -1784,7 +2057,7 @@ class LocalWritingService:
             "writing_world_info", world_info_id, "world info", scene["project_id"]
         )
         now = self._now()
-        with self._connect() as conn:
+        with self._transaction() as conn:
             conn.execute(
                 """
                 INSERT INTO writing_scene_world_info (
@@ -1798,7 +2071,7 @@ class LocalWritingService:
         return self.list_scene_world_info(scene_id)
 
     def list_scene_world_info(self, scene_id: str) -> list[dict[str, Any]]:
-        with self._connect() as conn:
+        with self._transaction() as conn:
             rows = conn.execute(
                 """
                 SELECT l.scene_id, l.world_info_id, w.name, w.kind
@@ -1815,7 +2088,7 @@ class LocalWritingService:
         ]
 
     def unlink_scene_world_info(self, scene_id: str, world_info_id: str) -> bool:
-        with self._connect() as conn:
+        with self._transaction() as conn:
             conn.execute(
                 "DELETE FROM writing_scene_world_info WHERE scene_id = ? AND world_info_id = ?",
                 (scene_id, world_info_id),
@@ -1828,7 +2101,7 @@ class LocalWritingService:
         scene = self._require_one("writing_scenes", scene_id, "scene")
         citation_id = kwargs.get("id") or self._new_id()
         now = self._now()
-        with self._connect() as conn:
+        with self._transaction() as conn:
             conn.execute(
                 """
                 INSERT INTO writing_citations (
@@ -1856,7 +2129,7 @@ class LocalWritingService:
         )
 
     def list_citations(self, scene_id: str) -> list[dict[str, Any]]:
-        with self._connect() as conn:
+        with self._transaction() as conn:
             rows = conn.execute(
                 """
                 SELECT * FROM writing_citations
@@ -1914,7 +2187,7 @@ class LocalWritingService:
     def _project_corpus(self, project_id: str) -> list[dict[str, Any]]:
         self._require_one("writing_projects", project_id, "project")
         corpus: list[dict[str, Any]] = []
-        with self._connect() as conn:
+        with self._transaction() as conn:
             scene_rows = conn.execute(
                 """
                 SELECT id, title, synopsis, content_markdown
@@ -2055,7 +2328,7 @@ class LocalWritingService:
 
     def _analysis_text_for_project(self, project_id: str) -> tuple[str, str, str]:
         self._require_one("writing_projects", project_id, "project")
-        with self._connect() as conn:
+        with self._transaction() as conn:
             rows = conn.execute(
                 """
                 SELECT content_markdown
@@ -2147,7 +2420,7 @@ class LocalWritingService:
         metrics = self._analysis_metrics(text)
         summary, findings = self._analysis_summary(scope_type, analysis_type, metrics)
         source_hash = hashlib.sha256(str(text or "").encode("utf-8")).hexdigest()
-        with self._connect() as conn:
+        with self._transaction() as conn:
             conn.execute(
                 """
                 INSERT INTO writing_analyses (
@@ -2303,7 +2576,7 @@ class LocalWritingService:
         if not include_stale:
             sql += " AND stale = 0"
         sql += " ORDER BY created_at DESC"
-        with self._connect() as conn:
+        with self._transaction() as conn:
             rows = conn.execute(sql, params).fetchall()
         analyses = [self._normalize_aux_record("analysis", dict(row)) for row in rows]
         return {"analyses": analyses, "total": len(analyses)}
