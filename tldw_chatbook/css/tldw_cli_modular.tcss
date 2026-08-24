@@ -23611,6 +23611,14 @@ InstalledView Button:disabled {
     background: $background;
 }
 
+/* Runs adds the shared one-row mode strip above the legacy 100%-high window.
+ * Claim only the remaining screen-content height so its footer stays contained.
+ */
+ResearchScreen #research-window.window {
+    height: 1fr;
+    min-height: 0;
+}
+
 #research-workspace-header {
     width: 100%;
     height: auto;

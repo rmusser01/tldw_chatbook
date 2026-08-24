@@ -134,8 +134,10 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         handles_visible = layout.mode != "narrow"
         for pane in ("sources", "studio"):
             handle = self.query_one(f"#research-{pane}-handle", ResearchPaneHandle)
+            handle.sync_expanded(
+                pane in layout.visible_panes, handle_visible=handles_visible
+            )
             handle.display = handles_visible
-            handle.sync_expanded(pane in layout.visible_panes)
 
         mode_strip = self.query_one("#research-pane-mode-strip", ResearchPaneModeStrip)
         mode_strip.display = layout.mode != "wide"
@@ -159,7 +161,12 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         while current is not None:
             widget_id = getattr(current, "id", None)
             for pane in ("sources", "chat", "studio"):
-                if widget_id == f"research-{pane}-pane":
+                if widget_id in {
+                    f"research-{pane}-pane",
+                    f"research-{pane}-handle",
+                    f"research-{pane}-collapse",
+                    f"research-{pane}-reveal",
+                }:
                     return pane
             current = getattr(current, "parent", None)
         return None

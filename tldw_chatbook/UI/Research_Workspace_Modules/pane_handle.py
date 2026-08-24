@@ -55,10 +55,14 @@ class ResearchPaneHandle(Vertical):
     def on_mount(self) -> None:
         self.sync_expanded(True)
 
-    def sync_expanded(self, expanded: bool) -> None:
+    def sync_expanded(self, expanded: bool, *, handle_visible: bool = True) -> None:
         """Swap visible control state without rebuilding the handle."""
-        self.query_one(f"#research-{self.pane}-collapse", Button).display = expanded
-        self.query_one(f"#research-{self.pane}-reveal", Button).display = not expanded
+        self.query_one(f"#research-{self.pane}-collapse", Button).display = (
+            handle_visible and expanded
+        )
+        self.query_one(f"#research-{self.pane}-reveal", Button).display = (
+            handle_visible and not expanded
+        )
 
     @on(Button.Pressed, ".research-pane-handle-button")
     def toggle_pane(self, event: Button.Pressed) -> None:

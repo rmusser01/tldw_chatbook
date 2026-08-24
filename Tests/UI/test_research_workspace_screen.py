@@ -153,3 +153,52 @@ async def test_narrow_mode_has_one_pane_and_resize_relocates_hidden_focus() -> N
         assert screen.query_one("#research-sources-pane").display
         assert not screen.query_one("#research-chat-pane").display
         assert app.focused is screen.query_one("#research-sources-pane")
+
+
+@pytest.mark.asyncio
+async def test_medium_reflow_moves_focus_from_swapped_handle_to_pane_mode() -> None:
+    app = _WorkspaceHarness()
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause()
+        screen = app.screen_stack[-1]
+        studio_collapse = screen.query_one("#research-studio-collapse", Button)
+        studio_collapse.focus()
+        await pilot.pause()
+        assert app.focused is studio_collapse
+
+        await pilot.resize_terminal(120, 30)
+        await pilot.pause()
+
+        assert not studio_collapse.display
+        assert app.focused is screen.query_one("#research-pane-mode-studio", Button)
+        assert any(
+            "Studio pane is hidden" in notification.message
+            for notification in app._notifications
+        )
+
+
+@pytest.mark.asyncio
+async def test_narrow_reflow_hides_handle_children_and_moves_focus_to_pane_mode() -> (
+    None
+):
+    app = _WorkspaceHarness()
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause()
+        screen = app.screen_stack[-1]
+        sources_collapse = screen.query_one("#research-sources-collapse", Button)
+        sources_collapse.focus()
+        await pilot.pause()
+        assert app.focused is sources_collapse
+
+        await pilot.resize_terminal(84, 24)
+        await pilot.pause()
+
+        handle = screen.query_one("#research-sources-handle")
+        assert not handle.display
+        assert not screen.query_one("#research-sources-collapse", Button).display
+        assert not screen.query_one("#research-sources-reveal", Button).display
+        assert app.focused is screen.query_one("#research-pane-mode-sources", Button)
+        assert any(
+            "Sources pane is hidden" in notification.message
+            for notification in app._notifications
+        )

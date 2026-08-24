@@ -22,6 +22,15 @@ class _ProductionWorkspaceHarness(ConsolidatedCSSApp):
         await self.push_screen(ResearchWorkspaceScreen(SimpleNamespace()))
 
 
+class _ProductionRunsHarness(ConsolidatedCSSApp):
+    CSS_PATH = TldwCli.CSS_PATH
+
+    async def on_mount(self) -> None:
+        from tldw_chatbook.UI.Screens.research_screen import ResearchScreen
+
+        await self.push_screen(ResearchScreen(SimpleNamespace()))
+
+
 def _painted_text(svg: str) -> str:
     """Flatten the screenshot's encoded SVG text nodes for frame assertions."""
     plain = unescape(re.sub(r"<[^>]+>", " ", svg)).replace("\N{NO-BREAK SPACE}", " ")
@@ -63,3 +72,25 @@ async def test_production_hierarchy_paints_contained_workspace_frames(
 
         for pane_id in {"sources", "chat", "studio"} - set(visible_panes):
             assert not screen.query_one(f"#research-{pane_id}-pane").display
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(160, 40), (60, 20)])
+async def test_production_runs_window_stays_inside_remaining_screen_content(
+    size: tuple[int, int],
+) -> None:
+    """The shared mode strip must not make the legacy 100%-high Runs window clip."""
+    app = _ProductionRunsHarness()
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause()
+        screen = app.screen_stack[-1]
+        content = screen.query_one("#screen-content")
+        mode_strip = screen.query_one("#research-mode-strip")
+        window = screen.query_one("#research-window")
+
+        assert window.region.y >= mode_strip.region.bottom
+        assert content.content_region.contains_region(window.region), (
+            size,
+            content.content_region,
+            window.region,
+        )
