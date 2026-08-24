@@ -12,7 +12,9 @@ mock would happily accept under any method name.
 
 from __future__ import annotations
 
+import threading
 from typing import Any
+from types import SimpleNamespace
 
 import pytest
 
@@ -545,6 +547,107 @@ class TestEnhancedRuntimeLifecycle:
         results = await service.semantic_search("anything")
 
         assert results[0]["metadata"] is metadata
+
+
+class TestProfileRuntimeModeReconciliation:
+    @pytest.mark.asyncio
+    async def test_profile_search_uses_acquired_plain_runtime_mode_as_keyword(
+        self, media_db, monkeypatch
+    ):
+        media_id = _seed(
+            media_db,
+            title="Acquired Plain Runtime Item",
+            content="acquiredplainmarker appears in this content",
+        )
+        runtime = _StubEnhancedRAGService([])
+        runtime.config = SimpleNamespace(
+            search=SimpleNamespace(default_search_mode="plain")
+        )
+        monkeypatch.setattr(search_service, "resolve_active_rag_search_mode", lambda: "semantic")
+        monkeypatch.setattr(search_service, "get_shared_rag_service", lambda: runtime)
+        service = SimplifiedRAGSearchService(media_db)
+
+        results = await service.profile_search("acquiredplainmarker")
+
+        assert results[0]["id"] == media_id
+        assert runtime.calls == []
+
+    @pytest.mark.asyncio
+    async def test_profile_search_uses_acquired_hybrid_runtime_mode(
+        self, media_db, monkeypatch
+    ):
+        runtime = _StubEnhancedRAGService([])
+        runtime.config = SimpleNamespace(
+            search=SimpleNamespace(default_search_mode="hybrid")
+        )
+        monkeypatch.setattr(search_service, "resolve_active_rag_search_mode", lambda: "semantic")
+        monkeypatch.setattr(search_service, "get_shared_rag_service", lambda: runtime)
+        service = SimplifiedRAGSearchService(media_db)
+
+        assert await service.profile_search("anything", limit=4) == []
+
+        assert runtime.calls == [
+            ("anything", 4, "hybrid", None, {"source_type": ("media",)})
+        ]
+
+    @pytest.mark.asyncio
+    async def test_falsey_injected_service_uses_requested_profile_mode(
+        self, media_db, monkeypatch
+    ):
+        class _FalseyService(_StubEnhancedRAGService):
+            def __bool__(self):
+                return False
+
+        runtime = _FalseyService([])
+        monkeypatch.setattr(search_service, "resolve_active_rag_search_mode", lambda: "hybrid")
+        monkeypatch.setattr(
+            search_service,
+            "get_shared_rag_service",
+            lambda: pytest.fail("falsey injected service must not resolve shared runtime"),
+        )
+        service = SimplifiedRAGSearchService(media_db)
+        service.rag_service = runtime
+
+        assert await service.profile_search("anything") == []
+
+        assert runtime.calls == [
+            ("anything", 10, "hybrid", None, {"source_type": ("media",)})
+        ]
+
+    @pytest.mark.asyncio
+    async def test_explicit_semantic_search_does_not_reconcile_runtime_mode(
+        self, media_db, monkeypatch
+    ):
+        runtime = _StubEnhancedRAGService([])
+        runtime.config = SimpleNamespace(
+            search=SimpleNamespace(default_search_mode="hybrid")
+        )
+        monkeypatch.setattr(search_service, "get_shared_rag_service", lambda: runtime)
+        service = SimplifiedRAGSearchService(media_db)
+
+        assert await service.semantic_search("anything") == []
+
+        assert runtime.calls == [
+            ("anything", 10, "semantic", None, {"source_type": ("media",)})
+        ]
+
+    @pytest.mark.asyncio
+    async def test_production_getter_runs_off_event_loop_thread(self, media_db, monkeypatch):
+        runtime = _StubEnhancedRAGService([])
+        getter_thread_ids = []
+        event_loop_thread_id = threading.get_ident()
+
+        def _get_shared_runtime():
+            getter_thread_ids.append(threading.get_ident())
+            return runtime
+
+        monkeypatch.setattr(search_service, "get_shared_rag_service", _get_shared_runtime)
+        service = SimplifiedRAGSearchService(media_db)
+
+        assert await service.semantic_search("anything") == []
+
+        assert len(getter_thread_ids) == 1
+        assert getter_thread_ids[0] != event_loop_thread_id
 
 
 class TestKeywordSearchScoreIsHonest:

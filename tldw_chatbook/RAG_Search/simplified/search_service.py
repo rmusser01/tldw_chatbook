@@ -11,7 +11,7 @@ from loguru import logger
 
 from ...DB.Client_Media_DB_v2 import MediaDatabase
 from ..ingestion_indexing import get_shared_rag_service
-from .active_config import resolve_active_rag_search_mode
+from .active_config import normalize_rag_search_mode, resolve_active_rag_search_mode
 
 
 class SimplifiedRAGSearchService:
@@ -34,7 +34,13 @@ class SimplifiedRAGSearchService:
         mode = resolve_active_rag_search_mode()
         if mode == "plain":
             return await self.keyword_search(query, limit, media_types)
-        return await self._enhanced_search(query, limit, media_types, search_type=mode)
+        return await self._enhanced_search(
+            query,
+            limit,
+            media_types,
+            search_type=mode,
+            reconcile_runtime_mode=True,
+        )
 
     async def semantic_search(
         self, query: str, limit: int = 10, media_types: Optional[List[str]] = None
@@ -51,8 +57,10 @@ class SimplifiedRAGSearchService:
         media_types: Optional[List[str]],
         *,
         search_type: str,
+        reconcile_runtime_mode: bool = False,
     ) -> List[Dict[str, Any]]:
         service = self.rag_service
+        injected_service = service is not None
         if service is None:
             try:
                 service = await asyncio.to_thread(get_shared_rag_service)
@@ -61,6 +69,12 @@ class SimplifiedRAGSearchService:
                 service = None
         if service is None:
             return await self.keyword_search(query, limit, media_types)
+        if reconcile_runtime_mode and not injected_service:
+            search_type = normalize_rag_search_mode(
+                service.config.search.default_search_mode
+            )
+            if search_type == "plain":
+                return await self.keyword_search(query, limit, media_types)
         filter_metadata = {"media_type": {"$in": media_types}} if media_types else None
         results = await service.search(
             query=query,
