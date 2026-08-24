@@ -681,9 +681,10 @@ some advanced areas, and occasional migration or recovery work.
 
 Maturity is not uniform across the application:
 
-- **Available now:** the core Textual shell, provider and model setup, Console
-  conversations, local conversation storage, Library workflows, Roleplay,
-  Settings, and the source-install path documented below.
+- **Available now:** the core Textual shell, Console connections to hosted
+  providers or supported local model servers, local conversations and notes,
+  Library workflows, Artifacts and Chatbook workflows, Roleplay, Settings, and
+  the source-install path documented below.
 - **Still evolving:** advanced optional capabilities, ACP/runtime integration,
   some agent and tool workflows, write synchronization, and complete parity
   between local-only use and configured tldw server workflows.
