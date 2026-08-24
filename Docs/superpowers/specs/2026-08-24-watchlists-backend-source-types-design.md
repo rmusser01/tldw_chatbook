@@ -62,8 +62,10 @@ payload vocabulary. The latter remains broader for programmatic and imported
 sources.
 
 `WatchlistScopeService` returns the active backend's form contract. It does not
-own display labels. `SourcesPane` maps the five machine values to the existing
-plain-language labels: RSS, Atom, Web page, Site, and Forum.
+own display labels. `SourcesPane` maps the five form-supported machine values
+to the existing plain-language labels: RSS, Atom, Web page, Site, and Forum.
+The pane also retains the broader existing source-type label registry used by
+the filter, including known legacy labels such as Playlist.
 
 The existing source filter options remain separate and unchanged so users can
 filter existing rows whose types are not creatable by this form.
@@ -95,20 +97,31 @@ gating remains unchanged.
 
 ### Validation and recovery
 
-Backend services remain the persistence/network boundary. Their validators
-reject unsupported payload types before database or API I/O and retain precise
-machine-level errors.
+Before calling the controller or scope service, the screen compares the
+submitted type with the active backend's form contract. A mismatch stops
+dispatch and shows the recovery message below. This form-boundary guard is
+required even for values such as Local `sitemap` that the persistence service
+accepts for programmatic or import callers but this form cannot configure.
 
-If creation fails and the submitted type is outside the active form contract,
-the screen shows an error toast with `markup=False`:
+Backend validators remain defense in depth at the persistence/network boundary.
+They continue validating against each service's complete accepted payload
+vocabulary, rejecting values outside that broader contract before database or
+API I/O and retaining precise machine-level errors.
+
+When the submitted type is outside the active form contract, the screen stops
+creation and shows an error toast with `markup=False`:
 
 - `Local sources don't support 'Playlist'. Choose RSS, Atom, or Web page.`
 - `Server sources don't support '<type>'. Choose RSS, Site, or Forum.`
 
-The screen derives this message from the active form contract and its UI label
-map; backend services do not depend on presentation labels. Other validation or
-unexpected failures retain the existing generic creation-failure copy rather
-than being misclassified as source-type errors.
+The screen derives this message from the active form contract and UI labels;
+backend services do not depend on presentation labels. For the rejected value,
+it first uses the broader existing source-type label registry, so `playlist`
+renders as `Playlist`. If no label is registered, it displays the submitted
+machine value unchanged. Toast markup remains disabled, so arbitrary stale
+values are rendered as text. Other validation or unexpected failures retain
+the existing generic creation-failure copy rather than being misclassified as
+source-type errors.
 
 ## Testing
 
@@ -121,9 +134,14 @@ Focused tests will prove:
 3. Local submissions retain cadence and noise fields.
 4. Server RSS, Site, and Forum submissions omit Local-only fields and route
    successfully through the real scope/service signature.
-5. Unsupported values are rejected before Local DB or Server client dispatch.
-6. The exact backend-specific recovery copy is emitted with markup disabled.
-7. Existing form focus order and supported-width geometry remain valid for both
+5. The form-boundary guard rejects form-unsupported values, including values
+   that the broader Local persistence contract accepts, before controller,
+   Local DB, or Server client dispatch.
+6. Backend validators still reject values outside their complete service
+   contracts before Local DB or Server client dispatch.
+7. Exact backend-specific recovery copy is emitted with markup disabled for a
+   known legacy label and for an arbitrary unregistered machine value.
+8. Existing form focus order and supported-width geometry remain valid for both
    backend variants.
 
 Verification remains scoped to the changed Watchlists service, pane, screen,
