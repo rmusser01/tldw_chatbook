@@ -1,7 +1,7 @@
 # TASK-3500: MCP profile-driven RAG search design
 
 Date: 2026-08-23
-Status: approved; pending written-spec review
+Status: revised after second-pass audit; pending written-spec reapproval
 Task: TASK-3500
 Base: `origin/dev` at `2088b1bb0`
 
@@ -89,7 +89,8 @@ unknown-value handling.
 
 ### Lazy shared runtime
 
-`SimplifiedRAGSearchService.__init__` keeps only the injected `MediaDatabase`.
+`SimplifiedRAGSearchService.__init__` stores the injected `MediaDatabase` and
+sets `rag_service = None` to preserve the adapter's existing attribute shape.
 It no longer reads the obsolete `rag_search.service.profile` section and no
 longer calls `create_rag_service()`.
 
@@ -101,7 +102,7 @@ would be stale after a reset and would duplicate lifecycle ownership.
 
 The existing `rag_service` attribute remains only as a non-production
 injection seam for focused tests. A normally constructed adapter leaves it
-unset/`None`; every real enhanced request consults the shared resolver.
+`None`; every real enhanced request consults the shared resolver.
 
 ### Routing and data flow
 
@@ -129,12 +130,21 @@ loop.
 The shared vector collection can contain media, notes, and conversations.
 Restricting only hybrid's keyword leg would still allow non-media vector rows
 into MCP results. Both semantic and hybrid MCP calls therefore pass the
-engine's existing metadata allowlist for `source_type=media`. The engine
-applies this restriction to the vector and FTS legs and skips unrelated FTS
-sub-legs fail-closed.
+engine's existing metadata allowlist in the exact shape
+`{"source_type": ("media",)}`. The engine applies this restriction to the
+vector and FTS legs and skips unrelated FTS sub-legs fail-closed.
 
-The existing `media_types` request continues to produce the current
-`filter_metadata` constraint, composed with the media source allowlist.
+The existing `media_types` request continues to produce its current
+`filter_metadata={"media_type": {"$in": media_types}}` constraint, composed
+with the media source allowlist. The audit found that the engine currently
+documents and implements equality-only metadata matching, so this already-
+emitted `$in` shape rejects every enhanced row instead of filtering it. Close
+that bug once in `RAGService` with one private value-matching helper used by
+the existing semantic and keyword post-filter sites. The helper preserves
+exact equality and adds only the already-used single-key `$in` membership
+form, failing closed on malformed `$in` values; it does not introduce a
+general query language. This keeps semantic and both hybrid legs consistent
+for single- and multi-value media filters.
 
 Enhanced retrieval treats the configured shared index and its configured
 media database path as authoritative. Explicit keyword mode uses the injected
@@ -153,10 +163,14 @@ they do for Library search, and the adapter preserves the returned metadata.
 One shared-runtime honesty gap must be closed at its owner: if reranking is
 enabled but reranker construction fails, the service currently logs the
 failure and silently continues with `self.reranker = None`. The V2 service
-will retain a sanitized unavailability reason and, when base results exist,
-tag the first result with the existing `reranking_skipped` metadata key. This
-minimal shared fix gives both Library and MCP the same disclosure; the MCP
-adapter must not synthesize its own tag.
+will retain a credential-safe unavailability detail containing only the
+exception type and, when more than one base result exists (the same condition
+under which reranking would run), tag the first result with the existing
+`reranking_skipped` metadata key. The setup state is cleared before
+construction and profile-switch attempts so a
+later successful or disabled profile cannot inherit a stale reranker or
+failure reason. This minimal shared fix gives both Library and MCP the same
+disclosure; the MCP adapter must not synthesize its own tag.
 
 If retrieval itself raises, the exception continues to reach
 `perform_rag_search`, whose existing compatibility error shape is
@@ -175,9 +189,12 @@ That block already carries:
   succeed, without pretending the unchanged base score is a reranker score.
 
 `mcp_inspector._ScoredRow` gains `score_kind` and `vector_score` slots alongside
-`score`. `_extract_scored_rows` derives those values from the complete MCP row
-with the existing `library_rag_result_score_kind()` helper. The inspector then
-continues to call `library_rag_all_matches_weak()`:
+`score`. `_extract_scored_rows` passes the nested `row["metadata"]` mapping
+first and the top-level row second to the existing
+`library_rag_result_score_kind()` helper. The helper intentionally does not
+recurse into nested mappings, so passing only the complete outer row would
+silently default every fused and reranked MCP result to vector similarity.
+The inspector then continues to call `library_rag_all_matches_weak()`:
 
 - vector scores use the existing similarity bands;
 - hybrid rows use their preserved vector leg when present;
@@ -203,15 +220,20 @@ Focused tests will pin:
 - constructor purity: MCP adapter construction does not build a RAG runtime;
 - `plain` routing never resolves the enhanced runtime;
 - `semantic` and `hybrid` routing call the shared service with the correct
-  search type, media allowlist, media-type filter, and limit;
+  search type, exact media allowlist, media-type filter, and limit;
+- the existing `$in` media-type filter matches allowed values in both the
+  semantic and hybrid keyword result processors while exact equality remains
+  unchanged;
 - each enhanced request consults the shared resolver, so a profile reset does
   not leave an MCP-local stale service;
 - `use_semantic=False` remains the explicit keyword override;
 - existing exact request and response shapes remain unchanged;
 - reranking metadata survives the MCP formatter, and constructor/runtime
-  reranker failures return base results with the shared skip disclosure;
+  reranker failures return multi-result base results with the shared skip
+  disclosure without leaving stale setup state after a profile switch;
 - inspector interpretation for vector, hybrid-with-vector, FTS-only hybrid,
-  reranker, and unscored keyword rows;
+  reranker, and unscored keyword rows, with provenance read from nested MCP
+  metadata;
 - focused mutation checks: changing each mode arm, removing the media
   allowlist, or restoring blind vector defaults must make its owning test
   fail.

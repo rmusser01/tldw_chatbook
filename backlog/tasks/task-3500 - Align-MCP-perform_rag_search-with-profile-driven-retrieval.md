@@ -4,7 +4,7 @@ title: Align MCP perform_rag_search with profile-driven retrieval
 status: In Progress
 assignee: []
 created_date: '2026-08-07 20:34'
-updated_date: '2026-08-24 05:06'
+updated_date: '2026-08-24 05:24'
 labels:
   - rag
   - mcp
@@ -31,4 +31,5 @@ This task aligns only MCP `perform_rag_search`. The legacy agent-owner premise i
 - [ ] #3 Reranking-enabled profiles rerank MCP results consistently with Library, and unavailable reranking is skipped with the same disclosure instead of failing the search
 - [ ] #4 Existing MCP `perform_rag_search` callers continue to work without a breaking request or response API change
 - [ ] #5 `mcp_inspector._ScoredRow.score_kind` reflects the actual scoring path; fused and reranker scores are handled explicitly instead of blindly defaulting to `vector_similarity`
+- [ ] #6 Single- and multi-value media_types filters remain effective for profile-driven semantic and hybrid MCP searches
 <!-- AC:END -->
