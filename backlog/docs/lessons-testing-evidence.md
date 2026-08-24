@@ -8241,3 +8241,48 @@ service's method KINDS first (`async def`, `async def ... yield`, plain `def`,
 plain generator), because the predicate is only as complete as the service it was
 written against. A plain sync generator has the mirror-image problem: routing it
 through a thread returns the generator without running any of it.
+---
+
+## An import-weight guard cannot see a cost that merely moved to screen mount (2026-08-24)
+
+**TASK-21731.** `import tldw_chatbook.app` had grown from 636 to 703 of this repo's
+own modules — the whole `Chunking` engine, the `RAG_Search.simplified` tree and
+`Internal_Prompts`, all in front of first paint. One module-scope import caused it
+(`Library/library_local_rag_search_service.py` reading `normalize_rag_search_mode`
+from `simplified.active_config`, a three-element frozenset lookup), and deferring
+that one import took the count straight back to 637 and turned two red guards green:
+`test_app_import_weight.py`'s own-module budget and
+`Tests/Packaging/test_chunking_import_closure.py`, **both of which had been failing
+on dev, so every branch inherited them red and the next regression would have been
+invisible**.
+
+That fix, on its own, bought the user nothing. A time-to-interactive probe (import →
+`TldwCli()` → `run_test()` → `_ui_ready`, censusing `sys.modules` at readiness)
+showed **Chunking 34, simplified 18, Internal_Prompts 10 still resident when the app
+became usable**: `Event_Handlers/Chat_Events/chat_rag_events.py` — imported during
+the *initial Chat screen mount*, on the event loop, via
+`UI/Console_Modules/retrieval.py` — ran a module-scope `try: from
+...RAG_Search.simplified import ...` availability probe. Timed with an import tracer,
+that single edge cost **50 ms** at mount. The eager boot import had merely been
+paying it early. Deferring the probe too (resolve on first ask, PEP 562
+`__getattr__` keeping the public flag readable) took residency at readiness to
+**Chunking 0, simplified 0** and the total from 984 to 928.
+
+**What to do.** `import tldw_chatbook.app` is a *budget*, not a boundary. Before
+claiming a deferral removed work, census `sys.modules` at `_ui_ready`, not after the
+import — and when the count does not drop, trace which module pulled it back in: the
+second importer is usually the default screen's mount chain, which every user walks
+anyway. This is the third recorded instance of the same shape (`__init__` is not the
+boundary, first paint is — TASK-21111; deferring at the CONSUMER can move the cost —
+TASK-21200); the instrument that settles it in one run is an import tracer that
+records the *importing module* and the *duration* of each first import, not a
+count.
+
+**Corollary on scope.** The bisect that filed this named three files as the cause
+(`MCP/server.py`, `MCP/tools.py`, `UI/MCP_Modules/mcp_inspector.py`). None of the
+three was on the boot path: `MCP/server.py` is in the closure but imports no RAG,
+`MCP/tools.py` (which *does* eagerly import `simplified.search_service`) is not in
+the closure at all, and `mcp_inspector.py` imports no RAG. A tracer that records
+`(importer, imported)` edges for the whole boot answered this in one run and disagreed
+with a plausible reading of the diff — run it before believing any reported chain,
+including one that comes with a bisect.

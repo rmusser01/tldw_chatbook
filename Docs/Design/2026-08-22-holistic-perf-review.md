@@ -412,6 +412,7 @@ Findings that were still open when the table above was written, measured the sam
 | Task | Measured before → after |
 |---|---|
 | 21121 changed-files guard per run tick | Per 25 simulated run ticks with a reply streaming, the guard alone: `messages_for_session` **25 → 0**, message copies **10,025 → 0** (400-message session; **1,025 → 0** at 40), guard wall time **32.1 ms → 0.02 ms** (**2.87 ms → 0.01 ms** at 40). Identical with a marker present (10,050 → 0) and the reported scope byte-identical in every arm, before and after. |
+| 21731 — **21102's guarantee had regressed** | PR #2049 (`codex/task-3500-mcp-profile-rag`) put one module-scope `normalize_rag_search_mode` import into `Library/library_local_rag_search_service.py`, and with it the whole `simplified` tree → `chunking_service` → the Chunking engine → `Internal_Prompts`: app-import own-module count **636 → 703**, with `test_app_import_weight.py`'s budget AND `Tests/Packaging/test_chunking_import_closure.py` both red on dev, unnoticed. Restored: **703 → 637**. **The import count was only half of it** — the same modules were also imported during the initial Chat screen mount (`chat_rag_events`'s module-scope availability probe, **50 ms** on the loop), so removing the boot import alone would have left time-to-interactive unchanged. With both deferred, residency at `_ui_ready` goes **Chunking 33 → 0, simplified 19 → 0**, total `tldw_chatbook.*` **984 → 928**. |
 
 ## Corrections found during implementation (added 2026-08-23 at close-out)
 

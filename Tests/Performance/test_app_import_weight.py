@@ -118,6 +118,20 @@ ELIMINATED_MODULES = ("torch", "transformers")
 #   a perf assertion. A genuinely cold run (no .pyc anywhere, cold FS cache)
 #   was measured at 5.6s on the machine above, so a "tightened" time bound
 #   would buy noise-driven flakes, not signal.
+#
+# TASK-21731 re-measured on 2026-08-24, after this budget had caught its
+# first real regression: `tldw_chatbook.*` had reached 703 (the whole
+# Chunking engine + the RAG_Search.simplified tree + Internal_Prompts, all
+# pulled by one module-scope import in
+# `Library/library_local_rag_search_service.py`). Deferring it returned the
+# count to 637 -- the drift signal worked exactly as designed, and the
+# budget was NOT relaxed to accommodate the regression. The 637 is the 630
+# above plus unrelated growth since, plus the one-module stdlib-only
+# `RAG_Search/search_modes.py` that replaced the heavy import. Note what
+# this axis still cannot see: the same modules were also being imported
+# during the initial Chat screen mount, so removing them from the app
+# import alone left time-to-interactive unchanged -- that leg is guarded by
+# `Tests/Packaging/test_rag_boot_import_closure.py`.
 MAX_IMPORT_SECONDS = 8.0
 MAX_MODULE_COUNT = 2200
 MAX_TLDW_MODULE_COUNT = 660

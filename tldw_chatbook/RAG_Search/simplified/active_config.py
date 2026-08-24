@@ -27,10 +27,15 @@ if TYPE_CHECKING:
     from ..config_profiles import ProfileConfig
 from ..ingestion_indexing import reset_shared_rag_service
 from ..reranker import RerankingConfig
+# TASK-21731: the mode vocabulary + its normalizer live in the stdlib-only
+# `RAG_Search/search_modes.py` so `Library/library_local_rag_search_service`
+# (on the app's import path) can read them without executing this module's
+# service tree. Re-imported here so both names stay single-sourced.
+from ..search_modes import RAG_SEARCH_MODES as _RAG_SEARCH_MODES
+from ..search_modes import normalize_rag_search_mode
 
 DEFAULT_PROFILE = "hybrid_basic"
 _IMPORTED_ID = "imported_settings"
-_RAG_SEARCH_MODES = frozenset({"plain", "semantic", "hybrid"})
 
 # Legacy TOML keys (task-495): non-index-determining query-time settings a
 # user may have hand-set under the deprecated [AppRAGSearchConfig.rag.search]
@@ -43,20 +48,6 @@ _RAG_SEARCH_MODES = frozenset({"plain", "semantic", "hybrid"})
 # SP1 adopts the legacy collection under.
 _LEGACY_SEARCH_KEYS = ("default_top_k", "score_threshold", "include_citations")
 _LEGACY_PROCESSOR_KEYS = ("enable_reranking", "reranker_model", "reranker_top_k")
-
-
-def normalize_rag_search_mode(value: object) -> str:
-    """Return a supported exact search mode.
-
-    Args:
-        value: Candidate search mode.
-
-    Returns:
-        ``value`` when it is a supported mode; otherwise ``"semantic"``.
-    """
-    return (
-        value if isinstance(value, str) and value in _RAG_SEARCH_MODES else "semantic"
-    )
 
 
 def _manager():

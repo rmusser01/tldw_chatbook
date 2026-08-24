@@ -107,17 +107,69 @@ class _ScopeExistenceReadError(RuntimeError):
 _CURRENT_ACTIVE_SESSION = object()
 
 
-# Check if RAG dependencies are available
-try:
-    from ...RAG_Search.simplified import (
-        create_rag_service,  # noqa: F401
-        create_config_for_collection,  # noqa: F401
-    )
+# Are the RAG dependencies available? Resolved on FIRST ASK, not at import
+# (TASK-21731).
+#
+# This module is imported during the initial Chat screen mount (via
+# `UI/Console_Modules/retrieval.py`), on the event loop, before the app is
+# interactive. The probe below executes `RAG_Search.simplified` -- and with
+# it `chunking_service` -> the ~15k-LOC `Chunking` engine and
+# `Internal_Prompts` -- measured at 50 ms on a fast M-series box, paid by
+# every user on every launch including one who never runs a retrieval.
+#
+# Semantics preserved exactly: the same two names are imported, the same
+# `ImportError` is caught, the same warning is logged (once), and the same
+# boolean is cached for the process. What moves is WHEN: the first caller
+# that actually asks (`get_or_initialize_rag_service`) pays it, and a
+# missing optional dependency surfaces there -- as the same `None` return
+# and the same warning line -- instead of at import.
+_RAG_SERVICES_AVAILABLE: Optional[bool] = None
 
-    RAG_SERVICES_AVAILABLE = True
-except ImportError:
-    logger.warning("RAG services not available")
-    RAG_SERVICES_AVAILABLE = False
+
+def _rag_services_available() -> bool:
+    """Whether the simplified RAG service package can be imported.
+
+    Returns:
+        ``True`` when ``RAG_Search.simplified`` resolves its constructors,
+        ``False`` when it raises ``ImportError`` (missing RAG extras). The
+        answer is computed once and cached for the process.
+    """
+    global _RAG_SERVICES_AVAILABLE
+    if _RAG_SERVICES_AVAILABLE is None:
+        try:
+            from ...RAG_Search.simplified import (
+                create_rag_service,  # noqa: F401
+                create_config_for_collection,  # noqa: F401
+            )
+
+            _RAG_SERVICES_AVAILABLE = True
+        except ImportError:
+            logger.warning("RAG services not available")
+            _RAG_SERVICES_AVAILABLE = False
+    return _RAG_SERVICES_AVAILABLE
+
+
+def __getattr__(name: str) -> Any:
+    """Keep ``chat_rag_events.RAG_SERVICES_AVAILABLE`` readable (PEP 562).
+
+    The flag used to be a module constant. External readers still get the
+    same boolean; resolving it here means the import cost is paid by whoever
+    asks rather than by every importer of this module. Note that the
+    module's own functions must call ``_rag_services_available()`` -- a bare
+    global lookup does not consult this hook.
+
+    Args:
+        name: Attribute being resolved.
+
+    Returns:
+        The resolved attribute value.
+
+    Raises:
+        AttributeError: For any other name, as usual.
+    """
+    if name == "RAG_SERVICES_AVAILABLE":
+        return _rag_services_available()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 async def perform_plain_rag_search(
@@ -417,7 +469,7 @@ async def get_or_initialize_rag_service(app: "TldwCli") -> Optional[Any]:
     callers that need the WHY on failure should call
     ``resolve_semantic_rag_service`` directly.
     """
-    if not RAG_SERVICES_AVAILABLE:
+    if not _rag_services_available():
         return None
 
     # Profile preference from config (first construction only; the shared

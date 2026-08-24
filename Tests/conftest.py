@@ -17,6 +17,7 @@ _SANDBOXED_ENV_NAMES = (
     "XDG_CONFIG_HOME",
     "TLDW_CONFIG_PATH",
     "PYTHON_KEYRING_BACKEND",
+    "HF_HUB_OFFLINE",
     _TEST_CONFIG_ROOT_ENV,
     _TEST_CONFIG_OWNER_ENV,
 )
@@ -79,6 +80,27 @@ os.environ["TLDW_CONFIG_PATH"] = str(_BOOTSTRAP_CONFIG_PATH)
 # unpatched. `TLDW_TEST_REAL_KEYRING=1` is the deliberate opt-out.
 if os.environ.get("TLDW_TEST_REAL_KEYRING") != "1":
     os.environ["PYTHON_KEYRING_BACKEND"] = "keyring.backends.null.Keyring"
+
+# TASK-21562: no test downloads a model. `huggingface_hub` freezes
+# `constants.HF_HUB_OFFLINE` at ITS import time, so this has to be written here
+# -- in the pre-import bootstrap -- to be read at all; an env var set from a
+# fixture arrives far too late (the measurement is in
+# `Tests/RAG_Eval/conftest.py`'s offline-latch comment).
+#
+# Why globally, when two sub-conftests already do it for their own scope: the
+# HF cache resolves INTO this sandbox (`.../home/.cache/huggingface/hub`), which
+# never exists, so any code path reaching the hub attempts a real download. That
+# is invisible on a developer machine -- whatever triggers it locally is not
+# triggered -- and very visible in CI, where one core shard alone recorded 188
+# egress-blocked errors against `huggingface.co:443` and a CDN address, each one
+# `huggingface_hub` retrying five times before the guard's record failed the
+# test at teardown. Offline turns that into an immediate, deterministic, local
+# failure instead of a slow CI-only one.
+#
+# `TLDW_TEST_ALLOW_HF_DOWNLOADS=1` opts out, for a test that genuinely needs a
+# live fetch.
+if os.environ.get("TLDW_TEST_ALLOW_HF_DOWNLOADS") != "1":
+    os.environ["HF_HUB_OFFLINE"] = "1"
 
 import pytest  # noqa: E402
 import pytest_asyncio  # noqa: E402
@@ -492,6 +514,34 @@ def fd_leak_sentinel() -> Iterator[None]:
         # survives even -W ignore.
         warnings.warn(message, UserWarning, stacklevel=0)
         print(f"[fd_leak_sentinel] {message}", file=sys.stderr)
+
+
+@pytest.fixture(autouse=True)
+def _huggingface_hub_is_offline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Close the other half of the offline latch (TASK-21562).
+
+    The bootstrap above sets ``HF_HUB_OFFLINE`` before anything imports
+    ``huggingface_hub``, which is the case that matters and the cheap one. This
+    covers the case where the module was somehow imported first: its
+    ``constants.HF_HUB_OFFLINE`` is frozen at import, so the env var would have
+    been read before we wrote it, while ``is_offline_mode()`` consults the
+    constant on every request and therefore still honours a write here.
+
+    Looked up through ``sys.modules`` rather than imported. Importing
+    ``huggingface_hub`` in every test session to assert a property of sessions
+    that never touch it would cost more than the guard is worth, and would drag
+    the whole hub stack into the import closure of the entire suite.
+
+    ``monkeypatch.setattr`` rather than assignment, so a session that opted out
+    per-test is restored -- the same reasoning as
+    ``Tests/RAG_Eval/conftest.py``'s fixture, which does this for its own scope.
+    """
+    if os.environ.get("TLDW_TEST_ALLOW_HF_DOWNLOADS") == "1":
+        return
+    constants = sys.modules.get("huggingface_hub.constants")
+    if constants is None:
+        return
+    monkeypatch.setattr(constants, "HF_HUB_OFFLINE", True, raising=False)
 
 
 @pytest.fixture(autouse=True)
