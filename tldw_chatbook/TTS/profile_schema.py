@@ -1297,16 +1297,44 @@ def _migration_domain_snapshot(
     return profiles, assignments
 
 
-def _migration_reference_snapshot(
+def _migration_reference_evidence(
     connection: sqlite3.Connection,
 ) -> tuple[tuple[object, ...], ...]:
-    """Capture every schema-v3 reference field in deterministic order."""
+    """Project every reference field except the WAV payload, in row order.
+
+    The projection is deliberately payload-free (TASK-21130): selecting
+    ``wav_bytes`` here materialised the whole reference table in Python, and
+    the migration held two such projections at once -- measured at 966 MiB of
+    peak allocation for a store at the 512 MiB
+    :data:`~tldw_chatbook.TTS.profile_reference_types.MAX_REFERENCE_TOTAL_BYTES`
+    bound, against this subsystem's own 256 KiB streaming norm.
+
+    Byte-for-byte payload identity is still proved, by transitivity rather
+    than by retention: the stored ``sha256`` column travels in this projection
+    verbatim, and :func:`_validate_migration_reference_rows` re-derives
+    ``sha256(wav_bytes)`` from the streamed BLOB and requires it to equal that
+    column on *both* sides of the migration (see
+    ``TTSCloneReference.__post_init__``). So ``blob_before == sha_before``,
+    ``sha_before == sha_after`` (this projection), ``sha_after == blob_after``
+    together give ``blob_before == blob_after``, and any caller comparing two
+    of these projections must run that validation at both boundaries.
+
+    ``reference_text`` is replaced by its UTF-8 length and digest so the
+    evidence retains no private transcript either; the same shape is used for
+    the downgrade-boundary evidence in ``profile_migration_candidate``.
+    """
 
     return tuple(
-        tuple(row)
+        (
+            row[0],
+            row[1],
+            len(row[2].encode("utf-8")),
+            hashlib.sha256(row[2].encode("utf-8")).hexdigest(),
+            *tuple(row[3:]),
+        )
         for row in connection.execute(
             f"""
-            SELECT profile_id, reference_id, wav_bytes, reference_text, sha256,
+            SELECT profile_id, reference_id, reference_text, sha256,
                    byte_length, duration_ms, sample_rate_hz, channels,
                    sample_encoding, created_at, updated_at
             FROM {_REFERENCE_TABLE}
@@ -1433,10 +1461,14 @@ def _run_migrations(connection: sqlite3.Connection, from_version: int) -> None:
         domain_snapshot = (
             ((), ()) if from_version == 0 else _migration_domain_snapshot(connection)
         )
-        reference_snapshot: tuple[tuple[object, ...], ...] = ()
+        reference_evidence: tuple[tuple[object, ...], ...] = ()
         if from_version >= 3:
+            # First link of the payload-identity chain: this proves
+            # sha256(wav_bytes) == the sha256 column for every row BEFORE the
+            # migration. The evidence captured on the next line then carries
+            # that column (never the payload) across the climb.
             _validate_migration_reference_rows(connection, schema_version=from_version)
-            reference_snapshot = _migration_reference_snapshot(connection)
+            reference_evidence = _migration_reference_evidence(connection)
         while version < CURRENT_PROFILE_SCHEMA_VERSION:
             if version == 2:
                 validate_profile_store_rows(connection)
@@ -1465,9 +1497,13 @@ def _run_migrations(connection: sqlite3.Connection, from_version: int) -> None:
             raise RuntimeError
         if _migration_domain_snapshot(connection) != domain_snapshot:
             raise RuntimeError
-        if _migration_reference_snapshot(connection) != reference_snapshot:
+        if _migration_reference_evidence(connection) != reference_evidence:
             raise RuntimeError
         validate_profile_store_rows(connection)
+        # Closing link of the payload-identity chain: re-derives
+        # sha256(wav_bytes) from the streamed BLOB and requires it to equal
+        # the sha256 column the evidence above just proved unchanged. Neither
+        # side ever holds more than one payload at a time.
         _validate_migration_reference_rows(
             connection,
             schema_version=CURRENT_PROFILE_SCHEMA_VERSION,

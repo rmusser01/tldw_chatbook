@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
+import gc
 import hashlib
 import io
+import os
+import signal
 import sqlite3
+import subprocess
+import sys
+import time
+import tracemalloc
 import wave
 from datetime import UTC, datetime
 from pathlib import Path
@@ -781,3 +788,646 @@ def test_schema_v4_migration_registration_is_exact() -> None:
     assert set(profile_schema.MIGRATIONS) == {0, 1, 2, 3}
     assert profile_schema.MIGRATIONS[2] is v2_to_v3.migrate
     assert profile_schema.MIGRATIONS[3] is v3_to_v4.migrate
+
+
+# --- TASK-21130: the v3->v4 migration must not snapshot the BLOB table -------
+
+
+def _canonical_wav(seconds: float, rate: int, channels: int, seed: int) -> bytes:
+    """One valid canonical reference WAV, deterministic in ``seed``."""
+
+    pattern = bytes((seed * 7 + index) % 251 for index in range(2 * channels))
+    output = io.BytesIO()
+    with wave.open(output, "wb") as writer:
+        writer.setnchannels(channels)
+        writer.setsampwidth(2)
+        writer.setframerate(rate)
+        writer.writeframes(pattern * int(seconds * rate))
+    return output.getvalue()
+
+
+def _create_populated_v3_references(
+    path: Path,
+    *,
+    count: int,
+    seconds: float = 1.0,
+    rate: int = 96_000,
+    channels: int = 2,
+) -> int:
+    """Build a schema-v3 store with ``count`` references; return total bytes.
+
+    Every payload goes through the production canonical-WAV validator, and
+    every metadata column is taken from what that validator reports, so the
+    fixture is real data on the production path rather than hand-rolled rows.
+    """
+
+    from tldw_chatbook.TTS.profile_reference_audio import (
+        validate_canonical_reference_wav,
+    )
+
+    connection = sqlite3.connect(path)
+    connection.execute("PRAGMA foreign_keys = ON")
+    v0_to_v1.migrate(connection)
+    v1_to_v2.migrate(connection)
+    for index in range(count):
+        connection.execute(
+            """
+            INSERT INTO tts_generation_profiles (
+                profile_id, display_name, normalized_name, provider_id, model_id,
+                voice_id, response_format, speed, options_json, revision,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(UUID(int=(index + 1) | (0x8 << 60))),
+                f"Private Voice {index}",
+                f"private voice {index}",
+                "audio_cpp",
+                "model-a",
+                None,
+                "wav",
+                1.0,
+                "{}",
+                4,
+                NOW,
+                NOW,
+            ),
+        )
+    v2_to_v3.migrate(connection)
+    total = 0
+    for index in range(count):
+        wav_bytes = _canonical_wav(seconds, rate, channels, index)
+        metadata = validate_canonical_reference_wav(wav_bytes)
+        total += len(wav_bytes)
+        connection.execute(
+            f"INSERT INTO {REFERENCE_TABLE} "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                str(UUID(int=(index + 1) | (0x8 << 60))),
+                str(UUID(int=(index + 1) | (0x4 << 60) | (0x8 << 76))),
+                wav_bytes,
+                f"Private transcript {index}",
+                hashlib.sha256(wav_bytes).hexdigest(),
+                len(wav_bytes),
+                metadata.duration_ms,
+                metadata.sample_rate_hz,
+                metadata.channels,
+                metadata.sample_encoding,
+                NOW,
+                NOW,
+            ),
+        )
+    connection.commit()
+    connection.close()
+    return total
+
+
+def _reference_content_digest(path: Path) -> str:
+    """Length-framed hash of every reference column, WAV payload included."""
+
+    connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    digest = hashlib.sha256()
+    try:
+        for row in connection.execute(
+            f"SELECT profile_id, reference_id, wav_bytes, reference_text, sha256,"
+            f" byte_length, duration_ms, sample_rate_hz, channels, sample_encoding,"
+            f" created_at, updated_at FROM {REFERENCE_TABLE} ORDER BY profile_id"
+        ):
+            for value in row:
+                raw = value if type(value) is bytes else repr(value).encode("utf-8")
+                digest.update(len(raw).to_bytes(8, "big"))
+                digest.update(raw)
+    finally:
+        connection.close()
+    return digest.hexdigest()
+
+
+def _migrate_under_tracemalloc(path: Path) -> int:
+    gc.collect()
+    tracemalloc.start()
+    try:
+        connection = open_profile_store(path)
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    try:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
+    finally:
+        connection.close()
+    return peak
+
+
+def test_v3_to_v4_migration_peak_allocation_does_not_scale_with_the_table(
+    tmp_path: Path,
+) -> None:
+    """TASK-21130: peak allocation must track one reference, not the table.
+
+    Two stores of the same per-reference size and different row counts are
+    migrated. Before the fix the migration held two full projections of
+    ``wav_bytes``, so the peak tracked the TOTAL payload and the difference
+    between the two arms was ~2x the extra bytes; it must now be a rounding
+    error against them.
+    """
+    small_path = tmp_path / "small.sqlite3"
+    large_path = tmp_path / "large.sqlite3"
+    small_bytes = _create_populated_v3_references(small_path, count=4)
+    large_bytes = _create_populated_v3_references(large_path, count=32)
+    extra_bytes = large_bytes - small_bytes
+    assert extra_bytes > 8 * 1024 * 1024
+
+    small_peak = _migrate_under_tracemalloc(small_path)
+    large_peak = _migrate_under_tracemalloc(large_path)
+
+    assert large_peak - small_peak < extra_bytes // 4, (
+        f"peak grew {large_peak - small_peak} bytes for {extra_bytes} extra "
+        "reference bytes -- the migration is still retaining the table"
+    )
+    assert large_peak < large_bytes, (
+        f"peak {large_peak} exceeds the {large_bytes}-byte reference table"
+    )
+
+
+def test_v3_to_v4_migration_evidence_never_holds_a_reference_payload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The captured evidence itself must contain no WAV bytes and no transcript."""
+
+    path = tmp_path / "profiles.sqlite3"
+    _create_populated_v3_references(path, count=3)
+    real_evidence = profile_schema._migration_reference_evidence
+    captured: list[object] = []
+
+    def tracked(connection: sqlite3.Connection):
+        evidence = real_evidence(connection)
+        captured.append(evidence)
+        return evidence
+
+    monkeypatch.setattr(profile_schema, "_migration_reference_evidence", tracked)
+
+    connection = open_profile_store(path)
+    connection.close()
+
+    assert len(captured) == 2
+    for evidence in captured:
+        assert len(evidence) == 3
+        assert not _nested_contains_bytes(evidence)
+        assert "Private transcript" not in repr(evidence)
+    assert captured[0] == captured[1]
+
+
+def test_v3_to_v4_migration_result_is_byte_identical_to_the_v3_payloads(
+    tmp_path: Path,
+) -> None:
+    """Identity is asserted with a content hash over the BLOBs, not a row count."""
+
+    path = tmp_path / "profiles.sqlite3"
+    _create_populated_v3_references(path, count=5)
+    before = _reference_content_digest(path)
+    before_rows = sqlite3.connect(path)
+    try:
+        raw_before = [
+            tuple(row)
+            for row in before_rows.execute(
+                f"SELECT * FROM {REFERENCE_TABLE} ORDER BY profile_id"
+            )
+        ]
+    finally:
+        before_rows.close()
+
+    connection = open_profile_store(path)
+    try:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert [row[0] for row in connection.execute("PRAGMA integrity_check")] == [
+            "ok"
+        ]
+        raw_after = [
+            tuple(row)
+            for row in connection.execute(
+                f"SELECT * FROM {REFERENCE_TABLE} ORDER BY profile_id"
+            )
+        ]
+    finally:
+        connection.close()
+
+    assert _reference_content_digest(path) == before
+    assert [row[:12] for row in raw_after] == raw_before
+    assert {row[12:] for row in raw_after} == {(None, None)}
+
+
+def test_v3_to_v4_migration_rejects_a_payload_only_mutation_and_rolls_back(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The payload-free evidence must still fail closed on a BLOB-only change.
+
+    The injected mutation swaps in a different but equally valid canonical WAV
+    of the SAME length, leaving ``sha256``, ``byte_length`` and every other
+    projected column untouched -- the one mutation class the removed
+    ``wav_bytes`` projection used to be the only guard against. It is caught
+    because ``_validate_migration_reference_rows`` re-derives the digest from
+    the stored BLOB on both sides of the climb.
+    """
+    path = tmp_path / "profiles.sqlite3"
+    _create_populated_v3_references(path, count=2)
+    before = _reference_content_digest(path)
+    replacement = _canonical_wav(1.0, 96_000, 2, seed=99)
+    real_migration = profile_schema.MIGRATIONS[3]
+
+    def mutate_payload(connection: sqlite3.Connection) -> None:
+        real_migration(connection)
+        target = connection.execute(
+            f"SELECT profile_id, byte_length FROM {REFERENCE_TABLE} "
+            "ORDER BY profile_id LIMIT 1"
+        ).fetchone()
+        assert len(replacement) == target[1]
+        connection.execute(
+            f"UPDATE {REFERENCE_TABLE} SET wav_bytes = ? WHERE profile_id = ?",
+            (replacement, target[0]),
+        )
+
+    monkeypatch.setitem(profile_schema.MIGRATIONS, 3, mutate_payload)
+
+    with _safe_error("migration_failed") as caught:
+        open_profile_store(path)
+
+    raw = sqlite3.connect(path)
+    try:
+        assert raw.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert [row[0] for row in raw.execute("PRAGMA integrity_check")] == ["ok"]
+    finally:
+        raw.close()
+    assert _reference_content_digest(path) == before
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
+@pytest.mark.parametrize(
+    ("column", "value"),
+    [
+        ("updated_at", "2026-08-11T12:34:56.123456Z"),
+        # Same UTF-8 length as "Private transcript 0", so only the digest half
+        # of the projection can catch it.
+        ("reference_text", "Private transcript X"),
+        ("reference_id", "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"),
+        ("duration_ms", 4_321),
+    ],
+)
+def test_v3_to_v4_migration_rejects_a_metadata_only_mutation_and_rolls_back(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    column: str,
+    value: object,
+) -> None:
+    """Every projected column is still compared across the climb.
+
+    ``reference_text`` matters most here: nothing else in the migration
+    compares transcripts across the boundary, so the UTF-8 length + digest
+    that replaced the raw text in the evidence is the only guard on it.
+    """
+
+    path = tmp_path / "profiles.sqlite3"
+    _create_populated_v3_references(path, count=2)
+    before = _reference_content_digest(path)
+    real_migration = profile_schema.MIGRATIONS[3]
+
+    def mutate_metadata(connection: sqlite3.Connection) -> None:
+        real_migration(connection)
+        target = connection.execute(
+            f"SELECT profile_id FROM {REFERENCE_TABLE} ORDER BY profile_id LIMIT 1"
+        ).fetchone()[0]
+        connection.execute(
+            f"UPDATE {REFERENCE_TABLE} SET {column} = ? WHERE profile_id = ?",
+            (value, target),
+        )
+
+    monkeypatch.setitem(profile_schema.MIGRATIONS, 3, mutate_metadata)
+
+    with _safe_error("migration_failed"):
+        open_profile_store(path)
+
+    raw = sqlite3.connect(path)
+    try:
+        assert raw.execute("PRAGMA user_version").fetchone()[0] == 3
+    finally:
+        raw.close()
+    assert _reference_content_digest(path) == before
+
+
+def test_v3_store_whose_digest_column_disagrees_with_its_blob_never_migrates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """First link of the payload-identity chain, isolated from the closing one.
+
+    The evidence no longer carries ``wav_bytes``, so it stands on the stored
+    ``sha256`` column being a true digest of the payload BEFORE the climb
+    starts. Asserting only that such a store fails to reach v4 would prove
+    nothing about that link -- the post-migration validation catches the same
+    poisoned digest on its own (verified by mutation). So this also requires
+    that the v3->v4 migration is never *entered*: the pre-migration
+    validation has to reject the store first.
+    """
+
+    path = tmp_path / "profiles.sqlite3"
+    _create_populated_v3_references(path, count=2)
+    before = _reference_content_digest(path)
+    raw = sqlite3.connect(path)
+    try:
+        raw.execute("PRAGMA ignore_check_constraints = ON")
+        raw.execute(
+            f"UPDATE {REFERENCE_TABLE} SET sha256 = ? WHERE profile_id = "
+            f"(SELECT MIN(profile_id) FROM {REFERENCE_TABLE})",
+            ("0" * 64,),
+        )
+        raw.commit()
+    finally:
+        raw.close()
+    poisoned = _reference_content_digest(path)
+    assert poisoned != before
+
+    attempts: list[int] = []
+    real_migration = profile_schema.MIGRATIONS[3]
+
+    def spy(connection: sqlite3.Connection) -> None:
+        attempts.append(1)
+        real_migration(connection)
+
+    monkeypatch.setitem(profile_schema.MIGRATIONS, 3, spy)
+
+    with _safe_error("migration_failed"):
+        open_profile_store(path)
+
+    assert attempts == [], "the climb started before the payload was validated"
+    check = sqlite3.connect(path)
+    try:
+        assert check.execute("PRAGMA user_version").fetchone()[0] == 3
+    finally:
+        check.close()
+    assert _reference_content_digest(path) == poisoned
+
+
+def test_v3_store_with_a_structurally_corrupt_payload_never_migrates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The BLOB-corrupt error path: rejected before the climb, left at v3.
+
+    Here the digest column agrees with the stored bytes -- they are simply not
+    a canonical WAV any more. The payload is still streamed and decoded on the
+    way in, so the migration must refuse to start.
+    """
+
+    path = tmp_path / "profiles.sqlite3"
+    _create_populated_v3_references(path, count=2)
+    raw = sqlite3.connect(path)
+    try:
+        target, length = raw.execute(
+            f"SELECT profile_id, byte_length FROM {REFERENCE_TABLE} "
+            "ORDER BY profile_id LIMIT 1"
+        ).fetchone()
+        rubbish = bytes((index * 31) % 256 for index in range(length))
+        raw.execute(
+            f"UPDATE {REFERENCE_TABLE} SET wav_bytes = ?, sha256 = ? "
+            "WHERE profile_id = ?",
+            (rubbish, hashlib.sha256(rubbish).hexdigest(), target),
+        )
+        raw.commit()
+    finally:
+        raw.close()
+    corrupted = _reference_content_digest(path)
+
+    attempts: list[int] = []
+    real_migration = profile_schema.MIGRATIONS[3]
+
+    def spy(connection: sqlite3.Connection) -> None:
+        attempts.append(1)
+        real_migration(connection)
+
+    monkeypatch.setitem(profile_schema.MIGRATIONS, 3, spy)
+
+    with _safe_error("migration_failed"):
+        open_profile_store(path)
+
+    assert attempts == []
+    check = sqlite3.connect(path)
+    try:
+        assert check.execute("PRAGMA user_version").fetchone()[0] == 3
+    finally:
+        check.close()
+    assert _reference_content_digest(path) == corrupted
+
+
+def test_v3_to_v4_migration_is_reenterable_after_a_failed_attempt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed attempt leaves v3 intact; the next open completes the climb."""
+
+    path = tmp_path / "profiles.sqlite3"
+    _create_populated_v3_references(path, count=3)
+    before = _reference_content_digest(path)
+    real_migration = profile_schema.MIGRATIONS[3]
+
+    def fail_after_migrating(connection: sqlite3.Connection) -> None:
+        real_migration(connection)
+        raise RuntimeError("PRIVATE injected failure")
+
+    monkeypatch.setitem(profile_schema.MIGRATIONS, 3, fail_after_migrating)
+    with _safe_error("migration_failed"):
+        open_profile_store(path)
+    raw = sqlite3.connect(path)
+    try:
+        assert raw.execute("PRAGMA user_version").fetchone()[0] == 3
+    finally:
+        raw.close()
+    assert _reference_content_digest(path) == before
+
+    monkeypatch.setitem(profile_schema.MIGRATIONS, 3, real_migration)
+    connection = open_profile_store(path)
+    try:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert [row[0] for row in connection.execute("PRAGMA integrity_check")] == [
+            "ok"
+        ]
+    finally:
+        connection.close()
+    assert _reference_content_digest(path) == before
+
+
+_KILL_CHILD_TEMPLATE = """
+import sys
+import time
+from pathlib import Path
+sys.path.insert(0, {repo!r})
+import tldw_chatbook.TTS.profile_schema as profile_schema
+
+real = profile_schema.MIGRATIONS[3]
+
+
+def park(connection):
+    real(connection)
+    with open({marker!r}, "w") as handle:
+        handle.write("in-transaction")
+    while True:
+        time.sleep(0.05)
+
+
+profile_schema.MIGRATIONS[3] = park
+profile_schema.open_profile_store(Path({path!r}))
+"""
+
+
+def test_v3_to_v4_migration_survives_sigkill_mid_transaction(tmp_path: Path) -> None:
+    """A real SIGKILL inside the climb must leave v3, then re-enter cleanly.
+
+    The child parks INSIDE the migration transaction, after the v4 table has
+    been rebuilt and ``PRAGMA user_version = 4`` executed but before commit,
+    so the kill lands at the worst possible instant. Recovery must roll the
+    whole climb back to v3 with byte-identical payloads, and the next open
+    must finish the migration.
+    """
+    path = tmp_path / "profiles.sqlite3"
+    _create_populated_v3_references(path, count=3)
+    before = _reference_content_digest(path)
+    marker = tmp_path / "parked.marker"
+    repo_root = str(Path(__file__).resolve().parents[2])
+
+    child = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            _KILL_CHILD_TEMPLATE.format(
+                repo=repo_root,
+                marker=str(marker),
+                path=str(path),
+            ),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        deadline = time.monotonic() + 120.0
+        while time.monotonic() < deadline:
+            if marker.exists():
+                break
+            if child.poll() is not None:
+                break
+            time.sleep(0.02)
+        assert child.poll() is None, (
+            "child exited before it reached the migration "
+            f"(stdout={child.stdout.read()!r} stderr={child.stderr.read()!r})"
+        )
+        assert marker.exists(), "child never parked inside the migration"
+        os.kill(child.pid, signal.SIGKILL)
+        child.wait(timeout=60)
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait(timeout=60)
+
+    recovered = sqlite3.connect(path)
+    try:
+        assert recovered.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert [row[0] for row in recovered.execute("PRAGMA integrity_check")] == ["ok"]
+    finally:
+        recovered.close()
+    assert _reference_content_digest(path) == before
+
+    connection = open_profile_store(path)
+    try:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert [row[0] for row in connection.execute("PRAGMA integrity_check")] == [
+            "ok"
+        ]
+    finally:
+        connection.close()
+    assert _reference_content_digest(path) == before
+
+
+def test_already_migrated_v4_store_captures_no_migration_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reopening a current store must not run the evidence projection at all."""
+
+    path = tmp_path / "profiles.sqlite3"
+    _create_populated_v3_references(path, count=2)
+    open_profile_store(path).close()
+    digest = _reference_content_digest(path)
+
+    calls: list[int] = []
+    real_evidence = profile_schema._migration_reference_evidence
+
+    def tracked(connection: sqlite3.Connection):
+        calls.append(1)
+        return real_evidence(connection)
+
+    monkeypatch.setattr(profile_schema, "_migration_reference_evidence", tracked)
+
+    connection = open_profile_store(path)
+    try:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
+    finally:
+        connection.close()
+
+    assert calls == []
+    assert _reference_content_digest(path) == digest
+
+
+def test_fresh_and_empty_stores_migrate_with_empty_reference_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A brand-new store and a populated v2 store both end with no references."""
+
+    captured: list[object] = []
+    real_evidence = profile_schema._migration_reference_evidence
+
+    def tracked(connection: sqlite3.Connection):
+        evidence = real_evidence(connection)
+        captured.append(evidence)
+        return evidence
+
+    monkeypatch.setattr(profile_schema, "_migration_reference_evidence", tracked)
+
+    fresh = open_profile_store(tmp_path / "fresh.sqlite3")
+    try:
+        assert fresh.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert (
+            fresh.execute(f"SELECT count(*) FROM {REFERENCE_TABLE}").fetchone()[0] == 0
+        )
+    finally:
+        fresh.close()
+
+    v2_path = tmp_path / "v2.sqlite3"
+    _create_populated_v2(v2_path)
+    upgraded = open_profile_store(v2_path)
+    try:
+        assert upgraded.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert (
+            upgraded.execute(f"SELECT count(*) FROM {REFERENCE_TABLE}").fetchone()[0]
+            == 0
+        )
+    finally:
+        upgraded.close()
+
+    assert captured == [(), ()]
+
+
+def test_candidate_and_live_migration_share_one_reference_evidence_shape(
+    tmp_path: Path,
+) -> None:
+    """The candidate stepper and the live opener must project identically."""
+
+    path = tmp_path / "shared.sqlite3"
+    _create_populated_v3_references(path, count=2)
+    connection = sqlite3.connect(path)
+    connection.row_factory = sqlite3.Row
+    try:
+        assert migration_candidate._compact_reference_evidence(
+            connection
+        ) == profile_schema._migration_reference_evidence(connection)
+    finally:
+        connection.close()
