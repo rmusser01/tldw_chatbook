@@ -22,7 +22,7 @@ from .private_sqlite import connect_private_sqlite
 
 
 class LibraryIngestJobsDB(BaseDB):
-    _CURRENT_SCHEMA_VERSION = 5
+    _CURRENT_SCHEMA_VERSION = 6
     _STT_LINEAGE_COLUMNS = (
         ("retry_of_job_id", "TEXT DEFAULT NULL"),
         ("stt_failure_provenance_json", "TEXT DEFAULT NULL"),
@@ -194,7 +194,8 @@ class LibraryIngestJobsDB(BaseDB):
                 remote_media_id TEXT DEFAULT NULL,
                 retry_of_job_id TEXT DEFAULT NULL,
                 stt_failure_provenance_json TEXT DEFAULT NULL,
-                retry_source_failure_provenance_json TEXT DEFAULT NULL
+                retry_source_failure_provenance_json TEXT DEFAULT NULL,
+                research_source_operation_id TEXT DEFAULT NULL
             );
             """
         )
@@ -213,6 +214,9 @@ class LibraryIngestJobsDB(BaseDB):
             current_version = 4
         if current_version < 5:
             self._migrate_v4_to_v5()
+            current_version = 5
+        if current_version < 6:
+            self._migrate_v5_to_v6()
 
     def _migrate_v3_to_v4(self) -> None:
         """Record the id of the media row the SERVER created.
@@ -246,6 +250,19 @@ class LibraryIngestJobsDB(BaseDB):
             conn.execute("DELETE FROM schema_version")
             conn.execute("INSERT INTO schema_version (version) VALUES (5)")
 
+    def _migrate_v5_to_v6(self) -> None:
+        """Add the nullable opaque Research source-operation link."""
+
+        with self.transaction() as conn:
+            conn.execute(
+                """
+                ALTER TABLE ingest_jobs
+                ADD COLUMN research_source_operation_id TEXT DEFAULT NULL
+                """
+            )
+            conn.execute("DELETE FROM schema_version")
+            conn.execute("INSERT INTO schema_version (version) VALUES (6)")
+
     @staticmethod
     def _seq_of(job_id: str) -> int:
         # "ingest-job-{n}" -> n
@@ -263,8 +280,8 @@ class LibraryIngestJobsDB(BaseDB):
                ingest_options, error_detail, progress, content_hash,
                origin, remote_job_id, batch_id, remote_media_id,
                retry_of_job_id, stt_failure_provenance_json,
-               retry_source_failure_provenance_json)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               retry_source_failure_provenance_json, research_source_operation_id)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(job_id) DO UPDATE SET
               source_path=excluded.source_path, title=excluded.title, author=excluded.author,
               keywords=excluded.keywords, perform_analysis=excluded.perform_analysis,
@@ -282,7 +299,8 @@ class LibraryIngestJobsDB(BaseDB):
               retry_source_failure_provenance_json=COALESCE(
                 ingest_jobs.retry_source_failure_provenance_json,
                 excluded.retry_source_failure_provenance_json
-              )
+              ),
+              research_source_operation_id=excluded.research_source_operation_id
             """,
             (
                 self._seq_of(job.job_id),
@@ -324,6 +342,7 @@ class LibraryIngestJobsDB(BaseDB):
                     if job.retry_source_failure_provenance is not None
                     else None
                 ),
+                job.research_source_operation_id,
             ),
         )
 

@@ -175,9 +175,7 @@ def _normalize_active_ingest_url(parsed: Any) -> str:
     if not host:
         raise ValueError("http(s) source requires a host")
     rendered_host = f"[{host}]" if ":" in host else host
-    raw_userinfo = (
-        f"{parsed.netloc.rsplit('@', 1)[0]}@" if "@" in parsed.netloc else ""
-    )
+    raw_userinfo = f"{parsed.netloc.rsplit('@', 1)[0]}@" if "@" in parsed.netloc else ""
     port = parsed.port
     if port is not None and not (
         (scheme == "http" and port == 80) or (scheme == "https" and port == 443)
@@ -307,7 +305,9 @@ class ActiveIngestSubmissionRefused(RuntimeError):
         self.matches = materialized[:ACTIVE_INGEST_REF_LIMIT]
         self.consent_scope = consent_scope
         self.candidate_changed = bool(candidate_changed)
-        super().__init__(f"Active ingest admission refused ({self.match_count} matches).")
+        super().__init__(
+            f"Active ingest admission refused ({self.match_count} matches)."
+        )
 
     def __repr__(self) -> str:
         return (
@@ -423,6 +423,8 @@ class LibraryIngestJob:
         stt_failure_provenance: This job's own sanitized failed STT attempt.
         retry_source_failure_provenance: Immutable failed-attempt snapshot
             carried into this retry.
+        research_source_operation_id: Opaque durable Research Workspace source
+            operation associated with this ingest lineage, when any.
     """
 
     job_id: str
@@ -465,6 +467,7 @@ class LibraryIngestJob:
     retry_of_job_id: str | None = None
     stt_failure_provenance: dict[str, Any] | None = None
     retry_source_failure_provenance: dict[str, Any] | None = None
+    research_source_operation_id: str | None = None
 
 
 def _copy_job(job: LibraryIngestJob) -> LibraryIngestJob:
@@ -476,9 +479,7 @@ def _copy_job(job: LibraryIngestJob) -> LibraryIngestJob:
         progress=deepcopy(job.progress),
         error_detail=deepcopy(job.error_detail),
         stt_failure_provenance=deepcopy(job.stt_failure_provenance),
-        retry_source_failure_provenance=deepcopy(
-            job.retry_source_failure_provenance
-        ),
+        retry_source_failure_provenance=deepcopy(job.retry_source_failure_provenance),
     )
 
 
@@ -765,6 +766,7 @@ class LibraryIngestJobRegistry:
         ingest_options: dict[str, Any] | None = None,
         origin: str = "local",
         batch_id: str | None = None,
+        research_source_operation_id: str | None = None,
     ) -> LibraryIngestJob:
         """Append a new ``QUEUED`` job.
 
@@ -787,6 +789,8 @@ class LibraryIngestJobRegistry:
             batch_id: Shared id for jobs submitted together (task-2221: a
                 folder expansion mints one so the queue can group the run);
                 ``None`` for single-file submissions.
+            research_source_operation_id: Opaque durable Research Workspace
+                source operation to retain across completion and retry.
 
         Returns:
             The newly created ``QUEUED`` job (a registry-owned copy).
@@ -806,6 +810,7 @@ class LibraryIngestJobRegistry:
             ingest_options=ingest_options or {},
             origin=origin,
             batch_id=batch_id,
+            research_source_operation_id=research_source_operation_id,
         )
         self._jobs.append(job)
         self._notify_listeners()
@@ -992,6 +997,12 @@ class LibraryIngestJobRegistry:
             return None
         current = self._jobs[index]
         if current.superseded or current.dismissed:
+            return None
+        if current.origin != "local":
+            logger.warning(
+                f"mark_done called for server job {job_id}; ignoring "
+                "(a server completion must record remote_media_id)."
+            )
             return None
         updated = replace(
             current,
@@ -1346,11 +1357,11 @@ class LibraryIngestJobRegistry:
             state=IngestJobState.QUEUED,
             submitted_at=time.monotonic(),
             retry_count=source.retry_count + 1,
+            origin=source.origin,
             batch_id=source.batch_id,
             retry_of_job_id=source.job_id,
-            retry_source_failure_provenance=deepcopy(
-                source.stt_failure_provenance
-            ),
+            research_source_operation_id=source.research_source_operation_id,
+            retry_source_failure_provenance=deepcopy(source.stt_failure_provenance),
         )
         superseded_source = replace(source, superseded=True)
         if self._store is not None:
@@ -1453,15 +1464,9 @@ class LibraryIngestJobRegistry:
             return ()
         matches: list[LibraryIngestJob] = []
         for job in self._jobs:
-            if (
-                job.superseded
-                or job.dismissed
-                or job.state not in ACTIVE_INGEST_STATES
-            ):
+            if job.superseded or job.dismissed or job.state not in ACTIVE_INGEST_STATES:
                 continue
-            job_key = _active_source_key_or_none(
-                job.source_path, origin=job.origin
-            )
+            job_key = _active_source_key_or_none(job.source_path, origin=job.origin)
             if job_key in keys:
                 matches.append(_copy_job(job))
         return tuple(matches)
@@ -1497,9 +1502,7 @@ class LibraryIngestJobRegistry:
             ``INGEST_DUPLICATE_PROGRESS_PREFIX`` progress marker.
         """
         return count_duplicate_done_jobs(
-            job
-            for job in self._jobs
-            if not (job.superseded or job.dismissed)
+            job for job in self._jobs if not (job.superseded or job.dismissed)
         )
 
     def counts(self) -> dict[str, int]:
@@ -1652,6 +1655,7 @@ def _job_from_row(row: dict) -> "LibraryIngestJob":
             if row.get("retry_source_failure_provenance_json")
             else None
         ),
+        research_source_operation_id=row.get("research_source_operation_id"),
         # monotonic fields are not round-trippable -- leave defaults.
         submitted_at=0.0,
         started_at=None,

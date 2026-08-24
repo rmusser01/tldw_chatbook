@@ -22,7 +22,65 @@ class WorkspaceDB(BaseDB):
     paint, cProfile in task-2902's notes).
     """
 
-    _CURRENT_SCHEMA_VERSION = 2
+    _CURRENT_SCHEMA_VERSION = 3
+    _MIGRATE_V2_TO_V3_SQL = """BEGIN IMMEDIATE;
+
+CREATE TABLE research_source_operations (
+    operation_id TEXT PRIMARY KEY,
+    idempotency_key TEXT NOT NULL UNIQUE,
+    data_source TEXT NOT NULL CHECK (data_source IN ('local', 'server')),
+    server_profile_id TEXT NOT NULL DEFAULT '',
+    principal_id TEXT NOT NULL DEFAULT '',
+    workspace_id TEXT NOT NULL,
+    ingest_job_id TEXT NOT NULL DEFAULT '',
+    canonical_item_type TEXT NOT NULL CHECK (
+        canonical_item_type IN ('local_library', 'server_media')
+    ),
+    canonical_item_id TEXT NOT NULL DEFAULT '',
+    workspace_source_id TEXT NOT NULL DEFAULT '',
+    desired_selected INTEGER NOT NULL DEFAULT 1 CHECK (desired_selected IN (0, 1)),
+    catalog_status TEXT NOT NULL DEFAULT 'pending' CHECK (
+        catalog_status IN ('pending', 'in_progress', 'succeeded', 'failed')
+    ),
+    association_status TEXT NOT NULL DEFAULT 'pending' CHECK (
+        association_status IN ('pending', 'in_progress', 'succeeded', 'failed')
+    ),
+    readiness_status TEXT NOT NULL DEFAULT 'pending' CHECK (
+        readiness_status IN ('pending', 'in_progress', 'succeeded', 'failed')
+    ),
+    error_stage TEXT DEFAULT NULL CHECK (
+        error_stage IS NULL OR error_stage IN ('catalog', 'association', 'readiness')
+    ),
+    error_code TEXT NOT NULL DEFAULT '',
+    error_message TEXT NOT NULL DEFAULT '',
+    revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    CHECK (
+        (data_source = 'local'
+         AND server_profile_id = ''
+         AND principal_id = ''
+         AND canonical_item_type = 'local_library')
+        OR
+        (data_source = 'server'
+         AND server_profile_id <> ''
+         AND canonical_item_type = 'server_media')
+    )
+);
+
+CREATE INDEX idx_research_source_operations_incomplete
+ON research_source_operations (
+    catalog_status,
+    association_status,
+    readiness_status,
+    created_at,
+    operation_id
+);
+
+INSERT OR IGNORE INTO schema_version (version) VALUES (3);
+
+COMMIT;
+"""
 
     #: Liveness-ping gate (mirrors `ChaChaNotes_DB`, task-261): pinging on
     #: every call roughly doubles the raw statement count on query-heavy
@@ -75,8 +133,7 @@ class WorkspaceDB(BaseDB):
             last_used = getattr(self._thread_local, "conn_last_used", None)
             if (
                 last_used is None
-                or (time.monotonic() - last_used)
-                >= self._LIVENESS_PING_IDLE_SECONDS
+                or (time.monotonic() - last_used) >= self._LIVENESS_PING_IDLE_SECONDS
             ):
                 try:
                     conn.execute("SELECT 1")
@@ -231,9 +288,30 @@ class WorkspaceDB(BaseDB):
             # v2 migration: add case-insensitive unique index on non-archived names.
             # Keep this runner SQL aligned with
             # tldw_chatbook/DB/migrations/workspaces_v1_to_v2_name_unique_index.sql.
-            version_row = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()
+            version_row = conn.execute(
+                "SELECT MAX(version) FROM schema_version"
+            ).fetchone()
             version = int(version_row[0] or 0) if version_row is not None else 0
-            needs_v2 = version < 2
+            v2_index_exists = (
+                conn.execute(
+                    """
+                SELECT 1 FROM sqlite_master
+                WHERE type = 'index' AND name = 'idx_workspace_records_name_ci'
+                """
+                ).fetchone()
+                is not None
+            )
+            v3_table_exists = (
+                conn.execute(
+                    """
+                SELECT 1 FROM sqlite_master
+                WHERE type = 'table' AND name = 'research_source_operations'
+                """
+                ).fetchone()
+                is not None
+            )
+            needs_v2 = version < 2 or not v2_index_exists
+            needs_v3 = version < 3 or not v3_table_exists
             rows: list[tuple[str, str]] = []
             if needs_v2:
                 # Reads only here; all v2 writes happen below inside self.transaction().
@@ -247,6 +325,8 @@ class WorkspaceDB(BaseDB):
                 ).fetchall()
 
         if not needs_v2:
+            if needs_v3:
+                self._migrate_v2_to_v3()
             return
 
         # Reserve every existing non-archived name up front (stripped, casefolded)
@@ -292,7 +372,22 @@ class WorkspaceDB(BaseDB):
                 ON workspace_records (lower(name)) WHERE archived = 0
                 """
             )
-            write_conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (2)")
+            write_conn.execute(
+                "INSERT OR IGNORE INTO schema_version (version) VALUES (2)"
+            )
+
+        if needs_v3:
+            self._migrate_v2_to_v3()
+
+    def _migrate_v2_to_v3(self) -> None:
+        """Add durable Research source-operation intent and stage receipts."""
+
+        with self.connection() as conn:
+            try:
+                conn.executescript(self._MIGRATE_V2_TO_V3_SQL)
+            except Exception:
+                conn.rollback()
+                raise
 
     def get_schema_version(self) -> int:
         """Return the initialized schema version."""
