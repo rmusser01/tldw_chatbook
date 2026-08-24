@@ -331,7 +331,8 @@ Severity is stated for constrained hardware (×3–5). "REGRESSION" = absent at 
 - **21128** · `messages_au` FTS trigger fires on ANY `messages` UPDATE (no `OF content`
   column list, re-confirmed in the v46 SQL), so usage-only and metadata-only flushes — now
   3–4 UPDATEs per chat turn — each re-tokenize and rewrite the full assistant reply into
-  `messages_fts`. Fix: `AFTER UPDATE OF content`, preserving the v46 deleted-guards.
+  `messages_fts`. Fix: ~~`AFTER UPDATE OF content`~~ **`AFTER UPDATE OF content, deleted`**
+  (corrected during implementation — see correction 3 below), preserving the v46/v47 guards.
   PRE-EXISTING shape, flush-count growth post-baseline.
 - **21129** · Notes-sync executor: six `list_bindings` read-all sites (no LIMIT, no
   `root_id` index), five invoked WITHOUT `to_thread` from async methods — ~3·K full owner-set
@@ -414,7 +415,7 @@ Findings that were still open when the table above was written, measured the sam
 
 ## Corrections found during implementation (added 2026-08-23 at close-out)
 
-Two statements in the findings above were proved wrong by the implementations they produced.
+Three statements in the findings above were proved wrong by the implementations they produced.
 They are corrected in place and listed here so the record stays trustworthy rather than
 silently edited.
 
@@ -430,6 +431,25 @@ silently edited.
    `_apply_library_row_toggle` performs **0 recomposes and 0 widget constructions** per click:
    the recompose statement the review cited sits inside an **exception-fallback arm** that a
    normal toggle never reaches. The other sites named in that finding stand.
+3. **Finding 21128 prescribed a fix that would have made soft-deleted messages searchable.**
+   The finding's diagnosis was right — the trigger really did fire on every `messages` UPDATE,
+   measured at **4 index rewrites per streamed turn**, `messages_fts_data` 55 → 12,636 bytes
+   for one 400-token reply. Its prescribed shape, `AFTER UPDATE OF content`, was not: soft
+   delete is `UPDATE messages SET deleted = 1 …` and never names `content`, so the trigger
+   would not fire and the tombstoned row would stay in the index. Measured on a scratch matrix
+   before any code was written (a direct `messages_fts MATCH` returned the tombstoned rowid),
+   and re-proved by mutation — that shape turns all three `messages` cases in
+   `Tests/DB/test_fts_soft_delete_index_witness.py` red. **Scope it precisely:** all six
+   production `messages_fts` consumers re-filter on `m.deleted = 0`
+   (`ChaChaNotes_DB.py:9131, 10318, 12496, 13935`; `RAG_Search/simplified/rag_service.py:2371,
+   2402`), so the bad shape would have been an **index-layer** leak — deleted text left
+   tokenized in `messages_fts_data` and reachable by a direct index query — **not** a
+   user-visible search leak. Still a real regression of the task-19567 guarantee, which is
+   stated at the index precisely because that consumer-side filtering is what kept the
+   original trigger defect invisible. The shipped column list is `content, deleted`: every
+   column the index stores, plus the column that decides membership. Shipped as v48 → v49
+   (task-21128; authored as v47 → v48 and renumbered when the Console Library policy step took
+   48 by merging first), one line different from v47's trigger.
 
 ---
 

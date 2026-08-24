@@ -510,7 +510,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 48  # Device-local Console Library policy and dispatch recovery.
+    _CURRENT_SCHEMA_VERSION = 49  # `messages_au` scoped to the FTS-relevant columns (task-21128).
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -6269,6 +6269,100 @@ UPDATE db_schema_version
                 f"Migration from V47 to V48 failed for '{self._SCHEMA_NAME}': {exc}"
             ) from exc
 
+    def _migrate_from_v48_to_v49(self, conn: sqlite3.Connection) -> None:
+        """Scope ``messages_au`` to the columns the FTS index depends on.
+
+        ``messages_au`` shipped as a bare ``AFTER UPDATE ON messages``, so it
+        re-tokenized and rewrote the whole message body into ``messages_fts``
+        on EVERY update of the row -- including the three to four auxiliary
+        writes a single chat turn now issues against the assistant row
+        (``update_message_usage_local``, ``update_message_metadata_local``,
+        attachment/variant bookkeeping, ranking-only edits), none of which
+        touch an indexed column. Measured over one simulated streamed turn:
+        four index rewrites, ``messages_fts_data`` 55 -> 12,636 bytes; one
+        rewrite and 3,201 bytes after this step (task-21128).
+
+        The column list is ``content, deleted``, not ``content`` alone:
+        ``content`` is the only column ``messages_fts`` indexes, but
+        ``deleted`` decides whether the row belongs in the index at all, and
+        soft delete (``UPDATE messages SET deleted = 1 ...``) never names
+        ``content``. Under ``AFTER UPDATE OF content`` the tombstoned row would
+        stay in the index -- the task-19567 guarantee, measured broken on that
+        shape. Both v47 guards (``old.deleted = 0`` plus the
+        ``messages_fts_docsize`` membership test on the delete half,
+        ``new.deleted = 0`` on the insert half) are preserved verbatim; see
+        the migration file header for the full analysis, including why this is
+        a separate step rather than an edited v47.
+
+        DDL only, O(1), and it writes no index content, so a task-21100
+        backfill still in flight is unaffected.
+
+        Authored as v47->v48 and renumbered to v48->v49 when the Console
+        Library policy step (``chachanotes_v47_to_v48_console_library_policy
+        .sql``) merged first and took 48. That step adds
+        ``messages.assistant_generation_state`` and rewrites the four
+        ``messages_sync_*`` triggers; it leaves ``messages_au``/``_ai``/``_ad``
+        alone, so this step's baseline is unchanged -- and its three new
+        ``UPDATE messages SET assistant_generation_state = ...`` dispatch
+        writers are three more per-turn updates that the pre-fix trigger would
+        have turned into full index rewrites.
+
+        Args:
+            conn: The active connection, inside ``_initialize_schema``'s
+                transaction.
+
+        Raises:
+            SchemaError: If the database is not at v48, the file cannot be
+                read/split, or the version bump does not land.
+        """
+        self._require_migration_entry_version(conn, 48, "V48→V49")
+        logger.info(
+            f"Migrating schema from V48 to V49 for '{self._SCHEMA_NAME}' in DB: {self.db_path_str}..."
+        )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v48_to_v49_messages_fts_update_scope.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V48→V49",
+                )
+                version_cursor = cursor.execute(
+                    """
+                    UPDATE db_schema_version
+                       SET version = 49
+                     WHERE schema_name = ?
+                       AND version = 48
+                    """,
+                    (self._SCHEMA_NAME,),
+                )
+                if version_cursor.rowcount != 1:
+                    raise SchemaError(
+                        f"[{self._SCHEMA_NAME} V48→V49] Migration version update was not applied"
+                    )
+
+            final_version = self._get_db_version(conn)
+            if final_version != 49:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V48→V49] Migration version check failed. "
+                    f"Expected 49, got: {final_version}"
+                )
+            logger.info(
+                f"[{self._SCHEMA_NAME} V48→V49] Migration completed successfully for DB: "
+                f"{self.db_path_str}."
+            )
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            logger.opt(exception=True).error(
+                f"[{self._SCHEMA_NAME} V48→V49] Migration failed: {exc}"
+            )
+            raise SchemaError(
+                f"Migration from V48 to V49 failed for '{self._SCHEMA_NAME}': {exc}"
+            ) from exc
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -6469,6 +6563,7 @@ UPDATE db_schema_version
                     45: self._migrate_from_v45_to_v46,
                     46: self._migrate_from_v46_to_v47,
                     47: self._migrate_from_v47_to_v48,
+                    48: self._migrate_from_v48_to_v49,
                 }
 
                 if current_db_version == 0:

@@ -7630,3 +7630,53 @@ the wrong reason (`assert racing.fired`: base reverses a snapshot *copy*, so
 the fixture's `__reversed__` hook never fires). Its real red-first evidence is
 mutating the fix back out. A base red is not automatically evidence that base
 has the bug; read *why* it failed.
+## A filing's prescribed FIX is a hypothesis; only its own behaviour matrix can accept it (TASK-21128, 2026-08-23)
+
+**What happened.** The finding was right about the defect: `messages_au` was
+declared `AFTER UPDATE ON messages` with no column list, so every auxiliary
+write to a message row — usage flush, metadata flush, variant bookkeeping —
+re-tokenized the whole assistant reply into `messages_fts`. Measured over one
+streamed turn: **4 index rewrites, `messages_fts_data` 55 → 12,636 bytes for a
+single 400-token reply.** The AC also named the fix, in backticks: `AFTER
+UPDATE OF content`. It is a one-line change, it matches the diagnosis, and it
+is a **data-exposure bug**. Soft delete is `UPDATE messages SET deleted = 1 …`
+and never names `content`, so the narrowed trigger would not fire and the
+tombstoned message would stay in the search index — the exact guarantee
+task-19567 exists to hold. Measured on a scratch matrix before any code was
+written (a direct `messages_fts MATCH` returned the tombstoned rowid), and
+re-proved afterwards by mutation: that shape turns all three `messages` cases
+in `Tests/DB/test_fts_soft_delete_index_witness.py` red.
+
+**What to do.** When an AC prescribes a mechanism, treat the mechanism as the
+author's hypothesis and the AC as the outcome; build the behaviour matrix for
+the mechanism BEFORE writing the diff, and amend the AC when the matrix
+disagrees. For a trigger narrowed with `UPDATE OF`, the correct column set is
+mechanical and worth writing down: **every column the derived artifact STORES,
+plus every column that decides whether the row BELONGS in it.** Here that is
+`content` (the only column `messages_fts` indexes) plus `deleted` (membership).
+Anything less is a stale-index bug in one direction or a leak in the other, and
+neither is visible through the six production `messages_fts` consumers,
+because all six redundantly re-filter on `deleted` (`ChaChaNotes_DB.py:9131,
+10318, 12496, 13935`; `RAG_Search/simplified/rag_service.py:2371, 2402` — the
+two RAG ones are easy to miss, and the review of this task caught them missing
+from an earlier draft of this very paragraph). So the failure such a mistake
+produces is an INDEX-LAYER leak, not a user-visible one, which is precisely
+why every witness for it must query the index directly.
+
+The permanent form of that rule is a census, not a comment: derive the required
+set from the LIVE schema (`PRAGMA table_info(messages_fts)` ∪ `{deleted}`),
+parse the trigger's `UPDATE OF` list out of `sqlite_master`, and assert the
+containment — so widening the fts5 table without widening the trigger fails at
+authoring time.
+
+**Adjacent trap from the same task, which cost a bogus baseline.** Editing a
+production module WHILE a pytest run is in flight makes structural tests lie.
+`Tests/DB/test_sql_debug_logging.py::…::test_no_eager_params_fstring_remains_in_source`
+came back red in the baseline run; the test uses `inspect.getsource`, which
+re-reads the file from disk using the ALREADY-IMPORTED code object's line
+numbers, so inserting ~85 lines earlier in `ChaChaNotes_DB.py` mid-run made it
+return a shifted, wrong span. It passed immediately on a re-run against the
+stable file. This repo has many `inspect.getsource` / source-text structural
+tests, so the failure looks exactly like a pre-existing red in someone else's
+area. Do not edit the tree while a run you intend to quote is running — and
+before A/B-ing any suspicious red, re-run it once against a quiescent tree.
