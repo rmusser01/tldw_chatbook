@@ -22,6 +22,14 @@ CONSOLE_RAIL_SECTION_IDS = (
     "agent",
     "character",
 )
+CONSOLE_INSPECTOR_MORE_DISCLOSURE_ID = "inspector_more"
+CONSOLE_RAIL_PREFERENCE_DISCLOSURE_IDS = (
+    *CONSOLE_RAIL_SECTION_IDS,
+    CONSOLE_INSPECTOR_MORE_DISCLOSURE_ID,
+)
+CONSOLE_RAIL_LAYOUT_SCOPE_GLOBAL = "global"
+CONSOLE_RAIL_LAYOUT_SCOPE_WORKSPACE = "workspace"
+CONSOLE_RAIL_SHARED_LAYOUT_SCOPE = "shared-layout-v1"
 CONSOLE_RAIL_RIGHT_COMPACT_COLLAPSE_COLUMNS = 150
 # TASK-2154.1/TASK-19639 (formerly TASK-18913): default Context stays open at
 # exactly 100 columns. ADR-043 keeps that established policy threshold even
@@ -124,6 +132,7 @@ class ConsoleRailPreferences:
     details_open: bool = False
     agent_open: bool = False
     character_open: bool = True
+    inspector_more_open: bool = False
 
 
 @dataclass(frozen=True)
@@ -168,6 +177,7 @@ class ConsoleRailState:
     details_open: bool = False
     agent_open: bool = False
     character_open: bool = True
+    inspector_more_open: bool = False
 
 
 def _sanitize_key_part(value: Any) -> str:
@@ -194,9 +204,17 @@ def _build_persistence_key(workspace_id: str, scope_id: str) -> str:
 #: entries per chat and reset a user's section layout on every new
 #: conversation (a toggle made moments earlier was gone after a workspace
 #: switch round-trip). Layout is a workspace-level preference.
-CONSOLE_RAIL_LAYOUT_SCOPE = "layout"
+_CONSOLE_RAIL_WORKSPACE_LAYOUT_SCOPE = "layout"
 #: Legacy no-conversation scope kept readable as a one-time migration source.
 _LEGACY_GLOBAL_SCOPE = "global"
+
+
+def normalize_console_rail_layout_scope(value: Any) -> str:
+    """Return the supported Console rail layout persistence scope."""
+    normalized = str(value or "").strip().lower()
+    if normalized == CONSOLE_RAIL_LAYOUT_SCOPE_WORKSPACE:
+        return CONSOLE_RAIL_LAYOUT_SCOPE_WORKSPACE
+    return CONSOLE_RAIL_LAYOUT_SCOPE_GLOBAL
 
 
 def build_console_rail_preference_key(
@@ -204,6 +222,7 @@ def build_console_rail_preference_key(
     workspace_id: Any = None,
     conversation_id: Any = None,
     session_id: Any = None,
+    layout_scope: Any = CONSOLE_RAIL_LAYOUT_SCOPE_GLOBAL,
 ) -> ConsoleRailPreferenceKey:
     """Build the deterministic persistence key for Console rail preferences.
 
@@ -212,18 +231,32 @@ def build_console_rail_preference_key(
         conversation_id: Accepted for API compatibility; no longer shapes the
             key (TASK-718 - preferences are per workspace).
         session_id: Accepted for API compatibility; no longer shapes the key.
+        layout_scope: ``global`` for one shared layout or ``workspace`` for
+            the active workspace's independent layout.
 
     Returns:
-        The per-workspace layout key, with the legacy ``:global`` key as the
-        read-only migration fallback (adopted by the caller's fallback
-        migration when the layout key has never been written).
+        The selected layout key. Global scope uses one reserved shared key;
+        workspace scope retains the legacy ``:global`` read fallback.
     """
     del conversation_id, session_id
+    if normalize_console_rail_layout_scope(layout_scope) == (
+        CONSOLE_RAIL_LAYOUT_SCOPE_GLOBAL
+    ):
+        return ConsoleRailPreferenceKey(
+            workspace_id=CONSOLE_RAIL_LAYOUT_SCOPE_GLOBAL,
+            scope_id=CONSOLE_RAIL_SHARED_LAYOUT_SCOPE,
+            value=_build_persistence_key(
+                CONSOLE_RAIL_LAYOUT_SCOPE_GLOBAL,
+                CONSOLE_RAIL_SHARED_LAYOUT_SCOPE,
+            ),
+        )
     workspace_scope = _sanitize_key_part(workspace_id)
     return ConsoleRailPreferenceKey(
         workspace_id=workspace_scope,
-        scope_id=CONSOLE_RAIL_LAYOUT_SCOPE,
-        value=_build_persistence_key(workspace_scope, CONSOLE_RAIL_LAYOUT_SCOPE),
+        scope_id=_CONSOLE_RAIL_WORKSPACE_LAYOUT_SCOPE,
+        value=_build_persistence_key(
+            workspace_scope, _CONSOLE_RAIL_WORKSPACE_LAYOUT_SCOPE
+        ),
         fallback_value=_build_persistence_key(workspace_scope, _LEGACY_GLOBAL_SCOPE),
     )
 
@@ -259,7 +292,11 @@ def collect_prunable_console_rail_keys(
         if len(parts) != 3 or parts[0] != _PERSISTENCE_PREFIX:
             continue
         scope_id = parts[2]
-        if scope_id in (CONSOLE_RAIL_LAYOUT_SCOPE, _LEGACY_GLOBAL_SCOPE):
+        if scope_id in (
+            _CONSOLE_RAIL_WORKSPACE_LAYOUT_SCOPE,
+            _LEGACY_GLOBAL_SCOPE,
+            CONSOLE_RAIL_SHARED_LAYOUT_SCOPE,
+        ):
             continue
         prunable.append(key)
     return prunable
@@ -325,6 +362,9 @@ def coerce_console_rail_preferences(raw: Any) -> ConsoleRailPreferences:
         details_open=_coerce_bool(raw.get("details_open"), defaults.details_open),
         agent_open=_coerce_bool(raw.get("agent_open"), defaults.agent_open),
         character_open=_coerce_bool(raw.get("character_open"), defaults.character_open),
+        inspector_more_open=_coerce_bool(
+            raw.get("inspector_more_open"), defaults.inspector_more_open
+        ),
     )
 
 
@@ -352,6 +392,7 @@ def serialize_console_rail_preferences(
         "details_open": bool(preferences.details_open),
         "agent_open": bool(preferences.agent_open),
         "character_open": bool(preferences.character_open),
+        "inspector_more_open": bool(preferences.inspector_more_open),
     }
 
 
@@ -762,4 +803,5 @@ def build_console_rail_state(
         details_open=preferences.details_open,
         agent_open=preferences.agent_open,
         character_open=preferences.character_open,
+        inspector_more_open=preferences.inspector_more_open,
     )

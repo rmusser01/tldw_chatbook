@@ -333,7 +333,10 @@ from ...Chat.console_rail_state import (
     CONSOLE_INSPECTOR_AUTO_OPEN_MAX_COLUMNS,
     CONSOLE_INSPECTOR_AUTO_OPEN_MIN_COLUMNS,
     CONSOLE_RAIL_LEFT_OPEN_EXPLICIT_KEY,
+    CONSOLE_RAIL_PREFERENCE_DISCLOSURE_IDS,
     CONSOLE_RAIL_SECTION_IDS,
+    CONSOLE_RAIL_SHARED_LAYOUT_SCOPE,
+    ConsoleRailPreferenceKey,
     ConsoleRailPreferences,
     ConsoleRailState,
     build_console_rail_preference_key,
@@ -343,6 +346,7 @@ from ...Chat.console_rail_state import (
     console_context_reveal_preferences,
     console_rail_left_open_explicit,
     console_rail_width_band,
+    normalize_console_rail_layout_scope,
     resolve_console_rail_priority,
     serialize_console_rail_preferences,
 )
@@ -10532,36 +10536,40 @@ class ChatScreen(BaseAppScreen):
         except Exception as exc:
             logger.warning("Failed to persist Console fleet coach-mark flag: {}", exc)
 
-    def _migrate_console_rail_fallback_preferences(
+    def _ensure_console_rail_scope_seed(
         self,
-        key: str,
-        fallback_key: str | None,
-    ) -> None:
-        """Copy temporary session rail preferences to a durable key when needed."""
-        if not fallback_key:
-            return
-        app_config = getattr(self.app_instance, "app_config", None)
-        if not isinstance(app_config, dict):
-            return
-        console_config = app_config.get("console")
-        if not isinstance(console_config, dict):
-            return
-        rail_state_config = console_config.get("rail_state")
-        if not isinstance(rail_state_config, dict):
-            return
-        if key in rail_state_config or fallback_key not in rail_state_config:
-            return
-        preferences = coerce_console_rail_preferences(rail_state_config[fallback_key])
-        rail_state_config[key] = serialize_console_rail_preferences(preferences)
-        self._persist_console_rail_preferences(
-            key,
-            preferences,
+        selected_key: ConsoleRailPreferenceKey,
+        workspace_key: ConsoleRailPreferenceKey,
+    ) -> Any:
+        """Seed one absent layout scope without overwriting or deleting sources."""
+        rail_state_config = self._console_rail_state_config()
+        if selected_key.value in rail_state_config:
+            return rail_state_config[selected_key.value]
+
+        shared_key = build_console_rail_preference_key(layout_scope="global")
+        candidates = (
+            (workspace_key.value, workspace_key.fallback_value)
+            if selected_key.scope_id == CONSOLE_RAIL_SHARED_LAYOUT_SCOPE
+            else (workspace_key.fallback_value, shared_key.value)
+        )
+        source = next(
+            (
+                rail_state_config[key]
+                for key in candidates
+                if key and key in rail_state_config
+            ),
+            None,
+        )
+        serialized = serialize_console_rail_preferences(
+            coerce_console_rail_preferences(source)
+        )
+        rail_state_config[selected_key.value] = serialized
+        self._save_console_rail_preferences(
+            selected_key.value,
+            serialized,
             notify_on_failure=False,
         )
-        # The session-scoped fallback is superseded by the durable key; drop
-        # it so migrations stop leaving permanent orphan sections behind.
-        rail_state_config.pop(fallback_key, None)
-        self._delete_console_rail_preference_keys([fallback_key])
+        return serialized
 
     def _console_active_session_is_ephemeral(self) -> bool:
         """Return whether the active Console session is temporary.
@@ -10655,18 +10663,21 @@ class ChatScreen(BaseAppScreen):
                 if session.id == active_session_id:
                     active_session = session
                     break
-        preference_key = build_console_rail_preference_key(
+        workspace_key = build_console_rail_preference_key(
             workspace_id=workspace_context.active_workspace_id,
             conversation_id=(self._character._current_console_rail_conversation_id()),
             session_id=self._session._current_console_session_id(),
+            layout_scope="workspace",
         )
-        self._migrate_console_rail_fallback_preferences(
-            preference_key.value,
-            preference_key.fallback_value,
+        preference_key = build_console_rail_preference_key(
+            workspace_id=workspace_context.active_workspace_id,
+            layout_scope=normalize_console_rail_layout_scope(
+                self._console_config().get("rail_layout_scope")
+            ),
         )
-        stored_preferences = self._stored_console_rail_preferences(
-            preference_key.value,
-            preference_key.fallback_value,
+        stored_preferences = self._ensure_console_rail_scope_seed(
+            preference_key,
+            workspace_key,
         )
         resolved_available_columns = (
             available_columns
@@ -10899,15 +10910,19 @@ class ChatScreen(BaseAppScreen):
     ) -> ConsoleRailState:
         """Persist requested Console rail preference changes and return new state."""
         workspace_context = self._workspace._current_console_workspace_context()
-        preference_key = build_console_rail_preference_key(
+        workspace_key = build_console_rail_preference_key(
             workspace_id=workspace_context.active_workspace_id,
             conversation_id=(self._character._current_console_rail_conversation_id()),
             session_id=self._session._current_console_session_id(),
+            layout_scope="workspace",
         )
-        self._migrate_console_rail_fallback_preferences(
-            preference_key.value,
-            preference_key.fallback_value,
+        preference_key = build_console_rail_preference_key(
+            workspace_id=workspace_context.active_workspace_id,
+            layout_scope=normalize_console_rail_layout_scope(
+                self._console_config().get("rail_layout_scope")
+            ),
         )
+        self._ensure_console_rail_scope_seed(preference_key, workspace_key)
         rail_state_config = self._console_rail_state_config()
         prior_stored = rail_state_config.get(preference_key.value)
         current = coerce_console_rail_preferences(prior_stored)
@@ -10917,7 +10932,7 @@ class ChatScreen(BaseAppScreen):
         if right_open is not None:
             changes["right_open"] = bool(right_open)
         for section_id, section_open in (section_updates or {}).items():
-            if section_id in CONSOLE_RAIL_SECTION_IDS:
+            if section_id in CONSOLE_RAIL_PREFERENCE_DISCLOSURE_IDS:
                 changes[f"{section_id}_open"] = bool(section_open)
         next_preferences = replace(current, **changes)
         # TASK-2154.2 (LY-11, ADR-043): an explicit rail toggle writes
@@ -17658,9 +17673,7 @@ class ChatScreen(BaseAppScreen):
                 send_blocked = (
                     send_blocked
                     or not queue_presentation.send_enabled
-                    or controller.store.dispatch_recovery_blocks_submission(
-                        active_id
-                    )
+                    or controller.store.dispatch_recovery_blocks_submission(active_id)
                 )
                 try:
                     queue_region = self.query_one(
@@ -17684,9 +17697,7 @@ class ChatScreen(BaseAppScreen):
                 else:
                     recovery_region.sync_recovery(
                         active_id,
-                        controller.store.dispatch_recovery_for_presentation(
-                            active_id
-                        )
+                        controller.store.dispatch_recovery_for_presentation(active_id),
                     )
         # task-3401.5: an in-flight video generation shows the same Stop
         # affordance (it sets the adapter's cooperative cancel event).

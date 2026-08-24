@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from textual.widgets import Button, Checkbox, Input, Static
+from textual.widgets import Button, Checkbox, Input, Select, Static
 
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
@@ -27,6 +27,145 @@ from tldw_chatbook.Widgets.Console.console_rail_handle import ConsoleRailHandle
 
 
 RAIL_LABEL_TOGGLE = "#settings-console-stack-collapsed-rail-labels"
+RAIL_LAYOUT_SCOPE = "#settings-console-rail-layout-scope"
+
+
+@pytest.mark.asyncio
+async def test_console_rail_layout_scope_is_global_nonblank_and_under_presentation():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+        scope = screen.query_one(RAIL_LAYOUT_SCOPE, Select)
+        card = screen.query_one("#settings-console-behavior-card")
+        children = list(card.children)
+        scope_index = children.index(scope)
+
+        assert scope.value == "global"
+        assert scope._allow_blank is False
+        assert [(str(label), value) for label, value in scope._options] == [
+            ("Global", "global"),
+            ("Per workspace", "workspace"),
+        ]
+        assert isinstance(children[scope_index - 1], Static)
+        assert str(children[scope_index - 1].content) == "Rail layout scope"
+        rail_heading_index = next(
+            index
+            for index, child in enumerate(children)
+            if isinstance(child, Static) and str(child.content) == "Rail presentation"
+        )
+        rail_label_index = children.index(screen.query_one(RAIL_LABEL_TOGGLE, Checkbox))
+        assert rail_heading_index < scope_index < rail_label_index
+        assert (
+            "Global keeps one arrangement everywhere. Per workspace restores and "
+            "keeps each workspace's saved arrangement." in _visible_text(screen)
+        )
+
+
+@pytest.mark.asyncio
+async def test_console_rail_layout_scope_search_lands_with_persistence_guidance():
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        await pilot.press("/")
+        await _wait_for_settings_search_focus(screen, pilot)
+        await pilot.press(*"layout scope")
+        await _wait_for_settings_text(
+            screen,
+            pilot,
+            "Console Behavior › Rail layout scope",
+        )
+        await pilot.press("enter")
+        for _ in range(8):
+            await pilot.pause()
+
+        assert screen.active_category == SettingsCategoryId.CONSOLE_BEHAVIOR.value
+        assert host.focused is screen.query_one(RAIL_LAYOUT_SCOPE, Select)
+        visible = _visible_text(screen)
+        assert "Global keeps one arrangement across workspace switches" in visible
+        assert "Per workspace restores each workspace's saved arrangement" in visible
+        assert "Prior global and workspace records are retained" in visible
+        assert "Saved as: console.rail_layout_scope" in visible
+        assert dict(screen._console_behavior_field_guidance_rows())[
+            "Applies"
+        ].startswith("After Save")
+
+
+@pytest.mark.asyncio
+async def test_console_rail_layout_scope_keyboard_stages_and_saves_exact_payload(
+    monkeypatch,
+):
+    app = _build_test_app()
+    app.app_config["console"] = {"rail_layout_scope": "global"}
+    saved: list[dict[str, dict[str, str]]] = []
+
+    class FakeAdapter:
+        def save_sections(self, section_values):
+            saved.append(section_values)
+            return True
+
+    monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FakeAdapter)
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+        scope = screen.query_one(RAIL_LAYOUT_SCOPE, Select)
+        scope.focus()
+        await pilot.press("enter")
+        await pilot.press("down")
+        await pilot.press("enter")
+        await pilot.pause()
+
+        draft = screen._settings_drafts[SettingsCategoryId.CONSOLE_BEHAVIOR]
+        assert scope.value == "workspace"
+        assert draft.values == {"rail_layout_scope": "workspace"}
+        assert draft.dirty_keys == {"rail_layout_scope"}
+        assert app.app_config["console"]["rail_layout_scope"] == "global"
+
+        await pilot.click("#settings-save-category")
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert saved == [{"console": {"rail_layout_scope": "workspace"}}]
+        assert app.app_config["console"]["rail_layout_scope"] == "workspace"
+
+
+@pytest.mark.asyncio
+async def test_console_rail_layout_scope_failed_save_keeps_draft_and_global_active(
+    monkeypatch,
+):
+    app = _build_test_app()
+    app.app_config["console"] = {"rail_layout_scope": "global"}
+
+    class FailingAdapter:
+        def save_sections(self, section_values):
+            return False
+
+    monkeypatch.setattr(settings_screen_module, "SettingsConfigAdapter", FailingAdapter)
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-console-behavior")
+        screen = _active_destination_screen(host)
+        scope = screen.query_one(RAIL_LAYOUT_SCOPE, Select)
+        scope.value = "workspace"
+        await pilot.pause()
+        await pilot.click("#settings-save-category")
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert scope.value == "workspace"
+        assert screen._settings_drafts[
+            SettingsCategoryId.CONSOLE_BEHAVIOR
+        ].dirty_keys == {"rail_layout_scope"}
+        assert app.app_config["console"]["rail_layout_scope"] == "global"
+        assert "Your draft is still here" in _visible_text(screen)
 
 
 @pytest.mark.asyncio
@@ -214,6 +353,7 @@ async def test_console_rail_label_revert_discards_every_console_behavior_draft()
     app = _build_test_app()
     app.app_config["console"] = {
         "stack_collapsed_rail_labels": False,
+        "rail_layout_scope": "global",
         "collapse_large_pastes": True,
     }
     host = DestinationHarness(app, "settings")
@@ -221,12 +361,17 @@ async def test_console_rail_label_revert_discards_every_console_behavior_draft()
     async with host.run_test(size=(190, 55)) as pilot:
         await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
+        screen.query_one(RAIL_LAYOUT_SCOPE, Select).value = "workspace"
         await pilot.click(RAIL_LABEL_TOGGLE)
-        await pilot.click("#settings-console-collapse-large-pastes-toggle")
+        screen.query_one(
+            "#settings-console-collapse-large-pastes-toggle", Checkbox
+        ).value = False
+        await pilot.pause()
 
         draft = screen._settings_drafts[SettingsCategoryId.CONSOLE_BEHAVIOR]
         assert draft.dirty_keys == {
             "collapse_large_pastes",
+            "rail_layout_scope",
             "stack_collapsed_rail_labels",
         }
 
@@ -235,6 +380,7 @@ async def test_console_rail_label_revert_discards_every_console_behavior_draft()
 
         assert SettingsCategoryId.CONSOLE_BEHAVIOR not in screen._settings_drafts
         assert screen.query_one(RAIL_LABEL_TOGGLE, Checkbox).value is False
+        assert screen.query_one(RAIL_LAYOUT_SCOPE, Select).value == "global"
         assert (
             screen.query_one(
                 "#settings-console-collapse-large-pastes-toggle", Checkbox

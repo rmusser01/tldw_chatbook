@@ -6,6 +6,7 @@ from tldw_chatbook.Chat.console_display_state import (
     ConsoleInspectorState,
     ConsoleStagedContextState,
 )
+import tldw_chatbook.Chat.console_rail_state as console_rail_state_module
 from tldw_chatbook.Chat.console_rail_state import (
     CONSOLE_INSPECTOR_AUTO_OPEN_MAX_COLUMNS,
     CONSOLE_INSPECTOR_AUTO_OPEN_MIN_COLUMNS,
@@ -45,7 +46,7 @@ def test_console_rail_state_uses_first_start_defaults():
     assert state.right_open is False
     assert state.preferred_left_open is True
     assert state.preferred_right_open is False
-    assert state.persistence_key == "console_rail_state:workspace-1:layout"
+    assert state.persistence_key == "console_rail_state:global:shared-layout-v1"
 
 
 def test_console_rail_state_restores_stored_preferences():
@@ -94,7 +95,7 @@ def test_console_rail_state_coerces_integer_preferences():
     assert preferences.right_open is True
 
 
-def test_console_rail_preference_key_is_per_workspace_only():
+def test_console_rail_preference_key_workspace_scope_is_per_workspace_only():
     """TASK-718: layout preferences are keyed per workspace. Conversation and
     session ids are accepted for API compatibility but must not shape the key -
     per-conversation keys multiplied config entries and reset section layouts
@@ -103,8 +104,11 @@ def test_console_rail_preference_key_is_per_workspace_only():
         workspace_id="workspace 1",
         conversation_id="conv:1",
         session_id="session:1",
+        layout_scope="workspace",
     )
-    bare_key = build_console_rail_preference_key(workspace_id="workspace 1")
+    bare_key = build_console_rail_preference_key(
+        workspace_id="workspace 1", layout_scope="workspace"
+    )
 
     assert key.value == "console_rail_state:workspace_1:layout"
     assert bare_key.value == key.value
@@ -118,16 +122,42 @@ def test_console_rail_preference_key_scope_inputs_never_leak_into_key():
             workspace_id="workspace",
             conversation_id=conversation_id,
             session_id=session_id,
+            layout_scope="workspace",
         )
         assert key.value == "console_rail_state:workspace:layout"
         assert key.fallback_value == "console_rail_state:workspace:global"
 
 
-def test_console_rail_preference_key_global_workspace_fallback():
-    global_key = build_console_rail_preference_key()
+def test_console_rail_layout_scope_normalizes_to_global_by_default():
+    normalize = console_rail_state_module.normalize_console_rail_layout_scope
 
-    assert global_key.value == "console_rail_state:global:layout"
-    assert global_key.fallback_value == "console_rail_state:global:global"
+    assert normalize(None) == "global"
+    assert normalize("bogus") == "global"
+    assert normalize({"workspace": True}) == "global"
+    assert normalize("  WoRkSpAcE  ") == "workspace"
+
+
+def test_console_rail_preference_key_global_scope_uses_reserved_shared_key():
+    global_key = build_console_rail_preference_key(
+        workspace_id="Research Lab", layout_scope="global"
+    )
+    default_key = build_console_rail_preference_key(workspace_id="Other Workspace")
+
+    assert global_key.value == "console_rail_state:global:shared-layout-v1"
+    assert global_key.workspace_id == "global"
+    assert global_key.scope_id == "shared-layout-v1"
+    assert global_key.fallback_value is None
+    assert default_key == global_key
+
+
+def test_console_rail_preference_key_workspace_scope_keeps_legacy_fallback():
+    workspace_key = build_console_rail_preference_key(
+        workspace_id="Research Lab", layout_scope="workspace"
+    )
+
+    assert workspace_key.value == "console_rail_state:Research_Lab:layout"
+    assert workspace_key.scope_id == "layout"
+    assert workspace_key.fallback_value == "console_rail_state:Research_Lab:global"
 
 
 def test_console_context_rail_badge_reflects_workspace_and_session_only():
@@ -436,6 +466,7 @@ def test_console_rail_preferences_serialize_to_public_dict_shape():
         "details_open": False,
         "agent_open": False,
         "character_open": True,
+        "inspector_more_open": False,
     }
 
 
@@ -835,7 +866,10 @@ def test_console_rail_state_explicit_right_open_at_threshold_renders_standard():
 
 
 def test_console_rail_section_defaults():
-    from tldw_chatbook.Chat.console_rail_state import CONSOLE_RAIL_SECTION_IDS
+    from tldw_chatbook.Chat.console_rail_state import (
+        CONSOLE_RAIL_PREFERENCE_DISCLOSURE_IDS,
+        CONSOLE_RAIL_SECTION_IDS,
+    )
 
     prefs = ConsoleRailPreferences()
     # Task-400: "context" (staged sources) is no longer a left-rail section;
@@ -855,6 +889,11 @@ def test_console_rail_section_defaults():
     assert prefs.model_open is True
     assert prefs.details_open is False
     assert prefs.character_open is True
+    assert prefs.inspector_more_open is False
+    assert CONSOLE_RAIL_PREFERENCE_DISCLOSURE_IDS == (
+        *CONSOLE_RAIL_SECTION_IDS,
+        "inspector_more",
+    )
 
 
 def test_coerce_console_rail_preferences_reads_section_fields():
@@ -887,11 +926,13 @@ def test_serialize_console_rail_preferences_round_trips_sections():
         details_open=True,
         model_open=False,
         conversations_open=False,
+        inspector_more_open=True,
     )
     serialized = serialize_console_rail_preferences(prefs)
     assert serialized["details_open"] is True
     assert serialized["model_open"] is False
     assert serialized["conversations_open"] is False
+    assert serialized["inspector_more_open"] is True
     assert "context_open" not in serialized
     assert coerce_console_rail_preferences(serialized) == prefs
 
@@ -907,6 +948,42 @@ def test_coerce_console_rail_preferences_ignores_legacy_context_key():
         {"left_open": False, "details_open": True}
     )
     assert with_legacy_key == without_legacy_key
+
+
+def test_console_rail_preferences_ignore_transient_view_state():
+    transient = {
+        "left_open": False,
+        "inspector_more_open": "yes",
+        "left_scroll_offset": 19,
+        "right_scroll_offset": 23,
+        "focused_widget_id": "console-workspace-tree",
+        "workspace_search": "research",
+        "conversation_search": "draft",
+        "selected_workspace_id": "workspace-1",
+        "selected_conversation_id": "conversation-2",
+        "tooltip_text": "A long workspace label",
+        "tooltip_target_id": "workspace-1",
+    }
+
+    preferences = coerce_console_rail_preferences(transient)
+    serialized = serialize_console_rail_preferences(preferences)
+
+    assert preferences.inspector_more_open is True
+    assert serialized["inspector_more_open"] is True
+    assert not (
+        set(serialized)
+        & {
+            "left_scroll_offset",
+            "right_scroll_offset",
+            "focused_widget_id",
+            "workspace_search",
+            "conversation_search",
+            "selected_workspace_id",
+            "selected_conversation_id",
+            "tooltip_text",
+            "tooltip_target_id",
+        }
+    )
 
 
 def test_build_console_rail_state_carries_section_flags():
@@ -925,6 +1002,18 @@ def test_build_console_rail_state_carries_section_flags():
     assert state.workspace_open is False
     assert state.conversations_open is True
     assert state.model_open is True
+    assert state.inspector_more_open is False
+
+
+def test_build_console_rail_state_carries_inspector_more_preference():
+    key = build_console_rail_preference_key(layout_scope="global")
+
+    state = build_console_rail_state(
+        preference_key=key,
+        stored_preferences={"inspector_more_open": True},
+    )
+
+    assert state.inspector_more_open is True
 
 
 # --- task-18911: width-budget rule (explicit toggles vs usable transcript) ---

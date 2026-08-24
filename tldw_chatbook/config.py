@@ -1482,9 +1482,7 @@ def _load_settings_uncached(
     # only packages *.json/*.md from that directory) so merging it was always
     # a no-op; dropping the probe changes nothing observable.
     bootstrap = _load_cli_config_bootstrap(
-        force_reload=(
-            force_reload if reload_bootstrap is None else reload_bootstrap
-        )
+        force_reload=(force_reload if reload_bootstrap is None else reload_bootstrap)
     )
     toml_config_data = copy.deepcopy(bootstrap.config)
     # Idempotent no-op when already decrypted (or encryption disabled) --
@@ -1564,6 +1562,13 @@ def _load_settings_uncached(
     final_console_settings_cli["stack_collapsed_rail_labels"] = coerce_bool_setting(
         final_console_settings_cli.get("stack_collapsed_rail_labels", False),
         False,
+    )
+    _rail_layout_scope = final_console_settings_cli.get("rail_layout_scope")
+    final_console_settings_cli["rail_layout_scope"] = (
+        _rail_layout_scope.strip().lower()
+        if isinstance(_rail_layout_scope, str)
+        and _rail_layout_scope.strip().lower() in {"global", "workspace"}
+        else "global"
     )
     # task-17652: status-row placement relative to the composer. Validation
     # lives in UI/Console_Modules/status_row.resolve_status_chips_position;
@@ -3086,6 +3091,7 @@ shutdown_grace_seconds = 120.0
 [console]
 collapse_large_pastes = true  # Display large pasted chunks compactly in Console composer
 stack_collapsed_rail_labels = false  # Use compact stacked labels on collapsed Console rails
+rail_layout_scope = "global"  # Share Console rail disclosure across workspaces; use "workspace" for per-workspace layouts
 assistant_library_access_default = false  # New Console sessions block assistant Library access
 paste_collapse_threshold = 50  # Collapse pasted/inserted chunks only when longer than this many characters
 local_tools_enabled = true      # workspace, web, and Watchlists agent tools; every call still uses MCP Ask/Allow/Off permissions
@@ -6994,9 +7000,7 @@ def get_notes_sync_watcher_intervals(
             type(value) not in (int, float)
             or not 0.05 <= value <= _NOTES_SYNC_WATCHER_INTERVAL_CEILING_SECONDS
         ):
-            raise ValueError(
-                f"{label} must be a number between 0.05 and 3600 seconds."
-            )
+            raise ValueError(f"{label} must be a number between 0.05 and 3600 seconds.")
     if peak < base:
         raise ValueError(
             "notes.sync_watcher_max_interval_seconds must be at least "
@@ -7021,7 +7025,9 @@ def load_console_library_migration_seed(
     selected = (
         load_cli_config_and_ensure_existence() if app_config is None else app_config
     )
-    chat_defaults = selected.get("chat_defaults") if isinstance(selected, Mapping) else None
+    chat_defaults = (
+        selected.get("chat_defaults") if isinstance(selected, Mapping) else None
+    )
     raw_value = (
         chat_defaults.get("rag_auto_retrieve_on_send", False)
         if isinstance(chat_defaults, Mapping)
