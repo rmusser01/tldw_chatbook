@@ -22,7 +22,29 @@ pull request sits blocked with its only required check showing no result, and st
 until somebody notices and re-runs it by hand. It is not specific to any author or branch —
 it is whichever pull requests happen to be open while the base branch moves.
 
-The residual cause is named in the earlier task's own comment. For a pull-request event the
+**Correction, from the experiment this task called for: the residual cause is not what is
+described below.** Ninety-five per cent of cancellations happen in coordinated bursts that
+kill every queued run in the repository at once, across every workflow — forty-six runs
+inside twenty-four seconds in the largest observed case, thirty-six inside three minutes in
+the next. Those bursts are indiscriminate: the required gate, the test suite, the guards and
+the one-off evidence workflows all die together, whatever triggered them and whatever
+reference they are tied to.
+
+The experiment settled the proposed fix as well, and settled it negatively. A run triggered
+by a push, tied to a branch reference that nothing recreates, was cancelled in the same burst
+as its pull-request sibling on the same commit. So watching pushes on every branch would not
+help: the runs it creates are swept along with the rest.
+
+What remains unknown is what performs the sweeps, and that cannot be established from the
+runs themselves. The candidates are an account limit being reached, or somebody clearing a
+backlog by hand — the queue regularly holds twenty to thirty runs against a pool that starts
+one or two at a time, so clearing it is a reasonable thing for a person to be doing. Whoever
+knows which will know immediately; nobody else can tell from the outside.
+
+The mechanism described in the rest of this section is real and is what the earlier task
+fixed. It is simply not what is causing the current rate.
+
+The originally suspected cause, retained because it is still worth understanding: For a pull-request event the
 run is tied to a merge reference that the platform recreates every time the base branch
 moves, and on a repository absorbing this many merges a day the reference is frequently
 recreated before a queued run gets a chance to start. Not cancelling the run ourselves does
