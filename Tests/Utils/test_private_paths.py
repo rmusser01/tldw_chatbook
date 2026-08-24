@@ -212,6 +212,22 @@ def test_windows_atomic_write_creates_explicit_application_owned_parent(
     assert target.read_text(encoding="utf-8") == "[chat]\n"
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX private overlay contract")
+def test_private_json_overlay_pair_creates_0700_directory_and_0600_file(tmp_path):
+    owned_parent = tmp_path / "research-overlay"
+    target = owned_parent / "overlay.json"
+
+    secure_private_directory(owned_parent, create=True, application_owned=True)
+    atomic_private_write_text(
+        target,
+        '{"schema_version": 1, "records": []}\n',
+        application_owned_directory=owned_parent,
+    )
+
+    assert stat.S_IMODE(owned_parent.stat().st_mode) == 0o700
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+
+
 def test_unsupported_posix_guards_fail_closed_without_creating(
     tmp_path,
     monkeypatch,
