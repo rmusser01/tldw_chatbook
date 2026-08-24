@@ -412,9 +412,9 @@ class _ItemStatusIntent:
 
 @dataclass(frozen=True)
 class _ManualLayoutRollback:
-    """One manual preference intent and every automatic token derived from it."""
+    """One manual preference intent owned by its latest request token."""
 
-    tokens: frozenset[int]
+    token: int
     attempted_layout: RegionLayout
     attempted_preferred: RegionLayout
     preferred_before: RegionLayout
@@ -2897,26 +2897,23 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             pass
         return next((width for width in candidates if width > 0), 10_000)
 
-    def _next_layout_request_token(self, *, preserve_manual_intent: bool = True) -> int:
+    def _next_layout_request_token(self) -> int:
         """Allocate the one current controller/workbench request token."""
         self._layout_request_generation += 1
         self._current_layout_request_token = self._layout_request_generation
         rollback = self._manual_layout_rollback
         if (
-            preserve_manual_intent
-            and rollback is not None
+            rollback is not None
             and self.region_layout == rollback.attempted_preferred
         ):
             self._manual_layout_rollback = _ManualLayoutRollback(
-                tokens=rollback.tokens | {self._current_layout_request_token},
+                token=self._current_layout_request_token,
                 attempted_layout=self._effective_region_layout,
                 attempted_preferred=rollback.attempted_preferred,
                 preferred_before=rollback.preferred_before,
                 article_focus_before=rollback.article_focus_before,
                 priority_before=rollback.priority_before,
             )
-        elif not preserve_manual_intent:
-            self._manual_layout_rollback = None
         return self._current_layout_request_token
 
     def _recompute_effective_layout(
@@ -3105,42 +3102,41 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         every `_schedule_layout_persist` call the burst has made so far —
         writes the true final layout, so the last write always wins.
         """
-        try:
-            while True:
-                with self._layout_persist_lock:
-                    generation = self._pending_persist_generation
-                    layout = self._pending_persist_layout
-                if generation is None or layout is None:
-                    return
-                try:
-                    success = save_region_layout(layout)
-                except Exception:
-                    logger.opt(exception=True).debug(
-                        "Failed to persist preferred Watchlists pane layout."
-                    )
-                    success = False
-                try:
-                    self.app.call_from_thread(
-                        self._acknowledge_layout_persist,
-                        generation,
-                        layout,
-                        success,
-                    )
-                except Exception:
-                    logger.opt(exception=True).debug(
-                        "Could not acknowledge preferred Watchlists layout write."
-                    )
-                    return
-                with self._layout_persist_lock:
-                    pending_generation = self._pending_persist_generation
-                    if (
-                        pending_generation is None
-                        or pending_generation == generation
-                    ):
-                        return
-        finally:
+        while True:
             with self._layout_persist_lock:
-                self._layout_persist_draining = False
+                generation = self._pending_persist_generation
+                layout = self._pending_persist_layout
+                if generation is None or layout is None:
+                    self._layout_persist_draining = False
+                    return
+            try:
+                success = save_region_layout(layout)
+            except Exception:
+                logger.opt(exception=True).debug(
+                    "Failed to persist preferred Watchlists pane layout."
+                )
+                success = False
+            try:
+                self.app.call_from_thread(
+                    self._acknowledge_layout_persist,
+                    generation,
+                    layout,
+                    success,
+                )
+            except Exception:
+                logger.opt(exception=True).debug(
+                    "Could not acknowledge preferred Watchlists layout write."
+                )
+                with self._layout_persist_lock:
+                    if self._pending_persist_generation != generation:
+                        continue
+                    self._layout_persist_draining = False
+                    return
+            with self._layout_persist_lock:
+                pending_generation = self._pending_persist_generation
+                if pending_generation is None or pending_generation == generation:
+                    self._layout_persist_draining = False
+                    return
 
     def _acknowledge_layout_persist(
         self,
@@ -3308,7 +3304,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         token = self._recompute_effective_layout()
         request_token = token or self._current_layout_request_token
         self._manual_layout_rollback = _ManualLayoutRollback(
-            tokens=frozenset({request_token}),
+            token=request_token,
             attempted_layout=self._effective_region_layout,
             attempted_preferred=preferred,
             preferred_before=before[0],
@@ -3332,8 +3328,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     ) -> None:
         """Correct screen preference only while the failed intent is current."""
         event.stop()
+        if event.token != self._current_layout_request_token:
+            return
         rollback = self._manual_layout_rollback
-        if rollback is not None and event.token in rollback.tokens:
+        if rollback is not None and event.token == rollback.token:
             current_preferred = self.region_layout
             self.region_layout = rollback.preferred_before
             self._article_focus_active = rollback.article_focus_before
@@ -3342,8 +3340,6 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self._recompute_effective_layout()
             if current_preferred != rollback.preferred_before:
                 self._schedule_layout_persist(rollback.preferred_before)
-            return
-        if event.token != self._current_layout_request_token:
             return
         if rollback is None:
             self._effective_region_layout = event.fallback
@@ -3357,7 +3353,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return
         if (
             self._manual_layout_rollback is not None
-            and event.token in self._manual_layout_rollback.tokens
+            and event.token == self._manual_layout_rollback.token
         ):
             self._manual_layout_rollback = None
         if (

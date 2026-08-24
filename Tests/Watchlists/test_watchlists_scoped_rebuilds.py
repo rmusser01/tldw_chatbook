@@ -1341,13 +1341,77 @@ async def test_layout_persistence_rapid_toggles_drain_latest_request(
         assert screen._layout_persist_draining is False
 
 
+async def test_layout_persist_disarm_is_atomic_with_a_newer_generation(
+    monkeypatch,
+) -> None:
+    """A request in the old decision/finally gap must start or be drained."""
+    gap_open = threading.Event()
+    release_exit = threading.Event()
+    writes: list[RegionLayout] = []
+
+    class GapLock:
+        """Expose the old worker gap after its return decision releases lock."""
+
+        def __init__(self) -> None:
+            self._lock = threading.Lock()
+            self._worker_exits = 0
+
+        def __enter__(self):
+            self._lock.acquire()
+            return self
+
+        def __exit__(self, *_exc_info) -> None:
+            self._lock.release()
+            if threading.current_thread() is threading.main_thread():
+                return
+            self._worker_exits += 1
+            if self._worker_exits == 2:
+                gap_open.set()
+                assert release_exit.wait(2)
+
+    def save(layout: RegionLayout) -> bool:
+        writes.append(layout)
+        return True
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.watchlists_collections_screen.save_region_layout",
+        save,
+    )
+    app = _build_test_app()
+    async with _open(app) as (screen, pilot, host):
+        screen._layout_persist_lock = GapLock()
+        screen.action_toggle_left_rail()
+        first = screen.region_layout
+
+        try:
+            assert await asyncio.to_thread(gap_open.wait, 2)
+            screen.action_toggle_right_rail()
+            newest = screen.region_layout
+        finally:
+            release_exit.set()
+
+        for _ in range(100):
+            if (
+                writes[-1:] == [newest]
+                and screen._pending_persist_layout is None
+                and not screen._layout_persist_draining
+            ):
+                break
+            await pilot.pause(0.01)
+
+        assert writes == [first, newest]
+        assert screen._last_persisted_collapsed == newest.collapsed
+        assert screen._pending_persist_layout is None
+        assert screen._layout_persist_draining is False
+
+
 async def test_layout_acknowledgements_ignore_stale_tokens_and_clear_current_noop() -> None:
     app = _build_test_app()
     async with _open(app) as (screen, pilot, host):
         layout = screen._effective_region_layout
         token = screen._next_layout_request_token()
         rollback = _ManualLayoutRollback(
-            tokens=frozenset({token}),
+            token=token,
             attempted_layout=layout,
             attempted_preferred=screen.region_layout,
             preferred_before=screen.region_layout,
@@ -1377,6 +1441,57 @@ async def test_layout_acknowledgements_ignore_stale_tokens_and_clear_current_noo
 
         screen.post_message(
             RegionLayoutApplied(token=token, previous=layout, layout=layout)
+        )
+        await _settle(pilot, host)
+
+        assert screen._manual_layout_rollback is None
+
+
+async def test_stale_failure_cannot_rollback_rekeyed_manual_intent(
+    monkeypatch,
+) -> None:
+    """Only the latest correlated token owns a manual rollback."""
+    persisted: list[RegionLayout] = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.watchlists_collections_screen.save_region_layout",
+        lambda layout: persisted.append(layout) or True,
+    )
+    app = _build_test_app()
+    async with _open(app) as (screen, pilot, host):
+        preferred = screen.region_layout
+        effective = screen._effective_region_layout
+        token1 = screen._next_layout_request_token()
+        screen._manual_layout_rollback = _ManualLayoutRollback(
+            token=token1,
+            attempted_layout=effective,
+            attempted_preferred=preferred,
+            preferred_before=preferred.toggle_preferred(Region.LEFT_RAIL),
+            article_focus_before=screen._article_focus_active,
+            priority_before=screen._responsive_priority_target,
+        )
+
+        token2 = screen._next_layout_request_token()
+        screen.post_message(
+            RegionLayoutApplyFailed(
+                token=token1,
+                attempted=effective,
+                fallback=effective.toggle_preferred(Region.LEFT_RAIL),
+            )
+        )
+        await _settle(pilot, host)
+
+        assert screen._current_layout_request_token == token2
+        assert screen.region_layout == preferred
+        assert screen._effective_region_layout == effective
+        assert persisted == []
+        assert screen._manual_layout_rollback is not None
+
+        screen.post_message(
+            RegionLayoutApplied(
+                token=token2,
+                previous=effective,
+                layout=effective,
+            )
         )
         await _settle(pilot, host)
 
