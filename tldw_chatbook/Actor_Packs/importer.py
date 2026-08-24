@@ -225,6 +225,8 @@ class ActorPackImportService:
                 self._staging_root, create=True, application_owned=True
             )
             if not privacy.verified_private:
+                if privacy.usable:
+                    return 0
                 raise ValueError
             removed = 0
             examined = 0
