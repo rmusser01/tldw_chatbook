@@ -21,6 +21,7 @@ from textual.pilot import OutOfBounds
 from textual.widgets import Button, Checkbox, Input, Static, TextArea
 
 from Tests.fixtures.required_doubles import exploding_double
+from Tests.UI.app_factory import attach_chachanotes_db
 from Tests.UI.background_signals import wait_for_background_signal, wait_for_signal
 from Tests.UI.console_controller_stubs import stub_image_controller
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
@@ -51,6 +52,9 @@ from tldw_chatbook.Chat.console_chat_models import (
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 from tldw_chatbook.Chat.console_image_view import IMAGE_CACHE_MAX_ENTRIES
+from tldw_chatbook.Chat.console_library_destination import (
+    resolve_console_destination,
+)
 from tldw_chatbook.Chat.console_provider_gateway import (
     AuxiliaryCompletionResult,
     ConsoleProviderGateway,
@@ -104,6 +108,30 @@ _ASYNC_SETTLE_TIMEOUT = 10.0
 
 def test_checking_citations_is_an_active_console_run_status():
     assert ConsoleRunStatus.CHECKING_CITATIONS in CONSOLE_ACTIVE_RUN_STATUSES
+
+
+def _build_console_send_test_app(*args, **kwargs):
+    """Build a factory app that can actually complete a Console send.
+
+    TASK-21590. `_build_test_app` boots with ``chachanotes_db = None``, so the
+    Console store is built with ``persistence=None``. Since TASK-19900.3's
+    review-fix commit `56db75386` a durable turn (any non-ephemeral manual or
+    queued send -- i.e. the flow every real user takes) *fails closed* unless
+    the persistence adapter exposes a callable ``commit_durable_turn``, and a
+    ``None`` adapter cannot. The refusal returns a bare `ConsoleSubmitResult`
+    rather than going through `_block`, so it writes no system row and raises
+    no toast: 26 tests in this module kept pressing Send and asserting against
+    a transcript the production gate had silently refused to write.
+
+    The shipping app always has this DB (`ConsoleRuntime.ensure_chat_store`
+    builds a real `ChatPersistenceService` from it), so every test here that
+    drives a real send builds its app through this helper instead. Use
+    `_build_test_app` directly for tests that are *about* the db-less shape.
+    See `attach_chachanotes_db` for why the attached DB is `:memory:`.
+    """
+    app = _build_test_app(*args, **kwargs)
+    attach_chachanotes_db(app)
+    return app
 
 
 def _configure_openai_missing_api_key(app) -> None:
@@ -290,8 +318,20 @@ def test_console_workspace_conversation_search_selection_refresh_invalidates_tok
 
 
 class _ReadyResolutionGateway:
+    """Stand-in for `ConsoleProviderGateway` that always resolves ready.
+
+    TASK-21590: a ready resolution must carry the typed
+    `ConsoleResolvedDestination` that `a26cdafd8` made mandatory --
+    `ConsoleChatController._resolved_destination_for_context` raises
+    `ValueError` without it and the send is blocked with "Provider destination
+    is incomplete." This double omitted it, and every mounted send test built
+    on it stopped reaching the provider. The destination is derived through the
+    production classifier the real gateway uses (`resolve_console_destination`)
+    rather than hand-built, so the double cannot silently drift from it again.
+    """
+
     async def resolve_for_send(self, selection):
-        return SimpleNamespace(
+        resolution = SimpleNamespace(
             provider=selection.provider,
             base_url=selection.base_url or "",
             model=selection.explicit_model
@@ -300,6 +340,8 @@ class _ReadyResolutionGateway:
             ready=True,
             visible_copy="",
         )
+        resolution.resolved_destination = resolve_console_destination(resolution)
+        return resolution
 
 
 class _PromptImprovementGateway:
@@ -1370,32 +1412,14 @@ class CapturingGateway(_ReadyResolutionGateway):
             yield chunk
 
 
-class WorkspaceLinkingPersistence:
-    def __init__(self, registry_service) -> None:
-        self.registry_service = registry_service
-        self.conversation_count = 0
-        self.message_count = 0
-
-    def create_conversation(self, **kwargs):
-        self.conversation_count += 1
-        conversation_id = f"persisted-conversation-{self.conversation_count}"
-        workspace_id = kwargs.get("workspace_id")
-        if kwargs.get("scope_type") == "workspace" and workspace_id:
-            self.registry_service.link_membership(
-                workspace_id,
-                item_type="conversation",
-                item_id=conversation_id,
-                role="workspace-thread",
-                title=kwargs.get("conversation_title") or "Chat 1",
-            )
-        return conversation_id
-
-    def create_message(self, **kwargs):
-        self.message_count += 1
-        return f"persisted-message-{self.message_count}"
-
-    def update_message_content(self, **kwargs):
-        return True
+# TASK-21590 removed `WorkspaceLinkingPersistence`, a three-method hand-rolled
+# persistence double that three send tests installed over the store's real
+# adapter. It predates durable turn acceptance and never grew a
+# `commit_durable_turn`, so production refused every send made through it --
+# silently, because that refusal does not go through `_block`. Its whole job
+# (linking a persisted conversation into the workspace registry) is what the
+# real `ChatPersistenceService` already does through the same registry, so the
+# three tests now assert against production's own linking.
 
 
 class StaticConversationTreeService:
@@ -2278,7 +2302,7 @@ def _select_llamacpp_console(console: ChatScreen) -> None:
 async def test_console_native_generic_provider_send_renders_completed_message(
     monkeypatch,
 ):
-    app = _build_test_app()
+    app = _build_console_send_test_app()
     app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4.1"}
     app.app_config["api_settings"] = {}
     captured_kwargs = []
@@ -2328,7 +2352,7 @@ async def test_console_native_generic_provider_send_renders_completed_message(
 
 @pytest.mark.asyncio
 async def test_console_native_send_button_click_dispatches_message(monkeypatch):
-    app = _build_test_app()
+    app = _build_console_send_test_app()
     app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4.1"}
     app.app_config["api_settings"] = {}
     captured_kwargs = []
@@ -2368,7 +2392,7 @@ async def test_console_native_send_button_click_dispatches_message(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_console_successful_send_does_not_leave_empty_send_tooltip(monkeypatch):
-    app = _build_test_app()
+    app = _build_console_send_test_app()
     app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4.1"}
     app.app_config["api_settings"] = {"openai": {"api_key": DUMMY_OPENAI_API_KEY}}
 
@@ -2505,7 +2529,7 @@ async def test_console_setup_blocked_send_is_unreachable_behind_modal():
 
 @pytest.mark.asyncio
 async def test_console_native_blocked_send_preserves_composer_text_and_shows_recovery():
-    app = _build_test_app()
+    app = _build_console_send_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
     app.console_provider_gateway_factory = BlockedGateway
@@ -2799,7 +2823,7 @@ def test_console_session_settings_base_url_wins_over_llamacpp_fallback(monkeypat
 @pytest.mark.asyncio
 async def test_console_stop_interrupts_stream_and_keeps_partial_message_visible():
     gateway = WaitingGateway()
-    app = _build_test_app()
+    app = _build_console_send_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
     app.console_provider_gateway_factory = lambda: gateway
@@ -2831,7 +2855,7 @@ async def test_console_stop_interrupts_stream_and_keeps_partial_message_visible(
 @pytest.mark.asyncio
 async def test_console_collapsed_stop_interrupts_real_run_without_expanding():
     gateway = WaitingGateway()
-    app = _build_test_app()
+    app = _build_console_send_test_app()
     _configure_native_ready_console(app, model="test-model")
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)
@@ -2873,7 +2897,7 @@ async def test_console_collapsed_stop_interrupts_real_run_without_expanding():
 @pytest.mark.asyncio
 async def test_console_collapsed_stop_stale_action_warns_without_expanding():
     gateway = WaitingGateway()
-    app = _build_test_app()
+    app = _build_console_send_test_app()
     _configure_native_ready_console(app, model="test-model")
     app.console_provider_gateway_factory = lambda: gateway
     notifications: list[tuple[str, dict]] = []
@@ -2908,7 +2932,7 @@ async def test_console_collapsed_stop_stale_action_warns_without_expanding():
 @pytest.mark.asyncio
 async def test_console_composer_stop_is_subdued_when_idle():
     gateway = WaitingGateway()
-    app = _build_test_app()
+    app = _build_console_send_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
     app.console_provider_gateway_factory = lambda: gateway
@@ -2963,7 +2987,7 @@ async def test_console_composer_stop_is_subdued_when_idle():
 @pytest.mark.asyncio
 async def test_console_duplicate_send_during_stream_does_not_break_stop_control():
     gateway = WaitingGateway()
-    app = _build_test_app()
+    app = _build_console_send_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
     app.console_provider_gateway_factory = lambda: gateway
@@ -3020,7 +3044,7 @@ async def test_console_duplicate_send_during_stream_does_not_break_stop_control(
 @pytest.mark.asyncio
 async def test_console_streaming_chunks_render_after_slow_provider_validation():
     gateway = DelayedWaitingGateway()
-    app = _build_test_app()
+    app = _build_console_send_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
     app.console_provider_gateway_factory = lambda: gateway
@@ -3087,7 +3111,7 @@ async def test_console_send_echoes_user_message_before_transcript_poll(monkeypat
     "not sent". The poll is disabled here so the echo has to stand on its own.
     """
     gateway = _HoldingStreamGateway()
-    app = _build_test_app()
+    app = _build_console_send_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
     app.console_provider_gateway_factory = lambda: gateway
@@ -3124,7 +3148,7 @@ async def test_console_send_echoes_user_message_before_transcript_poll(monkeypat
 async def test_console_collapsed_paste_sends_full_payload_not_visible_token():
     long_text = "x" * 80
     gateway = CapturingGateway()
-    app = _build_test_app()
+    app = _build_console_send_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
     app.console_provider_gateway_factory = lambda: gateway
@@ -3151,7 +3175,7 @@ async def test_console_collapsed_paste_sends_full_payload_not_visible_token():
 @pytest.mark.asyncio
 async def test_console_native_send_preserves_expanded_payload_whitespace():
     gateway = CapturingGateway()
-    app = _build_test_app()
+    app = _build_console_send_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
     app.console_provider_gateway_factory = lambda: gateway
@@ -3173,7 +3197,7 @@ async def test_console_native_send_preserves_expanded_payload_whitespace():
 @pytest.mark.asyncio
 async def test_console_configured_model_reaches_gateway_when_ui_model_is_unset():
     gateway = SelectionCapturingGateway()
-    app = _build_test_app()
+    app = _build_console_send_test_app()
     # `chat_defaults.provider` (read by `_effective_console_provider_model`
     # at session-creation time), not `_console_control_provider` set after
     # mount: the active session's settings -- and so its provider -- are
@@ -3210,7 +3234,7 @@ async def test_console_configured_model_reaches_gateway_when_ui_model_is_unset()
 @pytest.mark.asyncio
 async def test_console_native_send_clears_composer_after_acceptance_and_updates_store():
     """Verify accepted sends clear the composer and render compact transcript text."""
-    app = _build_test_app()
+    app = _build_console_send_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
     app.console_provider_gateway_factory = lambda: CapturingGateway(
@@ -3248,7 +3272,7 @@ async def test_console_native_send_clears_composer_after_acceptance_and_updates_
 @pytest.mark.asyncio
 async def test_console_chat_lifecycle_state_survives_screen_recreation_return():
     """Verify Console chat tabs, transcript, and draft restore after recreation."""
-    app = _build_test_app()
+    app = _build_console_send_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
     app.console_provider_gateway_factory = lambda: CapturingGateway(
@@ -3312,7 +3336,7 @@ async def test_console_chat_lifecycle_state_survives_screen_recreation_return():
 
 @pytest.mark.asyncio
 async def test_console_send_refreshes_workspace_conversation_rail_after_persistence():
-    app = _build_test_app()
+    app = _build_console_send_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
     app.console_provider_gateway_factory = lambda: CapturingGateway(
@@ -3326,8 +3350,12 @@ async def test_console_send_refreshes_workspace_conversation_rail_after_persiste
         row_texts = _console_workspace_conversation_texts(console)
         assert any("Chat 1" in text for text in row_texts)
         assert len(console.query("#console-workspace-empty-conversations")) == 0
-        store = console._ensure_console_chat_store()
-        store.persistence = WorkspaceLinkingPersistence(app.workspace_registry_service)
+        # TASK-21590: the hand-rolled WorkspaceLinkingPersistence double that
+        # used to be installed here predates durable turn acceptance and has no
+        # `commit_durable_turn`, so production refused the send outright. The
+        # real `ChatPersistenceService` the store already built links workspace
+        # membership through this same registry, so the double is both stale and
+        # redundant -- assert against production's own linking instead.
         _select_llamacpp_console(console)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("hello")
@@ -3363,7 +3391,7 @@ async def test_console_send_refreshes_workspace_conversation_rail_after_persiste
 
 @pytest.mark.asyncio
 async def test_console_send_after_workspace_switch_persists_to_selected_workspace():
-    app = _build_test_app()
+    app = _build_console_send_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
     app.console_provider_gateway_factory = lambda: CapturingGateway(
@@ -3380,7 +3408,12 @@ async def test_console_send_after_workspace_switch_persists_to_selected_workspac
         await _wait_for_selector(console, pilot, "#console-native-composer")
         await _wait_for_selector(console, pilot, "#console-change-workspace")
         store = console._ensure_console_chat_store()
-        store.persistence = WorkspaceLinkingPersistence(service)
+        # TASK-21590: the hand-rolled WorkspaceLinkingPersistence double that
+        # used to be installed here predates durable turn acceptance and has no
+        # `commit_durable_turn`, so production refused the send outright. The
+        # real `ChatPersistenceService` the store already built links workspace
+        # membership through this same registry, so the double is both stale and
+        # redundant -- assert against production's own linking instead.
         _select_llamacpp_console(console)
         first_session = store.ensure_session()
         store.replace_session_settings(
@@ -3599,7 +3632,7 @@ async def test_console_tab_switch_aligns_active_workspace_context():
 
 @pytest.mark.asyncio
 async def test_console_unsupported_provider_block_renders_one_normalized_system_message():
-    app = _build_test_app()
+    app = _build_console_send_test_app()
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -4299,7 +4332,7 @@ async def test_console_accepted_send_records_first_send_flag():
     # Reuse the ready-provider send harness from
     # test_console_send_refreshes_workspace_conversation_rail_after_persistence:
     # same fixtures/gateway stub, then assert the persisted global flag.
-    app = _build_test_app()
+    app = _build_console_send_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
     app.console_provider_gateway_factory = lambda: CapturingGateway(
@@ -4310,8 +4343,12 @@ async def test_console_accepted_send_records_first_send_flag():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        store = console._ensure_console_chat_store()
-        store.persistence = WorkspaceLinkingPersistence(app.workspace_registry_service)
+        # TASK-21590: the hand-rolled WorkspaceLinkingPersistence double that
+        # used to be installed here predates durable turn acceptance and has no
+        # `commit_durable_turn`, so production refused the send outright. The
+        # real `ChatPersistenceService` the store already built links workspace
+        # membership through this same registry, so the double is both stale and
+        # redundant -- assert against production's own linking instead.
         _select_llamacpp_console(console)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("hello")
@@ -4326,7 +4363,7 @@ async def test_console_accepted_send_records_first_send_flag():
 @pytest.mark.asyncio
 async def test_console_failed_send_does_not_record_first_send_flag():
     """A FAILED first send must not set the one-time onboarding flag (task-182d)."""
-    app = _build_test_app()
+    app = _build_console_send_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
     app.console_provider_gateway_factory = lambda: FailThenRecoverGateway()
@@ -5673,7 +5710,7 @@ async def test_console_selected_message_edit_action_opens_modal_and_saves_conten
 
 @pytest.mark.asyncio
 async def test_console_edit_resend_clears_replaced_descendant_original_attempt():
-    app = _build_test_app()
+    app = _build_console_send_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
     app.console_provider_gateway_factory = lambda: CapturingGateway(
@@ -6359,7 +6396,7 @@ async def test_console_save_as_media_failure_notifies_without_crashing():
 @pytest.mark.asyncio
 async def test_console_failed_stream_renders_inline_retry_and_recovers():
     gateway = FailThenRecoverGateway()
-    app = _build_test_app()
+    app = _build_console_send_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
     app.console_provider_gateway_factory = lambda: gateway
@@ -6404,7 +6441,7 @@ async def test_console_failed_stream_renders_inline_retry_and_recovers():
 
 @pytest.mark.asyncio
 async def test_console_continue_action_streams_new_message_from_selected_turn():
-    app = _build_test_app()
+    app = _build_console_send_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
     app.console_provider_gateway_factory = lambda: CapturingGateway(
@@ -6450,7 +6487,7 @@ async def test_console_continue_action_streams_new_message_from_selected_turn():
 
 @pytest.mark.asyncio
 async def test_console_regenerate_action_streams_selected_variant():
-    app = _build_test_app()
+    app = _build_console_send_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
     app.console_provider_gateway_factory = lambda: CapturingGateway(
@@ -11463,7 +11500,7 @@ async def test_console_save_as_savers_confirm_at_success_severity():
 async def test_console_retry_accepted_fires_success_toast():
     """Retrying a failed response confirms at success severity (FB-07)."""
     gateway = FailThenRecoverGateway()
-    app = _build_test_app()
+    app = _build_console_send_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
     app.console_provider_gateway_factory = lambda: gateway

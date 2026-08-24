@@ -124,6 +124,46 @@ def build_test_app_config(
     return config
 
 
+def attach_chachanotes_db(app, *, client_id: str = "test-client"):
+    """Give a factory-built app the durable ChaChaNotes DB a real send needs.
+
+    TASK-21590. `_build_test_app` patches `get_chachanotes_db_lazy` to `None`,
+    so a factory app boots with `chachanotes_db = None`. `ConsoleRuntime.
+    ensure_chat_store` then builds the Console store with `persistence=None` --
+    and since TASK-19900.3's review-fix commit `56db75386` a durable Console
+    turn (any non-ephemeral manual or queued send) *fails closed* unless the
+    persistence adapter exposes a callable ``commit_durable_turn``, which a
+    `None` adapter cannot. That refusal returns a bare `ConsoleSubmitResult`
+    instead of going through `_block`, so it writes no system row and raises no
+    toast: 26 mounted send tests kept pressing Send and asserting against a
+    transcript production had silently refused to write.
+
+    ``:memory:`` is load-bearing, not a shortcut. `ConsoleRuntime.
+    ensure_agent_bridge` deliberately refuses to build an agent bridge for a
+    `:memory:` DB ("an in-memory harness still builds neither"), so this
+    restores exactly the precondition the send path lost -- a durable-capable
+    persistence adapter -- without also switching the caller onto the agent
+    loop, which a file-backed DB does and which these tests were never written
+    against. A test that is *about* the agent runtime must attach a
+    file-backed DB itself.
+
+    Attach BEFORE mounting: the store is built lazily on first use and caches
+    its persistence adapter.
+
+    Args:
+        app: A `_build_test_app` product, not yet mounted.
+        client_id: Client id recorded on the DB's rows.
+
+    Returns:
+        The `CharactersRAGDB` now assigned to ``app.chachanotes_db``.
+    """
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(":memory:", client_id)
+    app.chachanotes_db = db
+    return db
+
+
 def drain_created_dirs() -> int:
     """Remove every user-data dir created since the last drain.
 
