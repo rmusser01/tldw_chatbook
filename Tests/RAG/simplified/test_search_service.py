@@ -26,19 +26,7 @@ from tldw_chatbook.RAG_Search.simplified.citations import (
 from tldw_chatbook.RAG_Search.simplified.search_service import (
     SimplifiedRAGSearchService,
 )
-
-
-def _make_service(media_db: MediaDatabase) -> SimplifiedRAGSearchService:
-    """Construct the service without running __init__ (which loads settings
-    and builds a full embeddings-backed RAG service) -- mirrors the
-    MCPTools.__new__ bypass already used in Tests/MCP/test_rag_search_tool.py.
-    `rag_service = None` exercises the same "semantic unavailable" path the
-    real constructor falls back to when create_rag_service() fails.
-    """
-    service = SimplifiedRAGSearchService.__new__(SimplifiedRAGSearchService)
-    service.media_db = media_db
-    service.rag_service = None
-    return service
+from tldw_chatbook.RAG_Search.simplified import search_service
 
 
 @pytest.fixture
@@ -68,6 +56,43 @@ def _seed(
     return media_id
 
 
+def test_constructor_does_not_build_enhanced_runtime(media_db, monkeypatch):
+    def _fail(*_args, **_kwargs):
+        pytest.fail("constructor must not create enhanced RAG runtime")
+
+    monkeypatch.setattr(search_service, "create_rag_service", _fail, raising=False)
+
+    service = SimplifiedRAGSearchService(media_db)
+
+    assert service.media_db is media_db
+    assert service.rag_service is None
+
+
+@pytest.mark.asyncio
+async def test_profile_plain_routes_to_keyword_without_resolving_shared_runtime(
+    media_db, monkeypatch
+):
+    media_id = _seed(
+        media_db,
+        title="Plain Profile Item",
+        content="plainprofilemarker appears in this content",
+    )
+    service = SimplifiedRAGSearchService(media_db)
+
+    monkeypatch.setattr(search_service, "resolve_active_rag_search_mode", lambda: "plain")
+    monkeypatch.setattr(
+        search_service,
+        "get_shared_rag_service",
+        lambda: pytest.fail("plain profile must not resolve shared runtime"),
+    )
+
+    results = await service.profile_search("plainprofilemarker", limit=10)
+
+    assert len(results) == 1
+    assert results[0]["id"] == media_id
+    assert results[0]["score"] is None
+
+
 class _StubEnhancedRAGService:
     """Provides ONLY the `.search()` seam that `semantic_search` calls into
     the embeddings-backed RAG service -- the mapping code that consumes the
@@ -80,8 +105,18 @@ class _StubEnhancedRAGService:
         self._results = results
         self.calls: list[tuple] = []
 
-    async def search(self, *, query, top_k, search_type, filter_metadata=None):
-        self.calls.append((query, top_k, search_type, filter_metadata))
+    async def search(
+        self,
+        *,
+        query,
+        top_k,
+        search_type,
+        filter_metadata=None,
+        metadata_allowlist=None,
+    ):
+        self.calls.append(
+            (query, top_k, search_type, filter_metadata, metadata_allowlist)
+        )
         return self._results
 
 
@@ -100,7 +135,7 @@ class TestKeywordSearchRealRowMapping:
             media_type="article",
             author="Ada Lovelace",
         )
-        service = _make_service(media_db)
+        service = SimplifiedRAGSearchService(media_db)
 
         results = await service.keyword_search("knownmarker", limit=10)
 
@@ -135,7 +170,7 @@ class TestKeywordSearchRealRowMapping:
             content="uniquefilterterm appears in this pdf document too",
             media_type="pdf",
         )
-        service = _make_service(media_db)
+        service = SimplifiedRAGSearchService(media_db)
 
         results = await service.keyword_search(
             "uniquefilterterm", limit=10, media_types=["pdf"]
@@ -153,7 +188,7 @@ class TestKeywordSearchRealRowMapping:
                 title=f"Limit Item {i}",
                 content=f"limitcapterm appears in item number {i}",
             )
-        service = _make_service(media_db)
+        service = SimplifiedRAGSearchService(media_db)
 
         results = await service.keyword_search("limitcapterm", limit=2)
 
@@ -170,7 +205,7 @@ class TestKeywordSearchRealRowMapping:
             title="End To End Item",
             content="endtoendmarker shows up in the perform_rag_search path",
         )
-        service = _make_service(media_db)
+        service = SimplifiedRAGSearchService(media_db)
         tools = MCPTools.__new__(MCPTools)
         tools.rag_service = service
 
@@ -186,7 +221,7 @@ class TestKeywordSearchRealRowMapping:
 class TestKeywordSearchFailureSurfacesAsError:
     @pytest.mark.asyncio
     async def test_media_db_failure_raises_instead_of_returning_empty(self, media_db):
-        service = _make_service(media_db)
+        service = SimplifiedRAGSearchService(media_db)
 
         def _boom(**kwargs: Any):
             raise RuntimeError("simulated media_db failure")
@@ -200,7 +235,7 @@ class TestKeywordSearchFailureSurfacesAsError:
     async def test_end_to_end_perform_rag_search_surfaces_error_shape(self, media_db):
         """A crash inside the search service must reach the MCP tool's
         existing honest error shape ([{"error": ...}]), not a silent []."""
-        service = _make_service(media_db)
+        service = SimplifiedRAGSearchService(media_db)
 
         def _boom(**kwargs: Any):
             raise RuntimeError("simulated media_db failure")
@@ -228,6 +263,37 @@ class TestSemanticSearchEnhancedMapping:
     seam (`.search()`) stubbed."""
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("mode", "media_types", "filter_metadata"),
+        [
+            ("semantic", ["pdf"], {"media_type": {"$in": ["pdf"]}}),
+            (
+                "hybrid",
+                ["pdf", "video"],
+                {"media_type": {"$in": ["pdf", "video"]}},
+            ),
+        ],
+    )
+    async def test_profile_enhanced_routes_are_media_confined(
+        self, media_db, monkeypatch, mode, media_types, filter_metadata
+    ):
+        service = SimplifiedRAGSearchService(media_db)
+        stub = _StubEnhancedRAGService([])
+        service.rag_service = stub
+        monkeypatch.setattr(search_service, "resolve_active_rag_search_mode", lambda: mode)
+
+        assert await service.profile_search("anything", limit=5, media_types=media_types) == []
+        assert stub.calls == [
+            (
+                "anything",
+                5,
+                mode,
+                filter_metadata,
+                {"source_type": ("media",)},
+            )
+        ]
+
+    @pytest.mark.asyncio
     async def test_maps_real_search_result_with_citations_document_field(
         self, media_db
     ):
@@ -253,7 +319,7 @@ class TestSemanticSearchEnhancedMapping:
                 )
             ],
         )
-        service = _make_service(media_db)
+        service = SimplifiedRAGSearchService(media_db)
         service.rag_service = _StubEnhancedRAGService([real_result])
 
         results = await service.semantic_search("anything", limit=5)
@@ -271,7 +337,7 @@ class TestSemanticSearchEnhancedMapping:
 
     @pytest.mark.asyncio
     async def test_media_types_filter_reaches_the_enhanced_service(self, media_db):
-        service = _make_service(media_db)
+        service = SimplifiedRAGSearchService(media_db)
         stub = _StubEnhancedRAGService([])
         service.rag_service = stub
 
@@ -281,7 +347,13 @@ class TestSemanticSearchEnhancedMapping:
 
         assert results == []
         assert stub.calls == [
-            ("anything", 5, "semantic", {"media_type": {"$in": ["pdf", "video"]}})
+            (
+                "anything",
+                5,
+                "semantic",
+                {"media_type": {"$in": ["pdf", "video"]}},
+                {"source_type": ("media",)},
+            )
         ]
 
     @pytest.mark.asyncio
@@ -296,7 +368,7 @@ class TestSemanticSearchEnhancedMapping:
             metadata={"title": "Default Path Doc", "media_type": "video"},
             citations=[],
         )
-        service = _make_service(media_db)
+        service = SimplifiedRAGSearchService(media_db)
         service.rag_service = _StubEnhancedRAGService([real_result])
 
         tools = MCPTools.__new__(MCPTools)
@@ -326,15 +398,16 @@ class TestSemanticSearchFallback:
 
     @pytest.mark.asyncio
     async def test_falls_back_to_keyword_search_when_semantic_unavailable(
-        self, media_db
+        self, media_db, monkeypatch
     ):
         media_id = _seed(
             media_db,
             title="Semantic Fallback Item",
             content="fallbackmarkerterm appears in this content",
         )
-        service = _make_service(media_db)
+        service = SimplifiedRAGSearchService(media_db)
         assert service.rag_service is None  # enhanced semantic path unavailable
+        monkeypatch.setattr(search_service, "get_shared_rag_service", lambda: None)
 
         results = await service.semantic_search("fallbackmarkerterm", limit=10)
 
@@ -342,8 +415,9 @@ class TestSemanticSearchFallback:
         assert results[0]["id"] == media_id
 
     @pytest.mark.asyncio
-    async def test_raises_on_failure_instead_of_returning_empty(self, media_db):
-        service = _make_service(media_db)
+    async def test_raises_on_failure_instead_of_returning_empty(self, media_db, monkeypatch):
+        service = SimplifiedRAGSearchService(media_db)
+        monkeypatch.setattr(search_service, "get_shared_rag_service", lambda: None)
 
         def _boom(**kwargs: Any):
             raise RuntimeError("simulated media_db failure")
@@ -352,6 +426,125 @@ class TestSemanticSearchFallback:
 
         with pytest.raises(RuntimeError, match="simulated media_db failure"):
             await service.semantic_search("anything")
+
+
+class TestEnhancedRuntimeLifecycle:
+    @pytest.mark.asyncio
+    async def test_each_enhanced_request_resolves_current_shared_service(
+        self, media_db, monkeypatch
+    ):
+        first = _StubEnhancedRAGService(
+            [
+                SearchResultWithCitations(
+                    id="first",
+                    score=0.1,
+                    document="first runtime result",
+                    metadata={"title": "First", "source": "first"},
+                    citations=[],
+                )
+            ]
+        )
+        second = _StubEnhancedRAGService(
+            [
+                SearchResultWithCitations(
+                    id="second",
+                    score=0.2,
+                    document="second runtime result",
+                    metadata={"title": "Second", "source": "second"},
+                    citations=[],
+                )
+            ]
+        )
+        shared_services = iter([first, second])
+        monkeypatch.setattr(
+            search_service, "get_shared_rag_service", lambda: next(shared_services)
+        )
+        service = SimplifiedRAGSearchService(media_db)
+
+        first_results = await service.semantic_search("first")
+        second_results = await service.semantic_search("second")
+
+        assert [first_results[0]["metadata"]["source"], second_results[0]["metadata"]["source"]] == [
+            "first",
+            "second",
+        ]
+        assert first.calls[0][0] == "first"
+        assert second.calls[0][0] == "second"
+        assert service.rag_service is None
+
+    @pytest.mark.asyncio
+    async def test_unavailable_shared_runtime_falls_back_to_unscored_keyword_search(
+        self, media_db, monkeypatch
+    ):
+        media_id = _seed(
+            media_db,
+            title="Unavailable Runtime Item",
+            content="unavailableruntimemarker appears in this content",
+        )
+        monkeypatch.setattr(search_service, "get_shared_rag_service", lambda: None)
+        service = SimplifiedRAGSearchService(media_db)
+
+        results = await service.semantic_search("unavailableruntimemarker")
+
+        assert results[0]["id"] == media_id
+        assert results[0]["score"] is None
+
+    @pytest.mark.asyncio
+    async def test_shared_runtime_acquisition_exception_falls_back_to_keyword_search(
+        self, media_db, monkeypatch
+    ):
+        media_id = _seed(
+            media_db,
+            title="Failing Runtime Item",
+            content="failingruntimemarker appears in this content",
+        )
+
+        def _boom():
+            raise RuntimeError("shared runtime unavailable")
+
+        monkeypatch.setattr(search_service, "get_shared_rag_service", _boom)
+        service = SimplifiedRAGSearchService(media_db)
+
+        results = await service.semantic_search("failingruntimemarker")
+
+        assert results[0]["id"] == media_id
+        assert results[0]["score"] is None
+
+    @pytest.mark.asyncio
+    async def test_enhanced_search_exception_propagates(self, media_db):
+        class _FailingService:
+            async def search(self, **_kwargs):
+                raise RuntimeError("enhanced search failed")
+
+        service = SimplifiedRAGSearchService(media_db)
+        service.rag_service = _FailingService()
+
+        with pytest.raises(RuntimeError, match="enhanced search failed"):
+            await service.semantic_search("anything")
+
+    @pytest.mark.asyncio
+    async def test_enhanced_formatter_preserves_complete_metadata(self, media_db):
+        metadata = {
+            "title": "Metadata Item",
+            "fusion": {"semantic": 0.8, "keyword": 0.2},
+            "reranking": {"model": "cross-encoder", "rank": 1},
+        }
+        service = SimplifiedRAGSearchService(media_db)
+        service.rag_service = _StubEnhancedRAGService(
+            [
+                SearchResultWithCitations(
+                    id="metadata-item",
+                    score=0.9,
+                    document="metadata body",
+                    metadata=metadata,
+                    citations=[],
+                )
+            ]
+        )
+
+        results = await service.semantic_search("anything")
+
+        assert results[0]["metadata"] is metadata
 
 
 class TestKeywordSearchScoreIsHonest:
@@ -380,7 +573,7 @@ class TestKeywordSearchScoreIsHonest:
             title="Honest Score Item",
             content="honestscoremarker appears in this content",
         )
-        service = _make_service(media_db)
+        service = SimplifiedRAGSearchService(media_db)
 
         results = await service.keyword_search("honestscoremarker", limit=10)
 
@@ -395,7 +588,7 @@ class TestKeywordSearchScoreIsHonest:
                 title=f"Honest Score Item {i}",
                 content=f"honestscoreplural appears in item {i}",
             )
-        service = _make_service(media_db)
+        service = SimplifiedRAGSearchService(media_db)
 
         results = await service.keyword_search("honestscoreplural", limit=10)
 

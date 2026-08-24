@@ -5,12 +5,13 @@ This module provides a simple interface for RAG search functionality
 specifically designed for MCP (Model Context Protocol) integration.
 """
 
+import asyncio
 from typing import List, Dict, Any, Optional
 from loguru import logger
 
 from ...DB.Client_Media_DB_v2 import MediaDatabase
-from ...config import load_settings
-from .rag_factory import create_rag_service
+from ..ingestion_indexing import get_shared_rag_service
+from .active_config import resolve_active_rag_search_mode
 
 
 class SimplifiedRAGSearchService:
@@ -24,89 +25,67 @@ class SimplifiedRAGSearchService:
             media_db: Media database instance
         """
         self.media_db = media_db
+        self.rag_service = None
 
-        # Load RAG configuration
-        settings = load_settings()
-        rag_config = settings.get("rag_search", {})
-        service_config = rag_config.get("service", {})
-
-        # Get profile name
-        profile_name = service_config.get("profile", "hybrid_basic")
-
-        # Create RAG service with profile
-        try:
-            self.rag_service = create_rag_service(profile_name=profile_name)
-            logger.info(f"Using profile '{profile_name}' for MCP integration")
-        except Exception as e:
-            logger.error(f"Failed to create RAG service: {e}")
-            self.rag_service = None
-            logger.info("Falling back to basic search for MCP integration")
+    async def profile_search(
+        self, query: str, limit: int = 10, media_types: Optional[List[str]] = None
+    ) -> List[Dict[str, Any]]:
+        """Search using the active profile's configured mode."""
+        mode = resolve_active_rag_search_mode()
+        if mode == "plain":
+            return await self.keyword_search(query, limit, media_types)
+        return await self._enhanced_search(query, limit, media_types, search_type=mode)
 
     async def semantic_search(
         self, query: str, limit: int = 10, media_types: Optional[List[str]] = None
     ) -> List[Dict[str, Any]]:
-        """
-        Perform semantic search across media.
+        """Perform explicit semantic search across media."""
+        return await self._enhanced_search(
+            query, limit, media_types, search_type="semantic"
+        )
 
-        Args:
-            query: Search query
-            limit: Maximum number of results
-            media_types: Optional list of media types to filter
+    async def _enhanced_search(
+        self,
+        query: str,
+        limit: int,
+        media_types: Optional[List[str]],
+        *,
+        search_type: str,
+    ) -> List[Dict[str, Any]]:
+        service = self.rag_service
+        if service is None:
+            try:
+                service = await asyncio.to_thread(get_shared_rag_service)
+            except Exception as exc:
+                logger.error(f"Failed to acquire shared RAG runtime: {exc}")
+                service = None
+        if service is None:
+            return await self.keyword_search(query, limit, media_types)
+        filter_metadata = {"media_type": {"$in": media_types}} if media_types else None
+        results = await service.search(
+            query=query,
+            top_k=limit,
+            search_type=search_type,
+            filter_metadata=filter_metadata,
+            metadata_allowlist={"source_type": ("media",)},
+        )
+        return self._format_enhanced_results(results)
 
-        Returns:
-            List of search results
-        """
-        try:
-            # Use enhanced RAG service if available
-            if self.rag_service and hasattr(self.rag_service, "search"):
-                # Build metadata filter for media types
-                filter_metadata = None
-                if media_types:
-                    filter_metadata = {"media_type": {"$in": media_types}}
-
-                # Perform semantic search
-                results = await self.rag_service.search(
-                    query=query,
-                    top_k=limit,
-                    search_type="semantic",
-                    filter_metadata=filter_metadata,
-                )
-
-                # Format results
-                formatted_results = []
-                for result in results:
-                    formatted_results.append(
-                        {
-                            "id": result.id,
-                            "title": result.metadata.get("title", "Untitled"),
-                            # `.document` is the real field on both
-                            # SearchResultWithCitations (citations.py) and
-                            # SearchResult (vector_store.py) -- neither
-                            # dataclass has a `.content` attribute (task-2271
-                            # round 2: this crashed with AttributeError on
-                            # every semantic search, i.e. the tool's DEFAULT
-                            # path, since use_semantic defaults True).
-                            "content": result.document,
-                            "media_type": result.metadata.get("media_type", "unknown"),
-                            "url": result.metadata.get("url"),
-                            "file_path": result.metadata.get("file_path"),
-                            "score": result.score,
-                            "metadata": result.metadata,
-                        }
-                    )
-
-                return formatted_results
-            else:
-                # Fall back to keyword search
-                return await self.keyword_search(query, limit, media_types)
-        except Exception as e:
-            # Do NOT swallow this into an empty result (task-2271): a crash
-            # here (including one that propagates up from the keyword_search
-            # fallback above) must surface as an error, never as a silent
-            # "0 results". The caller (MCP/tools.py:perform_rag_search)
-            # already catches this into the honest `[{"error": ...}]` shape.
-            logger.error(f"Error in semantic_search: {e}")
-            raise
+    @staticmethod
+    def _format_enhanced_results(results: Any) -> List[Dict[str, Any]]:
+        return [
+            {
+                "id": result.id,
+                "title": result.metadata.get("title", "Untitled"),
+                "content": result.document,
+                "media_type": result.metadata.get("media_type", "unknown"),
+                "url": result.metadata.get("url"),
+                "file_path": result.metadata.get("file_path"),
+                "score": result.score,
+                "metadata": result.metadata,
+            }
+            for result in results
+        ]
 
     async def keyword_search(
         self, query: str, limit: int = 10, media_types: Optional[List[str]] = None
