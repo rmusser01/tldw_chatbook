@@ -18,13 +18,12 @@ import time
 from datetime import datetime, timezone
 
 import pytest
-
-pytestmark = pytest.mark.unit
-
 from tldw_chatbook.UI.Watchlists_Modules.humane_time import (
     humane_timestamp,
     parse_timestamp,
 )
+
+pytestmark = pytest.mark.unit
 
 
 @pytest.fixture(autouse=True)

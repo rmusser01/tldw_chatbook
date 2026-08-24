@@ -65,35 +65,42 @@
     color: $text;
 }
 
-/* Workbench: rails around a vertically stacked centre */
+/* Workbench: stable chrome above a permanent horizontal centre. */
 .watchlists-workbench {
+    layout: vertical;
     width: 100%;
     height: 1fr;
+    min-width: 0;
     min-height: 0;
+    overflow: hidden;
+}
+
+#wl-workbench-body {
+    layout: horizontal;
+    width: 100%;
+    height: 1fr;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
 }
 
 .watchlists-region-left_rail {
-    width: 28;
-    min-width: 0;
+    width: 28fr;
+    min-width: 24;
+    max-width: 28;
     height: 100%;
     border: round $ds-grid-line;
 }
 
-/* Widened from 28 (Task 5): at 26 usable columns every Inspector action
- * label truncated -- "Stage Watchlists Cont", "Open current Watchlis",
- * "Console follow unavai" -- measured live at 235x52. 34 fits the longest
- * label ("Stage Watchlists Context in Console") close to on one line; the
- * `Button` rule below wraps as a fallback for whatever still does not fit,
- * rather than clipping it.
- *
- * Keeps its region border (Task 6, fix round 3): the ONE box per region is
+/* Keeps its region border: the ONE box per region is
  * drawn by the region wrapper, and the pane inside is stripped by ID below
  * (`#watchlists-inspector-pane`). See that rule for why the region, not the
  * pane, is the survivor.
  */
 .watchlists-region-right_rail {
-    width: 34;
-    min-width: 0;
+    width: 34fr;
+    min-width: 30;
+    max-width: 34;
     height: 100%;
     border: round $ds-grid-line;
 }
@@ -113,24 +120,9 @@
     text-align: left;
 }
 
-.watchlists-centre {
-    width: 1fr;
-    min-width: 0;
-    height: 100%;
-    min-height: 0;
-}
-
-/* The always-rendered centre header (section tab strip + the snapshot's
- * loading/error/empty/summary marker), shown above the regions on EVERY
- * tab since task-2513 -- see
- * `WatchlistsCollectionsScreen._build_centre_status_header`. `Vertical`'s
- * own `DEFAULT_CSS` claims `height: 1fr` (textual/containers.py), and an
- * `fr` sibling here would compete with ITEMS's own `1fr`/`2fr` share for
- * the centre's height instead of taking only what its (fixed-height) tab
- * strip and one-line marker actually need. `height: auto` fixes that; no
- * border, this is plain chrome, not a region.
- */
+/* Cross-cutting tab/status chrome stays above the body on every section. */
 #wl-centre-status {
+    width: 100%;
     height: auto;
 }
 
@@ -155,39 +147,32 @@
     border: none;
 }
 
-/* ITEMS keeps its region border (Task 6, fix round 3) -- the pane inside is
- * stripped by the rule above.
- *
- * `2fr` (fix round 2, human-authorised lever change): ITEMS hosts every
- * section pane and their DataTables, so it gets a double share of the
- * centre stack; CONTENT (below) is content-sized rather than a competing
- * `fr` claimant, which leaves ITEMS the `.watchlists-centre` Vertical's
- * only `fr` sibling and the tall reading area.
- */
+/* ITEMS is the management canvas, but a bounded Feed Items side pane on Read. */
 .watchlists-region-items {
-    width: 100%;
-    height: 2fr;
+    width: 44fr;
+    min-width: 0;
+    height: 100%;
     min-height: 0;
     border: round $ds-grid-line;
 }
 
 .watchlists-read-mode .watchlists-region-items {
-    height: auto;
-    min-height: 10;
-    max-height: 50;
+    width: 40fr;
+    min-width: 32;
+    max-width: 40;
+    height: 100%;
     overflow: hidden;
 }
 
 .watchlists-read-mode #watchlists-detail-pane,
 .watchlists-read-mode #watchlists-items-pane {
-    height: auto;
+    height: 100%;
     min-height: 0;
 }
 
 .watchlists-read-mode #items-table {
-    height: auto;
+    height: 1fr;
     min-height: 1;
-    max-height: 40;
     overflow-y: auto;
 }
 
@@ -206,39 +191,33 @@
     text-align: center;
 }
 
-/* Read is a stacked scroll document: CONTENT owns a bounded 20–50-row box,
- * while only its article body scrolls. The outer region clips overflow so
- * its title, actions, footer and border remain fixed around that body.
- */
+/* Reader is the permanent flexing centre; only its article body scrolls. */
 .watchlists-region-content {
-    width: 100%;
-    height: auto;
+    width: 44fr;
+    min-width: 0;
+    height: 100%;
+    min-height: 0;
     border: round $ds-grid-line;
-}
-
-.watchlists-read-mode .watchlists-region-content {
-    height: auto;
-    min-height: 20;
-    max-height: 50;
     overflow: hidden;
 }
 
-/* `Vertical` defaults to `height: 1fr`; use natural height inside the
- * content-sized outer region so short and medium articles grow correctly.
- */
-#watchlists-content-pane {
-    height: auto;
+.watchlists-has-expanded-side-pane .watchlists-region-content,
+.watchlists-has-expanded-side-pane .watchlists-region-items {
+    min-width: 44;
 }
 
-.watchlists-read-mode #watchlists-content-pane {
-    height: auto;
+.watchlists-has-expanded-side-pane.watchlists-read-mode .watchlists-region-items {
+    min-width: 32;
+}
+
+#watchlists-content-pane {
+    height: 1fr;
     min-height: 0;
 }
 
 .watchlists-read-mode #content-body-scroll {
-    height: auto;
+    height: 1fr;
     min-height: 1;
-    max-height: 45;
     overflow-y: auto;
 }
 
@@ -262,54 +241,6 @@
     width: 1fr;
 }
 
-/* Solo must actually fill the centre (Task 6, fix round 3, Finding 3).
- *
- * `Z` (`action_solo_region` -> `RegionLayout.solo`) collapses the other
- * centre region to a one-line header. CONTENT is the only capped region,
- * so a soloed CONTENT would stay pinned at its `max-height` while the
- * collapsed header took one row -- the rest of the centre blank.
- *
- * The cap exists so a long article cannot crowd ITEMS. When ITEMS is
- * collapsed there is nothing to crowd, so the cap is lifted (to the full
- * centre height) and the region takes the remaining space. `_region_widget`
- * adds `.watchlists-region-sole-centre` for exactly that state -- see its
- * comment for why it keys on "only expanded centre region" rather than on
- * `RegionLayout.solo_region`.
- *
- * Must stay AFTER `.watchlists-region-content` above: both are single-class
- * selectors, so this only wins the `height`/`max-height` tie on source
- * order.
- */
-.watchlists-region-sole-centre {
-    height: 1fr;
-    max-height: 100%;
-}
-
-.watchlists-read-mode
-.watchlists-region-items.watchlists-region-sole-centre {
-    height: 1fr;
-    max-height: 100%;
-}
-
-.watchlists-read-mode
-.watchlists-region-content.watchlists-region-sole-centre {
-    height: 1fr;
-    max-height: 100%;
-}
-
-.watchlists-read-mode .watchlists-region-sole-centre #watchlists-detail-pane,
-.watchlists-read-mode .watchlists-region-sole-centre #watchlists-items-pane,
-.watchlists-read-mode .watchlists-region-sole-centre #items-table {
-    height: 1fr;
-    max-height: 100%;
-}
-
-.watchlists-read-mode .watchlists-region-sole-centre #watchlists-content-pane,
-.watchlists-read-mode .watchlists-region-sole-centre #content-body-scroll {
-    height: 1fr;
-    max-height: 100%;
-}
-
 .watchlists-region-title {
     height: 1;
     text-style: bold;
@@ -320,33 +251,29 @@
     color: $ds-text-muted;
 }
 
-/* Collapsed regions keep a one-line, focusable header so nothing vanishes.
- *
- * `width: 100%` is only correct when the header is a direct child of the
- * centre `VerticalScroll` (`#wl-centre` / `.watchlists-centre`) -- there "100%"
- * means the centre column's own width. A rail header (LEFT_RAIL/RIGHT_RAIL)
- * is a direct child of the workbench `Horizontal` itself, so the same rule
- * there means the ENTIRE workbench width, pushing every region after it off
- * the right edge of the screen (Finding 1, fix round 2). Rails get a fixed
- * narrow width instead -- the same fixed-width-handle pattern
- * `console_rail_handle.py` uses for its collapsed rail buttons -- with
- * `min-width`/`max-width` pinned so Button's own `min-width: 16` default
- * (textual/widgets/_button.py) can't win the cascade and re-widen it.
- */
-.watchlists-region-header {
-    height: 1;
-    min-height: 1;
+.watchlists-pane-grip {
+    width: 5;
+    min-width: 5;
+    max-width: 5;
+    height: 100%;
+    min-height: 0;
+    padding: 0;
+    margin: 0;
+    border: none;
+    border-left: solid $ds-grid-line;
     color: $ds-text-muted;
+    background: $ds-surface-panel;
+    text-align: center;
+    content-align: center middle;
 }
 
-.watchlists-centre > .watchlists-region-header {
-    width: 100%;
-}
-
-.watchlists-workbench > .watchlists-region-header {
-    width: 16;
-    min-width: 0;
-    max-width: 16;
+.watchlists-pane-grip:focus,
+.watchlists-pane-grip:hover:focus {
+    border: none;
+    border-left: solid $ds-action-focus;
+    outline: none;
+    color: $ds-focus-fg;
+    background: $ds-focus-bg;
 }
 
 /* Section tab strip (Task 3, styled in Task 6 fix round 3 -- folded in by
@@ -488,9 +415,9 @@
  * test_watchlists_left_rail_is_labelled_when_expanded` fails on any `…` in
  * the composited rail, which is how this was caught.
  *
- * At `width: auto` + `padding: 0 1` the two rows measure 21 and 20 columns
- * against 26 available, so both fit whole with the rail at its current
- * width of 28.
+ * At `width: auto` + zero padding the two rows measure 21 and 22 columns,
+ * so both fit whole against the 22-column interior of the 24-column rail
+ * floor.
  *
  * `height: 1` on the strip matches every other one-row control group on
  * this screen (`.destination-filter-strip`, the tab strip): the rail is a
@@ -506,7 +433,7 @@
     width: auto;
     min-width: 0;
     height: 1;
-    padding: 0 1;
+    padding: 0;
     border: none;
 }
 
@@ -817,6 +744,13 @@ WatchlistPickerDialog {
     min-width: 12;
 }
 
+#sources-new-button,
+#sources-filter-toggle {
+    width: auto;
+    min-width: 0;
+    padding: 0;
+}
+
 /* TASK-1035. The create-source form had no rule anywhere, so it took
  * Textual's defaults for its container and painted like an unfinished
  * sketch: `Create` on row 40 and `Cancel` on row 43 with blank rows between
@@ -1029,11 +963,18 @@ WatchlistPickerDialog {
 
 #items-search-input {
     width: 1fr;
-    min-width: 12;
+    min-width: 0;
 }
 
 #items-status-select {
-    width: 16;
+    width: 9;
+    min-width: 0;
+}
+
+#items-refresh-button {
+    width: auto;
+    min-width: 0;
+    padding: 0;
 }
 
 /* TASK-3791 plan task 5. The pill is a notice, not a verb: no border

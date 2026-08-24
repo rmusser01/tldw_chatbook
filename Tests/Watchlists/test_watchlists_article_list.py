@@ -35,7 +35,14 @@ pytestmark = pytest.mark.unit
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    # Keep the relative-date fixtures away from local midnight while
+    # retaining per-call microseconds used to exercise stable newest-first
+    # ordering. Without this, ``now - 1 hour`` is legitimately yesterday
+    # during the first hour of a day and contradicts a fixture named Today.
+    now = datetime.now(timezone.utc)
+    if now.astimezone().hour < 6:
+        return now + timedelta(hours=12)
+    return now
 
 
 def _item(
@@ -104,6 +111,8 @@ class ProductionCssArticleListHarness(ArticleListHarness):
 
     def compose(self) -> ComposeResult:
         pane = ArticleListPane(id="watchlists-items-pane")
+        pane.styles.height = "1fr"
+        pane.styles.min_height = 0
         pane.items = [
             _item(index, published_offset_hours=index * 12 + 1)
             for index in range(50)
@@ -430,8 +439,20 @@ async def test_read_list_scrolls_rows_without_scrolling_its_fixed_chrome():
         fixed_regions = (toolbar.region, legend.region, pager.region)
 
         detail = app.query_one("#watchlists-detail-pane")
+        pane = app.query_one(ArticleListPane)
         assert app.query_one("#watchlists-detail-title") in detail.children
-        assert app.query_one(ArticleListPane) in detail.children
+        assert pane in detail.children
+
+        def assert_contains(parent, child) -> None:
+            assert child.region.x >= parent.region.x
+            assert child.region.y >= parent.region.y
+            assert child.region.right <= parent.region.right
+            assert child.region.bottom <= parent.region.bottom
+
+        assert_contains(detail, pane)
+        assert_contains(pane, pager)
+        assert_contains(pager, app.query_one("#items-page-previous"))
+        assert_contains(pager, app.query_one("#items-page-next"))
 
         def composited_text(widget) -> str:
             strips = widget.screen._compositor.render_strips()
@@ -440,10 +461,15 @@ async def test_read_list_scrolls_rows_without_scrolling_its_fixed_chrome():
                 "".join(segment.text for segment in strips[y])[
                     region.x : region.x + region.width
                 ]
-                for y in range(region.y, region.y + region.height)
+                for y in range(
+                    max(0, region.y), min(len(strips), region.y + region.height)
+                )
             )
 
-        assert table.region.height <= 40
+        # Read now owns the full-height Feed Items column in the permanent
+        # horizontal reader canvas. The list itself must scroll while its
+        # toolbar, legend, and pager remain fixed; its absolute height is a
+        # function of the terminal rather than a legacy stacked-pane cap.
         assert table.max_scroll_y > 0
         assert "Refresh" in composited_text(toolbar)
         for label in ("Previous", "Page 1", "Next"):
@@ -455,6 +481,8 @@ async def test_read_list_scrolls_rows_without_scrolling_its_fixed_chrome():
 
         assert table.scroll_y == table.max_scroll_y
         assert (toolbar.region, legend.region, pager.region) == fixed_regions
+        assert_contains(detail, pane)
+        assert_contains(pane, pager)
         assert "Article 49" in composited_text(table)
         assert "Refresh" in composited_text(toolbar)
         assert "unread" in composited_text(legend)

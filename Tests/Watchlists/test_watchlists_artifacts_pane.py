@@ -66,11 +66,7 @@ from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
 )
 from tldw_chatbook.UI.Watchlists_Modules.artifacts_pane import (
     ArtifactsPane,
-    BriefingSelected,
     CastScriptRequested,
-    CitationActivated,
-    ExportBriefingRequested,
-    ExportFeedRequested,
     GenerateBriefingRequested,
     KeepBriefingRequested,
     KeptBriefingsRequested,
@@ -171,13 +167,37 @@ async def _open_artifacts(app, watchlist_id, *, size=(180, 50), visual=False):
         else DestinationHarness(app, "watchlists_collections")
     )
     async with host.run_test(size=size) as pilot:
-        await pilot.pause(0.1)
+        await pilot.pause()
         screen = host.screen_stack[-1]
         assert isinstance(screen, WatchlistsCollectionsScreen)
         if watchlist_id is not None:
             screen.tree_scope = TreeScope(kind="watchlist", watchlist_id=watchlist_id)
         screen.active_section = "artifacts"
-        await pilot.pause(0.2)
+
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline:
+            await pilot.pause(0.01)
+            if screen.query("#watchlists-artifacts-pane #artifacts-table"):
+                break
+        else:
+            raise AssertionError("Artifacts table did not mount within 10 seconds")
+
+        remaining = max(0.01, deadline - time.monotonic())
+        await asyncio.wait_for(host.workers.wait_for_complete(), timeout=remaining)
+        expected_rows = (
+            len(app.watchlist_bundle_service.db.list_briefings(watchlist_id))
+            if watchlist_id is not None
+            else 0
+        )
+        while time.monotonic() < deadline:
+            await pilot.pause(0.01)
+            tables = screen.query("#watchlists-artifacts-pane #artifacts-table")
+            if tables and tables.first(DataTable).row_count == expected_rows:
+                break
+        else:
+            raise AssertionError(
+                "Artifacts table did not reach its loaded row count within 10 seconds"
+            )
         yield screen, pilot, host
 
 
@@ -2502,7 +2522,7 @@ async def test_the_cast_guard_is_claimed_before_the_worker_runs(monkeypatch):
     _use_fake_chat(monkeypatch, _FakeChat())
 
     async with _open_artifacts(app, watchlist_id) as (screen, pilot, _host):
-        briefing_id = await _prepare_cast(screen, pilot, app, watchlist_id)
+        await _prepare_cast(screen, pilot, app, watchlist_id)
         cast_chat = _FakeChat(
             reply=json.dumps([{"speaker": "Narrator", "text": "Hi."}])
         )
@@ -4721,7 +4741,7 @@ async def test_write_briefing_export_file_writes_the_document_and_toasts_success
     app = _build_test_app()
     app.notify = Mock()
     watchlist_id = _seed_watchlist(app)
-    briefing_id = _seed_complete_briefing(app, watchlist_id, body="Body text")
+    _seed_complete_briefing(app, watchlist_id, body="Body text")
     briefing = dict(app.watchlist_bundle_service.db.list_briefings(watchlist_id)[0])
     briefing["watchlist_name"] = "Morning AI Brief"
 
@@ -4748,7 +4768,7 @@ async def test_write_briefing_export_file_cancelled_writes_nothing():
     app = _build_test_app()
     app.notify = Mock()
     watchlist_id = _seed_watchlist(app)
-    briefing_id = _seed_complete_briefing(app, watchlist_id)
+    _seed_complete_briefing(app, watchlist_id)
     briefing = dict(app.watchlist_bundle_service.db.list_briefings(watchlist_id)[0])
     briefing["watchlist_name"] = "Morning AI Brief"
 
@@ -4770,7 +4790,7 @@ async def test_write_briefing_export_file_rejects_an_invalid_path(monkeypatch, t
     app = _build_test_app()
     app.notify = Mock()
     watchlist_id = _seed_watchlist(app)
-    briefing_id = _seed_complete_briefing(app, watchlist_id)
+    _seed_complete_briefing(app, watchlist_id)
     briefing = dict(app.watchlist_bundle_service.db.list_briefings(watchlist_id)[0])
     briefing["watchlist_name"] = "Morning AI Brief"
 
@@ -4802,7 +4822,7 @@ async def test_write_briefing_export_file_write_failure_toasts_the_exception_typ
     app = _build_test_app()
     app.notify = Mock()
     watchlist_id = _seed_watchlist(app)
-    briefing_id = _seed_complete_briefing(app, watchlist_id)
+    _seed_complete_briefing(app, watchlist_id)
     briefing = dict(app.watchlist_bundle_service.db.list_briefings(watchlist_id)[0])
     briefing["watchlist_name"] = "Morning AI Brief"
 
@@ -4838,7 +4858,7 @@ async def test_write_briefing_export_file_unicode_encode_error_toasts_the_except
     app = _build_test_app()
     app.notify = Mock()
     watchlist_id = _seed_watchlist(app)
-    briefing_id = _seed_complete_briefing(app, watchlist_id)
+    _seed_complete_briefing(app, watchlist_id)
     briefing = dict(app.watchlist_bundle_service.db.list_briefings(watchlist_id)[0])
     briefing["watchlist_name"] = "Morning AI Brief"
 
@@ -4871,7 +4891,7 @@ async def test_write_briefing_export_file_cancelled_error_propagates_uncaught(
     app = _build_test_app()
     app.notify = Mock()
     watchlist_id = _seed_watchlist(app)
-    briefing_id = _seed_complete_briefing(app, watchlist_id)
+    _seed_complete_briefing(app, watchlist_id)
     briefing = dict(app.watchlist_bundle_service.db.list_briefings(watchlist_id)[0])
     briefing["watchlist_name"] = "Morning AI Brief"
 

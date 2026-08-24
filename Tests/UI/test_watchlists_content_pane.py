@@ -1,3 +1,5 @@
+from unittest.mock import Mock
+
 import pytest
 
 # Harness apps load the consolidated widget CSS the real app loads
@@ -117,7 +119,6 @@ async def test_content_pane_shows_placeholder_with_no_item():
     `compose()` ever runs or produces the right widget. Mount it for real and
     read back the rendered text.
     """
-    from textual.app import App
     from textual.widgets import Static
 
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
@@ -130,7 +131,7 @@ async def test_content_pane_shows_placeholder_with_no_item():
     async with app.run_test() as pilot:
         await pilot.pause()
         placeholder = app.query_one("#content-empty", Static)
-        assert str(placeholder.renderable) == "Select an item to read it."
+        assert str(placeholder.renderable) == "Select a feed item to display it here."
         assert not app.query("#content-body-scroll"), (
             "the empty-state path stays a direct placeholder rather than an empty scroller"
         )
@@ -332,11 +333,8 @@ def test_diff_lines_with_markup_shaped_text_keep_our_colour_and_gain_none():
     assert "\x1b[31m" not in ansi, "the [bold red] tag must not have styled anything"
 
 
-def test_content_region_is_not_collapsed_by_default_now_it_has_a_reader():
-    """Task 4: through Phase C, CONTENT held only a placeholder stub and
-    started collapsed. Now it hosts the real reader, so a fresh screen must
-    show it expanded like every other region.
-    """
+def test_content_is_not_a_preferred_collapsible_region():
+    """The permanent Reader is absent from preferred side-pane state."""
     from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region
     from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
         WatchlistsCollectionsScreen,
@@ -403,7 +401,9 @@ async def test_selecting_an_item_renders_it_in_the_content_region():
 
         assert content_pane.item is None
         empty_placeholder = content_pane.query_one("#content-empty", Static)
-        assert str(empty_placeholder.renderable) == "Select an item to read it."
+        assert str(empty_placeholder.renderable) == (
+            "Select a feed item to display it here."
+        )
 
 
 @pytest.mark.asyncio
@@ -417,9 +417,7 @@ async def test_content_region_is_gated_to_the_items_read_tab():
     there and nowhere else, regardless of the user's stored collapse
     preference for it.
 
-    TASK-1344 AC#4: gated regions UNMOUNT rather than keep a one-row
-    header, so "nowhere else" means CONTENT has no DOM presence at all off
-    the Read tab -- no `#wl-header-content`, not just no `#wl-region-content`.
+    "Nowhere else" means CONTENT has no DOM presence at all off Read.
     """
     from Tests.UI.test_destination_shells import DestinationHarness
     from Tests.UI.app_factory import _build_test_app
@@ -435,72 +433,20 @@ async def test_content_region_is_gated_to_the_items_read_tab():
         # mounted at rest...
         assert not screen.region_layout.is_collapsed(Region.CONTENT)
         assert screen.query("#wl-region-content")
-        assert not screen.query("#wl-header-content")
 
         # ...and off Read it must be unmounted despite the un-gated default
         # (`region_layout`) being expanded.
         screen.active_section = "overview"
         await pilot.pause(0.2)
-        assert not screen.query("#wl-header-content")
         assert not screen.query("#wl-region-content")
 
         screen.active_section = "items"
         await pilot.pause(0.2)
         assert screen.query("#wl-region-content")
-        assert not screen.query("#wl-header-content")
 
         screen.active_section = "sources"
         await pilot.pause(0.2)
-        assert not screen.query("#wl-header-content")
         assert not screen.query("#wl-region-content")
-
-
-@pytest.mark.asyncio
-async def test_content_region_gating_does_not_clobber_a_real_collapse_preference():
-    """The tab gate is display-only: a user's REAL choice to collapse
-    CONTENT (made on the Items tab) must survive a trip through a non-Read
-    tab and back -- not get silently re-expanded just because the gate
-    also forces it collapsed everywhere else.
-    """
-    from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region
-
-    from Tests.UI.test_destination_shells import DestinationHarness
-    from Tests.UI.app_factory import _build_test_app
-
-    app = _build_test_app()
-    host = DestinationHarness(app, "watchlists_collections")
-    async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.pause(0.2)
-        screen = host.screen_stack[-1]
-
-        screen.active_section = "items"
-        await pilot.pause(0.2)
-        assert screen.query("#wl-region-content"), "CONTENT should start expanded on Items"
-
-        # The user deliberately collapses CONTENT while actually on Items.
-        screen._apply_layout(screen.region_layout.toggle(Region.CONTENT))
-        await pilot.pause(0.2)
-        assert screen.region_layout.is_collapsed(Region.CONTENT)
-        assert screen.query("#wl-header-content")
-
-        screen.active_section = "sources"
-        await pilot.pause(0.2)
-        # TASK-1344 AC#4: CONTENT unmounts off the Read tab -- no header,
-        # not even the collapsed one the user's real preference would
-        # otherwise still show on Items.
-        assert not screen.query("#wl-header-content")
-        assert not screen.query("#wl-region-content")
-
-        screen.active_section = "items"
-        await pilot.pause(0.2)
-        assert screen.region_layout.is_collapsed(Region.CONTENT), (
-            "the real preference must still read collapsed -- the gate must "
-            "never have touched it"
-        )
-        assert screen.query("#wl-header-content"), (
-            "returning to Items must restore the user's own collapse choice, "
-            "not silently force CONTENT back open"
-        )
 
 
 # --- Task 6: `j` / `k` item navigation -------------------------------------
@@ -1268,20 +1214,8 @@ async def test_opening_an_item_does_not_cancel_unrelated_background_work():
 
 
 @pytest.mark.asyncio
-async def test_the_content_chevron_off_the_read_tab_neither_collapses_nor_persists():
-    """TASK-1344 AC#4: CONTENT UNMOUNTS off the Read tab, so there is no
-    `▸ Content` chevron left to click at all -- the affordance this test
-    used to defend against no longer exists. What remains reachable is a
-    STALE `focused_region` (e.g. the user last focused CONTENT on Read, then
-    switched tabs without moving focus): `z`/`Z` can still be invoked with it
-    pointed at a region that is not currently mounted, so
-    `_refuse_region_gesture_off_read_tab` must refuse the toggle rather than
-    running it against the REAL `region_layout` -- which would silently flip
-    the user's genuine preference to collapsed and, once persisted, be
-    honoured forever thanks to the Phase D migration marker already being
-    set. That permanently recreates the exact state the migration exists to
-    repair, from a gesture that produced no visible feedback at all.
-    """
+async def test_article_focus_is_refused_off_read_without_changing_layout():
+    """The permanent Reader exists only on Read, and its focus mode is local."""
     from Tests.UI.test_destination_shells import DestinationHarness
     from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region
@@ -1294,35 +1228,21 @@ async def test_the_content_chevron_off_the_read_tab_neither_collapses_nor_persis
 
         screen.active_section = "sources"
         await pilot.pause(0.3)
-        assert not screen.query("#wl-header-content"), "CONTENT must be unmounted, not collapsed"
         assert not screen.query("#wl-region-content")
-        assert not screen.region_layout.is_collapsed(Region.CONTENT), (
-            "the real preference is still expanded -- the precondition"
-        )
-
-        # A stale `focused_region` (left over from a prior visit to Read) is
-        # the one remaining route that could still reach CONTENT here.
-        screen.focused_region = Region.CONTENT
-        screen.action_toggle_region()
+        preferred_before = screen.region_layout
+        effective_before = screen._effective_region_layout
+        screen.notify = Mock()
+        screen.action_article_focus()
         await pilot.pause(0.3)
+        assert screen.region_layout == preferred_before
+        assert screen._effective_region_layout == effective_before
+        assert screen._article_focus_active is False
+        screen.notify.assert_called_once()
 
-        assert not screen.region_layout.is_collapsed(Region.CONTENT), (
-            "the gesture must be refused, not run against the real preference"
-        )
-        assert Region.CONTENT not in (screen._last_persisted_collapsed or frozenset()), (
-            "and it must never reach the persisted collapse set"
-        )
-
-        # `Z` (solo) with CONTENT focused is the same class of route.
-        screen.action_solo_region()
-        await pilot.pause(0.3)
-        assert screen.region_layout.solo_region is None
-        assert not screen.region_layout.is_collapsed(Region.CONTENT)
-
-        # And back on Read the reader is still there, untouched.
         screen.active_section = "items"
         await pilot.pause(0.3)
         assert screen.query("#wl-region-content")
+        assert not screen._effective_region_layout.is_collapsed(Region.CONTENT)
 
 
 @pytest.mark.asyncio
@@ -1338,17 +1258,11 @@ async def test_a_workbench_rebuild_keeps_the_items_filter_search_and_selection()
     it only fires when the overview counts actually change value, which is
     why it is not what this test drives.
 
-    task-15461 changed the deterministic trigger, not the contract. A rail
-    toggle used to rebuild every region (`region_layout` was
-    `recompose=True`), so `[` was the cheapest way to force a fresh
-    `ArticleListPane`; layout changes are now scoped to the regions whose
-    form actually moved, so `[` deliberately leaves ITEMS' pane instance
-    alone -- which is what
-    `test_a_rail_toggle_rebuilds_only_the_toggled_region` pins. Collapsing
-    and re-expanding ITEMS itself is the trigger that still genuinely
-    reconstructs the pane, and it exercises the same `_build_detail_pane`
-    seeding this test is about.
+    Collapsing and re-expanding Feed Items through its permanent grip really
+    remounts the pane, so it exercises the same `_build_detail_pane` seeding.
     """
+    from textual.widgets import Button
+
     from Tests.UI.test_destination_shells import DestinationHarness
     from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.UI.Watchlists_Modules.article_list import ArticleListPane
@@ -1369,14 +1283,13 @@ async def test_a_workbench_rebuild_keeps_the_items_filter_search_and_selection()
         pane.select_and_reveal(open_item)
         await pilot.pause(0.5)
 
-        # Collapse ITEMS and expand it again: the region's form really
-        # changes, so `_build_detail_pane` runs and a brand new
-        # `ArticleListPane` is what the user is left looking at.
-        screen.focused_region = Region.ITEMS
-        screen.action_toggle_region()
+        screen.query_one("#wl-grip-items", Button).press()
         await pilot.pause(0.5)
-        screen.focused_region = Region.ITEMS
-        screen.action_toggle_region()
+        assert not screen.query("#watchlists-items-pane")
+        assert screen.region_layout.is_collapsed(Region.ITEMS)
+        assert screen._effective_region_layout.is_collapsed(Region.ITEMS)
+
+        screen.query_one("#wl-grip-items", Button).press()
         await pilot.pause(0.5)
 
         rebuilt = screen.query_one("#watchlists-items-pane", ArticleListPane)
@@ -1627,7 +1540,6 @@ async def test_a_persisted_body_reaches_the_reader_end_to_end():
 @pytest.mark.asyncio
 async def test_the_mark_unread_button_is_compact():
     """Reader actions stay in the established one-row chrome budget."""
-    from textual.app import App
     from textual.widgets import Button
 
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
@@ -1643,192 +1555,6 @@ async def test_the_mark_unread_button_is_compact():
         await pilot.pause()
         button = app.query_one("#content-mark-unread-button", Button)
         assert button.compact, "the reader's button must not cost three rows"
-
-
-@pytest.mark.asyncio
-async def test_the_expand_button_posts_the_request():
-    """Batch-4 review, I5 (half 1/2). task-2307's own Implementation Notes
-    honestly disclose that `ExpandReaderRequested` has no SCREEN-level
-    handler yet (AC#2 stays unchecked for exactly that reason -- not tested
-    here, on purpose). But the PANE-level half -- the button existing and
-    posting the message on press -- had zero test coverage at all:
-    mutation-verified by the review, gutting the `content-expand-button`
-    branch of `on_button_pressed` left all 52 tests in this file green.
-    """
-    from textual.app import App
-    from textual.widgets import Button
-
-    from tldw_chatbook.UI.Watchlists_Modules.content_pane import (
-        ContentPane,
-        ExpandReaderRequested,
-    )
-
-    class _PaneHost(ConsolidatedCSSApp):
-        def __init__(self) -> None:
-            super().__init__()
-            self.captured: list[str] = []
-
-        def compose(self):
-            pane = ContentPane()
-            pane.item = {"title": "x", "content": "y", "content_kind": "article"}
-            yield pane
-
-        def on_expand_reader_requested(self, message: ExpandReaderRequested) -> None:
-            self.captured.append("expand_reader_requested")
-
-    app = _PaneHost()
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        button = app.query_one("#content-expand-button", Button)
-        assert str(button.label) == "Expand", (
-            "the button must read Expand while the pane is not expanded"
-        )
-
-        button.press()
-        await pilot.pause()
-
-        assert app.captured == ["expand_reader_requested"], (
-            "pressing the button must post ExpandReaderRequested exactly once"
-        )
-
-
-@pytest.mark.asyncio
-async def test_the_expand_button_label_reflects_expanded_when_seeded():
-    """Batch-4 review, I5 (half 2/2). `expanded` is a plain reactive, not
-    `recompose=True` -- by design (see its own docstring): in production the
-    screen's region-solo toggle rebuilds the whole workbench through the
-    region factories, which constructs a brand new `ContentPane` and seeds
-    `expanded` on it BEFORE it mounts, so a second, pane-local recompose
-    would be pure churn. This mirrors that exact seeding shape -- set before
-    the pane is yielded -- rather than mutating the reactive on an
-    already-mounted pane, which would not be a fair test of how this
-    reactive is actually meant to be driven.
-    """
-    from textual.app import App
-    from textual.widgets import Button
-
-    from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
-
-    class _PaneHost(ConsolidatedCSSApp):
-        def compose(self):
-            pane = ContentPane()
-            pane.item = {"title": "x", "content": "y", "content_kind": "article"}
-            pane.expanded = True
-            yield pane
-
-    app = _PaneHost()
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        button = app.query_one("#content-expand-button", Button)
-        assert str(button.label) == "Restore", (
-            "a pane seeded with expanded=True must offer to give the room "
-            "back, not offer to expand again"
-        )
-
-
-@pytest.mark.asyncio
-async def test_pressing_expand_actually_solos_content_and_restores_on_a_second_press():
-    """Batch-4 review round 3, Qodo Q4. Closes the gap I5 deliberately left
-    open (AC#2's screen-level handler, "honestly unwired" at the time):
-    `ExpandReaderRequested` now routes to the SAME `RegionLayout.solo`
-    mechanism `Z`/`action_solo_region` already uses (task-1344), so pressing
-    the button must produce the identical, real effect a `Z` keypress does
-    -- not a second, parallel maximize implementation.
-    """
-    from textual.widgets import Button
-
-    from Tests.UI.test_destination_shells import DestinationHarness
-    from Tests.UI.app_factory import _build_test_app
-    from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
-    from tldw_chatbook.UI.Watchlists_Modules.article_list import ArticleListPane
-    from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region
-
-    item = {
-        "id": 11,
-        "title": "Expand me",
-        "source_name": "Feed",
-        "content": "body",
-        "content_kind": "article",
-        "content_format": "text",
-    }
-
-    app = _build_test_app()
-    host = DestinationHarness(app, "watchlists_collections")
-    async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.pause(0.2)
-        screen = host.screen_stack[-1]
-        screen.active_section = "items"
-        await pilot.pause(0.2)
-
-        items_pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
-        items_pane.items = [item]
-        await pilot.pause(0.2)
-        items_pane.select_item_by_id("11")
-        await pilot.pause(0.3)
-
-        # task-2513 removed the FEEDS region; the ITEMS region is now the
-        # neighbour whose collapse proves the solo actually happened.
-        assert screen.query("#wl-region-items"), "precondition: ITEMS starts visible"
-        content_pane = screen.query_one("#watchlists-content-pane", ContentPane)
-        expand_button = content_pane.query_one("#content-expand-button", Button)
-        assert str(expand_button.label) == "Expand"
-
-        expand_button.press()
-        await pilot.pause(0.3)
-
-        assert screen.region_layout.solo_region is Region.CONTENT, (
-            "the SAME solo mechanism Z uses must actually have run"
-        )
-        assert screen.query("#wl-region-content")
-        assert not screen.query("#wl-region-items"), (
-            "soloing CONTENT must actually collapse ITEMS around it -- the "
-            "real, visible effect, not just a state flag"
-        )
-
-        content_pane = screen.query_one("#watchlists-content-pane", ContentPane)
-        restore_button = content_pane.query_one("#content-expand-button", Button)
-        assert str(restore_button.label) == "Restore", (
-            "the freshly-rebuilt pane must be seeded from the live layout, "
-            "not silently reset to Expand"
-        )
-
-        restore_button.press()
-        await pilot.pause(0.3)
-
-        assert screen.region_layout.solo_region is None, "a second press must restore"
-        assert screen.query("#wl-region-items")
-        content_pane = screen.query_one("#watchlists-content-pane", ContentPane)
-        assert str(
-            content_pane.query_one("#content-expand-button", Button).label
-        ) == "Expand"
-
-
-@pytest.mark.asyncio
-async def test_expand_reader_requested_off_the_read_tab_is_refused_defensively():
-    """The button cannot actually be pressed off Read (CONTENT is unmounted
-    everywhere else), so this drives the message directly -- the same
-    defensive-gate shape `test_solo_on_content_off_the_read_tab_is_refused`
-    already pins for `Z`, now pinned for this second entry point into the
-    identical gate.
-    """
-    from Tests.UI.test_destination_shells import DestinationHarness
-    from Tests.UI.app_factory import _build_test_app
-    from tldw_chatbook.UI.Watchlists_Modules.content_pane import ExpandReaderRequested
-
-    app = _build_test_app()
-    host = DestinationHarness(app, "watchlists_collections")
-    async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.pause(0.2)
-        screen = host.screen_stack[-1]
-        screen.active_section = "sources"
-        await pilot.pause(0.3)
-        before = screen.region_layout
-
-        screen.post_message(ExpandReaderRequested())
-        await pilot.pause(0.3)
-
-        assert screen.region_layout == before
-        assert screen.region_layout.solo_region is None
 
 
 # --- PR #1091 review ---------------------------------------------------------
@@ -1992,21 +1718,8 @@ async def test_mark_unread_refuses_an_ingest_that_sits_beyond_a_lookup_page():
 
 
 @pytest.mark.asyncio
-async def test_soloing_content_then_leaving_read_leaves_a_centre_region_expanded():
-    """PR #1091 review, F2: the workbench must never render an empty centre.
-
-    Soloing CONTENT sets `collapsed` to `{ITEMS}`. Off the Read tab,
-    CONTENT is hidden outright now (TASK-1344 AC#1/#4:
-    `_hidden_centre_regions` unmounts it, independent of `collapsed`), so
-    the old failure mode this test was written against -- a force-collapse
-    derivation that added CONTENT to the solo's own collapsed set and left
-    all the centre regions collapsed with nothing expanded -- can no
-    longer happen structurally: hiding never touches `collapsed`, and ITEMS
-    (the one region that must survive) is forced OUT of `collapsed` by
-    `_rendered_region_layout` on every non-Read tab regardless of what
-    happened on Read. This test now pins that ITEMS is what is actually left
-    on screen, and that the user's solo is untouched and comes back on Read.
-    """
+async def test_article_focus_is_transient_and_the_reader_stays_permanent():
+    """Article Focus hides side panes without changing preferred state."""
     from Tests.UI.test_destination_shells import DestinationHarness
     from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region
@@ -2019,53 +1732,35 @@ async def test_soloing_content_then_leaving_read_leaves_a_centre_region_expanded
 
         screen.active_section = "items"
         await pilot.pause(0.3)
-        screen.focused_region = Region.CONTENT
-        screen.action_solo_region()
+        preferred_before = screen.region_layout
+        screen.action_article_focus()
         await pilot.pause(0.3)
-        assert screen.region_layout.solo_region is Region.CONTENT, (
-            "the precondition: CONTENT really is soloed"
-        )
+        assert screen._article_focus_active is True
+        assert screen.region_layout == preferred_before
         assert screen.query("#wl-region-content")
+        assert not screen.query("#wl-region-items")
+        for side in (Region.LEFT_RAIL, Region.ITEMS, Region.RIGHT_RAIL):
+            assert screen._effective_region_layout.is_collapsed(side)
+            assert screen.query(f"#wl-grip-{side.value}")
 
         screen.active_section = "sources"
         await pilot.pause(0.3)
-
-        # TASK-1344 hides CONTENT off Read (AC#1), so the only centre region
-        # ever mounted on Sources is now ITEMS -- assert against the DOM
-        # directly rather than the old `_visible_region_layout` derivation,
-        # which no longer exists in that shape (`_hidden_centre_regions` +
-        # `_rendered_region_layout` replaced it; hiding is now orthogonal to
-        # `RegionLayout.collapsed` rather than expressed through it, so there
-        # is nothing left to probe for "still collapsed").
-        assert screen.query("#wl-region-items"), (
-            "at least one centre region must be mounted expanded, not an "
-            "empty centre"
-        )
-        assert not screen.query("#wl-region-content"), "CONTENT stays hidden off Read"
+        assert screen._article_focus_active is False
+        assert screen.region_layout == preferred_before
+        assert screen.query("#wl-region-items")
+        assert not screen.query("#wl-region-content")
 
         screen.active_section = "items"
         await pilot.pause(0.3)
-        assert screen.region_layout.solo_region is Region.CONTENT, (
-            "the gate is display-only: the user's solo must survive the trip"
-        )
         assert screen.query("#wl-region-content")
-        assert not screen.query("#wl-region-items"), "and it must still be a solo"
+        assert screen.query("#wl-region-items")
 
 
 @pytest.mark.asyncio
-async def test_solo_on_content_off_the_read_tab_is_refused():
-    """PR #1091 review, F2 (second half) / TASK-1344 AC#2.
-
-    CONTENT is unmounted off the Read tab (AC#4), so there is no chevron to
-    click there -- but `focused_region` is a screen-level reactive that
-    outlives the widget that last set it, so `Z` can still be invoked with
-    it pointing at CONTENT after a tab switch. That must be refused rather
-    than soloing a region the user cannot see, which would otherwise
-    collapse ITEMS around it and leave nothing on screen.
-    """
+async def test_article_focus_off_read_does_not_change_preferred_or_effective_state():
+    """Management tabs reject Article Focus and retain their canvas."""
     from Tests.UI.test_destination_shells import DestinationHarness
     from Tests.UI.app_factory import _build_test_app
-    from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region
 
     app = _build_test_app()
     host = DestinationHarness(app, "watchlists_collections")
@@ -2075,19 +1770,17 @@ async def test_solo_on_content_off_the_read_tab_is_refused():
 
         screen.active_section = "sources"
         await pilot.pause(0.3)
-        before = screen.region_layout
-
-        screen.focused_region = Region.CONTENT
-        screen.action_solo_region()
+        preferred_before = screen.region_layout
+        effective_before = screen._effective_region_layout
+        screen.notify = Mock()
+        screen.action_article_focus()
         await pilot.pause(0.3)
 
-        assert screen.region_layout is before or screen.region_layout == before, (
-            "solo on the gated CONTENT region must not touch the real layout"
-        )
-        assert screen.region_layout.solo_region is None
-        assert screen.query("#wl-region-items"), (
-            "and the centre must still have something in it"
-        )
+        assert screen.region_layout == preferred_before
+        assert screen._effective_region_layout == effective_before
+        assert screen._article_focus_active is False
+        assert screen.query("#wl-region-items")
+        screen.notify.assert_called_once()
 
 
 def test_a_hostile_markdown_body_never_emits_a_terminal_hyperlink():
@@ -2178,99 +1871,68 @@ def test_a_raw_control_byte_in_a_markdown_body_is_stripped_before_rendering():
 # --- TASK-1494: the reader's `[full page]`/`[previous snapshot]` affordances -
 
 
+@pytest.mark.parametrize("content_kind", ["change", "article"])
 @pytest.mark.asyncio
-async def test_a_change_item_gets_both_snapshot_affordance_buttons():
-    """The design spec's promised affordances, finally wired to a `change`
-    item. Both buttons must be compact (1 row) -- CONTENT's budget is tight,
-    same discipline as the mark-unread button (see its own comment).
-    """
-    from textual.app import App
+async def test_only_change_items_get_snapshot_affordances_in_inspector(content_kind):
+    """Stored-page actions belong to change items in the Inspector only."""
     from textual.widgets import Button
 
-    from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
+    from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import InspectorPane
 
     class _PaneHost(ConsolidatedCSSApp):
         def compose(self):
-            pane = ContentPane()
-            pane.item = {
-                "title": "anthropic.com/news changed",
-                "content": "+ a\n- b",
-                "content_kind": "change",
-                "content_format": "diff",
-                "change_percentage": 5.0,
+            pane = InspectorPane()
+            pane.selected_entity = {
+                "entity_kind": "watchlist_item",
+                "item_id": 7,
+                "title": "Selected item",
+                "content_kind": content_kind,
             }
             yield pane
 
     app = _PaneHost()
     async with app.run_test() as pilot:
         await pilot.pause()
-        full_page = app.query_one("#content-full-page-button", Button)
-        previous = app.query_one("#content-previous-snapshot-button", Button)
-        assert full_page.compact
-        assert previous.compact
+        full_page = app.query("#inspector-full-page-button")
+        previous = app.query("#inspector-previous-snapshot-button")
+        assert bool(full_page) is (content_kind == "change")
+        assert bool(previous) is (content_kind == "change")
+        if content_kind == "change":
+            assert app.query_one("#inspector-full-page-button", Button).compact
+            assert app.query_one("#inspector-previous-snapshot-button", Button).compact
 
 
+@pytest.mark.parametrize(
+    ("button_id", "which"),
+    [
+        ("inspector-full-page-button", "full_page"),
+        ("inspector-previous-snapshot-button", "previous"),
+    ],
+)
 @pytest.mark.asyncio
-async def test_an_article_item_gets_neither_snapshot_affordance_button():
-    """Article items never gain these: `URLMonitor.check_url` is the only
-    `url_snapshots` writer and it only ever produces `change`-kind items, so
-    an article has no rows there for the buttons to show.
-    """
-    from textual.app import App
-    from textual.css.query import NoMatches
+async def test_inspector_snapshot_buttons_post_existing_request(button_id, which):
+    """Both Inspector buttons post the shared screen request with the item."""
     from textual.widgets import Button
 
-    from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
-
-    class _PaneHost(ConsolidatedCSSApp):
-        def compose(self):
-            pane = ContentPane()
-            pane.item = {
-                "title": "Claude Opus 4.5 is now available",
-                "content": "The model is available in the API today.",
-                "content_kind": "article",
-                "content_format": "text",
-            }
-            yield pane
-
-    app = _PaneHost()
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        with pytest.raises(NoMatches):
-            app.query_one("#content-full-page-button", Button)
-        with pytest.raises(NoMatches):
-            app.query_one("#content-previous-snapshot-button", Button)
-        # And the mark-unread button, common to both kinds, is untouched.
-        assert app.query_one("#content-mark-unread-button", Button)
-
-
-@pytest.mark.asyncio
-async def test_pressing_full_page_posts_view_snapshot_requested_with_full_page():
-    """The button press must post the message the screen handler reads,
-    carrying the item and the right `which` -- not just exist visually.
-    """
-    from textual.app import App
-    from textual.widgets import Button
-
-    from tldw_chatbook.UI.Watchlists_Modules.content_pane import (
-        ContentPane,
+    from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import (
+        InspectorPane,
         ViewSnapshotRequested,
     )
 
     captured: list[ViewSnapshotRequested] = []
     item = {
+        "entity_kind": "watchlist_item",
+        "item_id": 7,
         "title": "anthropic.com/news changed",
-        "content": "+ a\n- b",
         "content_kind": "change",
-        "content_format": "diff",
         "source_id": 7,
         "url": "https://anthropic.com/news",
     }
 
     class _PaneHost(ConsolidatedCSSApp):
         def compose(self):
-            pane = ContentPane()
-            pane.item = item
+            pane = InspectorPane()
+            pane.selected_entity = item
             yield pane
 
         def on_view_snapshot_requested(self, event: ViewSnapshotRequested) -> None:
@@ -2279,52 +1941,11 @@ async def test_pressing_full_page_posts_view_snapshot_requested_with_full_page()
     app = _PaneHost()
     async with app.run_test() as pilot:
         await pilot.pause()
-        app.query_one("#content-full-page-button", Button).press()
+        app.query_one(f"#{button_id}", Button).press()
         await pilot.pause()
 
     assert len(captured) == 1
-    assert captured[0].which == "full_page"
-    assert captured[0].item is item
-
-
-@pytest.mark.asyncio
-async def test_pressing_previous_snapshot_posts_view_snapshot_requested_with_previous():
-    """The other button, the other `which` value."""
-    from textual.app import App
-    from textual.widgets import Button
-
-    from tldw_chatbook.UI.Watchlists_Modules.content_pane import (
-        ContentPane,
-        ViewSnapshotRequested,
-    )
-
-    captured: list[ViewSnapshotRequested] = []
-    item = {
-        "title": "anthropic.com/news changed",
-        "content": "+ a\n- b",
-        "content_kind": "change",
-        "content_format": "diff",
-        "source_id": 7,
-        "url": "https://anthropic.com/news",
-    }
-
-    class _PaneHost(ConsolidatedCSSApp):
-        def compose(self):
-            pane = ContentPane()
-            pane.item = item
-            yield pane
-
-        def on_view_snapshot_requested(self, event: ViewSnapshotRequested) -> None:
-            captured.append(event)
-
-    app = _PaneHost()
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        app.query_one("#content-previous-snapshot-button", Button).press()
-        await pilot.pause()
-
-    assert len(captured) == 1
-    assert captured[0].which == "previous"
+    assert captured[0].which == which
     assert captured[0].item is item
 
 
@@ -2381,6 +2002,19 @@ def _seed_change_item_with_snapshots(db, *, snapshot_rows):
     return source_id, url
 
 
+async def _select_first_item_with_inspector(pilot, screen, pane):
+    """Open the right rail and select the first loaded item."""
+    from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import InspectorPane
+
+    if not screen.query("#watchlists-entity-inspector"):
+        screen.action_toggle_right_rail()
+        await pilot.pause(0.2)
+    item = screen._loaded_items[0]
+    pane.select_item_by_id(str(item["id"]))
+    await pilot.pause(0.3)
+    return screen.query_one("#watchlists-entity-inspector", InspectorPane)
+
+
 @pytest.mark.asyncio
 async def test_full_page_button_opens_the_newest_snapshot_in_a_modal():
     """The screen's handler must resolve `"full_page"` to the newest
@@ -2391,7 +2025,7 @@ async def test_full_page_button_opens_the_newest_snapshot_in_a_modal():
 
     from Tests.UI.test_destination_shells import DestinationHarness
     from Tests.UI.app_factory import _build_test_app
-    from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
+    from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import InspectorPane
     from tldw_chatbook.UI.Watchlists_Modules.snapshot_view_modal import SnapshotViewModal
 
     app = _build_test_app()
@@ -2407,12 +2041,9 @@ async def test_full_page_button_opens_the_newest_snapshot_in_a_modal():
     host = DestinationHarness(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
         screen, pane = await _mount_items_screen(pilot, host, expected_count=1)
-        item = screen._loaded_items[0]
-        pane.select_item_by_id(str(item["id"]))
-        await pilot.pause(0.3)
-
-        content_pane = screen.query_one("#watchlists-content-pane", ContentPane)
-        content_pane.query_one("#content-full-page-button", Button).press()
+        inspector = await _select_first_item_with_inspector(pilot, screen, pane)
+        assert isinstance(inspector, InspectorPane)
+        inspector.query_one("#inspector-full-page-button", Button).press()
 
         modal = None
         for _ in range(60):
@@ -2445,7 +2076,7 @@ async def test_previous_snapshot_button_opens_the_second_newest_snapshot():
 
     from Tests.UI.test_destination_shells import DestinationHarness
     from Tests.UI.app_factory import _build_test_app
-    from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
+    from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import InspectorPane
     from tldw_chatbook.UI.Watchlists_Modules.snapshot_view_modal import SnapshotViewModal
 
     app = _build_test_app()
@@ -2462,12 +2093,9 @@ async def test_previous_snapshot_button_opens_the_second_newest_snapshot():
     host = DestinationHarness(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
         screen, pane = await _mount_items_screen(pilot, host, expected_count=1)
-        item = screen._loaded_items[0]
-        pane.select_item_by_id(str(item["id"]))
-        await pilot.pause(0.3)
-
-        content_pane = screen.query_one("#watchlists-content-pane", ContentPane)
-        content_pane.query_one("#content-previous-snapshot-button", Button).press()
+        inspector = await _select_first_item_with_inspector(pilot, screen, pane)
+        assert isinstance(inspector, InspectorPane)
+        inspector.query_one("#inspector-previous-snapshot-button", Button).press()
 
         modal = None
         for _ in range(60):
@@ -2498,7 +2126,7 @@ async def test_previous_snapshot_with_only_one_stored_degrades_to_an_honest_toas
 
     from Tests.UI.test_destination_shells import DestinationHarness
     from Tests.UI.app_factory import _build_test_app
-    from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
+    from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import InspectorPane
     from tldw_chatbook.UI.Watchlists_Modules.snapshot_view_modal import SnapshotViewModal
 
     app = _build_test_app()
@@ -2514,12 +2142,9 @@ async def test_previous_snapshot_with_only_one_stored_degrades_to_an_honest_toas
     host = DestinationHarness(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
         screen, pane = await _mount_items_screen(pilot, host, expected_count=1)
-        item = screen._loaded_items[0]
-        pane.select_item_by_id(str(item["id"]))
-        await pilot.pause(0.3)
-
-        content_pane = screen.query_one("#watchlists-content-pane", ContentPane)
-        content_pane.query_one("#content-previous-snapshot-button", Button).press()
+        inspector = await _select_first_item_with_inspector(pilot, screen, pane)
+        assert isinstance(inspector, InspectorPane)
+        inspector.query_one("#inspector-previous-snapshot-button", Button).press()
 
         for _ in range(60):
             await pilot.pause(0.05)
@@ -2551,7 +2176,7 @@ async def test_snapshot_modal_renders_remote_markup_as_literal_text():
 
     from Tests.UI.test_destination_shells import DestinationHarness
     from Tests.UI.app_factory import _build_test_app
-    from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
+    from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import InspectorPane
     from tldw_chatbook.UI.Watchlists_Modules.snapshot_view_modal import SnapshotViewModal
 
     app = _build_test_app()
@@ -2570,12 +2195,9 @@ async def test_snapshot_modal_renders_remote_markup_as_literal_text():
     host = DestinationHarness(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
         screen, pane = await _mount_items_screen(pilot, host, expected_count=1)
-        item = screen._loaded_items[0]
-        pane.select_item_by_id(str(item["id"]))
-        await pilot.pause(0.3)
-
-        content_pane = screen.query_one("#watchlists-content-pane", ContentPane)
-        content_pane.query_one("#content-full-page-button", Button).press()
+        inspector = await _select_first_item_with_inspector(pilot, screen, pane)
+        assert isinstance(inspector, InspectorPane)
+        inspector.query_one("#inspector-full-page-button", Button).press()
 
         modal = None
         for _ in range(60):
@@ -2733,7 +2355,6 @@ async def test_the_star_button_reflects_the_open_items_state():
     """The button is seeded from the open item's `is_flagged`: starred items
     read "★ Starred", unstarred read "☆ Star" -- the same vocabulary the
     rail's Starred root and the list row's glyph speak."""
-    from textual.app import App
     from textual.widgets import Button
 
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
@@ -2761,7 +2382,6 @@ async def test_the_star_button_posts_the_toggle_without_an_optimistic_flip():
     message the screen's `s` handler serves) and does NOT flip its own
     label: the write is async and can fail, so the flip lands on the
     screen's success path -- the label can never lie about a failed write."""
-    from textual.app import App
     from textual.widgets import Button
 
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import (
@@ -2806,15 +2426,14 @@ async def test_the_star_button_posts_the_toggle_without_an_optimistic_flip():
 
 
 def _action_row_app(item: dict):
-    """A ContentPane host carrying `item`, capturing the three verb messages."""
-    from textual.app import App
-
+    """Host Reader and Inspector while capturing their shared action messages."""
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import (
         ContentPane,
         OpenInBrowserRequested,
     )
     from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import (
         IngestRequested,
+        InspectorPane,
         ToggleBriefingQueueRequested,
     )
 
@@ -2829,6 +2448,9 @@ def _action_row_app(item: dict):
             pane = ContentPane()
             pane.item = item
             yield pane
+            inspector = InspectorPane()
+            inspector.selected_entity = {"entity_kind": "watchlist_item", **item}
+            yield inspector
 
         def on_open_in_browser_requested(self, message: OpenInBrowserRequested) -> None:
             self.opened.append(message.item)
@@ -2845,10 +2467,8 @@ def _action_row_app(item: dict):
 
 
 @pytest.mark.asyncio
-async def test_the_reader_action_row_offers_open_ingest_and_queue():
-    """The reader strip shares the Inspector's verbs (TASK-3072 plan task 8):
-    Open in browser, Ingest, and Queue -- the queue button's label states
-    the CURRENT value, the Inspector's own rule."""
+async def test_reader_offers_open_while_inspector_offers_ingest_and_queue():
+    """Core browser action stays in Reader; advanced actions live in Inspector."""
     from textual.widgets import Button
 
     app = _action_row_app(
@@ -2857,12 +2477,14 @@ async def test_the_reader_action_row_offers_open_ingest_and_queue():
     async with app.run_test() as pilot:
         await pilot.pause()
         assert str(app.query_one("#content-open-button", Button).label) == "Open"
-        assert str(app.query_one("#content-ingest-button", Button).label) == "Ingest"
-        assert str(app.query_one("#content-queue-button", Button).label) == "Queue"
+        assert str(app.query_one("#inspector-ingest-button", Button).label) == "Ingest"
+        assert str(
+            app.query_one("#inspector-queue-briefing-button", Button).label
+        ) == "Queue for briefing"
 
 
 @pytest.mark.asyncio
-async def test_the_queue_button_label_reflects_queued_state():
+async def test_the_inspector_queue_button_label_reflects_queued_state():
     from textual.widgets import Button
 
     app = _action_row_app(
@@ -2876,14 +2498,14 @@ async def test_the_queue_button_label_reflects_queued_state():
     )
     async with app.run_test() as pilot:
         await pilot.pause()
-        assert str(app.query_one("#content-queue-button", Button).label) == "Unqueue"
+        assert str(
+            app.query_one("#inspector-queue-briefing-button", Button).label
+        ) == "Unqueue from briefing"
 
 
 @pytest.mark.asyncio
-async def test_the_reader_action_row_buttons_post_their_messages():
-    """Open posts the reader's own request; Ingest and Queue post the
-    Inspector's OWN message classes, so one screen handler serves both
-    surfaces (the message-layer sharing the plan specifies)."""
+async def test_reader_and_inspector_action_buttons_post_shared_messages():
+    """The two surfaces keep using the screen's existing message handlers."""
     from textual.widgets import Button
 
     app = _action_row_app(
@@ -2892,8 +2514,8 @@ async def test_the_reader_action_row_buttons_post_their_messages():
     async with app.run_test() as pilot:
         await pilot.pause()
         app.query_one("#content-open-button", Button).press()
-        app.query_one("#content-ingest-button", Button).press()
-        app.query_one("#content-queue-button", Button).press()
+        app.query_one("#inspector-ingest-button", Button).press()
+        app.query_one("#inspector-queue-briefing-button", Button).press()
         await pilot.pause()
 
         assert [item.get("title") for item in app.opened] == ["x"]
@@ -2911,7 +2533,6 @@ async def test_the_reader_action_row_buttons_post_their_messages():
 async def test_the_position_footer_renders_and_updates_in_place():
     """The footer shows the screen-pushed `position` string; updating the
     reactive re-renders the one Static in place -- never a reader recompose."""
-    from textual.app import App
     from textual.widgets import Static
 
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
@@ -2941,7 +2562,6 @@ async def test_the_next_unread_footer_button_posts_the_panes_message():
     """The footer's Next Unread control posts the pane's existing
     `NextUnreadRequested` -- the same message `space` already raises, so one
     screen handler serves both."""
-    from textual.app import App
     from textual.widgets import Button
 
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
@@ -2971,8 +2591,6 @@ async def test_the_next_unread_footer_button_posts_the_panes_message():
 @pytest.mark.asyncio
 async def test_the_empty_reader_has_no_position_footer():
     """With nothing open the footer is absent entirely -- not "0 of 0"."""
-    from textual.app import App
-
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import ContentPane
 
     class _PaneHost(ConsolidatedCSSApp):

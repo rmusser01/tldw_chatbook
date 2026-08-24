@@ -1192,6 +1192,50 @@ async def test_watchlists_collections_uses_compact_title_and_clear_sections():
         assert "Collections" not in visible_text
 
 
+def test_watchlists_help_and_footer_bindings_only_advertise_live_pane_actions():
+    bindings = {binding[0]: binding for binding in WatchlistsCollectionsScreen.BINDINGS}
+
+    assert bindings["z"][2] == "Toggle focused side pane"
+    assert bindings["Z"][2] == "Article Focus (Read only)"
+    assert bindings["left_square_bracket"][2] == "Navigation"
+    assert bindings["right_square_bracket"][2] == "Inspector"
+    assert not (
+        {
+            "ctrl+c",
+            "ctrl+v",
+            "ctrl+x",
+            "ctrl+s",
+            "ctrl+d",
+            "ctrl+z",
+            "ctrl+a",
+            "ctrl+r",
+            "ctrl+w",
+            "ctrl+p",
+            "ctrl+q",
+            "f1",
+            "f6",
+        }
+        & set(bindings)
+    )
+
+
+def test_watchlists_context_help_names_permanent_reader_and_side_pane_actions():
+    app = _build_test_app()
+    app.notify = Mock()
+    screen = WatchlistsCollectionsScreen(app)
+
+    screen.action_show_help()
+
+    copy = str(app.notify.call_args.args[0])
+    assert "z=toggle focused side pane" in copy
+    assert "Z=Article Focus (Read only)" in copy
+    assert "[=Navigation ]=Inspector" in copy
+    assert "Reader is permanent" in copy
+    assert "solo" not in copy.lower()
+    assert "Expand" not in copy
+    assert "collapsed header" not in copy.lower()
+
+
 @pytest.mark.asyncio
 async def test_watchlists_collections_lists_local_snapshot_from_services():
     app = _build_test_app()
