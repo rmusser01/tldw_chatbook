@@ -2,7 +2,7 @@
 id: TASK-21126
 title: >-
   Library Search/RAG panel runs an unindexed full-table GROUP BY on the event loop per panel mount
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-22'
 labels:
