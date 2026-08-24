@@ -649,6 +649,37 @@ async def test_collapse_does_not_transfer_fitting_child_hover_to_long_row() -> N
 
 
 @pytest.mark.asyncio
+async def test_local_scroll_clears_stationary_pointer_hover_ownership() -> None:
+    labels = tuple(f"Workspace {index} " + "界🙂" * 20 for index in range(8))
+    projection = (_workspace("cursor", "Fits"),) + tuple(
+        _workspace(f"w{index}", label) for index, label in enumerate(labels)
+    )
+    tree = ConsoleWorkspaceTree()
+    tree.sync_projection(projection, expanded_workspace_ids=set())
+    app = _TreeHarness(tree)
+    async with app.run_test(size=(60, 20)) as pilot:
+        tree.styles.width = 24
+        tree.styles.height = 4
+        await pilot.pause()
+        tree.move_cursor(tree.workspace_nodes["cursor"])
+        hovered = tree.workspace_nodes["w0"]
+        assert await pilot.hover(tree, offset=(6, hovered.line))
+        await pilot.pause()
+        assert tree.hover_line == hovered.line
+        assert isinstance(tree.tooltip, Text)
+        assert tree.tooltip.plain == labels[0]
+
+        tree.scroll_relative(y=3, animate=False)
+        await pilot.pause()
+
+        assert tree.scroll_y == 3
+        pointer_line = int(tree.scroll_y) + hovered.line
+        assert tree.get_node_at_line(pointer_line) is tree.workspace_nodes["w3"]
+        assert tree.hover_line == -1
+        assert tree.tooltip is None
+
+
+@pytest.mark.asyncio
 async def test_long_literal_label_renders_on_one_ellipsized_physical_row() -> None:
     tree = ConsoleWorkspaceTree()
     raw = "[bold]" + "界🙂" * 30 + "\nsecond physical row"

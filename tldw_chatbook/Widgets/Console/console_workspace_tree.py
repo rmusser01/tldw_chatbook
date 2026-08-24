@@ -947,6 +947,11 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
         super().watch_hover_line(old_value, new_value)
         self._update_tooltip()
 
+    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
+        super().watch_scroll_y(old_value, new_value)
+        if round(old_value) != round(new_value) and self.hover_line >= 0:
+            self.hover_line = -1
+
     def on_resize(self, _event: events.Resize) -> None:
         """Recompute truncation after Tree or outer-rail width changes."""
 
