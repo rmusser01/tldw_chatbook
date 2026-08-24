@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 import json
+import threading
 from unittest.mock import AsyncMock
 
 import pytest
@@ -34,6 +35,7 @@ from tldw_chatbook.Chat.console_rail_state import (
     build_console_rail_preference_key,
     serialize_console_rail_preferences,
 )
+import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
 
 
 def _stored_rail_preferences(app) -> dict:
@@ -44,8 +46,8 @@ def _stored_rail_preferences(app) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_seeded_default_layout_remains_authoritative_at_120_columns():
-    """The required first-use seed becomes the one-time layout authority."""
+async def test_standard_width_inspector_priority_preserves_context_preference():
+    """At 120 columns Inspector wins without rewriting Context preference."""
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -54,19 +56,26 @@ async def test_seeded_default_layout_remains_authoritative_at_120_columns():
         await _wait_for_selector(console, pilot, "#console-workspace-grid")
         await pilot.pause(0.2)
 
+        shared_key = build_console_rail_preference_key(layout_scope="global")
+        stored = app.app_config["console"]["rail_state"][shared_key.value]
+        before_render = json.dumps(stored, sort_keys=True, separators=(",", ":"))
+
         rail_state = console._current_console_rail_state(available_columns=120)
 
-        assert rail_state.left_open is True
-        assert rail_state.right_open is False
-        assert rail_state.right_compact_override is False
-        assert rail_state.compact_override is False
-        assert console.query_one("#console-left-rail").display is True
-        assert console.query_one("#console-right-rail").display is False
-        assert console.query_one("#console-context-rail-handle").display is False
-        assert console.query_one("#console-main-column").styles.min_width.value == 56
-        assert list(app.app_config["console"]["rail_state"]) == [
-            "console_rail_state:global:shared-layout-v1"
-        ]
+        assert rail_state.left_open is False
+        assert rail_state.right_open is True
+        assert rail_state.right_compact_override is True
+        assert rail_state.compact_override is True
+        assert console.query_one("#console-left-rail").display is False
+        assert console.query_one("#console-right-rail").display is True
+        assert console.query_one("#console-context-rail-handle").display is True
+        assert console.query_one("#console-main-column").styles.min_width.value == 0
+        assert stored["left_open"] is True
+        assert "right_open" not in stored
+        assert list(app.app_config["console"]["rail_state"]) == [shared_key.value]
+        assert (
+            json.dumps(stored, sort_keys=True, separators=(",", ":")) == before_render
+        )
 
 
 @pytest.mark.asyncio
@@ -370,7 +379,6 @@ async def test_console_rail_scope_seeding_is_lossless_one_time_and_responsive_sa
         await pilot.pause(0.2)
 
         writes: list[tuple[str, dict[str, bool], bool]] = []
-        deletions: list[list[str]] = []
 
         def record_save(
             _screen,
@@ -381,14 +389,8 @@ async def test_console_rail_scope_seeding_is_lossless_one_time_and_responsive_sa
         ) -> None:
             writes.append((key, deepcopy(serialized), notify_on_failure))
 
-        def record_delete(_screen, keys: list[str]) -> None:
-            deletions.append(list(keys))
-
         monkeypatch.setattr(
             type(console), "_save_console_rail_preferences", record_save
-        )
-        monkeypatch.setattr(
-            type(console), "_delete_console_rail_preference_keys", record_delete
         )
 
         shared_key = build_console_rail_preference_key(layout_scope="global")
@@ -399,6 +401,9 @@ async def test_console_rail_scope_seeding_is_lossless_one_time_and_responsive_sa
             workspace_id="Writing Room", layout_scope="workspace"
         )
         defaults = serialize_console_rail_preferences(ConsoleRailPreferences())
+        seeded_defaults = {
+            key: value for key, value in defaults.items() if key != "right_open"
+        }
         workspace_payload = {**defaults, "left_open": False, "workspace_open": False}
         legacy_payload = {**defaults, "right_open": True, "details_open": True}
         shared_payload = {**defaults, "agent_open": True, "character_open": False}
@@ -416,7 +421,7 @@ async def test_console_rail_scope_seeding_is_lossless_one_time_and_responsive_sa
                 {research_key.fallback_value: deepcopy(legacy_payload)},
                 legacy_payload,
             ),
-            (shared_key, research_key, {}, defaults),
+            (shared_key, research_key, {}, seeded_defaults),
             (
                 research_key,
                 research_key,
@@ -475,7 +480,6 @@ async def test_console_rail_scope_seeding_is_lossless_one_time_and_responsive_sa
         )
         assert records == snapshot
         assert writes == []
-        assert deletions == []
 
         app.app_config["console"]["rail_layout_scope"] = "global"
         before_compact = json.dumps(records, sort_keys=True, separators=(",", ":"))
@@ -483,7 +487,73 @@ async def test_console_rail_scope_seeding_is_lossless_one_time_and_responsive_sa
         after_compact = json.dumps(records, sort_keys=True, separators=(",", ":"))
         assert after_compact == before_compact
         assert writes == []
-        assert deletions == []
+
+        app.app_config["console"] = {"rail_layout_scope": "global", "rail_state": {}}
+        writes.clear()
+        console._set_console_rail_preference(left_open=False)
+        assert len(writes) == 1
+        assert writes[0][0] == shared_key.value
+        assert writes[0][1]["left_open"] is False
+        assert "right_open" not in writes[0][1]
+
+
+@pytest.mark.asyncio
+async def test_console_rail_writes_cannot_finish_with_stale_seed(monkeypatch):
+    """A delayed seed writer cannot overwrite a newer in-memory mutation."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-left-rail")
+        await pilot.app.workers.wait_for_complete()
+
+        shared_key = build_console_rail_preference_key(layout_scope="global")
+        app.app_config["console"] = {"rail_layout_scope": "global", "rail_state": {}}
+        seed_started = threading.Event()
+        release_seed = threading.Event()
+        mutation_finished = threading.Event()
+        persisted: dict[str, dict[str, bool]] = {}
+        write_order: list[bool] = []
+
+        def blocking_save(section: str, key: str, value: dict[str, bool]) -> bool:
+            assert section == "console.rail_state"
+            if value["left_open"] is True and not seed_started.is_set():
+                seed_started.set()
+                assert release_seed.wait(5)
+            persisted[key] = deepcopy(value)
+            write_order.append(value["left_open"])
+            if value["left_open"] is False:
+                mutation_finished.set()
+            return True
+
+        monkeypatch.setattr(
+            chat_screen_module,
+            "save_setting_to_cli_config",
+            blocking_save,
+        )
+
+        console._current_console_rail_state(available_columns=160)
+        for _ in range(40):
+            if seed_started.is_set():
+                break
+            await pilot.pause(0.05)
+        assert seed_started.is_set()
+
+        console._set_console_rail_preference(left_open=False)
+        for _ in range(10):
+            if mutation_finished.is_set():
+                break
+            await pilot.pause(0.02)
+        release_seed.set()
+        await pilot.app.workers.wait_for_complete()
+
+        assert (
+            app.app_config["console"]["rail_state"][shared_key.value]["left_open"]
+            is False
+        )
+        assert persisted[shared_key.value]["left_open"] is False
+        assert write_order[-1] is False
 
 
 @pytest.mark.asyncio

@@ -398,6 +398,18 @@ def serialize_console_rail_preferences(
     }
 
 
+def serialize_console_rail_stored_preferences(raw: Any) -> dict[str, bool]:
+    """Validate a stored payload while retaining behavior-affecting metadata."""
+    serialized = serialize_console_rail_preferences(
+        coerce_console_rail_preferences(raw)
+    )
+    if not isinstance(raw, Mapping) or "right_open" not in raw:
+        serialized.pop("right_open")
+    if console_rail_left_open_explicit(raw):
+        serialized[CONSOLE_RAIL_LEFT_OPEN_EXPLICIT_KEY] = True
+    return serialized
+
+
 def _coerce_non_negative_int(value: Any) -> int:
     if isinstance(value, bool):
         return int(value)

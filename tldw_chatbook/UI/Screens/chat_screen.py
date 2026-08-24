@@ -337,7 +337,6 @@ from ...Chat.console_rail_state import (
     CONSOLE_RAIL_SECTION_IDS,
     CONSOLE_RAIL_SHARED_LAYOUT_SCOPE,
     ConsoleRailPreferenceKey,
-    ConsoleRailPreferences,
     ConsoleRailState,
     build_console_rail_preference_key,
     build_console_rail_state,
@@ -349,6 +348,7 @@ from ...Chat.console_rail_state import (
     normalize_console_rail_layout_scope,
     resolve_console_rail_priority,
     serialize_console_rail_preferences,
+    serialize_console_rail_stored_preferences,
 )
 from ...config import (
     DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
@@ -587,6 +587,7 @@ NATIVE_CONSOLE_STATE_VERSION = "1.0"
 # for the native Console send-path applier (`_console_chat_dictionary_applier`).
 _CHATDICT_MAX_TOKENS = 500
 _CHATDICT_STRATEGY = "sorted_evenly"
+_CONSOLE_RAIL_PREFERENCE_WRITE_LOCK = threading.Lock()
 # Statuses during which the 0.2s transcript poll is actively ticking
 # (see `_start_console_transcript_sync_timer`) -- also used by the
 # sub-agent badge-count cache (Finding A) to decide whether a live run
@@ -10223,43 +10224,6 @@ class ChatScreen(BaseAppScreen):
             console_config["rail_state"] = rail_state_config
         return rail_state_config
 
-    def _stored_console_rail_preferences(
-        self,
-        key: str,
-        fallback_key: str | None,
-    ) -> Any:
-        """Read stored Console rail preferences without writing persistence."""
-        app_config = getattr(self.app_instance, "app_config", None)
-        if not isinstance(app_config, dict):
-            return None
-        console_config = app_config.get("console")
-        if not isinstance(console_config, dict):
-            return None
-        rail_state_config = console_config.get("rail_state")
-        if not isinstance(rail_state_config, dict):
-            return None
-        if key in rail_state_config:
-            return rail_state_config[key]
-        if fallback_key and fallback_key in rail_state_config:
-            return rail_state_config[fallback_key]
-        return None
-
-    def _persist_console_rail_preferences(
-        self,
-        key: str,
-        preferences: ConsoleRailPreferences,
-        *,
-        notify_on_failure: bool = False,
-    ) -> bool:
-        """Queue best-effort persistence for an already-updated in-memory preference."""
-        serialized = serialize_console_rail_preferences(preferences)
-        self._save_console_rail_preferences(
-            key,
-            serialized,
-            notify_on_failure=notify_on_failure,
-        )
-        return True
-
     @work(thread=True)
     def _save_console_rail_preferences(
         self,
@@ -10269,25 +10233,30 @@ class ChatScreen(BaseAppScreen):
         notify_on_failure: bool = False,
     ) -> None:
         """Persist Console rail preferences without blocking the UI thread."""
-        try:
-            saved = save_setting_to_cli_config(
-                "console.rail_state",
-                key,
-                serialized,
-            )
-        except Exception as exc:
-            logger.warning("Failed to persist Console rail preference: {}", exc)
-            saved = False
+        with _CONSOLE_RAIL_PREFERENCE_WRITE_LOCK:
+            latest: Any = serialized
+            app_config = getattr(self.app_instance, "app_config", None)
+            if isinstance(app_config, Mapping):
+                console_config = app_config.get("console")
+                if isinstance(console_config, Mapping):
+                    rail_state_config = console_config.get("rail_state")
+                    if (
+                        isinstance(rail_state_config, Mapping)
+                        and key in rail_state_config
+                    ):
+                        latest = rail_state_config[key]
+            latest_serialized = serialize_console_rail_stored_preferences(latest)
+            try:
+                saved = save_setting_to_cli_config(
+                    "console.rail_state",
+                    key,
+                    latest_serialized,
+                )
+            except Exception as exc:
+                logger.warning("Failed to persist Console rail preference: {}", exc)
+                saved = False
         if not saved and notify_on_failure:
             self.app.call_from_thread(self._notify_console_rail_preference_save_failure)
-
-    @work(thread=True)
-    def _delete_console_rail_preference_keys(self, keys: list[str]) -> None:
-        """Remove superseded/orphaned rail preference keys off the UI thread."""
-        try:
-            delete_settings_from_cli_config("console.rail_state", keys)
-        except Exception as exc:
-            logger.warning("Failed to prune Console rail preference keys: {}", exc)
 
     def _dispatch_console_rail_preference_prune(self) -> None:
         """Queue the one-shot orphaned rail-preference cleanup after mount."""
@@ -10540,6 +10509,8 @@ class ChatScreen(BaseAppScreen):
         self,
         selected_key: ConsoleRailPreferenceKey,
         workspace_key: ConsoleRailPreferenceKey,
+        *,
+        persist: bool = True,
     ) -> Any:
         """Seed one absent layout scope without overwriting or deleting sources."""
         rail_state_config = self._console_rail_state_config()
@@ -10560,17 +10531,14 @@ class ChatScreen(BaseAppScreen):
             ),
             None,
         )
-        serialized = serialize_console_rail_preferences(
-            coerce_console_rail_preferences(source)
-        )
-        if console_rail_left_open_explicit(source):
-            serialized[CONSOLE_RAIL_LEFT_OPEN_EXPLICIT_KEY] = True
+        serialized = serialize_console_rail_stored_preferences(source)
         rail_state_config[selected_key.value] = serialized
-        self._save_console_rail_preferences(
-            selected_key.value,
-            serialized,
-            notify_on_failure=False,
-        )
+        if persist:
+            self._save_console_rail_preferences(
+                selected_key.value,
+                serialized,
+                notify_on_failure=False,
+            )
         return serialized
 
     def _console_active_session_is_ephemeral(self) -> bool:
@@ -10924,8 +10892,13 @@ class ChatScreen(BaseAppScreen):
                 self._console_config().get("rail_layout_scope")
             ),
         )
-        self._ensure_console_rail_scope_seed(preference_key, workspace_key)
         rail_state_config = self._console_rail_state_config()
+        target_missing = preference_key.value not in rail_state_config
+        self._ensure_console_rail_scope_seed(
+            preference_key,
+            workspace_key,
+            persist=False,
+        )
         prior_stored = rail_state_config.get(preference_key.value)
         current = coerce_console_rail_preferences(prior_stored)
         changes: dict[str, bool] = {}
@@ -10942,19 +10915,25 @@ class ChatScreen(BaseAppScreen):
         # the left rail" below 100 cols persisted nothing -- the default is
         # already left_open=True -- and the force-collapse rule (see
         # build_console_rail_state) kept the rail hidden: the exact silent
-        # no-op this task removes. Because every write serializes the FULL
-        # payload, the left rail's explicitness cannot be read back from
-        # key presence; a dedicated marker records the gesture (the right
-        # rail's closed default is distinguishable by value, so it needs
-        # none). The marker is also preserved across later writes that did
-        # not touch the left rail (e.g. a section toggle re-serializing the
-        # payload). The augmented dict goes to both the in-memory config
-        # and the persisted file so the two never disagree.
+        # no-op this task removes. Ordinary writes serialize the preference
+        # payload, so the left rail's explicitness cannot be read back from
+        # key presence; a dedicated marker records the gesture. The marker
+        # is also preserved across later writes that did not touch the left
+        # rail (e.g. a section toggle). The right-open key is omitted when a
+        # seed source omitted it so the 118-128-column auto-open band remains
+        # distinguishable. The augmented dict goes to both the in-memory
+        # config and the persisted file so the two never disagree.
         explicit_rail_toggle = left_open is not None or right_open is not None
-        if next_preferences != current or explicit_rail_toggle:
+        if next_preferences != current or explicit_rail_toggle or target_missing:
             serialized = serialize_console_rail_preferences(next_preferences)
             if left_open is not None or console_rail_left_open_explicit(prior_stored):
                 serialized[CONSOLE_RAIL_LEFT_OPEN_EXPLICIT_KEY] = True
+            if (
+                right_open is None
+                and isinstance(prior_stored, Mapping)
+                and "right_open" not in prior_stored
+            ):
+                serialized.pop("right_open")
             rail_state_config[preference_key.value] = serialized
             self._save_console_rail_preferences(
                 preference_key.value,
