@@ -1,10 +1,10 @@
 ---
 id: TASK-3500
 title: Align MCP perform_rag_search with profile-driven retrieval
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-08-07 20:34'
-updated_date: '2026-08-24 05:55'
+updated_date: '2026-08-24 08:44'
 labels:
   - rag
   - mcp
@@ -26,12 +26,12 @@ This task aligns only MCP `perform_rag_search`. The legacy agent-owner premise i
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 MCP `perform_rag_search` resolves and honors the active RAG profile's `default_search_mode` the same way Library rag-mode search does instead of using hardcoded search behavior
-- [ ] #2 For the same query and active profile, MCP results use the same score-kind-aware match-strength semantics as Library rather than fabricating vector similarity
-- [ ] #3 Reranking-enabled profiles rerank MCP results consistently with Library, and unavailable reranking is skipped with the same disclosure instead of failing the search
-- [ ] #4 Existing MCP `perform_rag_search` callers continue to work without a breaking request or response API change
-- [ ] #5 `mcp_inspector._ScoredRow.score_kind` reflects the actual scoring path; fused and reranker scores are handled explicitly instead of blindly defaulting to `vector_similarity`
-- [ ] #6 Single- and multi-value media_types filters remain effective for profile-driven semantic and hybrid MCP searches
+- [x] #1 MCP `perform_rag_search` resolves and honors the active RAG profile's `default_search_mode` the same way Library rag-mode search does instead of using hardcoded search behavior
+- [x] #2 For the same query and active profile, MCP results use the same score-kind-aware match-strength semantics as Library rather than fabricating vector similarity
+- [x] #3 Reranking-enabled profiles rerank MCP results consistently with Library, and unavailable reranking is skipped with the same disclosure instead of failing the search
+- [x] #4 Existing MCP `perform_rag_search` callers continue to work without a breaking request or response API change
+- [x] #5 `mcp_inspector._ScoredRow.score_kind` reflects the actual scoring path; fused and reranker scores are handled explicitly instead of blindly defaulting to `vector_similarity`
+- [x] #6 Single- and multi-value media_types filters remain effective for profile-driven semantic and hybrid MCP searches
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -51,3 +51,15 @@ ADR required: yes
 ADR path: backlog/decisions/084-mcp-profile-driven-rag-search-contract.md
 Reason: TASK-3500 changes the lasting MCP request/runtime contract.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented profile-driven MCP media retrieval through active-profile mode resolution and request-time shared runtime acquisition, exact and `$in` metadata filters, media-only allowlists, reranker degradation disclosure, shared Library score kinds/inspector behavior, and public MCP contracts. ADR: `backlog/decisions/084-mcp-profile-driven-rag-search-contract.md`.
+
+Local GREEN evidence: consolidated suite **670 passed, 10 warnings in 135.36s**; hybrid allowlist **37 passed, 10 warnings in 9.17s**; keyword pushdown **22 passed, 10 warnings in 4.60s**; ingestion lifecycle `-k SharedRagService` **10 passed, 40 deselected, 1 warning in 0.95s** (nonzero selection); Library mode **27 passed, 1 warning in 2.48s**; metadata-filter coverage **16 passed, 1 warning in 0.68s**. Warnings were dependency deprecations/requests compatibility; pytest also emitted sandbox-only temporary-directory cleanup messages after runs.
+
+Static evidence: `git diff --check origin/dev...HEAD` is green. Dynamic changed-Python audit covered 21 files: 20 `origin/dev` counterparts plus one added test. It found no TASK-3500-added Ruff or formatting violations after the focused shared-mode import fix. Whole-file Ruff/format cannot exit zero due inherited debt: HEAD retains 7 E702 + 7 E402 findings and 12 format candidates, versus 17 Ruff findings and 15 candidates in the same `origin/dev` counterparts; the new test is formatted. The justified deviation and import fix are documented in the Task 7 plan.
+
+CI, the full suite, and live-provider UAT were explicitly excluded. The existing testing-evidence lesson records the vacuous snake_case selector incident (**0/50** selected) and its correction (**10** selected/passed). Genuine RED discrimination evidence was preserved: T1 missing helpers/delegation; T2 `$in` semantic/basic/citation misses plus nonserializable-cache crash and false metrics; T3 eager construction, missing profile/helper, runtime lifecycle/old-mode race, vacuous selector, falsey/off-thread gaps; T4 safe reason/one-result tag, construction/runtime secret leaks, wrong experiment arm, disabled-base activation and total-degraded metrics; T5 score provenance then bool/nonfinite/oversized malformed scores; T6 public copy, stale local-control descriptor, and missing schema description.
+<!-- SECTION:NOTES:END -->

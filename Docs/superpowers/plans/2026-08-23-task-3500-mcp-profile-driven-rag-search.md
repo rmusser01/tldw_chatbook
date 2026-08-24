@@ -782,7 +782,7 @@ engine module:
 ```bash
 PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/RAG_Search/test_hybrid_allowlist_pushdown.py -q --tb=short
 PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/RAG_Search/test_keyword_leg_pushdown.py -q --tb=short
-PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/RAG/test_ingestion_indexing.py -q --tb=short -k shared_rag_service
+PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/RAG/test_ingestion_indexing.py -q --tb=short -k SharedRagService
 ```
 
 Expected: all three commands PASS, freshly proving all-leg media confinement,
@@ -797,6 +797,23 @@ git diff --check origin/dev...HEAD
 ```
 
 Expected: all commands exit `0`; Ruff and `git diff --check` report no findings. Repository CI and the full suite are intentionally excluded per user direction.
+
+**Closeout deviation (2026-08-24).** The prescribed whole-file Ruff gates were
+run over the dynamic `git diff --name-only origin/dev...HEAD -- '*.py'` set
+(21 HEAD files; 20 have an `origin/dev` counterpart and one is new). They do
+not exit zero because the current checkout retains inherited debt: HEAD reports
+seven `E702` findings in `Tests/RAG/test_active_config_resolution.py` and seven
+`E402` findings in `library_local_rag_search_service.py`; the matching
+`origin/dev` snapshots report those same baseline categories plus one `E402`
+and two `F401` findings that this task removes. Similarly, HEAD's 12 files
+that Ruff would reformat are a subset of the 15 counterpart baseline files.
+The sole new Python file, `test_metadata_filter_matching.py`, was formatted and
+then passed its focused test and `ruff format --check`. A new TASK-3500 `E402`
+on the shared mode import was repaired by relocating that import into the
+existing top import block (`fix(rag): keep shared mode import ordered`); no
+baseline formatting or lint debt was churned. This differential evidence is
+the acceptance gate for static hygiene, and `git diff --check origin/dev...HEAD`
+remains required to exit zero.
 
 - [ ] **Step 4: Review the final diff against scope and ADR-084**
 

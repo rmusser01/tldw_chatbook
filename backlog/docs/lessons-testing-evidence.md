@@ -1707,6 +1707,13 @@ changed (`_console_provider_recovery_action`, `_build_console_setup_card_state`,
 ...) and run the full files that reference them — renamed or
 indirectly-exercised callers are exactly where stale expectations hide.
 
+**TASK-3500 recurrence (2026-08-24).** The planned lifecycle command used
+`-k shared_rag_service`; pytest selected **0/50** tests and exited 0 because
+the owning tests are named `TestSharedRagService*`. Correcting it to
+`-k SharedRagService` selected and passed **10** tests (with 40 deselected).
+Treat a keyword-filtered green result as evidence only after asserting a
+nonzero selected/passed count.
+
 ---
 
 ## Classifying user copy by loose substring invents the blocker you name first
