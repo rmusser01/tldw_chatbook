@@ -140,6 +140,7 @@ async def test_local_attached_rows_keep_membership_and_media_identities_distinct
     assert row.catalog_item_id == "7"
     assert row.workspace_source_version is None
     assert row.catalog_item_version == 4
+    assert row.updated_at == "2026-08-24T00:00:00Z"
     assert row.selected is True
     assert scope.calls == [
         (
@@ -286,9 +287,12 @@ async def test_local_selection_reconciles_101_canonical_ids_without_page_one_los
     assert result.ref == ref
     assert result.desired_source_ids == requested
     assert len(result.sources) <= 100
-    assert tuple(
-        item.source_id for item in registry.get_workspace_scope("workspace-1").items
-    ) == requested
+    assert (
+        tuple(
+            item.source_id for item in registry.get_workspace_scope("workspace-1").items
+        )
+        == requested
+    )
 
 
 @pytest.mark.asyncio
@@ -558,6 +562,7 @@ class RecordingServerSourceService:
                 "position": 0,
                 "selected": True,
                 "version": 5,
+                "updated_at": "2026-08-24T00:00:00Z",
             }
         ]
         self.capability = {
@@ -644,6 +649,7 @@ async def test_server_source_list_preserves_two_identity_spaces_and_refetch_vers
     assert page.items[0].source_id == "source-1"
     assert page.items[0].catalog_item_id == "31"
     assert page.items[0].workspace_source_version == 5
+    assert page.items[0].updated_at == "2026-08-24T00:00:00Z"
     assert selected.sources[0].workspace_source_version == 7
     assert service.calls == [
         ("capabilities", "workspace-1"),
@@ -792,16 +798,12 @@ async def test_server_reorder_preflights_the_exact_owner_before_mutation() -> No
     provider = ContextProvider()
     service = RecordingServerSourceService()
     service.rows = [
-        service.rows[0]
-        | {"id": "source-1", "media_id": 31, "position": 0},
-        service.rows[0]
-        | {"id": "source-2", "media_id": 32, "position": 1},
+        service.rows[0] | {"id": "source-1", "media_id": 31, "position": 0},
+        service.rows[0] | {"id": "source-2", "media_id": 32, "position": 1},
     ]
     adapter = ServerResearchWorkspaceAdapter(service, provider)
 
-    rows = await adapter.reorder_sources(
-        server_ref(provider), ("source-2", "source-1")
-    )
+    rows = await adapter.reorder_sources(server_ref(provider), ("source-2", "source-1"))
 
     assert [row.source_id for row in rows] == ["source-2", "source-1"]
     assert service.calls == [
@@ -849,10 +851,8 @@ async def test_server_reorder_refuses_nonexact_or_duplicate_owner_set_before_put
     provider = ContextProvider()
     service = RecordingServerSourceService()
     service.rows = [
-        service.rows[0]
-        | {"id": "source-1", "media_id": 31, "position": 0},
-        service.rows[0]
-        | {"id": "source-2", "media_id": 32, "position": 1},
+        service.rows[0] | {"id": "source-1", "media_id": 31, "position": 0},
+        service.rows[0] | {"id": "source-2", "media_id": 32, "position": 1},
     ]
     adapter = ServerResearchWorkspaceAdapter(service, provider)
 
@@ -923,9 +923,7 @@ async def test_server_catalog_stitches_crossing_backing_pages_without_gaps() -> 
         RecordingServerSourceService(), provider, media_scope_service=media_scope
     )
 
-    page = await adapter.search_catalog(
-        server_ref(provider), limit=25, offset=90
-    )
+    page = await adapter.search_catalog(server_ref(provider), limit=25, offset=90)
 
     assert [item.catalog_item_id for item in page.items] == [
         str(index) for index in range(90, 115)
@@ -936,7 +934,9 @@ async def test_server_catalog_stitches_crossing_backing_pages_without_gaps() -> 
 
 
 @pytest.mark.asyncio
-async def test_server_owner_rows_over_100_are_valid_but_public_page_stays_bounded() -> None:
+async def test_server_owner_rows_over_100_are_valid_but_public_page_stays_bounded() -> (
+    None
+):
     provider = ContextProvider()
     service = RecordingServerSourceService()
     service.rows = [

@@ -979,6 +979,9 @@ class ServerResearchWorkspaceAdapter:
             catalog_item_version=None,
             selected=bool(row.get("selected", True)),
             position=int(row.get("position") or 0),
+            updated_at=str(
+                row.get("updated_at") or row.get("last_modified") or ""
+            ),
         )
 
     async def _set_archived(

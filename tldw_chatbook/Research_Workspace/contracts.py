@@ -207,6 +207,7 @@ class ResearchSourceSummary:
     catalog_item_version: int | None = None
     selected: bool = True
     position: int = 0
+    updated_at: str = ""
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -220,6 +221,9 @@ class ResearchSourceSummary:
             self,
             "catalog_item_id",
             _required_text(self.catalog_item_id, "catalog_item_id"),
+        )
+        object.__setattr__(
+            self, "updated_at", _optional_text(self.updated_at, "updated_at")
         )
         if type(self.ready) is not bool:
             raise TypeError("ready must be bool")

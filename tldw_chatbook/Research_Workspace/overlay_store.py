@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import re
 
 from tldw_chatbook.Utils.private_paths import (
     PrivateFileWritePrecondition,
@@ -21,14 +22,20 @@ from .contracts import QualifiedWorkspaceRef
 from .layout_state import ResearchPanePreferences
 
 
-OVERLAY_SCHEMA_VERSION = 1
+OVERLAY_SCHEMA_VERSION = 2
 MAX_OVERLAY_FILE_BYTES = 1024 * 1024
 MAX_OVERLAY_RECORDS = 512
 MAX_IDENTITY_CHARS = 256
 MAX_TIMESTAMP_CHARS = 64
+MAX_SOURCE_FOLDERS = 128
+MAX_SOURCE_ANNOTATIONS = 512
+MAX_SOURCE_IDS_PER_FOLDER = 512
+MAX_SOURCE_ID_CHARS = 1024
+MAX_FOLDER_NAME_CHARS = 120
+MAX_ANNOTATION_TEXT_CHARS = 4000
 
 _ROOT_FIELDS = frozenset({"schema_version", "records"})
-_RECORD_FIELDS = frozenset(
+_V1_RECORD_FIELDS = frozenset(
     {
         "key",
         "revision",
@@ -38,12 +45,33 @@ _RECORD_FIELDS = frozenset(
         "updated_at",
     }
 )
+_V2_RECORD_FIELDS = _V1_RECORD_FIELDS | frozenset(
+    {"source_folders", "source_annotations"}
+)
 _KEY_FIELDS = frozenset(
     {"data_source", "workspace_id", "server_profile_id", "principal_id"}
 )
 _PREFERENCE_FIELDS = frozenset({"sources_open", "studio_open"})
 _FORBIDDEN_KEY_PARTS = frozenset(
     {"api", "body", "content", "password", "path", "secret", "token"}
+)
+_SOURCE_FOLDER_FIELDS = frozenset(
+    {"folder_id", "name", "parent_folder_id", "source_ids"}
+)
+_SOURCE_ANNOTATION_FIELDS = frozenset(
+    {
+        "annotation_id",
+        "source_id",
+        "quote",
+        "note",
+        "created_at",
+        "updated_at",
+    }
+)
+_PRIVATE_TEXT = re.compile(
+    r"(?i)(?:\b(?:api[_ -]?key|access[_ -]?token|client[_ -]?secret|password)\s*[:=]|"
+    r"\bbearer\s+\S+|[a-z][a-z0-9+.-]*://|(?:^|\s)(?:/Users/|/home/|/root/|"
+    r"[A-Za-z]:\\\\|\\\\\\\\))"
 )
 
 
@@ -60,12 +88,84 @@ class OverlayConflictError(RuntimeError):
 
 
 @dataclass(frozen=True, slots=True)
+class ResearchSourceFolder:
+    """Device-only organization for qualified source associations."""
+
+    folder_id: str
+    name: str
+    source_ids: tuple[str, ...] = ()
+    parent_folder_id: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "folder_id", _validated_source_id(self.folder_id, "folder_id")
+        )
+        object.__setattr__(
+            self,
+            "name",
+            _validated_plain_text(self.name, "folder name", MAX_FOLDER_NAME_CHARS),
+        )
+        parent = str(self.parent_folder_id or "").strip()
+        if parent:
+            parent = _validated_source_id(parent, "parent_folder_id")
+        if parent == self.folder_id:
+            raise OverlayValidationError("folder cannot be its own parent")
+        object.__setattr__(self, "parent_folder_id", parent)
+        if not isinstance(self.source_ids, tuple):
+            raise OverlayValidationError("source_ids must be a tuple")
+        if len(self.source_ids) > MAX_SOURCE_IDS_PER_FOLDER:
+            raise OverlayLimitError("folder source_ids exceed the declared bound")
+        source_ids = tuple(
+            _validated_source_id(value, "source_id") for value in self.source_ids
+        )
+        if len(source_ids) != len(set(source_ids)):
+            raise OverlayValidationError("folder source_ids must be unique")
+        object.__setattr__(self, "source_ids", source_ids)
+
+
+@dataclass(frozen=True, slots=True)
+class ResearchSourceAnnotation:
+    """Bounded device-only annotation tied to one source association."""
+
+    annotation_id: str
+    source_id: str
+    quote: str
+    note: str
+    created_at: str
+    updated_at: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "annotation_id",
+            _validated_source_id(self.annotation_id, "annotation_id"),
+        )
+        object.__setattr__(
+            self, "source_id", _validated_source_id(self.source_id, "source_id")
+        )
+        object.__setattr__(
+            self, "quote", _validated_annotation_text(self.quote, "quote")
+        )
+        object.__setattr__(self, "note", _validated_annotation_text(self.note, "note"))
+        if not self.quote and not self.note:
+            raise OverlayValidationError("annotation requires a quote or note")
+        object.__setattr__(
+            self, "created_at", _validated_timestamp(self.created_at, "created_at")
+        )
+        object.__setattr__(
+            self, "updated_at", _validated_timestamp(self.updated_at, "updated_at")
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ResearchPresentationOverlay:
     ref: QualifiedWorkspaceRef
     revision: int
     preferences: ResearchPanePreferences
     created_at: str
     updated_at: str
+    source_folders: tuple[ResearchSourceFolder, ...] = ()
+    source_annotations: tuple[ResearchSourceAnnotation, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,7 +205,7 @@ class ResearchPresentationOverlayStore:
         try:
             payload = raw_payload.decode("utf-8")
             root = json.loads(payload)
-            records = self._validated_record_list(root)
+            schema_version, records = self._validated_record_list(root)
         except UnicodeDecodeError as exc:
             return OverlayLoadResult(
                 {},
@@ -131,7 +231,7 @@ class ResearchPresentationOverlayStore:
         quarantined: list[QuarantinedOverlayRecord] = []
         for index, raw in enumerate(records):
             try:
-                record = _decode_record(raw)
+                record = _decode_record(raw, schema_version=schema_version)
                 if record.ref in decoded:
                     raise OverlayValidationError("duplicate qualified key")
             except (TypeError, ValueError) as exc:
@@ -153,6 +253,8 @@ class ResearchPresentationOverlayStore:
         preferences: ResearchPanePreferences,
         *,
         expected_revision: int,
+        source_folders: tuple[ResearchSourceFolder, ...] | None = None,
+        source_annotations: tuple[ResearchSourceAnnotation, ...] | None = None,
         timestamp: str | None = None,
     ) -> ResearchPresentationOverlay:
         """Compare the current target revision, then atomically replace the file."""
@@ -198,7 +300,18 @@ class ResearchPresentationOverlayStore:
             preferences=preferences,
             created_at=current.created_at if current is not None else now,
             updated_at=now,
+            source_folders=(
+                current.source_folders
+                if source_folders is None and current is not None
+                else tuple(source_folders or ())
+            ),
+            source_annotations=(
+                current.source_annotations
+                if source_annotations is None and current is not None
+                else tuple(source_annotations or ())
+            ),
         )
+        _validate_source_overlay(saved.source_folders, saved.source_annotations)
         records = dict(loaded.records)
         records[ref] = saved
         serialized = _encode_store(records.values(), loaded.quarantined)
@@ -248,11 +361,12 @@ class ResearchPresentationOverlayStore:
         return raw, target_precondition
 
     @staticmethod
-    def _validated_record_list(root: object) -> list[object]:
+    def _validated_record_list(root: object) -> tuple[int, list[object]]:
         if not isinstance(root, dict):
             raise OverlayValidationError("overlay root must be an object")
         _require_exact_fields(root, _ROOT_FIELDS, "overlay root")
-        if root["schema_version"] != OVERLAY_SCHEMA_VERSION:
+        schema_version = root["schema_version"]
+        if schema_version not in {1, OVERLAY_SCHEMA_VERSION}:
             raise OverlayValidationError("unsupported overlay schema version")
         records = root["records"]
         if not isinstance(records, list):
@@ -261,14 +375,18 @@ class ResearchPresentationOverlayStore:
             raise OverlayLimitError(
                 f"overlay records exceed maximum {MAX_OVERLAY_RECORDS}"
             )
-        return records
+        return schema_version, records
 
 
-def _decode_record(raw: object) -> ResearchPresentationOverlay:
+def _decode_record(raw: object, *, schema_version: int) -> ResearchPresentationOverlay:
     if not isinstance(raw, dict):
         raise OverlayValidationError("record must be an object")
     _reject_forbidden_keys(raw)
-    _require_exact_fields(raw, _RECORD_FIELDS, "record")
+    _require_exact_fields(
+        raw,
+        _V1_RECORD_FIELDS if schema_version == 1 else _V2_RECORD_FIELDS,
+        "record",
+    )
 
     raw_key = raw["key"]
     if not isinstance(raw_key, dict):
@@ -292,12 +410,23 @@ def _decode_record(raw: object) -> ResearchPresentationOverlay:
     )
     created_at = _validated_timestamp(raw["created_at"], "created_at")
     updated_at = _validated_timestamp(raw["updated_at"], "updated_at")
+    folders = (
+        () if schema_version == 1 else _decode_source_folders(raw["source_folders"])
+    )
+    annotations = (
+        ()
+        if schema_version == 1
+        else _decode_source_annotations(raw["source_annotations"])
+    )
+    _validate_source_overlay(folders, annotations)
     return ResearchPresentationOverlay(
         ref=ref,
         revision=revision,
         preferences=preferences,
         created_at=created_at,
         updated_at=updated_at,
+        source_folders=folders,
+        source_annotations=annotations,
     )
 
 
@@ -331,7 +460,126 @@ def _encode_record(record: ResearchPresentationOverlay) -> dict[str, object]:
         "preferred_companion": record.preferences.preferred_companion,
         "created_at": record.created_at,
         "updated_at": record.updated_at,
+        "source_folders": [
+            {
+                "folder_id": folder.folder_id,
+                "name": folder.name,
+                "parent_folder_id": folder.parent_folder_id,
+                "source_ids": list(folder.source_ids),
+            }
+            for folder in record.source_folders
+        ],
+        "source_annotations": [
+            {
+                "annotation_id": annotation.annotation_id,
+                "source_id": annotation.source_id,
+                "quote": annotation.quote,
+                "note": annotation.note,
+                "created_at": annotation.created_at,
+                "updated_at": annotation.updated_at,
+            }
+            for annotation in record.source_annotations
+        ],
     }
+
+
+def _decode_source_folders(value: object) -> tuple[ResearchSourceFolder, ...]:
+    if not isinstance(value, list):
+        raise OverlayValidationError("source_folders must be a list")
+    if len(value) > MAX_SOURCE_FOLDERS:
+        raise OverlayLimitError("source_folders exceed the declared bound")
+    folders: list[ResearchSourceFolder] = []
+    for raw in value:
+        if not isinstance(raw, dict):
+            raise OverlayValidationError("source folder must be an object")
+        _require_exact_fields(raw, _SOURCE_FOLDER_FIELDS, "source folder")
+        raw_ids = raw["source_ids"]
+        if not isinstance(raw_ids, list):
+            raise OverlayValidationError("source_ids must be a list")
+        folders.append(
+            ResearchSourceFolder(
+                folder_id=raw["folder_id"],
+                name=raw["name"],
+                parent_folder_id=raw["parent_folder_id"],
+                source_ids=tuple(raw_ids),
+            )
+        )
+    return tuple(folders)
+
+
+def _decode_source_annotations(
+    value: object,
+) -> tuple[ResearchSourceAnnotation, ...]:
+    if not isinstance(value, list):
+        raise OverlayValidationError("source_annotations must be a list")
+    if len(value) > MAX_SOURCE_ANNOTATIONS:
+        raise OverlayLimitError("source_annotations exceed the declared bound")
+    annotations: list[ResearchSourceAnnotation] = []
+    for raw in value:
+        if not isinstance(raw, dict):
+            raise OverlayValidationError("source annotation must be an object")
+        _require_exact_fields(raw, _SOURCE_ANNOTATION_FIELDS, "source annotation")
+        annotations.append(ResearchSourceAnnotation(**raw))
+    return tuple(annotations)
+
+
+def _validate_source_overlay(
+    folders: tuple[ResearchSourceFolder, ...],
+    annotations: tuple[ResearchSourceAnnotation, ...],
+) -> None:
+    if len(folders) > MAX_SOURCE_FOLDERS:
+        raise OverlayLimitError("source_folders exceed the declared bound")
+    if len(annotations) > MAX_SOURCE_ANNOTATIONS:
+        raise OverlayLimitError("source_annotations exceed the declared bound")
+    if any(not isinstance(item, ResearchSourceFolder) for item in folders):
+        raise OverlayValidationError("source_folders contain an invalid record")
+    if any(not isinstance(item, ResearchSourceAnnotation) for item in annotations):
+        raise OverlayValidationError("source_annotations contain an invalid record")
+    folder_ids = [item.folder_id for item in folders]
+    annotation_ids = [item.annotation_id for item in annotations]
+    if len(folder_ids) != len(set(folder_ids)):
+        raise OverlayValidationError("folder ids must be unique")
+    if len(annotation_ids) != len(set(annotation_ids)):
+        raise OverlayValidationError("annotation ids must be unique")
+    known_folders = set(folder_ids)
+    if any(
+        folder.parent_folder_id and folder.parent_folder_id not in known_folders
+        for folder in folders
+    ):
+        raise OverlayValidationError("parent folder does not exist")
+
+
+def _validated_source_id(value: object, field_name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise OverlayValidationError(f"{field_name} must be nonblank text")
+    normalized = value.strip()
+    if len(normalized) > MAX_SOURCE_ID_CHARS or len(normalized.encode("utf-8")) > 4096:
+        raise OverlayLimitError(f"{field_name} exceeds the declared bound")
+    if any(ord(character) < 32 or ord(character) == 127 for character in normalized):
+        raise OverlayValidationError(f"{field_name} contains control characters")
+    return normalized
+
+
+def _validated_plain_text(value: object, field_name: str, maximum: int) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise OverlayValidationError(f"{field_name} must be nonblank text")
+    normalized = value.strip()
+    if len(normalized) > maximum:
+        raise OverlayLimitError(f"{field_name} exceeds the declared bound")
+    if _PRIVATE_TEXT.search(normalized):
+        raise OverlayValidationError(f"{field_name} contains private material")
+    return normalized
+
+
+def _validated_annotation_text(value: object, field_name: str) -> str:
+    if not isinstance(value, str):
+        raise OverlayValidationError(f"{field_name} must be text")
+    normalized = value.strip()
+    if len(normalized) > MAX_ANNOTATION_TEXT_CHARS:
+        raise OverlayLimitError(f"{field_name} exceeds the declared bound")
+    if _PRIVATE_TEXT.search(normalized):
+        raise OverlayValidationError(f"{field_name} contains private material")
+    return normalized
 
 
 def _require_exact_fields(

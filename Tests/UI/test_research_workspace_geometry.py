@@ -7,6 +7,7 @@ import re
 from types import SimpleNamespace
 
 import pytest
+from textual.widgets import Button
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.app import TldwCli
 
@@ -72,6 +73,50 @@ async def test_production_hierarchy_paints_contained_workspace_frames(
 
         for pane_id in {"sources", "chat", "studio"} - set(visible_panes):
             assert not screen.query_one(f"#research-{pane_id}-pane").display
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "size", [(160, 40), (120, 30), (100, 30), (84, 24), (80, 24), (60, 20)]
+)
+async def test_active_sources_keeps_essential_controls_painted_and_reachable(
+    size: tuple[int, int],
+) -> None:
+    app = _ProductionWorkspaceHarness()
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause()
+        screen = app.screen_stack[-1]
+        sources = screen.query_one("#research-sources-pane")
+        if not sources.display:
+            screen.query_one("#research-pane-mode-sources", Button).press()
+            await pilot.pause()
+        painted = _painted_text(app.export_screenshot(simplify=True))
+
+        assert sources.display
+        assert screen.region.contains_region(sources.region)
+        for text in (
+            "Add Sources",
+            "Quick add URL",
+            "Search attached sources",
+            "Select all",
+            "No workspace selected",
+        ):
+            assert text in painted, (size, text, painted)
+        for widget_id in (
+            "research-source-add",
+            "research-source-search",
+            "research-source-select-all",
+            "research-source-recovery",
+        ):
+            widget = screen.query_one(f"#{widget_id}")
+            assert (
+                widget.display and widget.region.width > 0 and widget.region.height > 0
+            )
+            assert sources.region.overlaps(widget.region), (
+                size,
+                widget_id,
+                widget.region,
+            )
 
 
 @pytest.mark.asyncio

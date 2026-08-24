@@ -2243,6 +2243,25 @@ def test_submit_refuses_active_local_duplicate_before_second_append(
     )
 
 
+def test_research_ingest_required_origin_fails_before_queue_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _minimal_app(media_db="present")
+    monkeypatch.setattr(app, "_resolve_ingest_backend", lambda: "local")
+    admitted = MagicMock()
+    monkeypatch.setattr(app, "_submit_library_ingest_job_admitted", admitted)
+
+    with pytest.raises(ValueError, match="selected Server authority"):
+        app.submit_library_ingest_job(
+            source_path="https://example.invalid/paper",
+            research_source_operation_id="operation-server-1",
+            required_origin="server",
+        )
+
+    assert app.library_ingest_jobs.jobs() == ()
+    admitted.assert_not_called()
+
+
 def test_terminal_local_job_does_not_block_reingestion(tmp_path: Path) -> None:
     app = _minimal_app(media_db="present")
     source = tmp_path / "a.txt"

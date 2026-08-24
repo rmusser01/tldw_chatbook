@@ -340,3 +340,305 @@ ResearchPaneHandle .research-pane-handle-button:focus {
 #research-workspace-shell.height-compact #workbench-header-subtitle {
     display: none;
 }
+
+#research-workspace-shell.height-compact #research-source-filter-summary {
+    display: none;
+}
+
+#research-workspace-shell.height-compact .research-workspace-pane {
+    padding: 0;
+    border: none;
+}
+
+#research-workspace-shell.height-compact .research-workspace-pane:focus {
+    border: none;
+    outline: heavy $accent;
+}
+
+/* Task 4 Sources workbench: compact, keyboard-first controls. */
+ResearchSourcesRegion {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    padding: 0;
+    scrollbar-size: 1 1;
+}
+
+ResearchSourcesRegion Horizontal,
+ResearchSourcesRegion Vertical {
+    width: 100%;
+    height: auto;
+    min-height: 0;
+}
+
+ResearchSourcesRegion Button {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    border: none;
+    background: $surface;
+    color: $text;
+}
+
+ResearchSourcesRegion Button:focus {
+    border: none;
+    outline: none;
+    background: $primary;
+    color: $text;
+    text-style: bold underline;
+}
+
+ResearchSourcesRegion Button:disabled {
+    background: $surface-darken-1;
+    color: $text-muted;
+    text-style: dim;
+}
+
+ResearchSourcesRegion Input,
+ResearchSourcesRegion Select {
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    border: none;
+    background: $surface-darken-1;
+}
+
+#research-source-header,
+#research-source-quick-row,
+#research-source-view-row,
+#research-source-selection-row,
+#research-source-selection-summary,
+#research-source-page-actions {
+    height: 1;
+    min-height: 1;
+}
+
+#research-sources-heading,
+#research-source-quick-url,
+#research-source-search,
+#research-source-selected-count,
+#research-source-page-summary {
+    width: 1fr;
+}
+
+#research-source-add,
+#research-source-quick-submit,
+#research-source-advanced,
+#research-source-page-prev,
+#research-source-page-next {
+    width: auto;
+}
+
+#research-source-recovery {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+    padding: 0 1;
+    background: $warning 15%;
+    color: $text;
+}
+
+#research-source-filter-summary,
+#research-source-move-copy-reason,
+#research-source-remove-scope,
+#research-source-filter-owner-limits {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+    color: $text-muted;
+}
+
+#research-source-advanced-controls {
+    height: auto;
+    padding: 0 1;
+    background: $surface-darken-1;
+}
+
+.research-source-filter-row {
+    height: 1;
+}
+
+.research-source-filter-row Select {
+    width: 1fr;
+}
+
+#research-source-selection-row Button {
+    width: 1fr;
+    padding: 0;
+}
+
+#research-source-batch-actions,
+#research-source-folders,
+.research-source-folder-actions,
+.research-source-row-actions {
+    layout: vertical;
+    height: auto;
+}
+
+#research-source-batch-actions Button,
+.research-source-folder-actions Button,
+.research-source-row-actions Button {
+    width: 100%;
+}
+
+#research-source-folders {
+    margin-top: 1;
+    padding: 0 1;
+    border-left: solid $surface-lighten-1;
+}
+
+#research-source-folders-label,
+#research-source-receipts-heading {
+    width: 100%;
+    height: 1;
+    color: $accent;
+    text-style: bold;
+}
+
+#research-source-folder-name,
+#research-source-folder-tree {
+    width: 100%;
+}
+
+ResearchSourceList,
+ResearchSourceReceiptList {
+    width: 100%;
+    height: auto;
+}
+
+_ResearchSourceRowSlot,
+_ResearchSourceReceiptSlot {
+    width: 100%;
+    height: auto;
+    padding: 0 1;
+    margin-top: 1;
+    background: $surface-darken-1;
+    border-left: solid $surface-lighten-1;
+}
+
+.research-source-row-heading,
+.research-source-receipt-actions {
+    height: 1;
+}
+
+.research-source-row-heading Static {
+    width: 1fr;
+    height: 1;
+    color: $text;
+    text-style: bold;
+}
+
+_ResearchSourceRowSlot Static,
+_ResearchSourceReceiptSlot Static {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+}
+
+#research-source-receipts-bound {
+    width: 100%;
+    height: auto;
+    color: $text-muted;
+}
+
+/* Add Sources and source inspector modals share the workbench visual world. */
+ResearchAddSourceModal,
+ResearchSourceInspectorModal {
+    align: center middle;
+    background: $background 70%;
+}
+
+#research-add-source-dialog,
+#research-source-inspector-dialog {
+    width: 90%;
+    max-width: 110;
+    height: 90%;
+    min-height: 18;
+    padding: 1;
+    border: round $accent;
+    background: $panel;
+}
+
+#research-add-source-heading-row,
+#research-source-inspector-heading {
+    width: 100%;
+    height: 1;
+}
+
+#research-add-source-title,
+#research-source-inspector-title {
+    width: 1fr;
+    color: $accent;
+    text-style: bold;
+}
+
+#research-add-authority {
+    width: auto;
+    color: $text-muted;
+    margin-right: 2;
+}
+
+#research-add-source-dialog Button,
+#research-source-inspector-dialog Button {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    border: none;
+}
+
+#research-add-error {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+    background: $error 15%;
+    color: $text;
+}
+
+#research-add-source-tabs {
+    width: 100%;
+    height: 1fr;
+    min-height: 0;
+}
+
+.research-add-tab-body,
+#research-source-inspector-body {
+    width: 100%;
+    height: 1fr;
+    min-height: 0;
+}
+
+.research-add-tab-body Input,
+.research-add-tab-body Select,
+.research-add-tab-body TextArea,
+#research-source-inspector-body Input,
+#research-source-inspector-body TextArea {
+    width: 100%;
+    min-height: 1;
+}
+
+.research-add-actions,
+.research-add-filters {
+    width: 100%;
+    height: auto;
+}
+
+.research-add-filters Select {
+    width: 1fr;
+}
+
+#research-source-preview-text {
+    width: 100%;
+    height: auto;
+    padding: 1;
+    background: $surface-darken-1;
+}
+
+#research-source-annotation-label {
+    margin-top: 1;
+    color: $accent;
+    text-style: bold;
+}

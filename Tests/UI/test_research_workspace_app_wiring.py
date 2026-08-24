@@ -339,7 +339,11 @@ async def test_selected_workspace_loads_and_saves_device_only_pane_preferences(
         assert not screen.query_one("#research-sources-pane").display
 
         screen.query_one("#research-sources-reveal", Button).press()
-        await pilot.pause(0.1)
+        for _ in range(100):
+            saved = screen.overlay_store.load(local_ref)
+            if saved is not None and saved.revision == 2:
+                break
+            await pilot.pause(0.01)
 
         saved = screen.overlay_store.load(local_ref)
         assert saved is not None
@@ -531,6 +535,8 @@ class _BlockingOverlayStore:
             ref=ref,
             revision=1,
             preferences=ResearchPanePreferences(sources_open=False, studio_open=False),
+            source_folders=(),
+            source_annotations=(),
         )
 
 
@@ -551,11 +557,15 @@ class _CommitThenPauseOverlayStore:
         preferences: ResearchPanePreferences,
         *,
         expected_revision: int,
+        source_folders=(),
+        source_annotations=(),
     ):
         saved = self._store.save(
             ref,
             preferences,
             expected_revision=expected_revision,
+            source_folders=source_folders,
+            source_annotations=source_annotations,
         )
         if saved.revision == 1:
             self.first_committed.set()
@@ -591,6 +601,8 @@ class _BlockBeforeCommitOverlayStore:
         preferences: ResearchPanePreferences,
         *,
         expected_revision: int,
+        source_folders=(),
+        source_annotations=(),
     ):
         with self._lock:
             block = self._first_save
@@ -602,6 +614,8 @@ class _BlockBeforeCommitOverlayStore:
             ref,
             preferences,
             expected_revision=expected_revision,
+            source_folders=source_folders,
+            source_annotations=source_annotations,
         )
 
     def load_count(self, ref: QualifiedWorkspaceRef) -> int:

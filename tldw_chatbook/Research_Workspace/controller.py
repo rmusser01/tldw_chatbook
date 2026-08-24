@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from .contracts import (
     BoundedPageResult,
     CapabilityUnavailableError,
+    MAX_RESEARCH_SELECTION_IDS,
     QualifiedWorkspaceRef,
     ResearchCatalogItem,
     ResearchCapability,
@@ -20,6 +21,7 @@ from .contracts import (
     SourceReadiness,
     WorkspaceDataSource,
 )
+from .source_operations import ResearchSourceOperation
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +70,8 @@ class ResearchWorkspaceController:
             QualifiedWorkspaceRef, ResearchWorkspaceSummary
         ] = {}
         self._surface_generations = {
+            "association": 0,
+            "capabilities": 0,
             "sources": 0,
             "catalog": 0,
             "readiness": 0,
@@ -87,14 +91,11 @@ class ResearchWorkspaceController:
             tuple[QualifiedWorkspaceRef, str], ResearchSourcePreview
         ] = {}
         self.visible_workspace: ResearchWorkspaceSummary | None = None
-        self.visible_source_page: (
-            ResearchSourcePage | None
-        ) = None
-        self.visible_catalog_page: (
-            BoundedPageResult[ResearchCatalogItem] | None
-        ) = None
+        self.visible_source_page: ResearchSourcePage | None = None
+        self.visible_catalog_page: BoundedPageResult[ResearchCatalogItem] | None = None
         self.visible_readiness: tuple[SourceReadiness, ...] = ()
         self.visible_preview: ResearchSourcePreview | None = None
+        self.visible_capabilities: Mapping[str, ResearchCapability] = {}
         self.desired_source_ids: tuple[str, ...] = ()
 
     @property
@@ -284,6 +285,21 @@ class ResearchWorkspaceController:
             self._canonical_sources[(source.ref, source.source_id)] = source
         return True
 
+    async def refresh_selected_capabilities(self) -> bool:
+        """Refresh only the selected qualified authority's action projection."""
+
+        capture = self._capture_surface("capabilities")
+        result = await self._port_for(capture).capabilities(capture.context.ref)
+        if not isinstance(result, Mapping) or any(
+            not isinstance(name, str) or not isinstance(capability, ResearchCapability)
+            for name, capability in result.items()
+        ):
+            raise TypeError("Capability projection returned invalid entries")
+        if not self._is_current_surface(capture):
+            return False
+        self.visible_capabilities = dict(result)
+        return True
+
     async def search_selected_catalog(
         self,
         *,
@@ -369,11 +385,124 @@ class ResearchWorkspaceController:
             result.desired_source_ids
         ) != frozenset(source_ids):
             raise ValueError("Selection reconciliation did not match requested scope")
+        return self._accept_selection_result(capture, source_ids, result)
+
+    async def select_all_sources(self) -> bool:
+        """Persist every exact owner ID, never just the currently visible page."""
+
+        capture = self._capture_surface("selection")
+        self._surface_generations["sources"] += 1
+        port = self._port_for(capture)
+        owner_ids: list[str] = []
+        offset = 0
+        total: int | None = None
+        while total is None or offset < total:
+            page = await port.list_sources(
+                capture.context.ref, limit=100, offset=offset
+            )
+            if not isinstance(page, ResearchSourcePage):
+                raise TypeError("Source listing returned an invalid owner page")
+            self._validate_result_refs(page.items, capture.context.ref)
+            if total is None:
+                total = page.total
+                if total > MAX_RESEARCH_SELECTION_IDS:
+                    raise ValueError("Source owner exceeds the bounded selection limit")
+            elif page.total != total:
+                raise ValueError("Source owner changed during select all")
+            owner_ids.extend(
+                source.catalog_item_id
+                if capture.context.ref.data_source is WorkspaceDataSource.LOCAL
+                else source.source_id
+                for source in page.items
+            )
+            offset += len(page.items)
+            if not page.items and offset < total:
+                raise ValueError("Source owner returned an incomplete page")
+        requested = tuple(owner_ids)
+        result = await port.set_selected_scope(capture.context.ref, requested)
+        if not isinstance(result, SourceSelectionResult):
+            raise TypeError("Selection reconciliation returned an invalid result")
+        self._validate_result_refs((result, *result.sources), capture.context.ref)
+        return self._accept_selection_result(capture, requested, result)
+
+    async def attach_selected_existing(
+        self,
+        *,
+        catalog_item_id: str,
+        idempotency_key: str,
+        desired_selected: bool = True,
+    ) -> ResearchSourceOperation | None:
+        """Attach one catalog item through the captured authority's durable seam."""
+
+        capture = self._capture_surface("association")
+        self._surface_generations["sources"] += 1
+        result = await self.attach_existing(
+            capture.context.ref,
+            catalog_item_id=catalog_item_id,
+            desired_selected=desired_selected,
+            idempotency_key=idempotency_key,
+        )
+        return result if self._is_current_surface(capture) else None
+
+    async def attach_existing(
+        self,
+        ref: QualifiedWorkspaceRef,
+        *,
+        catalog_item_id: str,
+        idempotency_key: str,
+        desired_selected: bool = True,
+    ) -> ResearchSourceOperation:
+        """Attach to an explicit captured owner even after visible navigation."""
+
+        result = await self._port_for_ref(ref).attach_existing(
+            ref,
+            catalog_item_id=catalog_item_id,
+            desired_selected=desired_selected,
+            idempotency_key=idempotency_key,
+        )
+        if not isinstance(result, ResearchSourceOperation):
+            raise TypeError("Source attachment returned an invalid operation")
+        self._validate_operation_ref(result, ref)
+        return result
+
+    async def remove_selected_source(
+        self, source_id: str, *, expected_version: int | None = None
+    ) -> bool:
+        """Remove only the captured workspace association, never catalog media."""
+
+        capture = self._capture_surface("association")
+        self._surface_generations["sources"] += 1
+        removed = await self._port_for(capture).remove_source(
+            capture.context.ref,
+            source_id,
+            expected_version=expected_version,
+        )
+        if type(removed) is not bool:
+            raise TypeError("Source removal returned an invalid result")
         if not self._is_current_surface(capture):
             return False
+        if removed:
+            self._canonical_sources.pop((capture.context.ref, source_id), None)
+        return removed
+
+    async def reorder_selected_sources(
+        self, ordered_source_ids: tuple[str, ...]
+    ) -> bool:
+        """Persist an exact manual order through the selected owner capability."""
+
+        capture = self._capture_surface("association")
         self._surface_generations["sources"] += 1
-        self.desired_source_ids = result.desired_source_ids
-        for source in result.sources:
+        rows = tuple(
+            await self._port_for(capture).reorder_sources(
+                capture.context.ref, ordered_source_ids
+            )
+        )
+        self._validate_result_refs(rows, capture.context.ref)
+        if tuple(source.source_id for source in rows) != ordered_source_ids:
+            raise ValueError("Source reorder did not return the requested exact order")
+        if not self._is_current_surface(capture):
+            return False
+        for source in rows:
             self._canonical_sources[(source.ref, source.source_id)] = source
         return True
 
@@ -411,11 +540,12 @@ class ResearchWorkspaceController:
         )
 
     def _port_for(self, capture: ResearchSurfaceRequest) -> ResearchWorkspacePort:
-        port = self._ports.get(capture.context.ref.data_source)
+        return self._port_for_ref(capture.context.ref)
+
+    def _port_for_ref(self, ref: QualifiedWorkspaceRef) -> ResearchWorkspacePort:
+        port = self._ports.get(ref.data_source)
         if port is None:
-            raise RuntimeError(
-                f"No adapter is configured for {capture.context.ref.data_source.value}"
-            )
+            raise RuntimeError(f"No adapter is configured for {ref.data_source.value}")
         return port
 
     @staticmethod
@@ -429,4 +559,35 @@ class ResearchWorkspaceController:
         self.visible_catalog_page = None
         self.visible_readiness = ()
         self.visible_preview = None
+        self.visible_capabilities = {}
         self.desired_source_ids = ()
+
+    def _accept_selection_result(
+        self,
+        capture: ResearchSurfaceRequest,
+        requested: tuple[str, ...],
+        result: SourceSelectionResult,
+    ) -> bool:
+        if len(result.desired_source_ids) != len(requested) or frozenset(
+            result.desired_source_ids
+        ) != frozenset(requested):
+            raise ValueError("Selection reconciliation did not match requested scope")
+        if not self._is_current_surface(capture):
+            return False
+        self._surface_generations["sources"] += 1
+        self.desired_source_ids = result.desired_source_ids
+        for source in result.sources:
+            self._canonical_sources[(source.ref, source.source_id)] = source
+        return True
+
+    @staticmethod
+    def _validate_operation_ref(
+        operation: ResearchSourceOperation, ref: QualifiedWorkspaceRef
+    ) -> None:
+        if (
+            operation.data_source is not ref.data_source
+            or operation.workspace_id != ref.workspace_id
+            or operation.server_profile_id != ref.server_profile_id
+            or operation.principal_id != ref.principal_id
+        ):
+            raise ValueError("Request returned a mismatched workspace operation")

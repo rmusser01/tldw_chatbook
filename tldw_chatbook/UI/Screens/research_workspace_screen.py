@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
-from typing import Any, Literal
+from datetime import datetime, timezone
+from pathlib import Path
+import tempfile
+from typing import Any, Callable, Literal
+from uuid import uuid4
 
 from textual import on
 from textual.app import ComposeResult
@@ -13,11 +17,22 @@ from textual.events import Resize
 from textual.widgets import Button, Static
 
 from ...Research_Workspace import (
+    CapabilityUnavailableError,
     QualifiedWorkspaceRef,
     ResearchPresentationOverlayStore,
     ResearchWorkspaceCatalogState,
     ResearchWorkspaceController,
     WorkspaceDataSource,
+)
+from ...Research_Workspace.overlay_store import (
+    ResearchSourceAnnotation,
+    ResearchSourceFolder,
+)
+from ...Research_Workspace.source_operations import (
+    CanonicalItemType,
+    ResearchSourceOperation,
+    SourceOperationStage,
+    SourceOperationStatus,
 )
 from ...Research_Workspace.layout_state import (
     ResearchPaneLayout,
@@ -32,6 +47,12 @@ from ..Research_Workspace_Modules import (
     ResearchPaneHandle,
     ResearchPaneModeStrip,
     ResearchSourcesRegion,
+    ResearchAddSourceModal,
+    ResearchSourceIntakeRequest,
+    ResearchSourceList,
+    ResearchSourceReceiptList,
+    ResearchSourceAnnotationDraft,
+    ResearchSourceInspectorModal,
     ResearchStudioRegion,
 )
 from ..Research_Workspace_Modules.pane_handle import ResearchSidePane
@@ -52,11 +73,31 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         *,
         controller: ResearchWorkspaceController | None = None,
         overlay_store: ResearchPresentationOverlayStore | None = None,
+        operation_store: Any | None = None,
+        association_scheduler: Any | None = None,
+        operation_id_factory: Callable[[], str] | None = None,
+        now_factory: Callable[[], str] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(app_instance, "research_workspace", **kwargs)
         self.controller = controller or ResearchWorkspaceController({})
         self.overlay_store = overlay_store
+        self.operation_store = operation_store
+        self.association_scheduler = association_scheduler
+        self._operation_id_factory = operation_id_factory or (
+            lambda: f"research-source-operation-{uuid4().hex}"
+        )
+        self._now_factory = now_factory or (
+            lambda: (
+                datetime.now(timezone.utc)
+                .isoformat(timespec="seconds")
+                .replace("+00:00", "Z")
+            )
+        )
+        self._source_folders: tuple[ResearchSourceFolder, ...] = ()
+        self._source_annotations: tuple[ResearchSourceAnnotation, ...] = ()
+        self._source_page_offset = 0
+        self._focused_folder_id = ""
         self.pane_preferences = ResearchPanePreferences()
         self.active_pane: ResearchPaneName = "chat"
         self._pane_layout: ResearchPaneLayout | None = None
@@ -209,6 +250,9 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         """Switch the whole catalog owner without reading the other authority."""
 
         self.controller.select_data_source(message.data_source)
+        self._source_page_offset = 0
+        self._source_folders = ()
+        self._source_annotations = ()
         self._overlay_generation += 1
         self._set_overlay_ref(None)
         self._pane_preferences_ref = None
@@ -218,6 +262,10 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         header.sync_data_source(message.data_source)
         self.query_one("#research-workspace-selection", Static).update(
             f"Loading {message.data_source.value.title()} research workspaces..."
+        )
+        self.query_one("#research-sources-pane", ResearchSourcesRegion).clear_workspace(
+            authority=message.data_source.value.title(),
+            reason=f"Loading {message.data_source.value.title()} workspace sources...",
         )
         self._start_catalog_refresh()
 
@@ -256,7 +304,7 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         for mode in ("wide", "medium", "narrow"):
             grid.set_class(layout.mode == mode, f"layout-{mode}")
         shell = self.query_one("#research-workspace-shell")
-        shell.set_class(self.size.height < 24, "height-compact")
+        shell.set_class(self.size.height < 30, "height-compact")
 
         for pane in ("sources", "chat", "studio"):
             self.query_one(f"#research-{pane}-pane").display = (
@@ -343,6 +391,12 @@ class ResearchWorkspaceScreen(BaseAppScreen):
                 "Recovery required · No operation active"
             )
             self._set_overlay_ref(None)
+            self.query_one(
+                "#research-sources-pane", ResearchSourcesRegion
+            ).clear_workspace(
+                authority=state.data_source.value.title(),
+                reason=state.recovery.user_message,
+            )
             return
         if not state.workspaces:
             selection.update(
@@ -353,6 +407,11 @@ class ResearchWorkspaceScreen(BaseAppScreen):
                 "0 workspaces · Foundation only"
             )
             self._set_overlay_ref(None)
+            self.query_one(
+                "#research-sources-pane", ResearchSourcesRegion
+            ).clear_workspace(
+                authority=state.data_source.value.title(),
+            )
             return
 
         intended_ref = self.controller.selected_ref
@@ -365,6 +424,9 @@ class ResearchWorkspaceScreen(BaseAppScreen):
             state.workspaces[0],
         )
         self.controller.select_workspace(workspace.ref)
+        self._source_page_offset = 0
+        self._source_folders = ()
+        self._source_annotations = ()
         selection.update(
             f"{workspace.name} · {workspace.ref.data_source.value.title()}"
         )
@@ -380,6 +442,7 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         overlay_generation = self._overlay_generation
         overlay_capture = self.controller.capture_request()
         self._set_overlay_ref(workspace.ref)
+        self._start_sources_refresh()
         if self.overlay_store is None:
             return
         try:
@@ -401,8 +464,417 @@ class ResearchWorkspaceScreen(BaseAppScreen):
             return
         self._overlay_revision = overlay.revision
         self.pane_preferences = overlay.preferences
+        self._source_folders = overlay.source_folders
+        self._source_annotations = overlay.source_annotations
         self._pane_preferences_ref = workspace.ref
         self._apply_pane_layout(max(1, self.size.width), relocate_hidden_focus=True)
+        self._start_sources_refresh()
+
+    def _start_sources_refresh(self) -> None:
+        if self.controller.selected_ref is None or not self.is_mounted:
+            return
+        self.run_worker(
+            self._refresh_source_workbench(),
+            group="research-workspace-sources",
+            exclusive=True,
+        )
+
+    async def _refresh_source_workbench(self) -> None:
+        capture = self.controller.capture_request()
+        region = self.query_one("#research-sources-pane", ResearchSourcesRegion)
+        region.query_one("#research-source-recovery", Static).update(
+            f"Loading {capture.ref.data_source.value.title()} sources..."
+        )
+        try:
+            capabilities_current = await self.controller.refresh_selected_capabilities()
+            sources_current = await self.controller.refresh_selected_sources(
+                limit=25, offset=self._source_page_offset
+            )
+            page = self.controller.visible_source_page
+            if not capabilities_current or not sources_current or page is None:
+                return
+            readiness_current = await self.controller.refresh_selected_readiness(
+                source_ids=tuple(source.source_id for source in page.items)
+            )
+            if not readiness_current or not self.controller.is_current_request(capture):
+                return
+            operations = await self._recent_operations(capture.ref)
+        except CapabilityUnavailableError as exc:
+            if self.controller.is_current_request(capture):
+                region.clear_workspace(
+                    authority=capture.ref.data_source.value.title(),
+                    reason=f"{exc.capability.user_message} {exc.capability.recovery_action}".strip(),
+                )
+            return
+        except Exception:
+            if self.controller.is_current_request(capture):
+                region.clear_workspace(
+                    authority=capture.ref.data_source.value.title(),
+                    reason=(
+                        "Sources could not be loaded from the selected owner. "
+                        "Refresh or verify that authority's service."
+                    ),
+                )
+            return
+        if not self.controller.is_current_request(capture):
+            return
+        region.sync_workspace(
+            page,
+            readiness=self.controller.visible_readiness,
+            capabilities=self.controller.visible_capabilities,
+            folders=self._source_folders,
+            operations=operations,
+            focused_folder_id=self._focused_folder_id,
+            receipts_incomplete=len(operations) == 20,
+        )
+
+    async def _recent_operations(
+        self, ref: QualifiedWorkspaceRef
+    ) -> tuple[ResearchSourceOperation, ...]:
+        if self.operation_store is None:
+            return ()
+        return await asyncio.to_thread(
+            self.operation_store.list_recent,
+            data_source=ref.data_source,
+            server_profile_id=ref.server_profile_id,
+            principal_id=ref.principal_id,
+            workspace_id=ref.workspace_id,
+            limit=20,
+        )
+
+    @on(ResearchSourcesRegion.AddRequested)
+    def open_add_sources(self) -> None:
+        ref = self.controller.selected_ref
+        if ref is None:
+            self.notify("Select a Research workspace first.", severity="warning")
+            return
+
+        async def catalog_search(**kwargs):
+            if ref != self.controller.selected_ref:
+                return None
+            accepted = await self.controller.search_selected_catalog(**kwargs)
+            return self.controller.visible_catalog_page if accepted else None
+
+        def submitted(request: ResearchSourceIntakeRequest | None) -> None:
+            if request is not None:
+                self.run_worker(
+                    self._submit_intake_request(ref, request),
+                    group="research-source-intake",
+                )
+
+        self.app.push_screen(
+            ResearchAddSourceModal(ref.data_source, catalog_search=catalog_search),
+            callback=submitted,
+        )
+
+    @on(ResearchSourcesRegion.QuickUrlRequested)
+    def quick_add_url(self, message: ResearchSourcesRegion.QuickUrlRequested) -> None:
+        ref = self.controller.selected_ref
+        if ref is not None:
+            self.run_worker(
+                self._submit_intake_request(
+                    ref, ResearchSourceIntakeRequest("url", (message.url,))
+                ),
+                group="research-source-intake",
+            )
+
+    @on(ResearchSourcesRegion.RefreshRequested)
+    def refresh_sources(self) -> None:
+        self._start_sources_refresh()
+
+    @on(ResearchSourcesRegion.PageRequested)
+    def change_source_page(self, message: ResearchSourcesRegion.PageRequested) -> None:
+        self._source_page_offset = max(0, self._source_page_offset + message.delta * 25)
+        self._start_sources_refresh()
+
+    @on(ResearchSourcesRegion.SelectionScopeRequested)
+    def change_selection_scope(
+        self, message: ResearchSourcesRegion.SelectionScopeRequested
+    ) -> None:
+        async def apply() -> None:
+            if message.mode == "all":
+                await self.controller.select_all_sources()
+            elif message.mode == "clear":
+                await self.controller.set_selected_scope(())
+            else:
+                region = self.query_one("#research-sources-pane", ResearchSourcesRegion)
+                desired = tuple(
+                    dict.fromkeys(
+                        (
+                            *self.controller.desired_source_ids,
+                            *region.visible_owner_ids(),
+                        )
+                    )
+                )
+                await self.controller.set_selected_scope(desired)
+            self._start_sources_refresh()
+
+        self.run_worker(apply(), group="research-source-selection", exclusive=True)
+
+    @on(ResearchSourceList.SelectionToggled)
+    def toggle_source_selection(
+        self, message: ResearchSourceList.SelectionToggled
+    ) -> None:
+        desired = list(self.controller.desired_source_ids)
+        if message.selected and message.desired_owner_id not in desired:
+            desired.append(message.desired_owner_id)
+        elif not message.selected:
+            desired = [item for item in desired if item != message.desired_owner_id]
+
+        async def apply() -> None:
+            await self.controller.set_selected_scope(tuple(desired))
+            self._start_sources_refresh()
+
+        self.run_worker(apply(), group="research-source-selection", exclusive=True)
+
+    @on(ResearchSourceList.ReorderRequested)
+    def reorder_source(self, message: ResearchSourceList.ReorderRequested) -> None:
+        page = self.controller.visible_source_page
+        if page is None:
+            return
+        ordered = [source.source_id for source in page.items]
+        try:
+            index = ordered.index(message.source_id)
+        except ValueError:
+            return
+        target = index + message.delta
+        if target < 0 or target >= len(ordered):
+            return
+        ordered[index], ordered[target] = ordered[target], ordered[index]
+
+        async def apply() -> None:
+            await self.controller.reorder_selected_sources(tuple(ordered))
+            self._start_sources_refresh()
+
+        self.run_worker(apply(), group="research-source-reorder", exclusive=True)
+
+    @on(ResearchSourceList.ActionRequested)
+    def source_action(self, message: ResearchSourceList.ActionRequested) -> None:
+        if message.action == "remove":
+            self.run_worker(
+                self._remove_source(message.source_id),
+                group="research-source-remove",
+            )
+        elif message.action in {"details", "preview"}:
+            self.run_worker(
+                self._show_source_inspector(
+                    message.source_id, load_preview=message.action == "preview"
+                ),
+                group="research-source-preview",
+                exclusive=True,
+            )
+        elif message.action == "folders":
+            self._toggle_source_folder(message.source_id)
+        elif message.action == "copy":
+            self.notify(
+                "Move / Copy is unavailable because the selected owner exposes no canonical action.",
+                severity="warning",
+            )
+
+    @on(ResearchSourcesRegion.BatchRequested)
+    def batch_source_action(
+        self, message: ResearchSourcesRegion.BatchRequested
+    ) -> None:
+        region = self.query_one("#research-sources-pane", ResearchSourcesRegion)
+        source_ids = region.selected_source_ids()
+        if message.action == "preview-selected" and len(source_ids) == 1:
+            self.run_worker(
+                self._show_source_inspector(source_ids[0], load_preview=True),
+                group="research-source-preview",
+                exclusive=True,
+            )
+        elif message.action == "remove-selected" and source_ids:
+
+            async def remove_all() -> None:
+                for source_id in source_ids:
+                    await self.controller.remove_selected_source(source_id)
+                removed = frozenset(source_ids)
+                self._source_folders = tuple(
+                    ResearchSourceFolder(
+                        folder.folder_id,
+                        folder.name,
+                        tuple(
+                            item for item in folder.source_ids if item not in removed
+                        ),
+                        folder.parent_folder_id,
+                    )
+                    for folder in self._source_folders
+                )
+                self._start_overlay_save()
+                self._start_sources_refresh()
+
+            self.run_worker(
+                remove_all(), group="research-source-remove", exclusive=True
+            )
+        else:
+            self.notify(
+                "Move / Copy is unavailable because the selected owner exposes no canonical action.",
+                severity="warning",
+            )
+
+    async def _remove_source(self, source_id: str) -> None:
+        await self.controller.remove_selected_source(source_id)
+        self._source_folders = tuple(
+            ResearchSourceFolder(
+                folder.folder_id,
+                folder.name,
+                tuple(item for item in folder.source_ids if item != source_id),
+                folder.parent_folder_id,
+            )
+            for folder in self._source_folders
+        )
+        self._start_overlay_save()
+        self._start_sources_refresh()
+
+    @on(ResearchSourcesRegion.FolderRequested)
+    def folder_action(self, message: ResearchSourcesRegion.FolderRequested) -> None:
+        if message.action == "new":
+            if not message.name:
+                self.notify("Enter a device-only folder name.", severity="warning")
+                return
+            self._source_folders = (
+                *self._source_folders,
+                ResearchSourceFolder(f"folder-{uuid4().hex}", message.name),
+            )
+        elif message.action == "rename":
+            if not message.folder_id or not message.name:
+                self.notify(
+                    "Choose a folder and enter its new name.", severity="warning"
+                )
+                return
+            self._source_folders = tuple(
+                ResearchSourceFolder(
+                    folder.folder_id,
+                    message.name
+                    if folder.folder_id == message.folder_id
+                    else folder.name,
+                    folder.source_ids,
+                    folder.parent_folder_id,
+                )
+                for folder in self._source_folders
+            )
+        elif message.action == "focus":
+            self._focused_folder_id = (
+                ""
+                if self._focused_folder_id == message.folder_id
+                else message.folder_id
+            )
+            self.notify("Folder focus is device-only; retrieval scope is unchanged.")
+        elif message.action == "select-folder":
+            self._select_folder_sources(message.folder_id)
+            return
+        self._start_overlay_save()
+        self._start_sources_refresh()
+
+    def _toggle_source_folder(self, source_id: str) -> None:
+        region = self.query_one("#research-sources-pane", ResearchSourcesRegion)
+        folder_id = str(region.query_one("#research-source-folder-tree").value or "")
+        if not folder_id:
+            self.notify(
+                "Choose or create a device-only folder first.", severity="warning"
+            )
+            return
+        self._source_folders = tuple(
+            ResearchSourceFolder(
+                folder.folder_id,
+                folder.name,
+                (
+                    tuple(item for item in folder.source_ids if item != source_id)
+                    if source_id in folder.source_ids
+                    else (*folder.source_ids, source_id)
+                )
+                if folder.folder_id == folder_id
+                else folder.source_ids,
+                folder.parent_folder_id,
+            )
+            for folder in self._source_folders
+        )
+        self._start_overlay_save()
+        self._start_sources_refresh()
+
+    def _select_folder_sources(self, folder_id: str) -> None:
+        folder = next(
+            (item for item in self._source_folders if item.folder_id == folder_id),
+            None,
+        )
+        page = self.controller.visible_source_page
+        if folder is None or page is None:
+            return
+        by_source = {source.source_id: source for source in page.items}
+        if any(source_id not in by_source for source_id in folder.source_ids):
+            self.notify(
+                "Some folder sources are outside this page; load them before changing retrieval scope.",
+                severity="warning",
+            )
+            return
+        desired = tuple(
+            by_source[source_id].catalog_item_id
+            if by_source[source_id].ref.data_source is WorkspaceDataSource.LOCAL
+            else source_id
+            for source_id in folder.source_ids
+        )
+
+        async def apply() -> None:
+            await self.controller.set_selected_scope(desired)
+            self._start_sources_refresh()
+
+        self.run_worker(apply(), group="research-source-selection", exclusive=True)
+
+    async def _show_source_inspector(
+        self, source_id: str, *, load_preview: bool
+    ) -> None:
+        ref = self.controller.selected_ref
+        page = self.controller.visible_source_page
+        if ref is None or page is None:
+            return
+        source = next(
+            (item for item in page.items if item.source_id == source_id), None
+        )
+        if source is None:
+            return
+        if load_preview:
+            await self.controller.preview_selected_source(source_id)
+        if ref != self.controller.selected_ref:
+            return
+        readiness = self.controller.canonical_source_readiness(ref, source_id)
+        preview = self.controller.canonical_source_preview(ref, source_id)
+
+        def save_annotation(draft: ResearchSourceAnnotationDraft | None) -> None:
+            if draft is None:
+                return
+            now = self._now_factory()
+            self._source_annotations = (
+                *self._source_annotations,
+                ResearchSourceAnnotation(
+                    annotation_id=f"annotation-{uuid4().hex}",
+                    source_id=draft.source_id,
+                    quote=draft.quote,
+                    note=draft.note,
+                    created_at=now,
+                    updated_at=now,
+                ),
+            )
+            self._start_overlay_save()
+
+        self.app.push_screen(
+            ResearchSourceInspectorModal(source, readiness=readiness, preview=preview),
+            callback=save_annotation,
+        )
+
+    @on(ResearchSourceReceiptList.RetryRequested)
+    def retry_source_stage(
+        self, message: ResearchSourceReceiptList.RetryRequested
+    ) -> None:
+        scheduler = self.association_scheduler
+        if scheduler is None:
+            self.notify("Source operation retry is unavailable.", severity="warning")
+            return
+
+        async def retry() -> None:
+            await scheduler.retry(message.operation_id, stage=message.stage)
+            self._start_sources_refresh()
+
+        self.run_worker(retry(), group="research-source-retry")
 
     def _start_overlay_save(self) -> None:
         if self.overlay_store is None or self._overlay_ref is None:
@@ -436,6 +908,8 @@ class ResearchWorkspaceScreen(BaseAppScreen):
             return
         owner_generation = self._overlay_owner_generation
         preferences = self.pane_preferences
+        source_folders = self._source_folders
+        source_annotations = self._source_annotations
         expected_revision = max(
             self._overlay_revision,
             self._overlay_committed_revisions.get(ref, 0),
@@ -446,6 +920,8 @@ class ResearchWorkspaceScreen(BaseAppScreen):
                 ref,
                 preferences,
                 expected_revision=expected_revision,
+                source_folders=source_folders,
+                source_annotations=source_annotations,
             )
         except (OSError, ValueError, RuntimeError):
             self.notify(
@@ -471,3 +947,100 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         self._overlay_owner_generation += 1
         self._overlay_ref = ref
         self._overlay_revision = 0
+
+    async def _submit_intake_request(
+        self,
+        ref: QualifiedWorkspaceRef,
+        request: ResearchSourceIntakeRequest,
+    ) -> None:
+        """Persist each captured intent before submitting it to Library ingest."""
+
+        if request.kind in {"existing", "catalog"}:
+            for catalog_item_id in request.values:
+                await self._attach_existing(ref, catalog_item_id)
+            return
+        source_values = request.values
+        if request.kind == "paste":
+            source_values = (await asyncio.to_thread(self._stage_pasted_text, request),)
+        for source_path in source_values:
+            operation = ResearchSourceOperation(
+                operation_id=self._operation_id_factory(),
+                idempotency_key=f"research-intake-{uuid4().hex}",
+                data_source=ref.data_source,
+                server_profile_id=ref.server_profile_id,
+                principal_id=ref.principal_id,
+                workspace_id=ref.workspace_id,
+                canonical_item_type=(
+                    CanonicalItemType.LOCAL_LIBRARY
+                    if ref.data_source is WorkspaceDataSource.LOCAL
+                    else CanonicalItemType.SERVER_MEDIA
+                ),
+                desired_selected=True,
+                created_at=self._now_factory(),
+                updated_at=self._now_factory(),
+            )
+            if self.operation_store is None:
+                raise RuntimeError("Durable Research source intake is unavailable.")
+            operation = await asyncio.to_thread(self.operation_store.create, operation)
+            try:
+                job = self.app_instance.submit_library_ingest_job(
+                    source_path=source_path,
+                    title=request.title,
+                    research_source_operation_id=operation.operation_id,
+                    required_origin=ref.data_source.value,
+                )
+            except Exception:
+                await asyncio.to_thread(
+                    self.operation_store.advance_stage,
+                    operation.operation_id,
+                    stage=SourceOperationStage.CATALOG,
+                    status=SourceOperationStatus.FAILED,
+                    expected_revision=operation.revision,
+                    error_code="catalog_submit_failed",
+                    error_message="Catalog intake could not be started for the selected authority.",
+                )
+                continue
+            operation = await asyncio.to_thread(
+                self.operation_store.advance_stage,
+                operation.operation_id,
+                stage=SourceOperationStage.CATALOG,
+                status=SourceOperationStatus.IN_PROGRESS,
+                expected_revision=operation.revision,
+                ingest_job_id=job.job_id,
+            )
+            job_state = str(getattr(getattr(job, "state", None), "value", ""))
+            if job_state in {"done", "failed", "cancelled", "skipped"}:
+                scheduler = self.association_scheduler
+                if scheduler is not None:
+                    await scheduler.resume(operation.operation_id)
+        if self.is_mounted:
+            self._start_sources_refresh()
+
+    async def _attach_existing(
+        self, ref: QualifiedWorkspaceRef, catalog_item_id: str
+    ) -> None:
+        """Run receipt-first attach against the durable captured owner."""
+
+        await self.controller.attach_existing(
+            ref,
+            catalog_item_id=catalog_item_id,
+            idempotency_key=f"research-existing-{uuid4().hex}",
+        )
+        if ref == self.controller.selected_ref and self.is_mounted:
+            self._start_sources_refresh()
+
+    @staticmethod
+    def _stage_pasted_text(request: ResearchSourceIntakeRequest) -> str:
+        """Create a private one-item staging file; receipts never expose its path."""
+
+        title = request.title.strip() or "Pasted research source"
+        body = request.values[0]
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            prefix="tldw-research-source-",
+            suffix=".txt",
+            delete=False,
+        ) as handle:
+            handle.write(f"{title}\n\n{body}")
+            return str(Path(handle.name))

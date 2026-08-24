@@ -15,6 +15,7 @@ from .source_operations import (
     SourceOperationValidationError,
     validate_source_operation_id,
 )
+from .contracts import QualifiedWorkspaceRef, WorkspaceDataSource
 
 
 MAX_INCOMPLETE_PAGE = 100
@@ -234,6 +235,52 @@ class ResearchSourceOperationStore:
                     SourceOperationStatus.FAILED.value,
                     limit,
                     offset,
+                ),
+            ).fetchall()
+        return tuple(_operation_from_row(row) for row in rows)
+
+    def list_recent(
+        self,
+        *,
+        data_source: WorkspaceDataSource | str,
+        workspace_id: str,
+        server_profile_id: str = "",
+        principal_id: str = "",
+        limit: int = 20,
+    ) -> tuple[ResearchSourceOperation, ...]:
+        """Return the selected qualified workspace's bounded recent receipts."""
+
+        if type(limit) is not int or not 1 <= limit <= MAX_INCOMPLETE_PAGE:
+            raise SourceOperationValidationError(
+                f"limit must be between 1 and {MAX_INCOMPLETE_PAGE}"
+            )
+        try:
+            ref = QualifiedWorkspaceRef(
+                data_source=WorkspaceDataSource(data_source),
+                workspace_id=workspace_id,
+                server_profile_id=server_profile_id,
+                principal_id=principal_id,
+            )
+        except (TypeError, ValueError) as exc:
+            raise SourceOperationValidationError(str(exc)) from None
+        with self._db.connection() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT {_SELECT_COLUMNS}
+                FROM research_source_operations
+                WHERE data_source = ?
+                    AND server_profile_id = ?
+                    AND principal_id = ?
+                    AND workspace_id = ?
+                ORDER BY updated_at DESC, operation_id DESC
+                LIMIT ?
+                """,
+                (
+                    ref.data_source.value,
+                    ref.server_profile_id,
+                    ref.principal_id,
+                    ref.workspace_id,
+                    limit,
                 ),
             ).fetchall()
         return tuple(_operation_from_row(row) for row in rows)

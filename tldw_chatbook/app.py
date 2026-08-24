@@ -2612,6 +2612,7 @@ class LibraryIngestQueueMixin:
         batch_id: str | None = None,
         active_duplicate_consent: ActiveIngestConsentScope | None = None,
         research_source_operation_id: str | None = None,
+        required_origin: str | None = None,
     ) -> LibraryIngestJob:
         """Submit a new Library ingest job and top up the parse pool.
 
@@ -2637,6 +2638,8 @@ class LibraryIngestQueueMixin:
             chunk_size: Requested chunk size when ``chunk_enabled``.
             active_duplicate_consent: Exact candidate and active-membership scope
                 captured by an explicitly confirmed submission.
+            required_origin: Optional fail-closed owner precondition for a captured
+                Research workspace authority. General Library submissions omit it.
 
         Returns:
             The newly created job: ``QUEUED`` normally, or immediately
@@ -2645,7 +2648,23 @@ class LibraryIngestQueueMixin:
             so each file gets its own queue row, its own outcome and its own
             retry -- one unsupported file no longer fails its siblings.
         """
+        normalized_required_origin = (
+            str(required_origin).strip().lower()
+            if required_origin is not None
+            else None
+        )
+        if normalized_required_origin not in {None, "local", "server"}:
+            raise ValueError("required_origin must be local or server")
         backend = self._resolve_ingest_backend()
+        if (
+            normalized_required_origin is not None
+            and backend != normalized_required_origin
+        ):
+            selected = normalized_required_origin.title()
+            raise ValueError(
+                f"Ingestion is unavailable for the selected {selected} authority. "
+                f"The active Library ingest owner is {backend.title()}."
+            )
         expanded = self._expand_library_ingest_source(source_path)
         if research_source_operation_id and expanded is not None and len(expanded) > 1:
             raise ValueError(
@@ -9694,6 +9713,8 @@ class TldwCli(
             self,
             controller=controller,
             overlay_store=overlay_store,
+            operation_store=operation_store,
+            association_scheduler=association_scheduler,
         )
 
     def _valid_startup_route_ids(self) -> set[str]:

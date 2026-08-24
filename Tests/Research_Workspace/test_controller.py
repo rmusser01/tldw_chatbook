@@ -8,6 +8,7 @@ from tldw_chatbook.Research_Workspace.contracts import (
     BoundedPageResult,
     QualifiedWorkspaceRef,
     ResearchCatalogItem,
+    ResearchCapability,
     ResearchSourcePreview,
     ResearchSourcePage,
     ResearchSourceSummary,
@@ -18,6 +19,10 @@ from tldw_chatbook.Research_Workspace.contracts import (
     WorkspaceDataSource,
 )
 from tldw_chatbook.Research_Workspace.controller import ResearchWorkspaceController
+from tldw_chatbook.Research_Workspace.source_operations import (
+    CanonicalItemType,
+    ResearchSourceOperation,
+)
 
 
 class DeferredPort:
@@ -47,6 +52,9 @@ class DeferredSourcePort:
         self.readiness_results: list[asyncio.Future] = []
         self.preview_results: list[asyncio.Future] = []
         self.selection_results: list[asyncio.Future] = []
+        self.capability_results: list[asyncio.Future] = []
+        self.attach_results: list[asyncio.Future] = []
+        self.attach_refs: list[QualifiedWorkspaceRef] = []
 
     async def list_sources(self, ref, *, limit=100, offset=0):
         future = asyncio.get_running_loop().create_future()
@@ -72,9 +80,7 @@ class DeferredSourcePort:
         self.readiness_results.append(future)
         return await future
 
-    async def preview_source(
-        self, ref, source_id, *, max_chars=3000, snippet_limit=3
-    ):
+    async def preview_source(self, ref, source_id, *, max_chars=3000, snippet_limit=3):
         future = asyncio.get_running_loop().create_future()
         self.preview_results.append(future)
         return await future
@@ -82,6 +88,17 @@ class DeferredSourcePort:
     async def set_selected_scope(self, ref, source_ids):
         future = asyncio.get_running_loop().create_future()
         self.selection_results.append(future)
+        return await future
+
+    async def capabilities(self, ref):
+        future = asyncio.get_running_loop().create_future()
+        self.capability_results.append(future)
+        return await future
+
+    async def attach_existing(self, ref, **kwargs):
+        self.attach_refs.append(ref)
+        future = asyncio.get_running_loop().create_future()
+        self.attach_results.append(future)
         return await future
 
 
@@ -104,6 +121,118 @@ def local_source(
         source_type="media",
         selected=selected,
     )
+
+
+def local_operation(ref: QualifiedWorkspaceRef) -> ResearchSourceOperation:
+    return ResearchSourceOperation(
+        operation_id="operation-1",
+        idempotency_key="workspace-one-catalog-7",
+        data_source=ref.data_source,
+        workspace_id=ref.workspace_id,
+        canonical_item_type=CanonicalItemType.LOCAL_LIBRARY,
+        desired_selected=True,
+        created_at="2026-08-24T10:00:00Z",
+        updated_at="2026-08-24T10:00:00Z",
+    )
+
+
+@pytest.mark.asyncio
+async def test_capability_and_attach_results_are_fenced_to_captured_workspace() -> None:
+    port = DeferredSourcePort()
+    controller = ResearchWorkspaceController({WorkspaceDataSource.LOCAL: port})
+    old_ref = local_ref("old")
+    controller.select_workspace(old_ref, capability_revision="cap-1")
+
+    capability_request = asyncio.create_task(controller.refresh_selected_capabilities())
+    attach_request = asyncio.create_task(
+        controller.attach_selected_existing(
+            catalog_item_id="7", idempotency_key="workspace-one-catalog-7"
+        )
+    )
+    await asyncio.sleep(0)
+    controller.select_workspace(local_ref("new"), capability_revision="cap-2")
+    port.capability_results[0].set_result(
+        {
+            "list_sources": ResearchCapability(
+                available=True,
+                reason_code="available",
+                user_message="Sources available.",
+                owner="local",
+                capability_revision="cap-1",
+            )
+        }
+    )
+    port.attach_results[0].set_result(local_operation(old_ref))
+
+    assert await capability_request is False
+    assert await attach_request is None
+    assert controller.visible_capabilities == {}
+
+
+@pytest.mark.asyncio
+async def test_explicit_attach_uses_captured_ref_after_visible_workspace_changes() -> (
+    None
+):
+    port = DeferredSourcePort()
+    controller = ResearchWorkspaceController({WorkspaceDataSource.LOCAL: port})
+    captured_ref = local_ref("captured")
+    controller.select_workspace(local_ref("visible"), capability_revision="cap-2")
+
+    request = asyncio.create_task(
+        controller.attach_existing(
+            captured_ref,
+            catalog_item_id="7",
+            idempotency_key="captured-catalog-7",
+        )
+    )
+    await asyncio.sleep(0)
+    operation = local_operation(captured_ref)
+    port.attach_results[0].set_result(operation)
+
+    assert await request == operation
+    assert port.attach_refs == [captured_ref]
+    assert controller.selected_ref == local_ref("visible")
+
+
+@pytest.mark.asyncio
+async def test_select_all_sources_reads_every_bounded_owner_page() -> None:
+    class OwnerPort:
+        def __init__(self) -> None:
+            self.offsets: list[int] = []
+            self.selected: tuple[str, ...] = ()
+
+        async def list_sources(self, ref, *, limit=100, offset=0):
+            self.offsets.append(offset)
+            stop = min(offset + limit, 101)
+            items = tuple(
+                local_source(
+                    ref,
+                    f"membership-{index}",
+                    catalog_item_id=str(index),
+                    selected=False,
+                )
+                for index in range(offset + 1, stop + 1)
+            )
+            return ResearchSourcePage(
+                items=items,
+                limit=limit,
+                offset=offset,
+                total=101,
+                has_more=stop < 101,
+            )
+
+        async def set_selected_scope(self, ref, source_ids):
+            self.selected = source_ids
+            return SourceSelectionResult(ref=ref, desired_source_ids=source_ids)
+
+    port = OwnerPort()
+    controller = ResearchWorkspaceController({WorkspaceDataSource.LOCAL: port})
+    controller.select_workspace(local_ref("one"), capability_revision="cap-1")
+
+    assert await controller.select_all_sources() is True
+    assert port.offsets == [0, 100]
+    assert port.selected == tuple(str(index) for index in range(1, 102))
+    assert controller.desired_source_ids == port.selected
 
 
 def test_context_revision_increases_for_each_selection_and_capability_refresh() -> None:
@@ -200,9 +329,7 @@ async def test_source_generation_rejects_old_same_ref_result_after_workspace_aba
     new_request = asyncio.create_task(controller.refresh_selected_sources())
     await asyncio.sleep(0)
 
-    new_source = local_source(
-        ref, "membership-new", catalog_item_id="2", selected=True
-    )
+    new_source = local_source(ref, "membership-new", catalog_item_id="2", selected=True)
     port.source_results[1].set_result(
         ResearchSourcePage(
             items=(new_source,),
@@ -308,9 +435,7 @@ async def test_selection_reconciliation_supersedes_older_source_refresh() -> Non
     selection = asyncio.create_task(controller.set_selected_scope(("2",)))
     await asyncio.sleep(0)
 
-    selected = local_source(
-        ref, "membership-2", catalog_item_id="2", selected=True
-    )
+    selected = local_source(ref, "membership-2", catalog_item_id="2", selected=True)
     port.selection_results[0].set_result(
         SourceSelectionResult(
             ref=ref,
@@ -321,9 +446,7 @@ async def test_selection_reconciliation_supersedes_older_source_refresh() -> Non
     assert await selection is True
     assert controller.desired_source_ids == ("2",)
 
-    stale = local_source(
-        ref, "membership-2", catalog_item_id="2", selected=False
-    )
+    stale = local_source(ref, "membership-2", catalog_item_id="2", selected=False)
     port.source_results[0].set_result(
         ResearchSourcePage(items=(stale,), limit=100, total=1)
     )
@@ -372,7 +495,9 @@ async def test_source_page_uses_exact_owner_selection_not_visible_rows() -> None
 
 
 @pytest.mark.asyncio
-async def test_selection_completion_invalidates_refresh_started_during_owner_write() -> None:
+async def test_selection_completion_invalidates_refresh_started_during_owner_write() -> (
+    None
+):
     """A refresh started mid-write must not repaint pre-write owner state."""
 
     port = DeferredSourcePort()
@@ -385,9 +510,7 @@ async def test_selection_completion_invalidates_refresh_started_during_owner_wri
     refresh = asyncio.create_task(controller.refresh_selected_sources())
     await asyncio.sleep(0)
 
-    selected = local_source(
-        ref, "membership-2", catalog_item_id="2", selected=True
-    )
+    selected = local_source(ref, "membership-2", catalog_item_id="2", selected=True)
     port.selection_results[0].set_result(
         SourceSelectionResult(
             ref=ref,
@@ -397,9 +520,7 @@ async def test_selection_completion_invalidates_refresh_started_during_owner_wri
     )
     assert await selection is True
 
-    stale = local_source(
-        ref, "membership-1", catalog_item_id="1", selected=True
-    )
+    stale = local_source(ref, "membership-1", catalog_item_id="1", selected=True)
     port.source_results[0].set_result(
         ResearchSourcePage(
             items=(stale,),

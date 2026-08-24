@@ -216,6 +216,56 @@ def test_list_incomplete_does_not_starve_pending_behind_failed_rows(
     db.close()
 
 
+def test_list_recent_includes_completed_receipts_with_qualified_filter(
+    tmp_path: Path,
+) -> None:
+    db, store = _store(tmp_path)
+    local = _operation(operation_id="operation-local", idempotency_key="idem-local")
+    server = _operation(
+        operation_id="operation-server",
+        idempotency_key="idem-server",
+        data_source="server",
+        server_profile_id="profile-a",
+        principal_id="principal-a",
+        workspace_id="workspace-server",
+        canonical_item_type=CanonicalItemType.SERVER_MEDIA,
+    )
+    for item in (local, server):
+        saved = store.create(item)
+        saved = store.advance_stage(
+            saved.operation_id,
+            stage=SourceOperationStage.CATALOG,
+            status=SourceOperationStatus.SUCCEEDED,
+            expected_revision=saved.revision,
+            canonical_item_id="7",
+        )
+        saved = store.advance_stage(
+            saved.operation_id,
+            stage=SourceOperationStage.ASSOCIATION,
+            status=SourceOperationStatus.SUCCEEDED,
+            expected_revision=saved.revision,
+            workspace_source_id=f"source-{saved.operation_id}",
+        )
+        store.advance_stage(
+            saved.operation_id,
+            stage=SourceOperationStage.READINESS,
+            status=SourceOperationStatus.SUCCEEDED,
+            expected_revision=saved.revision,
+        )
+
+    recent = store.list_recent(
+        data_source="server",
+        server_profile_id="profile-a",
+        principal_id="principal-a",
+        workspace_id="workspace-server",
+        limit=20,
+    )
+
+    assert [item.operation_id for item in recent] == ["operation-server"]
+    assert recent[0].readiness_status is SourceOperationStatus.SUCCEEDED
+    db.close()
+
+
 def test_list_association_actionable_applies_bound_after_stage_filtering(
     tmp_path: Path,
 ) -> None:

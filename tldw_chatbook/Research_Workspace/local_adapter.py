@@ -726,6 +726,9 @@ class LocalResearchWorkspaceAdapter:
             catalog_item_version=version if type(version) is int else None,
             selected=selected,
             position=position,
+            updated_at=str(
+                detail.get("updated_at") or detail.get("last_modified") or ""
+            ),
         )
 
     async def _next_workspace_id(self) -> str:
