@@ -1,10 +1,10 @@
 ---
 id: TASK-3500
 title: Align MCP perform_rag_search with profile-driven retrieval
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-08-07 20:34'
-updated_date: '2026-08-12 21:18'
+updated_date: '2026-08-24 05:06'
 labels:
   - rag
   - mcp
