@@ -25,6 +25,7 @@ It deliberately depends on nothing but the standard library.
 
 from __future__ import annotations
 
+import math
 from typing import Any, Mapping
 
 
@@ -97,20 +98,22 @@ VECTOR_SCORE_METADATA_KEY = "vector_score"
 
 
 def coerce_optional_float(value: Any) -> float | None:
-    """Return `value` as a float, or `None` when it isn't numeric.
+    """Return `value` as a finite float, or `None` when it isn't numeric.
 
     Args:
         value: Any candidate score value.
 
     Returns:
-        The float, or `None` for `None`, `""`, and anything non-numeric.
+        The float, or `None` for `None`, `""`, booleans, non-finite values,
+        and anything non-numeric.
     """
-    if value is None or value == "":
+    if value is None or value == "" or isinstance(value, bool):
         return None
     try:
-        return float(value)
+        number = float(value)
     except (TypeError, ValueError):
         return None
+    return number if math.isfinite(number) else None
 
 
 def normalize_library_rag_score_kind(value: Any) -> str:

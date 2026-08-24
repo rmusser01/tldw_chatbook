@@ -1961,6 +1961,42 @@ class TestSummarizeToolResultAllWeakNotice:
                 else None
             )
 
+    def test_malformed_scores_are_unscored_and_never_reported_weak(self):
+        """Untrusted booleans and non-finite values are not similarities."""
+        from tldw_chatbook.UI.MCP_Modules.mcp_inspector import (
+            _extract_scored_rows,
+            _summarize_tool_result,
+        )
+
+        invalid_scores = (True, float("nan"), float("inf"), float("-inf"))
+        for score in invalid_scores:
+            vector_row = {"id": "vector", "score": score, "metadata": {}}
+            hybrid_row = {
+                "id": "hybrid",
+                "score": 0.016,
+                "metadata": {
+                    "hybrid_fusion": {
+                        "fts_rank": 1,
+                        "vector_rank": 1,
+                        "fts_score": 0.001,
+                        "vector_score": score,
+                    },
+                },
+            }
+
+            for row, score_field in (
+                (vector_row, "score"),
+                (hybrid_row, "vector_score"),
+            ):
+                extracted = _extract_scored_rows([row])
+
+                assert extracted is not None
+                assert getattr(extracted[0], score_field) is None
+                _, interpretation = _summarize_tool_result(
+                    ok=True, duration_ms=50, source="local", result=[row],
+                )
+                assert interpretation is None
+
     def test_all_rows_scoring_below_moderate_threshold_adds_all_weak_notice(self):
         from tldw_chatbook.Library.library_rag_state import (
             LIBRARY_RAG_ALL_WEAK_COVERAGE_PREFIX,

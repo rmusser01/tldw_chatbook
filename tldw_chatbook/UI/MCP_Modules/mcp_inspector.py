@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 from collections.abc import Mapping
 from functools import partial
 from typing import Any
@@ -521,7 +522,11 @@ class _ScoredRow:
         # non-numeric value inside `library_rag_all_matches_weak()`.
         self.score = (
             score
-            if isinstance(score, (int, float)) and not isinstance(score, bool)
+            if (
+                isinstance(score, (int, float))
+                and not isinstance(score, bool)
+                and math.isfinite(score)
+            )
             else None
         )
         self.score_kind = score_kind
