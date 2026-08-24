@@ -934,3 +934,68 @@ async def test_failed_expansion_rolls_back_screen_and_persisted_preference(
         )
         await _settle(pilot, host)
         assert screen.region_layout == newer
+
+
+async def test_management_expansion_failure_preserves_parked_feed_preference(
+    monkeypatch,
+) -> None:
+    """Rendered rollback merges into, rather than replaces, preferred state."""
+    from tldw_chatbook.UI.Watchlists_Modules.watchlists_workbench import (
+        WatchlistsWorkbench,
+    )
+
+    persisted: list[RegionLayout] = []
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.watchlists_collections_screen.save_region_layout",
+        persisted.append,
+    )
+    app = _build_test_app()
+    watchlist_id = _seed(app)
+    async with _open(app, watchlist_id, section="sources") as (
+        screen,
+        pilot,
+        host,
+    ):
+        fallback = RegionLayout(
+            collapsed=frozenset({Region.LEFT_RAIL, Region.ITEMS})
+        )
+        screen._apply_layout(fallback)
+        await _settle(pilot, host)
+        persisted.clear()
+
+        workbench = screen.query_one(WatchlistsWorkbench)
+        grip = screen.query_one("#wl-grip-left_rail", Button)
+        original_factory = workbench._content[Region.LEFT_RAIL]
+        fail_factory = True
+
+        def flaky_factory():
+            if fail_factory:
+                raise RuntimeError("management navigation failed")
+            return original_factory()
+
+        workbench._content[Region.LEFT_RAIL] = flaky_factory
+        grip.press()
+        await _settle(pilot, host)
+
+        assert screen.region_layout == fallback
+        assert screen.region_layout.is_collapsed(Region.ITEMS)
+        assert workbench.region_layout == screen._rendered_region_layout()
+        assert getattr(grip, "expanded") is False
+        assert not screen.query("#wl-region-left_rail")
+        assert screen._pending_persist_layout == fallback
+        assert (
+            screen._last_persisted_collapsed
+            == fallback.collapsed_for_persistence()
+        )
+        assert persisted
+        assert persisted[-1] == fallback
+
+        fail_factory = False
+        grip.press()
+        await _settle(pilot, host)
+
+        assert screen.region_layout.is_collapsed(Region.ITEMS)
+        assert not screen.region_layout.is_collapsed(Region.LEFT_RAIL)
+        assert workbench.region_layout == screen._rendered_region_layout()
+        assert getattr(grip, "expanded") is True
+        assert screen.query("#wl-region-left_rail")

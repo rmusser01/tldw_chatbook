@@ -166,7 +166,12 @@ from ..Watchlists_Modules.opml_dialogs import (
     WatchlistSourcePickerDialog,
 )
 from ..Watchlists_Modules.overview_pane import OverviewPane
-from ..Watchlists_Modules.region_layout import CENTRE_REGIONS, Region, RegionLayout
+from ..Watchlists_Modules.region_layout import (
+    CENTRE_REGIONS,
+    COLLAPSIBLE_REGIONS,
+    Region,
+    RegionLayout,
+)
 from ..Watchlists_Modules.region_layout_store import load_region_layout, save_region_layout
 from ..Watchlists_Modules.rules_pane import (
     RefreshRulesRequested,
@@ -3207,9 +3212,21 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     ) -> None:
         """Correct screen preference only while the failed intent is current."""
         event.stop()
-        if self.region_layout != event.attempted:
+        if self._rendered_region_layout() != event.attempted:
             return
-        self._apply_layout(event.fallback)
+        collapsed = set(self.region_layout.collapsed)
+        for region in COLLAPSIBLE_REGIONS:
+            if event.attempted.is_collapsed(region) == event.fallback.is_collapsed(
+                region
+            ):
+                continue
+            if event.fallback.is_collapsed(region):
+                collapsed.add(region)
+            else:
+                collapsed.discard(region)
+        self._apply_layout(
+            replace(self.region_layout, collapsed=frozenset(collapsed))
+        )
 
     def _apply_tree_scope(self, scope: TreeScope) -> None:
         """The single reconciliation point for "the tree scope is now `scope`".
