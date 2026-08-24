@@ -2,6 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-23
+- **Last amended:** 2026-08-23 (unsent draft recovery and extended-output owners)
 - **Task:** [TASK-21505](../tasks/task-21505%20-%20Design-Local-Server-Research-Workspace-and-Research-Runs-navigation.md)
 - **Design:** [Research Workspace design](../../Docs/superpowers/specs/2026-08-23-research-workspace-design.md)
 - **Amends:** ADR-015 (shell destination taxonomy); ADR-028 (adds Research
@@ -93,8 +94,9 @@ payloads:
 - Notes owns Quick Notes;
 - Study owns flashcard and quiz records;
 - local Chatbooks own Summary, Report, and Compare artifacts;
-- specialist stores own future audio, slides, mind-map, timeline, and data-table
-  artifacts when implemented;
+- stable Local TTS history owns Audio Summary when available;
+- Local Mind Map, Timeline, Slides, and Data Table remain unavailable until a
+  working canonical owner/editor exists;
 - Research Interop owns Research Runs.
 
 The UI may normalize these as `WorkspaceOutputRef` values in memory. It does
@@ -102,7 +104,12 @@ not add a universal output database. If a future output has no safe canonical
 owner, that storage decision requires its own ADR or an explicit amendment.
 
 Server mode uses canonical server workspace, source, note, artifact, chat,
-sharing, and operation APIs.
+sharing, and operation APIs. Mind Map and Timeline content is owned by server
+workspace artifacts. Data Table, Slides, and Audio Summary use their native
+server table/presentation/stable-audio owner first and a payload-free workspace
+artifact reference second; if no stable inspectable native owner is returned,
+the action is unavailable. Client-downloaded bytes are never a persistence
+receipt.
 
 Research ingestion first creates or reuses an item in the selected authority's
 general catalog and then associates its stable identity with the captured
@@ -123,8 +130,11 @@ independently retryable.
 
 The server has no canonical Research Workspace folder or annotation APIs.
 Chatbook stores those features, along with pane preferences and server
-Deep-Research launch context, in one private atomic device overlay keyed by
-data source, server/profile, principal, and workspace ID.
+Deep-Research launch context, one bounded unsent Research Chat draft per
+qualified workspace, and payload-free append-stage recovery receipts in one
+private atomic device overlay keyed by data source, server/profile, principal,
+and workspace ID. A successful canonical chat append clears the draft; sent
+transcript bodies are never mirrored into the overlay.
 
 The overlay does not create remote workspace records in the local registry and
 is never represented as uploaded, shared, or cross-device state. UI copy says
