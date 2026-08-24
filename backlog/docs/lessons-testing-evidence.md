@@ -8254,3 +8254,72 @@ you only ever see the outermost one.
    whose tooltip says to wait. Two shipped contracts disagree (ADR-046 vs the durable-owner
    submission block, each with its own test asserting the opposite). That is an owner
    decision, not a test edit — filed as TASK-22000 and left red.
+## A held-connection map keyed by thread does nothing until `check_same_thread=False` — and the test that should have caught it passed for the wrong reason (TASK-21131, 2026-08-24)
+
+**What happened.** TASK-21131 ported `EventStateRepository` to held connections
+using the shape the sibling tasks had established: `dict[thread_ident,
+Connection]` "so shutdown can reach connections it does not own", plus a
+depth guard so `close()` refuses a connection that is mid-operation. A
+deliberate mutation — *let `close()` close a busy connection anyway* — was
+expected to reproduce the TASK-21101 signature `ProgrammingError: Cannot
+operate on a closed database` inside the live operation. It stayed **GREEN**.
+
+The reason was not the test. The connections were opened through
+`BaseDB._get_connection`, which passes no `check_same_thread`, so sqlite3's
+default guard was on: `close()` running on the main thread against a worker
+thread's connection **raised instead of closing**, and the best-effort
+`except Exception: pass` swallowed it. The whole rationale for the dict — that
+shutdown can reach foreign threads' connections — was **false for this store**,
+and the depth guard it justified was unreachable code. The sibling template
+named in the task (`ClientNotificationsDB`) is self-consistent about this: it
+uses `threading.local` and only ever closes the calling thread's connection.
+The two designs are coherent; the hybrid I had written was not.
+
+A second, worse detail surfaced when the fix was tested. The new guard —
+"`close()` from the main thread really does close a worker's idle connection" —
+was written as:
+
+```python
+with pytest.raises(sqlite3.ProgrammingError):
+    worker_conn.execute("SELECT 1")
+```
+
+That passes **whether or not the connection was closed**: a connection merely
+*refused to this thread* raises the same exception class. Under the mutation
+that removed `check_same_thread=False`, it passed. `match="closed database"`
+was required to make it mean anything.
+
+**What to do.**
+
+1. `dict[thread_ident, Connection]` and `threading.local` are **the same
+   thing** unless the connections are opened with `check_same_thread=False`.
+   If you copy the dict shape from another store, copy the connect kwarg with
+   it, or copy `threading.local` instead and say so — do not ship the dict plus
+   a shutdown guard that can never run.
+2. In this repo the private-SQLite seam **enforces that a module only names
+   its own registered owner id**
+   (`Tests/DB/test_private_sqlite_inventory.py::test_private_sqlite_seam_calls_use_literal_module_owned_ids`).
+   So "call `connect_private_sqlite` yourself to pass one extra kwarg" is not a
+   local edit: it forces the module's own registry entry to describe the
+   targets it actually opens. Here that was a correction, not a widening — the
+   entry claimed "`memory`" while the app has been handing the store a private
+   file all along, opened under `db.base` (identical allowed target kinds).
+   Budget for the registry entry and `backlog/docs/sqlite-private-owner-inventory.md`.
+3. `pytest.raises(SomeError)` on a **connection or handle** is a vacuous
+   assertion by default: closed, wrong-thread, and wrong-state all raise
+   `ProgrammingError`. Always `match=` the condition you mean. The mutation is
+   what exposes it — a guard that passes under the mutation that deletes its
+   subject is not testing its subject.
+
+**Corollary from the same task: a concurrency test whose threads open their
+connections AFTER the barrier has no race window.** Two interleaving guards
+(12 threads recording the same event) went red against `BEGIN` instead of
+`BEGIN IMMEDIATE` — until the acquisition of a held connection was moved under
+the same lock hold as its in-flight registration. Then they went green under
+that mutation. Connection creation serialises on that lock, so a thread that
+opened *after* the barrier was released into a window where every earlier
+writer had already committed; each late thread simply saw the committed row
+and reported "duplicate". Warming each thread's connection **before**
+`barrier.wait()` restored the failure. If the first thing your barriered
+workers do is acquire a shared, lock-serialised resource, the barrier is
+synchronising the wrong instant.
