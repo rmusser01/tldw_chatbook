@@ -121,9 +121,9 @@ def test_phase6_packaging_config_and_data_safety_source_seams_are_present() -> N
     # approved README information architecture intentionally replaced.
     for required_copy in (
         "## Alpha status",
-        "Available now",
-        "Still evolving",
-        "Goal",
+        "**Available now:**",
+        "**Still evolving:**",
+        "**Goal:**",
         '<a id="installation"></a>',
         "## Quick start",
         "python3 --version",
@@ -156,7 +156,7 @@ def test_phase6_packaging_config_and_data_safety_source_seams_are_present() -> N
         "ebook",
     ):
         assert optional_group in project["optional-dependencies"]
-        assert f"`{optional_group}`" in readme
+        _markdown_table_row(readme, f"`{optional_group}`")
 
     assert "TLDW_CONFIG_PATH" in config
     assert "_get_effective_config_path" in config
