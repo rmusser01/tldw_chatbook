@@ -20,7 +20,22 @@ name: Derived Artifacts
 on:
   pull_request:
   push:
-    branches: [dev, main]
+# TASK-21967 EXPERIMENT -- NOT FOR MERGE.
+#
+# Question: does a run triggered by `push` (github.ref = refs/heads/<branch>,
+# a ref nothing recreates) satisfy the REQUIRED status context for a head
+# commit that also carries a cancelled result from the pull_request run
+# (github.ref = refs/pull/N/merge, which GitHub recreates whenever the base
+# moves)?
+#
+# If it does, watching pushes on all branches fixes the ~47% cancellation rate
+# for the required gate. If GitHub instead reports the most recent check run of
+# that name regardless of which trigger produced it, this buys nothing and the
+# task should record that.
+#
+# The branch filter is removed rather than widened so the answer is not
+# confounded by which branches happen to match.
+    branches: ['**']
 
 # Deliberately NOT path-filtered, unlike css-bundle-guard/backlog-guard.
 #
