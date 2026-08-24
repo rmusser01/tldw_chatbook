@@ -109,6 +109,18 @@ def _offending_functions(tree: ast.AST, rel: str) -> list[str]:
 
 
 def test_no_bare_chat_screen_shell_sets_its_store_without_a_fleet_controller() -> None:
+    """Fail on any shell that assigns the store without satisfying the runtime.
+
+    Scans every test module that mentions both spellings, and reports the
+    offending functions by name rather than the first one found -- a sweep that
+    stops at one violation makes a multi-file regression take as many rounds to
+    clear as it has files.
+
+    Raises:
+        AssertionError: If any function outside `ALLOWLIST` builds a shell with
+            `ChatScreen.__new__` and assigns `_console_chat_store` without
+            either wiring a fleet controller or supplying `_console_runtime_ref`.
+    """
     offenders: list[str] = []
     for path in sorted(TESTS_ROOT.rglob("*.py")):
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -131,8 +143,17 @@ def test_no_bare_chat_screen_shell_sets_its_store_without_a_fleet_controller() -
 
 
 def test_the_allowlist_does_not_name_a_function_that_is_already_clean() -> None:
-    """A ratchet that keeps stale entries stops ratcheting. Anything listed must
-    still be a real violation, or the list is hiding nothing and should shrink."""
+    """Refuse allowlist entries that no longer describe a violation.
+
+    A ratchet that keeps stale entries stops ratcheting: the list grows a
+    reputation for being noise, and the next real entry is waved through with
+    it. Anything listed must still be a genuine violation, or the list should
+    shrink.
+
+    Raises:
+        AssertionError: If an `ALLOWLIST` entry names a function that no longer
+            violates the rule.
+    """
     if not ALLOWLIST:
         return
     live: set[str] = set()
