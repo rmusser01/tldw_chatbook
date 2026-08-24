@@ -8011,3 +8011,46 @@ raising. Deliberately breaking the guard proved it — the memory-backed test
 went red with a zero count, not an error. Before wrapping any DB call in
 `to_thread`, check what that owner's connection factory does with
 `:memory:`, and keep a memory-backed test in the set.
+## A subsystem can have several migration entry points, and the product may not use the one you were pointed at (TASK-21130, 2026-08-23)
+
+**What happened.** The finding cited `TTS/profile_schema.py:1439,1468` —
+`_run_migrations`, reached from `open_profile_store` — as the place the v3→v4
+climb snapshots the whole reference-BLOB table twice. That was accurate about
+the code. It was wrong about the product: `TTSProfileRepository.
+_worker_initialize_store` never lets `open_profile_store` migrate a populated
+store. A below-current store is routed to `_worker_publish_migrated_store` →
+`migrate_profile_store_to_candidate` → `step_profile_migration_candidate`, and
+only *then* reopened, already at v4 (`profile_repository.py:1636-1638`). The
+user-visible upgrade ran through `_step_candidate`, which carried the
+**identical** double snapshot at different line numbers. Fixing only the cited
+lines would have measured as a 966 MiB → 88 MiB win on a path a real upgrade
+never takes, and shipped nothing.
+
+**What to do.** Before optimising or hardening a migration, enumerate every
+caller of the migration runner and find which one the app reaches at runtime —
+`grep` the runner's name, then walk *up* from each hit to a boot or lifecycle
+owner. Subsystems here routinely have three: an in-place opener, a disposable
+candidate/validation copy, and a publish-through-a-candidate upgrade. They are
+easy to mistake for one because they share the `MIGRATIONS` table and the same
+helper functions. Fix the defect in the shared helper, not at the call sites
+the filing happened to name.
+
+## Sequential A/B arms measured a regression that interleaving erased (TASK-21130, 2026-08-23)
+
+**What happened.** The candidate-path timings were taken as three base runs
+then three fixed runs: base 10.38 / 10.57 / 10.77 s, fixed 11.43 / 11.58 /
+12.87 s. Tight distributions, no overlap — it read as a clean ~1 s regression
+caused by the change, which would have been reported as one. Re-running the
+same two arms **alternating base, fixed, base, fixed** across five pairs gave
+base 10.12 / 10.92 / 11.09 / 11.26 / 12.18 and fixed 9.62 / 9.68 / 10.05 /
+10.47 / 10.75 — the fixed arm consistently ~1 s *faster*. Nothing about either
+build changed; the machine's load simply drifted between the two blocks, and a
+block design charges all of that drift to whichever arm ran second.
+
+**What to do.** Interleave A/B arms, always. A block of N runs per arm gives
+tight-looking intervals that measure *when* you ran, not *what* you ran, and
+tightness inside a block is not evidence against between-block drift. This
+matters most for the wall-clock half of a perf claim: the memory numbers here
+were byte-stable across every ordering (1,013,84x,xxx vs 92,24x,xxx every
+single run), which is exactly why an allocation-peak claim survives sloppy
+scheduling and a wall-time claim does not.

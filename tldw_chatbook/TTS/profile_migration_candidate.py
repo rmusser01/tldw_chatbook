@@ -6,7 +6,6 @@ import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from hashlib import sha256
 from typing import TypeAlias
 
 import tldw_chatbook.TTS.profile_schema as _profile_schema
@@ -307,26 +306,13 @@ def _capture_boundary_evidence(
 def _compact_reference_evidence(
     connection: sqlite3.Connection,
 ) -> _ReferenceDomain:
-    """Capture exact reference identity/metadata without retaining WAV bytes."""
+    """Capture exact reference identity/metadata without retaining WAV bytes.
 
-    return tuple(
-        (
-            row[0],
-            row[1],
-            len(row[2].encode("utf-8")),
-            sha256(row[2].encode("utf-8")).hexdigest(),
-            *tuple(row[3:]),
-        )
-        for row in connection.execute(
-            f"""
-            SELECT profile_id, reference_id, reference_text, sha256,
-                   byte_length, duration_ms, sample_rate_hz, channels,
-                   sample_encoding, created_at, updated_at
-            FROM {_profile_schema._REFERENCE_TABLE}
-            ORDER BY profile_id
-            """
-        )
-    )
+    One shared definition with the live opener's migration evidence
+    (TASK-21130) so both paths carry the same payload-free projection.
+    """
+
+    return _profile_schema._migration_reference_evidence(connection)
 
 
 def _require_boundary_evidence(
@@ -423,11 +409,14 @@ def _step_candidate(connection: sqlite3.Connection, version: int) -> None:
     profile_domain = (
         None if version == 0 else _profile_schema._migration_domain_snapshot(connection)
     )
-    reference_domain = (
-        _profile_schema._migration_reference_snapshot(connection)
-        if version >= 3
-        else ()
-    )
+    # Payload-free evidence (TASK-21130). ``version >= 3`` implies
+    # ``version == 3``, which always has a downgrade boundary, so
+    # ``_capture_boundary_evidence`` -> ``_validate_candidate_version`` has
+    # just re-derived sha256(wav_bytes) for every row; the post-step
+    # ``validate_profile_store_version`` below re-derives it again. Those two
+    # bracket this comparison of the sha256 column and give exact payload
+    # identity without ever holding a second copy of the table.
+    reference_domain = _compact_reference_evidence(connection) if version >= 3 else ()
     try:
         connection.execute("BEGIN IMMEDIATE")
         migration = _profile_schema.MIGRATIONS.get(version)
@@ -441,8 +430,7 @@ def _step_candidate(connection: sqlite3.Connection, version: int) -> None:
         ):
             raise ValueError
         if version >= 3 and (
-            _profile_schema._migration_reference_snapshot(connection)
-            != reference_domain
+            _compact_reference_evidence(connection) != reference_domain
         ):
             raise ValueError
         if (
