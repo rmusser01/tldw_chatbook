@@ -231,7 +231,7 @@ From 100 through 149 columns, render Chat plus at most one companion pane. The m
 
 ### Medium layout
 
-From 100 through 149 columns, render Chat plus one companion pane. The mode
+From 100 through 149 columns, render Chat plus at most one companion pane. The mode
 strip remains visible:
 
 ```text
@@ -981,6 +981,8 @@ reasons, and mode-tab navigation between separate screens.
 - Server adapter contract tests for workspace CRUD, source status/preview,
   selection/reorder, notes, artifacts, chat, capabilities, export, sharing, and
   diagnostics.
+- Server ingest round trip proves the item appears in server Media and through
+  its workspace-source row without creating a local Library record.
 - Server unavailable/auth-expired behavior proves no Local calls occur.
 - Local remote-provider preflight proves no request leaves before consent.
 - Primary five outputs reopen through their canonical owners.

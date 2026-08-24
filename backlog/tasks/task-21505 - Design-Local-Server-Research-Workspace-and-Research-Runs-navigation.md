@@ -45,6 +45,8 @@ Define the product, authority, persistence, navigation, and terminal-UX contract
 - [ ] #4 The design defines canonical ownership for sources, conversations, notes, Studio outputs, device-only overlays, and Deep Research launch/return context without inventing duplicate content stores.
 - [ ] #5 The design specifies measurable Textual layout, keyboard, focus, accessibility, loading, conflict, failure, and recovery behavior.
 - [ ] #6 A canonical ADR records the shell, authority, ownership, overlay, and manual-transfer decisions and links the existing governing ADRs.
+- [ ] #7 Sources and Studio have independently testable ASCII collapse/reveal controls with deterministic focus, explicit-toggle feedback, and stored preferences that survive responsive overrides.
+- [ ] #8 Research ingestion creates or reuses an item in the selected authority's general Library/Media catalog, durably associates its stable identity to the captured workspace, reports partial failures by stage, and never treats a mutable tag as the relationship.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -62,7 +64,10 @@ Define the product, authority, persistence, navigation, and terminal-UX contract
 6. Self-review the spec and ADR for placeholders, contradictions, scope, and ambiguity, then request user review.
 3. Define complete control classification, responsive Textual behavior, accessibility, recovery, and verification requirements.
 4. Write and link ADR-078 before implementation planning.
-5. Self-review the spec and ADR for placeholders, contradictions, scope, and ambiguity, then request user review.
+5. Amend the source contract so ingestion lands in the selected authority's
+   general catalog before a stable, durable workspace association; define
+   duplicate, partial-failure, retry, unlink, and no-blending behavior.
+6. Self-review the spec and ADR for placeholders, contradictions, scope, and ambiguity, then request user review.
 
 ADR required: yes
 ADR path: backlog/decisions/078-research-workspace-authority-and-screen-boundaries.md

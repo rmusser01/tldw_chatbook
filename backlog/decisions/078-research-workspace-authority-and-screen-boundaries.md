@@ -234,6 +234,21 @@ values share the same exact seven-day boundary. No migration heuristic promotes
 or deletes an ordinary membership.
 sharing, and operation APIs.
 
+Research ingestion first creates or reuses an item in the selected authority's
+general catalog and then associates its stable identity with the captured
+workspace. Local uses a Library item plus `WorkspaceMembership(role=source)`;
+Server uses a server Media item plus a server workspace-source row. The
+qualified association intent is durable across navigation and restart. It may
+never attach to the other authority or to the workspace visible when a late
+completion happens to arrive.
+
+A name-derived workspace keyword may be projected for search/display parity,
+but it is not the association or authority boundary: names and tags are
+editable and can drift. Removing a workspace association does not delete the
+canonical item. If catalog ingestion succeeds and association or indexing
+fails, the item remains in the general catalog and the failed stage is
+independently retryable.
+
 ### 5. Server folders and annotations are explicit device-only overlays
 
 The server has no canonical Research Workspace folder or annotation APIs.
@@ -399,6 +414,8 @@ preserves control and provenance.
   and focus behavior while using the requested compact ASCII labels.
 - Complete server parity remains discoverable without overwhelming the primary
   flow.
+- Side-pane controls share the app's tested preference, responsive-collapse,
+  and focus behavior while using the requested compact ASCII labels.
 - Device-only behavior is useful but cannot be mistaken for server sharing.
 - Deep Research integrates without weakening its durable execution contract.
 
