@@ -10,12 +10,26 @@ from tldw_chatbook.Research_Workspace.contracts import (
     QualifiedWorkspaceRef,
     ResearchCapability,
     ResearchSourcePreview,
+    ResearchSourcePage,
     ResearchSourceSummary,
     ResearchWorkspaceSummary,
     SourceSelectionResult,
     WorkspaceDataSource,
     require_capability,
 )
+
+
+def test_attached_source_page_has_a_dedicated_exact_owner_selection_contract() -> None:
+    """A generic bounded page cannot truthfully own workspace-wide selection."""
+
+    desired = tuple(str(index) for index in range(1, 102))
+    page = ResearchSourcePage(items=(), limit=100, desired_source_ids=desired)
+
+    assert page.desired_source_ids == desired
+    with pytest.raises(ValueError, match="unique"):
+        ResearchSourcePage(
+            items=(), limit=100, desired_source_ids=("source-1", "source-1")
+        )
 
 
 def test_selection_result_keeps_exact_owner_ids_separate_from_bounded_rows() -> None:
@@ -68,6 +82,13 @@ def test_null_preview_catalog_id_is_limited_to_unavailable_server_modes() -> Non
             ref=QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "workspace-1"),
             source_id="membership-1",
             catalog_item_id=None,
+            preview_mode="missing_media",
+        )
+    with pytest.raises(ValueError, match="positive canonical"):
+        ResearchSourcePreview(
+            ref=server_ref,
+            source_id="source-1",
+            catalog_item_id="0",
             preview_mode="missing_media",
         )
 

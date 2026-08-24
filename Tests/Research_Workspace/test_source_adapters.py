@@ -18,6 +18,7 @@ from tldw_chatbook.Library.library_ingest_jobs import LibraryIngestJobRegistry
 from tldw_chatbook.Research_Workspace.contracts import (
     CapabilityUnavailableError,
     QualifiedWorkspaceRef,
+    SourceIdentityMismatchError,
     SourceReadinessState,
     WorkspaceDataSource,
 )
@@ -288,6 +289,47 @@ async def test_local_selection_reconciles_101_canonical_ids_without_page_one_los
     assert tuple(
         item.source_id for item in registry.get_workspace_scope("workspace-1").items
     ) == requested
+
+
+@pytest.mark.asyncio
+async def test_local_page_projects_exact_restarted_selection_beyond_page_one(
+    tmp_path,
+) -> None:
+    registry = local_registry(tmp_path)
+    for media_id in range(1, 102):
+        registry.link_membership(
+            "workspace-1", item_type="media", item_id=str(media_id), role="source"
+        )
+    registry.set_workspace_scope(
+        "workspace-1",
+        RagScope(
+            items=(ScopeItem("media", "101"),),
+            updated_at="restart",
+            empty_is_scoped=True,
+        ),
+    )
+
+    class ManyMediaScope:
+        async def get_media_detail(self, **kwargs):
+            media_id = str(kwargs["media_id"])
+            return {
+                "source_id": media_id,
+                "backing_media_id": int(media_id),
+                "title": f"Source {media_id}",
+                "media_type": "document",
+            }
+
+    adapter = LocalResearchWorkspaceAdapter(
+        registry, media_scope_service=ManyMediaScope()
+    )
+    page = await adapter.list_sources(
+        QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "workspace-1"),
+        limit=100,
+        offset=0,
+    )
+
+    assert page.desired_source_ids == ("101",)
+    assert all(not row.selected for row in page.items)
 
 
 @pytest.mark.asyncio
@@ -651,13 +693,46 @@ async def test_server_readiness_rejects_every_mismatched_workspace_identity(
     service = MismatchedStatusService()
     adapter = ServerResearchWorkspaceAdapter(service, provider)
 
-    with pytest.raises(ValueError, match="mismatched workspace"):
+    with pytest.raises(SourceIdentityMismatchError, match="mismatched workspace"):
         await adapter.get_readiness(server_ref(provider))
 
     assert service.calls == [
         ("capabilities", "workspace-1"),
         ("status", "workspace-1"),
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "case",
+    ["missing", "not-a-list", "non-mapping-row", "oversized"],
+)
+async def test_server_readiness_malformed_projection_is_not_identity_mismatch(
+    case,
+) -> None:
+    provider = ContextProvider()
+
+    class MalformedStatusService(RecordingServerSourceService):
+        async def get_workspace_source_status(self, workspace_id):
+            self.calls.append(("status", workspace_id))
+            sources = {
+                "missing": None,
+                "not-a-list": "not-a-list",
+                "non-mapping-row": [None],
+                "oversized": [None] * 10_101,
+            }[case]
+            return {
+                "workspace_id": workspace_id,
+                "sources": sources,
+                "summary": {},
+            }
+
+    adapter = ServerResearchWorkspaceAdapter(MalformedStatusService(), provider)
+
+    with pytest.raises(ValueError) as exc_info:
+        await adapter.get_readiness(server_ref(provider))
+
+    assert type(exc_info.value) is ValueError
 
 
 @pytest.mark.asyncio
@@ -674,7 +749,7 @@ async def test_server_missing_media_preview_keeps_association_without_catalog_id
             return {
                 "workspace_id": workspace_id,
                 "source_id": source_id,
-                "media_id": None,
+                "media_id": 0,
                 "title": "Missing source",
                 "source_type": "document",
                 "url": None,
@@ -710,6 +785,82 @@ async def test_server_missing_media_preview_keeps_association_without_catalog_id
     assert preview.catalog_item_id is None
     assert preview.preview_mode == "missing_media"
     assert preview.text == ""
+
+
+@pytest.mark.asyncio
+async def test_server_reorder_preflights_the_exact_owner_before_mutation() -> None:
+    provider = ContextProvider()
+    service = RecordingServerSourceService()
+    service.rows = [
+        service.rows[0]
+        | {"id": "source-1", "media_id": 31, "position": 0},
+        service.rows[0]
+        | {"id": "source-2", "media_id": 32, "position": 1},
+    ]
+    adapter = ServerResearchWorkspaceAdapter(service, provider)
+
+    rows = await adapter.reorder_sources(
+        server_ref(provider), ("source-2", "source-1")
+    )
+
+    assert [row.source_id for row in rows] == ["source-2", "source-1"]
+    assert service.calls == [
+        ("capabilities", "workspace-1"),
+        ("list", "workspace-1"),
+        ("reorder", "workspace-1", ["source-2", "source-1"]),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_reorder_refuses_owner_over_request_bound_before_put() -> None:
+    provider = ContextProvider()
+    service = RecordingServerSourceService()
+    service.rows = [
+        service.rows[0]
+        | {"id": f"source-{index}", "media_id": index + 1, "position": index}
+        for index in range(101)
+    ]
+    adapter = ServerResearchWorkspaceAdapter(service, provider)
+
+    with pytest.raises(CapabilityUnavailableError) as exc_info:
+        await adapter.reorder_sources(
+            server_ref(provider), tuple(row["id"] for row in service.rows)
+        )
+
+    assert exc_info.value.capability.reason_code == "reorder_precondition_unavailable"
+    assert service.calls == [
+        ("capabilities", "workspace-1"),
+        ("list", "workspace-1"),
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "ordered_ids",
+    [
+        ("source-1",),
+        ("source-1", "source-stale"),
+        ("source-1", "source-1"),
+    ],
+)
+async def test_server_reorder_refuses_nonexact_or_duplicate_owner_set_before_put(
+    ordered_ids,
+) -> None:
+    provider = ContextProvider()
+    service = RecordingServerSourceService()
+    service.rows = [
+        service.rows[0]
+        | {"id": "source-1", "media_id": 31, "position": 0},
+        service.rows[0]
+        | {"id": "source-2", "media_id": 32, "position": 1},
+    ]
+    adapter = ServerResearchWorkspaceAdapter(service, provider)
+
+    with pytest.raises(CapabilityUnavailableError) as exc_info:
+        await adapter.reorder_sources(server_ref(provider), ordered_ids)
+
+    assert exc_info.value.capability.reason_code == "reorder_precondition_unavailable"
+    assert not any(call[0] == "reorder" for call in service.calls)
 
 
 @pytest.mark.asyncio
@@ -800,6 +951,31 @@ async def test_server_owner_rows_over_100_are_valid_but_public_page_stays_bounde
     assert len(page.items) == 100
     assert page.total == 101
     assert page.has_more is True
+
+
+@pytest.mark.asyncio
+async def test_server_pages_retain_exact_owner_selection_across_navigation() -> None:
+    provider = ContextProvider()
+    service = RecordingServerSourceService()
+    service.rows = [
+        service.rows[0]
+        | {
+            "id": f"source-{index}",
+            "media_id": index + 1,
+            "position": index,
+            "selected": index == 100,
+        }
+        for index in range(101)
+    ]
+    adapter = ServerResearchWorkspaceAdapter(service, provider)
+    ref = server_ref(provider)
+
+    first = await adapter.list_sources(ref, limit=100, offset=0)
+    second = await adapter.list_sources(ref, limit=100, offset=100)
+
+    assert first.desired_source_ids == ("source-100",)
+    assert second.desired_source_ids == first.desired_source_ids
+    assert [row.source_id for row in second.items] == ["source-100"]
 
 
 @pytest.mark.asyncio

@@ -182,7 +182,39 @@ legacy unscoped state.
 The audited modal tab order remains exactly: Upload, My Media, URL, Paste,
 Search Server.
 
+## Fix round 3 — exact owner pages and write preconditions
+
+- Added `ResearchSourcePage`, a source-specific bounded-page projection that
+  carries the exact ordered owner `desired_source_ids` independently of the
+  visible rows. Local restart and both Server pages preserve a selection that
+  exists only at row 101; the generic bounded-page contract remains unchanged.
+- Controller source navigation consumes only the exact owner projection. A
+  second source-generation increment after a current selection write prevents
+  a refresh started during that write from repainting stale desired state.
+- Split malformed readiness projections from exact workspace-identity
+  mismatches. Invalid containers, row shapes, and bounds now follow the normal
+  terminal `readiness_refresh_failed` path; exact top-level or row workspace
+  mismatches alone remain typed and retryable.
+- Preserved the actual server's `media_id=0` missing-media transport shape while
+  normalizing `None`/`0` to no canonical identity at the adapter boundary.
+  Available preview/status rows still reject zero, and domain objects reject a
+  fabricated canonical ID `"0"`.
+- Server reorder now reads and validates the exact owner before mutation. An
+  owner or request that cannot express one exact order within the 100-ID write
+  contract fails typed `reorder_precondition_unavailable` with no PUT; bounded
+  exact owners retain the existing PUT-then-GET reconciliation.
+
 ## Verification evidence
+
+- Round 3 focused owner/consumer gate: `219 passed, 1 warning in 2.79s`.
+- Round 3 independent Research neighbor gate: `265 passed, 1 warning in 4.01s`.
+- Round 3 exact Task 3 Library-ingest/DB neighbor gate:
+  `275 passed, 1 skipped, 1 warning in 19.60s`. The skip is the existing
+  Windows spawn/resource-tracker boundary.
+- Round 3 scoped Ruff, changed-production `compileall`, `git diff --check`, and
+  the Impeccable detector: pass. The scoped format probe identifies the same 10
+  whole-file legacy candidates at `67114c7ed`; no formatting churn was added.
+- Full pytest was not run, per repository policy.
 
 - Round 2 focused gate (contracts, controller, Local/Server adapters,
   association/readiness/selection, workspace adapters, source client, and Notes
@@ -238,6 +270,20 @@ Round 2 added four inverse checks, all restored before the final gates:
   pending-receipt/no-Local guard red.
 - Converting `media_id=None` back to `""` made the actual-shaped missing-media
   preview fixture fail at the domain boundary.
+
+Round 3 added seven independent inverse checks across all four reviewed
+families, all restored before the final gates:
+
+- Replacing page-level exact desired IDs with the bounded visible selection
+  made the row-101 navigation guard red; removing the post-write source
+  generation increment made the selection-versus-refresh race guard red.
+- Reclassifying malformed readiness as an identity mismatch made the paired
+  adapter and coordinator terminal-state guards red.
+- Removing zero-to-null adapter normalization, restoring `ge=1` independently
+  on status and preview transport schemas, and accepting domain ID `"0"` each
+  made their actual-shape boundary guard red.
+- Raising the reorder precondition from 100 to the owner cap allowed a
+  101-source PUT and made the exact no-mutation trace guard red.
 
 ## Files and boundaries
 

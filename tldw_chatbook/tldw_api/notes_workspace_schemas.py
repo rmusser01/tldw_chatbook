@@ -16,6 +16,7 @@ from pydantic import (
     StrictFloat,
     StrictInt,
     field_validator,
+    model_validator,
 )
 
 
@@ -552,6 +553,12 @@ class WorkspaceSourceStatusResponse(_WorkspaceSourceModel):
     stale: StrictBool = False
     updated_at: str = Field("", max_length=128)
 
+    @model_validator(mode="after")
+    def _zero_media_requires_missing_state(self):
+        if self.media_id == 0 and self.state != "missing_media":
+            raise ValueError("media_id 0 is valid only for missing_media")
+        return self
+
 
 class WorkspaceSourceStatusSummary(_WorkspaceSourceModel):
     total: StrictInt = Field(0, ge=0, le=MAX_WORKSPACE_SOURCE_OWNER_ROWS)
@@ -589,7 +596,7 @@ class WorkspaceSourcePreviewSnippet(_WorkspaceSourceModel):
 class WorkspaceSourcePreviewResponse(_WorkspaceSourceModel):
     workspace_id: str = Field(..., max_length=MAX_WORKSPACE_SOURCE_ID_CHARS)
     source_id: str = Field(..., max_length=MAX_WORKSPACE_SOURCE_ID_CHARS)
-    media_id: Optional[StrictInt] = Field(None, ge=1)
+    media_id: Optional[StrictInt] = Field(None, ge=0)
     title: str = Field(..., max_length=MAX_WORKSPACE_SOURCE_TITLE_CHARS)
     source_type: str = Field(..., max_length=128)
     url: Optional[str] = Field(None, max_length=4096)
@@ -608,6 +615,14 @@ class WorkspaceSourcePreviewResponse(_WorkspaceSourceModel):
         default_factory=list, max_length=10
     )
     generated_at: str = Field(..., max_length=128)
+
+    @model_validator(mode="after")
+    def _zero_media_requires_missing_preview(self):
+        if self.media_id == 0 and (
+            self.state != "missing_media" or self.preview_mode != "missing_media"
+        ):
+            raise ValueError("media_id 0 is valid only for missing_media preview")
+        return self
 
 
 class WorkspaceCapabilityService(_WorkspaceSourceModel):

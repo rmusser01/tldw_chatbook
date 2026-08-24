@@ -2,17 +2,17 @@
 
 Review base:
 
-`60a7bf27c15b285b4a80a1f9f6f1d0737835ac80`
+`67114c7ed8a20a085afe33ce814ad84a1de2147b`
 
 Expected commit subject:
 
-`fix: reconcile Research source owner projections`
+`fix: close Research source ownership races`
 
 Exact review command after commit:
 
 ```bash
-git diff --stat 60a7bf27c15b285b4a80a1f9f6f1d0737835ac80..HEAD
-git diff 60a7bf27c15b285b4a80a1f9f6f1d0737835ac80..HEAD -- \
+git diff --stat 67114c7ed8a20a085afe33ce814ad84a1de2147b..HEAD
+git diff 67114c7ed8a20a085afe33ce814ad84a1de2147b..HEAD -- \
   ':!backlog/tasks/task-21508 - Add-Research-Sources-ingest-association-and-Quick-Notes.md'
 ```
 
@@ -21,15 +21,16 @@ this implementation or commit.
 
 ## Review order
 
-1. `contracts.py`, `local_adapter.py`, `server_adapter.py`, and `controller.py`:
-   exact owner selection versus the independently bounded visible source page.
-2. `notes_workspace_schemas.py` and source-client/service tests: the 10,100-ID
-   owner selection cap and preservation of top-level/row workspace identities.
-3. `server_adapter.py` and `source_readiness.py`: pre-normalization identity
-   validation and pending-versus-terminal readiness receipt behavior.
-4. `ResearchSourcePreview`, Server preview projection, client fixture, and
-   controller cache tests: honest nullable canonical identity for missing Media.
-5. Focused tests and `task-3-report.md`: RED/GREEN and inverse-mutation evidence.
+1. `contracts.py`, both adapters, and `controller.py`: source-specific bounded
+   pages carrying the independently exact owner selection and the post-write
+   generation fence.
+2. `server_adapter.py` and readiness coordinator tests: malformed projections
+   versus exact identity mismatches and their terminal-versus-pending receipts.
+3. `notes_workspace_schemas.py`, preview/readiness adapters, and client/service
+   tests: actual missing-media zero transport with no invented canonical ID.
+4. `server_adapter.py` reorder tests: owner GET before PUT, exact set checks,
+   the 100-ID write boundary, and PUT-then-GET reconciliation.
+5. `task-3-report.md`: Round 3 RED/GREEN, inverse, split-gate, and static evidence.
 
 ## High-risk invariants to challenge
 
@@ -43,12 +44,21 @@ this implementation or commit.
 - Local selection reads back canonical `RagScope` state without listing page 1.
   Server selection derives exact IDs from the validated post-PUT owner refetch.
 - Controller selection preserves the current visible page, validates exact
-  desired identities, and caches only source rows the owner returned.
+  desired identities, caches only source rows the owner returned, and fences a
+  source refresh that began while the owner write was in flight.
+- Every source page carries the same exact ordered owner desired IDs regardless
+  of page offset; a bounded page never becomes the global selection authority.
 - Server readiness rejects both top-level and every row-level workspace mismatch
   before normalization. A typed identity mismatch remains pending/retryable;
   ordinary refresh failures remain terminal.
 - Missing-media preview keeps the Server association ID and carries
   `catalog_item_id=None`; no blank or fabricated catalog identity is allowed.
+- Transport `media_id=0` is accepted only for actual missing-media status or
+  preview shapes, then normalized to nullable canonical identity. Available
+  rows and domain ID `"0"` remain invalid.
+- Server reorder performs no PUT unless one exact, unique owner order is
+  expressible within 100 IDs. Owners above 100 and stale/missing/duplicate
+  request sets fail typed `reorder_precondition_unavailable`.
 - Missing vector readiness is FTS-only and cannot enter Hybrid retrieval.
 - Readiness retry must make zero catalog-ingest or association calls.
 - Late ABA, preview, readiness, and pre-write source-list results cannot enter
@@ -65,6 +75,18 @@ this implementation or commit.
   duplicate rows, and Local updated-time sorting must use owner vocabulary.
 
 ## Verification snapshot
+
+- Round 3 focused owner/consumer gate: `219 passed`.
+- Independent Research neighbors: `265 passed`.
+- Exact Task 3 ingestion/DB neighbors: `275 passed, 1 skipped` (existing
+  Windows-only boundary).
+- Seven Round 3 inverse mutations across page/race, readiness, preview zero,
+  and reorder families each made the intended guard red and were restored.
+- Scoped Ruff, changed-production compileall, `git diff --check`, and the
+  Impeccable detector pass. The same 10 scoped files are legacy Ruff-format
+  candidates at the review base and current tree; none were mechanically
+  reformatted.
+- Full pytest intentionally not run.
 
 - Fix-round focused gate: `199 passed`.
 - Expanded restored-tree owner/consumer gates: `440 passed`, plus Library

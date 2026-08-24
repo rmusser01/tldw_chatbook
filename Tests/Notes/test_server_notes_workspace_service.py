@@ -699,6 +699,47 @@ async def test_service_exposes_preview_status_and_capability_read_projections():
 
 
 @pytest.mark.asyncio
+async def test_service_preserves_actual_missing_media_zero_for_adapter_normalization():
+    client = SourceProjectionClient()
+
+    async def missing_preview(workspace_id, source_id, **kwargs):
+        return {
+            "workspace_id": workspace_id,
+            "source_id": source_id,
+            "media_id": 0,
+            "title": "Missing source",
+            "source_type": "document",
+            "url": None,
+            "state": "missing_media",
+            "status_reason": "media_id_missing",
+            "readiness": {
+                "metadata_ready": False,
+                "text_extracted": False,
+                "fts_ready": False,
+                "vector_ready": False,
+                "citation_ready": False,
+                "summary_ready": False,
+                "tool_accessible": False,
+            },
+            "content_available": False,
+            "preview_mode": "missing_media",
+            "unavailable_reason": "media_id_missing",
+            "text_preview": None,
+            "text_total_chars": None,
+            "text_truncated": False,
+            "snippets": [],
+            "generated_at": "2026-08-24T00:00:00Z",
+        }
+
+    client.get_workspace_source_preview = missing_preview
+    service = ServerNotesWorkspaceService(client=client)
+
+    preview = await service.preview_workspace_source("workspace-1", "source-1")
+
+    assert preview["media_id"] == 0
+
+
+@pytest.mark.asyncio
 async def test_service_retains_mismatched_status_identities_for_adapter_validation(
 ):
     client = SourceProjectionClient()

@@ -12,6 +12,7 @@ from .contracts import (
     ResearchCatalogItem,
     ResearchCapability,
     ResearchSourcePreview,
+    ResearchSourcePage,
     ResearchSourceSummary,
     SourceSelectionResult,
     ResearchWorkspacePort,
@@ -87,7 +88,7 @@ class ResearchWorkspaceController:
         ] = {}
         self.visible_workspace: ResearchWorkspaceSummary | None = None
         self.visible_source_page: (
-            BoundedPageResult[ResearchSourceSummary] | None
+            ResearchSourcePage | None
         ) = None
         self.visible_catalog_page: (
             BoundedPageResult[ResearchCatalogItem] | None
@@ -272,11 +273,13 @@ class ResearchWorkspaceController:
         result = await self._port_for(capture).list_sources(
             capture.context.ref, limit=limit, offset=offset
         )
+        if not isinstance(result, ResearchSourcePage):
+            raise TypeError("Source listing returned an invalid owner page")
         self._validate_result_refs(result.items, capture.context.ref)
         if not self._is_current_surface(capture):
             return False
         self.visible_source_page = result
-        self.desired_source_ids = self._selected_ids(result.items)
+        self.desired_source_ids = result.desired_source_ids
         for source in result.items:
             self._canonical_sources[(source.ref, source.source_id)] = source
         return True
@@ -368,6 +371,7 @@ class ResearchWorkspaceController:
             raise ValueError("Selection reconciliation did not match requested scope")
         if not self._is_current_surface(capture):
             return False
+        self._surface_generations["sources"] += 1
         self.desired_source_ids = result.desired_source_ids
         for source in result.sources:
             self._canonical_sources[(source.ref, source.source_id)] = source
@@ -419,18 +423,6 @@ class ResearchWorkspaceController:
         for result in results:
             if result.ref != ref:
                 raise ValueError("Request returned a mismatched workspace ref")
-
-    @staticmethod
-    def _selected_ids(
-        sources: tuple[ResearchSourceSummary, ...],
-    ) -> tuple[str, ...]:
-        return tuple(
-            source.catalog_item_id
-            if source.ref.data_source is WorkspaceDataSource.LOCAL
-            else source.source_id
-            for source in sources
-            if source.selected
-        )
 
     def _clear_visible_source_state(self) -> None:
         self.visible_source_page = None

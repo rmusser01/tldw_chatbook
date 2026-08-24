@@ -25,6 +25,7 @@ from .contracts import (
     ResearchCatalogItem,
     ResearchCapability,
     ResearchSourcePreview,
+    ResearchSourcePage,
     ResearchSourceSummary,
     ResearchWorkspaceSummary,
     SourceSelectionResult,
@@ -245,7 +246,7 @@ class LocalResearchWorkspaceAdapter:
         *,
         limit: int = 100,
         offset: int = 0,
-    ) -> BoundedPageResult[ResearchSourceSummary]:
+    ) -> ResearchSourcePage:
         self._require_local_ref(ref)
         require_capability(_LOCAL_CAPABILITIES, "list_sources")
         page_limit, page_offset = _page_bounds(limit, offset)
@@ -259,15 +260,22 @@ class LocalResearchWorkspaceAdapter:
         desired_scope = await asyncio.to_thread(
             self._service.get_workspace_scope, ref.workspace_id
         )
-        desired_ids = (
-            None
-            if desired_scope is None
-            else {
+        if desired_scope is None:
+            owner_memberships = await asyncio.to_thread(
+                self._service.list_workspace_memberships, ref.workspace_id
+            )
+            exact_desired_ids = tuple(
+                membership.item_id
+                for membership in owner_memberships
+                if membership.item_type == "media" and membership.role == "source"
+            )
+        else:
+            exact_desired_ids = tuple(
                 item.source_id
                 for item in desired_scope.items
                 if item.source_type == "media"
-            }
-        )
+            )
+        desired_ids = set(exact_desired_ids)
         details = await asyncio.gather(
             *(
                 media_scope.get_media_detail(
@@ -283,20 +291,19 @@ class LocalResearchWorkspaceAdapter:
                 membership,
                 detail,
                 selected=(
-                    True
-                    if desired_ids is None
-                    else membership.item_id in desired_ids
+                    membership.item_id in desired_ids
                 ),
                 position=page_offset + index,
             )
             for index, (membership, detail) in enumerate(zip(memberships, details))
         )
-        return BoundedPageResult(
+        return ResearchSourcePage(
             items=rows,
             limit=page_limit,
             offset=page_offset,
             total=total,
             has_more=page_offset + len(rows) < total,
+            desired_source_ids=exact_desired_ids,
         )
 
     async def search_catalog(

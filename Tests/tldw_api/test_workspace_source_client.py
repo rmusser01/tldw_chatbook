@@ -480,6 +480,55 @@ async def test_missing_media_preview_response_retains_null_catalog_identity(
 
 
 @pytest.mark.asyncio
+async def test_missing_media_preview_accepts_zero_but_available_preview_rejects_it(
+    monkeypatch,
+) -> None:
+    client = TLDWAPIClient("http://localhost:8000")
+    request = AsyncMock(
+        return_value=preview_payload(
+            media_id=0,
+            state="missing_media",
+            status_reason="media_id_missing",
+            content_available=False,
+            preview_mode="missing_media",
+            unavailable_reason="media_id_missing",
+            text_preview=None,
+            text_total_chars=None,
+            snippets=[],
+        )
+    )
+    monkeypatch.setattr(client, "_request", request)
+
+    result = await client.get_workspace_source_preview("workspace-1", "source-1")
+    assert result["media_id"] == 0
+
+    request.return_value = preview_payload(media_id=0)
+    with pytest.raises(ValidationError):
+        await client.get_workspace_source_preview("workspace-1", "source-1")
+
+
+@pytest.mark.asyncio
+async def test_zero_status_media_id_is_limited_to_missing_media(monkeypatch) -> None:
+    client = TLDWAPIClient("http://localhost:8000")
+    request = AsyncMock(
+        return_value=status_payload(
+            media_id=0,
+            state="missing_media",
+            status_reason="media_id_missing",
+        )
+    )
+    monkeypatch.setattr(client, "_request", request)
+
+    assert (await client.get_workspace_source_status("workspace-1"))["sources"][0][
+        "media_id"
+    ] == 0
+
+    request.return_value = status_payload(media_id=0, state="queryable")
+    with pytest.raises(ValidationError):
+        await client.get_workspace_source_status("workspace-1")
+
+
+@pytest.mark.asyncio
 async def test_status_rejects_oversized_job_text_and_malformed_summary(
     monkeypatch,
 ) -> None:

@@ -35,6 +35,7 @@ from .contracts import (
     ResearchCatalogItem,
     ResearchCapability,
     ResearchSourcePreview,
+    ResearchSourcePage,
     ResearchSourceSummary,
     ResearchWorkspaceSummary,
     SourceSelectionResult,
@@ -318,7 +319,7 @@ class ServerResearchWorkspaceAdapter:
         *,
         limit: int = 100,
         offset: int = 0,
-    ) -> BoundedPageResult[ResearchSourceSummary]:
+    ) -> ResearchSourcePage:
         page_limit, page_offset = _page_bounds(limit, offset)
         await self._require_source_action(ref, "inspect_sources", allow_empty=True)
         context = self._context_for_ref(ref)
@@ -332,12 +333,15 @@ class ServerResearchWorkspaceAdapter:
             raise ValueError("Server source list is not a bounded page")
         normalized = tuple(self._source_summary(ref, row) for row in rows)
         page = normalized[page_offset : page_offset + page_limit]
-        return BoundedPageResult(
+        return ResearchSourcePage(
             items=page,
             limit=page_limit,
             offset=page_offset,
             total=len(normalized),
             has_more=page_offset + len(page) < len(normalized),
+            desired_source_ids=tuple(
+                source.source_id for source in normalized if source.selected
+            ),
         )
 
     async def search_catalog(
@@ -568,12 +572,17 @@ class ServerResearchWorkspaceAdapter:
         snippets = row.get("snippets") or []
         if not isinstance(snippets, list):
             raise ValueError("Server preview snippets are invalid")
+        media_id = row.get("media_id")
+        if media_id is None or (type(media_id) is int and media_id == 0):
+            catalog_item_id = None
+        elif type(media_id) is not int or media_id < 1:
+            raise ValueError("Server preview returned an invalid canonical Media id")
+        else:
+            catalog_item_id = str(media_id)
         return ResearchSourcePreview(
             ref=ref,
             source_id=source_id,
-            catalog_item_id=(
-                None if row.get("media_id") is None else str(row["media_id"])
-            ),
+            catalog_item_id=catalog_item_id,
             preview_mode=str(row.get("preview_mode") or "unavailable"),
             text=str(row.get("text_preview") or ""),
             snippets=tuple(
@@ -597,23 +606,21 @@ class ServerResearchWorkspaceAdapter:
             context=context,
         )
         rows = payload.get("sources") if isinstance(payload, Mapping) else None
-        if (
-            not isinstance(payload, Mapping)
-            or str(payload.get("workspace_id") or "") != ref.workspace_id
-            or not isinstance(rows, list)
-            or len(rows) > MAX_WORKSPACE_SOURCE_OWNER_ROWS
-        ):
+        if not isinstance(payload, Mapping):
+            raise ValueError("Server readiness projection must be an object")
+        if str(payload.get("workspace_id") or "") != ref.workspace_id:
             raise SourceIdentityMismatchError(
                 "Server readiness returned a mismatched workspace"
             )
-        if any(
-            not isinstance(row, Mapping)
-            or str(row.get("workspace_id") or "") != ref.workspace_id
-            for row in rows
-        ):
-            raise SourceIdentityMismatchError(
-                "Server readiness returned a mismatched workspace"
-            )
+        if not isinstance(rows, list) or len(rows) > MAX_WORKSPACE_SOURCE_OWNER_ROWS:
+            raise ValueError("Server readiness sources projection is invalid")
+        for row in rows:
+            if not isinstance(row, Mapping):
+                raise ValueError("Server readiness source must be an object")
+            if str(row.get("workspace_id") or "") != ref.workspace_id:
+                raise SourceIdentityMismatchError(
+                    "Server readiness returned a mismatched workspace"
+                )
         requested = set(source_ids)
         normalized = tuple(normalize_server_readiness(ref=ref, status=row) for row in rows)
         if requested and not requested.issubset({row.source_id for row in normalized}):
@@ -674,11 +681,34 @@ class ServerResearchWorkspaceAdapter:
         ref: QualifiedWorkspaceRef,
         ordered_source_ids: tuple[str, ...],
     ) -> tuple[ResearchSourceSummary, ...]:
-        ordered_source_ids = self._association_ids(
-            ordered_source_ids, allow_empty=False
-        )
+        context = self._context_for_ref(ref)
+        try:
+            ordered_source_ids = self._association_ids(
+                ordered_source_ids,
+                allow_empty=False,
+                maximum=MAX_WORKSPACE_SOURCE_OWNER_ROWS,
+            )
+        except ValueError as exc:
+            raise self._reorder_precondition_error(context) from exc
         await self._require_source_action(ref, "add_sources")
         context = self._context_for_ref(ref)
+        owner_rows = await self._server_call(
+            self._service.list_workspace_sources(ref.workspace_id), context=context
+        )
+        if (
+            not isinstance(owner_rows, list)
+            or len(owner_rows) > MAX_WORKSPACE_SOURCE_OWNER_ROWS
+        ):
+            raise ValueError("Server source reorder owner projection is invalid")
+        owner_ids = tuple(
+            self._source_summary(ref, row).source_id for row in owner_rows
+        )
+        if (
+            len(owner_ids) > 100
+            or len(owner_ids) != len(set(owner_ids))
+            or frozenset(owner_ids) != frozenset(ordered_source_ids)
+        ):
+            raise self._reorder_precondition_error(context)
         rows = await self._server_call(
             self._service.reorder_workspace_sources(
                 ref.workspace_id, list(ordered_source_ids)
@@ -686,6 +716,23 @@ class ServerResearchWorkspaceAdapter:
             context=context,
         )
         return tuple(self._source_summary(ref, row) for row in rows)
+
+    @staticmethod
+    def _reorder_precondition_error(context: Any) -> CapabilityUnavailableError:
+        return CapabilityUnavailableError(
+            ResearchCapability(
+                available=False,
+                reason_code="reorder_precondition_unavailable",
+                user_message=(
+                    "Source order cannot be changed without the exact bounded owner list."
+                ),
+                owner="server",
+                recovery_action="Refresh sources and retry.",
+                capability_revision=ServerResearchWorkspaceAdapter._capability_revision(
+                    context
+                ),
+            )
+        )
 
     async def _require_source_action(
         self,

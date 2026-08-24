@@ -9,6 +9,7 @@ from tldw_chatbook.Research_Workspace.contracts import (
     QualifiedWorkspaceRef,
     ResearchCatalogItem,
     ResearchSourcePreview,
+    ResearchSourcePage,
     ResearchSourceSummary,
     ResearchWorkspaceSummary,
     SourceSelectionResult,
@@ -203,7 +204,12 @@ async def test_source_generation_rejects_old_same_ref_result_after_workspace_aba
         ref, "membership-new", catalog_item_id="2", selected=True
     )
     port.source_results[1].set_result(
-        BoundedPageResult(items=(new_source,), limit=100, total=1)
+        ResearchSourcePage(
+            items=(new_source,),
+            limit=100,
+            total=1,
+            desired_source_ids=("2",),
+        )
     )
     assert await new_request is True
 
@@ -211,7 +217,7 @@ async def test_source_generation_rejects_old_same_ref_result_after_workspace_aba
         ref, "membership-old", catalog_item_id="1", selected=False
     )
     port.source_results[0].set_result(
-        BoundedPageResult(items=(old_source,), limit=100, total=1)
+        ResearchSourcePage(items=(old_source,), limit=100, total=1)
     )
     assert await old_request is False
 
@@ -319,12 +325,93 @@ async def test_selection_reconciliation_supersedes_older_source_refresh() -> Non
         ref, "membership-2", catalog_item_id="2", selected=False
     )
     port.source_results[0].set_result(
-        BoundedPageResult(items=(stale,), limit=100, total=1)
+        ResearchSourcePage(items=(stale,), limit=100, total=1)
     )
     assert await old_refresh is False
     assert controller.visible_source_page is None
     assert controller.canonical_source(ref, "membership-2") == selected
     assert controller.desired_source_ids == ("2",)
+
+
+@pytest.mark.asyncio
+async def test_source_page_uses_exact_owner_selection_not_visible_rows() -> None:
+    """Changing pages must not replace the workspace-wide desired selection."""
+
+    class OwnerPagePort:
+        async def list_sources(self, ref, *, limit=100, offset=0):
+            catalog_id = "101" if offset else "1"
+            return ResearchSourcePage(
+                items=(
+                    local_source(
+                        ref,
+                        f"membership-{catalog_id}",
+                        catalog_item_id=catalog_id,
+                        selected=offset == 100,
+                    ),
+                ),
+                limit=limit,
+                offset=offset,
+                total=101,
+                has_more=offset == 0,
+                desired_source_ids=("101",),
+            )
+
+    ref = local_ref("one")
+    controller = ResearchWorkspaceController(
+        {WorkspaceDataSource.LOCAL: OwnerPagePort()}
+    )
+    controller.select_workspace(ref, capability_revision="cap-1")
+
+    assert await controller.refresh_selected_sources(limit=1, offset=0) is True
+    assert controller.desired_source_ids == ("101",)
+    assert await controller.refresh_selected_sources(limit=1, offset=100) is True
+    assert controller.desired_source_ids == ("101",)
+    assert controller.visible_source_page.offset == 100
+    assert controller.canonical_source(ref, "membership-1") is not None
+    assert controller.canonical_source(ref, "membership-101") is not None
+
+
+@pytest.mark.asyncio
+async def test_selection_completion_invalidates_refresh_started_during_owner_write() -> None:
+    """A refresh started mid-write must not repaint pre-write owner state."""
+
+    port = DeferredSourcePort()
+    controller = ResearchWorkspaceController({WorkspaceDataSource.LOCAL: port})
+    ref = local_ref("one")
+    controller.select_workspace(ref, capability_revision="cap-1")
+
+    selection = asyncio.create_task(controller.set_selected_scope(("2",)))
+    await asyncio.sleep(0)
+    refresh = asyncio.create_task(controller.refresh_selected_sources())
+    await asyncio.sleep(0)
+
+    selected = local_source(
+        ref, "membership-2", catalog_item_id="2", selected=True
+    )
+    port.selection_results[0].set_result(
+        SourceSelectionResult(
+            ref=ref,
+            desired_source_ids=("2",),
+            sources=(selected,),
+        )
+    )
+    assert await selection is True
+
+    stale = local_source(
+        ref, "membership-1", catalog_item_id="1", selected=True
+    )
+    port.source_results[0].set_result(
+        ResearchSourcePage(
+            items=(stale,),
+            limit=100,
+            total=1,
+            desired_source_ids=("1",),
+        )
+    )
+
+    assert await refresh is False
+    assert controller.desired_source_ids == ("2",)
+    assert controller.canonical_source(ref, "membership-1") is None
 
 
 @pytest.mark.asyncio
@@ -340,11 +427,12 @@ async def test_selection_of_row_101_preserves_the_current_visible_page() -> None
                 )
                 for index in range(1, 101)
             )
-            return BoundedPageResult(
+            return ResearchSourcePage(
                 items=first_page,
                 limit=100,
                 total=101,
                 has_more=True,
+                desired_source_ids=(),
             )
 
         async def set_selected_scope(self, ref, source_ids):

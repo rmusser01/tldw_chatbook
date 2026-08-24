@@ -599,6 +599,85 @@ async def test_nonidentity_readiness_refresh_failure_remains_terminal(tmp_path) 
 
 
 @pytest.mark.asyncio
+async def test_malformed_server_projection_settles_terminal_refresh_failure(
+    tmp_path,
+) -> None:
+    store = ResearchSourceOperationStore(WorkspaceDB(tmp_path / "workspace.sqlite"))
+    context = SimpleNamespace(
+        active_server_id="profile-1",
+        auth_token="test-token",
+        credential_source="test",
+        capabilities={
+            "server_configured": True,
+            "reachability": "reachable",
+            "auth_state": "authenticated",
+        },
+    )
+    principal_id = event_principal_id_from_active_context(context) or ""
+    operation = store.create(
+        ResearchSourceOperation(
+            operation_id="operation-server-malformed",
+            idempotency_key="server:workspace-1:malformed",
+            data_source=WorkspaceDataSource.SERVER,
+            workspace_id="workspace-1",
+            server_profile_id="profile-1",
+            principal_id=principal_id,
+            canonical_item_type=CanonicalItemType.SERVER_MEDIA,
+            desired_selected=True,
+            created_at=NOW,
+            updated_at=NOW,
+        )
+    )
+    operation = store.advance_stage(
+        operation.operation_id,
+        stage=SourceOperationStage.CATALOG,
+        status=SourceOperationStatus.SUCCEEDED,
+        expected_revision=operation.revision,
+        canonical_item_id="101",
+    )
+    operation = store.advance_stage(
+        operation.operation_id,
+        stage=SourceOperationStage.ASSOCIATION,
+        status=SourceOperationStatus.SUCCEEDED,
+        expected_revision=operation.revision,
+        workspace_source_id="source-1",
+    )
+
+    class Provider:
+        def get_active_context(self):
+            return context
+
+    class MalformedServerService:
+        async def get_workspace_capabilities(self, workspace_id):
+            return {
+                "workspace_id": workspace_id,
+                "access_level": "owner",
+                "allowed_actions": {
+                    "inspect_sources": {"allowed": True, "reason_code": None}
+                },
+            }
+
+        async def get_workspace_source_status(self, workspace_id):
+            return {
+                "workspace_id": workspace_id,
+                "sources": "not-a-list",
+                "summary": {},
+            }
+
+    settled = await ResearchSourceReadinessCoordinator(
+        operation_store=store,
+        adapters={
+            WorkspaceDataSource.SERVER: ServerResearchWorkspaceAdapter(
+                MalformedServerService(), Provider()
+            )
+        },
+    ).resume(operation.operation_id)
+
+    assert settled.readiness_status is SourceOperationStatus.FAILED
+    assert settled.error_code == "readiness_refresh_failed"
+
+
+@pytest.mark.asyncio
 async def test_local_readiness_receipt_converges_for_membership_after_row_100(
     tmp_path,
 ) -> None:

@@ -315,10 +315,15 @@ class SourceReadiness:
                     "catalog_item_id may be null only for Server readiness"
                 )
         else:
+            catalog_item_id = _required_text(
+                self.catalog_item_id, "catalog_item_id"
+            )
+            if catalog_item_id == "0":
+                raise ValueError("catalog_item_id must be a positive canonical id")
             object.__setattr__(
                 self,
                 "catalog_item_id",
-                _required_text(self.catalog_item_id, "catalog_item_id"),
+                catalog_item_id,
             )
         try:
             state = SourceReadinessState(self.state)
@@ -379,10 +384,15 @@ class ResearchSourcePreview:
                     "catalog_item_id may be null only for an unavailable Server preview"
                 )
         else:
+            catalog_item_id = _required_text(
+                self.catalog_item_id, "catalog_item_id"
+            )
+            if catalog_item_id == "0":
+                raise ValueError("catalog_item_id must be a positive canonical id")
             object.__setattr__(
                 self,
                 "catalog_item_id",
-                _required_text(self.catalog_item_id, "catalog_item_id"),
+                catalog_item_id,
             )
         object.__setattr__(self, "text", _optional_text(self.text, "text"))
         object.__setattr__(self, "snippets", tuple(self.snippets))
@@ -432,6 +442,37 @@ class BoundedPageResult(Generic[PageItem]):
             raise ValueError("total must be a non-negative integer or None")
 
 
+def _owner_source_ids(value: object, field_name: str) -> tuple[str, ...]:
+    if not isinstance(value, tuple):
+        raise TypeError(f"{field_name} must be a tuple")
+    normalized = tuple(_required_text(source_id, field_name) for source_id in value)
+    if any(
+        len(source_id) > 1024 or len(source_id.encode("utf-8")) > 4096
+        for source_id in normalized
+    ):
+        raise ValueError(f"{field_name} contains an identity that is too long")
+    if len(normalized) > MAX_RESEARCH_SELECTION_IDS:
+        raise ValueError(f"{field_name} exceeds the owner bound")
+    if len(normalized) != len(set(normalized)):
+        raise ValueError(f"{field_name} must be unique")
+    return normalized
+
+
+@dataclass(frozen=True, slots=True)
+class ResearchSourcePage(BoundedPageResult[ResearchSourceSummary]):
+    """One bounded row page plus the exact workspace-wide desired selection."""
+
+    desired_source_ids: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        super(ResearchSourcePage, self).__post_init__()
+        object.__setattr__(
+            self,
+            "desired_source_ids",
+            _owner_source_ids(self.desired_source_ids, "desired_source_ids"),
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class SourceSelectionResult:
     """Exact owner selection plus an optional bounded row reconciliation."""
@@ -441,23 +482,7 @@ class SourceSelectionResult:
     sources: tuple[ResearchSourceSummary, ...] = ()
 
     def __post_init__(self) -> None:
-        if not isinstance(self.desired_source_ids, tuple):
-            raise TypeError("desired_source_ids must be a tuple")
-        desired = tuple(
-            _required_text(source_id, "desired_source_ids")
-            for source_id in self.desired_source_ids
-        )
-        if any(
-            len(source_id) > 1024 or len(source_id.encode("utf-8")) > 4096
-            for source_id in desired
-        ):
-            raise ValueError(
-                "desired_source_ids contains an identity that is too long"
-            )
-        if len(desired) > MAX_RESEARCH_SELECTION_IDS:
-            raise ValueError("desired_source_ids exceeds the owner bound")
-        if len(desired) != len(set(desired)):
-            raise ValueError("desired_source_ids must be unique")
+        desired = _owner_source_ids(self.desired_source_ids, "desired_source_ids")
         if not isinstance(self.sources, tuple):
             raise TypeError("sources must be a tuple")
         sources = tuple(self.sources)
@@ -540,7 +565,7 @@ class ResearchWorkspacePort(Protocol):
         *,
         limit: int = 100,
         offset: int = 0,
-    ) -> BoundedPageResult[ResearchSourceSummary]: ...
+    ) -> ResearchSourcePage: ...
 
     async def search_catalog(
         self,
