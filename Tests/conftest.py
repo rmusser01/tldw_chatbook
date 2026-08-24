@@ -16,6 +16,7 @@ _SANDBOXED_ENV_NAMES = (
     "XDG_DATA_HOME",
     "XDG_CONFIG_HOME",
     "TLDW_CONFIG_PATH",
+    "PYTHON_KEYRING_BACKEND",
     _TEST_CONFIG_ROOT_ENV,
     _TEST_CONFIG_OWNER_ENV,
 )
@@ -59,6 +60,25 @@ os.environ["USERPROFILE"] = str(_BOOTSTRAP_HOME)
 os.environ["XDG_DATA_HOME"] = str(_BOOTSTRAP_DATA_HOME)
 os.environ["XDG_CONFIG_HOME"] = str(_BOOTSTRAP_CONFIG_PATH.parent)
 os.environ["TLDW_CONFIG_PATH"] = str(_BOOTSTRAP_CONFIG_PATH)
+# TASK-19570 finding A: every mounted-app test reaches the real OS credential
+# subsystem. `TldwCli.__init__` calls `_wire_server_context_provider()` ->
+# `build_default_server_credential_store()` -> `keyring.get_keyring()`
+# (app.py:5811, runtime_policy/server_credentials.py:296-298), unconditionally
+# and with no test seam -- `Tests/UI/app_factory.py` contains no `keyring`
+# string at all. On macOS the first read can raise a Keychain consent dialog or
+# block on a locked keychain, which under `timeout_method="thread"` kills the
+# whole run rather than one test. The risk was already known here:
+# `Tests/Packaging/` sets exactly this backend for the subprocesses it spawns,
+# but the awareness never reached the shared in-process app-construction seam.
+#
+# Set unconditionally rather than only when unset: an ambient value pointing at
+# a real backend is precisely the case this must override. No test needs a live
+# backend -- the one suite that is *about* keyring
+# (`Tests/Skills/test_skill_trust_keyring_autounlock.py`) injects its own
+# `FakeSecureKeyring()`, and no test calls `keyring.get_password`/`set_password`
+# unpatched. `TLDW_TEST_REAL_KEYRING=1` is the deliberate opt-out.
+if os.environ.get("TLDW_TEST_REAL_KEYRING") != "1":
+    os.environ["PYTHON_KEYRING_BACKEND"] = "keyring.backends.null.Keyring"
 
 import pytest  # noqa: E402
 import pytest_asyncio  # noqa: E402
