@@ -8,7 +8,7 @@ from rich.markup import escape as escape_markup
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
-from textual.widgets import Button, OptionList, Static
+from textual.widgets import Button, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
 from tldw_chatbook.Library.library_pager_state import LibraryPagerDisplay
@@ -34,14 +34,28 @@ _MEDIA_ROW_COMPACT_HEIGHT = 1
 _MEDIA_ROW_WIDE_HEIGHT = 2
 
 
-def _media_row_label_rest(title: str, secondary: str, *, compact: bool) -> str:
+def _media_row_label_rest(
+    title: str,
+    secondary: str,
+    *,
+    compact: bool,
+    loading: bool = False,
+    loaded: bool = False,
+) -> str:
     """Return the marker-free Media row label for one responsive density."""
     visible_title = _visible_row_title(title)
-    return (
-        f" {visible_title} · {secondary}"
-        if compact
-        else f" {visible_title}\n    {secondary}"
+    state = "Loading" if loading else "Loaded" if loaded else ""
+    if compact:
+        prefix = f"{state} · " if state else ""
+        return f" {prefix}{visible_title} · {secondary}"
+    prefix = (
+        "Selected · loading preview  "
+        if loading
+        else "Loaded in Reader            "
+        if loaded
+        else ""
     )
+    return f" {prefix}{visible_title}\n    {secondary}"
 
 
 class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical):
@@ -124,7 +138,13 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         for button in self.query(".library-media-row"):
             title = button._library_media_title
             secondary = button._library_media_secondary
-            label_rest = _media_row_label_rest(title, secondary, compact=compact)
+            label_rest = _media_row_label_rest(
+                title,
+                secondary,
+                compact=compact,
+                loading=button._library_media_loading,
+                loaded=button._library_media_loaded,
+            )
             button._library_row_label_rest = label_rest
             if select_mode:
                 marker = "☑" if button._library_media_checked else "☐"
@@ -149,6 +169,37 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             return
         preview.display = self.show_preview and self._has_preview and not compact
         open_viewer.can_focus = self.show_preview and not compact
+
+    def apply_reader_state(self, canvas: LibraryMediaCanvasState) -> None:
+        """Patch selected/loading/loaded row state without replacing row widgets."""
+        self.canvas = canvas
+        rows = {row.media_id: row for row in canvas.rows}
+        select_mode = getattr(canvas, "select_mode", False)
+        for button in self.query(".library-media-row"):
+            row = rows.get(str(button.media_id))
+            if row is None:
+                continue
+            button._library_media_selected = row.selected
+            button._library_media_checked = row.checked
+            button._library_media_loading = row.loading
+            button._library_media_loaded = row.loaded
+            label_rest = _media_row_label_rest(
+                row.title,
+                row.secondary,
+                compact=self.compact,
+                loading=row.loading,
+                loaded=row.loaded,
+            )
+            button._library_row_label_rest = label_rest
+            if select_mode:
+                marker = "☑" if row.checked else "☐"
+            else:
+                marker = "▸" if row.selected and not self.compact else " "
+            button.label = f"{marker}{label_rest}"
+            button.set_class(
+                row.selected and not self.compact and not select_mode,
+                "library-media-row-selected",
+            )
 
     def _gate_stale_action(self, button: Button, base_label: str) -> Button:
         """Apply the controller's stale-page gate to one unsafe action."""
@@ -176,6 +227,21 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         title_count = self.pager.title_count if self.pager is not None else self.canvas.count
         title = "Media" if title_count is None else f"Media ({title_count})"
         yield Static(title, id="library-media-title")
+        filter_row = Horizontal(classes="ds-toolbar")
+        filter_row.styles.height = "auto"
+        with filter_row:
+            yield Input(
+                value=self.canvas.query,
+                placeholder="Filter media",
+                id="library-media-filter",
+            )
+            clear_filter = Button(
+                "Clear filter",
+                id="library-media-filter-clear",
+                compact=True,
+            )
+            clear_filter.disabled = not bool(self.canvas.query)
+            yield clear_filter
         select_mode = getattr(self.canvas, "select_mode", False)
         if (
             self.pager is not None
@@ -551,14 +617,18 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                             marker = "☑" if row.checked else "☐"
                         else:
                             marker = "▸" if row.selected and not self.compact else " "
-                    # task-281 (PR #665 review): the in-place toggle needs the
-                    # marker-less RAW label to rebuild from -- reading it back
-                    # off the mounted Button un-escapes user titles (both
-                    # ``.plain`` and Textual 8's ``str(Content)`` return
-                    # rendered text), so the raw remainder is stashed here at
-                    # the single point of truth.
+                        # task-281 (PR #665 review): the in-place toggle needs the
+                        # marker-less RAW label to rebuild from -- reading it back
+                        # off the mounted Button un-escapes user titles (both
+                        # ``.plain`` and Textual 8's ``str(Content)`` return
+                        # rendered text), so the raw remainder is stashed here at
+                        # the single point of truth.
                         label_rest = _media_row_label_rest(
-                            row.title, row.secondary, compact=self.compact
+                            row.title,
+                            row.secondary,
+                            compact=self.compact,
+                            loading=row.loading,
+                            loaded=row.loaded,
                         )
                         button = Button(
                             f"{marker}{label_rest}",
@@ -572,6 +642,8 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         button._library_media_secondary = row.secondary
                         button._library_media_selected = row.selected
                         button._library_media_checked = row.checked
+                        button._library_media_loading = row.loading
+                        button._library_media_loaded = row.loaded
                         button.tooltip = escape_markup(row.title)
                         button.set_class(
                             row.selected and not self.compact and not select_mode,

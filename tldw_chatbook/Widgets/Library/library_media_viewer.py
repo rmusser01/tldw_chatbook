@@ -79,6 +79,8 @@ class LibraryMediaViewer(Vertical):
         content_match_index: int = 0,
         content_mode: str = "raw",
         loading: bool = False,
+        loading_message: str = "Loading media…",
+        error_message: str = "",
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -91,6 +93,8 @@ class LibraryMediaViewer(Vertical):
         self.content_match_index = content_match_index
         self.content_mode = content_mode
         self.loading = loading
+        self.loading_message = loading_message
+        self.error_message = error_message
         # Fill the (already 13fr) canvas host, not an independent 13fr: an `fr`
         # width here breaks width:100% child resolution so long lines (analysis
         # summary, a long URL) clip instead of wrapping. 1fr fills the same
@@ -116,6 +120,19 @@ class LibraryMediaViewer(Vertical):
         Returns:
             ComposeResult for the media viewer canvas.
         """
+        if self.error_message:
+            yield Static(
+                self.error_message,
+                id="library-media-viewer-error",
+                classes="destination-purpose",
+                markup=False,
+            )
+            yield Button(
+                "Retry",
+                id="library-media-reader-retry",
+                classes="library-canvas-action",
+                compact=True,
+            )
         if not self.viewer.media_id:
             yield Static(
                 "Loading media…"
@@ -128,7 +145,7 @@ class LibraryMediaViewer(Vertical):
             return
         if self.loading:
             yield Static(
-                "Loading media…",
+                self.loading_message,
                 id="library-media-viewer-loading",
                 classes="destination-purpose",
                 markup=False,

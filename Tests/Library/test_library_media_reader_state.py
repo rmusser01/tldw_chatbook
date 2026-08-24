@@ -313,6 +313,25 @@ def test_stale_success_and_stale_failure_are_rejected() -> None:
     assert current.error is None
 
 
+def test_reused_identity_still_requires_the_current_generation() -> None:
+    first = begin_selection(
+        LibraryMediaReaderSessionState(), "local:media:1", 1, "Alpha"
+    )
+    assert first.pending_request is not None
+    current = begin_selection(first, "local:media:1", 1, "Alpha", immediate=True)
+    assert current.pending_request is not None
+
+    stale = settle_success(
+        current,
+        first.pending_request.generation,
+        first.pending_request.requested_id,
+    )
+
+    assert stale is current
+    assert stale.pending_request.generation == current.pending_request.generation
+    assert stale.loaded_id is None
+
+
 def test_selected_and_loaded_can_differ_only_while_pending() -> None:
     pending = begin_selection(_loaded_local(1, "Alpha"), "local:media:2", 2, "Beta")
 

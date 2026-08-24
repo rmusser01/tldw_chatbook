@@ -158,6 +158,7 @@ from ...Library.library_media_state import (
     build_library_media_trash_state,
 )
 from ...Library.library_media_reader_state import (
+    SELECTION_SETTLE_SECONDS,
     LibraryMediaReaderSessionState,
     MediaReaderEffectiveLayout,
     MediaReaderLayoutPreferences,
@@ -3148,6 +3149,12 @@ class LibraryScreen(BaseAppScreen):
         # `type:` cycle value; see the task file's mechanism decision).
         self._library_media_view: str = "list"
         self._library_media_reader_session = LibraryMediaReaderSessionState()
+        self._library_media_selection_timer: Timer | None = None
+        self._library_media_filter_timer: Timer | None = None
+        self._library_media_unfiltered_scope = MediaBrowseScope()
+        self._library_media_unfiltered_selected_id = ""
+        self._library_media_filter_restore_id = ""
+        self._library_media_filter_select_first = False
         self._library_media_reader_preferences = MediaReaderLayoutPreferences()
         self._library_media_reader_layout: MediaReaderEffectiveLayout = (
             resolve_media_reader_layout(0, self._library_media_reader_preferences)
@@ -7249,6 +7256,25 @@ class LibraryScreen(BaseAppScreen):
         never reach ``on_key`` at all.
         """
         focused = event.widget
+        target_restore = self._library_notes_programmatic_focus_target is focused
+        programmatic = bool(
+            target_restore
+            or self._library_notes_restoring_focus
+            or self._library_notes_resize_settling
+        )
+        if (
+            focused is not None
+            and focused.has_class("library-media-row")
+            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+            and not self._library_media_select_mode
+            and not programmatic
+        ):
+            media_id = str(getattr(focused, "media_id", "") or "")
+            title = str(getattr(focused, "_library_media_title", "") or media_id)
+            if media_id and media_id != self._selected_media_id:
+                self._select_library_media_reader_row(
+                    media_id, title, immediate=False
+                )
         if self.is_mounted:
             stage = self._library_notes_focus_stage(focused)
             relevant = bool(
@@ -7259,14 +7285,8 @@ class LibraryScreen(BaseAppScreen):
                     and self._library_media_view == "list"
                 )
             )
-            target_restore = self._library_notes_programmatic_focus_target is focused
             if target_restore:
                 self._library_notes_programmatic_focus_target = None
-            programmatic = bool(
-                target_restore
-                or self._library_notes_restoring_focus
-                or self._library_notes_resize_settling
-            )
             user_intent = relevant and not programmatic
             if user_intent:
                 # Veto every older deferred restore before its next turn can
@@ -11864,7 +11884,15 @@ class LibraryScreen(BaseAppScreen):
             confirming_bulk_delete=self._library_media_confirming_bulk_delete,
             delete_receipt_count=len(self._library_media_delete_receipt_ids),
             type_choices_visible=self._library_media_type_choices_visible,
+            loading_id=(
+                (self._library_media_reader_session.selected_id or "")
+                if self._library_media_reader_session.pending_request is not None
+                else ""
+            ),
+            loaded_id=self._library_media_reader_session.loaded_id or "",
         )
+        if controller.loading and controller.inflight_scope is not None:
+            state = dataclasses.replace(state, query=controller.inflight_scope.query)
         if self._library_media_select_mode:
             self._library_media_row_selection.reconcile(r.media_id for r in state.rows)
         return state
@@ -11996,6 +12024,53 @@ class LibraryScreen(BaseAppScreen):
         applied = self._library_media_browse_controller.applied_scope
         if applied is not None:
             self._library_media_type_filter = applied.media_type
+        controller = self._library_media_browse_controller
+        applied_selection_id = ""
+        if (
+            applied is not None
+            and not controller.loading
+            and applied == controller.requested_scope
+        ):
+            page_ids = {str(item["id"]) for item in controller.retained_items}
+            if applied.query and self._library_media_filter_select_first:
+                self._selected_media_id = (
+                    str(controller.retained_items[0]["id"])
+                    if controller.retained_items
+                    else ""
+                )
+                applied_selection_id = self._selected_media_id
+                self._library_media_filter_select_first = False
+            elif not applied.query:
+                self._library_media_unfiltered_scope = applied
+                if self._library_media_filter_restore_id:
+                    self._selected_media_id = (
+                        self._library_media_filter_restore_id
+                        if self._library_media_filter_restore_id in page_ids
+                        else str(controller.retained_items[0]["id"])
+                        if controller.retained_items
+                        else ""
+                    )
+                    applied_selection_id = self._selected_media_id
+                    self._library_media_filter_restore_id = ""
+        if (
+            applied_selection_id
+            and self._library_media_reader_session.selected_id
+            != applied_selection_id
+        ):
+            selected_title = next(
+                (
+                    str(item.get("title") or applied_selection_id)
+                    for item in controller.retained_items
+                    if str(item["id"]) == applied_selection_id
+                ),
+                applied_selection_id,
+            )
+            self._select_library_media_reader_row(
+                applied_selection_id,
+                selected_title,
+                immediate=False,
+                sync_surfaces=False,
+            )
         media_state = self._build_library_media_state()
         self._selected_media_id = media_state.selected_id
         focused = self.focused
@@ -12088,10 +12163,159 @@ class LibraryScreen(BaseAppScreen):
             scope, focus_identity=focus_identity
         )
 
+    def _cancel_library_media_selection_settlement(self) -> None:
+        """Cancel delayed traversal and invalidate its request generation."""
+        if self._library_media_selection_timer is not None:
+            self._library_media_selection_timer.stop()
+            self._library_media_selection_timer = None
+        session = self._library_media_reader_session
+        if session.pending_request is None:
+            return
+        self._library_media_reader_session = LibraryMediaReaderSessionState(
+            selected_id=session.loaded_id,
+            selected_backing_id=session.loaded_backing_id,
+            selected_title=session.loaded_title,
+            loaded_id=session.loaded_id,
+            loaded_backing_id=session.loaded_backing_id,
+            loaded_title=session.loaded_title,
+            request_generation=session.request_generation + 1,
+            mode=session.mode,
+        )
+
+    def _dispatch_library_media_detail_request(
+        self, generation: int, requested_id: str, media_id: str
+    ) -> None:
+        """Dispatch only the still-current canonical-id/generation request."""
+        self._library_media_selection_timer = None
+        pending = self._library_media_reader_session.pending_request
+        if (
+            pending is None
+            or pending.generation != generation
+            or pending.requested_id != requested_id
+            or self._library_media_select_mode
+        ):
+            return
+        self.run_worker(
+            self._refresh_library_media_detail(
+                media_id,
+                request_generation=generation,
+                requested_id=requested_id,
+            ),
+            group="library_media_detail",
+        )
+
+    def _select_library_media_reader_row(
+        self,
+        media_id: str,
+        title: str,
+        *,
+        immediate: bool,
+        sync_surfaces: bool = True,
+    ) -> None:
+        """Select a row now and schedule its generation-fenced detail load."""
+        identity = self._library_media_reader_identity(media_id)
+        if identity is None:
+            return
+        canonical_id, backing_id = identity
+        current = self._library_media_reader_session
+        if (
+            not immediate
+            and current.selected_id == canonical_id
+            and current.pending_request is not None
+        ):
+            return
+        if self._library_media_selection_timer is not None:
+            self._library_media_selection_timer.stop()
+            self._library_media_selection_timer = None
+        self._selected_media_id = canonical_id
+        self._library_media_view = "viewer"
+        self._library_media_reader_session = begin_selection(
+            current,
+            canonical_id,
+            backing_id,
+            title,
+            immediate=immediate,
+        )
+        pending = self._library_media_reader_session.pending_request
+        assert pending is not None
+        if sync_surfaces:
+            try:
+                canvas = self.query_one("#library-media-canvas", LibraryMediaCanvas)
+            except (NoMatches, QueryError):
+                self._sync_library_media_browse_state(None)
+            else:
+                canvas.apply_reader_state(self._build_library_media_state())
+            self._sync_library_media_viewer_or_recompose()
+        if immediate:
+            self._dispatch_library_media_detail_request(
+                pending.generation, pending.requested_id, canonical_id
+            )
+            return
+        self._library_media_selection_timer = self.set_timer(
+            SELECTION_SETTLE_SECONDS,
+            partial(
+                self._dispatch_library_media_detail_request,
+                pending.generation,
+                pending.requested_id,
+                canonical_id,
+            ),
+        )
+
     def _request_library_media_facets(self) -> Any | None:
         return self._library_media_browse_controller.request_facets(
             fingerprint=self._library_media_browse_controller.requested_scope.fingerprint
         )
+
+    def _stop_library_media_filter_timer(self) -> None:
+        if self._library_media_filter_timer is not None:
+            self._library_media_filter_timer.stop()
+            self._library_media_filter_timer = None
+
+    def _request_library_media_filter(self, query: str) -> None:
+        """Request authoritative search while preserving the unfiltered anchor."""
+        query = self._safe_text(query, max_length=200).strip()
+        controller = self._library_media_browse_controller
+        applied = controller.applied_scope or controller.mutation_refresh_scope
+        if query == controller.requested_scope.query:
+            return
+        self._clear_library_media_selection_for_scope_change()
+        if query:
+            if not applied.query:
+                self._library_media_unfiltered_scope = applied
+                self._library_media_unfiltered_selected_id = self._selected_media_id
+            self._library_media_filter_select_first = True
+            scope = dataclasses.replace(applied, query=query, page=1)
+        else:
+            self._library_media_filter_restore_id = (
+                self._library_media_unfiltered_selected_id
+            )
+            self._library_media_filter_select_first = False
+            scope = self._library_media_unfiltered_scope
+        self._request_library_media_browse(
+            scope,
+            focus_identity="#library-media-filter",
+        )
+
+    @on(Input.Changed, "#library-media-filter")
+    def handle_library_media_filter_changed(self, event: Input.Changed) -> None:
+        """Debounce Media search through the authoritative browse controller."""
+        self._stop_library_media_filter_timer()
+        self._library_media_filter_timer = self.set_timer(
+            SELECTION_SETTLE_SECONDS,
+            partial(self._request_library_media_filter, event.value),
+        )
+
+    @on(Input.Submitted, "#library-media-filter")
+    def handle_library_media_filter_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        self._stop_library_media_filter_timer()
+        self._request_library_media_filter(event.value)
+
+    @on(Button.Pressed, "#library-media-filter-clear")
+    def handle_library_media_filter_clear(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._stop_library_media_filter_timer()
+        self._request_library_media_filter("")
 
     def _load_library_media_list_if_needed(self) -> None:
         """Load the exact list after a direct viewer had no applied page."""
@@ -13429,6 +13653,8 @@ class LibraryScreen(BaseAppScreen):
         media_id: str,
         *,
         entry_origin: bool = False,
+        request_generation: int | None = None,
+        requested_id: str | None = None,
     ) -> LibraryEntryReconcileResult | None:
         """Fetch and store the full detail for a selected Library media item.
 
@@ -13455,12 +13681,31 @@ class LibraryScreen(BaseAppScreen):
         )
         pending = self._library_media_reader_session.pending_request
         reader_identity = self._library_media_reader_identity(media_id)
-        requested_id = reader_identity[0] if reader_identity is not None else media_id
-        request_generation = (
-            pending.generation
-            if pending is not None and pending.requested_id == requested_id
-            else None
+        requested_id = requested_id or (
+            reader_identity[0] if reader_identity is not None else media_id
         )
+        if (
+            request_generation is None
+            and pending is None
+            and reader_identity is not None
+            and requested_id == self._selected_media_id
+            and self._library_media_view == "viewer"
+        ):
+            canonical_id, backing_id = reader_identity
+            self._library_media_reader_session = begin_selection(
+                self._library_media_reader_session,
+                canonical_id,
+                backing_id,
+                self._library_media_reader_session.selected_title or canonical_id,
+                immediate=True,
+            )
+            pending = self._library_media_reader_session.pending_request
+        if request_generation is None:
+            request_generation = (
+                pending.generation
+                if pending is not None and pending.requested_id == requested_id
+                else None
+            )
         service = getattr(self.app_instance, "media_reading_scope_service", None)
         get_media_item = getattr(service, "get_media_item", None)
         if not callable(get_media_item):
@@ -13471,8 +13716,6 @@ class LibraryScreen(BaseAppScreen):
                     requested_id,
                     "Media service is unavailable.",
                 )
-            self._library_media_view = "list"
-            self._load_library_media_list_if_needed()
             if self.is_mounted:
                 if entry_origin:
                     if entry_route_key != self._library_entry_route_key():
@@ -13505,9 +13748,12 @@ class LibraryScreen(BaseAppScreen):
         # for the previous selection must not overwrite the current one. The
         # highlights fetch is a second await point, so re-check after it too
         # and store detail + highlights together only when still current.
+        current_pending = self._library_media_reader_session.pending_request
         if (
-            media_id != self._selected_media_id
-            or self._library_media_view != "viewer"
+            request_generation is None
+            or current_pending is None
+            or current_pending.generation != request_generation
+            or current_pending.requested_id != requested_id
             or (
                 entry_route_key is not None
                 and entry_route_key != self._library_entry_route_key()
@@ -13515,9 +13761,11 @@ class LibraryScreen(BaseAppScreen):
         ):
             return LibraryEntryReconcileResult.SUPERSEDED if entry_origin else None
         highlights = await self._fetch_library_media_highlights(media_id)
+        current_pending = self._library_media_reader_session.pending_request
         if (
-            media_id != self._selected_media_id
-            or self._library_media_view != "viewer"
+            current_pending is None
+            or current_pending.generation != request_generation
+            or current_pending.requested_id != requested_id
             or (
                 entry_route_key is not None
                 and entry_route_key != self._library_entry_route_key()
@@ -13567,21 +13815,6 @@ class LibraryScreen(BaseAppScreen):
                     current_route_key,
                 )
             return LibraryEntryReconcileResult.SUPERSEDED
-        if (
-            not isinstance(detail, Mapping)
-            and media_id == self._selected_media_id
-            and self._library_media_view == "viewer"
-        ):
-            # The record backing an opened item vanished between the click
-            # and this fetch resolving (e.g. deleted elsewhere, or a stale
-            # Search/RAG "Open" result) -- mirror the equivalent
-            # "Conversation is unavailable." notify _open_library_item_by_id
-            # gives its conversations branch, and fall back to the list
-            # view instead of leaving an empty/stuck viewer.
-            notify = getattr(self.app_instance, "notify", None)
-            if callable(notify):
-                notify("Media item is unavailable.", severity="warning")
-            self._library_media_view = "list"
         if self.is_mounted:
             if entry_origin:
                 if entry_route_key != self._library_entry_route_key():
@@ -17648,6 +17881,7 @@ class LibraryScreen(BaseAppScreen):
             self._notify_skill_dirty_veto()
             return
         self._acknowledge_library_destination_change()
+        self._cancel_library_media_selection_settlement()
         if row_id != LIBRARY_ROW_BROWSE_MEDIA:
             self._library_media_browse_controller.invalidate()
         self._library_navigation_context_generation += 1
@@ -18125,6 +18359,11 @@ class LibraryScreen(BaseAppScreen):
         if self._library_media_select_mode:
             self._exit_library_media_select_mode(announce_discard=True)
         else:
+            cancel_settlement = getattr(
+                self, "_cancel_library_media_selection_settlement", None
+            )
+            if callable(cancel_settlement):
+                cancel_settlement()
             self._library_media_select_mode = True
             self._library_media_row_selection.clear()
             # task-4022: a fresh Select session starts clean -- a receipt
@@ -18948,7 +19187,6 @@ class LibraryScreen(BaseAppScreen):
             self._library_media_viewer_return = (media_id, scroll_offset)
         if media_id:
             self._acknowledge_library_destination_change()
-            self._selected_media_id = media_id
             title = next(
                 (
                     row.title
@@ -18957,16 +19195,7 @@ class LibraryScreen(BaseAppScreen):
                 ),
                 media_id,
             )
-            reader_identity = self._library_media_reader_identity(media_id)
-            if reader_identity is not None:
-                canonical_id, backing_id = reader_identity
-                self._library_media_reader_session = begin_selection(
-                    self._library_media_reader_session,
-                    canonical_id,
-                    backing_id,
-                    title,
-                    immediate=True,
-                )
+            self._select_library_media_reader_row(media_id, title, immediate=True)
         self._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
         self._library_media_view = "viewer"
         # task-14902: an open type strip must not survive the trip through
@@ -18979,15 +19208,6 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_content_query = ""
         self._library_media_content_match_index = 0
         self._library_media_content_mode = "raw"
-        if media_id:
-            # Exclusive in its own group so rapidly switching rows cancels the
-            # previous in-flight detail fetch instead of letting a slower older
-            # fetch finish and overwrite the newer selection's viewer.
-            self.run_worker(
-                self._refresh_library_media_detail(media_id),
-                exclusive=True,
-                group="library_media_detail",
-            )
         self._sync_library_media_viewer_or_recompose()
 
     def _library_media_backing_id(self, media_id: str) -> int | str:
@@ -31445,6 +31665,7 @@ class LibraryScreen(BaseAppScreen):
         delete sub-state, mirroring the "‹ Back to list" button itself,
         which renders (and is reachable) in every one of those sub-states.
         """
+        self._cancel_library_media_selection_settlement()
         self._library_media_view = "list"
         self._library_media_editing = False
         self._library_media_confirming_delete = False
@@ -32145,6 +32366,10 @@ class LibraryScreen(BaseAppScreen):
                 self._library_media_reader_session.pending_request is not None
                 and self._library_media_reader_session.error is None
             ),
+            loading_message=(
+                self._library_media_reader_session.pending_banner or "Loading media…"
+            ),
+            error_message=self._library_media_reader_session.error or "",
             id="library-media-viewer",
         )
         viewer._library_entry_arrival_note = arrival_note
@@ -32197,6 +32422,10 @@ class LibraryScreen(BaseAppScreen):
                 self._library_media_reader_session.pending_request is not None
                 and self._library_media_reader_session.error is None
             )
+            and viewer.loading_message
+            == (self._library_media_reader_session.pending_banner or "Loading media…")
+            and viewer.error_message
+            == (self._library_media_reader_session.error or "")
         )
         if not unchanged:
             viewer.viewer = viewer_state
@@ -32211,11 +32440,28 @@ class LibraryScreen(BaseAppScreen):
                 self._library_media_reader_session.pending_request is not None
                 and self._library_media_reader_session.error is None
             )
+            viewer.loading_message = (
+                self._library_media_reader_session.pending_banner or "Loading media…"
+            )
+            viewer.error_message = self._library_media_reader_session.error or ""
             viewer.refresh(recompose=True)
         if detail is not None:
             self._library_media_composed_detail = detail
         self.call_after_refresh(self._sync_library_media_viewer_mutation_gate)
         return True
+
+    @on(Button.Pressed, "#library-media-reader-retry")
+    def handle_library_media_reader_retry(self, event: Button.Pressed) -> None:
+        """Retry the current failed Reader request immediately."""
+        event.stop()
+        session = self._library_media_reader_session
+        if session.selected_id is None or session.error is None:
+            return
+        self._select_library_media_reader_row(
+            session.selected_id,
+            session.selected_title or session.selected_id,
+            immediate=True,
+        )
 
     def _sync_library_media_viewer_or_recompose(self) -> None:
         """Viewer-scoped recompose for an in-viewer sub-state flip.

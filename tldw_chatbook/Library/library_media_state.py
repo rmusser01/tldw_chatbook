@@ -242,6 +242,8 @@ class LibraryMediaRow:
     secondary: str
     selected: bool = False
     checked: bool = False
+    loading: bool = False
+    loaded: bool = False
 
 
 @dataclass(frozen=True)
@@ -270,6 +272,7 @@ class LibraryMediaCanvasState:
     # task-14902: True while the type chooser's direct-pick strip replaces
     # the browse toolbar row (the Notes Sort choice-strip pattern).
     type_choices_visible: bool = False
+    query: str = ""
 
 
 @dataclass(frozen=True)
@@ -435,6 +438,8 @@ def build_library_media_browse_state(
     confirming_bulk_delete: bool = False,
     delete_receipt_count: int = 0,
     type_choices_visible: bool = False,
+    loading_id: str = "",
+    loaded_id: str = "",
 ) -> LibraryMediaCanvasState:
     """Project one exact Media page without filtering, sorting, or slicing it."""
     if not isinstance(result, MediaBrowseResult):
@@ -469,6 +474,8 @@ def build_library_media_browse_state(
             ),
             selected=item["id"] == resolved_selected_id,
             checked=item["id"] in selected_ids,
+            loading=item["id"] == loading_id,
+            loaded=item["id"] == loaded_id,
         )
         for item in items
     )
@@ -489,7 +496,7 @@ def build_library_media_browse_state(
     empty_copy = ""
     if not rows:
         if result.scope.query:
-            empty_copy = "No media matched this search."
+            empty_copy = f"No media matched ‘{result.scope.query}’."
         elif result.scope.media_type is not None:
             empty_copy = f"No media of type '{result.scope.media_type}'."
         else:
@@ -508,6 +515,7 @@ def build_library_media_browse_state(
         confirming_bulk_delete=confirming_bulk_delete,
         delete_receipt_count=max(0, delete_receipt_count),
         type_choices_visible=type_choices_visible,
+        query=result.scope.query,
     )
 
 
