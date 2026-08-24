@@ -442,3 +442,47 @@ def test_a_byte_for_byte_same_size_replacement_misses_the_cache(tmp_path):
         "after",
         "old",
     ]
+
+
+def test_a_concurrent_append_is_not_pinned_by_the_cache(tmp_path, monkeypatch):
+    """Another writer landing inside our own append window must not be cached.
+
+    A second process can append between the bytes we compute and the stat we
+    fingerprint them with. Caching then would pin content already short of the
+    file, under a fingerprint claiming it is current.
+    """
+    from tldw_chatbook.MCP import execution_log as module
+
+    private = "MCP-CONCURRENT-SENTINEL-sk-not-a-real-key"
+    active = tmp_path / "mcp_execution_log.jsonl"
+    execution_log = MCPExecutionLog(active, max_records_per_file=200)
+    execution_log.append(_record("warm"))
+
+    real_identity = module.MCPExecutionLog._identity
+    seen = {"active_calls": 0}
+
+    def intruding_identity(path):
+        # One append makes two _identity calls on the active generation: the
+        # staleness check, then the one that fingerprints what we just wrote.
+        # The window this guards is between them, so intrude before the second.
+        if Path(path) == active:
+            seen["active_calls"] += 1
+            if seen["active_calls"] == 2:
+                with active.open("a", encoding="utf-8") as handle:
+                    handle.write(
+                        json.dumps({"tool_name": "other", "result_excerpt": private})
+                        + "\n"
+                    )
+        return real_identity(path)
+
+    monkeypatch.setattr(
+        module.MCPExecutionLog, "_identity", staticmethod(intruding_identity)
+    )
+    execution_log.append(_record("ours"))
+    monkeypatch.undo()
+
+    # The intruder's row must be visible and scrubbed, not overwritten by a
+    # stale cached copy of the log.
+    names = [row["tool_name"] for row in execution_log.read_recent()]
+    assert names == ["other", "ours", "warm"], names
+    assert private not in active.read_text(encoding="utf-8")

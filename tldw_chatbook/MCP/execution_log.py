@@ -377,8 +377,16 @@ class MCPExecutionLog:
         return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
 
     def _remember_migration(self, path: Path, sanitized: bytes) -> None:
+        """Record ``sanitized`` as this generation's content, if it still is.
+
+        The size check is the multi-process window: another writer can append
+        between our read (or our own append) and this stat, and caching then
+        would pin bytes that are already short of the file while the
+        fingerprint says they are current. A mismatch simply means no cache
+        entry, i.e. the next call re-reads exactly as it did before.
+        """
         identity = self._identity(path)
-        if identity is None:
+        if identity is None or identity[2] != len(sanitized):
             self._migrated.pop(str(path), None)
             return
         self._migrated[str(path)] = (identity, sanitized)
