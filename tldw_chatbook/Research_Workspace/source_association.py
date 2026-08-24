@@ -8,7 +8,6 @@ import hashlib
 from pathlib import Path
 from typing import Any
 
-from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem
 from tldw_chatbook.Library.library_ingest_jobs import (
     IngestJobState,
     LibraryIngestJobRegistry,
@@ -251,14 +250,17 @@ class ResearchSourceAssociationCoordinator:
                 item_id=operation.canonical_item_id,
                 role="source",
             )
-            if callable(
-                getattr(self._local_registry, "get_workspace_scope", None)
-            ) and callable(
-                getattr(self._local_registry, "set_workspace_scope", None)
-            ):
+            reconcile_selection = getattr(
+                self._local_registry,
+                "reconcile_research_source_selection",
+                None,
+            )
+            if callable(reconcile_selection):
                 await asyncio.to_thread(
-                    self._persist_local_desired_scope,
-                    operation,
+                    reconcile_selection,
+                    operation.workspace_id,
+                    media_id=operation.canonical_item_id,
+                    desired_selected=operation.desired_selected,
                 )
         except Exception:
             return await self._association_failed(operation)
@@ -379,32 +381,6 @@ class ResearchSourceAssociationCoordinator:
             and type(row.get("selected")) is bool
             and type(row.get("version")) is int
             and row["version"] >= 1
-        )
-
-    def _persist_local_desired_scope(
-        self, operation: ResearchSourceOperation
-    ) -> None:
-        """Persist canonical Media selection after the membership exists."""
-
-        scope = self._local_registry.get_workspace_scope(operation.workspace_id)
-        existing = list(scope.items if scope is not None else ())
-        existing = [
-            item
-            for item in existing
-            if not (
-                item.source_type == "media"
-                and item.source_id == operation.canonical_item_id
-            )
-        ]
-        if operation.desired_selected:
-            existing.append(ScopeItem("media", operation.canonical_item_id))
-        self._local_registry.set_workspace_scope(
-            operation.workspace_id,
-            RagScope(
-                items=tuple(existing),
-                updated_at=operation.updated_at,
-                empty_is_scoped=True,
-            ),
         )
 
     async def _association_failed(

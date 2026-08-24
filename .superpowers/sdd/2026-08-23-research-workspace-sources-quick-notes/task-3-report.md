@@ -204,7 +204,34 @@ Search Server.
   contract fails typed `reorder_precondition_unavailable` with no PUT; bounded
   exact owners retain the existing PUT-then-GET reconciliation.
 
+## Fix round 4 — atomic Local desired-selection ownership
+
+- Replaced the coordinator's split `get_workspace_scope` / mutate /
+  `set_workspace_scope` sequence with one
+  `LocalWorkspaceRegistryService.reconcile_research_source_selection` owner
+  operation. The coordinator calls it off the event loop after the canonical
+  Media membership exists.
+- A missing scope remains the canonical implicit-all state when the new source
+  is desired. Deselecting from that state materializes every other attached
+  Media/Note source; an explicit scope changes only the target Media item; a
+  malformed row starts from explicit empty and adds the target only when
+  desired.
+- `WorkspaceDB.transaction` now exposes the same opt-in `immediate` write-lock
+  mode used by the repository's other read-then-write SQLite owners. The new
+  registry operation reserves that lock before its first membership/scope
+  read, so different source operations cannot both commit from one stale
+  desired-scope snapshot.
+
 ## Verification evidence
+
+- Round 4 complete Research Workspace gate: `243 passed, 1 warning in 2.09s`.
+- Round 4 Workspace registry/DB neighbor gate: `98 passed, 1 warning in 1.16s`.
+- Round 4 scoped Ruff, changed-file `compileall`, `git diff --check`, and the
+  Impeccable detector: pass. The scoped format probe found no new production
+  candidate; the remaining three whole-file legacy candidates are also
+  candidates at `6a23c6ff1`.
+- Round 4's only warning is the accepted environment
+  `RequestsDependencyWarning`. Full pytest was not run, per repository policy.
 
 - Round 3 focused owner/consumer gate: `219 passed, 1 warning in 2.79s`.
 - Round 3 independent Research neighbor gate: `265 passed, 1 warning in 4.01s`.
@@ -284,6 +311,13 @@ families, all restored before the final gates:
   made their actual-shape boundary guard red.
 - Raising the reorder precondition from 100 to the owner cap allowed a
   101-source PUT and made the exact no-mutation trace guard red.
+
+Round 4 added one owner-boundary inverse, restored before the final gates:
+
+- Replacing only `BEGIN IMMEDIATE` on the atomic Local reconciliation with a
+  deferred transaction made the barrier-started real-file SQLite concurrency
+  guard fail with `database is locked`; restoring the reservation made both
+  source updates persist without loss.
 
 ## Files and boundaries
 

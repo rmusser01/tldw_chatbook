@@ -156,7 +156,7 @@ COMMIT;
         yield self._held_connection()
 
     @contextmanager
-    def transaction(self) -> Iterator[sqlite3.Connection]:
+    def transaction(self, *, immediate: bool = False) -> Iterator[sqlite3.Connection]:
         """Run a write transaction on the held connection; roll back on failure.
 
         Nesting: this issues an explicit BEGIN on the ONE connection this
@@ -167,13 +167,17 @@ COMMIT;
         cleanly here, because the failure propagates through its `except`
         before reaching the caller.
 
+        Args:
+            immediate: Reserve the write lock before the first read. Use for
+                read-then-write updates that must serialize concurrent writers.
+
         Raises:
             Exception: Re-raised after rolling back, on any error inside
                 the `with` block. On clean exit the transaction commits.
         """
 
         conn = self._held_connection()
-        conn.execute("BEGIN")
+        conn.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
         try:
             yield conn
         except Exception:

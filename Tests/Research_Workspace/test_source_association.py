@@ -6,6 +6,7 @@ import asyncio
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
+import threading
 import time
 from types import SimpleNamespace
 
@@ -13,7 +14,7 @@ import pytest
 
 from tldw_chatbook.DB.Library_Ingest_Jobs_DB import LibraryIngestJobsDB
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
-from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem
+from tldw_chatbook.Chat.rag_scope import RagScope
 from tldw_chatbook.Library.library_ingest_jobs import (
     IngestJobState,
     LibraryIngestJobRegistry,
@@ -127,11 +128,7 @@ async def test_local_done_links_canonical_media_to_captured_workspace(
     assert [(item.workspace_id, item.role) for item in memberships] == [
         ("ws-captured", "source")
     ]
-    assert local_registry.get_workspace_scope("ws-captured") == RagScope(
-        items=(ScopeItem("media", "41"),),
-        updated_at=local_registry.get_workspace_scope("ws-captured").updated_at,
-        empty_is_scoped=True,
-    )
+    assert local_registry.get_workspace_scope("ws-captured") is None
 
 
 @pytest.mark.asyncio
@@ -988,6 +985,76 @@ async def test_coordinator_db_read_does_not_block_event_loop() -> None:
     await asyncio.gather(resume(), pulse())
 
     assert order == ["pulse", "resume"]
+
+
+@pytest.mark.asyncio
+async def test_local_scope_reconciliation_is_off_loop_and_uses_registry_owner(
+    tmp_path: Path,
+) -> None:
+    store = _operation_store(tmp_path)
+    operation = store.create(
+        _operation(
+            operation_id="research-op-scope-owner",
+            data_source=WorkspaceDataSource.LOCAL,
+            workspace_id="ws-a",
+        )
+    )
+    operation = store.advance_stage(
+        operation.operation_id,
+        stage=SourceOperationStage.CATALOG,
+        status=SourceOperationStatus.SUCCEEDED,
+        expected_revision=operation.revision,
+        canonical_item_id="41",
+    )
+    main_thread = threading.get_ident()
+    calls: list[tuple[str, str, bool, int]] = []
+
+    class RegistryOwner:
+        def link_membership(self, workspace_id: str, **kwargs):
+            assert threading.get_ident() != main_thread
+            return SimpleNamespace(membership_id="membership-41")
+
+        def reconcile_research_source_selection(
+            self,
+            workspace_id: str,
+            *,
+            media_id: str,
+            desired_selected: bool,
+        ) -> None:
+            calls.append(
+                (workspace_id, media_id, desired_selected, threading.get_ident())
+            )
+            time.sleep(0.1)
+
+        def get_workspace_scope(self, *_args, **_kwargs):
+            raise AssertionError("Coordinator must not read the scope owner.")
+
+        def set_workspace_scope(self, *_args, **_kwargs):
+            raise AssertionError("Coordinator must not write the scope owner.")
+
+    coordinator = ResearchSourceAssociationCoordinator(
+        operation_store=store,
+        ingest_jobs=LibraryIngestJobRegistry(),
+        local_registry=RegistryOwner(),
+    )
+    order: list[str] = []
+
+    async def resume() -> None:
+        receipt = await coordinator.resume(operation.operation_id)
+        assert receipt.association_status is SourceOperationStatus.SUCCEEDED
+        order.append("resume")
+
+    async def pulse() -> None:
+        await asyncio.sleep(0.01)
+        order.append("pulse")
+
+    await asyncio.gather(resume(), pulse())
+
+    assert order == ["pulse", "resume"]
+    assert [(workspace, media, selected) for workspace, media, selected, _ in calls] == [
+        ("ws-a", "41", True)
+    ]
+    assert calls[0][3] != main_thread
 
 
 @pytest.mark.asyncio

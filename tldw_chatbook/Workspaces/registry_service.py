@@ -10,7 +10,12 @@ from uuid import uuid4
 
 from loguru import logger
 
-from tldw_chatbook.Chat.rag_scope import RagScope, parse_scope, serialize_scope
+from tldw_chatbook.Chat.rag_scope import (
+    RagScope,
+    ScopeItem,
+    parse_scope,
+    serialize_scope,
+)
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Utils.sensitive_paths import find_root_binding_conflict
 
@@ -1285,6 +1290,126 @@ class LocalWorkspaceRegistryService:
         if scope is not None and not scope.items and not scope.empty_is_scoped:
             return None
         return scope
+
+    def reconcile_research_source_selection(
+        self,
+        workspace_id: str,
+        *,
+        media_id: str,
+        desired_selected: bool,
+    ) -> RagScope | None:
+        """Atomically reconcile one attached Media item into Research scope.
+
+        A missing scope means every workspace source is implicitly selected.
+        Selecting another source therefore leaves the row absent, while
+        deselecting one materializes all other representable source
+        memberships. Existing explicit scopes change only the target Media
+        item. Malformed stored state starts from explicit empty so a repair
+        cannot widen retrieval.
+
+        Args:
+            workspace_id: Workspace owning the source association.
+            media_id: Canonical Local Media id already linked as a source.
+            desired_selected: Whether that Media item should be desired.
+
+        Returns:
+            The persisted explicit scope, or ``None`` when implicit selection
+            remains authoritative.
+
+        Raises:
+            ValueError: If an identity is invalid or selection is not boolean.
+            WorkspaceRegistryServiceError: If the item is not attached or the
+                storage update fails.
+        """
+
+        safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
+        safe_media_id = _normalize_required_text(media_id, "media_id")
+        if type(desired_selected) is not bool:
+            raise ValueError("desired_selected must be a bool")
+        try:
+            with self.db.transaction(immediate=True) as conn:
+                memberships = conn.execute(
+                    """
+                    SELECT item_type, item_id
+                    FROM workspace_memberships
+                    WHERE workspace_id = ?
+                        AND role = 'source'
+                        AND item_type IN ('media', 'note')
+                    ORDER BY created_at ASC, item_type ASC, item_id ASC,
+                        membership_id ASC
+                    """,
+                    (safe_workspace_id,),
+                ).fetchall()
+                if not any(
+                    row["item_type"] == "media" and row["item_id"] == safe_media_id
+                    for row in memberships
+                ):
+                    raise WorkspaceRegistryServiceError(
+                        "Research source is not attached to this workspace."
+                    )
+
+                row = conn.execute(
+                    """
+                    SELECT payload
+                    FROM workspace_rag_scopes
+                    WHERE workspace_id = ?
+                    """,
+                    (safe_workspace_id,),
+                ).fetchone()
+                if row is None and desired_selected:
+                    return None
+
+                if row is None:
+                    existing = [
+                        ScopeItem(item["item_type"], item["item_id"])
+                        for item in memberships
+                        if not (
+                            item["item_type"] == "media"
+                            and item["item_id"] == safe_media_id
+                        )
+                    ]
+                else:
+                    try:
+                        raw_scope = json.loads(row["payload"])
+                    except (TypeError, ValueError):
+                        raw_scope = None
+                    scope = parse_scope(raw_scope)
+                    existing = list(scope.items if scope is not None else ())
+                    existing = [
+                        item
+                        for item in existing
+                        if not (
+                            item.source_type == "media"
+                            and item.source_id == safe_media_id
+                        )
+                    ]
+                    if desired_selected:
+                        existing.append(ScopeItem("media", safe_media_id))
+
+                scope = RagScope(
+                    items=tuple(existing),
+                    updated_at=self._now_factory(),
+                    empty_is_scoped=True,
+                )
+                conn.execute(
+                    """
+                    INSERT INTO workspace_rag_scopes (
+                        workspace_id, payload, updated_at
+                    )
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(workspace_id) DO UPDATE SET
+                        payload = excluded.payload,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        safe_workspace_id,
+                        json.dumps(serialize_scope(scope)),
+                        scope.updated_at,
+                    ),
+                )
+                return scope
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
 
     def set_workspace_scope(self, workspace_id: str, scope: RagScope | None) -> None:
         """Persist or clear a workspace's RAG retrieval scope.
