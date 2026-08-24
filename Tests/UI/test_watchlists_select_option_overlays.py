@@ -507,10 +507,13 @@ async def test_a_borderless_compact_select_has_a_visible_focus_cue(select_id):
     host = _watchlists_host()
     async with host.run_test(size=UAT_SIZE) as pilot:
         screen = _active_destination_screen(host)
-        screen.active_section = "items"
+        screen.active_section = (
+            "items" if select_id == "#items-status-select" else "sources"
+        )
         await pilot.pause()
         await _wait_for_selector(screen, pilot, select_id, timeout=5.0)
         select = screen.query_one(select_id, Select)
+        assert not select.disabled, "focus contrast must be measured on a focusable control"
 
         rest = _rendered_background(screen, select.region)
         select.focus()
