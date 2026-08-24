@@ -477,11 +477,19 @@ def test_source_scope_survives_a_screen_state_round_trip():
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
     from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 
-    from Tests.UI.console_controller_stubs import NO_APP, stub_message_controller
+    from Tests.UI.console_controller_stubs import (
+        NO_APP,
+        stub_fleet_controller,
+        stub_message_controller,
+    )
 
     def _bare_screen(store: ConsoleChatStore) -> ChatScreen:
         screen = ChatScreen.__new__(ChatScreen)
         screen._retrieval = Mock()
+        # Precedes the `_console_chat_store` assignment: that setter reaches
+        # `_console_runtime().set_chat_store`, which reads
+        # `self._fleet._console_wake_user_priority` (TASK-21381).
+        stub_fleet_controller(screen, context="rag settings bare screen")
         screen._console_chat_store = store
         screen._session = ConsoleSessionController.__new__(ConsoleSessionController)
         screen._console_visible_draft_session_id = None

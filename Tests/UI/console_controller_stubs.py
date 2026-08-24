@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from tldw_chatbook.UI.Console_Modules.fleet import ConsoleFleetLifecycleController
 from tldw_chatbook.UI.Console_Modules.image import ConsoleImageController
 from tldw_chatbook.UI.Console_Modules.message import ConsoleMessageController
 
@@ -66,6 +67,47 @@ IMAGE_CONTROLLER_CALLABLES = (
     "request_console_control_bar_sync",
     "default_console_session_settings",
     "clear_console_composer_draft",
+)
+
+#: Every keyword-only dependency of
+#: ``ConsoleFleetLifecycleController.__init__``. Unlike the two controllers
+#: above it takes no positional ``screen``: it reaches the screen only through
+#: these callables, so a shell can hold one without the controller holding the
+#: shell back.
+FLEET_CONTROLLER_CALLABLES = (
+    "pending_handoffs_accessor",
+    "ensure_chat_store",
+    "ensure_chat_controller",
+    "activate_workspace_for_session",
+    "switch_chat_session",
+    "schedule_native_console_sync",
+    "ensure_agent_bridge",
+    "wire_wake_coordinator",
+    "seed_wake_from_marks",
+    "retry_wake_soon",
+    "wake_has_pending",
+    "wake_delivering_conversation_id",
+    "displayed_composer_draft_accessor",
+    "screen_displayed_accessor",
+    "screen_mounted_accessor",
+    "active_session_id_accessor",
+    "chat_sessions_accessor",
+    "defer_on_message_pump",
+    "start_transcript_sync_timer",
+    "transcript_sync_timer_active",
+    "sync_native_console_ui",
+    "create_interval",
+    "record_timer_created",
+    "record_timer_stopped",
+    "chat_controller_available",
+    "fleet_has_unsettled_children",
+    "run_marker_for_session",
+    "fleet_teardown_split",
+    "leave_runtime",
+    "stage_teardown_notices",
+    "fleet_unseen_revision_accessor",
+    "read_fleet_unseen_ids",
+    "clear_fleet_unseen",
 )
 
 
@@ -183,4 +225,61 @@ def stub_image_controller(
         },
     )
     screen._image = controller
+    return controller
+
+
+def stub_fleet_controller(
+    screen: Any,
+    *,
+    context: str = "stub_fleet_controller",
+    **wired: Any,
+) -> ConsoleFleetLifecycleController:
+    """Attach a ``ConsoleFleetLifecycleController`` to a bare ``ChatScreen`` shell.
+
+    ``ChatScreen.__init__`` installs ``_fleet`` through
+    ``Console_Modules/wiring.build_console_controllers``, so a
+    ``ChatScreen.__new__(ChatScreen)`` shell never gets one. That is only
+    invisible until a shell touches a seam that reaches it -- and one of the
+    most ordinary lines a Console test writes does:
+    ``screen._console_chat_store = store`` is a property whose setter calls
+    ``self._console_runtime().set_chat_store(...)``, which builds the chat
+    controller's kwargs, which reads
+    ``self._fleet._console_wake_user_priority``. So the shell dies while being
+    *set up*, before the scenario under test has begun, with an
+    ``AttributeError`` naming an attribute the test never mentions.
+
+    Attaching a real controller wired to raisers is what makes that legible:
+    the ten ``_fleet.<x>`` members ``chat_screen.py`` reads are all real
+    methods, so merely *referencing* them succeeds, and a test that actually
+    invokes an unwired seam fails at that seam by name instead of at setup.
+
+    Args:
+        screen: The ``ChatScreen.__new__(ChatScreen)`` shell. Gets its
+            ``_fleet`` attribute set as a side effect.
+        context: Label used in the failure message of unwired callables, so a
+            fail-loud trip names the fixture it came from.
+        **wired: Any subset of ``FLEET_CONTROLLER_CALLABLES``, wired for real.
+            Everything omitted raises ``AssertionError`` when called.
+
+    Returns:
+        The controller, already assigned to ``screen._fleet``.
+
+    Raises:
+        TypeError: If ``wired`` names something that is not a constructor
+            callable -- a typo would otherwise silently leave that seam
+            raising.
+    """
+    unknown = set(wired) - set(FLEET_CONTROLLER_CALLABLES)
+    if unknown:
+        raise TypeError(
+            f"stub_fleet_controller got unknown callable(s) {sorted(unknown)}; "
+            f"expected a subset of {list(FLEET_CONTROLLER_CALLABLES)}"
+        )
+
+    kwargs = {
+        name: wired.get(name, _raiser(name, context))
+        for name in FLEET_CONTROLLER_CALLABLES
+    }
+    controller = ConsoleFleetLifecycleController(**kwargs)
+    screen._fleet = controller
     return controller
