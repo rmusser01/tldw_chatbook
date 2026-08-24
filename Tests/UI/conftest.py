@@ -119,6 +119,46 @@ def _disable_model_catalog_refresh(monkeypatch):
     )
 
 
+@pytest.fixture(autouse=True)
+def _no_tiktoken_bpe_download(monkeypatch):
+    """Keep UI token counting off tiktoken's BPE download seam (TASK-21590).
+
+    Incident: repairing the Console send harness let 16 mounted send tests
+    reach `ConsoleProviderGateway.prepare_chat_request` for the first time —
+    `prepare_provider_request` → `_account_categories` → `_count_wire` →
+    `count_console_messages_tokens` → `token_counter.estimate_tokens` →
+    `count_tokens_tiktoken` → `get_tiktoken_encoding`. On a cold cache
+    `tiktoken.get_encoding` fetches its BPE blobs from
+    ``openaipublic.blob.core.windows.net`` over HTTPS, so the egress guard
+    recorded six blocked connects per test and failed each one at teardown.
+    The tests themselves passed; only the guard saw it. The old, broken
+    harness never got past the durable-acceptance gate, so it never reached
+    this seam at all — which is why the failure is invisible on dev.
+
+    ``get_tiktoken_encoding`` is the single chokepoint: every tiktoken use in
+    the Console send path funnels through it (`console_cost_tracker` and
+    `console_session_settings` only reach tiktoken via
+    ``count_tokens_messages``), and it resolves as a module global at call
+    time, so patching it here covers callers that imported
+    ``count_tokens_tiktoken``/``estimate_tokens`` by name.
+
+    Returning ``None`` drives the already-tested no-tokenizer branch
+    (`count_tokens_tiktoken`'s character estimate) — which is what a default
+    install actually does, since tiktoken is not a base dependency
+    (task-2526). No test's LOGICAL coverage changes, only its network access,
+    and the result stops depending on whether this machine happens to have a
+    warm ``$TMPDIR/data-gym-cache`` (which the HOME sandbox does not
+    redirect). A test that needs the real encoding monkeypatches it back
+    within its own scope, exactly as with `_disable_model_catalog_refresh`
+    above.
+    """
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Utils.token_counter.get_tiktoken_encoding",
+        lambda _model: None,
+    )
+
+
 @pytest_asyncio.fixture
 async def mock_app_config():
     """Provide a standard mock app configuration for tests."""

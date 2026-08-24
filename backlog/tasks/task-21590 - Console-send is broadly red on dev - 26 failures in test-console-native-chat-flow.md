@@ -138,3 +138,51 @@ and reverted by hand; `git diff -- tldw_chatbook/` is empty.
 * `backlog/docs/lessons-testing-evidence.md` — the fail-closed-double lesson
 
 No production code changed.
+
+## Follow-up: the repair unblocked a real egress seam (2026-08-24)
+
+Review caught that the repaired tests were attempting live network egress: 16 teardown
+errors from `Tests/conftest.py`'s `_no_network_io` guard (task-15111), each recording
+`socket.connect -> 57.150.97.129:443` (an `openaipublic.blob.core.windows.net` address).
+The tests themselves passed; only the guard saw it, and because the errors attach to
+*passing* tests that still fail early on dev, a naive A/B baseline shows nothing.
+
+**Seam.** Not `chat_api_call`. Tracing the guard's `_deny` with a stack dump gave one
+distinct stack (the six connects are tiktoken's own retries):
+
+```
+_submit_console_native_draft -> run_prompt_chain -> submit_draft -> _accept_durable_turn
+  -> resume_durable_postcommit -> _run_durable_postcommit_effect
+  -> _stream_assistant_response -> _apply_conversation_memory_preflight
+  -> ConsoleProviderGateway.prepare_chat_request -> prepare_provider_request
+  -> _account_categories -> _count_wire -> count_console_messages_tokens
+  -> token_counter.estimate_tokens -> count_tokens_tiktoken -> get_tiktoken_encoding
+```
+
+`tiktoken.get_encoding` downloads its BPE blobs on a cold cache. The old harness never
+got past the durable-acceptance gate, so it never reached `prepare_chat_request` at all —
+the repair is what exposed the seam.
+
+**Fix.** A `_no_tiktoken_bpe_download` autouse fixture in `Tests/UI/conftest.py`, sibling
+to the existing `_disable_model_catalog_refresh` (task-16198, added for the same guard,
+same shape). It patches the single chokepoint `token_counter.get_tiktoken_encoding` to
+return `None`, which drives the already-tested no-tokenizer branch — the branch a default
+install takes anyway, since tiktoken is not a base dependency (task-2526). No
+`allow_network`, no `loopback_network`, no socket patching, and no narrowing of the
+dispatch under test: the send still runs the whole real path, it just counts tokens by
+character estimate. `Tests/UI` scope keeps `Tests/Chunking` (which legitimately needs a
+real tokenizer and skips when it is uncached) untouched.
+
+**Counts after the fix:** `test_console_native_chat_flow.py` + `test_console_composer_cursor.py`
+= **2 failed, 326 passed, 0 errors** (was 2 failed, 326 passed, **16 errors**). The 2
+failures are the unchanged TASK-22000 pair.
+
+**Mutation kills are unchanged:** M2 (force `durable_commit = None`) still kills 22/25,
+M3 (make `_resolved_destination_for_context` always raise) still kills 23/25, union
+survivors = none, so 25/25. Stubbing the tokenizer did not weaken what the tests exercise.
+
+**Wider cluster:** the 20 adjacent Console UI modules re-run at 26 failed / 600 passed
+with **0 blocked-egress attempts and 0 teardown errors** — the same 26 failures in the
+same 13 modules as before this change. Those tests still stop at the durable gate, so
+they never reached the tokenizer; the fixture pre-empts the seam for whenever they are
+repaired.
