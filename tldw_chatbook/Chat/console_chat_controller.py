@@ -4421,7 +4421,10 @@ class ConsoleChatController:
     ) -> ConsoleSubmitResult:
         """Fence one complete submit lifecycle for close and shutdown."""
 
-        if self._disposed or self._shutdown_requested.is_set():
+        if self._disposed or (
+            self._shutdown_requested.is_set()
+            and origin is not ConsoleSubmissionOrigin.AGENT_WAKE
+        ):
             return ConsoleSubmitResult(False, False, "Console is shutting down.")
         active_task = asyncio.current_task()
         owner_key = session_id or self.store.active_session_id
@@ -5278,7 +5281,10 @@ class ConsoleChatController:
                 if preparation is not None:
                     self._rollback_committing_preparation(preparation.preparation_id)
                 raise
-        if self._disposed or self._shutdown_requested.is_set():
+        if self._disposed or (
+            self._shutdown_requested.is_set()
+            and origin is not ConsoleSubmissionOrigin.AGENT_WAKE
+        ):
             if echoed_user is not None:
                 try:
                     self._mark_transient_echo_blocked(echoed_user.id)
@@ -5572,10 +5578,16 @@ class ConsoleChatController:
             preparation.preparation_id,
             user_message_id=echoed_user.id,
         )
-        parent_message_id = None
-        if echoed_user.parent_message_id is not None:
-            parent = self.store.get_message(echoed_user.parent_message_id)
-            parent_message_id = parent.persisted_message_id
+        # `echoed_user.parent_message_id` is the PERSISTED parent id, which
+        # `_persist_new_message` assigns -- and this echo was appended with
+        # `persist=False`, so it is always None here. Reading it made every
+        # checkpointed turn a fresh DB root, forking the conversation away
+        # from its own history on the second send. Ask the store for the
+        # nearest persisted ancestor of the echo's real tree parent instead.
+        has_native_parent, parent_message_id = (
+            self.store.durable_parent_for_message(echoed_user.id)
+        )
+        if has_native_parent:
             if parent_message_id is None:
                 self._pause_prepared_commit(
                     preparation.preparation_id,
@@ -14336,6 +14348,31 @@ class ConsoleChatController:
                 "cost_cache_ttl_record_failed"
             )
 
+    def _teardown_refuses_turn(self, session_id: str | None) -> bool:
+        """Whether teardown must refuse this session's turn before dispatch.
+
+        App exit (``_disposed``) refuses everything. The PER-VISIT
+        ``_shutdown_requested`` fence must not: ``leave_console``'s owner
+        ruling keeps an in-flight ``AGENT_WAKE`` turn running headless
+        ("cancelling it would re-create the exact 'only completes if you
+        stay' gap this arc exists to close"), and
+        ``_agent_wake_turn_sessions`` is the registry that ruling already
+        uses to spare those sessions from the same method's cancel fan-out.
+        Reading the flag alone refused the wake anyway, one layer down.
+
+        Args:
+            session_id: Session owning the turn, or None when unresolved.
+
+        Returns:
+            True when the turn must be refused.
+        """
+
+        if self._disposed:
+            return True
+        if not self._shutdown_requested.is_set():
+            return False
+        return session_id not in self._agent_wake_turn_sessions
+
     def _accepted_shutdown_before_dispatch(
         self, assistant_message_id: str, session_id: str
     ) -> ConsoleSubmitResult:
@@ -14468,7 +14505,7 @@ class ConsoleChatController:
                 status="started",
             )
         try:
-            if self._disposed or self._shutdown_requested.is_set():
+            if self._teardown_refuses_turn(owner_id):
                 return self._accepted_shutdown_before_dispatch(
                     assistant_message_id, owner_id
                 )
@@ -15387,7 +15424,7 @@ class ConsoleChatController:
         # (agent_models.py) is what bounds a run overall, but only once
         # control returns to a checkpoint the loop actually polls -- it is
         # not a hard timeout on an in-flight, zero-chunk provider call.
-        if self._disposed or self._shutdown_requested.is_set():
+        if self._teardown_refuses_turn(session_id):
             return self._accepted_shutdown_before_dispatch(
                 assistant_message_id, session_id
             )

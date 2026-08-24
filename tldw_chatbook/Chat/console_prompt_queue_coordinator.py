@@ -434,6 +434,15 @@ class ConsolePromptQueueCoordinator:
         if chain is None:
             if origin is ConsoleSubmissionOrigin.MANUAL:
                 return
+            if entry_id is None:
+                # Nothing was ever queued, so there is no claim to settle and
+                # no chain to require. The live case is an AGENT_WAKE turn
+                # delivered after `leave_console` tombstoned this visit's
+                # chains: `leave_console`'s own owner ruling keeps an
+                # in-flight wake running headless, and raising here refused
+                # it instead -- re-creating the "only completes if you stay"
+                # gap task-15860 closed.
+                return
             raise RuntimeError("accepted queued chain is unavailable")
         if origin is ConsoleSubmissionOrigin.MANUAL:
             snapshot = self.registry.snapshot(session_id)
