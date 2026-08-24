@@ -5740,8 +5740,9 @@ class TldwCli(
     # the DBStatusManager resolves the visible widget on the active screen.
     # DB Size checker - now using AppFooterStatus
     _db_size_status_widget: Optional[AppFooterStatus] = None
-    # DB size update timer moved to DBStatusManager
-    _token_count_update_timer: Optional[Timer] = None
+    # DB size update timer moved to DBStatusManager; the 10 s token-count
+    # timer that used to live here was retired by task-21133 (its consumer
+    # surface went with task-17653).
     ui_responsiveness_monitor: UIResponsivenessMonitor | None = None
     _ui_responsiveness_heartbeat_timer: Optional[Timer] = None
 
@@ -9178,17 +9179,15 @@ class TldwCli(
             return
 
     def _stop_footer_status_timers(self) -> None:
-        """Stop footer status timers and clear their diagnostic entries."""
-        timer = getattr(self, "_token_count_update_timer", None)
-        if timer is not None:
-            try:
-                timer.stop()
-            except Exception as exc:
-                logger.debug(f"Footer token timer stop skipped: {exc}")
-            finally:
-                self._token_count_update_timer = None
+        """Clear the footer status timers' diagnostic entries.
+
+        The timer object itself is owned by ``DBStatusManager`` and stopped
+        by its ``stop_periodic_updates()``; both shutdown hooks call that
+        immediately before this. task-21133 removed the second, token-count
+        timer this method also used to own, so there is no longer a handle
+        to stop here.
+        """
         self._record_ui_responsiveness_timer_stopped("footer-db-size-periodic")
-        self._record_ui_responsiveness_timer_stopped("footer-token-periodic")
 
     def _record_footer_timer_created(self, name: str) -> None:
         """Record footer timer creation without making diagnostics mandatory."""
@@ -12211,10 +12210,6 @@ class TldwCli(
         """Updates the database size information in the shell status line."""
         await self.db_status_manager.update_db_sizes()
 
-    async def update_token_count_display(self) -> None:
-        """Updates the token count in the footer when on Chat tab."""
-        await self.db_status_manager.update_token_count_display()
-
     def _active_footer_status(self) -> Optional[AppFooterStatus]:
         """The visible screen's footer, falling back to the default-screen one.
 
@@ -12486,7 +12481,19 @@ class TldwCli(
             self._legacy_citation_migration_in_flight = False
 
     def _schedule_footer_status_updates(self) -> None:
-        """Wire status-line DB/token status updates after UI readiness."""
+        """Wire the status-line DB-size updates after UI readiness.
+
+        task-21133: this used to arm a second pair of timers -- a 0.5 s
+        one-shot and a 10 s interval -- for a token counter whose entire
+        consumer surface task-17653 removed. Nothing armed the footer's
+        ``#footer-token-count`` chip any more (``BaseAppScreen`` composes
+        every ``AppFooterStatus`` with ``show_token_count=False``, and that
+        is the only construction site in the package), so each tick resolved
+        the active footer, ran three ``query_one`` selectors that no live
+        screen composes, and threw the answer away in a debug log. The
+        interval, its handle, and the whole chain behind it are gone; the
+        DB-size timers below are unchanged.
+        """
 
         def record_footer_timer(name: str) -> None:
             record_timer = getattr(self, "_record_footer_timer_created", None)
@@ -12505,8 +12512,8 @@ class TldwCli(
             # resolve the ACTIVE screen's footer via `_active_footer_status`.
             # Splash and the first-run wizard mount no AppFooterStatus, so a
             # miss here must not abort timer setup (task-2721: it previously
-            # logged two tracebacks per fresh install and left the DB-size and
-            # token timers never started for the whole session).
+            # logged two tracebacks per fresh install and left the DB-size
+            # timers never started for the whole session).
             try:
                 self._db_size_status_widget = self.query_one(AppFooterStatus)
                 self.loguru_logger.info("AppFooterStatus widget instance acquired.")
@@ -12526,14 +12533,6 @@ class TldwCli(
             self.loguru_logger.info(
                 "DB size update timer started for the shell status line (interval: 2 minutes)."
             )
-
-            self.set_timer(0.5, self.update_token_count_display)
-            record_footer_timer("footer-token-periodic")
-            self._token_count_update_timer = self.set_interval(
-                10,
-                lambda: self.call_after_refresh(self.update_token_count_display),
-            )
-            self.loguru_logger.info("Token count update timer started (10s interval).")
         except Exception as e_db_size:
             self.loguru_logger.opt(exception=True).error(
                 f"Error setting up DB size indicator for the shell status line: {e_db_size}",

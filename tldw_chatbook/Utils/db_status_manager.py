@@ -3,7 +3,12 @@ Database Status Manager - Centralized management for database size telemetry.
 
 Computes the local database file sizes on a timer and caches them on the
 app (``db_sizes_status``) for the Library Details disclosure, plus logs
-them. Token-count footer updates route through here as well.
+them.
+
+task-21133: footer token-count updates used to route through here too. Their
+whole consumer surface was retired by task-17653 (no screen composes an armed
+``AppFooterStatus``), so the periodic producer and this manager's half of it
+are gone; only the DB-size telemetry remains.
 """
 
 from typing import Optional, TYPE_CHECKING
@@ -77,38 +82,6 @@ class DBStatusManager:
 
         except Exception as e:
             logger.opt(exception=True).error(f"Error computing DB sizes: {e}")
-
-    async def update_token_count_display(self) -> None:
-        """
-        Update the token count in the footer when on Chat tab.
-
-        This method checks if the current tab is the chat tab and updates
-        the token count display accordingly.
-        """
-        # Import here to avoid circular imports
-        from tldw_chatbook.Constants import TAB_CHAT
-
-        db_status_widget = self._get_db_status_widget()
-        if not db_status_widget:
-            return
-
-        # Check if we're on the chat tab
-        if hasattr(self.app, "current_tab") and self.app.current_tab != TAB_CHAT:
-            # Clear token count when not on chat tab
-            db_status_widget.update_token_count("")
-            return
-
-        try:
-            # Do the real update
-            from tldw_chatbook.Event_Handlers.Chat_Events.chat_token_events import (
-                update_chat_token_counter,
-            )
-
-            await update_chat_token_counter(self.app)
-        except Exception as e:
-            logger.opt(exception=True).error(f"Error updating token count: {e}")
-            if db_status_widget:
-                db_status_widget.update_token_count("Token count error")
 
     def start_periodic_updates(self, interval_seconds: float = 5.0) -> None:
         """
