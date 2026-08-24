@@ -65,7 +65,10 @@ implementation-base ref itself before it can create a correction namespace;
 callers cannot supply an unverified revision. Reopen and correction-approval
 retries now reconcile the durable receipt marker with a missing append-only
 lineage transition after either a pre-commit or post-commit failure, while
-remaining idempotent after the transition commits.
+remaining idempotent after the transition commits. A visible marker is not by
+itself treated as durable: reconciliation revalidates and fsyncs the exact
+marker file and its containing directory before appending a missing transition
+or returning an already-committed result.
 
 Registry markers now bind normalized receipt path plus receipt hash and reject
 duplicate numeric review identities. The correction path rejects symlinks,
@@ -84,8 +87,10 @@ Verification completed for the implementation:
 
 - review-finding RED shard: 12 expected failures;
 - review-finding GREEN shard: 12 passed;
-- correction/review regression shard: 87 passed;
-- complete performance harness: 642 passed, 2 dependency warnings in 126.62s;
+- marker-durability RED shard: 4 expected failures;
+- marker-durability GREEN/reconciliation shard: 8 passed;
+- correction/review regression shard: 91 passed;
+- complete performance harness: 646 passed, 2 dependency warnings in 124.01s;
 - Ruff, `py_compile`, and `git diff --check`: passed.
 
 Modified files are the benchmark runner, its focused harness tests, and this

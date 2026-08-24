@@ -737,6 +737,9 @@ def _reopen_review_receipt_locked(
     if current_identity:
         if registered[-1][:2] != (location.relative_path, receipt_sha256):
             raise RuntimeError("review_receipt_order_invalid")
+        _register_receipt_identity(
+            attempt_root, receipt_path, receipt_sha256, normalized=True
+        )
         if current == changes_event:
             return receipt
         if current["state"] != "complete_pending_review":
@@ -944,6 +947,9 @@ def _register_correction_review_locked(
         for relative, digest, _registered in registered
     )
     if current_identity:
+        _register_receipt_identity(
+            attempt_root, receipt_path, receipt_sha256, normalized=True
+        )
         if (
             current["state"] == "changes_required"
             and current.get("correction_id") == location.correction_id

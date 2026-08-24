@@ -4892,6 +4892,22 @@ def test_reopen_review_reconciles_marker_to_lineage_crash_window(
         / f"review-002.json--{hashlib.sha256(rejected.read_bytes()).hexdigest()}"
     )
     assert marker.is_file()
+    events: list[str] = []
+    real_file_fsync = profile._fsync_regular_file
+    real_directory_fsync = profile._fsync_directory
+
+    def record_file(path: Path) -> None:
+        if path == marker:
+            events.append("marker")
+        real_file_fsync(path)
+
+    def record_directory(path: Path) -> None:
+        if path == marker.parent:
+            events.append("directory")
+        real_directory_fsync(path)
+
+    monkeypatch.setattr(profile, "_fsync_regular_file", record_file)
+    monkeypatch.setattr(profile, "_fsync_directory", record_directory)
     monkeypatch.setattr(profile, "append_attempt_state", real_append)
     assert profile.reopen_review_receipt(
         campaign,
@@ -4905,6 +4921,91 @@ def test_reopen_review_reconciles_marker_to_lineage_crash_window(
         "complete_pending_review",
         "changes_required",
     ]
+    assert events == ["marker", "directory"]
+
+
+@pytest.mark.parametrize("failure", ("marker", "directory"))
+def test_reopen_review_refsyncs_incomplete_marker_before_lineage_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    campaign, attempt, approved, digest, _raw_sha256 = _approve_review_attempt(
+        tmp_path
+    )
+    rejected = _write_review_receipt(
+        attempt,
+        digest,
+        decision="changes_required",
+        filename="review-002.json",
+    )
+    marker = (
+        attempt
+        / "reviews/.registered/reviews"
+        / f"review-002.json--{hashlib.sha256(rejected.read_bytes()).hexdigest()}"
+    )
+    real_file_fsync = profile._fsync_regular_file
+    real_directory_fsync = profile._fsync_directory
+
+    def fail_file(path: Path) -> None:
+        if failure == "marker" and path == marker:
+            raise OSError("injected reopen marker fsync failure")
+        real_file_fsync(path)
+
+    def fail_directory(path: Path) -> None:
+        if failure == "directory" and path == marker.parent:
+            raise OSError("injected reopen marker directory fsync failure")
+        real_directory_fsync(path)
+
+    monkeypatch.setattr(profile, "_fsync_regular_file", fail_file)
+    monkeypatch.setattr(profile, "_fsync_directory", fail_directory)
+    with pytest.raises(
+        RuntimeError, match="^review_receipt_registry_durability_failed$"
+    ):
+        profile.reopen_review_receipt(
+            campaign,
+            "attempt-0001",
+            rejected,
+            correction_id="correction-001",
+        )
+
+    assert marker.is_file()
+    assert approved.is_file()
+    assert rejected.is_file()
+    assert [
+        event["state"] for event in profile.attempt_lineage(campaign / "attempts.jsonl")
+    ] == ["running", "complete_pending_review"]
+
+    events: list[str] = []
+
+    def record_file(path: Path) -> None:
+        if path == marker:
+            events.append("marker")
+        real_file_fsync(path)
+
+    def record_directory(path: Path) -> None:
+        if path == marker.parent:
+            events.append("directory")
+        real_directory_fsync(path)
+
+    real_append = profile.append_attempt_state
+
+    def record_append(ledger: Path, event: dict[str, object]) -> None:
+        if event["state"] == "changes_required":
+            events.append("lineage")
+        real_append(ledger, event)
+
+    monkeypatch.setattr(profile, "_fsync_regular_file", record_file)
+    monkeypatch.setattr(profile, "_fsync_directory", record_directory)
+    monkeypatch.setattr(profile, "append_attempt_state", record_append)
+    assert profile.reopen_review_receipt(
+        campaign,
+        "attempt-0001",
+        rejected,
+        correction_id="correction-001",
+    )["decision"] == "changes_required"
+
+    assert events == ["marker", "directory", "lineage"]
 
 
 @pytest.mark.parametrize(
@@ -5275,6 +5376,22 @@ def test_correction_approval_reconciles_marker_to_lineage_crash_window(
         / f"review-003.json--{hashlib.sha256(receipt.read_bytes()).hexdigest()}"
     )
     assert marker.is_file()
+    events: list[str] = []
+    real_file_fsync = profile._fsync_regular_file
+    real_directory_fsync = profile._fsync_directory
+
+    def record_file(path: Path) -> None:
+        if path == marker:
+            events.append("marker")
+        real_file_fsync(path)
+
+    def record_directory(path: Path) -> None:
+        if path == marker.parent:
+            events.append("directory")
+        real_directory_fsync(path)
+
+    monkeypatch.setattr(profile, "_fsync_regular_file", record_file)
+    monkeypatch.setattr(profile, "_fsync_directory", record_directory)
     monkeypatch.setattr(profile, "complete_attempt_measurement", real_complete)
     assert profile.register_review_receipt(
         campaign, "attempt-0001", receipt
@@ -5286,6 +5403,83 @@ def test_correction_approval_reconciles_marker_to_lineage_crash_window(
         "changes_required",
         "complete_pending_review",
     ]
+    assert events == ["marker", "directory"]
+
+
+@pytest.mark.parametrize("failure", ("marker", "directory"))
+def test_correction_approval_refsyncs_incomplete_marker_before_lineage_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    campaign, attempt, approved, _digest, _raw_sha256 = _reopen_approved_attempt(
+        tmp_path
+    )
+    correction = _prepare_manifest_correction(campaign)
+    receipt = _write_review_receipt(
+        correction,
+        profile.canonical_artifact_digest(correction),
+        filename="review-003.json",
+    )
+    marker = (
+        attempt
+        / "reviews/.registered/corrections/correction-001/reviews"
+        / f"review-003.json--{hashlib.sha256(receipt.read_bytes()).hexdigest()}"
+    )
+    real_file_fsync = profile._fsync_regular_file
+    real_directory_fsync = profile._fsync_directory
+
+    def fail_file(path: Path) -> None:
+        if failure == "marker" and path == marker:
+            raise OSError("injected correction marker fsync failure")
+        real_file_fsync(path)
+
+    def fail_directory(path: Path) -> None:
+        if failure == "directory" and path == marker.parent:
+            raise OSError("injected correction marker directory fsync failure")
+        real_directory_fsync(path)
+
+    monkeypatch.setattr(profile, "_fsync_regular_file", fail_file)
+    monkeypatch.setattr(profile, "_fsync_directory", fail_directory)
+    with pytest.raises(
+        RuntimeError, match="^review_receipt_registry_durability_failed$"
+    ):
+        profile.register_review_receipt(campaign, "attempt-0001", receipt)
+
+    assert marker.is_file()
+    assert approved.is_file()
+    assert correction.is_dir()
+    assert receipt.is_file()
+    assert [
+        event["state"] for event in profile.attempt_lineage(campaign / "attempts.jsonl")
+    ] == ["running", "complete_pending_review", "changes_required"]
+
+    events: list[str] = []
+
+    def record_file(path: Path) -> None:
+        if path == marker:
+            events.append("marker")
+        real_file_fsync(path)
+
+    def record_directory(path: Path) -> None:
+        if path == marker.parent:
+            events.append("directory")
+        real_directory_fsync(path)
+
+    real_complete = profile.complete_attempt_measurement
+
+    def record_complete(*args, **kwargs):
+        events.append("lineage")
+        return real_complete(*args, **kwargs)
+
+    monkeypatch.setattr(profile, "_fsync_regular_file", record_file)
+    monkeypatch.setattr(profile, "_fsync_directory", record_directory)
+    monkeypatch.setattr(profile, "complete_attempt_measurement", record_complete)
+    assert profile.register_review_receipt(
+        campaign, "attempt-0001", receipt
+    )["decision"] == "approved"
+
+    assert events == ["marker", "directory", "lineage"]
 
 
 def test_correction_receipt_and_registry_namespaces_fsync_every_parent_link(
