@@ -5457,6 +5457,9 @@ async def run_scripted_mounted_sample(
     from tldw_chatbook.Chat.console_project_instructions import (
         ProjectInstructionControlState,
     )
+    from tldw_chatbook.Chat.console_library_destination import (
+        resolve_console_destination,
+    )
     from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
     from tldw_chatbook.Widgets.Console import ConsoleComposerBar
@@ -5474,13 +5477,17 @@ async def run_scripted_mounted_sample(
             self.tool_calls: list[str] = []
 
         async def resolve_for_send(self, selection: Any) -> ConsoleProviderResolution:
-            return ConsoleProviderResolution(
+            resolution = ConsoleProviderResolution(
                 provider="llama_cpp",
                 base_url=selection.base_url or "http://127.0.0.1:9099",
                 model="scripted-model",
                 ready=True,
                 readiness_key="llama_cpp",
                 execution_key="llama_cpp",
+            )
+            return dataclass_replace(
+                resolution,
+                resolved_destination=resolve_console_destination(resolution),
             )
 
         async def stream_chat(self, _resolution: Any, _messages: Any, **_kwargs: Any):
@@ -5589,6 +5596,13 @@ async def run_scripted_mounted_sample(
                 for session in controller.store.sessions()
                 if session.id == controller.store.active_session_id
             )
+            mutation_path = (
+                console._console_runtime()
+                .scratch_spaces.snapshot(benchmark_session.id)
+                .root
+                / "measured/turn-two.txt"
+            )
+            mutation_path.parent.mkdir(exist_ok=True)
             if benchmark_session.workspace_id != runtime.workspace_id:
                 raise AssertionError(
                     "mounted session selected the wrong workspace: "
@@ -5663,12 +5677,14 @@ async def run_scripted_mounted_sample(
                 if message.role is ConsoleMessageRole.ASSISTANT
             ]
             terminal = assistants[-1].content
-            mutation_path = runtime.workspace_root / "measured/turn-two.txt"
-            if not mutation_path.exists():
+            if (
+                not mutation_path.exists()
+                or mutation_path.read_bytes() != FIXED_MUTATION
+            ):
                 rows = store.messages_for_session(store.active_session_id)
                 raise AssertionError(
-                    "fs_write did not create the benchmark mutation: "
-                    f"{[(message.role.value, message.status, len(message.content)) for message in rows]!r}"
+                    "fs_write did not create the expected private-scratch mutation: "
+                    f"{[(message.role.value, message.status, message.content) for message in rows]!r}"
                 )
             console_runtime = console._console_runtime()
             await await_owned_cleanup(console_runtime.dispose())
@@ -5690,6 +5706,7 @@ async def run_scripted_mounted_sample(
         "turn_2_release_ns": turn_2_release_ns,
         "third_provider_started_ns": gateway.third_provider_started_ns,
         "terminal_third_assistant": terminal,
+        "mutation_verified": True,
     }
 
 

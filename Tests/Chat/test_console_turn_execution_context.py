@@ -229,6 +229,25 @@ def test_final_context_requires_complete_authority_and_destination():
         )
 
 
+def test_final_context_preserves_change_review_admission_snapshot():
+    skipped = SkippedReviewRoot(alias="folder-busy", reason="Preparing history")
+    configuration = ConsoleTurnConfigurationSnapshot.capture(
+        session_id="session-a",
+        provider_selection=ConsoleProviderSelection(provider="openai"),
+        change_review_root_aliases=("folder-ready",),
+        change_review_skipped_roots=(skipped,),
+    )
+
+    context = ConsoleTurnExecutionContext(
+        configuration=configuration,
+        library_authority=_authority(),
+        resolved_destination=_destination(),
+    )
+
+    assert context.change_review_root_aliases == ("folder-ready",)
+    assert context.change_review_skipped_roots == (skipped,)
+
+
 def test_final_context_exposes_read_only_configuration_compatibility_properties():
     configuration = ConsoleTurnConfigurationSnapshot.capture(
         session_id="session-a",

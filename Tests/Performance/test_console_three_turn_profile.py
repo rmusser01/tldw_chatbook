@@ -11656,6 +11656,4 @@ async def test_scripted_mounted_sample_uses_real_composer_queue_and_fs_write(
     assert result["third_send_requested_ns"] < result["turn_2_release_ns"]
     assert result["third_provider_started_ns"] is not None
     assert result["terminal_third_assistant"] == "turn-three-complete"
-    assert (tmp_path / "mounted/workspace/measured/turn-two.txt").read_bytes() == (
-        profile.FIXED_MUTATION
-    )
+    assert result["mutation_verified"] is True

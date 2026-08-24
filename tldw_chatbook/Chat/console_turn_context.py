@@ -200,6 +200,8 @@ def _detached_configuration(
         scratch_space=configuration.scratch_space,
         session_settings=configuration.session_settings,
         workspace_roots=configuration.workspace_roots,
+        change_review_root_aliases=configuration.change_review_root_aliases,
+        change_review_skipped_roots=configuration.change_review_skipped_roots,
         capabilities=configuration.capabilities,
         rag_defaults=configuration.rag_defaults,
         tool_configuration=configuration.tool_configuration,
@@ -317,6 +319,16 @@ class ConsoleTurnExecutionContext:
     def workspace_roots(self) -> tuple[str, ...]:
         """Return the detached workspace roots."""
         return self.configuration.workspace_roots
+
+    @property
+    def change_review_root_aliases(self) -> tuple[str, ...]:
+        """Return roots admitted to Change Review for this turn."""
+        return self.configuration.change_review_root_aliases
+
+    @property
+    def change_review_skipped_roots(self) -> tuple[SkippedReviewRoot, ...]:
+        """Return roots skipped by Change Review admission for this turn."""
+        return self.configuration.change_review_skipped_roots
 
     @property
     def capabilities(self) -> Mapping[str, object]:
