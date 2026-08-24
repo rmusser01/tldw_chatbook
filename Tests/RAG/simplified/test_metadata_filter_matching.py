@@ -40,6 +40,7 @@ def test_metadata_filter_value_matching(actual, expected, matches):
 @pytest.mark.asyncio
 async def test_semantic_search_uses_membership_filter():
     """Semantic post-filtering retains each media type named by $in."""
+
     class Embeddings:
         async def create_embeddings_async(self, texts):
             return [[0.0]]
@@ -121,6 +122,7 @@ async def test_search_bypasses_cache_for_non_serializable_membership_filter(
     monkeypatch,
 ):
     """Public search still filters correctly when $in cannot form a cache key."""
+
     class Embeddings:
         async def create_embeddings_async(self, texts):
             return [[0.0]]
