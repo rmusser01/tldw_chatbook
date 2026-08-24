@@ -4744,6 +4744,16 @@ def _prebuild_manifest_correction(campaign: Path) -> Path:
     return correction
 
 
+@pytest.fixture
+def synthetic_correction_authority(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep ordinary synthetic approvals independent from the local Git ref."""
+    monkeypatch.setattr(
+        profile,
+        "resolve_implementation_base_revision",
+        lambda *_args, **_kwargs: profile.IMPLEMENTATION_BASE_SHA,
+    )
+
+
 def test_implementation_base_revision_resolves_only_the_fixed_ref(
     tmp_path: Path,
 ) -> None:
@@ -5261,7 +5271,10 @@ def test_manifest_correction_rename_failure_leaves_no_partial_root(
     ),
 )
 def test_registered_correction_rejects_later_artifact_changes(
-    tmp_path: Path, name: str, code: str
+    tmp_path: Path,
+    name: str,
+    code: str,
+    synthetic_correction_authority: None,
 ) -> None:
     campaign, _attempt, _approved, _digest, _raw_sha256 = _reopen_approved_attempt(
         tmp_path
@@ -5282,6 +5295,7 @@ def test_registered_correction_rejects_later_artifact_changes(
 
 def test_correction_approval_requires_a_still_later_review_number(
     tmp_path: Path,
+    synthetic_correction_authority: None,
 ) -> None:
     campaign, _attempt, _approved, _digest, _raw_sha256 = _reopen_approved_attempt(
         tmp_path
@@ -5323,7 +5337,9 @@ def test_manifest_correction_post_rename_failure_retains_only_complete_root(
 
 
 def test_post_rename_correction_republishes_parent_before_approval_marker(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    synthetic_correction_authority: None,
 ) -> None:
     campaign, attempt, approved, _digest, _raw_sha256 = _reopen_approved_attempt(
         tmp_path
@@ -5349,15 +5365,6 @@ def test_post_rename_correction_republishes_parent_before_approval_marker(
         correction,
         profile.canonical_artifact_digest(correction),
         filename="review-003.json",
-    )
-    monkeypatch.setattr(
-        profile,
-        "resolve_implementation_base_revision",
-        lambda repository_root: (
-            profile.IMPLEMENTATION_BASE_SHA
-            if repository_root == Path(profile.__file__).resolve().parents[2]
-            else pytest.fail("wrong implementation-base authority root")
-        ),
     )
     marker = (
         attempt
@@ -5427,6 +5434,7 @@ def test_post_rename_correction_republishes_parent_before_approval_marker(
 
 def test_versioned_manifest_correction_preserves_original_and_promotes_by_path(
     tmp_path: Path,
+    synthetic_correction_authority: None,
 ) -> None:
     campaign, attempt, approved, digest, raw_sha256 = _approve_review_attempt(tmp_path)
     original = {
@@ -5510,6 +5518,7 @@ def test_correction_approval_reconciles_marker_to_lineage_crash_window(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     append_committed: bool,
+    synthetic_correction_authority: None,
 ) -> None:
     campaign, attempt, _approved, _digest, _raw_sha256 = _reopen_approved_attempt(
         tmp_path
@@ -5572,6 +5581,7 @@ def test_correction_approval_refsyncs_incomplete_marker_before_lineage_retry(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     failure: str,
+    synthetic_correction_authority: None,
 ) -> None:
     campaign, attempt, approved, _digest, _raw_sha256 = _reopen_approved_attempt(
         tmp_path
@@ -5644,7 +5654,9 @@ def test_correction_approval_refsyncs_incomplete_marker_before_lineage_retry(
 
 
 def test_correction_receipt_and_registry_namespaces_fsync_every_parent_link(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    synthetic_correction_authority: None,
 ) -> None:
     campaign, attempt, _approved, _digest, _raw_sha256 = _reopen_approved_attempt(
         tmp_path
@@ -5696,6 +5708,7 @@ def test_correction_namespace_fsync_failure_is_stable_and_retryable(
     monkeypatch: pytest.MonkeyPatch,
     failure: str,
     code: str,
+    synthetic_correction_authority: None,
 ) -> None:
     campaign, attempt, approved, _digest, _raw_sha256 = _reopen_approved_attempt(
         tmp_path

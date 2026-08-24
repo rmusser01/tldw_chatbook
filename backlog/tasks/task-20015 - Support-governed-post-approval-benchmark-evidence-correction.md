@@ -87,6 +87,10 @@ retained after a post-rename parent-fsync failure safely retryable.
 Promotion reuses the existing durable atomic no-replace publisher with the
 source root derived solely from the approving receipt location. The pytest
 cleanup fixture recursively unseals nested published/correction directories.
+Ordinary synthetic correction-approval tests opt into a shared fixed-authority
+fixture, so their outcome does not depend on whether the worktree-local
+benchmark ref exists. The explicit missing/drift tests retain sole control of
+their authority failures.
 
 Verification completed for the implementation:
 
@@ -96,8 +100,11 @@ Verification completed for the implementation:
 - marker-durability GREEN/reconciliation shard: 8 passed;
 - correction-authority/durability RED shard: 4 expected failures;
 - correction-authority/durability GREEN shard: 4 passed;
+- missing-ref portability mutation: representative RED failed as expected,
+  representative GREEN passed, and the correction shard passed 19 tests;
 - correction/review regression shard: 94 passed;
-- complete performance harness: 649 passed, 2 dependency warnings in 77.27s;
+- complete performance harness with the non-authority test ref pointed to a
+  nonexistent in-process ref: 649 passed, 2 dependency warnings in 92.24s;
 - Ruff, `py_compile`, and `git diff --check`: passed.
 
 Modified files are the benchmark runner, its focused harness tests, and this
