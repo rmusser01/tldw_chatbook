@@ -20,12 +20,14 @@ from Tests.UI.test_library_shell import (
     _seed_conversations,
     _two_conversations,
     _wait_for_condition,
+    _wait_for_selector,
 )
 from tldw_chatbook.Library.library_media_state import (
     MediaBrowseScope,
     build_library_media_browse_state,
     build_media_browse_result,
 )
+from tldw_chatbook.Library.library_media_reader_state import set_mode
 
 
 class ControlledDetailMediaService(StaticLibraryMediaScopeService):
@@ -145,6 +147,241 @@ async def test_enter_bypasses_selection_settle_window():
         )
         assert service.detail_calls[0]["media_id"] == expected_backing_id
         service.release(expected_backing_id)
+
+
+@pytest.mark.asyncio
+async def test_reader_defaults_to_read_and_keeps_mode_across_local_items():
+    """Reader mode is session state, not a per-detail display default."""
+    app, service = _flow_app()
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        first = screen.query_one("#library-media-row-0", Button)
+        first_id, first_backing_id, _ = _row_identity(first)
+        assert screen._library_media_reader_session.mode == "read"
+
+        first.press()
+        await _wait_for_detail_call(service, first_backing_id)
+        service.release(first_backing_id)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_reader_session.loaded_id == first_id,
+            message="First local item never loaded.",
+        )
+        screen._library_media_reader_session = set_mode(
+            screen._library_media_reader_session, "analysis"
+        )
+        screen._sync_library_media_viewer_or_recompose()
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(screen.query("#library-media-reader-mode-analysis")),
+            message="Analysis mode did not compose.",
+        )
+
+        second = screen.query_one("#library-media-row-1", Button)
+        second_id, second_backing_id, _ = _row_identity(second)
+        second.press()
+        await _wait_for_detail_call(service, second_backing_id)
+        service.release(second_backing_id)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_reader_session.loaded_id == second_id,
+            message="Second local item never loaded.",
+        )
+        assert screen._library_media_reader_session.mode == "analysis"
+        assert screen.query("#library-media-reader-mode-analysis")
+        assert not screen.query("#library-media-reader-mode-read")
+
+
+@pytest.mark.asyncio
+async def test_edit_metadata_from_read_routes_to_info_form_actions():
+    """More's local metadata action must reveal its editable Info surface."""
+    app, service = _flow_app()
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        row = screen.query_one("#library-media-row-0", Button)
+        canonical_id, backing_id, _ = _row_identity(row)
+        row.press()
+        await _wait_for_detail_call(service, backing_id)
+        service.release(backing_id)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_reader_session.loaded_id == canonical_id,
+            message="Local detail never loaded for metadata editing.",
+        )
+        assert screen._library_media_reader_session.mode == "read"
+
+        screen.query_one("#library-media-reader-more", Button).press()
+        edit = await _wait_for_selector(screen, pilot, "#library-media-edit")
+        edit.press()
+        await _wait_for_selector(screen, pilot, "#library-media-edit-form")
+
+        assert screen._library_media_reader_session.mode == "info"
+        for selector in (
+            "#library-media-edit-title",
+            "#library-media-edit-author",
+            "#library-media-edit-url",
+            "#library-media-edit-keywords",
+            "#library-media-edit-save",
+            "#library-media-edit-cancel",
+        ):
+            assert screen.query(selector)
+
+
+@pytest.mark.asyncio
+async def test_external_detail_without_original_exposes_no_empty_more_menu():
+    """A server-only detail exposes only actions that it can actually perform."""
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        await screen._open_library_external_media_detail("7")
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(screen.query("#library-media-reader-identity")),
+            message=lambda: (
+                "External server detail never mounted: "
+                f"view={screen._library_media_view!r}, "
+                f"row={screen._library_selected_row_id!r}, "
+                f"session={screen._library_media_reader_session!r}, "
+                f"detail={screen._library_media_detail!r}, "
+                f"viewer={bool(screen.query('#library-media-viewer'))!r}."
+            ),
+        )
+
+        assert screen.query_one("#library-media-reader-identity", Static).renderable == (
+            "Server item · not in local Media list"
+        )
+        assert screen.app_instance.media_reading_scope_service.detail_calls[-1] == {
+            "media_id": 7,
+            "mode": "server",
+            "include_content": True,
+            "include_versions": True,
+        }
+        assert not any(
+            row.loading or row.loaded
+            for row in screen._build_library_media_state().rows
+        )
+        assert screen.query("#library-media-reader-find")
+        assert screen.query("#library-media-use-in-chat")
+        assert not screen.query("#library-media-reader-more")
+        assert not screen.query("#library-media-read-later")
+        assert not screen.query("#library-media-reader-mode-toolbar")
+        assert not screen.query("#library-media-highlight-add")
+        assert not screen.query("#library-media-edit")
+        assert not screen.query("#library-media-delete")
+
+        screen.query_one("#library-media-back", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen._library_media_reader_session.external_detail,
+            message="Back did not clear the external-detail session.",
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("late_outcome", [None, RuntimeError("late failure")])
+async def test_late_external_a_cannot_replace_b_or_show_error(late_outcome):
+    """A stale server detail cannot repaint a newer external Reader session."""
+    app, service = _flow_app()
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        opening_a = asyncio.create_task(screen._open_library_external_media_detail("7"))
+        await _wait_for_detail_call(service, 7)
+        opening_b = asyncio.create_task(screen._open_library_external_media_detail("8"))
+        await _wait_for_detail_call(service, 8)
+        service.release(8)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_detail is not None
+            and screen._library_media_reader_session.loaded_id == "server:media:8",
+            message="External B did not load.",
+        )
+
+        service.release(7, late_outcome)
+        await asyncio.gather(opening_a, opening_b)
+        await pilot.pause()
+
+        assert screen._library_media_reader_session.loaded_id == "server:media:8"
+        assert screen._library_media_reader_session.error is None
+        assert screen._library_media_detail["id"] == "media-8"
+
+
+@pytest.mark.asyncio
+async def test_info_describes_the_same_stored_text_representation_sent_to_console():
+    """Info and Console share the authoritative handoff decision."""
+    app, service = _flow_app()
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        row = screen.query_one("#library-media-row-0", Button)
+        _, backing_id, _ = _row_identity(row)
+        source = next(
+            item for item in service.media_items if item["id"] == f"media-{backing_id}"
+        )
+        source["type"] = "markdown"
+        source["content"] = "# Stored Markdown\n\n**Exact source text**"
+        row.press()
+        await _wait_for_detail_call(service, backing_id)
+        service.release(backing_id)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_reader_session.loaded_backing_id == backing_id,
+            message="Local detail never loaded for the Console handoff check.",
+        )
+
+        screen.query_one("#library-media-reader-select-info", Button).press()
+        provenance = await _wait_for_selector(
+            screen, pilot, "#library-media-reader-provenance"
+        )
+        payload = screen._selected_media_handoff_payload()
+
+        assert payload is not None
+        assert "Complete stored text excerpt" in str(provenance.renderable)
+        assert "Content excerpt:\n# Stored Markdown\n\n**Exact source text**" in payload.body
+        assert payload.body_truncated is False
+
+
+@pytest.mark.asyncio
+async def test_info_calls_empty_content_metadata_only_like_console():
+    """Info must not call the Console's explicit no-content payload complete text."""
+    app, service = _flow_app()
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        row = screen.query_one("#library-media-row-0", Button)
+        _, backing_id, _ = _row_identity(row)
+        source = next(
+            item for item in service.media_items if item["id"] == f"media-{backing_id}"
+        )
+        source["content"] = ""
+        row.press()
+        await _wait_for_detail_call(service, backing_id)
+        service.release(backing_id)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_media_reader_session.loaded_backing_id == backing_id,
+            message="Empty-content detail did not load.",
+        )
+
+        screen.query_one("#library-media-reader-select-info", Button).press()
+        provenance = await _wait_for_selector(
+            screen, pilot, "#library-media-reader-provenance"
+        )
+        payload = screen._selected_media_handoff_payload()
+
+        assert payload is not None
+        assert "No stored content." in payload.body
+        assert "Metadata only (no stored text)" in str(provenance.renderable)
 
 
 @pytest.mark.asyncio

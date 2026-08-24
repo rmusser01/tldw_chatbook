@@ -11,6 +11,7 @@ import re
 import threading
 import time
 import uuid
+import webbrowser
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timezone
 from enum import Enum
@@ -163,7 +164,11 @@ from ...Library.library_media_reader_state import (
     MediaReaderEffectiveLayout,
     MediaReaderLayoutPreferences,
     begin_selection,
+    enter_external_detail,
+    leave_external_detail,
     resolve_media_reader_layout,
+    set_mode,
+    set_more_open,
     settle_failure,
     settle_success,
 )
@@ -1936,20 +1941,10 @@ class LibraryScreen(BaseAppScreen):
         Binding("r", "library_ingest_retry_last", "Retry this batch", show=False),
     ]
 
-    #: Whether the media item open in the viewer lives on the SERVER. Set only
-    #: by the ingest queue's "View on server" action (task-700); every other
-    #: route into the viewer opens a local row and clears it.
-    #:
-    #: Declared on the class, not in a method, because a restored session
-    #: reaches the viewer without running the constructors that set instance
-    #: state -- an attribute defined only there is missing exactly when the
-    #: viewer is rebuilt on mount, and the detail fetch that reads it fails.
-    _library_media_detail_is_remote: bool = False
-
     #: task-4023 AC#7: which canvas's "Export…" action opened the Export
     #: canvas ("" = entered from the rail/deep link). Escape returns
     #: there; a plain rail switch clears it. Class-level default for the
-    #: same restored-session reason as ``_library_media_detail_is_remote``.
+    #: same restored-session reason as the other class-level route defaults.
     _library_export_origin_row_id: str = ""
 
     #: Footer hint set while the Search/RAG canvas is active — mirrors the
@@ -10038,7 +10033,12 @@ class LibraryScreen(BaseAppScreen):
         if not isinstance(detail, Mapping):
             return None
         viewer = build_library_media_viewer_state(detail)
-        media_id = viewer.media_id or self._safe_text(self._selected_media_id)
+        external_detail = self._library_media_reader_session.external_detail
+        media_id = (
+            self._library_media_reader_session.loaded_id
+            if external_detail
+            else viewer.media_id or self._safe_text(self._selected_media_id)
+        )
         if not media_id:
             return None
         title = viewer.title or "Untitled source"
@@ -10056,7 +10056,7 @@ class LibraryScreen(BaseAppScreen):
             for line in viewer.metadata_lines
             if line.startswith(("Type:", "Author:", "Keywords:"))
         )
-        body_lines.append("Source authority: local")
+        body_lines.append(f"Source authority: {'server' if external_detail else 'local'}")
         body_lines.append("")
         body_lines.append("Content excerpt:")
         body_lines.append(excerpt if excerpt else "No stored content.")
@@ -10070,16 +10070,30 @@ class LibraryScreen(BaseAppScreen):
             source_id=media_id,
             display_summary=f"Media staged: {title}",
             suggested_prompt="Use this media as source context for my next question.",
-            runtime_backend="local",
-            source_owner="local",
-            source_selector_state="local",
+            runtime_backend="server" if external_detail else "local",
+            source_owner="server" if external_detail else "local",
+            source_selector_state="server" if external_detail else "local",
             discovery_owner="media",
             discovery_entity_id=media_id,
             metadata={
                 "media_id": media_id,
                 "media_title": title,
                 "media_type": media_type,
+                "source_authority": "server" if external_detail else "local",
             },
+        )
+
+    def _library_media_console_representation(self) -> str:
+        """Describe the exact media representation chosen by the handoff builder."""
+        payload = self._selected_media_handoff_payload()
+        if payload is None:
+            return "Unavailable until a media item is loaded"
+        if "No stored content." in payload.body:
+            return "Metadata only (no stored text)"
+        return (
+            "Stored text excerpt (truncated)"
+            if payload.body_truncated
+            else "Complete stored text excerpt"
         )
 
     def _hub_table_cell(
@@ -13684,6 +13698,7 @@ class LibraryScreen(BaseAppScreen):
         requested_id = requested_id or (
             reader_identity[0] if reader_identity is not None else media_id
         )
+        external_detail = self._library_media_reader_session.external_detail
         if (
             request_generation is None
             and pending is None
@@ -13704,7 +13719,11 @@ class LibraryScreen(BaseAppScreen):
             request_generation = (
                 pending.generation
                 if pending is not None and pending.requested_id == requested_id
-                else None
+                else (
+                    self._library_media_reader_session.request_generation
+                    if external_detail
+                    else None
+                )
             )
         service = getattr(self.app_instance, "media_reading_scope_service", None)
         get_media_item = getattr(service, "get_media_item", None)
@@ -13726,13 +13745,21 @@ class LibraryScreen(BaseAppScreen):
                 await self._apply_library_media_active_surface()
             return None
         resolved_service_media_id = self._library_media_backing_id(media_id)
+        if (
+            external_detail
+            and isinstance(resolved_service_media_id, str)
+            and resolved_service_media_id.isdecimal()
+        ):
+            # Server ingest persists its returned id as text, while the server
+            # media client requires the numeric path parameter it reported.
+            resolved_service_media_id = int(resolved_service_media_id)
         try:
             detail = await self._run_library_service_call(
                 get_media_item,
                 # A media item opened from a finished SERVER ingest lives in the
                 # server's library, so resolving it locally would find nothing
                 # (task-700). Every other route into this viewer is local.
-                mode="server" if self._library_media_detail_is_remote else "local",
+                mode="server" if external_detail else "local",
                 media_id=resolved_service_media_id,
                 include_content=True,
                 include_versions=True,
@@ -13748,24 +13775,45 @@ class LibraryScreen(BaseAppScreen):
         # for the previous selection must not overwrite the current one. The
         # highlights fetch is a second await point, so re-check after it too
         # and store detail + highlights together only when still current.
-        current_pending = self._library_media_reader_session.pending_request
+        current_session = self._library_media_reader_session
+        current_pending = current_session.pending_request
+        request_is_current = (
+            current_session.external_detail
+            and current_session.request_generation == request_generation
+            and current_session.loaded_id == requested_id
+            if external_detail
+            else (
+                request_generation is not None
+                and current_pending is not None
+                and current_pending.generation == request_generation
+                and current_pending.requested_id == requested_id
+            )
+        )
         if (
-            request_generation is None
-            or current_pending is None
-            or current_pending.generation != request_generation
-            or current_pending.requested_id != requested_id
+            not request_is_current
             or (
                 entry_route_key is not None
                 and entry_route_key != self._library_entry_route_key()
             )
         ):
             return LibraryEntryReconcileResult.SUPERSEDED if entry_origin else None
-        highlights = await self._fetch_library_media_highlights(media_id)
-        current_pending = self._library_media_reader_session.pending_request
+        highlights = [] if external_detail else await self._fetch_library_media_highlights(media_id)
+        current_session = self._library_media_reader_session
+        current_pending = current_session.pending_request
+        request_is_current = (
+            current_session.external_detail
+            and current_session.request_generation == request_generation
+            and current_session.loaded_id == requested_id
+            if external_detail
+            else (
+                request_generation is not None
+                and current_pending is not None
+                and current_pending.generation == request_generation
+                and current_pending.requested_id == requested_id
+            )
+        )
         if (
-            current_pending is None
-            or current_pending.generation != request_generation
-            or current_pending.requested_id != requested_id
+            not request_is_current
             or (
                 entry_route_key is not None
                 and entry_route_key != self._library_entry_route_key()
@@ -13775,13 +13823,13 @@ class LibraryScreen(BaseAppScreen):
         if isinstance(detail, Mapping):
             self._library_media_detail = detail
             self._library_media_highlights = highlights
-            if request_generation is not None:
+            if request_generation is not None and not external_detail:
                 self._library_media_reader_session = settle_success(
                     self._library_media_reader_session,
                     request_generation,
                     requested_id,
                 )
-        elif request_generation is not None:
+        elif request_generation is not None and not external_detail:
             self._library_media_reader_session = settle_failure(
                 self._library_media_reader_session,
                 request_generation,
@@ -19209,6 +19257,29 @@ class LibraryScreen(BaseAppScreen):
         self._library_media_content_match_index = 0
         self._library_media_content_mode = "raw"
         self._sync_library_media_viewer_or_recompose()
+
+    async def _open_library_external_media_detail(self, media_id: str) -> None:
+        """Open one server detail without selecting or adding a local Items row."""
+        self._cancel_library_media_selection_settlement()
+        self._library_media_reader_session = enter_external_detail(
+            self._library_media_reader_session, media_id, f"Server media {media_id}"
+        )
+        self._library_media_detail = None
+        self._library_media_composed_detail = None
+        self._library_media_highlights = []
+        self._library_media_editing = False
+        self._library_media_editing_analysis = False
+        self._library_media_content_query = ""
+        self._library_media_content_match_index = 0
+        self._library_media_content_mode = "raw"
+        self._library_media_view = "viewer"
+        self._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
+        await self._apply_library_media_active_surface()
+        await self._refresh_library_media_detail(
+            media_id,
+            request_generation=self._library_media_reader_session.request_generation,
+            requested_id=self._library_media_reader_session.loaded_id,
+        )
 
     def _library_media_backing_id(self, media_id: str) -> int | str:
         """Resolve a canonical list identity to the positive local backing id."""
@@ -29744,8 +29815,7 @@ class LibraryScreen(BaseAppScreen):
             # a stale-press guard rather than an expected path.
             self.notify("The server did not report which item it created.")
             return
-        self._library_media_detail_is_remote = True
-        self.run_worker(self._open_library_item_by_id("media", str(remote_media_id)))
+        self.run_worker(self._open_library_external_media_detail(str(remote_media_id)))
 
     @on(Button.Pressed, ".library-ingest-retry")
     def handle_library_ingest_retry(self, event: Button.Pressed) -> None:
@@ -31666,6 +31736,9 @@ class LibraryScreen(BaseAppScreen):
         which renders (and is reachable) in every one of those sub-states.
         """
         self._cancel_library_media_selection_settlement()
+        self._library_media_reader_session = leave_external_detail(
+            self._library_media_reader_session
+        )
         self._library_media_view = "list"
         self._library_media_editing = False
         self._library_media_confirming_delete = False
@@ -31733,6 +31806,9 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by the viewer's "Edit" action.
         """
         event.stop()
+        self._library_media_reader_session = set_mode(
+            self._library_media_reader_session, "info"
+        )
         self._library_media_editing = True
         self.refresh(recompose=True)
 
@@ -32349,9 +32425,8 @@ class LibraryScreen(BaseAppScreen):
             self._library_media_composed_detail = detail
         arrival_note = self._pop_library_media_arrival_note()
         viewer = LibraryMediaViewer(
-            build_library_media_viewer_state(
-                detail,
-                arrival_note=arrival_note,
+            self._build_library_media_viewer_display_state(
+                detail, arrival_note=arrival_note
             ),
             editing=self._library_media_editing,
             confirming_delete=self._library_media_confirming_delete,
@@ -32370,10 +32445,29 @@ class LibraryScreen(BaseAppScreen):
                 self._library_media_reader_session.pending_banner or "Loading media…"
             ),
             error_message=self._library_media_reader_session.error or "",
+            reader_mode=self._library_media_reader_session.mode,
+            more_open=self._library_media_reader_session.more_open,
+            external_detail=self._library_media_reader_session.external_detail,
+            console_representation=self._library_media_console_representation(),
             id="library-media-viewer",
         )
         viewer._library_entry_arrival_note = arrival_note
         return viewer
+
+    def _build_library_media_viewer_display_state(
+        self, detail: Mapping[str, Any] | None, *, arrival_note: str = ""
+    ):
+        """Build display facts and qualify one-off server provenance."""
+        state = build_library_media_viewer_state(detail, arrival_note=arrival_note)
+        session = self._library_media_reader_session
+        if not session.external_detail:
+            return state
+        return dataclasses.replace(
+            state,
+            backend="server",
+            canonical_id=session.loaded_id or "",
+            is_markdown=False,
+        )
 
     def _sync_library_media_viewer_state(self, viewer: LibraryMediaViewer) -> bool:
         """Re-read every viewer compose input after its mount await.
@@ -32398,7 +32492,7 @@ class LibraryScreen(BaseAppScreen):
             if isinstance(self._library_media_detail, Mapping)
             else None
         )
-        viewer_state = build_library_media_viewer_state(
+        viewer_state = self._build_library_media_viewer_display_state(
             detail,
             arrival_note=str(
                 getattr(viewer, "_library_entry_arrival_note", "") or ""
@@ -32426,6 +32520,11 @@ class LibraryScreen(BaseAppScreen):
             == (self._library_media_reader_session.pending_banner or "Loading media…")
             and viewer.error_message
             == (self._library_media_reader_session.error or "")
+            and viewer.reader_mode == self._library_media_reader_session.mode
+            and viewer.more_open == self._library_media_reader_session.more_open
+            and viewer.external_detail
+            == self._library_media_reader_session.external_detail
+            and viewer.console_representation == self._library_media_console_representation()
         )
         if not unchanged:
             viewer.viewer = viewer_state
@@ -32444,6 +32543,10 @@ class LibraryScreen(BaseAppScreen):
                 self._library_media_reader_session.pending_banner or "Loading media…"
             )
             viewer.error_message = self._library_media_reader_session.error or ""
+            viewer.reader_mode = self._library_media_reader_session.mode
+            viewer.more_open = self._library_media_reader_session.more_open
+            viewer.external_detail = self._library_media_reader_session.external_detail
+            viewer.console_representation = self._library_media_console_representation()
             viewer.refresh(recompose=True)
         if detail is not None:
             self._library_media_composed_detail = detail
@@ -32462,6 +32565,47 @@ class LibraryScreen(BaseAppScreen):
             session.selected_title or session.selected_id,
             immediate=True,
         )
+
+    @on(Button.Pressed, "#library-media-reader-more")
+    def handle_library_media_reader_more(self, event: Button.Pressed) -> None:
+        """Toggle the transient inline secondary-action region."""
+        event.stop()
+        session = self._library_media_reader_session
+        self._library_media_reader_session = set_more_open(session, not session.more_open)
+        self._sync_library_media_viewer_or_recompose()
+
+    @on(Button.Pressed, ".library-media-reader-mode")
+    def handle_library_media_reader_mode(self, event: Button.Pressed) -> None:
+        """Select one permanent Reader mode without reloading the item."""
+        event.stop()
+        button_id = str(event.button.id or "")
+        prefix = "library-media-reader-select-"
+        if not button_id.startswith(prefix):
+            return
+        mode = button_id.removeprefix(prefix)
+        self._library_media_reader_session = set_mode(
+            self._library_media_reader_session, mode  # type: ignore[arg-type]
+        )
+        self._sync_library_media_viewer_or_recompose()
+
+    @on(Button.Pressed, "#library-media-reader-find")
+    def handle_library_media_reader_find(self, event: Button.Pressed) -> None:
+        """Take Find to the loaded item's content body."""
+        event.stop()
+        self._library_media_reader_session = set_mode(
+            self._library_media_reader_session, "read"
+        )
+        self._sync_library_media_viewer_or_recompose()
+        self.call_after_refresh(self._focus_library_media_content_search_input)
+
+    @on(Button.Pressed, "#library-media-open-original")
+    def handle_library_media_open_original(self, event: Button.Pressed) -> None:
+        """Open the stored original URL when the detail actually has one."""
+        event.stop()
+        detail = self._library_media_detail
+        url = self._safe_text(detail.get("url")) if isinstance(detail, Mapping) else ""
+        if url.startswith(("http://", "https://")):
+            webbrowser.open(url)
 
     def _sync_library_media_viewer_or_recompose(self) -> None:
         """Viewer-scoped recompose for an in-viewer sub-state flip.
@@ -34213,7 +34357,10 @@ class LibraryScreen(BaseAppScreen):
             # Mirrors handle_library_media_row's full state-set EXACTLY so
             # the recomposed canvas lands on a clean viewer, never a stale
             # one carried over from a previously opened item.
-            self._library_media_detail_is_remote = False
+            if self._library_media_reader_session.external_detail:
+                self._library_media_reader_session = leave_external_detail(
+                    self._library_media_reader_session
+                )
             self._selected_media_id = record_id
             self._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
             self._library_media_view = "viewer"

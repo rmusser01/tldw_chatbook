@@ -112,6 +112,10 @@ class LibraryMediaViewerState:
     read_later: bool
     media_type: str
     is_markdown: bool
+    backend: str
+    canonical_id: str
+    original_source: str
+    stored_representation: str
 
 
 def _text(value: Any) -> str:
@@ -218,6 +222,10 @@ def _empty_state() -> LibraryMediaViewerState:
         read_later=False,
         media_type="",
         is_markdown=False,
+        backend="local",
+        canonical_id="",
+        original_source="",
+        stored_representation="No stored content",
     )
 
 
@@ -341,6 +349,12 @@ def build_library_media_viewer_state(
         read_later=read_later,
         media_type=media_type,
         is_markdown=is_markdown,
+        backend="local",
+        canonical_id=(
+            f"local:media:{media_id.removeprefix('media-')}" if media_id else ""
+        ),
+        original_source=url,
+        stored_representation=("Complete stored text" if content else "No stored content"),
     )
 
 

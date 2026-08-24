@@ -81,6 +81,10 @@ class LibraryMediaViewer(Vertical):
         loading: bool = False,
         loading_message: str = "Loading media…",
         error_message: str = "",
+        reader_mode: str = "read",
+        more_open: bool = False,
+        external_detail: bool = False,
+        console_representation: str = "Complete stored text excerpt",
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -95,6 +99,10 @@ class LibraryMediaViewer(Vertical):
         self.loading = loading
         self.loading_message = loading_message
         self.error_message = error_message
+        self.reader_mode = reader_mode
+        self.more_open = more_open
+        self.external_detail = external_detail
+        self.console_representation = console_representation
         # Fill the (already 13fr) canvas host, not an independent 13fr: an `fr`
         # width here breaks width:100% child resolution so long lines (analysis
         # summary, a long URL) clip instead of wrapping. 1fr fills the same
@@ -150,50 +158,36 @@ class LibraryMediaViewer(Vertical):
                 classes="destination-purpose",
                 markup=False,
             )
-        yield Button(
-            "‹ Back to list",
-            id="library-media-back",
-            classes="library-canvas-action",
-            compact=True,
+        yield Static(
+            "Server item · not in local Media list"
+            if self.external_detail
+            else "Local Media item",
+            id="library-media-reader-identity",
+            markup=False,
         )
+        yield Button("‹ Back", id="library-media-back", compact=True)
         yield Static(
             "Edit media details" if self.editing else self.viewer.title,
             id="library-media-viewer-title",
             markup=False,
         )
-        if self.editing:
-            yield from self._compose_edit_form()
-        else:
+        if not self.editing:
             yield Static(
-                "\n".join(self.viewer.metadata_lines),
-                id="library-media-viewer-meta",
+                next(
+                    (line.removeprefix("Author: ") for line in self.viewer.metadata_lines
+                     if line.startswith("Author: ")),
+                    "",
+                )
+                or next(
+                    (line.removeprefix("URL: ") for line in self.viewer.metadata_lines
+                     if line.startswith("URL: ")),
+                    "",
+                ),
+                id="library-media-reader-byline",
                 markup=False,
             )
-        yield Static(
-            "Content",
-            id="library-media-viewer-content-title",
-            classes="destination-section",
-        )
-        yield from self._compose_content_mode_toggle()
-        matches = find_content_matches(self.viewer.content, self.content_query)
-        yield LibraryMediaContentSearchControls(
-            is_markdown=self.viewer.is_markdown,
-            query=self.content_query,
-            matches=matches,
-            match_index=self.content_match_index,
-            id="library-media-content-search-controls",
-        )
-        yield LibraryMediaContentBody(
-            content=self.viewer.content,
-            is_markdown=self.viewer.is_markdown,
-            mode=self.content_mode,
-            query=self.content_query,
-            match_index=self.content_match_index,
-            id="library-media-viewer-content",
-        )
-        yield from self._compose_analysis()
-
-        yield from self._compose_highlights()
+        yield from self._compose_primary_toolbar()
+        yield from self._compose_mode_toolbar()
 
         if self.confirming_delete and not self.editing:
             # A single full-width Static above the toolbar, not inside it --
@@ -211,71 +205,96 @@ class LibraryMediaViewer(Vertical):
                 markup=False,
             )
 
-        toolbar = Horizontal(classes="ds-toolbar")
-        toolbar.styles.height = "auto"
-        with toolbar:
-            if self.editing:
+        yield from self._compose_active_body()
+
+    def _compose_primary_toolbar(self) -> ComposeResult:
+        """Render the always-reachable Reader actions."""
+        with Horizontal(classes="ds-toolbar", id="library-media-reader-primary-toolbar"):
+            yield Button("Find", id="library-media-reader-find", compact=True)
+            if not self.external_detail:
                 yield Button(
-                    "Save",
-                    id="library-media-edit-save",
-                    classes="library-canvas-action",
-                    compact=True,
-                )
-                yield Button(
-                    "Cancel",
-                    id="library-media-edit-cancel",
-                    classes="library-canvas-action",
-                    compact=True,
-                )
-            elif self.confirming_delete:
-                yield Button(
-                    "Delete",
-                    id="library-media-delete-confirm",
-                    classes="library-canvas-action",
-                    compact=True,
-                )
-                yield Button(
-                    "Cancel",
-                    id="library-media-delete-cancel",
-                    classes="library-canvas-action",
-                    compact=True,
-                )
-            else:
-                # Object/primary actions first, then the escape hatch to the
-                # legacy screen, then the destructive Delete pushed to the far
-                # end (CSS margin) so it is not adjacent to Edit -- avoids the
-                # classic Edit/Delete misclick trap.
-                yield Button(
-                    "Edit",
-                    id="library-media-edit",
-                    classes="library-canvas-action",
-                    compact=True,
-                )
-                yield Button(
-                    "Use in Console",
-                    id="library-media-use-in-chat",
-                    classes="library-canvas-action",
-                    compact=True,
-                )
-                yield Button(
-                    "Remove from read-it-later"
-                    if self.viewer.read_later
-                    else "Read it later",
+                    "Remove later" if self.viewer.read_later else "Read later",
                     id="library-media-read-later",
-                    classes="library-canvas-action",
                     compact=True,
                 )
+            yield Button("Use in Console", id="library-media-use-in-chat", compact=True)
+            if not self.external_detail or self.viewer.original_source:
+                yield Button("More", id="library-media-reader-more", compact=True)
+        if self.more_open:
+            with Vertical(id="library-media-reader-more-actions"):
+                if not self.external_detail:
+                    yield Button("Edit metadata", id="library-media-edit", compact=True)
+                if self.viewer.original_source:
+                    yield Button("Open original", id="library-media-open-original", compact=True)
+                if not self.external_detail:
+                    yield Button("Open manager", id="library-media-open", compact=True)
+                    yield Button("Move to trash", id="library-media-delete", compact=True)
+
+    def _compose_mode_toolbar(self) -> ComposeResult:
+        """Render one explicit mode selector; external detail remains read-only."""
+        if self.external_detail:
+            return
+        with Horizontal(classes="ds-toolbar", id="library-media-reader-mode-toolbar"):
+            for mode, label in (
+                ("read", "Read"),
+                ("analysis", "Analysis"),
+                ("highlights", "Highlights"),
+                ("info", "Info"),
+            ):
                 yield Button(
-                    "Open in Library ▸ Media",
-                    id="library-media-open",
-                    classes="library-canvas-action",
+                    f"{label} (selected)" if self.reader_mode == mode else label,
+                    id=f"library-media-reader-select-{mode}",
+                    classes="library-media-reader-mode",
                     compact=True,
                 )
-                yield Button(
-                    "Delete",
-                    id="library-media-delete",
-                    classes="library-canvas-action library-media-action-danger",
-                    compact=True,
+
+    def _compose_active_body(self) -> ComposeResult:
+        """Compose exactly the selected Reader body; never mount hidden modes."""
+        if self.external_detail or self.reader_mode == "read":
+            with Vertical(id="library-media-reader-mode-read"):
+                yield Static("Read", classes="destination-section")
+                yield from self._compose_content_mode_toggle()
+                matches = find_content_matches(self.viewer.content, self.content_query)
+                yield LibraryMediaContentSearchControls(
+                    is_markdown=self.viewer.is_markdown,
+                    query=self.content_query,
+                    matches=matches,
+                    match_index=self.content_match_index,
+                    id="library-media-content-search-controls",
+                )
+                yield LibraryMediaContentBody(
+                    content=self.viewer.content,
+                    is_markdown=self.viewer.is_markdown,
+                    mode=self.content_mode,
+                    query=self.content_query,
+                    match_index=self.content_match_index,
+                    id="library-media-viewer-content",
+                )
+            return
+        if self.reader_mode == "analysis":
+            with Vertical(id="library-media-reader-mode-analysis"):
+                yield from self._compose_analysis()
+            return
+        if self.reader_mode == "highlights":
+            with Vertical(id="library-media-reader-mode-highlights"):
+                yield from self._compose_highlights()
+            return
+        with Vertical(id="library-media-reader-mode-info"):
+            yield Static("Info", classes="destination-section")
+            if self.editing:
+                yield from self._compose_edit_form()
+            else:
+                yield Static("\n".join(self.viewer.metadata_lines), id="library-media-viewer-meta", markup=False)
+                yield Static(
+                    "\n".join((
+                        f"Backend: {self.viewer.backend}",
+                        f"Canonical ID: {self.viewer.canonical_id}",
+                        f"Original source: {self.viewer.original_source or 'None recorded'}",
+                        f"Stored representation: {self.viewer.stored_representation}",
+                        f"Use in Console sends: {self.console_representation}",
+                    )),
+                    id="library-media-reader-provenance",
+                    markup=False,
                 )
 
     def _compose_content_mode_toggle(self) -> ComposeResult:
@@ -430,6 +449,9 @@ class LibraryMediaViewer(Vertical):
                     placeholder=placeholder,
                     id=field_id,
                 )
+            with Horizontal(classes="ds-toolbar"):
+                yield Button("Save", id="library-media-edit-save", compact=True)
+                yield Button("Cancel", id="library-media-edit-cancel", compact=True)
 
     def _compose_analysis(self) -> ComposeResult:
         """Render the Analysis section: read-only text + Edit toggle, or the edit form.

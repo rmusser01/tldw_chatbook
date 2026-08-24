@@ -90,6 +90,7 @@ class LibraryMediaReaderSessionState:
     pending_request: MediaReaderDetailRequest | None = None
     request_generation: int = 0
     mode: ReaderMode = "read"
+    more_open: bool = False
     error: str | None = None
     external_detail: bool = False
 
@@ -428,6 +429,15 @@ def set_mode(
     if mode not in {"read", "analysis", "highlights", "info"}:
         raise ValueError("mode is not a supported Reader mode.")
     return replace(state, mode=mode)
+
+
+def set_more_open(
+    state: LibraryMediaReaderSessionState, more_open: bool
+) -> LibraryMediaReaderSessionState:
+    """Change the transient inline More region without touching identity."""
+    if type(more_open) is not bool:
+        raise TypeError("more_open must be a bool.")
+    return replace(state, more_open=more_open)
 
 
 def enter_external_detail(

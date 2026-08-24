@@ -130,6 +130,38 @@ async def test_wide_media_keeps_two_line_rows_and_permanent_reader() -> None:
 
 
 @pytest.mark.asyncio
+async def test_reader_mode_toolbar_has_one_body_and_reachable_primary_actions_at_80x24() -> None:
+    """The compact Reader keeps primary actions on screen without hidden mode DOM."""
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_two_media_items())
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=(80, 24)) as pilot:
+        screen = await _open_media_list(host, pilot)
+        row = screen.query_one("#library-media-row-0", Button)
+        row.press()
+        await _wait_for_selector(screen, pilot, "#library-media-reader-mode-read")
+
+        for selector in (
+            "#library-media-reader-find",
+            "#library-media-read-later",
+            "#library-media-use-in-chat",
+            "#library-media-reader-more",
+        ):
+            widget = screen.query_one(selector, Button)
+            assert widget.region.width > 0
+            assert widget.region.x < 80
+
+        bodies = [
+            "#library-media-reader-mode-read",
+            "#library-media-reader-mode-analysis",
+            "#library-media-reader-mode-highlights",
+            "#library-media-reader-mode-info",
+        ]
+        assert sum(bool(screen.query(selector)) for selector in bodies) == 1
+
+
+@pytest.mark.asyncio
 async def test_media_resize_preserves_scope_focus_scroll_without_reads() -> None:
     app = _build_media_test_app()
     _seed_conversations(app, _two_conversations(), media=_many_media_items())
