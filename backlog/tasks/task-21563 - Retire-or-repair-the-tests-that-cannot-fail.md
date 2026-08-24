@@ -1,10 +1,10 @@
 ---
 id: TASK-21563
 title: Retire or repair the tests that cannot fail
-status: Done
+status: In Progress
 assignee: []
 created_date: ''
-updated_date: '2026-08-24 14:45'
+updated_date: '2026-08-24 17:18'
 labels:
   - testing
   - test-integrity
