@@ -1249,15 +1249,23 @@ class ConsolePromptsController:
         self,
         source: Literal["local", "server"],
         identifier: str,
-    ) -> None:
-        """Open a newly saved local Recipe in Library > Prompts by identity."""
+    ) -> bool:
+        """Open a newly saved local Recipe in Library > Prompts by identity.
+
+        Args:
+            source: Saved Recipe source.
+            identifier: Source-owned Recipe identity.
+
+        Returns:
+            bool: ``True`` when navigation was posted; otherwise ``False``.
+        """
 
         if source != "local" or not identifier.isdecimal():
             self.app_instance.notify(
                 "Recipe saved. Open Library > Prompts and select its source to find it.",
                 severity="warning",
             )
-            return
+            return False
         self.post_message(
             NavigateToScreen(
                 TAB_LIBRARY,
@@ -1268,6 +1276,7 @@ class ConsolePromptsController:
                 },
             )
         )
+        return True
 
     @staticmethod
     def _is_recipe_prompt_record(record: Mapping[str, Any]) -> bool:

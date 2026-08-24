@@ -2055,7 +2055,7 @@ class ConsolePromptsModal(
                 identity = _saved_record_identifier(record)
             except ValueError:
                 identity = ""
-        if identity:
+        if source == "local" and identity.isdecimal():
             target = (source, identity)
         self._saved_recipe_library_target = target
         confirmation.update(f"{name} saved to Library > Prompts as a Recipe.")
@@ -2065,7 +2065,11 @@ class ConsolePromptsModal(
         open_library.can_focus = not open_library.disabled
         if open_library.disabled:
             open_library.tooltip = (
-                "Reload Library > Prompts to find this Recipe; its saved identity was not returned."
+                "Deep link available only for local recipes; open Library > "
+                "Prompts and select its source."
+                if identity
+                else "Reload Library > Prompts to find this Recipe; its saved "
+                "identity was not returned."
             )
             return
         open_library.tooltip = "Open the newly saved Recipe in Library > Prompts."
@@ -2116,8 +2120,9 @@ class ConsolePromptsModal(
             target = self._saved_recipe_library_target
             if target is None or self._open_library_prompt is None:
                 return
-            self.dismiss_safe_once(None)
-            await _maybe_await(self._open_library_prompt(*target))
+            opened = await _maybe_await(self._open_library_prompt(*target))
+            if opened:
+                self.dismiss_safe_once(None)
         elif button_id == "console-prompts-review-apply":
             event.stop()
             generation = self._claim_apply_transaction()

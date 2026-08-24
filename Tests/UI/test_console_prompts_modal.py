@@ -2089,13 +2089,16 @@ async def test_recipe_save_confirms_library_destination_and_opens_saved_identity
     }
     driver = _ImprovementDriver()
     opened: list[tuple[str, str]] = []
+
+    def open_library(source: str, identity: str) -> bool:
+        opened.append((source, identity))
+        return True
+
     app = _Harness(
         backend,
         improvement_kwargs={
             **driver.kwargs(),
-            "open_library_prompt": lambda source, identity: opened.append(
-                (source, identity)
-            ),
+            "open_library_prompt": open_library,
         },
     )
 
@@ -2131,6 +2134,77 @@ async def test_recipe_save_confirms_library_destination_and_opens_saved_identity
 
     assert opened == [("local", "77")]
     assert app.results == [None]
+
+
+@pytest.mark.asyncio
+async def test_recipe_saved_confirmation_disables_unsupported_library_target() -> None:
+    backend = _PromptBackend()
+    app = _Harness(
+        backend,
+        improvement_kwargs={
+            "open_library_prompt": lambda _source, _identity: True,
+        },
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        await modal.enter_mode("recipe")
+        modal.query_one(
+            "#console-prompts-recipe-outcome-first", Button
+        ).press()
+        await pilot.pause()
+        modal._show_recipe_saved_confirmation(
+            {
+                "backend": "server",
+                "source_id": "recipe-server-77",
+                "name": "Server recipe",
+            }
+        )
+        await pilot.pause()
+
+        open_library = modal.query_one(
+            "#console-prompts-open-saved-recipe", Button
+        )
+        assert open_library.display is True
+        assert open_library.disabled is True
+        assert modal._saved_recipe_library_target is None
+        assert "local recipes" in str(open_library.tooltip)
+        assert app.results == []
+
+
+@pytest.mark.asyncio
+async def test_recipe_library_open_keeps_modal_when_navigation_declines() -> None:
+    backend = _PromptBackend()
+    app = _Harness(
+        backend,
+        improvement_kwargs={
+            "open_library_prompt": lambda _source, _identity: False,
+        },
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        await modal.enter_mode("recipe")
+        modal.query_one(
+            "#console-prompts-recipe-outcome-first", Button
+        ).press()
+        await pilot.pause()
+        modal._show_recipe_saved_confirmation(
+            {
+                "backend": "local",
+                "local_id": 77,
+                "name": "Local recipe",
+            }
+        )
+        await pilot.pause()
+
+        modal.query_one("#console-prompts-open-saved-recipe", Button).press()
+        await pilot.pause()
+
+        assert app.screen is modal
+        assert app.results == []
 
 
 @pytest.mark.asyncio

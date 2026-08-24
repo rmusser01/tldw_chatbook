@@ -733,9 +733,10 @@ async def test_saved_recipe_open_library_uses_existing_prompt_deep_link() -> Non
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-shell")
 
-        console._prompts._open_saved_console_recipe_in_library("local", "77")
+        opened = console._prompts._open_saved_console_recipe_in_library("local", "77")
         await pilot.pause()
 
+    assert opened is True
     assert len(host.navigation_messages) == 1
     navigation = host.navigation_messages[0]
     assert navigation.screen_name == "library"
@@ -744,6 +745,25 @@ async def test_saved_recipe_open_library_uses_existing_prompt_deep_link() -> Non
         "open_source_type": "prompt",
         "open_source_id": "77",
     }
+
+
+@pytest.mark.asyncio
+async def test_saved_recipe_open_library_rejects_unsupported_identity() -> None:
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleNavigationHarness(app)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-shell")
+
+        opened = console._prompts._open_saved_console_recipe_in_library(
+            "server", "recipe-server-77"
+        )
+        await pilot.pause()
+
+    assert opened is False
+    assert host.navigation_messages == []
 
 
 @pytest.mark.asyncio

@@ -76,11 +76,22 @@ class ConsolePromptComparisonModal(
     BINDINGS = [("escape", "request_safe_cancel", "Close")]
 
     def __init__(self, *, before: str, after: str) -> None:
+        """Initialize the comparison with immutable before/after text.
+
+        Args:
+            before: Draft text captured before automatic improvement.
+            after: Draft text produced by automatic improvement.
+        """
         super().__init__()
         self._before = before
         self._after = after
 
     def compose(self) -> ComposeResult:
+        """Compose the read-only comparison and its decision actions.
+
+        Returns:
+            ComposeResult: Child widgets for the modal.
+        """
         with Vertical(id="console-prompt-comparison-modal"):
             yield Static("Review prompt changes", classes="console-modal-header")
             yield Static(
@@ -119,6 +130,11 @@ class ConsolePromptComparisonModal(
                 )
 
     def on_mount(self) -> None:
+        """Focus the non-destructive keep action after mounting.
+
+        Returns:
+            None: The modal is focused in place.
+        """
         self.query_one("#console-prompt-comparison-keep", Button).focus()
 
     @on(Button.Pressed, "#console-prompt-comparison-keep")
