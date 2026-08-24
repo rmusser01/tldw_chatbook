@@ -383,8 +383,10 @@ to Local and never substitutes a local workspace with the same name.
 | Summary/Report/Compare | Local Chatbook artifact + membership | Workspace artifact API | Versioned Studio output |
 | Flashcards | Local Study deck/cards + membership | Workspace artifact/study API | Generate, reopen in Study |
 | Quiz | Local Quiz record + membership | Workspace artifact/study API | Generate, reopen in Study |
-| Audio | TTS-owned file/artifact when implemented | Workspace artifact/export API | Future capability-gated output |
-| Slides/Mind Map/Timeline/Data Table | Native owner when implemented | Workspace artifact API | Future capability-gated output |
+| Audio | Stable TTS history item plus membership when available | Stable audio job/history owner plus workspace artifact reference; otherwise unavailable | Capability-gated spoken summary |
+| Mind Map/Timeline | Unavailable until a working Local owner/editor exists | Workspace artifact content (`mindmap` / `timeline`) | Capability-gated visual/narrative output |
+| Slides | Unavailable until a working Local owner exists | Slides presentation ID/version plus workspace artifact reference | Native presentation owner and reopen/export |
+| Data Table | Unavailable until a working Local owner exists | Data Tables UUID/version plus workspace artifact reference | Native structured owner and CSV/JSON export |
 | Research run | Research Interop service | Server Research API | Runs screen lifecycle |
 | Copy receipt | Local workspace handoff audit | Server migration/operation receipt plus local audit | Inspectable transfer history |
 | Folder/annotation overlay | Device overlay store | Not server-owned | Explicit device-only organization |
@@ -440,6 +442,9 @@ workbench-specific client state:
 - source annotations;
 - per-qualified-workspace preferred side-pane state and preferred companion;
   width-driven effective collapse is not persisted;
+- one bounded unsent Research Chat draft per qualified workspace plus
+  payload-free append-stage recovery receipts; a successful canonical append
+  clears the draft and no sent transcript body is mirrored here;
 - recent and pinned server workspaces;
 - banner and split/pane presentation preferences;
 - durable Deep Research launch/return context for server workspaces.
