@@ -13,6 +13,7 @@ import pytest
 
 from tldw_chatbook.DB.Library_Ingest_Jobs_DB import LibraryIngestJobsDB
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem
 from tldw_chatbook.Library.library_ingest_jobs import (
     IngestJobState,
     LibraryIngestJobRegistry,
@@ -49,6 +50,7 @@ def _operation(
     workspace_id: str,
     server_profile_id: str = "",
     principal_id: str = "",
+    desired_selected: bool = True,
 ) -> ResearchSourceOperation:
     timestamp = _timestamp()
     return ResearchSourceOperation(
@@ -63,7 +65,7 @@ def _operation(
             if data_source is WorkspaceDataSource.LOCAL
             else CanonicalItemType.SERVER_MEDIA
         ),
-        desired_selected=True,
+        desired_selected=desired_selected,
         created_at=timestamp,
         updated_at=timestamp,
     )
@@ -125,6 +127,48 @@ async def test_local_done_links_canonical_media_to_captured_workspace(
     assert [(item.workspace_id, item.role) for item in memberships] == [
         ("ws-captured", "source")
     ]
+    assert local_registry.get_workspace_scope("ws-captured") == RagScope(
+        items=(ScopeItem("media", "41"),),
+        updated_at=local_registry.get_workspace_scope("ws-captured").updated_at,
+        empty_is_scoped=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_local_unselected_association_persists_explicit_empty_desired_scope(
+    tmp_path: Path,
+) -> None:
+    store = _operation_store(tmp_path)
+    local_registry = LocalWorkspaceRegistryService(store._db)
+    local_registry.create_workspace(workspace_id="ws-a", name="Workspace A")
+    operation = store.create(
+        _operation(
+            operation_id="research-op-unselected",
+            data_source=WorkspaceDataSource.LOCAL,
+            workspace_id="ws-a",
+            desired_selected=False,
+        )
+    )
+    operation = store.advance_stage(
+        operation.operation_id,
+        stage=SourceOperationStage.CATALOG,
+        status=SourceOperationStatus.SUCCEEDED,
+        expected_revision=operation.revision,
+        canonical_item_id="42",
+    )
+
+    receipt = await ResearchSourceAssociationCoordinator(
+        operation_store=store,
+        ingest_jobs=LibraryIngestJobRegistry(),
+        local_registry=local_registry,
+    ).resume(operation.operation_id)
+
+    assert receipt.association_status is SourceOperationStatus.SUCCEEDED
+    assert local_registry.get_workspace_scope("ws-a") == RagScope(
+        items=(),
+        updated_at=local_registry.get_workspace_scope("ws-a").updated_at,
+        empty_is_scoped=True,
+    )
 
 
 @pytest.mark.asyncio
@@ -313,6 +357,7 @@ async def test_server_done_uses_remote_media_and_durable_server_target(
             "media_id": 884,
             "title": "Paper",
             "source_type": "pdf",
+            "selected": True,
             "version": None,
         }
     ]

@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable, Mapping
+from datetime import datetime, timezone
 from typing import Any, TypeVar
 from uuid import uuid4
 
+from tldw_chatbook.Media.media_reading_scope_service import MediaReadingBackend
 from tldw_chatbook.Notes.server_notes_workspace_service import (
     ServerNotesWorkspaceService,
 )
@@ -21,13 +24,26 @@ from tldw_chatbook.tldw_api.exceptions import (
 )
 
 from .contracts import (
+    BoundedPageResult,
     CapabilityUnavailableError,
     QualifiedWorkspaceRef,
+    ResearchCatalogItem,
     ResearchCapability,
+    ResearchSourcePreview,
+    ResearchSourceSummary,
     ResearchWorkspaceSummary,
+    SourceReadiness,
     WorkspaceDataSource,
     require_capability,
 )
+from .source_operations import (
+    CanonicalItemType,
+    ResearchSourceOperation,
+    SourceOperationStage,
+    SourceOperationStatus,
+)
+from .source_operation_store import SourceOperationConflictError
+from .source_readiness import normalize_server_readiness
 
 
 _AUDITED_SERVICE_METHODS = {
@@ -41,6 +57,17 @@ _AUDITED_SERVICE_METHODS = {
     "delete": "delete_workspace",
 }
 _AUDITED_CAPABILITY_REVISION = "server-notes-workspace-service-v1"
+_SOURCE_CAPABILITY_NAMES = (
+    "list_sources",
+    "search_catalog",
+    "attach_existing",
+    "remove_source",
+    "update_source",
+    "preview_source",
+    "get_readiness",
+    "set_selected_scope",
+    "reorder_sources",
+)
 _RECOVERY_BY_REASON = {
     "server_not_configured": "Configure a server.",
     "server_profile_missing": "Choose or configure a server profile.",
@@ -53,6 +80,18 @@ _RECOVERY_BY_REASON = {
 _ServerResult = TypeVar("_ServerResult")
 
 
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _page_bounds(limit: object, offset: object) -> tuple[int, int]:
+    if type(limit) is not int or not 1 <= limit <= 100:
+        raise ValueError("limit must be between 1 and 100")
+    if type(offset) is not int or not 0 <= offset <= 10_000:
+        raise ValueError("offset must be between 0 and 10000")
+    return limit, offset
+
+
 class ServerResearchWorkspaceAdapter:
     """Use only the selected server context and server workspace service."""
 
@@ -62,10 +101,22 @@ class ServerResearchWorkspaceAdapter:
         server_context_provider: Any,
         *,
         id_factory: Callable[[], str] | None = None,
+        media_scope_service: Any | None = None,
+        operation_store: Any | None = None,
+        association_scheduler: Any | None = None,
+        operation_id_factory: Callable[[], str] | None = None,
+        now_factory: Callable[[], str] | None = None,
     ) -> None:
         self._service = service
         self._context_provider = server_context_provider
         self._id_factory = id_factory or (lambda: f"workspace-{uuid4().hex}")
+        self._media_scope = media_scope_service
+        self._operation_store = operation_store
+        self._association_scheduler = association_scheduler
+        self._operation_id_factory = operation_id_factory or (
+            lambda: f"source-operation-{uuid4().hex}"
+        )
+        self._now_factory = now_factory or _utc_now
 
     async def list_workspaces(
         self, *, include_archived: bool = False
@@ -209,7 +260,602 @@ class ServerResearchWorkspaceAdapter:
         self, ref: QualifiedWorkspaceRef
     ) -> Mapping[str, ResearchCapability]:
         context = self._context_for_ref(ref)
-        return self._capabilities_for_context(context)
+        lifecycle = dict(self._capabilities_for_context(context))
+        try:
+            projection = await self._server_call(
+                self._service.get_workspace_capabilities(ref.workspace_id),
+                context=context,
+            )
+        except AttributeError:
+            lifecycle.update(
+                self._unavailable_source_capabilities(
+                    context,
+                    reason_code="server_capability_unavailable",
+                    message=(
+                        "The selected server does not expose source capabilities."
+                    ),
+                )
+            )
+            return lifecycle
+        lifecycle.update(self._project_source_capabilities(ref, projection, context))
+        return lifecycle
+
+    async def list_sources(
+        self,
+        ref: QualifiedWorkspaceRef,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> BoundedPageResult[ResearchSourceSummary]:
+        page_limit, page_offset = _page_bounds(limit, offset)
+        await self._require_source_action(ref, "inspect_sources", allow_empty=True)
+        context = self._context_for_ref(ref)
+        rows = await self._server_call(
+            self._service.list_workspace_sources(ref.workspace_id), context=context
+        )
+        if not isinstance(rows, list) or len(rows) > 100:
+            raise ValueError("Server source list is not a bounded page")
+        normalized = tuple(self._source_summary(ref, row) for row in rows)
+        page = normalized[page_offset : page_offset + page_limit]
+        return BoundedPageResult(
+            items=page,
+            limit=page_limit,
+            offset=page_offset,
+            total=len(normalized),
+            has_more=page_offset + len(page) < len(normalized),
+        )
+
+    async def search_catalog(
+        self,
+        ref: QualifiedWorkspaceRef,
+        *,
+        query: str = "",
+        source_types: tuple[str, ...] = (),
+        sort_by: str = "updated_desc",
+        limit: int = 25,
+        offset: int = 0,
+    ) -> BoundedPageResult[ResearchCatalogItem]:
+        page_limit, page_offset = _page_bounds(limit, offset)
+        if not isinstance(query, str) or len(query.strip()) > 1000:
+            raise ValueError("query is invalid")
+        if sort_by not in {
+            "relevance",
+            "title_asc",
+            "title_desc",
+            "updated_asc",
+            "updated_desc",
+        }:
+            raise ValueError("sort_by is unsupported")
+        if len(source_types) > 25 or any(
+            not isinstance(item, str) or not item.strip() or len(item) > 128
+            for item in source_types
+        ):
+            raise ValueError("source_types is invalid")
+        await self._require_source_action(ref, "add_sources")
+        context = self._context_for_ref(ref)
+        media_scope = self._require_media_scope(context)
+        server_page = page_offset // 100 + 1
+        page_inner_offset = page_offset % 100
+        filters: dict[str, Any] = {
+            "query": query.strip() or None,
+            "sort_by": sort_by,
+        }
+        if source_types:
+            filters["media_types"] = [item.strip() for item in source_types]
+        result = await self._server_call(
+            media_scope.search_backing_media_items(
+                mode=MediaReadingBackend.SERVER,
+                page=server_page,
+                results_per_page=100,
+                **filters,
+            ),
+            context=context,
+        )
+        raw_items = result.get("items") if isinstance(result, Mapping) else None
+        pagination = result.get("pagination") if isinstance(result, Mapping) else None
+        if (
+            not isinstance(raw_items, list)
+            or len(raw_items) > 100
+            or not isinstance(pagination, Mapping)
+            or type(pagination.get("total_items")) is not int
+            or pagination["total_items"] < 0
+        ):
+            raise ValueError("Server catalog returned an invalid bounded page")
+        selected = raw_items[page_inner_offset : page_inner_offset + page_limit]
+        items = tuple(self._catalog_item(ref, row) for row in selected)
+        total = pagination["total_items"]
+        return BoundedPageResult(
+            items=items,
+            limit=page_limit,
+            offset=page_offset,
+            total=total,
+            has_more=page_offset + len(items) < total,
+        )
+
+    async def attach_existing(
+        self,
+        ref: QualifiedWorkspaceRef,
+        *,
+        catalog_item_id: str,
+        desired_selected: bool = True,
+        idempotency_key: str,
+    ) -> ResearchSourceOperation:
+        if type(desired_selected) is not bool:
+            raise ValueError("desired_selected must be bool")
+        canonical_id = self._canonical_media_id(catalog_item_id)
+        await self._require_source_action(ref, "add_sources")
+        context = self._context_for_ref(ref)
+        media_scope = self._require_media_scope(context)
+        await self._server_call(
+            media_scope.get_backing_media_by_identifier(
+                mode=MediaReadingBackend.SERVER, media_id=int(canonical_id)
+            ),
+            context=context,
+        )
+        if self._operation_store is None or self._association_scheduler is None:
+            raise CapabilityUnavailableError(
+                ResearchCapability(
+                    available=False,
+                    reason_code="source_operation_unavailable",
+                    user_message="Durable source attachment is unavailable.",
+                    owner="server",
+                    recovery_action="Restart and retry.",
+                )
+            )
+        now = self._now_factory()
+        operation = ResearchSourceOperation(
+            operation_id=self._operation_id_factory(),
+            idempotency_key=idempotency_key,
+            data_source=WorkspaceDataSource.SERVER,
+            server_profile_id=ref.server_profile_id,
+            principal_id=ref.principal_id,
+            workspace_id=ref.workspace_id,
+            canonical_item_type=CanonicalItemType.SERVER_MEDIA,
+            desired_selected=desired_selected,
+            created_at=now,
+            updated_at=now,
+        )
+        try:
+            operation = await asyncio.to_thread(
+                self._operation_store.create, operation
+            )
+        except SourceOperationConflictError:
+            existing = await asyncio.to_thread(
+                self._operation_store.get_by_idempotency_key, idempotency_key
+            )
+            if not self._matching_attach_intent(
+                existing,
+                ref=ref,
+                canonical_id=canonical_id,
+                desired_selected=desired_selected,
+            ):
+                raise
+            operation = existing
+        if operation.catalog_status is SourceOperationStatus.PENDING:
+            operation = await asyncio.to_thread(
+                self._operation_store.advance_stage,
+                operation.operation_id,
+                stage=SourceOperationStage.CATALOG,
+                status=SourceOperationStatus.SUCCEEDED,
+                expected_revision=operation.revision,
+                canonical_item_id=canonical_id,
+            )
+        settled = await self._association_scheduler.resume(operation.operation_id)
+        if settled is None:
+            raise RuntimeError("Durable source attachment did not settle")
+        await self._persist_operation_selection(ref, settled)
+        return settled
+
+    async def remove_source(
+        self,
+        ref: QualifiedWorkspaceRef,
+        source_id: str,
+        *,
+        expected_version: int | None = None,
+    ) -> bool:
+        source_id = self._association_id(source_id)
+        await self._require_source_action(ref, "add_sources")
+        context = self._context_for_ref(ref)
+        await self._server_call(
+            self._service.delete_workspace_source(ref.workspace_id, source_id),
+            context=context,
+        )
+        return True
+
+    async def update_source(
+        self,
+        ref: QualifiedWorkspaceRef,
+        source_id: str,
+        *,
+        title: str | None = None,
+        expected_version: int | None = None,
+    ) -> ResearchSourceSummary:
+        source_id = self._association_id(source_id)
+        await self._require_source_action(ref, "add_sources")
+        version = self._require_version(expected_version, self._context_for_ref(ref))
+        context = self._context_for_ref(ref)
+        row = await self._server_call(
+            self._service.save_workspace_source(
+                workspace_id=ref.workspace_id,
+                source_id=source_id,
+                title=title,
+                version=version,
+            ),
+            context=context,
+        )
+        return self._source_summary(ref, row)
+
+    async def preview_source(
+        self,
+        ref: QualifiedWorkspaceRef,
+        source_id: str,
+        *,
+        max_chars: int = 3000,
+        snippet_limit: int = 3,
+    ) -> ResearchSourcePreview:
+        source_id = self._association_id(source_id)
+        await self._require_source_action(ref, "inspect_sources")
+        context = self._context_for_ref(ref)
+        row = await self._server_call(
+            self._service.preview_workspace_source(
+                ref.workspace_id,
+                source_id,
+                max_chars=max_chars,
+                chunk_limit=snippet_limit,
+            ),
+            context=context,
+        )
+        if str(row.get("workspace_id") or "") != ref.workspace_id or str(
+            row.get("source_id") or ""
+        ) != source_id:
+            raise ValueError("Server preview returned mismatched source identity")
+        snippets = row.get("snippets") or []
+        if not isinstance(snippets, list):
+            raise ValueError("Server preview snippets are invalid")
+        return ResearchSourcePreview(
+            ref=ref,
+            source_id=source_id,
+            catalog_item_id=str(row.get("media_id") or ""),
+            preview_mode=str(row.get("preview_mode") or "unavailable"),
+            text=str(row.get("text_preview") or ""),
+            snippets=tuple(
+                str(snippet.get("text") or "")
+                for snippet in snippets
+                if isinstance(snippet, Mapping)
+            ),
+        )
+
+    async def get_readiness(
+        self,
+        ref: QualifiedWorkspaceRef,
+        *,
+        source_ids: tuple[str, ...] = (),
+    ) -> tuple[SourceReadiness, ...]:
+        source_ids = self._association_ids(source_ids, allow_empty=True)
+        await self._require_source_action(ref, "inspect_sources", allow_empty=True)
+        context = self._context_for_ref(ref)
+        payload = await self._server_call(
+            self._service.get_workspace_source_status(ref.workspace_id),
+            context=context,
+        )
+        rows = payload.get("sources") if isinstance(payload, Mapping) else None
+        if not isinstance(rows, list) or len(rows) > 100:
+            raise ValueError("Server readiness returned invalid rows")
+        requested = set(source_ids)
+        normalized = tuple(normalize_server_readiness(ref=ref, status=row) for row in rows)
+        if requested and not requested.issubset({row.source_id for row in normalized}):
+            raise ValueError("source_ids contains an unattached source")
+        return tuple(
+            row for row in normalized if not requested or row.source_id in requested
+        )
+
+    async def set_selected_scope(
+        self,
+        ref: QualifiedWorkspaceRef,
+        source_ids: tuple[str, ...],
+    ) -> tuple[ResearchSourceSummary, ...]:
+        source_ids = self._association_ids(source_ids, allow_empty=True)
+        await self._require_source_action(ref, "add_sources")
+        context = self._context_for_ref(ref)
+        rows = await self._server_call(
+            self._service.set_workspace_source_selection(
+                ref.workspace_id, list(source_ids)
+            ),
+            context=context,
+        )
+        return tuple(self._source_summary(ref, row) for row in rows)
+
+    async def reorder_sources(
+        self,
+        ref: QualifiedWorkspaceRef,
+        ordered_source_ids: tuple[str, ...],
+    ) -> tuple[ResearchSourceSummary, ...]:
+        ordered_source_ids = self._association_ids(
+            ordered_source_ids, allow_empty=False
+        )
+        await self._require_source_action(ref, "add_sources")
+        context = self._context_for_ref(ref)
+        rows = await self._server_call(
+            self._service.reorder_workspace_sources(
+                ref.workspace_id, list(ordered_source_ids)
+            ),
+            context=context,
+        )
+        return tuple(self._source_summary(ref, row) for row in rows)
+
+    async def _require_source_action(
+        self,
+        ref: QualifiedWorkspaceRef,
+        action: str,
+        *,
+        allow_empty: bool = False,
+    ) -> Mapping[str, Any]:
+        context = self._context_for_ref(ref)
+        projection = await self._server_call(
+            self._service.get_workspace_capabilities(ref.workspace_id),
+            context=context,
+        )
+        if (
+            not isinstance(projection, Mapping)
+            or str(projection.get("workspace_id") or "") != ref.workspace_id
+        ):
+            raise self._source_capability_error(
+                "malformed_capability",
+                "The selected server returned an invalid capability projection.",
+                context,
+            )
+        actions = projection.get("allowed_actions")
+        row = actions.get(action) if isinstance(actions, Mapping) else None
+        if not isinstance(row, Mapping) or type(row.get("allowed")) is not bool:
+            raise self._source_capability_error(
+                "unknown_capability",
+                "The selected server did not report this source capability.",
+                context,
+            )
+        if not row["allowed"] and not (
+            allow_empty and row.get("reason_code") == "no_sources"
+        ):
+            raise self._source_capability_error(
+                str(row.get("reason_code") or "server_capability_unavailable"),
+                "The selected server blocked this source action.",
+                context,
+            )
+        if action == "add_sources" and projection.get("access_level") == "viewer":
+            raise self._source_capability_error(
+                "server_permission_denied",
+                "The selected server workspace is read-only.",
+                context,
+            )
+        return projection
+
+    def _project_source_capabilities(
+        self,
+        ref: QualifiedWorkspaceRef,
+        projection: Mapping[str, Any],
+        context: Any,
+    ) -> Mapping[str, ResearchCapability]:
+        if str(projection.get("workspace_id") or "") != ref.workspace_id:
+            unavailable = self._source_capability_error(
+                "malformed_capability",
+                "The selected server returned an invalid capability projection.",
+                context,
+            ).capability
+            return {
+                "list_sources": unavailable,
+                "search_catalog": unavailable,
+                "attach_existing": unavailable,
+                "remove_source": unavailable,
+                "update_source": unavailable,
+                "preview_source": unavailable,
+                "get_readiness": unavailable,
+                "set_selected_scope": unavailable,
+                "reorder_sources": unavailable,
+            }
+        actions = projection.get("allowed_actions")
+        if not isinstance(actions, Mapping):
+            actions = {}
+        revision = self._capability_revision(context)
+
+        def project(action: str, *, allow_empty: bool = False):
+            row = actions.get(action)
+            if not isinstance(row, Mapping) or type(row.get("allowed")) is not bool:
+                return ResearchCapability(
+                    available=False,
+                    reason_code="unknown_capability",
+                    user_message="The selected server did not report this source capability.",
+                    owner="server",
+                    recovery_action="Refresh capabilities or update the server.",
+                    capability_revision=revision,
+                )
+            available = bool(row["allowed"]) or (
+                allow_empty and row.get("reason_code") == "no_sources"
+            )
+            return ResearchCapability(
+                available=available,
+                reason_code=(
+                    "available"
+                    if available
+                    else str(row.get("reason_code") or "server_capability_unavailable")
+                ),
+                user_message=(
+                    "Available on the selected server."
+                    if available
+                    else "The selected server blocked this source action."
+                ),
+                owner="server",
+                recovery_action="Refresh capabilities or review server permissions.",
+                capability_revision=revision,
+            )
+
+        inspect = project("inspect_sources", allow_empty=True)
+        mutate = project("add_sources")
+        return {
+            "list_sources": inspect,
+            "search_catalog": mutate,
+            "attach_existing": mutate,
+            "remove_source": mutate,
+            "update_source": mutate,
+            "preview_source": project("inspect_sources"),
+            "get_readiness": inspect,
+            "set_selected_scope": mutate,
+            "reorder_sources": mutate,
+        }
+
+    def _source_capability_error(
+        self, reason_code: str, message: str, context: Any
+    ) -> CapabilityUnavailableError:
+        return CapabilityUnavailableError(
+            ResearchCapability(
+                available=False,
+                reason_code=reason_code,
+                user_message=message,
+                owner="server",
+                recovery_action="Refresh capabilities or review server permissions.",
+                capability_revision=self._capability_revision(context),
+            )
+        )
+
+    def _unavailable_source_capabilities(
+        self,
+        context: Any,
+        *,
+        reason_code: str,
+        message: str,
+    ) -> Mapping[str, ResearchCapability]:
+        capability = ResearchCapability(
+            available=False,
+            reason_code=reason_code,
+            user_message=message,
+            owner="server",
+            recovery_action="Refresh capabilities or update the server.",
+            capability_revision=self._capability_revision(context),
+        )
+        return {name: capability for name in _SOURCE_CAPABILITY_NAMES}
+
+    def _require_media_scope(self, context: Any) -> Any:
+        if self._media_scope is None:
+            raise self._source_capability_error(
+                "server_media_unavailable",
+                "The selected server Media catalog is unavailable.",
+                context,
+            )
+        return self._media_scope
+
+    @staticmethod
+    def _matching_attach_intent(
+        operation: ResearchSourceOperation | None,
+        *,
+        ref: QualifiedWorkspaceRef,
+        canonical_id: str,
+        desired_selected: bool,
+    ) -> bool:
+        return bool(
+            operation is not None
+            and operation.data_source is WorkspaceDataSource.SERVER
+            and operation.workspace_id == ref.workspace_id
+            and operation.server_profile_id == ref.server_profile_id
+            and operation.principal_id == ref.principal_id
+            and operation.desired_selected is desired_selected
+            and operation.catalog_status is SourceOperationStatus.SUCCEEDED
+            and operation.canonical_item_id == canonical_id
+        )
+
+    async def _persist_operation_selection(
+        self, ref: QualifiedWorkspaceRef, operation: ResearchSourceOperation
+    ) -> None:
+        context = self._context_for_ref(ref)
+        rows = await self._server_call(
+            self._service.list_workspace_sources(ref.workspace_id), context=context
+        )
+        selected_ids = [
+            str(row.get("id"))
+            for row in rows
+            if row.get("selected") and str(row.get("id") or "")
+        ]
+        if operation.desired_selected:
+            if operation.workspace_source_id not in selected_ids:
+                selected_ids.append(operation.workspace_source_id)
+        else:
+            selected_ids = [
+                item for item in selected_ids if item != operation.workspace_source_id
+            ]
+        context = self._context_for_ref(ref)
+        await self._server_call(
+            self._service.set_workspace_source_selection(
+                ref.workspace_id, selected_ids
+            ),
+            context=context,
+        )
+
+    @staticmethod
+    def _canonical_media_id(value: object) -> str:
+        if isinstance(value, bool):
+            raise ValueError("catalog_item_id must be a positive Media id")
+        normalized = str(value).strip()
+        if not normalized.isdigit() or int(normalized) < 1:
+            raise ValueError("catalog_item_id must be a positive Media id")
+        return str(int(normalized))
+
+    @staticmethod
+    def _association_id(value: object) -> str:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("source_ids must contain nonblank association IDs")
+        normalized = value.strip()
+        if len(normalized) > 1024 or len(normalized.encode("utf-8")) > 4096:
+            raise ValueError("source_ids contain an oversized association ID")
+        return normalized
+
+    @classmethod
+    def _association_ids(
+        cls, values: object, *, allow_empty: bool
+    ) -> tuple[str, ...]:
+        if not isinstance(values, tuple) or len(values) > 100:
+            raise ValueError("source_ids must be a bounded tuple of association IDs")
+        normalized = tuple(cls._association_id(value) for value in values)
+        if (not allow_empty and not normalized) or len(set(normalized)) != len(
+            normalized
+        ):
+            raise ValueError("source_ids must contain unique association IDs")
+        return normalized
+
+    @staticmethod
+    def _catalog_item(
+        ref: QualifiedWorkspaceRef, row: Mapping[str, Any]
+    ) -> ResearchCatalogItem:
+        catalog_id = row.get("id", row.get("media_id"))
+        version = row.get("version")
+        return ResearchCatalogItem(
+            ref=ref,
+            catalog_item_id=str(catalog_id),
+            title=str(row.get("title") or "Untitled"),
+            source_type=str(row.get("type") or row.get("media_type") or "media"),
+            catalog_item_version=version if type(version) is int else None,
+            updated_at=str(row.get("last_modified") or row.get("updated_at") or ""),
+        )
+
+    @staticmethod
+    def _source_summary(
+        ref: QualifiedWorkspaceRef, row: Mapping[str, Any]
+    ) -> ResearchSourceSummary:
+        if str(row.get("workspace_id") or "") != ref.workspace_id:
+            raise ValueError("Server returned a mismatched workspace source")
+        source_id = str(row.get("id") or "")
+        media_id = row.get("media_id")
+        version = row.get("version")
+        if type(media_id) is not int or media_id < 1:
+            raise ValueError("Server returned an invalid canonical Media id")
+        return ResearchSourceSummary(
+            ref=ref,
+            source_id=source_id,
+            catalog_item_id=str(media_id),
+            title=str(row.get("title") or "Untitled"),
+            source_type=str(row.get("source_type") or "media"),
+            ready=False,
+            version=version if type(version) is int else None,
+            catalog_item_version=None,
+            selected=bool(row.get("selected", True)),
+            position=int(row.get("position") or 0),
+        )
 
     async def _set_archived(
         self,

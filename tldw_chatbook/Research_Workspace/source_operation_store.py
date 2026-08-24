@@ -169,6 +169,29 @@ class ResearchSourceOperationStore:
             ).fetchone()
         return _operation_from_row(row) if row is not None else None
 
+    def get_by_idempotency_key(
+        self, idempotency_key: str
+    ) -> ResearchSourceOperation | None:
+        """Return the existing qualified intent for idempotent convergence."""
+
+        if not isinstance(idempotency_key, str) or not idempotency_key.strip():
+            raise SourceOperationValidationError(
+                "idempotency_key must be nonblank text"
+            )
+        normalized = idempotency_key.strip()
+        if len(normalized) > 512 or len(normalized.encode("utf-8")) > 512:
+            raise SourceOperationValidationError("idempotency_key is too long")
+        with self._db.connection() as connection:
+            row = connection.execute(
+                f"""
+                SELECT {_SELECT_COLUMNS}
+                FROM research_source_operations
+                WHERE idempotency_key = ?
+                """,
+                (normalized,),
+            ).fetchone()
+        return _operation_from_row(row) if row is not None else None
+
     def list_incomplete(
         self, *, limit: int = 50, offset: int = 0
     ) -> tuple[ResearchSourceOperation, ...]:
@@ -243,6 +266,35 @@ class ResearchSourceOperationStore:
                 (
                     SourceOperationStatus.PENDING.value,
                     SourceOperationStatus.IN_PROGRESS.value,
+                    SourceOperationStatus.SUCCEEDED.value,
+                    SourceOperationStatus.PENDING.value,
+                    SourceOperationStatus.IN_PROGRESS.value,
+                    limit,
+                ),
+            ).fetchall()
+        return tuple(_operation_from_row(row) for row in rows)
+
+    def list_readiness_actionable(
+        self, *, limit: int = 50
+    ) -> tuple[ResearchSourceOperation, ...]:
+        """Return a bounded page whose association is ready for status refresh."""
+
+        if type(limit) is not int or not 1 <= limit <= MAX_INCOMPLETE_PAGE:
+            raise SourceOperationValidationError(
+                f"limit must be between 1 and {MAX_INCOMPLETE_PAGE}"
+            )
+        with self._db.connection() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT {_SELECT_COLUMNS}
+                FROM research_source_operations
+                WHERE association_status = ?
+                    AND readiness_status IN (?, ?)
+                    AND workspace_source_id <> ''
+                ORDER BY created_at ASC, operation_id ASC
+                LIMIT ?
+                """,
+                (
                     SourceOperationStatus.SUCCEEDED.value,
                     SourceOperationStatus.PENDING.value,
                     SourceOperationStatus.IN_PROGRESS.value,

@@ -439,6 +439,7 @@ from .Research_Workspace.source_association import (
     ResearchSourceAssociationScheduler,
 )
 from .Research_Workspace.source_operation_store import ResearchSourceOperationStore
+from .Research_Workspace.source_readiness import ResearchSourceReadinessCoordinator
 from .Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
 from .Scheduling.constants import (
     HANDLER_TIMEOUT_SECONDS,
@@ -2454,7 +2455,7 @@ class LibraryIngestQueueMixin:
         scheduler = getattr(self, "research_source_association_scheduler", None)
         if scheduler is not None:
             self.run_worker(
-                scheduler.resume_incomplete(),
+                scheduler.resume_startup(),
                 group="research_source_association_startup",
             )
 
@@ -7669,6 +7670,12 @@ class TldwCli(
         """Compose durable post-ingest association services."""
 
         try:
+            from .Research_Workspace import (
+                LocalResearchWorkspaceAdapter,
+                ServerResearchWorkspaceAdapter,
+                WorkspaceDataSource,
+            )
+
             if self.local_workspace_db is None:
                 raise RuntimeError("Workspace database is unavailable.")
             operation_store = ResearchSourceOperationStore(self.local_workspace_db)
@@ -7681,9 +7688,37 @@ class TldwCli(
                 catalog_requeuer=self._requeue_research_source_catalog_job,
                 catalog_dispatcher=self._dispatch_research_source_catalog_job,
             )
+            readiness_adapters = {}
+            if self.workspace_registry_service is not None:
+                readiness_adapters[WorkspaceDataSource.LOCAL] = (
+                    LocalResearchWorkspaceAdapter(
+                        self.workspace_registry_service,
+                        media_scope_service=getattr(
+                            self, "media_reading_scope_service", None
+                        ),
+                    )
+                )
+            if (
+                self.server_notes_workspace_service is not None
+                and self.server_context_provider is not None
+            ):
+                readiness_adapters[WorkspaceDataSource.SERVER] = (
+                    ServerResearchWorkspaceAdapter(
+                        self.server_notes_workspace_service,
+                        self.server_context_provider,
+                        media_scope_service=getattr(
+                            self, "media_reading_scope_service", None
+                        ),
+                    )
+                )
+            readiness_coordinator = ResearchSourceReadinessCoordinator(
+                operation_store=operation_store,
+                adapters=readiness_adapters,
+            )
             scheduler = ResearchSourceAssociationScheduler(
                 coordinator=coordinator,
                 operation_store=operation_store,
+                readiness_coordinator=readiness_coordinator,
             )
         except Exception:
             logger.opt(exception=True).warning(
@@ -7691,10 +7726,12 @@ class TldwCli(
             )
             self.research_source_operation_store = None
             self.research_source_association_coordinator = None
+            self.research_source_readiness_coordinator = None
             self.research_source_association_scheduler = None
             return
         self.research_source_operation_store = operation_store
         self.research_source_association_coordinator = coordinator
+        self.research_source_readiness_coordinator = readiness_coordinator
         self.research_source_association_scheduler = scheduler
 
     def _build_chatbook_db_paths(self) -> dict[str, str]:
@@ -9627,9 +9664,17 @@ class TldwCli(
 
         ports = {}
         local_service = getattr(self, "workspace_registry_service", None)
+        media_scope_service = getattr(self, "media_reading_scope_service", None)
+        operation_store = getattr(self, "research_source_operation_store", None)
+        association_scheduler = getattr(
+            self, "research_source_association_scheduler", None
+        )
         if local_service is not None:
             ports[WorkspaceDataSource.LOCAL] = LocalResearchWorkspaceAdapter(
-                local_service
+                local_service,
+                media_scope_service=media_scope_service,
+                operation_store=operation_store,
+                association_scheduler=association_scheduler,
             )
         server_service = getattr(self, "server_notes_workspace_service", None)
         server_context_provider = getattr(self, "server_context_provider", None)
@@ -9637,6 +9682,9 @@ class TldwCli(
             ports[WorkspaceDataSource.SERVER] = ServerResearchWorkspaceAdapter(
                 server_service,
                 server_context_provider,
+                media_scope_service=media_scope_service,
+                operation_store=operation_store,
+                association_scheduler=association_scheduler,
             )
         controller = ResearchWorkspaceController(ports)
         overlay_store = ResearchPresentationOverlayStore(

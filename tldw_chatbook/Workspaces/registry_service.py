@@ -745,7 +745,7 @@ class LocalWorkspaceRegistryService:
                 )
                 if remaining == scope.items:
                     return True
-                if not remaining:
+                if not remaining and not scope.empty_is_scoped:
                     conn.execute(
                         "DELETE FROM workspace_rag_scopes WHERE workspace_id = ?",
                         (safe_workspace_id,),
@@ -754,6 +754,7 @@ class LocalWorkspaceRegistryService:
                 updated_scope = RagScope(
                     items=remaining,
                     updated_at=self._now_factory(),
+                    empty_is_scoped=scope.empty_is_scoped,
                 )
                 conn.execute(
                     """
@@ -817,6 +818,50 @@ class LocalWorkspaceRegistryService:
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
         return tuple(_membership_from_row(row) for row in rows)
+
+    def list_workspace_source_memberships(
+        self,
+        workspace_id: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> tuple[tuple[WorkspaceMembership, ...], int]:
+        """Return one bounded page of canonical Media source associations."""
+
+        safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("limit must be between 1 and 100")
+        if type(offset) is not int or not 0 <= offset <= 10_000:
+            raise ValueError("offset must be between 0 and 10000")
+        try:
+            with self.db.connection() as conn:
+                total = int(
+                    conn.execute(
+                        """
+                        SELECT COUNT(*)
+                        FROM workspace_memberships
+                        WHERE workspace_id = ?
+                            AND item_type = 'media'
+                            AND role = 'source'
+                        """,
+                        (safe_workspace_id,),
+                    ).fetchone()[0]
+                )
+                rows = conn.execute(
+                    """
+                    SELECT *
+                    FROM workspace_memberships
+                    WHERE workspace_id = ?
+                        AND item_type = 'media'
+                        AND role = 'source'
+                    ORDER BY created_at ASC, item_id ASC, membership_id ASC
+                    LIMIT ? OFFSET ?
+                    """,
+                    (safe_workspace_id, limit, offset),
+                ).fetchall()
+        except sqlite3.Error as exc:
+            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+        return tuple(_membership_from_row(row) for row in rows), total
 
     def list_workspace_conversations(
         self,
@@ -1196,7 +1241,19 @@ class LocalWorkspaceRegistryService:
             )
             return None
         scope = parse_scope(raw)
-        if scope is not None and not scope.items:
+        if (
+            scope is None
+            and isinstance(raw, dict)
+            and raw.get("version") == 2
+            and raw.get("empty_is_scoped") is True
+        ):
+            safe_stamp = raw.get("updated_at")
+            return RagScope(
+                items=(),
+                updated_at=safe_stamp if isinstance(safe_stamp, str) else "corrupt",
+                empty_is_scoped=True,
+            )
+        if scope is not None and not scope.items and not scope.empty_is_scoped:
             return None
         return scope
 
@@ -1226,7 +1283,7 @@ class LocalWorkspaceRegistryService:
         """
 
         safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
-        if scope is not None and not scope.items:
+        if scope is not None and not scope.items and not scope.empty_is_scoped:
             scope = None
         try:
             with self.db.transaction() as conn:

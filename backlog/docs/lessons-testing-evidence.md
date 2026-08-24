@@ -8361,3 +8361,17 @@ not evidence for "not invoked at all".
 (`waited += 0.05` against a `5.0` limit) is off by one at random — a hundred
 additions of `0.05` do not reliably reach `5.0`. Count polls against an
 integer budget derived once from the two constants.
+
+## A wrong identity space can make a readiness test pass without exercising readiness (TASK-21508, 2026-08-24)
+
+**Incident.** A missing-embeddings test expected Hybrid retrieval to exclude an
+FTS-only Local source. The test passed, but an inverse mutation from
+`fts and vector` to `fts or vector` also passed. The desired-selection fixture
+had supplied the Local membership ID, while the canonical Local `RagScope`
+stores Media IDs; the source was excluded before the readiness predicate ran.
+
+**Rule.** When a result is an intersection of identity, selection, support, and
+readiness gates, mutate each gate independently. A green expected-empty test is
+not evidence for the named gate until making that gate permissive turns the test
+red. Fixtures crossing association and canonical-owner boundaries must state
+which ID space each value occupies.

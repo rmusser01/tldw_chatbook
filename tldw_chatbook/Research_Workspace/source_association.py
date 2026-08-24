@@ -7,6 +7,7 @@ import hashlib
 from pathlib import Path
 from typing import Any
 
+from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem
 from tldw_chatbook.Library.library_ingest_jobs import (
     IngestJobState,
     LibraryIngestJobRegistry,
@@ -249,6 +250,15 @@ class ResearchSourceAssociationCoordinator:
                 item_id=operation.canonical_item_id,
                 role="source",
             )
+            if callable(
+                getattr(self._local_registry, "get_workspace_scope", None)
+            ) and callable(
+                getattr(self._local_registry, "set_workspace_scope", None)
+            ):
+                await asyncio.to_thread(
+                    self._persist_local_desired_scope,
+                    operation,
+                )
         except Exception:
             return await self._association_failed(operation)
         return await self._advance_stage(
@@ -295,6 +305,7 @@ class ResearchSourceAssociationCoordinator:
                 media_id=media_id,
                 title=job.title or Path(job.source_path).stem or "Source",
                 source_type=job.detected_type or "media",
+                selected=operation.desired_selected,
                 version=None,
             )
             if (
@@ -314,6 +325,32 @@ class ResearchSourceAssociationCoordinator:
             status=SourceOperationStatus.SUCCEEDED,
             expected_revision=operation.revision,
             workspace_source_id=source_id,
+        )
+
+    def _persist_local_desired_scope(
+        self, operation: ResearchSourceOperation
+    ) -> None:
+        """Persist canonical Media selection after the membership exists."""
+
+        scope = self._local_registry.get_workspace_scope(operation.workspace_id)
+        existing = list(scope.items if scope is not None else ())
+        existing = [
+            item
+            for item in existing
+            if not (
+                item.source_type == "media"
+                and item.source_id == operation.canonical_item_id
+            )
+        ]
+        if operation.desired_selected:
+            existing.append(ScopeItem("media", operation.canonical_item_id))
+        self._local_registry.set_workspace_scope(
+            operation.workspace_id,
+            RagScope(
+                items=tuple(existing),
+                updated_at=operation.updated_at,
+                empty_is_scoped=True,
+            ),
         )
 
     async def _association_failed(
@@ -371,9 +408,16 @@ class _OperationFence:
 class ResearchSourceAssociationScheduler:
     """Fence same-operation resumes while permitting unrelated operations."""
 
-    def __init__(self, *, coordinator: Any, operation_store: Any) -> None:
+    def __init__(
+        self,
+        *,
+        coordinator: Any,
+        operation_store: Any,
+        readiness_coordinator: Any | None = None,
+    ) -> None:
         self._coordinator = coordinator
         self._operation_store = operation_store
+        self._readiness_coordinator = readiness_coordinator
         self._operation_fences: dict[str, _OperationFence] = {}
 
     @property
@@ -387,7 +431,7 @@ class ResearchSourceAssociationScheduler:
 
         return await self._run_fenced(
             operation_id,
-            self._coordinator.resume,
+            self._resume_with_readiness,
         )
 
     async def retry(
@@ -398,11 +442,30 @@ class ResearchSourceAssociationScheduler:
     ) -> ResearchSourceOperation | None:
         """Retry one operation behind the same operation-specific lock."""
 
+        if stage is SourceOperationStage.READINESS:
+            if self._readiness_coordinator is None:
+                raise ValueError("Readiness retry is unavailable.")
+            return await self._run_fenced(
+                operation_id,
+                self._readiness_coordinator.retry,
+            )
         return await self._run_fenced(
-            operation_id,
-            self._coordinator.retry,
-            stage=stage,
+            operation_id, self._coordinator.retry, stage=stage
         )
+
+    async def _resume_with_readiness(
+        self, operation_id: str
+    ) -> ResearchSourceOperation | None:
+        operation = await self._coordinator.resume(operation_id)
+        if (
+            self._readiness_coordinator is not None
+            and operation is not None
+            and operation.association_status is SourceOperationStatus.SUCCEEDED
+            and operation.readiness_status
+            in {SourceOperationStatus.PENDING, SourceOperationStatus.IN_PROGRESS}
+        ):
+            return await self._readiness_coordinator.resume(operation_id)
+        return operation
 
     async def _run_fenced(
         self,
@@ -442,6 +505,24 @@ class ResearchSourceAssociationScheduler:
             *(self.resume(operation.operation_id) for operation in actionable),
             return_exceptions=True,
         )
+
+    async def resume_readiness_incomplete(self, *, limit: int = 50) -> None:
+        """Resume one bounded stage-specific page after association recovery."""
+
+        if self._readiness_coordinator is None:
+            return
+        await self._readiness_coordinator.resume_incomplete(limit=limit)
+
+    async def resume_startup(
+        self,
+        *,
+        association_limit: int = 50,
+        readiness_limit: int = 50,
+    ) -> None:
+        """Restore bounded association work before bounded readiness work."""
+
+        await self.resume_incomplete(limit=association_limit)
+        await self.resume_readiness_incomplete(limit=readiness_limit)
 
 
 def _server_source_id(idempotency_key: str, media_id: str) -> str:

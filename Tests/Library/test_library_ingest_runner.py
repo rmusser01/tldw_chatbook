@@ -435,6 +435,9 @@ class _RecordingAssociationScheduler:
     async def resume_incomplete(self) -> None:
         return None
 
+    async def resume_startup(self) -> None:
+        return None
+
 
 def _exit_ingest_worker_abruptly() -> None:
     """Picklable spawn-pool target that simulates a hard worker crash."""
@@ -794,10 +797,17 @@ def test_real_app_wires_research_association_and_restores_before_startup_resume(
 
     scheduler = app.research_source_association_scheduler
     coordinator = app.research_source_association_coordinator
+    readiness = app.research_source_readiness_coordinator
 
     assert scheduler._coordinator is coordinator
     assert scheduler._operation_store is app.research_source_operation_store
+    assert scheduler._readiness_coordinator is readiness
     assert coordinator._operation_store is app.research_source_operation_store
+    assert readiness._operation_store is app.research_source_operation_store
+    assert set(readiness._adapters) == {
+        WorkspaceDataSource.LOCAL,
+        WorkspaceDataSource.SERVER,
+    }
     assert coordinator._ingest_jobs is app.library_ingest_jobs
     assert coordinator._local_registry is app.workspace_registry_service
     assert coordinator._server_service is app.server_notes_workspace_service

@@ -1,0 +1,568 @@
+from __future__ import annotations
+
+import asyncio
+from pathlib import Path
+import threading
+import time
+from types import SimpleNamespace
+
+import pytest
+
+from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem
+from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+from tldw_chatbook.Media.media_reading_scope_service import MediaReadingBackend
+from tldw_chatbook.Library.library_ingest_jobs import LibraryIngestJobRegistry
+from tldw_chatbook.Research_Workspace.contracts import (
+    CapabilityUnavailableError,
+    QualifiedWorkspaceRef,
+    SourceReadinessState,
+    WorkspaceDataSource,
+)
+from tldw_chatbook.Research_Workspace.local_adapter import (
+    LocalResearchWorkspaceAdapter,
+)
+from tldw_chatbook.Research_Workspace.server_adapter import (
+    ServerResearchWorkspaceAdapter,
+)
+from tldw_chatbook.Research_Workspace.source_association import (
+    ResearchSourceAssociationCoordinator,
+    ResearchSourceAssociationScheduler,
+)
+from tldw_chatbook.Research_Workspace.source_operation_store import (
+    ResearchSourceOperationStore,
+)
+from tldw_chatbook.Research_Workspace.source_operations import SourceOperationStatus
+from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
+from tldw_chatbook.runtime_policy.server_event_scope import (
+    event_principal_id_from_active_context,
+)
+
+
+class RecordingMediaScope:
+    def __init__(self) -> None:
+        self.calls: list[tuple[object, ...]] = []
+        self.details = {
+            "7": {
+                "source_id": "7",
+                "backing_media_id": 7,
+                "title": "Paper",
+                "media_type": "pdf",
+                "updated_at": "2026-08-24T00:00:00Z",
+                "version": 4,
+                "content": "Paper body",
+                "has_transcript": True,
+                "has_chunks": True,
+                "chunking_status": "completed",
+                "vector_processing": False,
+            },
+            "8": {
+                "source_id": "8",
+                "backing_media_id": 8,
+                "title": "Book",
+                "media_type": "ebook",
+                "updated_at": "2026-08-23T00:00:00Z",
+                "version": 2,
+                "content": "Book body",
+                "has_transcript": True,
+                "has_chunks": True,
+                "chunking_status": "completed",
+                "vector_processing": "completed",
+            },
+        }
+
+    async def search_media(self, **kwargs):
+        self.calls.append(("search_media", kwargs))
+        items = list(self.details.values())
+        return {"items": items, "total": 2, "offset": 0, "limit": 25}
+
+    async def search_backing_media_items(self, **kwargs):
+        self.calls.append(("search_backing_media_items", kwargs))
+        return {
+            "items": [
+                {
+                    "id": 31,
+                    "title": "Server paper",
+                    "type": "pdf",
+                    "last_modified": "2026-08-24T00:00:00Z",
+                    "version": 6,
+                }
+            ],
+            "pagination": {
+                "page": kwargs["page"],
+                "results_per_page": kwargs["results_per_page"],
+                "total_items": 1,
+                "total_pages": 1,
+            },
+        }
+
+    async def get_media_detail(self, **kwargs):
+        self.calls.append(("get_media_detail", kwargs))
+        return dict(self.details[str(kwargs["media_id"])])
+
+
+def local_registry(tmp_path: Path) -> LocalWorkspaceRegistryService:
+    registry = LocalWorkspaceRegistryService(
+        WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="source-adapter")
+    )
+    registry.create_workspace(workspace_id="workspace-1", name="Research")
+    return registry
+
+
+@pytest.mark.asyncio
+async def test_local_attached_rows_keep_membership_and_media_identities_distinct(
+    tmp_path,
+) -> None:
+    registry = local_registry(tmp_path)
+    membership = registry.link_membership(
+        "workspace-1", item_type="media", item_id="7", role="source"
+    )
+    registry.set_workspace_scope(
+        "workspace-1",
+        RagScope(
+            items=(ScopeItem("media", "7"),),
+            updated_at="t1",
+            empty_is_scoped=True,
+        ),
+    )
+    scope = RecordingMediaScope()
+    adapter = LocalResearchWorkspaceAdapter(registry, media_scope_service=scope)
+    ref = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "workspace-1")
+
+    page = await adapter.list_sources(ref)
+
+    assert len(page.items) == 1
+    row = page.items[0]
+    assert row.workspace_source_id == membership.membership_id
+    assert row.catalog_item_id == "7"
+    assert row.workspace_source_version is None
+    assert row.catalog_item_version == 4
+    assert row.selected is True
+    assert scope.calls == [
+        (
+            "get_media_detail",
+            {"mode": MediaReadingBackend.LOCAL, "media_id": "7"},
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_local_catalog_search_is_bounded_deterministic_and_explicit_mode(
+    tmp_path,
+) -> None:
+    scope = RecordingMediaScope()
+    adapter = LocalResearchWorkspaceAdapter(
+        local_registry(tmp_path), media_scope_service=scope
+    )
+    ref = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "workspace-1")
+
+    page = await adapter.search_catalog(
+        ref,
+        query="paper",
+        source_types=("pdf",),
+        sort_by="updated_desc",
+        limit=25,
+        offset=0,
+    )
+
+    assert [item.catalog_item_id for item in page.items] == ["7", "8"]
+    assert scope.calls == [
+        (
+            "search_media",
+            {
+                "mode": MediaReadingBackend.LOCAL,
+                "query": "paper",
+                "limit": 25,
+                "offset": 0,
+                "media_types": ["pdf"],
+                "sort_by": "updated_desc",
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_local_selection_uses_canonical_media_ids_and_persists_empty(
+    tmp_path,
+) -> None:
+    registry = local_registry(tmp_path)
+    registry.link_membership(
+        "workspace-1", item_type="media", item_id="7", role="source"
+    )
+    adapter = LocalResearchWorkspaceAdapter(
+        registry, media_scope_service=RecordingMediaScope()
+    )
+    ref = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "workspace-1")
+
+    await adapter.set_selected_scope(ref, ())
+
+    assert registry.get_workspace_scope("workspace-1") == RagScope(
+        items=(),
+        updated_at=registry.get_workspace_scope("workspace-1").updated_at,
+        empty_is_scoped=True,
+    )
+
+    with pytest.raises(ValueError, match="canonical Media"):
+        await adapter.set_selected_scope(
+            ref,
+            (registry.list_workspace_memberships("workspace-1")[0].membership_id,),
+        )
+
+
+@pytest.mark.asyncio
+async def test_local_remove_unlinks_only_and_local_update_reorder_are_typed(
+    tmp_path,
+) -> None:
+    registry = local_registry(tmp_path)
+    membership = registry.link_membership(
+        "workspace-1", item_type="media", item_id="7", role="source"
+    )
+    adapter = LocalResearchWorkspaceAdapter(
+        registry, media_scope_service=RecordingMediaScope()
+    )
+    ref = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "workspace-1")
+
+    assert await adapter.remove_source(ref, membership.membership_id)
+    assert registry.list_workspace_memberships("workspace-1") == ()
+    with pytest.raises(CapabilityUnavailableError) as update_error:
+        await adapter.update_source(ref, membership.membership_id, title="Other")
+    with pytest.raises(CapabilityUnavailableError) as reorder_error:
+        await adapter.reorder_sources(ref, (membership.membership_id,))
+
+    assert update_error.value.capability.reason_code == "canonical_owner_required"
+    assert reorder_error.value.capability.reason_code == "local_order_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_local_attach_existing_creates_intent_then_converges_duplicate_retry(
+    tmp_path,
+) -> None:
+    registry = local_registry(tmp_path)
+    store = ResearchSourceOperationStore(registry.db)
+    coordinator = ResearchSourceAssociationCoordinator(
+        operation_store=store,
+        ingest_jobs=LibraryIngestJobRegistry(),
+        local_registry=registry,
+    )
+    scheduler = ResearchSourceAssociationScheduler(
+        coordinator=coordinator,
+        operation_store=store,
+    )
+    operation_ids = iter(("operation-1", "operation-2"))
+    adapter = LocalResearchWorkspaceAdapter(
+        registry,
+        media_scope_service=RecordingMediaScope(),
+        operation_store=store,
+        association_scheduler=scheduler,
+        operation_id_factory=lambda: next(operation_ids),
+        now_factory=lambda: "2026-08-24T12:00:00Z",
+    )
+    ref = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "workspace-1")
+
+    first = await adapter.attach_existing(
+        ref,
+        catalog_item_id="7",
+        desired_selected=True,
+        idempotency_key="local:workspace-1:catalog-7",
+    )
+    replay = await adapter.attach_existing(
+        ref,
+        catalog_item_id="7",
+        desired_selected=True,
+        idempotency_key="local:workspace-1:catalog-7",
+    )
+
+    assert replay == first
+    assert first.catalog_status is SourceOperationStatus.SUCCEEDED
+    assert first.association_status is SourceOperationStatus.SUCCEEDED
+    assert len(registry.get_item_memberships("media", "7")) == 1
+
+
+@pytest.mark.asyncio
+async def test_local_source_membership_query_does_not_block_event_loop(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    registry = local_registry(tmp_path)
+    release = threading.Event()
+    original = registry.list_workspace_source_memberships
+
+    def blocking_query(*args, **kwargs):
+        release.wait(timeout=1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(registry, "list_workspace_source_memberships", blocking_query)
+    adapter = LocalResearchWorkspaceAdapter(
+        registry, media_scope_service=RecordingMediaScope()
+    )
+    ref = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "workspace-1")
+    timer = threading.Timer(0.15, release.set)
+    timer.start()
+    started = time.monotonic()
+    try:
+        task = asyncio.create_task(adapter.list_sources(ref))
+        await asyncio.sleep(0.02)
+        assert time.monotonic() - started < 0.1
+        await task
+    finally:
+        release.set()
+        timer.cancel()
+
+
+def server_context(profile_id: str = "profile-1") -> object:
+    return SimpleNamespace(
+        active_server_id=profile_id,
+        auth_token="test-token",
+        credential_source="test",
+        capabilities={
+            "server_configured": True,
+            "reachability": "reachable",
+            "auth_state": "authenticated",
+        },
+    )
+
+
+class ContextProvider:
+    def __init__(self) -> None:
+        self.context = server_context()
+        self.calls = 0
+
+    def get_active_context(self):
+        self.calls += 1
+        return self.context
+
+
+def server_ref(provider: ContextProvider) -> QualifiedWorkspaceRef:
+    return QualifiedWorkspaceRef(
+        WorkspaceDataSource.SERVER,
+        "workspace-1",
+        server_profile_id="profile-1",
+        principal_id=event_principal_id_from_active_context(provider.context) or "",
+    )
+
+
+class RecordingServerSourceService:
+    def __init__(self) -> None:
+        self.calls: list[tuple[object, ...]] = []
+        self.rows = [
+            {
+                "id": "source-1",
+                "workspace_id": "workspace-1",
+                "media_id": 31,
+                "title": "Server paper",
+                "source_type": "pdf",
+                "position": 0,
+                "selected": True,
+                "version": 5,
+            }
+        ]
+        self.capability = {
+            "workspace_id": "workspace-1",
+            "workspace_profile": "research",
+            "workspace_kind": "research_workspace",
+            "access_level": "owner",
+            "workspace_services": {},
+            "allowed_actions": {
+                "add_sources": {"allowed": True, "reason_code": None},
+                "inspect_sources": {"allowed": True, "reason_code": None},
+            },
+        }
+
+    async def get_workspace_capabilities(self, workspace_id):
+        self.calls.append(("capabilities", workspace_id))
+        return dict(self.capability)
+
+    async def list_workspace_sources(self, workspace_id):
+        self.calls.append(("list", workspace_id))
+        return list(self.rows)
+
+    async def set_workspace_source_selection(self, workspace_id, selected_ids):
+        self.calls.append(("selection", workspace_id, list(selected_ids)))
+        selected = set(selected_ids)
+        return [
+            row | {"selected": row["id"] in selected, "version": 7} for row in self.rows
+        ]
+
+    async def reorder_workspace_sources(self, workspace_id, ordered_ids):
+        self.calls.append(("reorder", workspace_id, list(ordered_ids)))
+        by_id = {row["id"]: row for row in self.rows}
+        return [
+            by_id[source_id] | {"position": index, "version": 8}
+            for index, source_id in enumerate(ordered_ids)
+        ]
+
+    async def get_workspace_source_status(self, workspace_id):
+        self.calls.append(("status", workspace_id))
+        return {
+            "workspace_id": workspace_id,
+            "sources": [
+                {
+                    "id": "source-1",
+                    "workspace_id": workspace_id,
+                    "media_id": 31,
+                    "state": "partially_queryable",
+                    "status_reason": "vector_index_pending",
+                    "readiness": {
+                        "metadata_ready": True,
+                        "text_extracted": True,
+                        "fts_ready": True,
+                        "vector_ready": False,
+                        "citation_ready": True,
+                        "summary_ready": False,
+                        "tool_accessible": False,
+                    },
+                    "retry_eligible": False,
+                    "stale": False,
+                }
+            ],
+            "summary": {},
+        }
+
+    async def delete_workspace_source(self, workspace_id, source_id):
+        self.calls.append(("delete", workspace_id, source_id))
+        return None
+
+
+@pytest.mark.asyncio
+async def test_server_source_list_preserves_two_identity_spaces_and_refetch_versions() -> (
+    None
+):
+    provider = ContextProvider()
+    service = RecordingServerSourceService()
+    adapter = ServerResearchWorkspaceAdapter(
+        service, provider, media_scope_service=RecordingMediaScope()
+    )
+    ref = server_ref(provider)
+
+    page = await adapter.list_sources(ref)
+    selected = await adapter.set_selected_scope(ref, ("source-1",))
+
+    assert page.items[0].source_id == "source-1"
+    assert page.items[0].catalog_item_id == "31"
+    assert page.items[0].workspace_source_version == 5
+    assert selected[0].workspace_source_version == 7
+    assert service.calls == [
+        ("capabilities", "workspace-1"),
+        ("list", "workspace-1"),
+        ("capabilities", "workspace-1"),
+        ("selection", "workspace-1", ["source-1"]),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_catalog_uses_media_scope_server_mode_without_local_call() -> None:
+    provider = ContextProvider()
+    media_scope = RecordingMediaScope()
+    service = RecordingServerSourceService()
+    adapter = ServerResearchWorkspaceAdapter(
+        service, provider, media_scope_service=media_scope
+    )
+
+    page = await adapter.search_catalog(
+        server_ref(provider), query="paper", limit=25, offset=0
+    )
+
+    assert page.items[0].catalog_item_id == "31"
+    assert media_scope.calls == [
+        (
+            "search_backing_media_items",
+            {
+                "mode": MediaReadingBackend.SERVER,
+                "page": 1,
+                "results_per_page": 100,
+                "query": "paper",
+                "sort_by": "updated_desc",
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_server_readiness_and_missing_capability_are_typed() -> None:
+    provider = ContextProvider()
+    service = RecordingServerSourceService()
+    adapter = ServerResearchWorkspaceAdapter(
+        service, provider, media_scope_service=RecordingMediaScope()
+    )
+    ref = server_ref(provider)
+
+    readiness = await adapter.get_readiness(ref)
+    assert readiness[0].state is SourceReadinessState.FTS_READY
+    service.capability["allowed_actions"] = {}
+    with pytest.raises(CapabilityUnavailableError) as exc_info:
+        await adapter.list_sources(ref)
+
+    assert exc_info.value.capability.reason_code == "unknown_capability"
+
+
+@pytest.mark.asyncio
+async def test_server_context_switch_is_checked_before_source_dispatch() -> None:
+    provider = ContextProvider()
+    service = RecordingServerSourceService()
+    adapter = ServerResearchWorkspaceAdapter(
+        service, provider, media_scope_service=RecordingMediaScope()
+    )
+    ref = server_ref(provider)
+    provider.context = server_context("profile-2")
+
+    with pytest.raises(CapabilityUnavailableError) as exc_info:
+        await adapter.list_sources(ref)
+
+    assert exc_info.value.capability.reason_code == "server_context_changed"
+    assert service.calls == []
+
+
+@pytest.mark.asyncio
+async def test_server_rechecks_identity_after_capability_projection() -> None:
+    provider = ContextProvider()
+
+    class SwitchingService(RecordingServerSourceService):
+        async def get_workspace_capabilities(self, workspace_id):
+            projection = await super().get_workspace_capabilities(workspace_id)
+            provider.context = server_context("profile-2")
+            return projection
+
+    service = SwitchingService()
+    adapter = ServerResearchWorkspaceAdapter(
+        service, provider, media_scope_service=RecordingMediaScope()
+    )
+
+    with pytest.raises(CapabilityUnavailableError) as exc_info:
+        await adapter.list_sources(server_ref(ContextProvider()))
+
+    assert exc_info.value.capability.reason_code == "server_context_changed"
+    assert service.calls == [("capabilities", "workspace-1")]
+
+
+@pytest.mark.asyncio
+async def test_missing_server_capability_projection_is_typed_and_discoverable() -> None:
+    provider = ContextProvider()
+    service = SimpleNamespace()
+    adapter = ServerResearchWorkspaceAdapter(service, provider)
+
+    capabilities = await adapter.capabilities(server_ref(provider))
+
+    for action in (
+        "list_sources",
+        "search_catalog",
+        "attach_existing",
+        "remove_source",
+        "update_source",
+        "preview_source",
+        "get_readiness",
+        "set_selected_scope",
+        "reorder_sources",
+    ):
+        assert capabilities[action].available is False
+        assert capabilities[action].reason_code == "server_capability_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_server_selection_rejects_nonassociation_ids_before_dispatch() -> None:
+    provider = ContextProvider()
+    service = RecordingServerSourceService()
+    adapter = ServerResearchWorkspaceAdapter(service, provider)
+
+    with pytest.raises(ValueError, match="association IDs"):
+        await adapter.set_selected_scope(server_ref(provider), (31,))
+
+    assert service.calls == []

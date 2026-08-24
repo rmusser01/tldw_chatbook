@@ -608,3 +608,112 @@ async def test_service_enforces_notes_graph_policy_actions():
         "notes.graph.create.server",
         "notes.graph.delete.server",
     ]
+
+
+class SourceProjectionClient:
+    def __init__(self):
+        self.calls = []
+
+    async def get_workspace_source_preview(self, workspace_id, source_id, **kwargs):
+        self.calls.append(("preview", workspace_id, source_id, kwargs))
+        return {
+            "workspace_id": workspace_id,
+            "source_id": source_id,
+            "media_id": 42,
+            "title": "Paper",
+            "source_type": "pdf",
+            "preview_mode": "available",
+            "content_available": True,
+            "text_preview": "Body",
+            "snippets": [],
+        }
+
+    async def get_workspace_source_status(self, workspace_id):
+        self.calls.append(("status", workspace_id))
+        return {"workspace_id": workspace_id, "sources": [], "summary": {}}
+
+    async def get_workspace_capabilities(self, workspace_id):
+        self.calls.append(("capabilities", workspace_id))
+        return {
+            "workspace_id": workspace_id,
+            "workspace_services": {},
+            "allowed_actions": {},
+        }
+
+    async def set_workspace_source_selection(self, workspace_id, request):
+        self.calls.append(("selection", workspace_id, request.selected_ids))
+        return [
+            {
+                "id": "source-1",
+                "workspace_id": workspace_id,
+                "media_id": 42,
+                "title": "Paper",
+                "source_type": "pdf",
+                "position": 0,
+                "selected": True,
+                "version": 5,
+            }
+        ]
+
+    async def reorder_workspace_sources(self, workspace_id, request):
+        self.calls.append(("reorder", workspace_id, request.ordered_ids))
+        return [
+            {
+                "id": source_id,
+                "workspace_id": workspace_id,
+                "media_id": index + 1,
+                "title": source_id,
+                "source_type": "pdf",
+                "position": index,
+                "selected": True,
+                "version": 8,
+            }
+            for index, source_id in enumerate(request.ordered_ids)
+        ]
+
+
+@pytest.mark.asyncio
+async def test_service_exposes_preview_status_and_capability_read_projections():
+    client = SourceProjectionClient()
+    service = ServerNotesWorkspaceService(client=client)
+
+    preview = await service.preview_workspace_source(
+        "workspace-1", "source-1", max_chars=4000, chunk_limit=4
+    )
+    status = await service.get_workspace_source_status("workspace-1")
+    capabilities = await service.get_workspace_capabilities("workspace-1")
+
+    assert preview["source_id"] == "source-1"
+    assert status["workspace_id"] == "workspace-1"
+    assert capabilities["workspace_id"] == "workspace-1"
+    assert client.calls == [
+        (
+            "preview",
+            "workspace-1",
+            "source-1",
+            {"max_chars": 4000, "chunk_limit": 4},
+        ),
+        ("status", "workspace-1"),
+        ("capabilities", "workspace-1"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_service_selection_and_reorder_return_post_write_refetched_versions():
+    client = SourceProjectionClient()
+    service = ServerNotesWorkspaceService(client=client)
+
+    selected = await service.set_workspace_source_selection(
+        "workspace-1", ["source-1"]
+    )
+    reordered = await service.reorder_workspace_sources(
+        "workspace-1", ["source-2", "source-1"]
+    )
+
+    assert selected[0]["version"] == 5
+    assert [row["id"] for row in reordered] == ["source-2", "source-1"]
+    assert [row["position"] for row in reordered] == [0, 1]
+    assert client.calls == [
+        ("selection", "workspace-1", ["source-1"]),
+        ("reorder", "workspace-1", ["source-2", "source-1"]),
+    ]

@@ -6,11 +6,16 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from .contracts import (
+    BoundedPageResult,
     CapabilityUnavailableError,
     QualifiedWorkspaceRef,
+    ResearchCatalogItem,
     ResearchCapability,
+    ResearchSourcePreview,
+    ResearchSourceSummary,
     ResearchWorkspacePort,
     ResearchWorkspaceSummary,
+    SourceReadiness,
     WorkspaceDataSource,
 )
 
@@ -20,6 +25,15 @@ class ResearchRequestContext:
     ref: QualifiedWorkspaceRef
     capability_revision: str
     context_revision: int
+
+
+@dataclass(frozen=True, slots=True)
+class ResearchSurfaceRequest:
+    """One qualified request plus its independently monotonic surface token."""
+
+    context: ResearchRequestContext
+    surface: str
+    generation: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,7 +65,35 @@ class ResearchWorkspaceController:
         self._canonical_workspaces: dict[
             QualifiedWorkspaceRef, ResearchWorkspaceSummary
         ] = {}
+        self._surface_generations = {
+            "sources": 0,
+            "catalog": 0,
+            "readiness": 0,
+            "preview": 0,
+            "selection": 0,
+        }
+        self._canonical_sources: dict[
+            tuple[QualifiedWorkspaceRef, str], ResearchSourceSummary
+        ] = {}
+        self._canonical_catalog_items: dict[
+            tuple[QualifiedWorkspaceRef, str], ResearchCatalogItem
+        ] = {}
+        self._canonical_readiness: dict[
+            tuple[QualifiedWorkspaceRef, str], SourceReadiness
+        ] = {}
+        self._canonical_previews: dict[
+            tuple[QualifiedWorkspaceRef, str], ResearchSourcePreview
+        ] = {}
         self.visible_workspace: ResearchWorkspaceSummary | None = None
+        self.visible_source_page: (
+            BoundedPageResult[ResearchSourceSummary] | None
+        ) = None
+        self.visible_catalog_page: (
+            BoundedPageResult[ResearchCatalogItem] | None
+        ) = None
+        self.visible_readiness: tuple[SourceReadiness, ...] = ()
+        self.visible_preview: ResearchSourcePreview | None = None
+        self.desired_source_ids: tuple[str, ...] = ()
 
     @property
     def context_revision(self) -> int:
@@ -90,6 +132,7 @@ class ResearchWorkspaceController:
         self._selected_ref = None
         self._capability_revision = ""
         self.visible_workspace = None
+        self._clear_visible_source_state()
         self._context_revision += 1
         return self._context_revision
 
@@ -160,6 +203,7 @@ class ResearchWorkspaceController:
         self._capability_revision = capability_revision.strip()
         self._context_revision += 1
         self.visible_workspace = self._canonical_workspaces.get(ref)
+        self._clear_visible_source_state()
         return self._context_revision
 
     def set_capability_revision(self, capability_revision: str) -> int:
@@ -167,6 +211,7 @@ class ResearchWorkspaceController:
         if normalized != self._capability_revision:
             self._capability_revision = normalized
             self._context_revision += 1
+            self._clear_visible_source_state()
         return self._context_revision
 
     def capture_request(self) -> ResearchRequestContext:
@@ -216,3 +261,183 @@ class ResearchWorkspaceController:
         self, ref: QualifiedWorkspaceRef
     ) -> ResearchWorkspaceSummary | None:
         return self._canonical_workspaces.get(ref)
+
+    async def refresh_selected_sources(
+        self, *, limit: int = 100, offset: int = 0
+    ) -> bool:
+        """Refresh the attached-source page without accepting a late result."""
+
+        capture = self._capture_surface("sources")
+        result = await self._port_for(capture).list_sources(
+            capture.context.ref, limit=limit, offset=offset
+        )
+        self._validate_result_refs(result.items, capture.context.ref)
+        if not self._is_current_surface(capture):
+            return False
+        self.visible_source_page = result
+        self.desired_source_ids = self._selected_ids(result.items)
+        for source in result.items:
+            self._canonical_sources[(source.ref, source.source_id)] = source
+        return True
+
+    async def search_selected_catalog(
+        self,
+        *,
+        query: str = "",
+        source_types: tuple[str, ...] = (),
+        sort_by: str = "updated_desc",
+        limit: int = 25,
+        offset: int = 0,
+    ) -> bool:
+        """Search only the selected authority's canonical Media catalog."""
+
+        capture = self._capture_surface("catalog")
+        result = await self._port_for(capture).search_catalog(
+            capture.context.ref,
+            query=query,
+            source_types=source_types,
+            sort_by=sort_by,
+            limit=limit,
+            offset=offset,
+        )
+        self._validate_result_refs(result.items, capture.context.ref)
+        if not self._is_current_surface(capture):
+            return False
+        self.visible_catalog_page = result
+        for item in result.items:
+            self._canonical_catalog_items[(item.ref, item.catalog_item_id)] = item
+        return True
+
+    async def refresh_selected_readiness(
+        self, *, source_ids: tuple[str, ...] = ()
+    ) -> bool:
+        """Refresh readiness without changing the user's desired selection."""
+
+        capture = self._capture_surface("readiness")
+        result = tuple(
+            await self._port_for(capture).get_readiness(
+                capture.context.ref, source_ids=source_ids
+            )
+        )
+        self._validate_result_refs(result, capture.context.ref)
+        if not self._is_current_surface(capture):
+            return False
+        self.visible_readiness = result
+        for readiness in result:
+            self._canonical_readiness[(readiness.ref, readiness.source_id)] = readiness
+        return True
+
+    async def preview_selected_source(
+        self,
+        source_id: str,
+        *,
+        max_chars: int = 3000,
+        snippet_limit: int = 3,
+    ) -> bool:
+        """Preview one source while fencing workspace and capability changes."""
+
+        capture = self._capture_surface("preview")
+        result = await self._port_for(capture).preview_source(
+            capture.context.ref,
+            source_id,
+            max_chars=max_chars,
+            snippet_limit=snippet_limit,
+        )
+        self._validate_result_refs((result,), capture.context.ref)
+        if not self._is_current_surface(capture):
+            return False
+        self.visible_preview = result
+        self._canonical_previews[(result.ref, result.source_id)] = result
+        return True
+
+    async def set_selected_scope(self, source_ids: tuple[str, ...]) -> bool:
+        """Persist desired selection and reconcile from the authority owner."""
+
+        capture = self._capture_surface("selection")
+        self._surface_generations["sources"] += 1
+        result = tuple(
+            await self._port_for(capture).set_selected_scope(
+                capture.context.ref, source_ids
+            )
+        )
+        self._validate_result_refs(result, capture.context.ref)
+        reconciled_ids = self._selected_ids(result)
+        if frozenset(reconciled_ids) != frozenset(source_ids):
+            raise ValueError("Selection reconciliation did not match requested scope")
+        if not self._is_current_surface(capture):
+            return False
+        self.desired_source_ids = tuple(source_ids)
+        self.visible_source_page = BoundedPageResult(
+            items=result,
+            limit=100,
+            total=len(result),
+        )
+        for source in result:
+            self._canonical_sources[(source.ref, source.source_id)] = source
+        return True
+
+    def canonical_source(
+        self, ref: QualifiedWorkspaceRef, source_id: str
+    ) -> ResearchSourceSummary | None:
+        return self._canonical_sources.get((ref, source_id))
+
+    def canonical_catalog_item(
+        self, ref: QualifiedWorkspaceRef, catalog_item_id: str
+    ) -> ResearchCatalogItem | None:
+        return self._canonical_catalog_items.get((ref, catalog_item_id))
+
+    def canonical_source_readiness(
+        self, ref: QualifiedWorkspaceRef, source_id: str
+    ) -> SourceReadiness | None:
+        return self._canonical_readiness.get((ref, source_id))
+
+    def canonical_source_preview(
+        self, ref: QualifiedWorkspaceRef, source_id: str
+    ) -> ResearchSourcePreview | None:
+        return self._canonical_previews.get((ref, source_id))
+
+    def _capture_surface(self, surface: str) -> ResearchSurfaceRequest:
+        self._surface_generations[surface] += 1
+        return ResearchSurfaceRequest(
+            context=self.capture_request(),
+            surface=surface,
+            generation=self._surface_generations[surface],
+        )
+
+    def _is_current_surface(self, capture: ResearchSurfaceRequest) -> bool:
+        return self.is_current_request(capture.context) and (
+            capture.generation == self._surface_generations[capture.surface]
+        )
+
+    def _port_for(self, capture: ResearchSurfaceRequest) -> ResearchWorkspacePort:
+        port = self._ports.get(capture.context.ref.data_source)
+        if port is None:
+            raise RuntimeError(
+                f"No adapter is configured for {capture.context.ref.data_source.value}"
+            )
+        return port
+
+    @staticmethod
+    def _validate_result_refs(results: object, ref: QualifiedWorkspaceRef) -> None:
+        for result in results:
+            if result.ref != ref:
+                raise ValueError("Request returned a mismatched workspace ref")
+
+    @staticmethod
+    def _selected_ids(
+        sources: tuple[ResearchSourceSummary, ...],
+    ) -> tuple[str, ...]:
+        return tuple(
+            source.catalog_item_id
+            if source.ref.data_source is WorkspaceDataSource.LOCAL
+            else source.source_id
+            for source in sources
+            if source.selected
+        )
+
+    def _clear_visible_source_state(self) -> None:
+        self.visible_source_page = None
+        self.visible_catalog_page = None
+        self.visible_readiness = ()
+        self.visible_preview = None
+        self.desired_source_ids = ()
