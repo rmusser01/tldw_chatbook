@@ -1,10 +1,10 @@
 ---
 id: TASK-2803
 title: Rewrite README for newcomers
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-07-24 00:43'
-updated_date: '2026-07-24 00:45'
+updated_date: '2026-08-24 05:04'
 labels:
   - docs
   - onboarding
@@ -29,3 +29,16 @@ Make the project landing page easy for new users to understand, set honest expec
 - [ ] #5 Advanced extras and configuration are concise and linked without obscuring the newcomer path.
 - [ ] #6 Stale or duplicated README content is removed and remaining commands and local links are verified.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Verify README-facing package metadata, entry points, current navigation, setup-wizard recovery paths, and maintained documentation targets.
+2. Rewrite README.md around the approved newcomer-first structure: introduction, Alpha status, source quick start, hosted/local first conversation, concise capabilities, direction, optional extras, configuration/data, troubleshooting/docs, and contribution/license.
+3. Validate commands, metadata claims, Markdown structure, relative links, and the focused runtime/recovery baseline; review the diff for stale or duplicated material.
+4. Record implementation notes, ADR outcome, verification evidence, check all acceptance criteria, and close TASK-2803.
+
+ADR required: no
+ADR path: N/A
+Reason: documentation-only alignment with existing behavior and accepted product/navigation decisions; no architecture or runtime policy changes.
+<!-- SECTION:PLAN:END -->
