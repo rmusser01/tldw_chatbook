@@ -1,0 +1,60 @@
+TASK-20937.6 iTerm2 operator evidence
+Captured: 2026-08-24 07:27:35 America/Los_Angeles
+Status: partial; capture 2 remains required
+
+Source identity:
+- Product source commit: 8d6784541c8dcf6ff7297d8a45747ecff5c51ad1
+- Evidence-only branch commit before this capture: 3424cfeb85cb048c2de1dbb6fbc2c9d8f62576cd
+- 3424cfeb8 adds only the preflight report/task note, so the running product is
+  source-equivalent to the branch at capture time.
+
+Environment:
+- macOS 15.6 (24G84)
+- iTerm2 3.5.14
+- Python 3.12.11
+- Textual 8.2.8
+- tmux 3.6a
+- Prepared tmux window and application pane: 235x52 cells
+- Disposable profile: /tmp/tldw-task20937.6-iterm.G3ETE5
+
+Capture 1:
+- File: task-20937-6-iterm2-landscape-2026-08-24.png
+- PNG raster: 3020x1720 pixels (recorded for artifact identity only; not used
+  as the layout oracle)
+- SHA-256: f44359e9b8d6d0de7f7e18070b139e4779c07cfca412a9c95deedecb40fe6bb2
+- The operator attached the prepared tmux session from iTerm2 and supplied the
+  screenshot.
+
+Visible proof in capture 1:
+- Context is owned by the application edge and has one divider between the rail
+  and conversation canvas; there is no inlaid outer rail frame.
+- Context is outer-scrolled to the lower sections. Conversations contains only
+  Default scratch conversation; named-workspace conversations are absent from
+  the flat list.
+- The selected Landscape roleplay scene and its user fixture remain visible.
+- Wide Landscape paints at its natural contained height (six image rows), fills
+  the available rail width, keeps its label and Reaction: Automatic below it,
+  and does not stretch/max out to the 35-row Character ceiling.
+- Model, Agent, Details, and Character boundaries remain readable at the lower
+  outer-scroll position.
+
+Not visible in capture 1:
+- The Workspaces Tree and its disclosure/selection rows are above the retained
+  outer-scroll position.
+- The top-of-rail Sessions/Workspaces local ceilings and the outer-scroll cue.
+- Portrait containment, resize continuity, and collapse/reopen continuity.
+
+Capture 2 handoff:
+- A replacement disposable session is prepared at the same 235x52 cells with
+  Context at the top.
+- It visibly shows Research Lab's six conversations, Roleplay Tavern's temporary
+  plus landscape/portrait conversations, Writing Room's draft, the empty flat
+  Conversations projection for a named workspace, and the outer-scroll cue.
+- Attach from iTerm2 with:
+  tmux -L task20937-6-live attach -t console
+- Detach with Ctrl+B then D.
+
+Acceptance accounting:
+- This is genuine iTerm2 capture evidence, but the iTerm2 checklist remains
+  partial until capture 2 is supplied and reviewed.
+- Windows Terminal same/source-equivalent-commit evidence remains outstanding.
