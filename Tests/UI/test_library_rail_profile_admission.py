@@ -50,6 +50,11 @@ BROWSE_ROWS = (
 
 
 def test_the_factory_clears_new_profile_admission() -> None:
+    """The default: a factory-built app is not a newly created profile.
+
+    This is the mechanism the other two tests depend on, asserted on its own so
+    a failure here points at the factory rather than at the rail.
+    """
     assert _build_test_app().library_new_profile_admission is False
 
 
