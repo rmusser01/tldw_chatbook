@@ -177,7 +177,7 @@ def test_no_change_beside_a_real_safe_action_keeps_apply_enabled() -> None:
     assert build_reconciliation_review(plan).can_apply is True
 
 
-def test_move_file_safe_action_keeps_apply_enabled() -> None:
+def test_move_file_safe_action_does_not_enable_manual_apply() -> None:
     plan = ReconciliationPlan(
         root_id="root-1",
         observation_token=TOKEN,
@@ -190,7 +190,12 @@ def test_move_file_safe_action_keeps_apply_enabled() -> None:
         deletion_groups=(),
     )
 
-    assert build_reconciliation_review(plan).can_apply is True
+    review = build_reconciliation_review(plan)
+
+    assert review.can_apply is False
+    assert (
+        review.apply_blocker is lasting_state.LastingSyncApplyBlocker.NOTHING_SELECTED
+    )
 
 
 @pytest.mark.parametrize(

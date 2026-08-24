@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-06-11 17:05'
-updated_date: '2026-08-24 01:54'
+updated_date: '2026-08-24 02:17'
 labels: []
 dependencies: []
 documentation:
@@ -60,6 +60,6 @@ authority boundary.
 - Implemented exact conflict eligibility, bounded Note-to-File comparison, mutation-free staging, subset Apply, occurrence-only Keep file/Keep note, restart-safe Keep both, 30-day per-item Undo, receipts, and bounded durable history through the existing runtime/executor/device-state ownership chain.
 - Extended the retained Library controller and Textual canvas with keyboard- and non-color-reachable inline controls at wide and 60x20 sizes; updated the user guide and added the mixed-partial-restart verification lesson.
 - Preserved deletion/capability/managed-placement blockers, automatic sync direction, recovery-before-write, private projections, and filesystem confinement. No dependency, schema, database owner, modal, or new ADR was introduced; ADRs 055, 059, and 073 govern the implementation.
-- Task 8 integration fixed real ChaChaNotes timestamp/tombstone seams and restarted mixed reviews. Follow-up correction tests prevent no-op-only Apply, avoid conflict-free duplicate observation, keep persisted-root history reachable through empty/read-failure states, and delete the transient history-availability probe. Exact shipped labels are documented.
-- Evidence: corrected exact 12-file matrix **742 passed, 8 warnings in 172.86s**; scoped Ruff/format, compileall, CSS generation, private-SQLite/backup/legacy/startup/privacy governance, and diff checks passed. Exact MyPy output remains the known baseline of 144 errors in 5 files. Isolated scratch-profile TUI UAT proved all choices, partial Skip, receipt Dismiss/Undo, restart history, and shared config/DB fingerprints unchanged before/after.
+- Task 8 integration fixed real ChaChaNotes timestamp/tombstone seams and restarted mixed reviews. Follow-up correction tests prevent no-op-only Apply, avoid conflict-free duplicate observation, keep persisted-root history reachable through empty/read-failure states, and delete the transient history-availability probe. The final spec gate keeps MOVE_FILE outside the runtime manual-Apply contract and adds a normalized documentation ratchet for exact shipped labels.
+- Evidence: corrected exact 12-file matrix **744 passed, 8 warnings in 171.88s**; scoped Ruff/format, compileall, CSS generation, private-SQLite/backup/legacy/startup/privacy governance, and diff checks passed. Exact MyPy output remains the known baseline of 144 errors in 5 files. Isolated scratch-profile TUI UAT proved all choices, partial Skip, receipt Dismiss/Undo, restart history, and shared config/DB fingerprints unchanged before/after.
 <!-- SECTION:NOTES:END -->

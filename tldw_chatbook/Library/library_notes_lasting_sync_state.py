@@ -790,7 +790,6 @@ def _apply_blocker(
             NotesSyncActionKind.UPDATE_NOTE,
             NotesSyncActionKind.CREATE_FILE,
             NotesSyncActionKind.UPDATE_FILE,
-            NotesSyncActionKind.MOVE_FILE,
         }
         for action in plan.safe_actions
     ) and not any(

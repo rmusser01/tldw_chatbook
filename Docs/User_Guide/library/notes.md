@@ -158,7 +158,7 @@ Project planning, Research notes, Todo list.
   reviewed receipt. Later changes to the originals are not tracked.
 - **Keep a folder synced** creates a lasting local relationship. Choose the
   folder, direction, and local Library destination, then choose **Check
-  folder**. Checking is mutation-free. Review safe actions, attention items,
+  changes**. Checking is mutation-free. Review safe actions, attention items,
   skips, filesystem effects, and deletion-like effects before **Activate
   reviewed root** is enabled.
 

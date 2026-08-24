@@ -275,6 +275,17 @@ async def _close_real_conflict_stack(
     database.close_connection()
 
 
+def test_notes_guide_uses_only_shipped_sync_action_labels() -> None:
+    guide = (_REPO_ROOT / "Docs/User_Guide/library/notes.md").read_text()
+    normalized = " ".join(guide.split())
+
+    assert "Check changes" in normalized
+    assert all(
+        label not in normalized
+        for label in ("Check folder", "Review attention", "Sync now")
+    )
+
+
 def test_live_verifier_is_a_checked_in_isolated_entry_point(tmp_path: Path) -> None:
     """The helper proves scratch paths/checksums/teardown before live launch."""
     assert _LIVE_HELPER.is_file()

@@ -398,6 +398,34 @@ async def test_no_change_only_review_cannot_apply_or_create_a_receipt() -> None:
     assert not any(call[0] == "apply_reviewed" for call in runtime.calls)
 
 
+async def test_move_file_only_review_never_crosses_the_manual_apply_boundary() -> None:
+    runtime = _Runtime()
+    runtime.check_plan = ReconciliationPlan(
+        root_id="root-1",
+        observation_token=TOKEN,
+        safe_actions=(
+            NotesSyncAction("act-move", NotesSyncActionKind.MOVE_FILE, "bind-1"),
+        ),
+        attention=(),
+        skips=(),
+        managed_placement_effects=(),
+        deletion_groups=(),
+    )
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+
+    await controller.check_root("root-1")
+    await controller.apply_reviewed("root-1", TOKEN)
+
+    assert controller.snapshot.review.can_apply is False
+    assert controller.snapshot.phase == "review"
+    assert controller.snapshot.receipts == ()
+    assert "invalid review" not in controller.snapshot.status_line
+    assert not any(call[0] == "apply_reviewed" for call in runtime.calls)
+
+
 async def test_mixed_no_change_and_real_action_counts_only_the_real_action() -> None:
     runtime = _Runtime()
     plan = ReconciliationPlan(
