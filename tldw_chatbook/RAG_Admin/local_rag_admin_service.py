@@ -306,6 +306,29 @@ class LocalRAGAdminService:
         existing = self.get_template(template_name)
         self._require_chunking_service().delete_template(int(existing["id"]))
 
+    def diagnostics_are_thread_safe(self) -> bool:
+        """Report whether ``get_template_diagnostics`` may run off the loop.
+
+        (TASK-21126) The diagnostics payload's only I/O is the legacy-chunk
+        census, a read-only SELECT against the media DB. ``MediaDatabase``
+        hands out THREAD-LOCAL connections, so a worker thread opens its
+        own — fine (and WAL-safe) for a file-backed database, but for a
+        ``:memory:`` one it opens a *different, empty* database and the
+        census would silently report zero legacy items instead of raising.
+        Every production wiring is file-backed (``app.media_db``); the
+        memory case is tests and ephemeral fixtures, and it stays on the
+        calling thread rather than getting a wrong answer quietly.
+
+        Returns:
+            True when the census is safe to run on a worker thread.
+        """
+        db = self.media_db
+        if db is None:
+            # No media DB: `get_legacy_chunk_report_line` returns "" without
+            # touching sqlite, so there is nothing thread-bound to protect.
+            return True
+        return not bool(getattr(db, "is_memory_db", False))
+
     def get_template_diagnostics(self) -> dict[str, Any]:
         service = self._require_chunking_service()
         diagnostics = {
@@ -589,6 +612,16 @@ class LocalRAGAdminService:
         report never needs the chunking service or vector store backends,
         and never mutates anything (a plain SELECT; stamp + report only,
         there is no re-chunk action).
+
+        BLOCKING. Cost is proportional to live chunk rows; media schema v8
+        (TASK-21126) adds ``idx_unvectorizedmediachunks_engine_census``, a
+        partial covering index whose column order is chosen so this exact
+        SQL text uses it *without* ``ANALYZE`` -- do not re-spell the query
+        (the ``WHERE deleted = 0`` and the ``GROUP BY
+        chunk_engine_version`` are what match the index) and do not call
+        this from the event loop. Async callers go through
+        ``RAGAdminScopeService.get_template_diagnostics``, which offloads
+        it; ``Tests/DB/test_media_db_schema_v8.py`` pins the plan.
 
         Args:
             db: The ``MediaDatabase`` (or compatible) holding

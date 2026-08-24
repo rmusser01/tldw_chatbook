@@ -7862,3 +7862,55 @@ note id that existed on **neither** root, so it passed for the wrong reason. The
 fixture now gives the other root values that exist only there. Any negative
 cross-scope assertion needs the value to genuinely exist in the other scope, or it
 proves only that nothing matches nothing.
+---
+
+## An index is not evidence until the planner picks it in the state your users' databases are actually in (TASK-21126, 2026-08-23)
+
+**What happened.** The holistic-perf finding said the Library Search/RAG
+panel's legacy-chunk census ran an unindexed full-table `GROUP BY` and
+prescribed "index or maintained count". The obvious index —
+`(chunk_engine_version, media_id) WHERE deleted = 0` — is a textbook
+COVERING index for that exact query, and the first probe confirmed it:
+112 ms → 3.4 ms at 200k chunk rows, `SCAN … USING COVERING INDEX`, both
+temp B-trees gone.
+
+The probe had run `ANALYZE` to make the corpus "realistic". **No media
+database in the wild has ever run `ANALYZE`** — there is no `ANALYZE`
+anywhere in `Client_Media_DB_v2.py`, so `sqlite_stat1` does not exist on a
+single user's disk. Re-measured in that state, the planner ignores the new
+index completely and stays on the pre-existing `idx_...deleted`: **118.8 ms
+without the index, 120.2 ms with it.** Five megabytes of disk, a schema
+migration, and a green "the index exists" test, for a 1% change.
+
+What actually works is counter-intuitive: lead the index with the
+**redundant** `deleted` column that the partial predicate already pins to a
+constant. That makes it answer the same equality search the no-stats
+heuristic already likes, while additionally covering the GROUP BY and the
+`COUNT(DISTINCT)` — chosen without stats, 23.4 ms at 200k and 122.8 ms at
+1M. Four shapes were measured; two of them were never chosen at all.
+
+**What to do.**
+
+1. **`EXPLAIN QUERY PLAN` on a corpus built the way production builds one.**
+   Before believing an index, grep the owning module for `ANALYZE` /
+   `PRAGMA optimize`. If neither runs, your probe must not run them either —
+   and say so in the probe, because "I made the corpus realistic" is exactly
+   how the `ANALYZE` got in.
+2. **Assert the PLAN in a test, not the index's existence.** `SELECT … FROM
+   sqlite_master WHERE type='index'` passes for a dead index. The pin that
+   catches this is the `EXPLAIN QUERY PLAN` string: index name present,
+   `COVERING INDEX` present, `TEMP B-TREE` absent — plus an explicit
+   assertion that `sqlite_stat1` is absent, so a future fixture that adds
+   `ANALYZE` cannot quietly restore the flattering plan.
+3. **Timing alone would not have caught it either.** 118.8 → 120.2 ms reads
+   as noise; only the plan text says *why*. Measure both.
+
+**Adjacent trap from the same task, worth its own line: offloading a query
+to a thread can make a `:memory:` database silently return the wrong
+answer.** `MediaDatabase` hands out THREAD-LOCAL connections. For a file
+that is fine; for `:memory:` a worker thread opens a *different, empty*
+database, so the census returns `{}` and the UI shows nothing instead of
+raising. Deliberately breaking the guard proved it — the memory-backed test
+went red with a zero count, not an error. Before wrapping any DB call in
+`to_thread`, check what that owner's connection factory does with
+`:memory:`, and keep a memory-backed test in the set.

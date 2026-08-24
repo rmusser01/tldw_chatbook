@@ -475,6 +475,19 @@ silently edited.
    **The method lesson**: a finding's cost estimate decays as fast as its line numbers. Re-measure
    before dispatching, not after — five of seven is not a rounding error, and two of these would
    have shipped a fix for a problem that was not there.
+5. **Finding 21126's "no index … add an index" is right about the scan and would have shipped
+   a DEAD index.** The census does cost what the review said (measured 119 ms at 200k live
+   chunk rows, 701 ms at 1M, on the event loop) — but it is not literally unindexed: the
+   planner uses `idx_unvectorizedmediachunks_deleted` and then does one table row-lookup per
+   live row plus two temp B-trees. The index the finding's wording implies,
+   `(chunk_engine_version, media_id) WHERE deleted = 0`, is a textbook covering index for the
+   query and **SQLite never picks it**: this database has no `sqlite_stat1` (there is no
+   `ANALYZE` anywhere in `Client_Media_DB_v2.py`), and with no stats the planner stays on the
+   `deleted` index — measured 118.8 ms without it against 120.2 ms with it, i.e. 5 MB of disk
+   for nothing. The shipped v8 index leads with the *redundant* `deleted` column so it answers
+   the same equality search the no-stats planner already prefers while also covering the GROUP
+   BY and the DISTINCT: 23.4 ms at 200k, 122.8 ms at 1M. **Any future "add an index" finding
+   in this repo needs a query-plan check with `sqlite_stat1` absent, not just present.**
 
 ---
 

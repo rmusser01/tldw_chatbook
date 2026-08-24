@@ -113,6 +113,15 @@ class LibrarySearchRagPanel(PostRecomposeCallback, VerticalScroll):
     async def _fetch_legacy_chunk_report(self) -> None:
         """Query the legacy-chunk report line via the scope service.
 
+        TASK-21126: this is an ASYNC worker, so "off the mount path" is not
+        the same as "off the event loop" — until that task the scope
+        service evaluated the local backend's synchronous
+        ``get_template_diagnostics`` (and with it the legacy-chunk census
+        SELECT) inline here, freezing the UI for the duration. The census
+        now runs on a worker thread inside
+        ``RAGAdminScopeService._call_off_loop``; this coroutine only awaits
+        it. Keep it that way: any new work added here runs on the loop.
+
         Consumes ONLY the payload's ``legacy_chunk_report`` field. The same
         payload's ``capability`` / ``missing_methods`` / ``fallback_enabled``
         are HARDCODED upstream (spec §11 item 4) and never render here --

@@ -234,7 +234,7 @@ class MediaDatabase:
     Requires client_id on initialization. Includes schema versioning.
     """
 
-    _CURRENT_SCHEMA_VERSION = 7  # Define the version this code supports
+    _CURRENT_SCHEMA_VERSION = 8  # Define the version this code supports
     # task-261: idle window within which the per-call `SELECT 1` liveness
     # ping is skipped for a recently-used thread-local connection (see
     # `_get_thread_connection`).
@@ -280,6 +280,14 @@ class MediaDatabase:
                 "deleted, convert rows, seed six server built-ins"
             ),
         },
+        7: {
+            "to_version": 8,
+            "function": "_apply_migration_v7_to_v8",
+            "description": (
+                "Add the engine-version census covering index to "
+                "UnvectorizedMediaChunks"
+            ),
+        },
     }
 
     _TRANSCRIPTION_PROVENANCE_MIGRATION_SQL = """
@@ -301,6 +309,45 @@ class MediaDatabase:
         ALTER TABLE UnvectorizedMediaChunks
         ADD COLUMN chunk_engine_version TEXT DEFAULT NULL;
         UPDATE schema_version SET version = 6;
+    """
+
+    # TASK-21126: the Library Search/RAG panel's legacy-chunk census
+    # (``LocalRAGAdminService.count_chunks_by_engine_version`` — "SELECT
+    # chunk_engine_version, COUNT(DISTINCT media_id) ... WHERE deleted = 0
+    # GROUP BY chunk_engine_version") ran once per Search/RAG panel show
+    # against `idx_unvectorizedmediachunks_deleted` plus two temp B-trees —
+    # i.e. one table row-lookup per live chunk row. Measured on a real
+    # production-schema DB: 119 ms at 200k live chunk rows (64 MB), 701 ms
+    # at 1M (325 MB).
+    #
+    # The COLUMN ORDER here is measured, not aesthetic. `deleted` leads even
+    # though the partial predicate already pins it to 0, because THIS
+    # DATABASE NEVER RUNS `ANALYZE` (there is no ANALYZE anywhere in this
+    # file, so no user's media DB has a `sqlite_stat1`). With no stats the
+    # planner ignores a `(chunk_engine_version, media_id) WHERE deleted = 0`
+    # index completely — measured 120 ms, i.e. a dead 5 MB index — and keeps
+    # using `idx_unvectorizedmediachunks_deleted`. Leading with `deleted`
+    # makes this index answer the same equality search that one does, while
+    # additionally COVERING the GROUP BY and the COUNT(DISTINCT), so the
+    # no-stats planner picks it: measured 119 -> 23.4 ms at 200k (5.1x) and
+    # 701 -> 122.8 ms at 1M (5.7x), plan `SEARCH ... USING COVERING INDEX
+    # (deleted=?)` with zero TEMP B-TREE lines. (For the record, the same
+    # index reaches 4.2 / 25.0 ms once `sqlite_stat1` exists; deliberately
+    # not chasing that here — running ANALYZE would re-plan every other
+    # query in this database for one report line.)
+    #
+    # Write-side cost: +0.06 ms on a 50-chunk ingest batch (0.660 -> 0.720 ms
+    # median) and ~30 bytes per LIVE chunk row on disk (+9% file size: 64.3
+    # -> 70.2 MB at 200k rows, 325.2 -> 354.8 MB at 1M). Soft-deleted rows
+    # are excluded by the partial predicate and cost nothing.
+    #
+    # Like every migration-added artifact in this file, it lives ONLY here
+    # and not in _TABLES_SQL_V1 (fresh databases replay the whole chain).
+    _CHUNK_ENGINE_CENSUS_INDEX_MIGRATION_SQL = """
+        CREATE INDEX IF NOT EXISTS idx_unvectorizedmediachunks_engine_census
+            ON UnvectorizedMediaChunks(deleted, chunk_engine_version, media_id)
+            WHERE deleted = 0;
+        UPDATE schema_version SET version = 8;
     """
 
     # task-7 (chunking template parity, spec §5.2): v7 rebuilds
@@ -1774,6 +1821,40 @@ class MediaDatabase:
                 exc_info=True,
             )
             raise DatabaseError(f"Unexpected error during migration v6->v7: {e}") from e
+
+    def _apply_migration_v7_to_v8(self, conn: sqlite3.Connection):
+        """Add the engine-version census covering index (TASK-21126).
+
+        Pure index addition: no column, table, trigger or row is touched,
+        so there is nothing to back-fill and nothing a partial application
+        could corrupt. The measurements that chose this index's exact
+        shape are recorded on
+        ``_CHUNK_ENGINE_CENSUS_INDEX_MIGRATION_SQL``.
+
+        Build cost is proportional to live chunk rows and is paid once, at
+        the first open after upgrade: measured 167 ms on a 200k-row / 64 MB
+        media DB and 2.05 s on a 1M-row / 325 MB one. That is a one-off
+        open-time stall on a very large library; it buys back 578 ms per
+        Library Search/RAG panel show at that size.
+
+        Raises:
+            DatabaseError: On any failure, after rolling the transaction
+                back (the DB remains at v7 and keeps working — the census
+                simply falls back to the pre-index scan plan).
+        """
+
+        try:
+            with self.transaction():
+                self._execute_transactional_script(
+                    conn,
+                    self._CHUNK_ENGINE_CENSUS_INDEX_MIGRATION_SQL,
+                )
+        except sqlite3.Error as error:
+            raise DatabaseError(f"Migration v7->v8 failed: {error}") from error
+        except Exception as error:
+            raise DatabaseError(
+                f"Unexpected error during migration v7->v8: {error}"
+            ) from error
 
     @staticmethod
     def _assert_no_foreign_keys_reference(

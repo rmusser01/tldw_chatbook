@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 from enum import Enum
 from typing import Any
@@ -82,6 +83,40 @@ class RAGAdminScopeService:
         if inspect.isawaitable(value):
             return await value
         return value
+
+    async def _call_off_loop(self, service: Any, method_name: str) -> Any:
+        """Invoke a backend method without blocking the event loop.
+
+        (TASK-21126) ``_maybe_await(service.method())`` evaluates its
+        argument BEFORE the first suspension point, so a *synchronous*
+        backend method runs to completion on the event loop — for
+        ``get_template_diagnostics`` that meant the legacy-chunk census
+        (measured 119 ms at 200k live chunk rows, 701 ms at 1M) froze the
+        UI once per Library Search/RAG panel show.
+
+        The offload is opt-in per backend, never blanket: a backend must
+        say so by exposing a truthy ``diagnostics_are_thread_safe()``.
+        Anything else — an async backend, a test double, a Mock — keeps the
+        pre-existing inline behaviour exactly, so this cannot silently move
+        an unknown backend's work onto a thread it was never written for.
+
+        Args:
+            service: The resolved local or server backend.
+            method_name: Name of the zero-argument backend method to call.
+
+        Returns:
+            The method's result, awaited if it was awaitable.
+        """
+        method = getattr(service, method_name)
+        if inspect.iscoroutinefunction(method):
+            return await method()
+        safe = getattr(service, "diagnostics_are_thread_safe", None)
+        if not callable(safe) or not safe():
+            return await self._maybe_await(method())
+        # `to_thread` propagates the callee's exception into this await, so
+        # every existing failure path (an unmigrated media DB, a policy
+        # error, a closed connection) reaches callers unchanged.
+        return await self._maybe_await(await asyncio.to_thread(method))
 
     def _enforce_policy(self, action_id: str) -> None:
         """Require a policy action id (no-op without an enforcer).
@@ -261,10 +296,22 @@ class RAGAdminScopeService:
         *,
         mode: RAGAdminBackend | str | None = None,
     ) -> dict[str, Any]:
+        """Return the backend's template diagnostics payload.
+
+        (TASK-21126) Routed through :meth:`_call_off_loop`: the local
+        backend's payload carries the legacy-chunk census, whose SELECT used
+        to run inline on the event loop once per Library Search/RAG panel
+        show. Deliberately NOT cached — the census is re-read per show, and
+        that is the whole freshness protocol (an ingest, a re-chunk, a media
+        delete or a sync-in all show up on the next visit with nothing to
+        invalidate). With the v8 covering index the query costs 23 ms at
+        200k live chunk rows and 123 ms at 1M, off the loop, so a cache
+        would trade a measured-zero saving for a staleness surface.
+        """
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._admin_action_id(normalized_mode, "observe"))
         service = self._service_for_mode(normalized_mode)
-        diagnostics = await self._maybe_await(service.get_template_diagnostics())
+        diagnostics = await self._call_off_loop(service, "get_template_diagnostics")
         payload = dict(diagnostics or {})
         payload.setdefault("backend", normalized_mode.value)
         return payload
