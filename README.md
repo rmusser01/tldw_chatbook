@@ -708,6 +708,7 @@ Current package facts:
 | Installed command | `tldw-cli` |
 | Entry point | `tldw_chatbook.cli:main_cli_runner` |
 
+<a id="installation"></a>
 ## Quick start
 
 The primary installation route is a checkout of the latest source.
@@ -724,21 +725,33 @@ cd tldw_chatbook
 Unix and macOS:
 
 ```bash
+python3 --version
 python3 -m venv .venv
 source .venv/bin/activate
 ```
 
-Windows PowerShell:
+Use a `python3` executable whose reported version is 3.11 or newer. If needed,
+substitute a versioned executable such as `python3.12` in both commands.
+
+Windows (PowerShell or Command Prompt):
 
 ```powershell
-py -3.11 -m venv .venv
+py -3 --version
+py -3 -m venv .venv
+```
+
+If that reports a version below 3.11, install a supported Python or substitute
+an installed selector such as `py -3.12` in both commands.
+
+Activate in PowerShell:
+
+```powershell
 .venv\Scripts\Activate.ps1
 ```
 
-Windows Command Prompt:
+Activate in Command Prompt:
 
 ```bat
-py -3.11 -m venv .venv
 .venv\Scripts\activate.bat
 ```
 
@@ -764,14 +777,17 @@ retry the install with that environment's `python -m pip`.
 
 The hosted and local routes differ only in how the model is reached. Both end
 in **Console**, using the provider and model chosen in the first-run wizard.
+Completing the wizard returns you to **Home**; click **Console** or press
+**Ctrl+2**, then send your first message.
 
 ### Option A: Connect a hosted model API
 
 1. In the first-run wizard, choose the quick setup track.
 2. Select the hosted provider you already use.
 3. Enter its API key and choose one of its available models.
-4. Finish setup and open **Console**.
-5. Type a message in the composer and send it.
+4. Finish setup and return to **Home**.
+5. Click **Console** or press **Ctrl+2**.
+6. Type a message in the composer and send it.
 
 Prompts and responses travel through the selected provider under that
 provider's terms. API keys can be stored through the guided configuration or
@@ -784,7 +800,8 @@ supplied through supported environment variables.
 2. In the first-run wizard, choose the quick setup track.
 3. Select the local or compatible provider and confirm its endpoint.
 4. Choose a model exposed by that server.
-5. Finish setup, open **Console**, and send a message.
+5. Finish setup and return to **Home**.
+6. Click **Console** or press **Ctrl+2**, then send a message.
 
 tldw_chatbook does not claim an embedded model runtime. The local server owns
 model loading and inference; the app provides the conversation interface.
@@ -808,6 +825,7 @@ the User Guide records current controls and limitations.
 
 | Destination | What it helps you do |
 | --- | --- |
+| **Home** | See what needs attention, what is running, and a useful next action. |
 | **Console** | Hold model conversations, attach context, and supervise supported tools or agent runs. |
 | **Library** | Organize and find conversations, notes, prompts, media, and imported source material. |
 | **Artifacts** | Collect generated outputs and Chatbooks. |
@@ -900,7 +918,7 @@ CI, and secret managers. Provider-specific names and precedence can change, so
 use the current Settings UI and maintained documentation instead of copying an
 unverified list of variables.
 
-On a typical Unix-like system, the default local data base is:
+On a typical Unix-like system, the default base directory for local data is:
 
 ```text
 ~/.local/share/tldw_cli/<user>/
