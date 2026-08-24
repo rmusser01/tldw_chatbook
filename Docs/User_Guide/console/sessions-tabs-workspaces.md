@@ -103,15 +103,38 @@ highlighted result when it is an open tab. Esc cancels.
 | "Archive" (in the switcher) | Opens "Archive workspace?" — "Its conversations stay saved and remain visible in Library; the workspace disappears from the switcher and the Console browser." Confirm with "Archive" |
 | "RAG" | Narrows retrieval to this workspace — see [Context & RAG](context-and-rag.md) |
 | "Search workspaces" | Searches named workspace names and their associated conversation titles independently of Conversations search; delete the query to clear it |
-| Workspace disclosure marker / Space | Expands or collapses that workspace without changing the selected workspace |
-| Workspace or conversation label / Enter | Selects the workspace or opens the conversation; Right expands or enters children, Left collapses or returns to the parent |
 | Up/Down, Page Up/Page Down, Home/End | Navigates and pages the native Tree |
 | "Load more…" / "Retry" | Loads the next bounded page for that workspace or retries a failed page without discarding settled children |
 | "Star" / "Unstar" or `s` on a conversation leaf | Changes its starred property in place; starred leaves sort first inside that workspace |
 
+The Tree deliberately separates the row you are inspecting from the Console
+context that is already active:
+
+| Interaction or state | What it means |
+|---|---|
+| Single-click a workspace or conversation | Selects the row without activating it. A collapsed workspace also expands so its children are visible; clicking an expanded workspace does not collapse it. |
+| Double-click the selected workspace or conversation / Enter | Activates that workspace or opens that conversation. Both clicks must belong to the same stable row; a reflow cannot retarget the gesture. |
+| Disclosure marker / Space / Left / Right | Toggles, collapses, expands, or moves through workspace branches without activating a different Console context. |
+| "Load more…" / "Retry" | Runs immediately; these action rows do not require a select-then-activate step. |
+| `▌` selected, `●` active workspace, `›` active conversation | `▌` is the Tree row currently prepared for Enter or double-click. `●` and `›` identify the workspace and conversation that already own the Console session; selection alone does not move them. |
+| Full-label help | A one-row `Selected: <full label> · Enter open` context follows the Tree cursor. Pointer hover shows the full label only when the painted row is genuinely truncated; reflow clears stale tooltips. With the Tree focused, F1 shows the complete selected label and the click, Enter, Space, Left, and Right grammar. |
+| Settings > Console Behavior > Rail layout scope | **Global** is the default and keeps one arrangement across workspace switches. **Per workspace** restores and keeps each workspace's existing saved arrangement. |
+| What the selected layout scope saves | Whether the Context and Inspect rails are open, direct section disclosures (including **More**), and explicit rail-open behavior markers. Compact responsive collapse may temporarily override the rendering without rewriting those choices. |
+| What it does not save | Local or outer scroll positions, Workspaces search disclosure, Tree selection, pointer tooltip, and focus are transient. Switching layout scope neither deletes the inactive scope's records nor turns those transient states into preferences. |
+| Pinned Inspect summary | `What happens if I send now?` stays above Inspect scrolling and reports six fixed rows: its heading plus **Where**, **Scope**, **Run**, **Sources**, and **Approvals**, all from the same Console snapshot. |
+| Inspect **More** | Empty Tools, Approvals, and Artifacts groups stay under **More**. A nonzero, pending, blocked, available, or otherwise actionable group promotes into the main Inspect sequence; collapsing More never hides an actionable group. |
+
 Workspaces search can reveal matching conversation results whose parent branch
 was closed. Those temporary disclosure changes are discarded when the search
 is cleared, restoring the exact disclosure state from before the search.
+
+Context preserves complete reading bodies up to 15 rows for Sessions, Model,
+Agent, and Details; 20 for Workspaces and Conversations; and 35 for Character.
+Longer sections scroll locally, while **▼ more sections — scroll** means to
+scroll the outer rail to reach complete later sections. Inspector sections keep
+their separate 20-row ceiling. Character art remains centered and complete with
+its aspect ratio preserved: it only scales down to fit and is never stretched,
+cropped, or enlarged merely to fill the 35-row body.
 
 **The "New Workspace" dialog** is the same creation dialog Settings ▸
 Workspaces and Library use. It opens with a **name** prefilled "Workspace N"
