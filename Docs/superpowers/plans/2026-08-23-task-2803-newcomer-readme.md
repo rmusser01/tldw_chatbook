@@ -135,10 +135,10 @@
 - [ ] Run the focused runtime/recovery baseline:
 
   ```bash
-  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/CI/test_textual_runtime_contract.py Tests/UI/test_product_maturity_phase6_recovery_docs.py Tests/UI/test_product_maturity_phase6_packaging_data_safety.py Tests/UI/test_destination_shells.py::test_library_destination_partial_failure_offers_source_retry -q
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/CI/test_textual_runtime_contract.py Tests/UI/test_product_maturity_phase6_recovery_docs.py Tests/UI/test_product_maturity_phase6_packaging_data_safety.py -q
   ```
 
-  Expected: 6 tests pass. Record unrelated pre-existing warnings separately.
+  Expected: the focused runtime, recovery-documentation, and packaging/data-safety checks pass. Record unrelated pre-existing warnings separately.
 
 - [ ] Run the repository test suite required by the Definition of Done:
 
