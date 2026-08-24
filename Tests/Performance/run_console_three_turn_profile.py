@@ -6014,6 +6014,17 @@ def _install_common_timing_wrappers(
 
         return wrapped
 
+    def durable_accepted_wrapper(
+        original: Callable[..., Any],
+    ) -> Callable[..., Any]:
+        def wrapped(owner: Any, *args: Any, **kwargs: Any) -> Any:
+            result = original(owner, *args, **kwargs)
+            if result:
+                observation.turn_accepted()
+            return result
+
+        return wrapped
+
     def after_turn_wrapper(original: Callable[..., Any]) -> Callable[..., Any]:
         async def wrapped(owner: Any, *args: Any, **kwargs: Any) -> Any:
             observation.after_turn_started()
@@ -6067,6 +6078,18 @@ def _install_common_timing_wrappers(
 
     replace(ConsolePromptQueueUIController, "dispatch", dispatch_wrapper)
     replace(ConsolePromptQueueCoordinator, "turn_accepted", accepted_wrapper)
+    if callable(
+        getattr(
+            ConsolePromptQueueCoordinator,
+            "acknowledge_durable_acceptance",
+            None,
+        )
+    ):
+        replace(
+            ConsolePromptQueueCoordinator,
+            "acknowledge_durable_acceptance",
+            durable_accepted_wrapper,
+        )
     replace(ConsolePromptQueueCoordinator, "_after_turn", after_turn_wrapper)
     replace(ConsolePromptQueueCoordinator, "_drain_waiting", drain_wrapper)
     replace(ConsoleChatController, "_run_agent_reply", worker_wrapper)

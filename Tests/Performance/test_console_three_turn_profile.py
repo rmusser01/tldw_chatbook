@@ -11700,3 +11700,37 @@ def test_mounted_queue_contract_tracks_nonblocking_candidate_finalization():
         "after_turn_count": 3,
         "durable_count": 3,
     }
+
+
+def test_common_timing_wrappers_observe_durable_queued_acceptance(monkeypatch):
+    from tldw_chatbook.Chat.console_prompt_queue_coordinator import (
+        ConsolePromptQueueCoordinator,
+    )
+
+    accepted: list[bool] = []
+    monkeypatch.setattr(
+        ConsolePromptQueueCoordinator,
+        "acknowledge_durable_acceptance",
+        lambda _owner, _session_id, **kwargs: kwargs["entry_id"] == "accepted",
+    )
+    observation = SimpleNamespace(turn_accepted=lambda: accepted.append(True))
+    restorations = profile._install_common_timing_wrappers(observation)
+    try:
+        owner = object.__new__(ConsolePromptQueueCoordinator)
+        assert owner.acknowledge_durable_acceptance(
+            "session-a",
+            entry_id="accepted",
+            preparation_id="preparation-a",
+            context_epoch=1,
+        )
+        assert not owner.acknowledge_durable_acceptance(
+            "session-a",
+            entry_id="rejected",
+            preparation_id="preparation-b",
+            context_epoch=1,
+        )
+    finally:
+        for restore in reversed(restorations):
+            restore()
+
+    assert accepted == [True]
