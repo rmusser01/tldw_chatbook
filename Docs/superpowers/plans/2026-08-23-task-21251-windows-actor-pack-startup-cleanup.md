@@ -207,12 +207,18 @@ archive validation, activation, schema, dependency, or configuration changes.
 - [ ] **Step 5: Update TASK-21251 through the Backlog CLI**
 
 Check all four acceptance criteria, add concise implementation notes including
-the commands and results above, state that no new lesson was needed, retain the
-ADR-074 link and ADR check, and set the task to `Done` only if every required
-check is green:
+the results above, state that no new lesson was needed, retain the ADR-074 link
+and ADR check, and set the task to `Done` only if every required check is green.
+Use `backlog task edit 21251 --notes ... --plain` to write the notes. They must
+name the exact commands, actual pass counts, and warnings observed in Steps 1-3;
+do not substitute generic text and do not mark the task `Done` if that evidence
+is unavailable. Then check the acceptance criteria, inspect the rendered task to
+confirm the evidence is present, and only then change the status:
 
 ```bash
-backlog task edit 21251 --check-ac 1 --check-ac 2 --check-ac 3 --check-ac 4 --notes "Implemented the usable-but-unverified startup cleanup no-op in ActorPackImportService, with regression coverage proving service construction succeeds, sweep returns zero, and no candidate enumeration or deletion occurs. Existing authenticated cleanup behavior remains covered. ADR required: no; ADR-074 continues to govern the fail-closed boundary. Verification: record exact passing commands and counts here. Lessons: no new general lesson; the incident is specific to the documented platform capability split." -s Done --plain
+backlog task edit 21251 --check-ac 1 --check-ac 2 --check-ac 3 --check-ac 4 --plain
+backlog task 21251 --plain
+backlog task edit 21251 -s Done --plain
 ```
 
 - [ ] **Step 6: Commit task completion metadata**
