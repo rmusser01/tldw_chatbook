@@ -1,6 +1,6 @@
 # ADR-078: Research Workspace authority and screen boundaries
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-23
 - **Task:** [TASK-21505](../tasks/task-21505%20-%20Design-Local-Server-Research-Workspace-and-Research-Runs-navigation.md)
 - **Design:** [Research Workspace design](../../Docs/superpowers/specs/2026-08-23-research-workspace-design.md)

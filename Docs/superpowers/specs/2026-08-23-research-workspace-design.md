@@ -1,6 +1,6 @@
 # Research Workspace design
 
-- **Status:** Proposed for user review
+- **Status:** Approved
 - **Date:** 2026-08-23
 - **Task:** [TASK-21505](../../../backlog/tasks/task-21505%20-%20Design-Local-Server-Research-Workspace-and-Research-Runs-navigation.md)
 - **Decision:** [ADR-078](../../../backlog/decisions/078-research-workspace-authority-and-screen-boundaries.md)
