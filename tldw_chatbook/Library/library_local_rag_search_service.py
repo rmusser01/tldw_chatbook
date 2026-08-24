@@ -33,7 +33,13 @@ from tldw_chatbook.Library.library_rag_state import (
     LIBRARY_RAG_ROUTE_NOTES_KEY,
     LIBRARY_RAG_SERVICE_ERROR_SELECTOR,
 )
-from tldw_chatbook.RAG_Search.simplified.active_config import (
+# TASK-21731: read the mode vocabulary from the stdlib-only `search_modes`
+# module, NOT from `simplified.active_config` -- this module is on the app's
+# import path, and active_config drags the whole simplified service tree
+# (-> chunking_service -> the Chunking engine -> Internal_Prompts) with it.
+# active_config re-imports the same objects, so normalization stays single-
+# sourced. Guarded by `Tests/Packaging/test_rag_boot_import_closure.py`.
+from tldw_chatbook.RAG_Search.search_modes import (
     normalize_rag_search_mode,
 )
 
