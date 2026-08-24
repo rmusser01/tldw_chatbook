@@ -664,9 +664,13 @@ async def test_rail_recompose_retains_unknown_fingerprint_deduper(monkeypatch):
     )
     diagnostics = []
     monkeypatch.setattr(
-        inspector_module.logger,
-        "warning",
-        lambda message, fingerprint: diagnostics.append((message, fingerprint)),
+        inspector_module,
+        "logger",
+        SimpleNamespace(
+            warning=lambda message, fingerprint: diagnostics.append(
+                (message, fingerprint)
+            )
+        ),
     )
 
     async with make_console_pilot() as pilot:
