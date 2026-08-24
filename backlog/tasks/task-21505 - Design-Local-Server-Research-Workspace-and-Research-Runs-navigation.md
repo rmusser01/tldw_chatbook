@@ -5,6 +5,10 @@ status: Done
 assignee: []
 created_date: '2026-08-24 05:06'
 updated_date: '2026-08-24 05:39'
+status: In Progress
+assignee: []
+created_date: '2026-08-24 05:06'
+updated_date: '2026-08-24 05:14'
 labels:
   - research
   - workspace
@@ -35,6 +39,12 @@ Define the product, authority, persistence, navigation, and terminal-UX contract
 - [x] #6 A canonical ADR records the shell, authority, ownership, overlay, and manual-transfer decisions and links the existing governing ADRs.
 - [x] #7 Sources and Studio have independently testable ASCII collapse/reveal controls with deterministic focus, explicit-toggle feedback, and stored preferences that survive responsive overrides.
 - [x] #8 Research ingestion creates or reuses an item in the selected authority's general Library/Media catalog, durably associates its stable identity to the captured workspace, reports partial failures by stage, and never treats a mutable tag as the relationship.
+- [ ] #1 A reviewed design spec defines one Research shell destination with separately routed Workspace and Runs screens while preserving the existing research route.
+- [ ] #2 The design defines fail-closed Local/Server data authority, explicit inference-egress disclosure, manual cross-authority Copy, and durable receipts without silent blending or fallback.
+- [ ] #3 The design maps the complete audited server control namespace into core, contextual, owner-link, capability-gated, or planned surfaces, with the primary five Studio outputs and More outputs hierarchy.
+- [ ] #4 The design defines canonical ownership for sources, conversations, notes, Studio outputs, device-only overlays, and Deep Research launch/return context without inventing duplicate content stores.
+- [ ] #5 The design specifies measurable Textual layout, keyboard, focus, accessibility, loading, conflict, failure, and recovery behavior.
+- [ ] #6 A canonical ADR records the shell, authority, ownership, overlay, and manual-transfer decisions and links the existing governing ADRs.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -50,6 +60,9 @@ Define the product, authority, persistence, navigation, and terminal-UX contract
    general catalog before a stable, durable workspace association; define
    duplicate, partial-failure, retry, unlink, and no-blending behavior.
 6. Self-review the spec and ADR for placeholders, contradictions, scope, and ambiguity, then request user review.
+3. Define complete control classification, responsive Textual behavior, accessibility, recovery, and verification requirements.
+4. Write and link ADR-078 before implementation planning.
+5. Self-review the spec and ADR for placeholders, contradictions, scope, and ambiguity, then request user review.
 
 ADR required: yes
 ADR path: backlog/decisions/078-research-workspace-authority-and-screen-boundaries.md

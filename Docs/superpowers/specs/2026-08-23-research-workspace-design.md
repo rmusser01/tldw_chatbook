@@ -1,6 +1,7 @@
 # Research Workspace design
 
 - **Status:** Approved
+- **Status:** Proposed for user review
 - **Date:** 2026-08-23
 - **Task:** [TASK-21505](../../../backlog/tasks/task-21505%20-%20Design-Local-Server-Research-Workspace-and-Research-Runs-navigation.md)
 - **Decision:** [ADR-078](../../../backlog/decisions/078-research-workspace-authority-and-screen-boundaries.md)
@@ -227,6 +228,10 @@ root/heading. Hidden panes and controls do not remain in the focus cycle.
 ### Medium layout
 
 From 100 through 149 columns, render Chat plus at most one companion pane. The mode
+
+### Medium layout
+
+From 100 through 149 columns, render Chat plus one companion pane. The mode
 strip remains visible:
 
 ```text
@@ -240,6 +245,8 @@ restored when width permits. An explicit reveal of one companion visibly
 replaces the other companion without rewriting the hidden pane's stored
 wide-layout preference; a toggle must never become a silent no-op because of
 the responsive override.
+Sources is the default companion until the user explicitly opens Studio. The
+preferred companion is persistent and is restored when width permits.
 
 ### Narrow layout
 
@@ -387,6 +394,8 @@ to Local and never substitutes a local workspace with the same name.
 | Mind Map/Timeline | Unavailable until a working Local owner/editor exists | Workspace artifact content (`mindmap` / `timeline`) | Capability-gated visual/narrative output |
 | Slides | Unavailable until a working Local owner exists | Slides presentation ID/version plus workspace artifact reference | Native presentation owner and reopen/export |
 | Data Table | Unavailable until a working Local owner exists | Data Tables UUID/version plus workspace artifact reference | Native structured owner and CSV/JSON export |
+| Audio | TTS-owned file/artifact when implemented | Workspace artifact/export API | Future capability-gated output |
+| Slides/Mind Map/Timeline/Data Table | Native owner when implemented | Workspace artifact API | Future capability-gated output |
 | Research run | Research Interop service | Server Research API | Runs screen lifecycle |
 | Copy receipt | Local workspace handoff audit | Server migration/operation receipt plus local audit | Inspectable transfer history |
 | Folder/annotation overlay | Device overlay store | Not server-owned | Explicit device-only organization |
@@ -445,6 +454,7 @@ workbench-specific client state:
 - one bounded unsent Research Chat draft per qualified workspace plus
   payload-free append-stage recovery receipts; a successful canonical append
   clears the draft and no sent transcript body is mirrored here;
+- per-qualified-workspace pane preference and collapsed state;
 - recent and pinned server workspaces;
 - banner and split/pane presentation preferences;
 - durable Deep Research launch/return context for server workspaces.
@@ -968,6 +978,9 @@ reasons, and mode-tab navigation between separate screens.
   diagnostics.
 - Server ingest round trip proves the item appears in server Media and through
   its workspace-source row without creating a local Library record.
+- Server adapter contract tests for workspace CRUD, source status/preview,
+  selection/reorder, notes, artifacts, chat, capabilities, export, sharing, and
+  diagnostics.
 - Server unavailable/auth-expired behavior proves no Local calls occur.
 - Local remote-provider preflight proves no request leaves before consent.
 - Primary five outputs reopen through their canonical owners.
@@ -994,6 +1007,8 @@ independent Backlog tasks and plans in dependency order:
    durable authority-specific association, association retry/unlink,
    attach/search/preview/readiness/selection, overlays, Local ingestion, server
    APIs, and notes CRUD.
+2. **Sources and Quick Notes** — attach/search/preview/readiness/selection,
+   overlays, Local ingestion, server APIs, and notes CRUD.
 3. **Grounded Chat** — local/server conversation persistence, retrieval modes,
    citations, diagnostics, processing-route consent, and message actions.
 4. **Primary Studio outputs** — Summary, Flashcards, Quiz, Report, Compare
