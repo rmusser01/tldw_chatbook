@@ -23725,14 +23725,16 @@ ResearchScreen #research-window.window {
     color: $text-muted;
 }
 
-#research-authority-summary .research-data-source-button.is-active {
+#research-authority-summary .research-data-source-button:focus {
     border: none;
-    background: $primary;
+    outline: none;
+    background: $ds-focus-bg;
     color: $text;
     text-style: bold underline;
 }
 
-#research-authority-summary .research-data-source-button:focus {
+#research-authority-summary .research-data-source-button.is-active,
+#research-authority-summary .research-data-source-button.is-active:focus {
     border: none;
     outline: none;
     background: $primary;

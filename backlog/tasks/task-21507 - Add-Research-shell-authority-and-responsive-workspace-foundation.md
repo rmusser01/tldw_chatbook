@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-24 05:54'
-updated_date: '2026-08-24 09:36'
+updated_date: '2026-08-24 10:08'
 labels:
   - research
   - workspace
@@ -69,3 +69,27 @@ checkout with no findings. Known unrelated Library failures in the broad
 navigation file were excluded by the approved selected-node boundary, and
 full pytest was not run. No new ADR was required; ADR-078 remains the governing
 decision.
+
+### Fix Round 1
+
+Added explicit Workspace snapshot/restore for selected authority, qualified
+workspace intent, active responsive pane, and pane preferences, verified through
+the real Workspace → Runs → Workspace navigation boundary without changing
+Runs' independent state. Catalog loads now carry mandatory monotonic generation
+and controller revision metadata; stale Local results are rejected at both
+controller storage and screen paint across Local → Server → Local ABA changes.
+
+Qualified pane preferences reset before a different workspace's overlay loads,
+and overlay application is fenced by returned ref, selected ref, controller
+revision, and overlay generation. Medium companion changes now persist through
+the same optimistic overlay store. Production CSS distinguishes inactive focus
+from active authority selection, and rendered geometry directly proves Chat
+uses the wide grid minus two fixed four-cell reveal handles when both side panes
+are closed.
+
+Fix Round 1 verification passed `318 passed` with only the accepted
+`RequestsDependencyWarning`; all six inverse guards passed separately, and CSS
+reproduction, Ruff, format, compile, diff, detector, and affected rendered
+geometry checks passed. ADR-078 remains the governing decision, no new ADR was
+required, the known unrelated Library failures remain out of scope, and full
+pytest was not run.

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -12,6 +14,9 @@ from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.Research_Workspace import (
     QualifiedWorkspaceRef,
     ResearchPanePreferences,
+    ResearchWorkspaceCatalogState,
+    ResearchWorkspaceController,
+    ResearchWorkspaceSummary,
     WorkspaceDataSource,
 )
 from tldw_chatbook.UI.Screens.research_workspace_screen import (
@@ -70,6 +75,16 @@ class _ServerContextProvider:
 
     def get_active_context(self):
         return self.context
+
+
+class _DeferredCatalogPort:
+    def __init__(self) -> None:
+        self.results: list[asyncio.Future] = []
+
+    async def list_workspaces(self, *, include_archived: bool = False):
+        future = asyncio.get_running_loop().create_future()
+        self.results.append(future)
+        return await future
 
 
 def _unmounted_app(
@@ -183,6 +198,10 @@ class _ResearchHarness(ConsolidatedCSSApp):
 
     async def on_mount(self) -> None:
         await self.push_screen(self._research_screen)
+
+
+class _ProductionResearchHarness(_ResearchHarness):
+    CSS_PATH = TldwCli.CSS_PATH
 
 
 @pytest.mark.asyncio
@@ -351,3 +370,277 @@ def test_foundation_screen_does_not_construct_future_phase_coordinators(
         "ingestion_coordinator",
     ):
         assert not hasattr(screen, attribute)
+
+
+@pytest.mark.asyncio
+async def test_catalog_aba_does_not_repaint_newer_local_selection() -> None:
+    port = _DeferredCatalogPort()
+    controller = ResearchWorkspaceController({WorkspaceDataSource.LOCAL: port})
+    screen = ResearchWorkspaceScreen(SimpleNamespace(), controller=controller)
+    app = _ResearchHarness(screen)
+
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause()
+        controller.select_data_source(WorkspaceDataSource.SERVER)
+        controller.select_data_source(WorkspaceDataSource.LOCAL)
+        new_request = asyncio.create_task(screen._refresh_workspace_catalog())
+        await asyncio.sleep(0)
+
+        new_workspace = ResearchWorkspaceSummary(
+            ref=QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "new"),
+            name="New notebook",
+        )
+        port.results[1].set_result((new_workspace,))
+        await new_request
+        assert "New notebook" in _rendered_text(
+            screen.query_one("#research-workspace-selection", Static)
+        )
+
+        old_workspace = ResearchWorkspaceSummary(
+            ref=QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "old"),
+            name="Old notebook",
+        )
+        port.results[0].set_result((old_workspace,))
+        await pilot.pause()
+
+        assert "New notebook" in _rendered_text(
+            screen.query_one("#research-workspace-selection", Static)
+        )
+        assert screen.controller.catalog_state is not None
+        assert screen.controller.catalog_state.workspaces == (new_workspace,)
+
+
+@pytest.mark.asyncio
+async def test_local_overlay_preferences_do_not_carry_to_server_without_overlay(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import tldw_chatbook.app as app_module
+
+    app_owner = _unmounted_app(
+        local_service=_LocalWorkspaceService(),
+        server_service=_ServerWorkspaceService(),
+        server_context_provider=_ServerContextProvider(),
+    )
+    monkeypatch.setattr(app_module, "get_user_data_dir", lambda: tmp_path)
+    screen = app_owner._create_navigation_screen(
+        "research_workspace", ResearchWorkspaceScreen
+    )
+    local_ref = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "local-research")
+    screen.overlay_store.save(
+        local_ref,
+        ResearchPanePreferences(sources_open=False, studio_open=False),
+        expected_revision=0,
+        timestamp="2026-08-24T00:00:00Z",
+    )
+    app = _ResearchHarness(screen)
+
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.1)
+        assert screen.pane_preferences == ResearchPanePreferences(
+            sources_open=False, studio_open=False
+        )
+        screen.query_one("#research-data-source-server", Button).press()
+        await pilot.pause(0.1)
+
+        assert screen.controller.selected_data_source is WorkspaceDataSource.SERVER
+        assert screen.pane_preferences == ResearchPanePreferences()
+        assert screen.query_one("#research-sources-pane").display
+        assert screen.query_one("#research-studio-pane").display
+
+
+@pytest.mark.asyncio
+async def test_server_overlay_preferences_do_not_carry_back_to_local_without_overlay(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import tldw_chatbook.app as app_module
+
+    app_owner = _unmounted_app(
+        local_service=_LocalWorkspaceService(),
+        server_service=_ServerWorkspaceService(),
+        server_context_provider=_ServerContextProvider(),
+    )
+    monkeypatch.setattr(app_module, "get_user_data_dir", lambda: tmp_path)
+    screen = app_owner._create_navigation_screen(
+        "research_workspace", ResearchWorkspaceScreen
+    )
+    server_adapter = screen.controller.port_for_data_source(WorkspaceDataSource.SERVER)
+    server_ref = (await server_adapter.list_workspaces())[0].ref
+    screen.overlay_store.save(
+        server_ref,
+        ResearchPanePreferences(sources_open=False, studio_open=False),
+        expected_revision=0,
+        timestamp="2026-08-24T00:00:00Z",
+    )
+    app = _ResearchHarness(screen)
+
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.1)
+        screen.query_one("#research-data-source-server", Button).press()
+        await pilot.pause(0.1)
+        assert screen.pane_preferences == ResearchPanePreferences(
+            sources_open=False, studio_open=False
+        )
+
+        screen.query_one("#research-data-source-local", Button).press()
+        await pilot.pause(0.1)
+        assert screen.controller.selected_data_source is WorkspaceDataSource.LOCAL
+        assert screen.pane_preferences == ResearchPanePreferences()
+
+
+@pytest.mark.asyncio
+async def test_medium_companion_change_persists_qualified_overlay(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import tldw_chatbook.app as app_module
+
+    app_owner = _unmounted_app(
+        local_service=_LocalWorkspaceService(),
+        server_service=_ServerWorkspaceService(),
+        server_context_provider=_ServerContextProvider(),
+    )
+    monkeypatch.setattr(app_module, "get_user_data_dir", lambda: tmp_path)
+    screen = app_owner._create_navigation_screen(
+        "research_workspace", ResearchWorkspaceScreen
+    )
+    app = _ResearchHarness(screen)
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause(0.1)
+        screen.query_one("#research-pane-mode-studio", Button).press()
+        await pilot.pause(0.1)
+
+        assert screen.controller.selected_ref is not None
+        saved = screen.overlay_store.load(screen.controller.selected_ref)
+        assert saved is not None
+        assert saved.preferences.preferred_companion == "studio"
+
+
+class _BlockingOverlayStore:
+    def __init__(self, local_ref: QualifiedWorkspaceRef) -> None:
+        self.local_ref = local_ref
+        self.started = threading.Event()
+        self.release = threading.Event()
+
+    def load(self, ref: QualifiedWorkspaceRef):
+        if ref != self.local_ref:
+            return None
+        self.started.set()
+        assert self.release.wait(2)
+        return SimpleNamespace(
+            ref=ref,
+            revision=1,
+            preferences=ResearchPanePreferences(sources_open=False, studio_open=False),
+        )
+
+
+@pytest.mark.asyncio
+async def test_stale_overlay_load_cannot_repaint_new_qualified_workspace() -> None:
+    local_ref = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "local")
+    server_ref = QualifiedWorkspaceRef(
+        WorkspaceDataSource.SERVER,
+        "server",
+        server_profile_id="profile-a",
+        principal_id="principal-a",
+    )
+    store = _BlockingOverlayStore(local_ref)
+    controller = ResearchWorkspaceController({})
+    screen = ResearchWorkspaceScreen(
+        SimpleNamespace(), controller=controller, overlay_store=store
+    )
+    app = _ResearchHarness(screen)
+
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause()
+        local_state = ResearchWorkspaceCatalogState(
+            data_source=WorkspaceDataSource.LOCAL,
+            context_revision=controller.context_revision,
+            catalog_generation=controller.catalog_generation,
+            workspaces=(ResearchWorkspaceSummary(ref=local_ref, name="Local"),),
+        )
+        old_load = asyncio.create_task(screen._apply_catalog_state(local_state))
+        assert await asyncio.to_thread(store.started.wait, 1)
+
+        controller.select_data_source(WorkspaceDataSource.SERVER)
+        server_state = ResearchWorkspaceCatalogState(
+            data_source=WorkspaceDataSource.SERVER,
+            context_revision=controller.context_revision,
+            catalog_generation=controller.catalog_generation,
+            workspaces=(ResearchWorkspaceSummary(ref=server_ref, name="Server"),),
+        )
+        await screen._apply_catalog_state(server_state)
+        assert screen.controller.selected_ref == server_ref
+        assert screen.pane_preferences == ResearchPanePreferences()
+
+        store.release.set()
+        await old_load
+
+        assert screen.controller.selected_ref == server_ref
+        assert screen.pane_preferences == ResearchPanePreferences()
+
+
+@pytest.mark.asyncio
+async def test_mismatched_overlay_ref_cannot_repaint_selected_workspace() -> None:
+    selected_ref = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "selected")
+    wrong_ref = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "wrong")
+
+    class _MismatchedOverlayStore:
+        def load(self, ref: QualifiedWorkspaceRef):
+            return SimpleNamespace(
+                ref=wrong_ref,
+                revision=1,
+                preferences=ResearchPanePreferences(
+                    sources_open=False, studio_open=False
+                ),
+            )
+
+    controller = ResearchWorkspaceController({})
+    screen = ResearchWorkspaceScreen(
+        SimpleNamespace(),
+        controller=controller,
+        overlay_store=_MismatchedOverlayStore(),
+    )
+    app = _ResearchHarness(screen)
+
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause()
+        state = ResearchWorkspaceCatalogState(
+            data_source=WorkspaceDataSource.LOCAL,
+            context_revision=controller.context_revision,
+            catalog_generation=controller.catalog_generation,
+            workspaces=(ResearchWorkspaceSummary(ref=selected_ref, name="Selected"),),
+        )
+        await screen._apply_catalog_state(state)
+
+        assert screen.controller.selected_ref == selected_ref
+        assert screen.pane_preferences == ResearchPanePreferences()
+
+
+@pytest.mark.asyncio
+async def test_inactive_authority_focus_does_not_impersonate_active_selection(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import tldw_chatbook.app as app_module
+
+    app_owner = _unmounted_app(
+        local_service=_LocalWorkspaceService(),
+        server_service=_ServerWorkspaceService(),
+        server_context_provider=_ServerContextProvider(),
+    )
+    monkeypatch.setattr(app_module, "get_user_data_dir", lambda: tmp_path)
+    screen = app_owner._create_navigation_screen(
+        "research_workspace", ResearchWorkspaceScreen
+    )
+    app = _ProductionResearchHarness(screen)
+
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause(0.1)
+        server = screen.query_one("#research-data-source-server", Button)
+        local = screen.query_one("#research-data-source-local", Button)
+        server.press()
+        await pilot.pause(0.1)
+        local.focus()
+        await pilot.pause()
+
+        assert server.has_class("is-active")
+        assert not local.has_class("is-active")
+        assert server.styles.background != local.styles.background

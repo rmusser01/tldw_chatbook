@@ -27,6 +27,8 @@ class ResearchWorkspaceCatalogState:
     """One authority's qualified catalog or its typed recovery state."""
 
     data_source: WorkspaceDataSource
+    context_revision: int
+    catalog_generation: int
     workspaces: tuple[ResearchWorkspaceSummary, ...] = ()
     recovery: ResearchCapability | None = None
 
@@ -39,6 +41,7 @@ class ResearchWorkspaceController:
     ) -> None:
         self._ports = dict(ports)
         self._context_revision = 0
+        self._catalog_generation = 0
         self._selected_data_source = WorkspaceDataSource.LOCAL
         self._catalog_states: dict[
             WorkspaceDataSource, ResearchWorkspaceCatalogState
@@ -53,6 +56,10 @@ class ResearchWorkspaceController:
     @property
     def context_revision(self) -> int:
         return self._context_revision
+
+    @property
+    def catalog_generation(self) -> int:
+        return self._catalog_generation
 
     @property
     def selected_ref(self) -> QualifiedWorkspaceRef | None:
@@ -90,6 +97,9 @@ class ResearchWorkspaceController:
         """Load only the selected authority or return its explicit recovery."""
 
         data_source = self._selected_data_source
+        context_revision = self._context_revision
+        self._catalog_generation += 1
+        catalog_generation = self._catalog_generation
         port = self._ports.get(data_source)
         if port is None:
             owner = data_source.value
@@ -108,6 +118,8 @@ class ResearchWorkspaceController:
                         else "Configure or choose a server, then retry."
                     ),
                 ),
+                context_revision=context_revision,
+                catalog_generation=catalog_generation,
             )
         else:
             try:
@@ -116,14 +128,29 @@ class ResearchWorkspaceController:
                 state = ResearchWorkspaceCatalogState(
                     data_source=data_source,
                     recovery=exc.capability,
+                    context_revision=context_revision,
+                    catalog_generation=catalog_generation,
                 )
             else:
                 state = ResearchWorkspaceCatalogState(
                     data_source=data_source,
                     workspaces=tuple(workspaces),
+                    context_revision=context_revision,
+                    catalog_generation=catalog_generation,
                 )
-        self._catalog_states[data_source] = state
+        if self.is_current_catalog_state(state):
+            self._catalog_states[data_source] = state
         return state
+
+    def is_current_catalog_state(self, state: ResearchWorkspaceCatalogState) -> bool:
+        """Return whether a catalog result still owns the selected generation."""
+
+        if state.data_source is not self._selected_data_source:
+            return False
+        return (
+            state.context_revision == self._context_revision
+            and state.catalog_generation == self._catalog_generation
+        )
 
     def select_workspace(
         self, ref: QualifiedWorkspaceRef, *, capability_revision: str = ""
@@ -151,6 +178,15 @@ class ResearchWorkspaceController:
             context_revision=self._context_revision,
         )
 
+    def is_current_request(self, capture: ResearchRequestContext) -> bool:
+        """Return whether a qualified request may still update presentation state."""
+
+        return (
+            capture.context_revision == self._context_revision
+            and capture.ref == self._selected_ref
+            and capture.capability_revision == self._capability_revision
+        )
+
     async def refresh_selected_workspace(self) -> bool:
         capture = self.capture_request()
         port = self._ports.get(capture.ref.data_source)
@@ -171,11 +207,7 @@ class ResearchWorkspaceController:
         if result.ref != capture.ref:
             raise ValueError("Request returned a mismatched workspace ref")
         self._canonical_workspaces[capture.ref] = result
-        if (
-            capture.context_revision != self._context_revision
-            or capture.ref != self._selected_ref
-            or capture.capability_revision != self._capability_revision
-        ):
+        if not self.is_current_request(capture):
             return False
         self.visible_workspace = result
         return True

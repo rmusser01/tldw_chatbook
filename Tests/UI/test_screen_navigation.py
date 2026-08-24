@@ -3819,6 +3819,57 @@ def test_primary_routed_screens_use_base_app_screen():
 
 
 @pytest.mark.asyncio
+async def test_research_workspace_runs_round_trip_restores_independent_context():
+    """The real navigation snapshot must not reset Workspace to Local."""
+    from tldw_chatbook.Research_Workspace import (
+        QualifiedWorkspaceRef,
+        ResearchPanePreferences,
+        WorkspaceDataSource,
+    )
+
+    app = _build_test_app()
+
+    async with app.run_test(size=(160, 40)) as pilot:
+        await _wait_for_initial_screen(pilot)
+        await app.handle_screen_navigation(NavigateToScreen("research_workspace"))
+        first_workspace = app.screen
+        server_ref = QualifiedWorkspaceRef(
+            WorkspaceDataSource.SERVER,
+            "server-intent",
+            server_profile_id="server-profile-a",
+            principal_id="principal-a",
+        )
+        first_workspace.controller.select_data_source(WorkspaceDataSource.SERVER)
+        first_workspace.controller.select_workspace(server_ref)
+        first_workspace.active_pane = "studio"
+        first_workspace.pane_preferences = ResearchPanePreferences(
+            sources_open=False,
+            studio_open=True,
+            preferred_companion="studio",
+        )
+
+        await app.handle_screen_navigation(NavigateToScreen("research"))
+        assert type(app.screen).__name__ == "ResearchScreen"
+        runs_screen = app.screen
+
+        await app.handle_screen_navigation(NavigateToScreen("research_workspace"))
+        restored = app.screen
+        assert type(restored).__name__ == "ResearchWorkspaceScreen"
+        assert restored is not first_workspace
+        assert restored.controller.selected_data_source is WorkspaceDataSource.SERVER
+        assert restored.controller.selected_ref == server_ref
+        assert restored.active_pane == "studio"
+        assert restored.pane_preferences == ResearchPanePreferences(
+            sources_open=False,
+            studio_open=True,
+            preferred_companion="studio",
+        )
+        assert runs_screen.save_state() == app.screen_state_store.restore(
+            "research", app._current_runtime_identity()
+        )
+
+
+@pytest.mark.asyncio
 async def test_library_screen_round_trip_returns_to_landing_with_rag_draft():
     """A generic Library return lands at the hub without losing a RAG draft.
 

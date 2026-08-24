@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from typing import Any, Literal
 
 from textual import on
@@ -12,9 +13,11 @@ from textual.events import Resize
 from textual.widgets import Button, Static
 
 from ...Research_Workspace import (
+    QualifiedWorkspaceRef,
     ResearchPresentationOverlayStore,
     ResearchWorkspaceCatalogState,
     ResearchWorkspaceController,
+    WorkspaceDataSource,
 )
 from ...Research_Workspace.layout_state import (
     ResearchPaneLayout,
@@ -58,7 +61,87 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         self.active_pane: ResearchPaneName = "chat"
         self._pane_layout: ResearchPaneLayout | None = None
         self._overlay_revision = 0
-        self._overlay_ref = None
+        self._overlay_ref: QualifiedWorkspaceRef | None = None
+        self._pane_preferences_ref: QualifiedWorkspaceRef | None = None
+        self._overlay_generation = 0
+
+    def save_state(self) -> dict[str, object]:
+        """Save Phase-1 authority, workspace intent, and responsive view state."""
+
+        state = dict(super().save_state() or {})
+        selected_ref = self.controller.selected_ref
+        state.update(
+            {
+                "research_workspace_data_source": (
+                    self.controller.selected_data_source.value
+                ),
+                "research_workspace_ref": (
+                    {
+                        "data_source": selected_ref.data_source.value,
+                        "workspace_id": selected_ref.workspace_id,
+                        "server_profile_id": selected_ref.server_profile_id,
+                        "principal_id": selected_ref.principal_id,
+                    }
+                    if selected_ref is not None
+                    else None
+                ),
+                "research_workspace_active_pane": self.active_pane,
+                "research_workspace_pane_preferences": {
+                    "sources_open": self.pane_preferences.sources_open,
+                    "studio_open": self.pane_preferences.studio_open,
+                    "preferred_companion": (self.pane_preferences.preferred_companion),
+                },
+            }
+        )
+        return state
+
+    def restore_state(self, state: dict[str, object]) -> None:
+        """Restore safe view intent before catalog and overlay reconciliation."""
+
+        super().restore_state(state)
+        try:
+            data_source = WorkspaceDataSource(
+                state.get("research_workspace_data_source", "local")
+            )
+        except (TypeError, ValueError):
+            data_source = WorkspaceDataSource.LOCAL
+
+        active_pane = state.get("research_workspace_active_pane", "chat")
+        if active_pane in {"sources", "chat", "studio"}:
+            self.active_pane = active_pane
+
+        raw_preferences = state.get("research_workspace_pane_preferences")
+        if isinstance(raw_preferences, Mapping):
+            try:
+                self.pane_preferences = ResearchPanePreferences(
+                    sources_open=raw_preferences.get("sources_open", True),
+                    studio_open=raw_preferences.get("studio_open", True),
+                    preferred_companion=raw_preferences.get(
+                        "preferred_companion", "sources"
+                    ),
+                )
+            except (TypeError, ValueError):
+                self.pane_preferences = ResearchPanePreferences()
+
+        selected_ref = None
+        raw_ref = state.get("research_workspace_ref")
+        if isinstance(raw_ref, Mapping):
+            try:
+                selected_ref = QualifiedWorkspaceRef(
+                    raw_ref.get("data_source", data_source.value),
+                    raw_ref.get("workspace_id", ""),
+                    server_profile_id=raw_ref.get("server_profile_id", ""),
+                    principal_id=raw_ref.get("principal_id", ""),
+                )
+            except (TypeError, ValueError):
+                selected_ref = None
+        if selected_ref is not None and selected_ref.data_source is not data_source:
+            selected_ref = None
+
+        self.controller.select_data_source(data_source)
+        if selected_ref is not None:
+            self.controller.select_workspace(selected_ref)
+        self._pane_preferences_ref = selected_ref
 
     def compose_content(self) -> ComposeResult:
         with Vertical(id="research-workspace-shell"):
@@ -121,8 +204,12 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         """Switch the whole catalog owner without reading the other authority."""
 
         self.controller.select_data_source(message.data_source)
+        self._overlay_generation += 1
         self._overlay_ref = None
         self._overlay_revision = 0
+        self._pane_preferences_ref = None
+        self.pane_preferences = ResearchPanePreferences()
+        self._apply_pane_layout(max(1, self.size.width), relocate_hidden_focus=True)
         header = self.query_one("#research-workspace-header", ResearchHeaderRegion)
         header.sync_data_source(message.data_source)
         self.query_one("#research-workspace-selection", Static).update(
@@ -134,6 +221,7 @@ class ResearchWorkspaceScreen(BaseAppScreen):
     def select_pane_mode(self, message: ResearchPaneModeStrip.Selected) -> None:
         """Reveal the selected pane according to the current responsive band."""
         width = max(1, self.size.width)
+        preferences_before = self.pane_preferences
         if width < 100:
             self.active_pane = message.pane
         elif (
@@ -147,6 +235,8 @@ class ResearchWorkspaceScreen(BaseAppScreen):
                 self.pane_preferences, message.pane, width=width
             )
         self._apply_pane_layout(width)
+        if self.pane_preferences != preferences_before:
+            self._start_overlay_save()
         self._focus_pane(message.pane)
 
     def _apply_pane_layout(
@@ -228,13 +318,14 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         )
 
     async def _refresh_workspace_catalog(self) -> None:
-        data_source = self.controller.selected_data_source
         state = await self.controller.refresh_workspace_catalog()
-        if data_source is not self.controller.selected_data_source:
+        if not self.controller.is_current_catalog_state(state):
             return
         await self._apply_catalog_state(state)
 
     async def _apply_catalog_state(self, state: ResearchWorkspaceCatalogState) -> None:
+        if not self.controller.is_current_catalog_state(state):
+            return
         header = self.query_one("#research-workspace-header", ResearchHeaderRegion)
         header.sync_catalog_state(state)
         selection = self.query_one("#research-workspace-selection", Static)
@@ -262,7 +353,15 @@ class ResearchWorkspaceScreen(BaseAppScreen):
             self._overlay_revision = 0
             return
 
-        workspace = state.workspaces[0]
+        intended_ref = self.controller.selected_ref
+        workspace = next(
+            (
+                candidate
+                for candidate in state.workspaces
+                if intended_ref is not None and candidate.ref == intended_ref
+            ),
+            state.workspaces[0],
+        )
         self.controller.select_workspace(workspace.ref)
         selection.update(
             f"{workspace.name} · {workspace.ref.data_source.value.title()}"
@@ -271,6 +370,13 @@ class ResearchWorkspaceScreen(BaseAppScreen):
             f"Foundation ready · {state.data_source.value.title()} catalog ready · "
             f"{len(state.workspaces)} workspace(s) · Foundation only"
         )
+        if self._pane_preferences_ref != workspace.ref:
+            self.pane_preferences = ResearchPanePreferences()
+            self._pane_preferences_ref = workspace.ref
+            self._apply_pane_layout(max(1, self.size.width), relocate_hidden_focus=True)
+        self._overlay_generation += 1
+        overlay_generation = self._overlay_generation
+        overlay_capture = self.controller.capture_request()
         self._overlay_ref = workspace.ref
         self._overlay_revision = 0
         if self.overlay_store is None:
@@ -285,13 +391,22 @@ class ResearchWorkspaceScreen(BaseAppScreen):
             return
         if overlay is None:
             return
+        if (
+            getattr(overlay, "ref", None) != workspace.ref
+            or overlay_generation != self._overlay_generation
+            or workspace.ref != self._overlay_ref
+            or not self.controller.is_current_request(overlay_capture)
+        ):
+            return
         self._overlay_revision = overlay.revision
         self.pane_preferences = overlay.preferences
+        self._pane_preferences_ref = workspace.ref
         self._apply_pane_layout(max(1, self.size.width), relocate_hidden_focus=True)
 
     def _start_overlay_save(self) -> None:
         if self.overlay_store is None or self._overlay_ref is None:
             return
+        self._overlay_generation += 1
         self.run_worker(
             self._save_overlay_preferences(),
             group="research-workspace-overlay",

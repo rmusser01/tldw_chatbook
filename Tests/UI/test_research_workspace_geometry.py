@@ -94,3 +94,28 @@ async def test_production_runs_window_stays_inside_remaining_screen_content(
             content.content_region,
             window.region,
         )
+
+
+@pytest.mark.asyncio
+async def test_wide_chat_uses_grid_except_two_fixed_reveal_handles() -> None:
+    from textual.widgets import Button
+
+    app = _ProductionWorkspaceHarness()
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause()
+        screen = app.screen_stack[-1]
+        screen.query_one("#research-sources-collapse", Button).press()
+        screen.query_one("#research-studio-collapse", Button).press()
+        await pilot.pause()
+
+        grid = screen.query_one("#research-workspace-grid")
+        chat = screen.query_one("#research-chat-pane")
+        sources_handle = screen.query_one("#research-sources-handle")
+        studio_handle = screen.query_one("#research-studio-handle")
+
+        assert not screen.query_one("#research-sources-pane").display
+        assert chat.display
+        assert not screen.query_one("#research-studio-pane").display
+        assert sources_handle.region.width == 4
+        assert studio_handle.region.width == 4
+        assert chat.region.width == grid.content_region.width - 8

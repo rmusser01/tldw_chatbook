@@ -22,6 +22,16 @@ class DeferredPort:
         return await future
 
 
+class DeferredCatalogPort:
+    def __init__(self) -> None:
+        self.results: list[asyncio.Future] = []
+
+    async def list_workspaces(self, *, include_archived: bool = False):
+        future = asyncio.get_running_loop().create_future()
+        self.results.append(future)
+        return await future
+
+
 def local_ref(workspace_id: str) -> QualifiedWorkspaceRef:
     return QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, workspace_id)
 
@@ -63,13 +73,9 @@ async def test_stale_result_updates_owner_cache_but_not_visible_state() -> None:
     new_request = asyncio.create_task(controller.refresh_selected_workspace())
     await asyncio.sleep(0)
 
-    port.results[new_ref].set_result(
-        ResearchWorkspaceSummary(ref=new_ref, name="New")
-    )
+    port.results[new_ref].set_result(ResearchWorkspaceSummary(ref=new_ref, name="New"))
     assert await new_request is True
-    port.results[old_ref].set_result(
-        ResearchWorkspaceSummary(ref=old_ref, name="Old")
-    )
+    port.results[old_ref].set_result(ResearchWorkspaceSummary(ref=old_ref, name="Old"))
     assert await old_request is False
 
     assert controller.visible_workspace == ResearchWorkspaceSummary(
@@ -78,3 +84,31 @@ async def test_stale_result_updates_owner_cache_but_not_visible_state() -> None:
     assert controller.canonical_workspace(old_ref) == ResearchWorkspaceSummary(
         ref=old_ref, name="Old"
     )
+
+
+@pytest.mark.asyncio
+async def test_catalog_generation_rejects_old_local_result_after_authority_aba() -> (
+    None
+):
+    port = DeferredCatalogPort()
+    controller = ResearchWorkspaceController({WorkspaceDataSource.LOCAL: port})
+
+    old_request = asyncio.create_task(controller.refresh_workspace_catalog())
+    await asyncio.sleep(0)
+    controller.select_data_source(WorkspaceDataSource.SERVER)
+    controller.select_data_source(WorkspaceDataSource.LOCAL)
+    new_request = asyncio.create_task(controller.refresh_workspace_catalog())
+    await asyncio.sleep(0)
+
+    new_workspace = ResearchWorkspaceSummary(ref=local_ref("new"), name="New")
+    port.results[1].set_result((new_workspace,))
+    await new_request
+    assert controller.catalog_state is not None
+    assert controller.catalog_state.workspaces == (new_workspace,)
+
+    old_workspace = ResearchWorkspaceSummary(ref=local_ref("old"), name="Old")
+    port.results[0].set_result((old_workspace,))
+    await old_request
+
+    assert controller.catalog_state is not None
+    assert controller.catalog_state.workspaces == (new_workspace,)
