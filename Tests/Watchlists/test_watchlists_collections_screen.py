@@ -1,11 +1,13 @@
 """Tests for the Watchlists collections screen action handlers."""
 
 from contextlib import asynccontextmanager
+import threading
 
 import pytest
 from unittest.mock import AsyncMock, Mock
 
 from rich.text import Text
+from textual.app import App, ComposeResult
 from textual.widgets import Button, Input, Static, TextArea
 
 from Tests.UI.test_destination_shells import DestinationHarness, _static_text
@@ -18,6 +20,7 @@ from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import (
     InspectorPane,
     PreviewRequested,
 )
+from tldw_chatbook.UI.Watchlists_Modules import inspector_pane as inspector_pane_module
 from tldw_chatbook.UI.Watchlists_Modules.article_list import ArticleListPane
 from tldw_chatbook.UI.Watchlists_Modules.items_pane import ItemSelected
 from tldw_chatbook.UI.Watchlists_Modules.opml_dialogs import (
@@ -33,6 +36,7 @@ from tldw_chatbook.UI.Watchlists_Modules.sources_pane import (
     SourcesPane,
 )
 from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope, TreeScopeChanged
+from tldw_chatbook.Utils.input_validation import validate_url as real_validate_url
 
 
 @pytest.fixture
@@ -69,6 +73,104 @@ async def _open_screen(controller):
         assert isinstance(screen, WatchlistsCollectionsScreen)
         screen._controller = controller
         yield screen, pilot
+
+
+class _InspectorActionsApp(App[None]):
+    def __init__(self, entity: dict) -> None:
+        super().__init__()
+        self.entity = entity
+        self.snapshot_requests: list[object] = []
+
+    def compose(self) -> ComposeResult:
+        pane = InspectorPane(id="watchlists-entity-inspector")
+        pane.set_reactive(InspectorPane.selected_entity, self.entity)
+        yield pane
+
+    def on_view_snapshot_requested(self, message) -> None:
+        self.snapshot_requests.append(message)
+
+
+@pytest.mark.parametrize("content_kind", ["article", "change"])
+@pytest.mark.asyncio
+async def test_item_inspector_keeps_advanced_actions(content_kind: str) -> None:
+    app = _InspectorActionsApp(
+        {
+            "entity_kind": "watchlist_item",
+            "item_id": 7,
+            "title": "Selected item",
+            "content_kind": content_kind,
+            "queued_for_briefing": False,
+        }
+    )
+    async with app.run_test():
+        action_ids = [
+            button.id
+            for button in app.query_one("#inspector-actions").query(Button)
+        ]
+
+        assert "inspector-ingest-button" in action_ids
+        assert "inspector-queue-briefing-button" in action_ids
+        assert ("inspector-full-page-button" in action_ids) is (
+            content_kind == "change"
+        )
+        assert ("inspector-previous-snapshot-button" in action_ids) is (
+            content_kind == "change"
+        )
+
+
+@pytest.mark.asyncio
+async def test_inspector_previous_snapshot_posts_the_existing_request() -> None:
+    message_type = getattr(inspector_pane_module, "ViewSnapshotRequested", None)
+    assert message_type is not None, "Inspector must own the snapshot request"
+    entity = {
+        "entity_kind": "watchlist_item",
+        "item_id": 7,
+        "title": "Changed page",
+        "content_kind": "change",
+    }
+    app = _InspectorActionsApp(entity)
+    async with app.run_test() as pilot:
+        await pilot.click("#inspector-previous-snapshot-button")
+        await pilot.pause()
+
+        assert len(app.snapshot_requests) == 1
+        request = app.snapshot_requests[0]
+        assert isinstance(request, message_type)
+        assert request.item is entity
+        assert request.which == "previous"
+
+
+@pytest.mark.asyncio
+async def test_screen_keeps_previous_snapshot_modal_handler(monkeypatch) -> None:
+    message_type = getattr(inspector_pane_module, "ViewSnapshotRequested", None)
+    assert message_type is not None, "Inspector must own the snapshot request"
+    app = _build_test_app()
+    app.local_watchlists_service.get_url_snapshots = AsyncMock(
+        return_value=[
+            {"created_at": "2026-08-23T10:00:00Z", "extracted_content": "now"},
+            {
+                "created_at": "2026-08-22T10:00:00Z",
+                "extracted_content": "before",
+            },
+        ]
+    )
+    host = DestinationHarness(app, "watchlists_collections")
+    pushed = AsyncMock(return_value=None)
+    monkeypatch.setattr(host, "push_screen_wait", pushed)
+    item = {"source_id": 11, "url": "https://example.com/changed"}
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = host.screen_stack[-1]
+        screen.post_message(message_type(item, "previous"))
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        app.local_watchlists_service.get_url_snapshots.assert_awaited_once_with(
+            11, "https://example.com/changed", limit=2
+        )
+        modal = pushed.await_args.args[0]
+        assert modal._url == "https://example.com/changed"
+        assert modal._content == "before"
 
 
 @pytest.mark.asyncio
@@ -986,6 +1088,57 @@ async def test_open_in_browser_requested_takes_the_same_path(monkeypatch):
             if opened:
                 break
         assert opened == ["https://example.com/via-button"]
+
+
+@pytest.mark.parametrize("activation", ["keyboard", "button"])
+@pytest.mark.asyncio
+async def test_open_validates_on_ui_thread_then_opens_in_worker(
+    monkeypatch, activation: str
+):
+    """Both entry points converge before the UI/worker thread boundary."""
+    from tldw_chatbook.UI.Watchlists_Modules.content_pane import (
+        OpenInBrowserRequested,
+    )
+
+    ui_thread = threading.get_ident()
+    validation_threads: list[int] = []
+    browser_threads: list[int] = []
+    def validate_on_recorded_thread(url: str) -> bool:
+        validation_threads.append(threading.get_ident())
+        return real_validate_url(url)
+
+    def open_on_recorded_thread(url: str) -> bool:
+        browser_threads.append(threading.get_ident())
+        return True
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.watchlists_collections_screen.validate_url",
+        validate_on_recorded_thread,
+    )
+    monkeypatch.setattr("webbrowser.open", open_on_recorded_thread)
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "watchlists_collections")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        db = app.watchlist_bundle_service._db
+        await _open_item_and_get_url(
+            pilot, screen, db, "Threaded open", "https://example.com/threaded"
+        )
+
+        if activation == "keyboard":
+            await pilot.press("o")
+        else:
+            screen.post_message(
+                OpenInBrowserRequested(dict(screen._selected_content_item))
+            )
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert validation_threads == [ui_thread]
+        assert len(browser_threads) == 1
+        assert browser_threads[0] != ui_thread
 
 
 # --- TASK-3072 plan task 9: the reader's position footer ----------------------

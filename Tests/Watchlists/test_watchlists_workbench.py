@@ -633,12 +633,43 @@ async def test_reader_actions_and_footer_remain_inside_reader() -> None:
 
 
 @pytest.mark.asyncio
+async def test_reader_empty_state_uses_the_approved_copy() -> None:
+    class _App(App[None]):
+        def compose(self) -> ComposeResult:
+            yield ContentPane(id="watchlists-content-pane")
+
+    app = _App()
+    async with app.run_test():
+        empty = app.query_one("#content-empty", Static)
+
+        assert str(empty.renderable) == "Select a feed item to display it here."
+
+
+@pytest.mark.asyncio
+async def test_reader_exposes_only_core_actions_in_the_approved_order() -> None:
+    app = _ReadGeometryApp()
+    async with app.run_test(size=(180, 50)):
+        actions = app.query_one("#content-actions", HorizontalScroll)
+        footer = app.query_one("#content-footer", Horizontal)
+
+        assert _direct_child_ids(actions) == [
+            "content-star-button",
+            "content-mark-unread-button",
+            "content-open-button",
+        ]
+        assert _direct_child_ids(footer) == [
+            "content-position",
+            "content-next-unread-button",
+        ]
+
+
+@pytest.mark.asyncio
 async def test_reader_focus_order_keeps_body_between_actions_and_footer() -> None:
     app = _ReadGeometryApp()
     async with app.run_test(size=(180, 50)) as pilot:
         await pilot.pause()
         body_scroll = app.query_one("#content-body-scroll", VerticalScroll)
-        first_action = app.query_one("#content-mark-unread-button")
+        first_action = app.query_one("#content-star-button")
         footer_action = app.query_one("#content-next-unread-button")
         focus_chain = app.screen.focus_chain
 

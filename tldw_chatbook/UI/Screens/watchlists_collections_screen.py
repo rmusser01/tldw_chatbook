@@ -104,6 +104,7 @@ from ..Watchlists_Modules.inspector_pane import (
     PreviewRequested,
     StageInConsoleRequested,
     ToggleBriefingQueueRequested,
+    ViewSnapshotRequested,
 )
 from ..Watchlists_Modules.artifacts_pane import (
     ArtifactsPane,
@@ -132,11 +133,9 @@ from ..Watchlists_Modules.artifacts_pane import (
 from ..Watchlists_Modules.briefing_preset_modal import BriefingPresetModal
 from ..Watchlists_Modules.content_pane import (
     ContentPane,
-    ExpandReaderRequested,
     OpenInBrowserRequested,
     StarToggleRequested,
     UnreadToggleRequested,
-    ViewSnapshotRequested,
 )
 from ..Watchlists_Modules.article_list import (
     ArticleListPane,
@@ -1109,9 +1108,8 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # `_swap_region_widget` calls on a normal visit. Kept, rather than
         # dropped outright, so a screen mounted a second way (a test that
         # changes `region_layout` between construction and mount, or a
-        # future caller) still gets the reconciliation pass `_apply_layout`
-        # performs — `_sync_reader_expanded_state`, and the persistence
-        # no-op check for anything that genuinely did change.
+        # future caller) still gets the persistence reconciliation pass
+        # `_apply_layout` performs for anything that genuinely did change.
         self._apply_layout(self.region_layout)
         self._refresh_local_wc_snapshot()
         self._refresh_overview_data()
@@ -2387,24 +2385,15 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         in `watchlists_workbench.py`), so `WatchlistsWorkbench` prepends the
         generic "Content" title above whatever this returns.
 
-        Batch-4 review, Qodo Q4. `pane.expanded` is seeded from the live
-        `region_layout` (matching `_build_inspector_pane`'s `selected_entity`
-        seeding note above): this factory reruns on every region rebuild,
-        including the one `handle_expand_reader_requested` itself triggers
-        by calling `_apply_layout`, so the freshly-built pane must be told
-        whether CONTENT is the soloed region or its "Expand"/"Restore" label
-        would go stale the instant the layout that produced it changes.
         """
         pane = ContentPane(id="watchlists-content-pane")
         # `set_reactive`: `item` is the pane's one `recompose=True` reactive
         # and has no watcher, so a plain assignment here bought nothing but
         # the queued extra recompose whenever an item was selected — a full
         # second render of the article, inside the very swap task-15778
-        # batches. `expanded`/`position` below are non-recompose reactives
-        # whose watchers patch in place and stay plain, same audit as
-        # `_build_detail_pane`'s.
+        # batches. `position` below is a non-recompose reactive whose watcher
+        # patches in place and stays plain, same audit as `_build_detail_pane`.
         pane.set_reactive(ContentPane.item, self._selected_content_item)
-        pane.expanded = self.region_layout.solo_region == Region.CONTENT
         # TASK-3072 plan task 9: re-seed the footer the same way `item` is
         # re-seeded just above, so a region rebuild re-renders the same
         # position. Guarded inside `_reader_position_text` for the build
@@ -2962,28 +2951,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             self.query_one(WatchlistsWorkbench).region_layout = self._rendered_region_layout()
         except Exception:
             logger.debug("Workbench not mounted yet; layout applies on compose.")
-        self._sync_reader_expanded_state()
         self._schedule_layout_persist(layout)
-
-    def _sync_reader_expanded_state(self) -> None:
-        """Push CONTENT's solo state into the live reader (task-15461).
-
-        `_build_content_pane` seeds `ContentPane.expanded` on every build,
-        which used to be enough because every layout change rebuilt every
-        region. Scoped updates keep a still-expanded CONTENT on its ORIGINAL
-        instance, and `Z` on CONTENT is exactly the case that changes this
-        flag without changing CONTENT's own form (solo collapses ITEMS, the
-        sibling) -- so without this push the reader's Expand/Restore button
-        would keep offering the action it has just performed.
-
-        A no-op when CONTENT is collapsed or hidden: there is no pane, and
-        the next `_build_content_pane` seeds the fresh one anyway.
-        """
-        try:
-            reader = self.query_one("#watchlists-content-pane", ContentPane)
-        except NoMatches:
-            return
-        reader.expanded = self.region_layout.solo_region == Region.CONTENT
 
     def _schedule_layout_persist(self, layout: RegionLayout) -> None:
         """Persist ``layout`` off the UI thread, skipping genuine no-ops.
@@ -4124,13 +4092,6 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         )
         if rehome_focus:
             self._restore_focus_after_swap()
-        # CONTENT is not rebuilt by the swap (the reader is deliberately not
-        # gated on `active_section` -- see `_build_content_pane`), so a still
-        # -mounted reader keeps its instance across the tab change. Its
-        # `expanded` flag is layout-derived, and `_rendered_region_layout`
-        # can move ITEMS' collapse state across the Read boundary, so
-        # re-push it for the same reason `_apply_layout` does.
-        self._sync_reader_expanded_state()
         self._reseed_active_section_pane()
 
     #: The two surfaces `_swap_active_section` tears down: the centre header
@@ -9746,40 +9707,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             return
         self._dispatch_item_status(item_id, _ItemStatusIntent(status="new", gate=True))
 
-    @on(ExpandReaderRequested)
-    def handle_expand_reader_requested(self, event: ExpandReaderRequested) -> None:
-        """Give the reader the whole centre stack, or give it back (AC#2).
-
-        Batch-4 review, Qodo Q4: this was task-2307's own disclosed gap --
-        `ContentPane` posted `ExpandReaderRequested` and nothing handled it,
-        a dead button. Task-1344 already built the mechanism this needs
-        (`action_solo_region`, bound to `Z`): isolate one centre pane,
-        collapsing the other two around it, and calling `solo` again on the
-        same region restores them (`RegionLayout.solo`'s own docstring).
-        Routed through THAT mechanism rather than a second one -- same
-        `_apply_layout` call `action_solo_region` makes, just with
-        `Region.CONTENT` as the target instead of reading it off
-        `self.focused_region`, since a button press already names its
-        target unambiguously and does not need the focus-tracking
-        indirection a keyboard shortcut does.
-
-        `_refuse_region_gesture_off_read_tab` is consulted anyway, for the
-        same "one source of truth for is a region-layout gesture allowed"
-        reason `action_toggle_region`/`action_solo_region`/`_on_region_
-        toggled` all do (see that method's own docstring) -- in practice
-        this button cannot be pressed off the Read tab at all (CONTENT is
-        unmounted everywhere else), so the refusal is defensive rather than
-        reachable, not a second, independent gate someone could drift out
-        of sync with the other three.
-        """
-        event.stop()
-        if self._refuse_region_gesture_off_read_tab(Region.CONTENT):
-            return
-        self._apply_layout(self.region_layout.solo(Region.CONTENT))
-
     @on(ViewSnapshotRequested)
     def handle_view_snapshot_requested(self, event: ViewSnapshotRequested) -> None:
-        """The reader's `[full page]`/`[previous snapshot]` affordances (TASK-1494).
+        """The Inspector's stored-page affordances (TASK-1494).
 
         Deferred to a worker for the same reason every other DB-touching
         handler on this screen is: `_open_snapshot_view` awaits a service
@@ -11349,7 +11279,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._open_item_in_browser(item)
 
     def _open_item_in_browser(self, item: dict[str, Any]) -> None:
-        """`webbrowser.open`, gated by the shared URL validator.
+        """Validate on the UI thread, then dispatch the OS call to a worker.
 
         A feed item's `url` is a REMOTE-derived string and `webbrowser.open`
         hands it to the OS, so validation runs at this boundary through
@@ -11370,7 +11300,28 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     severity="warning",
                 )
             return
-        webbrowser.open(url)
+        self._open_item_in_browser_worker(url)
+
+    @work(thread=True, group="wl-open-browser")
+    def _open_item_in_browser_worker(self, url: str) -> None:
+        """Invoke the blocking OS browser integration off the UI thread."""
+        try:
+            opened = webbrowser.open(url)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "The system browser failed while opening a Watchlists item."
+            )
+            opened = False
+        if not opened:
+            self.app.call_from_thread(self._notify_browser_open_failed)
+
+    def _notify_browser_open_failed(self) -> None:
+        """Report a browser worker failure from the Textual UI thread."""
+        self._notify_watchlists(
+            "Could not open this item in the system browser.",
+            severity="error",
+            markup=False,
+        )
 
     @on(NextUnreadRequested)
     def handle_next_unread_requested(self, event: NextUnreadRequested) -> None:

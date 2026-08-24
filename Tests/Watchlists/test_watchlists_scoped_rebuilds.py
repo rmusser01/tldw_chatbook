@@ -22,6 +22,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from collections import Counter
 from datetime import datetime, timedelta, timezone
+import threading
 
 import pytest
 from textual.widget import Widget
@@ -706,6 +707,53 @@ async def test_a_script_selection_never_recomposes_the_briefing_detail_region():
 # --------------------------------------------------------------------------
 # AC#3 -- a layout key rebuilds only the toggled region
 # --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("failure", ["false", "exception"])
+async def test_browser_worker_failure_does_not_rebuild_reader(
+    monkeypatch, failure: str
+):
+    app = _build_test_app()
+    watchlist_id = _seed(app)
+    async with _open(app, watchlist_id) as (screen, pilot, host):
+        reader = screen.query_one("#watchlists-content-pane", ContentPane)
+        item = {
+            "url": "https://example.com/story",
+            "title": "Reader stays put",
+            "content_kind": "article",
+            "content": "body",
+        }
+        reader.item = item
+        await _settle(pilot, host)
+        ui_thread = threading.get_ident()
+        notifications: list[tuple[int, str, dict]] = []
+        app.notify = lambda message, **kwargs: notifications.append(
+            (threading.get_ident(), message, kwargs)
+        )
+
+        def fail_to_open(_url: str) -> bool:
+            if failure == "exception":
+                raise RuntimeError("browser unavailable")
+            return False
+
+        monkeypatch.setattr("webbrowser.open", fail_to_open)
+        synchronous_errors: list[Exception] = []
+        with _RebuildCounter() as counted:
+            try:
+                screen._open_item_in_browser(item)
+            except Exception as exc:
+                synchronous_errors.append(exc)
+            await _settle(pilot, host)
+
+        assert synchronous_errors == []
+        assert notifications
+        assert notifications[-1][0] == ui_thread
+        assert notifications[-1][2].get("severity") == "error"
+        assert screen.query_one("#watchlists-content-pane", ContentPane) is reader
+        assert reader.item is item
+        assert counted.recomposes["ContentPane#watchlists-content-pane"] == 0, (
+            counted.report()
+        )
 
 
 async def test_a_rail_toggle_rebuilds_only_the_toggled_region():
