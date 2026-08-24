@@ -24,10 +24,15 @@ from tldw_chatbook.Widgets.Console import (
 from tldw_chatbook.Widgets.Console.console_workspace_context import (
     ConsoleWorkspaceStatusPair,
 )
+from tldw_chatbook.Widgets.Console.console_workspace_tree import (
+    ConsoleWorkspaceTree,
+    WorkspaceTreeNodeData,
+)
 from tldw_chatbook.Widgets.Console.console_workspace_details import (
     ConsoleWorkspaceDetailsTray,
 )
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel
 from tldw_chatbook.Workspaces import (
     CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT,
     ConsoleWorkspaceACPHandoffState,
@@ -50,10 +55,11 @@ from tldw_chatbook.Workspaces.display_state import (
     console_workspace_conversation_result_copy,
     console_workspace_conversation_visible_rows,
 )
+from tldw_chatbook.Workspaces.workspace_tree_state import WorkspaceTreeWorkspace
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 
 
 def _visible_text(screen) -> str:
@@ -440,6 +446,156 @@ async def test_console_workspace_context_mounts_native_tree_without_legacy_group
         assert len(console.query("#console-workspace-tree")) == 1
         assert len(console.query("#console-workspace-search")) == 1
         assert len(console.query("#console-conversation-browser-starred-title")) == 0
+
+
+@pytest.mark.asyncio
+async def test_workspace_tree_selection_context_is_one_reserved_updating_row() -> None:
+    state = replace(_base_grouped_workspace_state(), workspace_name="Research Lab")
+
+    class TestApp(ConsolidatedCSSApp):
+        CSS_PATH = str(BUNDLED_STYLESHEET)
+
+        def compose(self):
+            yield ConsoleWorkspaceContextTray(
+                state,
+                show_heading=False,
+                content="workspace",
+                id="console-workspaces-context",
+            )
+
+    app = TestApp()
+    async with app.run_test(size=(40, 20)) as pilot:
+        tray = app.query_one(ConsoleWorkspaceContextTray)
+        context = app.query_one("#console-workspace-tree-selection-context", Static)
+        action_row = app.query_one("#console-workspace-context-action-row")
+
+        assert context.region.height == 1
+        assert context.styles.height.value == 1
+        assert context.styles.text_wrap == "nowrap"
+        assert context.styles.text_overflow == "ellipsis"
+        assert str(context.renderable) == "Selected: Research Lab · Enter open"
+        assert action_row.display is False
+
+        conversation = WorkspaceTreeNodeData.conversation(
+            "workspace-1",
+            "conversation-1",
+            "Planning notes",
+            starred=False,
+            selected=False,
+            star_enabled=True,
+        )
+        assert tray.sync_workspace_tree_context(conversation) is False
+        await pilot.pause()
+        context = app.query_one("#console-workspace-tree-selection-context", Static)
+        action_row = app.query_one("#console-workspace-context-action-row")
+        assert str(context.renderable) == "Selected: Planning notes · Enter open"
+        assert action_row.display is False
+
+        auxiliary = WorkspaceTreeNodeData.auxiliary(
+            "load-more",
+            "workspace-1",
+            "action:workspace-1:load-more",
+            "Load more…",
+        )
+        assert tray.sync_workspace_tree_context(auxiliary) is False
+        await pilot.pause()
+        context = app.query_one("#console-workspace-tree-selection-context", Static)
+        action_row = app.query_one("#console-workspace-context-action-row")
+        assert str(context.renderable) == "Selected: Load more… · Enter open"
+        assert action_row.display is False
+
+        assert tray.sync_workspace_tree_context(None) is False
+        await pilot.pause()
+        context = app.query_one("#console-workspace-tree-selection-context", Static)
+        assert str(context.renderable) == "Selected: Research Lab · Enter open"
+        assert context.region.height == 1
+
+
+@pytest.mark.asyncio
+async def test_workspace_tree_selection_context_tooltip_only_when_clipped() -> None:
+    state = replace(_base_grouped_workspace_state(), workspace_name="Research Lab")
+
+    class TestApp(ConsolidatedCSSApp):
+        CSS_PATH = str(BUNDLED_STYLESHEET)
+
+        def compose(self):
+            yield ConsoleWorkspaceContextTray(
+                state,
+                show_heading=False,
+                content="workspace",
+                id="console-workspaces-context",
+            )
+
+    app = TestApp()
+    async with app.run_test(size=(90, 20)) as pilot:
+        tray = app.query_one(ConsoleWorkspaceContextTray)
+        context = app.query_one("#console-workspace-tree-selection-context", Static)
+        assert context.tooltip is None
+
+        long_label = "研究🙂" * 8
+        tray.sync_workspace_tree_context(
+            WorkspaceTreeNodeData.workspace("workspace-1", long_label)
+        )
+        await pilot.resize_terminal(28, 20)
+        await pilot.pause()
+        context = app.query_one("#console-workspace-tree-selection-context", Static)
+        full_copy = f"Selected: {long_label} · Enter open"
+        assert context.region.height == 1
+        assert context.tooltip == full_copy
+
+        await pilot.resize_terminal(90, 20)
+        await pilot.pause()
+        context = app.query_one("#console-workspace-tree-selection-context", Static)
+        assert context.tooltip is None
+
+
+@pytest.mark.asyncio
+async def test_console_f1_exposes_full_selected_tree_label_and_complete_grammar() -> (
+    None
+):
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    long_label = "Research Lab " + "研究🙂" * 12
+
+    async with host.run_test(size=(160, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-workspace-tree")
+        rail = console.query_one("#console-left-rail")
+        state = replace(
+            _base_grouped_workspace_state(),
+            workspace_tree=(
+                WorkspaceTreeWorkspace(
+                    workspace_id="workspace-1",
+                    label=long_label,
+                    conversations=(),
+                    next_cursor=None,
+                ),
+            ),
+        )
+        rail.sync_workspace_context(state)
+        await pilot.pause()
+        tree = console.query_one(ConsoleWorkspaceTree)
+        tree.move_cursor(tree.workspace_nodes["workspace-1"])
+        tree.focus()
+        await pilot.pause()
+
+        await console.action_show_workbench_help()
+        await pilot.pause()
+        panel = host.screen_stack[-1]
+        assert isinstance(panel, WorkbenchHelpPanel)
+        rendered = panel.state.render_text()
+
+        assert long_label in rendered
+        for gesture in (
+            "Single click",
+            "Double-click",
+            "Enter",
+            "Space",
+            "Left",
+            "Right",
+        ):
+            assert gesture in rendered
 
 
 @pytest.mark.asyncio

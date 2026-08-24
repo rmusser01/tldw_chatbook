@@ -5,16 +5,20 @@ from __future__ import annotations
 from dataclasses import replace
 
 import pytest
+from rich.style import Style
 from rich.text import Text
 from textual.app import App, ComposeResult
+from textual.events import Click
 from textual.widgets import Input, Tree
 
 import tldw_chatbook.Widgets.Console.console_workspace_tree as tree_module
 from tldw_chatbook.Widgets.Console.console_workspace_tree import (
     ConsoleWorkspaceTree,
-    WorkspaceTreeFocusRecoveryRequested,
     WorkspaceTreeConversationSelected,
+    WorkspaceTreeFocusRecoveryRequested,
+    WorkspaceTreeLoadMoreRequested,
     WorkspaceTreeNodeData,
+    WorkspaceTreeRetryRequested,
     WorkspaceTreeStarRequested,
     WorkspaceTreeWorkspaceSelected,
 )
@@ -85,6 +89,16 @@ class _TreeHarness(App[None]):
 
     def on_workspace_tree_focus_recovery_requested(
         self, event: WorkspaceTreeFocusRecoveryRequested
+    ) -> None:
+        self.messages.append(event)
+
+    def on_workspace_tree_load_more_requested(
+        self, event: WorkspaceTreeLoadMoreRequested
+    ) -> None:
+        self.messages.append(event)
+
+    def on_workspace_tree_retry_requested(
+        self, event: WorkspaceTreeRetryRequested
     ) -> None:
         self.messages.append(event)
 
@@ -160,7 +174,7 @@ def test_ascii_mode_uses_only_ascii_tree_icons_and_guides(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_enter_selects_without_expanding_and_space_toggles() -> None:
+async def test_enter_activates_and_space_left_right_only_change_disclosure() -> None:
     tree = _tree()
     app = _TreeHarness(tree)
     async with app.run_test(size=(60, 20)) as pilot:
@@ -175,13 +189,36 @@ async def test_enter_selects_without_expanding_and_space_toggles() -> None:
         assert isinstance(app.messages[-1], WorkspaceTreeWorkspaceSelected)
         assert app.messages[-1].workspace_id == "w2"
 
+        message_count = len(app.messages)
         await pilot.press("space")
         await pilot.pause()
         assert workspace.is_expanded
+        await pilot.press("left", "right")
+        await pilot.pause()
+        assert len(app.messages) == message_count
 
 
 @pytest.mark.asyncio
-async def test_native_pointer_disclosure_toggles_and_label_selects() -> None:
+async def test_single_label_click_selects_and_expands_without_activation() -> None:
+    tree = _tree()
+    app = _TreeHarness(tree)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        workspace = tree.workspace_nodes["w2"]
+
+        assert workspace.is_collapsed
+        assert await pilot.click(tree, offset=(4, 3))
+        await pilot.pause()
+        assert workspace.is_expanded
+        assert tree.cursor_node is workspace
+        assert not any(
+            isinstance(message, WorkspaceTreeWorkspaceSelected)
+            for message in app.messages
+        )
+
+
+@pytest.mark.asyncio
+async def test_disclosure_glyph_click_toggles_without_activation() -> None:
     tree = _tree()
     app = _TreeHarness(tree)
     async with app.run_test(size=(60, 20)) as pilot:
@@ -192,11 +229,230 @@ async def test_native_pointer_disclosure_toggles_and_label_selects() -> None:
         assert await pilot.click(tree, offset=(0, 3))
         await pilot.pause()
         assert workspace.is_expanded
+        assert not any(
+            isinstance(message, WorkspaceTreeWorkspaceSelected)
+            for message in app.messages
+        )
 
-        assert await pilot.click(tree, offset=(4, 3))
+
+@pytest.mark.asyncio
+async def test_double_click_activates_only_the_same_selected_stable_key() -> None:
+    tree = _tree()
+    app = _TreeHarness(tree)
+    async with app.run_test(size=(60, 20)) as pilot:
         await pilot.pause()
-        assert isinstance(app.messages[-1], WorkspaceTreeWorkspaceSelected)
-        assert app.messages[-1].workspace_id == "w2"
+        workspace = tree.workspace_nodes["w2"]
+
+        assert await pilot.click(tree, offset=(4, 3), times=2)
+        await pilot.pause()
+
+        assert tree.cursor_node is workspace
+        assert [
+            message.workspace_id
+            for message in app.messages
+            if isinstance(message, WorkspaceTreeWorkspaceSelected)
+        ] == ["w2"]
+
+
+@pytest.mark.asyncio
+async def test_double_click_cancels_if_the_row_stopped_being_selected() -> None:
+    tree = _tree()
+    app = _TreeHarness(tree)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        workspace = tree.workspace_nodes["w2"]
+        tree._last_pointer_click_key = workspace.data.key
+        tree._pressed_node_key = workspace.data.key
+        tree.move_cursor(tree.workspace_nodes["w1"])
+
+        await tree._on_click(
+            Click(
+                tree,
+                4,
+                int(workspace._line),
+                0,
+                0,
+                1,
+                False,
+                False,
+                False,
+                chain=2,
+            )
+        )
+        await pilot.pause()
+
+        assert tree.cursor_node is workspace
+        assert not any(
+            isinstance(message, WorkspaceTreeWorkspaceSelected)
+            for message in app.messages
+        )
+
+
+@pytest.mark.asyncio
+async def test_conversation_single_click_selects_and_double_click_activates_once() -> (
+    None
+):
+    tree = _tree()
+    app = _TreeHarness(tree)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        conversation = tree.conversation_nodes["c1"]
+
+        assert await pilot.click(tree, offset=(7, 1))
+        await pilot.pause()
+        assert tree.cursor_node is conversation
+        assert not any(
+            isinstance(message, WorkspaceTreeConversationSelected)
+            for message in app.messages
+        )
+
+        assert await pilot.click(tree, offset=(7, 1), times=2)
+        await pilot.pause()
+        assert [
+            message.conversation_id
+            for message in app.messages
+            if isinstance(message, WorkspaceTreeConversationSelected)
+        ] == ["c1"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("workspace", "message_type"),
+    [
+        (
+            _workspace("w", "Workspace", next_cursor="p2"),
+            WorkspaceTreeLoadMoreRequested,
+        ),
+        (
+            _workspace("w", "Workspace", error="offline"),
+            WorkspaceTreeRetryRequested,
+        ),
+    ],
+)
+async def test_auxiliary_pointer_actions_remain_immediate(
+    workspace: WorkspaceTreeWorkspace,
+    message_type: type[object],
+) -> None:
+    tree = ConsoleWorkspaceTree()
+    tree.sync_projection((workspace,), expanded_workspace_ids={"w"})
+    app = _TreeHarness(tree)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        action = next(
+            node
+            for node in tree.auxiliary_nodes.values()
+            if node.data is not None and node.data.selectable
+        )
+
+        assert await pilot.click(tree, offset=(8, int(action._line)))
+        await pilot.pause()
+        assert tree.cursor_node is action
+        assert sum(isinstance(item, message_type) for item in app.messages) == 1
+
+
+@pytest.mark.asyncio
+async def test_selected_and_active_markers_are_independently_legible() -> None:
+    active_workspace = replace(_workspace("w1", "One"), active=True)
+    active_conversation = replace(
+        _workspace("w2", "Two", ("c2", "Chat")).conversations[0],
+        selected=True,
+    )
+    tree = ConsoleWorkspaceTree()
+    tree.sync_projection(
+        (
+            active_workspace,
+            WorkspaceTreeWorkspace(
+                workspace_id="w2",
+                label="Two",
+                conversations=(active_conversation,),
+                next_cursor=None,
+            ),
+        ),
+        expanded_workspace_ids={"w2"},
+    )
+    app = _TreeHarness(tree)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        neither = tree.workspace_nodes["w2"]
+        active_only = tree.workspace_nodes["w1"]
+        selected_active = tree.conversation_nodes["c2"]
+
+        tree.move_cursor(neither)
+        await pilot.pause()
+        selected_only_text = tree.render_label(neither, Style(), Style()).plain
+        active_only_text = tree.render_label(active_only, Style(), Style()).plain
+        tree.move_cursor(selected_active)
+        await pilot.pause()
+        selected_active_text = tree.render_label(
+            selected_active, Style(), Style()
+        ).plain
+        neither_text = tree.render_label(neither, Style(), Style()).plain
+
+        assert "▌" not in neither_text
+        assert "▌" in selected_only_text
+        assert "●" in active_only_text
+        assert "›" in selected_active_text
+        assert "▌" in selected_active_text
+        assert "▌" not in active_only_text
+
+
+@pytest.mark.asyncio
+async def test_truncation_tooltip_uses_cell_width_and_clears_after_growth() -> None:
+    short = "Research Lab"
+    raw_long = "界🙂" * 20
+    tree = ConsoleWorkspaceTree()
+    tree.sync_projection(
+        (
+            _workspace("short", short),
+            _workspace("long", raw_long),
+        ),
+        expanded_workspace_ids=set(),
+    )
+    app = _TreeHarness(tree)
+    async with app.run_test(size=(100, 20)) as pilot:
+        tree.styles.width = 24
+        await pilot.pause()
+
+        tree.move_cursor(tree.workspace_nodes["short"])
+        await pilot.pause()
+        assert tree.tooltip is None
+
+        tree.move_cursor(tree.workspace_nodes["long"])
+        await pilot.pause()
+        assert tree.tooltip == raw_long
+
+        tree.styles.width = 96
+        await pilot.pause()
+        assert tree.tooltip is None
+
+
+@pytest.mark.asyncio
+async def test_hover_tooltip_clears_when_projection_reflows_hovered_line() -> None:
+    old_raw = "Old " + "界🙂" * 20
+    tree = ConsoleWorkspaceTree()
+    tree.sync_projection(
+        (
+            _workspace("first", "First"),
+            _workspace("old", old_raw),
+        ),
+        expanded_workspace_ids=set(),
+    )
+    app = _TreeHarness(tree)
+    async with app.run_test(size=(60, 20)) as pilot:
+        tree.styles.width = 24
+        await pilot.pause()
+        old = tree.workspace_nodes["old"]
+        tree.hover_line = int(old._line)
+        await pilot.pause()
+        assert tree.tooltip == old_raw
+
+        tree.sync_projection(
+            (_workspace("replacement", "Fits"),),
+            expanded_workspace_ids=set(),
+        )
+        await pilot.pause()
+
+        assert tree.tooltip != old_raw
 
 
 @pytest.mark.asyncio

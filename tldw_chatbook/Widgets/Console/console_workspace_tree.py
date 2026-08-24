@@ -7,8 +7,10 @@ from dataclasses import dataclass
 from typing import Literal
 
 import textual
+from rich.cells import cell_len
 from rich.style import Style
 from rich.text import Text
+from textual import events
 from textual.binding import Binding
 from textual.message import Message
 from textual.widgets import Tree
@@ -228,6 +230,8 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
         )
         self.star_enabled = True
         self.can_focus = False
+        self._pressed_node_key: str | None = None
+        self._last_pointer_click_key: str | None = None
 
     @staticmethod
     def _workspace_label(workspace: WorkspaceTreeWorkspace) -> Text:
@@ -436,6 +440,13 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
                 *self.auxiliary_nodes.values(),
             )
         )
+        if (
+            self._pressed_node_key is not None
+            and self._node_for_stable_key(self._pressed_node_key) is None
+        ):
+            self._pressed_node_key = None
+            self._last_pointer_click_key = None
+            self._post_context_changed()
         self._update_tooltip()
 
     def render_label(
@@ -447,16 +458,44 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
         """Render one literal row with an end ellipsis inside the Tree width."""
 
         label = super().render_label(node, base_style, style)
-        guide_levels = 0
-        ancestor: TreeNode[WorkspaceTreeNodeData] | None = node
-        while ancestor is not None and ancestor is not self.root:
-            guide_levels += 1
-            ancestor = ancestor.parent
-        label.truncate(
-            max(1, self.size.width - (guide_levels * 3)),
-            overflow="ellipsis",
+        toggle = (
+            self.ICON_NODE_EXPANDED if node.is_expanded else self.ICON_NODE
+        ) if node.allow_expand else ""
+        toggle_length = len(toggle)
+        marker = (
+            ("| " if ascii_glyph_mode() else "▌ ")
+            if node is self.cursor_node
+            else "  "
         )
+        marker_style = style if node is self.cursor_node else base_style
+        label = Text.assemble(
+            label[:toggle_length],
+            (marker, marker_style),
+            label[toggle_length:],
+        )
+        label.truncate(self._available_label_cells(node), overflow="ellipsis")
         return label
+
+    def _available_label_cells(self, node: TreeNode[WorkspaceTreeNodeData]) -> int:
+        """Return the exact row budget after native three-cell guides."""
+
+        depth = 0
+        ancestor = node
+        while ancestor is not self.root:
+            depth += 1
+            ancestor = ancestor.parent
+        guide_cells = depth * 3
+        return max(1, self.size.width - guide_cells)
+
+    def _untruncated_visible_label(self, node: TreeNode[WorkspaceTreeNodeData]) -> str:
+        """Return the marker-bearing literal label measured for truncation."""
+
+        marker = (
+            ("| " if ascii_glyph_mode() else "▌ ")
+            if node is self.cursor_node
+            else "  "
+        )
+        return f"{marker}{node.label.plain}"
 
     @property
     def preferred_expanded_workspace_ids(self) -> frozenset[str]:
@@ -542,6 +581,50 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
             else:
                 self.move_cursor(target)
         node.remove()
+
+    def _node_for_stable_key(
+        self, key: str | None
+    ) -> TreeNode[WorkspaceTreeNodeData] | None:
+        """Resolve a current node from the three existing keyed registries."""
+
+        if key is None:
+            return None
+        if key.startswith("workspace:"):
+            return self.workspace_nodes.get(key.removeprefix("workspace:"))
+        if key.startswith("conversation:"):
+            return self.conversation_nodes.get(key.removeprefix("conversation:"))
+        return self.auxiliary_nodes.get(key)
+
+    def _select_node(self, node: TreeNode[WorkspaceTreeNodeData]) -> None:
+        """Move the cursor and expand a collapsed workspace label."""
+
+        self.move_cursor(node)
+        data = node.data
+        if data is not None and data.kind == "workspace" and node.is_collapsed:
+            node.expand()
+
+    def _activate_node(self, node: TreeNode[WorkspaceTreeNodeData] | None) -> None:
+        """Post activation for a business row or an immediate auxiliary action."""
+
+        data = node.data if node is not None else None
+        if data is None or not data.selectable:
+            return
+        if data.kind == "workspace" and data.workspace_id is not None:
+            self.post_message(WorkspaceTreeWorkspaceSelected(data.workspace_id))
+        elif (
+            data.kind == "conversation"
+            and data.workspace_id is not None
+            and data.conversation_id is not None
+        ):
+            self.post_message(
+                WorkspaceTreeConversationSelected(
+                    data.workspace_id, data.conversation_id
+                )
+            )
+        elif data.kind == "load-more" and data.workspace_id is not None:
+            self.post_message(WorkspaceTreeLoadMoreRequested(data.workspace_id))
+        elif data.kind == "retry" and data.workspace_id is not None:
+            self.post_message(WorkspaceTreeRetryRequested(data.workspace_id))
 
     def _move_node_preserving_identity(
         self,
@@ -642,35 +725,73 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
         self._search_expansion_snapshot = None
         self._search_workspace_ids_snapshot = None
 
+    def _on_mouse_down(self, event: events.MouseDown) -> None:
+        """Capture the pressed node before an owning rail may reflow."""
+
+        event.prevent_default()
+        self._pressed_node_key = None
+        meta = event.style.meta
+        line = meta.get("line")
+        node = self.get_node_at_line(line) if isinstance(line, int) else None
+        data = node.data if node is not None else None
+        if data is not None:
+            self._pressed_node_key = data.key
+        if node is not None and meta.get("toggle", False):
+            self._toggle_node(node)
+            self._pressed_node_key = None
+            self._last_pointer_click_key = None
+            self._update_tooltip()
+
+    async def _on_click(self, event: events.Click) -> None:
+        """Resolve the complete pointer gesture only through its pressed key."""
+
+        event.prevent_default()
+        async with self.lock:
+            pressed_key = self._pressed_node_key
+            self._pressed_node_key = None
+            node = self._node_for_stable_key(pressed_key)
+            if node is None:
+                self._last_pointer_click_key = None
+                self._post_context_changed()
+                return
+            data = node.data
+            if data is None or not data.selectable:
+                self._last_pointer_click_key = None
+                return
+            selected = self.cursor_node
+            selected_key = (
+                selected.data.key if selected is not None and selected.data else None
+            )
+            activate_double_click = (
+                event.chain == 2
+                and data.key == self._last_pointer_click_key == selected_key
+            )
+            self._select_node(node)
+            if data.kind in {"load-more", "retry"}:
+                self._activate_node(node)
+                self._last_pointer_click_key = None
+                return
+            if activate_double_click:
+                self._activate_node(node)
+            self._last_pointer_click_key = data.key
+
+    def action_select_cursor(self) -> None:
+        """Activate the current row from the keyboard Enter binding."""
+
+        self._activate_node(self.cursor_node)
+
     def on_tree_node_selected(
         self, event: Tree.NodeSelected[WorkspaceTreeNodeData]
     ) -> None:
-        data = event.node.data
-        if data is None or not data.selectable:
-            event.stop()
-            return
-        if data.kind == "workspace" and data.workspace_id is not None:
-            self.post_message(WorkspaceTreeWorkspaceSelected(data.workspace_id))
-        elif (
-            data.kind == "conversation"
-            and data.workspace_id is not None
-            and data.conversation_id is not None
-        ):
-            self.post_message(
-                WorkspaceTreeConversationSelected(
-                    data.workspace_id, data.conversation_id
-                )
-            )
-        elif data.kind == "load-more" and data.workspace_id is not None:
-            self.post_message(WorkspaceTreeLoadMoreRequested(data.workspace_id))
-        elif data.kind == "retry" and data.workspace_id is not None:
-            self.post_message(WorkspaceTreeRetryRequested(data.workspace_id))
+        """Keep externally posted native selection messages non-business."""
+
         event.stop()
 
     def on_tree_node_expanded(
         self, event: Tree.NodeExpanded[WorkspaceTreeNodeData]
     ) -> None:
         self._record_expansion_gesture(event.node)
+        self._update_tooltip()
 
     def on_tree_node_collapsed(
         self, event: Tree.NodeCollapsed[WorkspaceTreeNodeData]
@@ -687,6 +808,7 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
         if cursor_was_descendant:
             self.move_cursor(node)
         self._record_expansion_gesture(node)
+        self._update_tooltip()
 
     def _record_expansion_gesture(self, node: TreeNode[WorkspaceTreeNodeData]) -> None:
         data = node.data
@@ -801,10 +923,30 @@ class ConsoleWorkspaceTree(Tree[WorkspaceTreeNodeData]):
         super().watch_hover_line(old_value, new_value)
         self._update_tooltip()
 
+    def on_resize(self, _event: events.Resize) -> None:
+        """Recompute truncation after Tree or outer-rail width changes."""
+
+        self.call_after_refresh(self._update_tooltip)
+
     def _update_tooltip(self) -> None:
         line = self.hover_line if self.hover_line >= 0 else self.cursor_line
         node = self.get_node_at_line(line)
-        self.tooltip = node.data.raw_label if node is not None and node.data else None
+        if (
+            self.hover_line >= 0
+            and self.tooltip is not None
+            and (node is None or node.data is None or node.data.raw_label != self.tooltip)
+        ):
+            self.hover_line = -1
+            line = self.cursor_line
+            node = self.get_node_at_line(line)
+        data = node.data if node is not None else None
+        self.tooltip = (
+            data.raw_label
+            if data is not None
+            and cell_len(self._untruncated_visible_label(node))
+            > self._available_label_cells(node)
+            else None
+        )
 
     def _post_context_changed(self) -> None:
         if not self.is_mounted:

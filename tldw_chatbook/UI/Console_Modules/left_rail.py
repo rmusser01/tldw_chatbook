@@ -1015,6 +1015,7 @@ class ConsoleLeftRail(Vertical):
                 needs_outer_hint=needs_outer_hint,
             )
             self._queue_pending_active_reveal()
+            self._refresh_workspace_tree_after_reflow()
         except (NoMatches, QueryError):
             # Recompose may briefly remove one member of the complete snapshot.
             return
@@ -1200,6 +1201,17 @@ class ConsoleLeftRail(Vertical):
         self._last_allocation_state = complete_state
         self._update_outer_hint()
 
+    def _refresh_workspace_tree_after_reflow(self) -> None:
+        """Clear stale hover identity and recompute truncation after rail motion."""
+
+        try:
+            tree = self.query_one("#console-workspace-tree", ConsoleWorkspaceTree)
+        except (NoMatches, QueryError):
+            return
+        if tree.hover_line >= 0:
+            tree.hover_line = -1
+        tree._update_tooltip()
+
     @staticmethod
     def _present_header_title(
         title: Static,
@@ -1341,6 +1353,7 @@ class ConsoleLeftRail(Vertical):
             force=True,
         )
         self._update_outer_hint()
+        self._refresh_workspace_tree_after_reflow()
 
     def sync_workspace_context(self, state: ConsoleWorkspaceContextState) -> None:
         """Push one context snapshot into every scoped rail projection.

@@ -414,6 +414,7 @@ from ...Widgets.Console import (
     ConsoleStagedEvidenceStrip,
     ConsoleTranscript,
     ConsoleWorkspaceContextTray,
+    ConsoleWorkspaceTree,
     WorkspaceTreeConversationSelected,
     WorkspaceTreeExpansionChanged,
     WorkspaceTreeLoadMoreRequested,
@@ -3148,6 +3149,31 @@ class ChatScreen(BaseAppScreen):
             shortcut_groups = (
                 *shortcut_groups,
                 ("Inspector", (("n / p", "next / previous section"),)),
+            )
+        if isinstance(self.app.focused, ConsoleWorkspaceTree):
+            try:
+                tray = self.query_one(
+                    "#console-workspaces-context", ConsoleWorkspaceContextTray
+                )
+            except (NoMatches, QueryError):
+                context_data = None
+            else:
+                context_data = tray._workspace_tree_context_data
+            label = str(getattr(context_data, "raw_label", "") or "Workspace tree")
+            shortcut_groups = (
+                *shortcut_groups,
+                (
+                    "Workspaces",
+                    (
+                        ("Selected", label),
+                        ("Single click", "select row; expand a collapsed workspace"),
+                        ("Double-click", "open the selected workspace or conversation"),
+                        ("Enter", "open the selected row"),
+                        ("Space", "toggle workspace disclosure"),
+                        ("Left", "collapse or move to the parent workspace"),
+                        ("Right", "expand or move to the first child"),
+                    ),
+                ),
             )
         self.app.push_screen(
             WorkbenchHelpPanel(
