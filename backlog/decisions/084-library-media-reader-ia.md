@@ -1,4 +1,4 @@
-# ADR-070: Make Library Media an adaptive reader with a permanent Reader
+# ADR-084: Make Library Media an adaptive reader with a permanent Reader
 
 Status: Accepted
 Date: 2026-08-23

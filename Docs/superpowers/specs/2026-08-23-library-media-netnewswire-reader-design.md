@@ -4,7 +4,7 @@ Date: 2026-08-23
 
 Status: Approved
 
-ADR: [ADR-070](../../../backlog/decisions/070-library-media-reader-ia.md)
+ADR: [ADR-084](../../../backlog/decisions/084-library-media-reader-ia.md)
 
 Related: [Watchlists NetNewsWire reader design](2026-08-23-watchlists-netnewswire-reader-collapsible-rails-design.md), [ADR-042](../../../backlog/decisions/042-watchlists-reader-first-ia.md)
 
@@ -512,7 +512,7 @@ the repository's evidence guidance.
 
 Implementation planning should split work into atomic Backlog tasks that leave the Media
 destination usable at each step. The plan must read the applicable testing/live-verification
-lessons, link ADR-070, and avoid marking any task Done without focused automated evidence and the
+lessons, link ADR-084, and avoid marking any task Done without focused automated evidence and the
 required task notes.
 
 ## Alternatives considered
