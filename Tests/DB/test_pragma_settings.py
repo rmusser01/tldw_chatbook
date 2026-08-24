@@ -414,6 +414,7 @@ _HELD_CONNECTION_DBS: list[tuple[str, Callable]] = [
     ("library_collections", lambda path: LibraryCollectionsDB(path / "collections.db")),
     ("rag_indexing", lambda path: RAGIndexingDB(path / "rag_indexing.db")),
     ("client_notifications", lambda path: ClientNotificationsDB(path / "notify.db")),
+    ("event_state", lambda path: EventStateRepository(path / "event_state.db")),
     ("workspace", lambda path: WorkspaceDB(path / "workspace.db")),
     ("agent_runs", lambda path: AgentRunsDB(path / "agent_runs.db")),
 ]
