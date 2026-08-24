@@ -765,9 +765,13 @@ async def test_apply_section_view_rebuilds_only_required_centres() -> None:
 @pytest.mark.asyncio
 async def test_mode_switch_factory_failure_preserves_previous_read_view() -> None:
     fail_items = False
+    observed_read_classes: list[bool] = []
 
     def items_factory() -> Label:
         if fail_items:
+            observed_read_classes.append(
+                app.query_one(WatchlistsWorkbench).has_class("watchlists-read-mode")
+            )
             raise RuntimeError("management centre failed")
         return Label("feed items", id="items-content")
 
@@ -807,6 +811,10 @@ async def test_mode_switch_factory_failure_preserves_previous_read_view() -> Non
         assert app.query_one("#items-content") is items
         assert app.query_one("#reader-content") is reader
         assert app.is_running
+        assert observed_read_classes == [False], (
+            "the target mode class must be active while its body is reconciled, "
+            "then rolled back with the previous view when the factory fails"
+        )
 
         fail_items = False
         applied = await workbench.apply_section_view(

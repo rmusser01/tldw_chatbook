@@ -1387,7 +1387,7 @@ async def test_watchlists_left_rail_is_labelled_when_expanded():
     factory-presence rather than on "the pane supplies its own heading", and
     LEFT_RAIL is where the two diverge -- `WatchlistTree` composes navigation
     buttons and no heading. The expanded rail rendered as an unlabelled box
-    while its collapsed header still read "▸ Watchlists".
+    while its responsive Navigation grip still named the region "Watchlists".
     """
     app = _build_test_app()
     app.watchlist_scope_service = StaticWatchlistsScopeService([])
@@ -2529,10 +2529,9 @@ COMPACT_DESTINATION_CONTRACTS = {
         "identity": "#watchlists-collections-title",
         "workbench": "#wl-workbench",
         # `#watchlists-list-pane` died with the FEEDS region in task-2513.
-        # `#wl-region-left_rail` (the watchlist tree) is the rail-as-"object"
-        # analogue "chat" and "library" already use above for the same
-        # reason -- always present, regardless of active section.
-        "object": "#wl-region-left_rail",
+        # At this compact width the responsive workbench parks the watchlist
+        # tree body but keeps its labelled Navigation grip reachable.
+        "object": "#wl-grip-left_rail",
         "detail": "#watchlists-detail-pane",
         # `#nav-overview` retired with the left-rail navigator -- see the
         # note on the same key in SOURCE_PREP_WORKBENCHES above.
@@ -2715,9 +2714,11 @@ VISIBLE_FOCUS_TARGETS = {
     },
     "personas": {"personas-library-new", "personas-attach-to-console"},
     "watchlists_collections": {
+        "wc-empty-create-source",
         "wc-open-watchlists",
         "wc-attach-to-console",
         "watchlists-follow-in-console",
+        "watchlists-switch-local",
     },
     "schedules": {"schedules-follow-in-console"},
     "workflows": {"workflows-launch-in-console"},
@@ -3326,7 +3327,11 @@ async def test_watchlists_other_filter_strip_controls_are_visible(size):
         await pilot.pause(0.2)
 
         items_pane = screen.query_one("#watchlists-items-pane")
-        for selector in ("#items-search-input", "#items-status-select"):
+        for selector in (
+            "#items-refresh-button",
+            "#items-search-input",
+            "#items-status-select",
+        ):
             widget = screen.query_one(selector)
             assert widget.region.height >= 1 and widget.region.width > 0, (
                 f"{selector} is clipped to nothing: {widget.region}"
@@ -3340,7 +3345,7 @@ async def test_watchlists_other_filter_strip_controls_are_visible(size):
         items_row = screen.query_one("#items-search-input").region.y
         painted = "".join(seg.text for seg in strips[items_row])
         # TASK-3072: the Select's resting label is now the reader's "All".
-        for label in ("Search items...", "All"):
+        for label in ("Refresh", "Search items...", "All"):
             assert label in painted, (
                 f"{label!r} never reaches the screen; the Items toolbar is "
                 f"clipped at {size}. Row {items_row} paints: {painted.strip()!r}"

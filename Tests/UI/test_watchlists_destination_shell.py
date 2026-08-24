@@ -1548,7 +1548,7 @@ async def test_read_mode_class_is_set_before_each_section_layout_swap():
         assert workbench.has_class("watchlists-read-mode")
 
         observed: list[tuple[str, bool]] = []
-        apply_section_view = workbench.apply_section_view
+        reconcile_body = workbench._reconcile_body
 
         async def record_mode_before_layout(**kwargs):
             observed.append(
@@ -1557,9 +1557,9 @@ async def test_read_mode_class_is_set_before_each_section_layout_swap():
                     workbench.has_class("watchlists-read-mode"),
                 )
             )
-            await apply_section_view(**kwargs)
+            await reconcile_body(**kwargs)
 
-        workbench.apply_section_view = record_mode_before_layout
+        workbench._reconcile_body = record_mode_before_layout
 
         screen.active_section = "sources"
         await pilot.pause(0.2)
@@ -2440,6 +2440,9 @@ async def test_focus_leaving_the_header_for_a_non_region_widget_clears_the_flag(
     async with host.run_test(size=(180, 50)) as pilot:
         await pilot.pause(0.2)
         screen = host.screen_stack[-1]
+
+        screen.active_section = "runs"
+        await pilot.pause(0.2)
 
         screen.query_one("#wl-tab-runs").focus()
         await pilot.pause()

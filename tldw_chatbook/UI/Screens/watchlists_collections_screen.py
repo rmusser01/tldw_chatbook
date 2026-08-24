@@ -4507,9 +4507,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     "#watchlists-sources-pane", SourcesPane
                 ).sources = self.scoped_loaded_sources()
             elif section == "runs":
-                self.query_one("#watchlists-runs-pane", RunsPane).runs = (
-                    self._loaded_runs
-                )
+                self._reseed_live_detail_pane()
             elif section == "rules":
                 self.query_one("#watchlists-rules-pane", RulesPane).rules = (
                     self._loaded_rules

@@ -415,9 +415,9 @@
  * test_watchlists_left_rail_is_labelled_when_expanded` fails on any `…` in
  * the composited rail, which is how this was caught.
  *
- * At `width: auto` + `padding: 0 1` the two rows measure 21 and 20 columns
- * against 26 available, so both fit whole with the rail at its current
- * width of 28.
+ * At `width: auto` + zero padding the two rows measure 21 and 22 columns,
+ * so both fit whole against the 22-column interior of the 24-column rail
+ * floor.
  *
  * `height: 1` on the strip matches every other one-row control group on
  * this screen (`.destination-filter-strip`, the tab strip): the rail is a
@@ -433,7 +433,7 @@
     width: auto;
     min-width: 0;
     height: 1;
-    padding: 0 1;
+    padding: 0;
     border: none;
 }
 
@@ -744,6 +744,13 @@ WatchlistPickerDialog {
     min-width: 12;
 }
 
+#sources-new-button,
+#sources-filter-toggle {
+    width: auto;
+    min-width: 0;
+    padding: 0;
+}
+
 /* TASK-1035. The create-source form had no rule anywhere, so it took
  * Textual's defaults for its container and painted like an unfinished
  * sketch: `Create` on row 40 and `Cancel` on row 43 with blank rows between
@@ -956,11 +963,18 @@ WatchlistPickerDialog {
 
 #items-search-input {
     width: 1fr;
-    min-width: 12;
+    min-width: 0;
 }
 
 #items-status-select {
-    width: 16;
+    width: 9;
+    min-width: 0;
+}
+
+#items-refresh-button {
+    width: auto;
+    min-width: 0;
+    padding: 0;
 }
 
 /* TASK-3791 plan task 5. The pill is a notice, not a verb: no border

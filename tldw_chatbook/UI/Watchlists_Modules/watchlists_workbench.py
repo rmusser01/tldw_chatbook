@@ -369,6 +369,7 @@ class WatchlistsWorkbench(Vertical):
     ) -> bool:
         """Reconcile one section view while holding the layout lock."""
         next_read_mode = read_mode
+        previous_read_mode = self.read_mode
         previous = self._rendered_layout
         self.set_reactive(
             WatchlistsWorkbench.effective_layout_request, (token, previous)
@@ -389,6 +390,8 @@ class WatchlistsWorkbench(Vertical):
             return True
 
         try:
+            self.read_mode = next_read_mode
+            self.set_class(self.read_mode, "watchlists-read-mode")
             replacement_header = (
                 (self._header if header is None else header)()
                 if rebuild_header
@@ -404,8 +407,6 @@ class WatchlistsWorkbench(Vertical):
                 )
                 if replacement_header is not None:
                     await self._replace_header(replacement_header)
-                self.read_mode = next_read_mode
-                self.set_class(self.read_mode, "watchlists-read-mode")
                 self._rendered_layout = layout
                 self.set_reactive(
                     WatchlistsWorkbench.effective_layout_request, (token, layout)
@@ -414,6 +415,8 @@ class WatchlistsWorkbench(Vertical):
                     read_mode=next_read_mode, layout=layout
                 )
         except Exception:
+            self.read_mode = previous_read_mode
+            self.set_class(self.read_mode, "watchlists-read-mode")
             logger.exception("Watchlists section-view factory failed")
             self.post_message(
                 RegionLayoutApplyFailed(
