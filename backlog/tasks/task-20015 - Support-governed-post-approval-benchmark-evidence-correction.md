@@ -1,11 +1,11 @@
 ---
 id: TASK-20015
 title: Support governed post-approval benchmark evidence correction
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-24 04:44'
-updated_date: '2026-08-24 04:45'
+updated_date: '2026-08-24 06:43'
 labels:
   - performance
   - testing
@@ -26,9 +26,9 @@ Allow an unreleased, already-promoted confirmatory evidence package to be reopen
 - [x] #1 Confirmatory manifests record the exact SHA resolved from the immutable implementation-base ref and fail closed if that ref is missing or drifts.
 - [x] #2 An approved attempt can be reopened only by a fresh, numerically later `changes_required` receipt bound to its current approved digest, raw hash, verdict, and attempt ID.
 - [x] #3 A distinct immutable `corrections/correction-NNN` artifact root requires and accepts a still-later independent approval structurally bound to its confined receipt location and changed digest while retaining every earlier receipt identity and the append-only attempt lineage.
-- [ ] #4 The unreleased repository package is recoverably removed without an intermediate commit and republished only through the existing atomic no-replace promotion path.
+- [x] #4 The unreleased repository package is recoverably removed without an intermediate commit and republished only through the existing atomic no-replace promotion path.
 - [x] #5 The correction uses the same acquisition: the original approved five files and `review-001` remain byte-identical, and the versioned correction root copies the raw JSONL, machine summary, human report, and README byte-for-byte while changing only its derived manifest and later receipt.
-- [ ] #6 Focused and full harness tests, static checks, privacy scans, exact digest/receipt verification, and independent evidence review pass.
+- [x] #6 Focused and full harness tests, static checks, privacy scans, exact digest/receipt verification, and independent evidence review pass.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -50,6 +50,7 @@ Reason: this extends benchmark-only evidence correction already required by the 
 
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 Implemented the benchmark-harness portion of the governed correction workflow.
 Confirmatory acquisition now resolves the fixed implementation-base ref and
 records its exact SHA. An approved attempt can be reopened only through a
@@ -108,9 +109,7 @@ Verification completed for the implementation:
 - Ruff, `py_compile`, and `git diff --check`: passed.
 
 Modified files are the benchmark runner, its focused harness tests, and this
-task record. The recoverable removal/republish of the unreleased retained
-package and the independent `review-002`/`review-003` evidence review remain
-before AC #4 and #6, and task completion, can be recorded.
+task record.
 
 ADR required: no
 
@@ -118,3 +117,23 @@ ADR path: N/A
 
 Reason: this is a benchmark-only correction protocol and does not change a
 production storage, provider, privacy, security, or runtime boundary.
+
+Operational closeout completed against retained campaign `attempt-0001`.
+Independent `review-002` (SHA-256
+`cdc00f8823e4202e88f7b260213cccf882ebbc97d6dacfe38efdb9ec356253a5`)
+reopened the original digest for the missing implementation-base provenance.
+`correction-001` preserved raw, summary JSON, report, and README byte-for-byte
+and changed only the manifest by adding implementation base
+`77c5e9f487af79391a479deb85e712163bfed909`. Independent `review-003` approved
+corrected digest
+`c04acca85762c5f2cbfe05113223049d907ad2c8436b0ce8909f7ae78267ee49` with
+receipt SHA-256
+`889b3f8382d7ac78fa931bd8ea50dda5aa78fc8e17cf08d193616702d6a2c95d`.
+The unreleased six-file package was removed by `git revert --no-commit` and
+atomically republished through the harness; the net canonical diff is only the
+manifest plus receipt. Original artifacts and reviews remain immutable in
+campaign history. Exact hash, digest, lineage, privacy, Ruff, `py_compile`, and
+`git diff --check` gates passed, as did the full performance harness: 649
+passed with 2 dependency warnings in 75.04s. Correction publication was
+committed as `927eb0ea9`. No new ADR was required.
+<!-- SECTION:NOTES:END -->
