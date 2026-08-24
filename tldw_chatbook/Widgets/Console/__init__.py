@@ -58,6 +58,18 @@ from .console_staged_evidence_strip import ConsoleStagedEvidenceStrip
 from .console_transcript import ConsoleTranscript
 from .console_workbench_state import build_console_workbench_state
 from .console_workspace_context import ConsoleWorkspaceContextTray
+from .console_workspace_tree import (
+    ConsoleWorkspaceTree,
+    WorkspaceTreeConversationSelected,
+    WorkspaceTreeContextChanged,
+    WorkspaceTreeExpansionChanged,
+    WorkspaceTreeFocusRecoveryRequested,
+    WorkspaceTreeLoadMoreRequested,
+    WorkspaceTreeNodeData,
+    WorkspaceTreeRetryRequested,
+    WorkspaceTreeStarRequested,
+    WorkspaceTreeWorkspaceSelected,
+)
 from .console_workspace_switcher_modal import (
     ConsoleWorkspaceRenameModal,
     ConsoleWorkspaceSwitcherModal,
@@ -103,6 +115,7 @@ __all__ = [
     "ConsoleTranscript",
     "ConsoleTranscriptSurface",
     "ConsoleWorkspaceContextTray",
+    "ConsoleWorkspaceTree",
     "ConsoleWorkspaceRenameModal",
     "ConsoleWorkspaceSwitcherModal",
     "PromptBrowseResult",
@@ -111,6 +124,15 @@ __all__ = [
     "ProjectInstructionSetupModal",
     "ProjectInstructionSetupResult",
     "UnownedInspectorContentError",
+    "WorkspaceTreeConversationSelected",
+    "WorkspaceTreeContextChanged",
+    "WorkspaceTreeFocusRecoveryRequested",
+    "WorkspaceTreeExpansionChanged",
+    "WorkspaceTreeLoadMoreRequested",
+    "WorkspaceTreeNodeData",
+    "WorkspaceTreeRetryRequested",
+    "WorkspaceTreeStarRequested",
+    "WorkspaceTreeWorkspaceSelected",
     "build_console_citation_source_rows",
     "build_console_context_control_state",
 ]

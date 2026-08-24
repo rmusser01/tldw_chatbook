@@ -30,6 +30,7 @@ from .eligibility import evaluate_workspace_eligibility
 
 if TYPE_CHECKING:
     from .conversation_browser_state import ConsoleConversationBrowserState
+    from .workspace_tree_state import WorkspaceTreeWorkspace
 
 logger = logger.bind(module="WorkspaceDisplayState")
 
@@ -208,6 +209,16 @@ class ConsoleWorkspaceContextState:
         default=None,
         kw_only=True,
     )
+    workspace_tree: tuple[WorkspaceTreeWorkspace, ...] = field(
+        default=(),
+        kw_only=True,
+    )
+    active_workspace_id: str = field(default="", kw_only=True)
+    workspace_query: str = field(default="", kw_only=True)
+    workspace_loading: bool = field(default=False, kw_only=True)
+    workspace_error: str = field(default="", kw_only=True)
+    workspace_retry_available: bool = field(default=False, kw_only=True)
+    workspace_marks_available: bool = field(default=False, kw_only=True)
     change_workspace_enabled: bool
     change_workspace_recovery: str
     new_conversation_enabled: bool
@@ -428,8 +439,9 @@ def build_console_workspace_state(
         heading="Convos & Workspaces",
         workspace_label=f"Workspace: {active_workspace.name}",
         workspace_name=active_workspace.name,
+        active_workspace_id=str(active_workspace.workspace_id),
         scope_label=scope_label,
-            scope_detail=scope_detail,
+        scope_detail=scope_detail,
         new_workspace_enabled=True,
         rag_scope_enabled=True,
         authority_label=f"Authority: {active_workspace.authority.value}",

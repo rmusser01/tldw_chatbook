@@ -21,7 +21,7 @@ baseline (``Tests/UI/test_console_shell_regions.py``) at all three sizes, so
 that placement is not a stylistic preference.
 
 **Naming**: the DOM here spells two things, an outer column and an inner
-framed region, and the whole column exists to hold the transcript — there is
+borderless region, and the whole column exists to hold the transcript — there is
 no other content in it. So the class is named for what the column is FOR
 (``ConsoleTranscriptRegion``) while the ids stay exactly as they are, the
 same judgement call ``ConsoleInspectorRail`` made when the plan's placeholder
@@ -116,7 +116,7 @@ class _ConsoleTranscriptReadingState:
 
 
 class ConsoleTranscriptRegion(Vertical):
-    """The Console shell's main column: the framed transcript surface.
+    """The Console shell's main column: the borderless transcript surface.
 
     Composes nothing of its own beyond the two containers the screen used to
     build inline; the transcript itself lives inside ``ConsoleSessionSurface``
@@ -156,20 +156,16 @@ class ConsoleTranscriptRegion(Vertical):
         self._session_surface_builder = session_surface_builder
 
     def compose(self) -> ComposeResult:
-        """Compose the framed transcript region and the session surface.
+        """Compose the borderless transcript region and the session surface.
 
         Returns:
-            The framed ``#console-transcript-region`` container holding the
-            Console session surface. ``top=False`` is deliberate: the control
-            bar directly above already paints that edge, so the transcript
-            reads as continuous with it instead of drawing a doubled rule.
+            The borderless ``#console-transcript-region`` container holding the
+            Console session surface. ``edges=()`` makes this child root own no
+            workspace shell edge.
         """
         transcript_region = frame_console_region(
             Vertical(id="console-transcript-region", classes="console-region"),
-            top=False,
-            # TASK-17651: the workspace grid's own bottom border is the
-            # bottom stack's single separator; the region ends flush.
-            bottom=False,
+            edges=(),
         )
         with transcript_region:
             yield self._session_surface_builder()

@@ -42,20 +42,19 @@ default limit — the banner shows whatever your configured limit is.
 **Sessions section** (left rail). Names the active conversation ("None" when
 no conversation is active yet); hover the value to see its durable id.
 
-**Workspaces section** (left rail). Shows "Workspace" plus the active
-workspace name, with "Switch", "New", and "RAG Scope" buttons. "RAG Scope"
-narrows retrieval to this workspace's items — see
-[Context & RAG](context-and-rag.md).
+**Workspaces section** (left rail). Shows the active workspace on one compact
+line, keeps **Switch**, **New**, and **RAG** together, and renders every
+named workspace in a native Tree with its conversations as children. The
+built-in Default workspace is intentionally absent from the Tree; **Switch**
+is the route to it. **RAG** narrows retrieval to the active workspace's
+items — see [Context & RAG](context-and-rag.md).
 
-**Conversations section** (left rail). A "Search conversations" box with a
-"Clear" button, a "New conversation" button, and three collapsible groups:
-"Starred", "Workspaces", and "Chats".
-Empty groups start collapsed as quiet one-line headers — expand one to see
-its empty copy (for example "No starred conversations."); while you search,
-groups with no matches stay expanded so the "No ... conversations." feedback
-stays visible. Each row shows the conversation title
-plus a secondary line of `<workspace> - <state> - <age>` (for example
-"Chats - active session - 1m"), and ends with a star toggle ("☆" / "★").
+**Conversations section** (left rail). A separate **Search conversations**
+box with **Clear**, a **New conversation** button, and a flat list containing
+only Default-workspace and unassigned conversations. A conversation assigned
+to a named workspace appears under that workspace in the Tree instead, never
+in both places. Starred entries sort first inside their one owner; starring is
+a property and action, not a duplicate Starred group.
 
 **Details section** (left rail, collapsed by default). Status lines for
 "Storage", "Sync", "Local file tools", "Server", and "ACP", plus a "Handoff" list.
@@ -85,15 +84,14 @@ filter, press Enter to activate the top result, or move through results with
 ↑/↓ and press Enter (or click) on the one you want. F2 renames the
 highlighted result when it is an open tab. Esc cancels.
 
-### Conversation browser
+### Conversations (Default and unassigned)
 
 | Control | What it does |
 |---|---|
-| "Search conversations" + "Clear" | Filters the row list, settling about a fifth of a second after you stop typing; "Clear" resets it immediately |
+| "Search conversations" + "Clear" | Filters only Default and unassigned conversations; "Clear" resets it without changing Workspaces search |
 | "New conversation" | Starts a fresh conversation |
-| "Starred" / "Workspaces" / "Chats" | Groups; click a header's ▸/▾ toggle to expand or collapse |
 | Conversation row | Click to open it in the Console |
-| "☆" / "★" | Stars or unstars the conversation — starred rows collect under "Starred" |
+| "☆" / "★" | Stars or unstars the conversation; starred rows sort first in this same list |
 
 ### Workspaces
 
@@ -103,7 +101,17 @@ highlighted result when it is an open tab. Esc cancels.
 | "New" | Opens the "New Workspace" dialog — see below |
 | "Rename" (in the switcher) | Opens "Rename Workspace" — edit the name, then "Save" |
 | "Archive" (in the switcher) | Opens "Archive workspace?" — "Its conversations stay saved and remain visible in Library; the workspace disappears from the switcher and the Console browser." Confirm with "Archive" |
-| "RAG Scope" | Narrows retrieval to this workspace — see [Context & RAG](context-and-rag.md) |
+| "RAG" | Narrows retrieval to this workspace — see [Context & RAG](context-and-rag.md) |
+| "Search workspaces" | Searches named workspace names and their associated conversation titles independently of Conversations search; delete the query to clear it |
+| Workspace disclosure marker / Space | Expands or collapses that workspace without changing the selected workspace |
+| Workspace or conversation label / Enter | Selects the workspace or opens the conversation; Right expands or enters children, Left collapses or returns to the parent |
+| Up/Down, Page Up/Page Down, Home/End | Navigates and pages the native Tree |
+| "Load more…" / "Retry" | Loads the next bounded page for that workspace or retries a failed page without discarding settled children |
+| "Star" / "Unstar" or `s` on a conversation leaf | Changes its starred property in place; starred leaves sort first inside that workspace |
+
+Workspaces search can reveal matching conversation results whose parent branch
+was closed. Those temporary disclosure changes are discarded when the search
+is cleared, restoring the exact disclosure state from before the search.
 
 **The "New Workspace" dialog** is the same creation dialog Settings ▸
 Workspaces and Library use. It opens with a **name** prefilled "Workspace N"
@@ -216,14 +224,18 @@ conversation.
 
 1. Press Ctrl+K, type a few characters of the title, and press Enter to open
    the top match — or,
-2. In the left rail, type into "Search conversations" and click the row you
-   want under "Starred", "Workspaces", or "Chats".
+2. For a named-workspace conversation, search in **Workspaces**, disclose its
+   parent if needed, and select the conversation leaf.
+3. For a Default or unassigned conversation, search in **Conversations** and
+   select its flat row.
 
 **Star a conversation**
 
-1. Find its row in the "Conversations" browser.
-2. Click the "☆" at the end of the row. It becomes "★" and the conversation
-   is pinned under "Starred". Click "★" to unstar.
+1. Find it under its named workspace in the Tree, or in the flat
+   **Conversations** list when it belongs to Default or no workspace.
+2. Use **Star**/**Unstar** (or press `s` while its Tree leaf has the cursor),
+   or click the flat row's "☆"/"★" control. The row stays in the same owner
+   and moves within that owner's starred-first order.
 
 **Create and switch to a new workspace**
 
@@ -316,3 +328,6 @@ the registry; Console now reconciles its own session against it on the
 next resume instead of staying stale until an in-Console switch, so the
 Default-workspace paragraph above gained a one-sentence note on that; the
 rest of this page's content unchanged from the prior stamp).*
+*Reconciled against the TASK-20937 native Workspace Tree and exclusive
+Default/unassigned ownership implementation — 2026-08-23. Same-cell iTerm2
+and Windows Terminal verification remains tracked by TASK-20937.6.*

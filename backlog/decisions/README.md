@@ -74,6 +74,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-078](078-structured-agent-tool-outcome-provenance.md) | Accepted | Carry optional structured tool outcome provenance across the internal provider/runtime step boundary, with safe legacy fallback and no SQLite or external provider-wire migration. |
 | [ADR-081](081-mcp-prompt-reduction-recommendations.md) | Accepted | Keep MCP prompt-reduction recommendations local-only, MCP-only, telemetry-free, and routed through the existing permission-store APIs. |
 | [ADR-082](082-console-per-chat-private-scratch-space.md) | Accepted | Give each live Console chat private temporary scratch, remove implicit cwd/config authority, preserve explicit Workspace bindings, and defer cleanup safely around late tool threads. |
+| [ADR-083](083-console-edge-rails-and-workspace-tree-ownership.md) | Accepted | Make Console rails application-edge owners, use per-section Context ceilings with ordinary outer scrolling, and partition named-workspace conversations into a native Tree. |
 
 ## Historical Decision Material
 

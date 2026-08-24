@@ -1,11 +1,11 @@
 ---
-id: TASK-20937
+id: TASK-20935
 title: Add deterministic GGUF variant guidance to Remote Models
 status: Done
 assignee:
   - '@codex'
 created_date: '2026-08-22 19:43'
-updated_date: '2026-08-22 20:23'
+updated_date: '2026-08-23 14:15'
 labels:
   - models
   - ui
@@ -51,3 +51,14 @@ Reason: ADR-025 already governs provider-neutral artifact truth, GGUF structural
 <!-- SECTION:NOTES:BEGIN -->
 Implemented a provider-neutral deterministic projection from exact upstream file paths, bytes, and shard counts, with bounded quantization recognition and qualified same-model guidance. Added local filename/quantization filtering, four stable sort orders, hidden-selection clearing, sort-preserved identity, and production 80-column keyboard/paint behavior. Kept Hugging Face attribution and the existing provider, acquisition, consent, verification, completion, and runtime boundaries unchanged. Updated model browser state, RemoteView, production CSS/generated bundles, and focused pure/mounted/real-host tests. ADR check: no new ADR; ADR-025 continues to govern artifact truth and compatibility claims. Independent re-review found no remaining actionable issues. No new lessons entry was needed because existing production-hierarchy and compositor-geometry guidance covered the issues encountered.
 <!-- SECTION:NOTES:END -->
+
+## Renumbering provenance
+
+Renumbered from `TASK-20937` to `TASK-20935` on 2026-08-23 after a duplicate
+identifier was discovered during Console TASK-20937 closeout. The Console task
+was the older claimant (`created_date` 19:31; add commit `cf6a9b75d`), while
+this task was created at 19:43 and added by `e2624953f`, so the repository's
+older-arrival rule requires this later claimant to move. Its dependent
+machine-fit task now points to `TASK-20935`. The replacement ID was verified
+unused across current worktrees, fetched refs, and reachable task history, and
+it preserves the repository rule that dependencies reference a lower task ID.

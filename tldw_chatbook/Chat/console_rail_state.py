@@ -23,19 +23,18 @@ CONSOLE_RAIL_SECTION_IDS = (
     "character",
 )
 CONSOLE_RAIL_RIGHT_COMPACT_COLLAPSE_COLUMNS = 150
-# TASK-2154.1/TASK-19639 (formerly TASK-18913): default Context stays open at exactly 100 columns,
-# where the framed grid has 96 content columns and resolves as Context 30 +
-# main outer 55 + the horizontal Inspector handle 11. The existing main
-# min-width waiver permits that one-column yield; below 100, default Context
-# is force-collapsed as a rendering override without rewriting preference.
+# TASK-2154.1/TASK-19639 (formerly TASK-18913): default Context stays open at
+# exactly 100 columns. ADR-043 keeps that established policy threshold even
+# though the edge-owned workbench now exposes every terminal column; below
+# 100, default Context is force-collapsed without rewriting preference.
 # TASK-2154.2 (LY-11, ADR-043): eligible explicit opens below either compact
 # threshold receive the same layout-minimum waiver. ``compact_override`` is
 # only that layout authority, never persisted preference or explicit intent.
 CONSOLE_RAIL_LEFT_COMPACT_COLLAPSE_COLUMNS = 100
-# TASK-2154.1 (LY-08/LY-09): below this width even the collapsed-handle
-# layout fills the terminal (left handle 13 + main 56 + right handle 11 +
-# two borders + two horizontal-padding cells = 84). Below 84 the default
-# layout is transcript-only: both handles hide and the main minimum is waived.
+# TASK-2154.1 (LY-08/LY-09): ADR-043 keeps the established 84-column
+# single-pane threshold after edge ownership removed the former shell inset.
+# Below 84 the default layout is transcript-only: both handles hide and the
+# main minimum is waived.
 # Budget-eligible explicit rails may still render from their 70/74 floors
 # through 83 via compact override while the handles remain hidden.
 CONSOLE_SINGLE_PANE_COLUMNS = 84

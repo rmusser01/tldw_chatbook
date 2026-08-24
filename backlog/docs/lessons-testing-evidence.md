@@ -105,6 +105,15 @@ changed class-level CSS, update production-shaped harnesses to inherit
 Loading only the app bundle is insufficient, and testing regenerated sheets
 against stale source is equally misleading.
 
+**Recurred, TASK-20937.5, 2026-08-23.** Character-art fitting passed in a
+lightweight Console harness, but the production bundle produced a different
+available cell box and exposed a one-row/one-column mismatch between the
+requested avatar size and the mosaic grid actually painted. Thumbnail rounding
+had allowed the two rendering paths to derive slightly different aspect-ratio
+results. Loading the bundled stylesheet in the mounted shape matrix made the
+failure deterministic; sharing the mosaic grid calculation made graphics and
+mosaic settle to the same exact cell box.
+
 ---
 
 ## An exact live-test gate must be the first gate that can skip the test

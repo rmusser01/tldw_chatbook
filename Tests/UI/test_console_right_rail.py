@@ -459,8 +459,8 @@ async def test_sources_use_exact_twenty_line_content_ceiling():
         "after_demand",
     ),
     (
-        ("pending-to-readiness", 200, 14, "not_configured", 20, 21),
-        ("readiness-to-pending", 210, 15, "running", 20, 21),
+        ("pending-to-readiness", 190, 14, "not_configured", 20, 21),
+        ("readiness-to-pending", 202, 15, "running", 20, 21),
     ),
 )
 @pytest.mark.asyncio

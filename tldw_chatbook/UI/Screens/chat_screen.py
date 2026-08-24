@@ -25,9 +25,9 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
-from textual.color import Color
 from textual.events import (
     Click,
+    DescendantBlur,
     DescendantFocus,
     Key,
     MouseDown,
@@ -56,8 +56,8 @@ from .provider_model_resolution import (
 )
 from .settings_config_models import SettingsCategoryId
 from ..Console_Modules.frame import (
-    CONSOLE_FRAME_BORDER,
     frame_console_region,
+    sync_console_focus_paint,
 )
 from ..Console_Modules.status_row import (
     STATUS_CHIPS_POSITION_ABOVE,
@@ -74,6 +74,7 @@ from ..Console_Modules.status_row import (
 # body actually uses. Tests that steer a controller patch it on the module
 # that defines it (`..Console_Modules.dictation` and friends) rather than
 # through this module's namespace -- see task-3023, which repointed them.
+from ..Console_Modules.character_avatar_layout import fit_character_avatar_cell_box
 from ..Console_Modules.dictation import (
     ConsoleDictationEvent,
     ConsoleDictationLimitSignal,
@@ -412,6 +413,12 @@ from ...Widgets.Console import (
     ConsoleStagedEvidenceStrip,
     ConsoleTranscript,
     ConsoleWorkspaceContextTray,
+    WorkspaceTreeConversationSelected,
+    WorkspaceTreeExpansionChanged,
+    WorkspaceTreeLoadMoreRequested,
+    WorkspaceTreeRetryRequested,
+    WorkspaceTreeStarRequested,
+    WorkspaceTreeWorkspaceSelected,
 )
 from ...Widgets.Console.console_control_bar import (
     ConsoleAutoSpeakRetryRequested,
@@ -563,19 +570,8 @@ CONSOLE_COMPACT_HEIGHT_ROWS = 35
 #: TASK-365: trailing affordance marking the clickable rail system-prompt line as
 #: interactive (matches the ▸ the rail uses for its other actionable controls).
 CONSOLE_RAIL_SYSTEM_EDIT_AFFORDANCE = "▸"
-# CONSOLE_FRAME_COLOR / CONSOLE_FRAME_BORDER / CONSOLE_QUIET_FRAME_BORDER now
-# live in `UI.Console_Modules.frame` (wave-1 console decomposition, task 2)
-# alongside `frame_console_region`, which is their only consumer that needs
-# them as a module-level default; imported above for the other call sites in
-# this file that still reference them directly.
-# TASK-359: the F6 rail stop focuses the collapse button inside an
-# INLINE-framed region — CSS :focus-within can never win against
-# widget.styles.border, so the pane-stop accent (matching the transcript/
-# composer stops, review-measured #0178D4) is swapped in Python on focus
-# change. $ds-focus-accent resolves to $primary; this mirrors it the same
-# way CONSOLE_FRAME_COLOR hardcodes the frame gray.
-CONSOLE_FOCUS_FRAME_COLOR = "#0178D4"
-CONSOLE_FOCUS_FRAME_BORDER = ("solid", CONSOLE_FOCUS_FRAME_COLOR)
+# Frame and focus-border constants live with their rendering helpers in
+# `UI.Console_Modules.frame`; this screen imports only those helpers.
 CONSOLE_START_HERE_COPY = ""
 CONSOLE_ACTION_HINTS_COPY = ""
 CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL = "Set up provider"
@@ -2243,6 +2239,61 @@ class ChatScreen(BaseAppScreen):
         disabled = bool(getattr(getattr(event, "input", None), "disabled", False))
         self._workspace.transition_browser_search(query, disabled)
 
+    @on(Input.Changed, "#console-workspace-search")
+    def on_console_workspace_search_changed(self, event: Changed) -> None:
+        """Keep Workspaces search independent from flat Conversations search."""
+
+        event.stop()
+        self._workspace.transition_workspace_tree_search(
+            str(event.value or ""),
+            bool(getattr(getattr(event, "input", None), "disabled", False)),
+        )
+
+    @on(WorkspaceTreeConversationSelected)
+    @on(WorkspaceTreeRetryRequested)
+    @on(WorkspaceTreeLoadMoreRequested)
+    @on(WorkspaceTreeStarRequested)
+    @on(WorkspaceTreeExpansionChanged)
+    @on(WorkspaceTreeWorkspaceSelected)
+    async def on_workspace_tree_action(
+        self,
+        event: (
+            WorkspaceTreeConversationSelected
+            | WorkspaceTreeRetryRequested
+            | WorkspaceTreeLoadMoreRequested
+            | WorkspaceTreeStarRequested
+            | WorkspaceTreeExpansionChanged
+            | WorkspaceTreeWorkspaceSelected
+        ),
+    ) -> None:
+        event.stop()
+        if isinstance(event, WorkspaceTreeWorkspaceSelected):
+            self._workspace.activate_workspace_id(event.workspace_id)
+        elif isinstance(event, WorkspaceTreeExpansionChanged):
+            self._workspace.transition_workspace_tree_expansion(
+                event.workspace_id,
+                expanded=event.expanded,
+            )
+        elif isinstance(event, WorkspaceTreeStarRequested):
+            self._workspace._toggle_console_conversation_star(
+                event.conversation_id,
+                starred=event.starred,
+                conversation_title="",
+            )
+        elif isinstance(event, WorkspaceTreeLoadMoreRequested):
+            self._workspace.request_next_workspace_tree_page(event.workspace_id)
+        elif isinstance(event, WorkspaceTreeRetryRequested):
+            self.run_worker(
+                self._workspace.retry_workspace_tree_page(event.workspace_id),
+                group=f"console-workspace-page-{event.workspace_id}",
+                exclusive=False,
+            )
+        else:
+            await self._workspace.open_console_workspace_conversation(
+                event.conversation_id,
+                target_workspace_id=event.workspace_id,
+            )
+
     @on(Select.Changed, "#compact-api-provider")
     def on_console_compact_provider_changed(self, event: Select.Changed) -> None:
         """Mirror native compact provider changes into Console-owned labels.
@@ -3342,22 +3393,14 @@ class ChatScreen(BaseAppScreen):
         """Clear Console Workbench shortcuts from this screen's own footer."""
         self.clear_footer_shortcuts(source="console")
 
-    def action_open_console_session_switcher(self) -> None:
+    async def action_open_console_session_switcher(self) -> None:
         """Open the Ctrl+K fuzzy session switcher."""
         if self._console_setup_modal_blocking():
             return
-        rows = [
-            *self._workspace._native_console_browser_rows(),
-            *self._workspace._membership_console_browser_rows(),
-        ]
-        persisted_rows, _total, _error = (
-            self._workspace._sync_persisted_console_browser_rows(
-                current_conversation_id=self._current_console_conversation_id()
-            )
-        )
-        rows.extend(persisted_rows)
         self.app.push_screen(
-            ConsoleSessionSwitcherModal(rows=tuple(rows)),
+            ConsoleSessionSwitcherModal(
+                rows=await self._workspace.console_session_switcher_rows()
+            ),
             callback=self._session._apply_console_switcher_choice,
         )
 
@@ -9771,22 +9814,19 @@ class ChatScreen(BaseAppScreen):
         if not is_current():
             return
         try:
-            holder = self.query_one("#console-character-avatar", Container)
-        except QueryError:
+            left_rail = self.query_one("#console-left-rail", ConsoleLeftRail)
+        except (NoMatches, QueryError):
             return  # section not composed (config off / not mounted)
         try:
             if not is_current():
                 return
-            await holder.remove_children()
-            if not is_current():
-                return
-            avatar_widget = self._build_character_avatar_widget(spec)
-            if not is_current():
-                return
-            await holder.mount(avatar_widget)
-            if not is_current():
-                if avatar_widget.parent is holder:
-                    await avatar_widget.remove()
+            left_rail.invalidate_character_avatar_geometry()
+            fitted_box = left_rail.character_avatar_box
+            replaced = await left_rail.replace_character_avatar_widget(
+                lambda: self._build_character_avatar_widget(spec, box=fitted_box),
+                is_current=is_current,
+            )
+            if not replaced or not is_current():
                 return
             try:
                 name_widget = self.query_one("#console-character-name", Static)
@@ -9869,7 +9909,12 @@ class ChatScreen(BaseAppScreen):
         except Exception:
             return 0
 
-    def _build_character_avatar_widget(self, spec: dict | None) -> Widget:
+    def _build_character_avatar_widget(
+        self,
+        spec: dict | None,
+        *,
+        box: tuple[int, int] | None = None,
+    ) -> Widget:
         """Build a fresh avatar widget from the cached spec (data, not a widget).
 
         `spec` is `{character_id, name, mode, pil, pixels}` (T3 fills it via
@@ -9899,6 +9944,18 @@ class ChatScreen(BaseAppScreen):
             placeholder = Static(hint, id="console-character-avatar-empty")
             placeholder.styles.width = "auto"
             return placeholder
+        if box == (0, 0):
+            hidden = Static("", id="console-character-avatar-image")
+            hidden.styles.width = 0
+            hidden.styles.height = 0
+            hidden.styles.display = "none"
+            return hidden
+        resolved_box = box or character_avatar_box(
+            self._character_avatar_available_cols()
+        )
+        image = spec.get("pil")
+        if image is not None:
+            resolved_box = fit_character_avatar_cell_box(image, *resolved_box)
         if spec.get("mode") == "graphics" and spec.get("pil") is not None:
             try:
                 from textual_image.widget import Image as _GraphicsImage
@@ -9913,9 +9970,7 @@ class ChatScreen(BaseAppScreen):
                 # tick before that settles can ask the renderer to scale
                 # into a transient 0-width/height region, which PIL's
                 # resize() raises on.
-                box_cols, box_lines = character_avatar_box(
-                    self._character_avatar_available_cols()
-                )
+                box_cols, box_lines = resolved_box
                 w, h = fit_image_cell_size(
                     spec["pil"].width,
                     spec["pil"].height,
@@ -9928,9 +9983,7 @@ class ChatScreen(BaseAppScreen):
             except Exception:
                 logger.opt(exception=True).debug("avatar: graphics mount failed")
         try:
-            box_cols, box_lines = character_avatar_box(
-                self._character_avatar_available_cols()
-            )
+            box_cols, box_lines = resolved_box
             from ...Utils.mosaic_render import explicit_cell_size
 
             pixels = spec.get("pixels")
@@ -12604,8 +12657,7 @@ class ChatScreen(BaseAppScreen):
     def _frame_console_region(
         widget: Any,
         *,
-        top: bool = True,
-        bottom: bool = True,
+        edges: tuple[str, ...],
         variant: str = "solid",
     ) -> Any:
         """Apply a visible Textual-native workbench frame.
@@ -12613,7 +12665,7 @@ class ChatScreen(BaseAppScreen):
         Delegates to `UI.Console_Modules.frame.frame_console_region` (wave-1
         console decomposition, task 2). Kept as a thin shim so the
         not-yet-extracted call sites in `compose_content` are untouched.
-        Task 6 (wave 1's close-out) checked this: 7 call sites remain
+        Task 6 (wave 1's close-out) checked this; five call sites remain
         inside `compose_content` (the main-column block, wave 2's job), so
         the shim stays rather than being force-removed. It is safe to
         delete once every remaining call site imports
@@ -12622,13 +12674,13 @@ class ChatScreen(BaseAppScreen):
 
         Args:
             widget: The Console shell region widget to frame in place.
-            top: When False, suppresses the top border.
+            edges: The exact application or interior edges owned by the region.
             variant: ``"solid"`` or ``"quiet"`` framing.
 
         Returns:
             The same `widget`, mutated in place with frame styling applied.
         """
-        return frame_console_region(widget, top=top, bottom=bottom, variant=variant)
+        return frame_console_region(widget, edges=edges, variant=variant)
 
     def _build_console_live_work_source_readiness_card(self) -> Container:
         """Build the mounted source-readiness card shown without a launch.
@@ -13081,7 +13133,8 @@ class ChatScreen(BaseAppScreen):
                 Horizontal(
                     id="console-workspace-grid",
                     classes="ds-panel destination-workbench",
-                )
+                ),
+                edges=("top", "bottom"),
             )
             workspace_grid.styles.min_height = 0
             stack_rail_labels = self._stack_collapsed_rail_labels()
@@ -13105,7 +13158,7 @@ class ChatScreen(BaseAppScreen):
                     # TASK-2154.1: single-pane mode hides both handles -- the
                     # transcript is the only pane left to point at.
                     left_handle.styles.display = "none"
-                yield self._frame_console_region(left_handle, bottom=False)
+                yield self._frame_console_region(left_handle, edges=("right",))
 
                 # The section-level values below are computed here, on the
                 # screen, exactly as they were computed inline before this
@@ -13132,9 +13185,9 @@ class ChatScreen(BaseAppScreen):
                     getattr(getattr(self, "app_instance", None), "app_config", {}) or {}
                 )
                 # `character_avatar_widget_builder` hands `ConsoleLeftRail` a
-                # zero-arg callable, not a pre-built widget: the rail's own
+                # box-aware callable, not a pre-built widget: the rail's own
                 # `compose()` calls it, so a future recompose always mounts a
-                # fresh avatar widget built from the CURRENT
+                # fresh, currently fitted avatar widget built from the CURRENT
                 # `self._active_character_avatar` rather than re-yielding a
                 # stale instance `_render_character_avatar_into_section` may
                 # already have removed from the DOM (final review finding 1).
@@ -13145,12 +13198,28 @@ class ChatScreen(BaseAppScreen):
                 # method or a snapshotted spec, which would freeze today's
                 # value instead.
                 character_avatar_widget_builder = None
+                character_avatar_fit_box = None
                 character_avatar_name = ""
                 if show_character_section:
 
-                    def character_avatar_widget_builder():
+                    def character_avatar_widget_builder(box=None):
                         return self._build_character_avatar_widget(
-                            self._active_character_avatar
+                            self._active_character_avatar,
+                            box=box,
+                        )
+
+                    def character_avatar_fit_box(
+                        available_cols: int,
+                        available_lines: int,
+                    ) -> tuple[int, int] | None:
+                        spec = self._active_character_avatar or {}
+                        image = spec.get("pil")
+                        if image is None:
+                            return None
+                        return fit_character_avatar_cell_box(
+                            image,
+                            available_cols,
+                            available_lines,
                         )
 
                     character_avatar_name = (
@@ -13182,6 +13251,13 @@ class ChatScreen(BaseAppScreen):
                     show_character_section=show_character_section,
                     character_avatar_widget_builder=character_avatar_widget_builder,
                     character_avatar_name=character_avatar_name,
+                    character_avatar_fit_box=character_avatar_fit_box,
+                    workspace_tree_expanded_ids=(
+                        self._workspace.workspace_tree_expansion_preferences()
+                    ),
+                    workspace_tree_expansion_preferences_changed=(
+                        self._workspace.set_workspace_tree_expansion_preferences
+                    ),
                     manual_reaction_label=(
                         self._session._manual_reaction_label_for_current_actor()
                     ),
@@ -13189,10 +13265,10 @@ class ChatScreen(BaseAppScreen):
                 left_rail.can_focus = True
                 left_rail.styles.width = "3fr"
                 # TASK-19639 (formerly TASK-18913) compact contract: at exactly 100 columns the
-                # workspace grid has 96 content columns after two border and
-                # two horizontal-padding cells. Default horizontal-label
-                # geometry resolves as Context 30 + main outer 55 + collapsed
-                # Inspector handle 11 = 96. The main min-width waiver keeps
+                # workspace grid has all 100 application columns. Default
+                # horizontal-label geometry resolves as Context 30 + main
+                # outer 59 + collapsed Inspector handle 11 = 100. The main
+                # min-width waiver keeps
                 # the row solvable; `rail_state.left_open` determines Context
                 # visibility. Below 100, default Context force-collapses
                 # without rewriting preference; eligible explicit opens
@@ -13203,7 +13279,7 @@ class ChatScreen(BaseAppScreen):
                 left_rail.styles.min_width = 30
                 if not rail_state.left_open:
                     left_rail.styles.display = "none"
-                yield self._frame_console_region(left_rail, bottom=False)
+                yield self._frame_console_region(left_rail, edges=("right",))
 
                 # A zero-arg builder, not a pre-built widget, for the same
                 # reason `character_avatar_widget_builder` above is one --
@@ -13236,8 +13312,9 @@ class ChatScreen(BaseAppScreen):
                 # minimum is waived. The default layout is transcript-only;
                 # budget-eligible explicit rails may still render from their
                 # 70/74 floors through 83 via compact override. At 84, default
-                # horizontal handles (13 + 11), main 56, two borders, and two
-                # padding cells fit exactly; stacked handles are 3 columns each.
+                # horizontal handles (13 + 11) leave 60 application columns
+                # for the main, above its 56-column floor; stacked handles are
+                # 3 columns each.
                 # TASK-2154.2/TASK-19639 (formerly TASK-18913): ``compact_override`` is only
                 # layout-minimum-waiver authority. It covers eligible explicit
                 # opens below the thresholds, default Context at exactly 100,
@@ -13292,7 +13369,7 @@ class ChatScreen(BaseAppScreen):
                 right_rail.styles.min_width = 34
                 if not rail_state.right_open:
                     right_rail.styles.display = "none"
-                yield self._frame_console_region(right_rail, bottom=False)
+                yield self._frame_console_region(right_rail, edges=("left",))
 
                 right_handle = ConsoleRailHandle(
                     label=rail_state.right_label,
@@ -13311,7 +13388,7 @@ class ChatScreen(BaseAppScreen):
                 right_handle.styles.max_width = right_handle_width
                 if rail_state.right_open or rail_state.single_pane:
                     right_handle.styles.display = "none"
-                yield self._frame_console_region(right_handle, bottom=False)
+                yield self._frame_console_region(right_handle, edges=("left",))
             # task-17652: the status row's side of the composer cluster is
             # user-configurable ([console] status_chips_position). "above"
             # (the default; owner ruling 2026-08-17) tops the cluster
@@ -16305,8 +16382,7 @@ class ChatScreen(BaseAppScreen):
             report = await loader()
         except Exception as exc:  # noqa: BLE001 -- render recovery, never send command
             logger.warning(
-                "MCP prompt recommendations command failed "
-                "(exception_type={})",
+                "MCP prompt recommendations command failed (exception_type={})",
                 type(exc).__name__,
             )
             await self._append_native_console_system_message(
@@ -17757,48 +17833,23 @@ class ChatScreen(BaseAppScreen):
             if target.display and button.display:
                 button.focus()
 
+    @on(DescendantBlur)
     @on(DescendantFocus)
-    def _paint_console_rail_focus_frame(self, event: DescendantFocus) -> None:
-        """Swap framed regions' inline borders to the accent while focused.
+    def _paint_console_rail_focus_frame(
+        self, event: DescendantFocus | DescendantBlur
+    ) -> None:
+        """Paint dimension-stable workbench focus cues.
 
-        TASK-359: F6's rail stop focuses the collapse button; the region
-        border is inline-styled (single-frame contract), so this is the
-        only place a visible pane-stop indicator can be painted.
-
-        TASK-17651: the transcript region joins the painter — the widget
-        inside it draws no border of its own any more, so the region's
-        column lines ARE the transcript's focus indicator. Edges are
-        written individually, never via the ``border`` shorthand: every
-        region here has a suppressed edge (rails: bottom; transcript
-        region: top and bottom — the workspace grid's border closes the
-        frame) that a shorthand write would silently resurrect.
+        TASK-20937.3: expanded rails and collapsed handles keep the exact
+        same border cells focused or unfocused. The focus class reinforces
+        the owning control with bold/underline/background, so color is not
+        the only cue. The transcript owns neither divider; its class marks
+        only the stable title row.
         """
-        for region_id, accent_edges in (
-            ("console-left-rail", ("left", "right", "top")),
-            ("console-right-rail", ("left", "right", "top")),
-            ("console-transcript-region", ("left", "right")),
-        ):
-            try:
-                framed = self.query_one(f"#{region_id}")
-            except QueryError:
-                continue
-            focused_within = False
-            node = event.widget
-            while node is not None:
-                if node is framed:
-                    focused_within = True
-                    break
-                node = node.parent
-            border = (
-                CONSOLE_FOCUS_FRAME_BORDER if focused_within else CONSOLE_FRAME_BORDER
-            )
-            # styles.border_left holds (str, Color) — compare against the
-            # parsed color, or the dedup guard never dedups (review #739).
-            current_kind, current_color = framed.styles.border_left
-            if current_kind == border[0] and current_color == Color.parse(border[1]):
-                continue
-            for edge in accent_edges:
-                setattr(framed.styles, f"border_{edge}", border)
+        focused = (
+            event.widget if isinstance(event, DescendantFocus) else self.app.focused
+        )
+        sync_console_focus_paint(self, focused)
 
     #: Task 4 fix-round-2 (I3): how long `_recover_stuck_console_send_stash`
     #: waits before treating `_console_pending_send_stash` as abandoned.
@@ -19448,97 +19499,19 @@ class ChatScreen(BaseAppScreen):
             event.stop()
             self._workspace.clear_console_conversation_browser_search()
             return
+        if button_id == "console-workspace-search-retry":
+            event.stop()
+            self.run_worker(
+                self._workspace.retry_workspace_tree_search(),
+                group="console-workspace-tree-search",
+                exclusive=True,
+            )
+            return
         if button_id and button_id.startswith("console-workspace-conversation-"):
             event.stop()
-            conversation_id = str(
-                getattr(event.button, "conversation_id", "") or ""
-            ).strip()
-            row_key = str(getattr(event.button, "row_key", "") or "").strip()
-            browser_row = self._workspace._find_console_browser_row(
-                row_key or conversation_id,
-                conversation_id=conversation_id,
-            )
-            if browser_row is not None:
-                self._workspace._activate_console_workspace_for_browser_row(browser_row)
-                row_conversation_id = str(browser_row.conversation_id or "").strip()
-                session_id = self._session._console_session_id_for_browser_row(
-                    browser_row
-                )
-            else:
-                row_conversation_id = conversation_id
-                session_id = (
-                    self._workspace._console_session_id_for_workspace_conversation(
-                        conversation_id
-                    )
-                )
-            if session_id is None:
-                if not row_conversation_id:
-                    self.app_instance.notify(
-                        "This conversation row is no longer available.",
-                        severity="warning",
-                    )
-                    return
-                # task-457(b): the resume is awaited inline and can be slow or
-                # fail; flag the pressed row loading for the duration so it does
-                # not read as a dead click, and always clear it afterwards (a
-                # successful resume also recomposes the rail, which drops the
-                # flag; the finally covers the not-resumable/error return).
-                self._set_console_conversation_row_loading(row_conversation_id, True)
-                try:
-                    resumed = (
-                        await self._workspace._resume_console_workspace_conversation(
-                            row_conversation_id,
-                            target_scope_type=(
-                                browser_row.scope_type
-                                if browser_row is not None
-                                else None
-                            ),
-                            target_workspace_id=(
-                                browser_row.workspace_id
-                                if browser_row is not None
-                                else None
-                            ),
-                        )
-                    )
-                finally:
-                    self._set_console_conversation_row_loading(
-                        row_conversation_id, False
-                    )
-                if resumed:
-                    await self._workspace._refresh_console_conversation_browser_after_selection()
-                    return
-                if resumed is None:
-                    # Transient failure; the resume path already explained it.
-                    return
-                # TASK-717: the record is missing - say so honestly (Library
-                # has no affordance for a nonexistent record) and mark the
-                # row visibly broken so it stops presenting as openable.
-                self._mark_console_conversation_row_broken(row_conversation_id)
-                self.app_instance.notify(
-                    "This saved conversation could not be loaded - "
-                    "its record is missing.",
-                    severity="warning",
-                )
-                return
-            controller = self._ensure_console_chat_controller()
-            if controller.store.active_session_id != session_id:
-                if browser_row is None:
-                    self._workspace._set_active_workspace_for_console_session(
-                        session_id
-                    )
-                controller.switch_session(session_id)
-                await self._sync_native_console_chat_ui()
-                # task-7 review: an already-open native tab for this
-                # conversation is never ephemeral, but the PREVIOUS active
-                # session might have been -- `_sync_native_console_chat_ui`
-                # above never touches the temporary chip (see
-                # `_sync_console_temporary_chip`), so without this the chip
-                # could keep reading "Temporary" after switching onto a
-                # saved conversation.
-                self._sync_console_temporary_chip()
-            self._focus_console_composer_if_needed(force=True)
-            await (
-                self._workspace._refresh_console_conversation_browser_after_selection()
+            await self._workspace.open_console_workspace_conversation(
+                str(getattr(event.button, "conversation_id", "") or ""),
+                row_key=str(getattr(event.button, "row_key", "") or ""),
             )
             return
         if button_id and button_id.startswith("console-close-session-tab-"):

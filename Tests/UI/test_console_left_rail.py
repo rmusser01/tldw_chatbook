@@ -19,6 +19,8 @@ from contextlib import asynccontextmanager
 
 import pytest
 from textual.containers import Horizontal
+from textual.css.query import NoMatches
+from textual.pilot import OutOfBounds
 from textual.widgets import Button
 
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
@@ -81,10 +83,26 @@ async def _click_rail_toggle(pilot, section_id: str) -> None:
     mirrors what a real user scrolling the rail before clicking would do;
     it does not change what gets clicked or what handles the click.
     """
-    toggle = pilot.app.screen.query_one(f"#console-rail-section-toggle-{section_id}")
-    toggle.scroll_visible(animate=False)
-    await pilot.pause(0.2)
-    await pilot.click(f"#console-rail-section-toggle-{section_id}")
+    selector = f"#console-rail-section-toggle-{section_id}"
+    before = _section_header_open_flag(pilot, section_id)
+    for _ in range(40):
+        if _section_header_open_flag(pilot, section_id) is not before:
+            return
+        try:
+            toggle = pilot.app.screen.query_one(selector)
+            toggle.scroll_visible(animate=False, force=True)
+            await pilot.pause(0.05)
+            clicked = await pilot.click(selector)
+        except (NoMatches, OutOfBounds):
+            clicked = False
+        if clicked:
+            for _ in range(40):
+                if _section_header_open_flag(pilot, section_id) is not before:
+                    return
+                await pilot.pause(0.05)
+            break
+        await pilot.pause(0.05)
+    raise AssertionError(f"Section {section_id!r} did not toggle from {before!r}")
 
 
 @pytest.mark.asyncio
@@ -220,6 +238,15 @@ async def test_context_direct_bodies_use_seven_bounded_wrappers_in_dom_order():
             "agent",
             "details",
             "character",
+        ]
+        assert [section.max_content_lines for section in sections] == [
+            15,
+            20,
+            20,
+            15,
+            15,
+            15,
+            35,
         ]
         assert [
             section.query_one(".console-rail-section-body").id for section in sections
@@ -362,16 +389,7 @@ async def test_workspace_and_conversation_disclosures_toggle_independently():
 
 @pytest.mark.asyncio
 async def test_clicking_a_rail_section_toggle_moves_focus_to_the_toggle_button():
-    """Pin today's focus behaviour when a rail section header is pressed.
-
-    The composer holds focus at mount (the harness waits for
-    ``#console-native-composer`` before yielding control), and nothing in
-    ``_toggle_console_rail_section`` calls ``.focus()`` explicitly -- so
-    whatever focus ends up on is whatever Textual's default click-to-focus
-    behaviour does for a pressed ``Button``. Pinning the OBSERVED outcome
-    here (rather than asserting what "should" happen) is the point of a
-    characterisation test.
-    """
+    """A clicked disclosure retains focus after its layout reconciliation."""
     async with make_console_pilot() as pilot:
         composer = pilot.app.screen.query_one("#console-native-composer")
         assert pilot.app.focused is composer or pilot.app.focused in list(
@@ -384,4 +402,8 @@ async def test_clicking_a_rail_section_toggle_moves_focus_to_the_toggle_button()
         toggle_button = pilot.app.screen.query_one(
             "#console-rail-section-toggle-details"
         )
+        for _ in range(40):
+            if pilot.app.focused is toggle_button:
+                break
+            await pilot.pause(0.05)
         assert pilot.app.focused is toggle_button

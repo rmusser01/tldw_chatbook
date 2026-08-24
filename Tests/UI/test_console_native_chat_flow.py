@@ -88,6 +88,8 @@ from tldw_chatbook.Widgets.Console import (
     ConsoleSetupModal,
     ConsoleTranscript,
     ConsoleWorkspaceContextTray,
+    ConsoleWorkspaceTree,
+    WorkspaceTreeWorkspaceSelected,
 )
 from tldw_chatbook.Widgets.Prompts.prompt_block_editor import PromptBlockEditor
 from tldw_chatbook.Widgets.Console.console_workspace_details import (
@@ -209,7 +211,7 @@ def test_console_workspace_status_row_empty_value_uses_unavailable():
     )
 
 
-def test_console_workspace_conversation_search_worker_uses_dedicated_group():
+def test_console_flat_conversation_search_worker_uses_dedicated_group():
     # TASK-15454 moved the `run_worker` call out of the `Input.Changed`
     # handler and into the debounced callback the handler now arms -- the
     # DB work in front of the timer was running once per keystroke. The
@@ -220,7 +222,7 @@ def test_console_workspace_conversation_search_worker_uses_dedicated_group():
         ConsoleWorkspaceController._start_console_conversation_browser_search
     )
 
-    assert 'group="console-workspace-conversation-search"' in source
+    assert 'group="console-flat-conversation-search"' in source
     assert "exclusive=True" in source
 
     transition = inspect.getsource(ConsoleWorkspaceController.transition_browser_search)
@@ -1832,8 +1834,16 @@ def _widget_text(widget) -> str:
 
 
 def _console_workspace_conversation_texts(console) -> list[str]:
-    rows = console.query(".console-workspace-conversation-row")
-    return [_widget_text(row) for row in rows]
+    rows = [
+        _widget_text(row)
+        for row in console.query(".console-workspace-conversation-row")
+    ]
+    try:
+        tree = console.query_one("#console-workspace-tree", ConsoleWorkspaceTree)
+    except NoMatches:
+        return rows
+    rows.extend(node.label.plain for node in tree.conversation_nodes.values())
+    return rows
 
 
 def _normalized_row_text(row) -> str:
@@ -1870,10 +1880,9 @@ def _console_conversation_browser_rows(console):
     ``ConsoleConversationBrowserRow.updated_label`` is only populated by
     ``_normalize_input_row`` inside ``build_console_conversation_browser_state``
     (see ``tldw_chatbook/Workspaces/conversation_browser_state.py``); the raw
-    ``_native_console_browser_rows``/``_membership_console_browser_rows``
-    accessors return un-normalized input rows whose ``updated_label`` is
-    always the dataclass default (``""``). Rebuilding the full context state
-    is the seam that actually feeds the rendered row label.
+    Raw native/Tree/flat owner accessors return un-normalized input rows whose
+    ``updated_label`` is always the dataclass default (``""``). Rebuilding the
+    full context state is the seam that actually feeds the rendered row label.
     """
     browser = (
         console._workspace._build_console_workspace_context_state().conversation_browser
@@ -2069,6 +2078,18 @@ async def _click_console_workspace_conversation_for_id(
                 # The rail rebuilt between the scroll and the click; the next
                 # attempt re-queries. The loop still has to land a real click.
                 pass
+        try:
+            tree = console.query_one("#console-workspace-tree", ConsoleWorkspaceTree)
+        except NoMatches:
+            tree = None
+        if tree is not None:
+            node = tree.conversation_nodes.get(conversation_id)
+            if node is not None:
+                tree.move_cursor(node)
+                tree.focus()
+                await pilot.press("enter")
+                await pilot.pause()
+                return str(tree.id)
         await pilot.pause(0.05)
     rows = [
         (
@@ -2137,11 +2158,47 @@ async def _wait_for_workspace_conversation_text(
                 continue
             if selected is None or _row_is_selected(row) == selected:
                 return row_texts
+        try:
+            tree = console.query_one("#console-workspace-tree", ConsoleWorkspaceTree)
+        except NoMatches:
+            tree = None
+        if tree is not None:
+            tree_texts = [
+                " ".join(node.label.plain.split())
+                for node in tree.conversation_nodes.values()
+            ]
+            for node, text in zip(tree.conversation_nodes.values(), tree_texts):
+                if expected not in text:
+                    continue
+                data = node.data
+                if selected is None or bool(data and data.selected) == selected:
+                    return [*row_texts, *tree_texts]
         await pilot.pause(0.05)
     raise AssertionError(
         f"Workspace conversation {expected!r} not found. "
         f"Rows: {_console_workspace_conversation_texts(console)!r}"
     )
+
+
+async def _expand_console_workspace_tree(
+    console,
+    pilot,
+    workspace_id: str,
+    *,
+    attempts: int = 40,
+) -> ConsoleWorkspaceTree:
+    """Expand one named workspace so its bounded conversation page loads."""
+
+    tree = console.query_one("#console-workspace-tree", ConsoleWorkspaceTree)
+    for _ in range(attempts):
+        node = tree.workspace_nodes.get(workspace_id)
+        if node is not None:
+            if node.is_collapsed:
+                node.expand()
+                await pilot.pause()
+            return tree
+        await pilot.pause(0.05)
+    raise AssertionError(f"Workspace tree node {workspace_id!r} not found")
 
 
 async def _wait_for_console_rename_modal(host: ConsoleHarness, pilot):
@@ -2600,9 +2657,7 @@ def test_console_provider_selection_floors_missing_active_workspace_read_only():
     service.ensure_default_workspace()
     assert service.get_active_workspace().workspace_id == DEFAULT_WORKSPACE_ID
     selection_after = screen._build_console_provider_selection()
-    assert (
-        selection_after.workspace_context.active_workspace_id == DEFAULT_WORKSPACE_ID
-    )
+    assert selection_after.workspace_context.active_workspace_id == DEFAULT_WORKSPACE_ID
 
 
 def test_console_configured_llamacpp_override_wins_over_provider_api_url():
@@ -3360,6 +3415,48 @@ async def test_console_send_after_workspace_switch_persists_to_selected_workspac
         assert [row.title for row in workspace_b_conversations] == [
             active_session.title
         ]
+
+
+@pytest.mark.asyncio
+async def test_tree_workspace_selection_switches_session_and_visible_transcript():
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    service = app.workspace_registry_service
+    service.create_workspace(workspace_id="ws-a", name="Workspace A")
+    service.create_workspace(workspace_id="ws-b", name="Workspace B")
+    service.set_active_workspace("ws-a")
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session(title="Workspace A Chat", workspace_id="ws-a")
+        store.append_message(
+            first.id,
+            role=ConsoleMessageRole.USER,
+            content="Workspace A transcript",
+        )
+        second = store.create_session(title="Workspace B Chat", workspace_id="ws-b")
+        store.append_message(
+            second.id,
+            role=ConsoleMessageRole.USER,
+            content="Workspace B transcript",
+        )
+        store.switch_session(first.id)
+        await console._sync_native_console_chat_ui()
+        await _wait_for_text(console, pilot, "Workspace A transcript")
+
+        tree = console.query_one("#console-workspace-tree", ConsoleWorkspaceTree)
+        tree.post_message(WorkspaceTreeWorkspaceSelected("ws-b"))
+        await _wait_for_active_session(store, pilot, second.id)
+        await _wait_for_text(console, pilot, "Workspace B transcript")
+
+        assert service.get_active_workspace().workspace_id == "ws-b"
+        assert store.workspace_context.active_workspace_id == "ws-b"
+        assert store.active_session_id == second.id
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        assert "Workspace A transcript" not in _visible_text(transcript)
 
 
 @pytest.mark.asyncio
@@ -6718,73 +6815,17 @@ def _configure_grouped_browser_workspaces(app):
     return service
 
 
-def _browser_group_toggle(console, group_id: str) -> Button:
-    for button in console.query(Button):
-        if getattr(button, "group_id", None) == group_id:
-            return button
-    groups = [
-        (getattr(button, "id", None), getattr(button, "group_id", None))
-        for button in console.query(Button)
-        if str(getattr(button, "id", "")).startswith("console-conversation-browser")
-    ]
-    raise AssertionError(
-        f"Browser group toggle {group_id!r} not found. Groups: {groups!r}"
-    )
-
-
-def _browser_star_button(console, conversation_id: str) -> Button:
-    for button in console.query(".console-conversation-star"):
-        if getattr(button, "conversation_id", None) == conversation_id:
-            return button
-    stars = [
-        (getattr(button, "id", None), getattr(button, "conversation_id", None))
-        for button in console.query(".console-conversation-star")
-    ]
-    raise AssertionError(
-        f"Star button for {conversation_id!r} not found. Stars: {stars!r}"
-    )
+# TASK-20937.6 retired the mounted tests that projected named-workspace rows,
+# Starred duplicates, and disclosure groups through the flat Conversations
+# browser. The approved owners now have focused mounted coverage in
+# test_console_workspace_{tree,controller,lifecycle}.py, while this file keeps
+# the still-valid end-to-end native chat and Default/unassigned browser flows.
 
 
 #: Wall-clock budget for browser-row renders (TASK-1900). Deliberately
 #: generous: this waits on a RENDER, and render latency scales with machine
 #: load in a way an iteration count cannot express.
 _BROWSER_ROW_RENDER_TIMEOUT = 15.0
-
-
-async def _wait_for_browser_conversation_row(console, pilot, conversation_id: str):
-    """Wait for a browser row to render, on a wall-clock deadline.
-
-    TASK-1900. This used to spin a fixed `for _ in range(80)` over
-    `pilot.pause(0.05)` and call it four seconds. It is not four seconds: on
-    a busy machine each pause overruns AND the render itself takes longer,
-    so the budget shrinks exactly when it needs to grow. That made
-    `test_console_conversation_browser_search_ignores_stale_results` fail
-    about one run in five, and 3/3 with four CPU burners alongside -- while
-    the screen's `_console_conversation_browser_rows` state was already
-    correct. The test was right, the clock was wrong.
-
-    Args:
-        console: The mounted Console screen.
-        pilot: Its `Pilot`, used to let the event loop settle between polls.
-        conversation_id: Row to wait for.
-
-    Returns:
-        The rendered row widget.
-
-    Raises:
-        AssertionError: If the row has not rendered within the deadline.
-    """
-    deadline = time.monotonic() + _BROWSER_ROW_RENDER_TIMEOUT
-    while time.monotonic() < deadline:
-        for row in console.query(".console-workspace-conversation-row"):
-            if getattr(row, "conversation_id", None) == conversation_id:
-                return row
-        await pilot.pause(0.05)
-    rows = [
-        (getattr(row, "conversation_id", None), _widget_text(row))
-        for row in console.query(".console-workspace-conversation-row")
-    ]
-    raise AssertionError(f"Browser row {conversation_id!r} not found. Rows: {rows!r}")
 
 
 async def _wait_for_browser_render(pilot, predicate, describe) -> None:
@@ -6828,112 +6869,6 @@ async def _set_console_conversation_browser_search(console, pilot, query: str) -
     search.value = query
     console.on_console_workspace_conversation_search_changed(_InputChangedEvent(query))
     await pilot.pause(0.3)
-
-
-@pytest.mark.asyncio
-async def test_console_conversation_browser_lists_all_workspace_groups():
-    app = _build_test_app()
-    app.conversation_local_marks_service = FakeConversationLocalMarksService()
-    service = _configure_grouped_browser_workspaces(app)
-    service.link_membership(
-        "ws-a",
-        item_type="conversation",
-        item_id="workspace-a-chat",
-        role="workspace-thread",
-        title="Workspace A saved",
-    )
-    service.link_membership(
-        "ws-b",
-        item_type="conversation",
-        item_id="workspace-b-chat",
-        role="workspace-thread",
-        title="Workspace B saved",
-    )
-    host = ConsoleHarness(app)
-
-    async with host.run_test(size=(160, 48)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(
-            console, pilot, "#console-workspace-conversation-search"
-        )
-        store = console._ensure_console_chat_store()
-        default_session = store.create_session(
-            title="Global chat",
-            workspace_id=DEFAULT_WORKSPACE_ID,
-        )
-        store.switch_session(default_session.id)
-        await console._sync_native_console_chat_ui()
-
-        visible_text = _visible_text(console)
-        assert "Starred" in visible_text
-        assert "Workspaces" in visible_text
-        assert "Workspace A" in visible_text
-        assert "Workspace B" in visible_text
-        assert "Chats" in visible_text
-        assert "Global chat" in visible_text
-        assert "Storage" in visible_text
-        assert "Server" in visible_text
-        assert len(console.query("#console-workspace-conversations-toggle")) == 0
-        assert (
-            len(
-                console.query("#console-conversation-browser-section-toggle-workspaces")
-            )
-            == 1
-        )
-        assert any(
-            getattr(button, "group_id", None) == "workspace:ws-a"
-            for button in console.query(".console-workspace-conversations-toggle")
-        )
-
-
-@pytest.mark.asyncio
-async def test_console_conversation_browser_search_filters_all_groups():
-    app = _build_test_app()
-    app.conversation_local_marks_service = FakeConversationLocalMarksService()
-    service = _configure_grouped_browser_workspaces(app)
-    service.link_membership(
-        "ws-a",
-        item_type="conversation",
-        item_id="alpha-a",
-        role="workspace-thread",
-        title="Alpha in Workspace A",
-    )
-    service.link_membership(
-        "ws-b",
-        item_type="conversation",
-        item_id="needle-b",
-        role="workspace-thread",
-        title="Needle in Workspace B",
-    )
-    host = ConsoleHarness(app)
-
-    async with host.run_test(size=(160, 48)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(
-            console, pilot, "#console-workspace-conversation-search"
-        )
-        await pilot.click("#console-workspace-conversation-search")
-        search = console.query_one("#console-workspace-conversation-search", Input)
-        search.value = "needle"
-        console.on_console_workspace_conversation_search_changed(
-            _InputChangedEvent("needle")
-        )
-        for _ in range(40):
-            row_texts = _console_workspace_conversation_texts(console)
-            if any(
-                getattr(row, "conversation_id", None) == "needle-b"
-                for row in console.query(".console-workspace-conversation-row")
-            ):
-                break
-            await pilot.pause(0.05)
-        else:
-            raise AssertionError(f"Needle row not found. Rows: {row_texts!r}")
-        row_texts = _console_workspace_conversation_texts(console)
-
-        normalized_texts = [" ".join(text.split()) for text in row_texts]
-        assert any("Needle in Workspa" in text for text in normalized_texts)
-        assert any("Workspace B" in text for text in normalized_texts)
-        assert all("Alpha in Workspace A" not in text for text in normalized_texts)
 
 
 @pytest.mark.asyncio
@@ -6995,12 +6930,13 @@ async def test_console_browser_selecting_non_default_workspace_persisted_row_swi
         role="workspace-thread",
         title="Workspace B saved",
     )
-    app.chat_conversation_scope_service = StaticConversationTreeService(
+    app.chat_conversation_scope_service = SearchableConversationService(
         {
             "persisted-ws-b": {
                 "conversation": {
                     "id": "persisted-ws-b",
                     "title": "Workspace B saved",
+                    "workspace_id": "ws-b",
                 },
                 "root_threads": [
                     {
@@ -7038,125 +6974,15 @@ async def test_console_browser_selecting_non_default_workspace_persisted_row_swi
         assert active.workspace_id == "ws-b"
         assert store.workspace_context.active_workspace_id == "ws-b"
         assert session.workspace_id == "ws-b"
-
-
-@pytest.mark.asyncio
-async def test_console_browser_selecting_duplicate_membership_row_ignores_other_workspace_open_session():
-    app = _build_test_app()
-    _configure_native_ready_console(app)
-    app.conversation_local_marks_service = FakeConversationLocalMarksService()
-    service = _configure_grouped_browser_workspaces(app)
-    service.set_active_workspace("ws-a")
-    app.app_config["console"]["conversation_browser"]["collapsed_groups"][
-        "workspace:ws-b"
-    ] = False
-    for workspace_id in ("ws-a", "ws-b"):
-        service.link_membership(
-            workspace_id,
-            item_type="conversation",
-            item_id="shared-open-chat",
-            role="workspace-thread",
-            title="Shared open chat",
+        assert not any(
+            candidate.workspace_id == "ws-b"
+            and candidate.persisted_conversation_id is None
+            for candidate in store.sessions()
         )
-    app.chat_conversation_scope_service = StaticConversationTreeService(
-        {
-            "shared-open-chat": {
-                "conversation": {
-                    "id": "shared-open-chat",
-                    "title": "Shared open chat",
-                },
-                "root_threads": [
-                    {
-                        "id": "shared-open-message",
-                        "role": "user",
-                        "content": "Workspace B shared prompt",
-                    }
-                ],
-            },
-        }
-    )
-    host = ConsoleHarness(app)
-
-    async with host.run_test(size=(160, 48)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(
-            console, pilot, "#console-workspace-conversation-search"
-        )
-        store = console._ensure_console_chat_store()
-        open_ws_a = store.ensure_session(title="Shared open chat", workspace_id="ws-a")
-        open_ws_a.persisted_conversation_id = "shared-open-chat"
-        store.switch_session(open_ws_a.id)
-        await console._sync_native_console_chat_ui()
-        # _sync_native_console_chat_ui reentrancy-guards concurrent calls: if one
-        # is already running when this call lands, it just flags a follow-up sync
-        # and returns immediately, deferring the real rebuild to an unawaited
-        # background worker. Give that worker a chance to finish so the browser
-        # rows below are the final settled set rather than a transient one whose
-        # underlying widget can be unmounted while the click below is in flight.
-        await pilot.pause(0.2)
-        ws_b_row = _workspace_conversation_row_by_key(
-            console,
-            "workspace:ws-b:conversation:shared-open-chat",
-        )
-
-        assert ws_b_row is not None
-        assert not _row_is_selected(ws_b_row)
-        assert (
-            console._workspace._find_console_browser_row(
-                "workspace:missing:conversation:shared-open-chat",
-                conversation_id="shared-open-chat",
-            )
-            is None
-        )
-
-        await _click_console_workspace_conversation_for_row_key(
-            console,
-            pilot,
-            "workspace:ws-b:conversation:shared-open-chat",
-        )
-        await _wait_for_text(console, pilot, "Workspace B shared prompt")
-        sessions = [
-            session
-            for session in store.sessions()
-            if session.persisted_conversation_id == "shared-open-chat"
-        ]
-        active_session = store.switch_session(store.active_session_id)
-
-        assert len(sessions) == 2
-        assert active_session.workspace_id == "ws-b"
-        selected_shared_rows = [
-            row
-            for row in console.query(".console-workspace-conversation-row")
-            if getattr(row, "conversation_id", None) == "shared-open-chat"
-            and _row_is_selected(row)
-        ]
-        assert len(selected_shared_rows) == 1
-        assert (
-            getattr(selected_shared_rows[0], "native_session_id", None)
-            == active_session.id
-        )
-        selected_native_rows = [
-            row
-            for row in console._workspace._native_console_browser_rows(
-                "shared-open-chat"
-            )
-            if row.conversation_id == "shared-open-chat" and row.selected
-        ]
-        assert len(selected_native_rows) == 1
-        assert selected_native_rows[0].native_session_id == active_session.id
-        selected_membership_rows = [
-            row
-            for row in console._workspace._membership_console_browser_rows(
-                "shared-open-chat"
-            )
-            if row.conversation_id == "shared-open-chat" and row.selected
-        ]
-        assert len(selected_membership_rows) == 1
-        assert selected_membership_rows[0].workspace_id == "ws-b"
-        active = service.get_active_workspace()
-        assert active is not None
-        assert active.workspace_id == "ws-b"
-        assert store.workspace_context.active_workspace_id == "ws-b"
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        search = console.query_one("#console-workspace-conversation-search", Input)
+        assert console.app.focused is composer
+        assert console.app.focused is not search
 
 
 @pytest.mark.asyncio
@@ -7224,12 +7050,14 @@ async def test_console_browser_selecting_default_persisted_row_uses_private_scra
         role="workspace-thread",
         title="Default saved",
     )
-    app.chat_conversation_scope_service = StaticConversationTreeService(
+    app.chat_conversation_scope_service = SyncSearchableConversationService(
         {
             "persisted-default": {
                 "conversation": {
                     "id": "persisted-default",
                     "title": "Default saved",
+                    "scope_type": "workspace",
+                    "workspace_id": DEFAULT_WORKSPACE_ID,
                 },
                 "root_threads": [
                     {
@@ -7354,434 +7182,9 @@ async def test_console_browser_selecting_global_persisted_row_switches_context_t
 
 
 @pytest.mark.asyncio
-async def test_console_conversation_browser_search_counts_only_matching_local_rows():
-    app = _build_test_app()
-    app.conversation_local_marks_service = FakeConversationLocalMarksService()
-    service = _configure_grouped_browser_workspaces(app)
-    app.chat_conversation_scope_service = None
-    app.local_chat_conversation_service = None
-    service.link_membership(
-        "ws-a",
-        item_type="conversation",
-        item_id="needle-local",
-        role="workspace-thread",
-        title="Needle Local Match",
-    )
-    service.link_membership(
-        "ws-a",
-        item_type="conversation",
-        item_id="other-local",
-        role="workspace-thread",
-        title="Other Local Row",
-    )
-    host = ConsoleHarness(app)
-
-    async with host.run_test(size=(160, 48)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(
-            console, pilot, "#console-workspace-conversation-search"
-        )
-        await _set_console_conversation_browser_search(console, pilot, "needle")
-
-        for _ in range(80):
-            status = console.query_one(
-                "#console-workspace-conversation-search-status",
-                Static,
-            )
-            if _static_plain_text(status):
-                break
-            await pilot.pause(0.05)
-        else:
-            raise AssertionError("Conversation browser search status did not render")
-
-        row_texts = _console_workspace_conversation_texts(console)
-        assert _static_plain_text(status) == "1 match"
-        assert any("Needle Local" in text for text in row_texts)
-        assert all("Other Local Row" not in text for text in row_texts)
-
-
-@pytest.mark.asyncio
-async def test_console_conversation_browser_keeps_multi_workspace_memberships():
-    app = _build_test_app()
-    app.conversation_local_marks_service = FakeConversationLocalMarksService()
-    service = _configure_grouped_browser_workspaces(app)
-    app.app_config["console"]["conversation_browser"]["collapsed_groups"][
-        "workspace:ws-b"
-    ] = False
-    service.link_membership(
-        "ws-a",
-        item_type="conversation",
-        item_id="shared-conversation",
-        role="workspace-thread",
-        title="Shared Conversation",
-    )
-    service.link_membership(
-        "ws-b",
-        item_type="conversation",
-        item_id="shared-conversation",
-        role="workspace-thread",
-        title="Shared Conversation",
-    )
-    host = ConsoleHarness(app)
-
-    async with host.run_test(size=(160, 48)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(
-            console, pilot, "#console-workspace-conversation-search"
-        )
-
-        rows = [
-            row
-            for row in console.query(".console-workspace-conversation-row")
-            if getattr(row, "conversation_id", None) == "shared-conversation"
-        ]
-        stars = [
-            button
-            for button in console.query(".console-conversation-star")
-            if getattr(button, "conversation_id", None) == "shared-conversation"
-        ]
-
-        assert len(rows) == 2
-        assert {getattr(row, "workspace_id", None) for row in rows} == {"ws-a", "ws-b"}
-        assert {getattr(row, "row_key", None) for row in rows} == {
-            "workspace:ws-a:conversation:shared-conversation",
-            "workspace:ws-b:conversation:shared-conversation",
-        }
-        assert len(stars) == 2
-        assert {getattr(button, "row_key", None) for button in stars} == {
-            "workspace:ws-a:conversation:shared-conversation",
-            "workspace:ws-b:conversation:shared-conversation",
-        }
-
-
-@pytest.mark.asyncio
-async def test_console_conversation_browser_dedupes_membership_and_persisted_same_workspace():
-    app = _build_test_app()
-    app.conversation_local_marks_service = FakeConversationLocalMarksService()
-    service = _configure_grouped_browser_workspaces(app)
-    service.link_membership(
-        "ws-a",
-        item_type="conversation",
-        item_id="same-workspace-conversation",
-        role="workspace-thread",
-        title="Membership Title",
-    )
-    app.local_chat_conversation_service = SyncSearchableConversationService(
-        {
-            "same-workspace-conversation": {
-                "conversation": {
-                    "id": "same-workspace-conversation",
-                    "title": "Persisted Title",
-                    "scope_type": "workspace",
-                    "workspace_id": "ws-a",
-                },
-                "root_threads": [],
-            },
-        }
-    )
-    host = ConsoleHarness(app)
-
-    async with host.run_test(size=(160, 48)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(
-            console, pilot, "#console-workspace-conversation-search"
-        )
-
-        rows = [
-            row
-            for row in console.query(".console-workspace-conversation-row")
-            if (
-                getattr(row, "conversation_id", None) == "same-workspace-conversation"
-                and getattr(row, "workspace_id", None) == "ws-a"
-            )
-        ]
-        stars = [
-            button
-            for button in console.query(".console-conversation-star")
-            if (
-                getattr(button, "conversation_id", None)
-                == "same-workspace-conversation"
-                and getattr(button, "row_key", None)
-                == "workspace:ws-a:conversation:same-workspace-conversation"
-            )
-        ]
-
-        assert len(rows) == 1
-        assert getattr(rows[0], "row_key", None) == (
-            "workspace:ws-a:conversation:same-workspace-conversation"
-        )
-        assert "Membership Title" in _normalized_row_text(rows[0])
-        assert len(stars) == 1
-
-
-@pytest.mark.asyncio
-async def test_console_conversation_browser_search_ignores_stale_results():
-    app = _build_test_app()
-    app.conversation_local_marks_service = FakeConversationLocalMarksService()
-    _configure_grouped_browser_workspaces(app)
-    app.chat_conversation_scope_service = SlowFirstSearchableConversationService(
-        {
-            "stale-alpha": {
-                "conversation": {
-                    "id": "stale-alpha",
-                    "title": "Stale Alpha",
-                    "workspace_id": "ws-a",
-                },
-                "root_threads": [],
-            },
-            "fresh-beta": {
-                "conversation": {
-                    "id": "fresh-beta",
-                    "title": "Fresh Beta",
-                    "workspace_id": "ws-b",
-                },
-                "root_threads": [],
-            },
-        }
-    )
-    host = ConsoleHarness(app)
-
-    async with host.run_test(size=(160, 48)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(
-            console, pilot, "#console-workspace-conversation-search"
-        )
-        console._console_conversation_browser_query = "alpha"
-        console._console_conversation_browser_search_token += 1
-        stale_token = console._console_conversation_browser_search_token
-        stale_task = asyncio.create_task(
-            console._workspace._refresh_console_conversation_browser_search(
-                "alpha", stale_token
-            )
-        )
-        for _ in range(40):
-            if app.chat_conversation_scope_service.started.is_set():
-                break
-            await pilot.pause(0.05)
-        assert app.chat_conversation_scope_service.started.is_set()
-
-        console._console_conversation_browser_query = "beta"
-        console._console_conversation_browser_search_token += 1
-        app.chat_conversation_scope_service.release.set()
-        await stale_task
-
-        console._console_conversation_browser_query = "beta"
-        console._console_conversation_browser_search_token += 1
-        fresh_token = console._console_conversation_browser_search_token
-        await console._workspace._refresh_console_conversation_browser_search(
-            "beta", fresh_token
-        )
-
-        # TASK-1900: assert the CLAIM first, on state that is correct
-        # synchronously once the refresh returns. The widget check below waits
-        # on a render, so when it was the only assertion a slow machine looked
-        # exactly like a stale result winning -- the failure said "row not
-        # found. Rows: [stale-alpha]" while the state already held only
-        # fresh-beta. Now a real regression fails here and names itself, and a
-        # render that is merely late fails below saying so.
-        assert [
-            row.conversation_id for row in console._console_conversation_browser_rows
-        ] == ["fresh-beta"], "the stale search result overwrote the fresh one"
-
-        await _wait_for_browser_conversation_row(console, pilot, "fresh-beta")
-        row_texts = _console_workspace_conversation_texts(console)
-        assert all("Stale Alpha" not in text for text in row_texts)
-
-
-@pytest.mark.asyncio
-async def test_console_conversation_browser_group_collapse_persists_locally():
-    app = _build_test_app()
-    app.conversation_local_marks_service = FakeConversationLocalMarksService()
-    service = _configure_grouped_browser_workspaces(app)
-    service.link_membership(
-        "ws-a",
-        item_type="conversation",
-        item_id="collapse-chat",
-        role="workspace-thread",
-        title="Collapse Target",
-    )
-    host = ConsoleHarness(app)
-
-    async with host.run_test(size=(160, 48)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(
-            console, pilot, "#console-workspace-conversation-search"
-        )
-        assert "Collapse Target" in _visible_text(console)
-
-        _browser_group_toggle(console, "workspace:ws-a").press()
-        await pilot.pause(0.1)
-
-        assert all(
-            "Collapse Target" not in " ".join(text.split())
-            for text in _console_workspace_conversation_texts(console)
-        )
-        collapsed_groups = app.app_config["console"]["conversation_browser"][
-            "collapsed_groups"
-        ]
-        assert collapsed_groups["workspace:ws-a"] is True
-
-        console._sync_console_workspace_context()
-        await pilot.pause(0.1)
-        assert all(
-            "Collapse Target" not in " ".join(text.split())
-            for text in _console_workspace_conversation_texts(console)
-        )
-
-
-@pytest.mark.asyncio
-async def test_console_conversation_browser_workspaces_section_collapse_persists_locally():
-    app = _build_test_app()
-    app.conversation_local_marks_service = FakeConversationLocalMarksService()
-    service = _configure_grouped_browser_workspaces(app)
-    service.link_membership(
-        "ws-a",
-        item_type="conversation",
-        item_id="section-collapse-chat",
-        role="workspace-thread",
-        title="Section Collapse Target",
-    )
-    host = ConsoleHarness(app)
-
-    async with host.run_test(size=(160, 48)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(
-            console, pilot, "#console-workspace-conversation-search"
-        )
-        assert any(
-            "Section Collapse" in " ".join(text.split())
-            for text in _console_workspace_conversation_texts(console)
-        )
-
-        _browser_group_toggle(console, "section:workspaces").press()
-        await pilot.pause(0.1)
-
-        assert all(
-            "Section Collapse" not in " ".join(text.split())
-            for text in _console_workspace_conversation_texts(console)
-        )
-        collapsed_groups = app.app_config["console"]["conversation_browser"][
-            "collapsed_groups"
-        ]
-        assert collapsed_groups["section:workspaces"] is True
-
-        console._sync_console_workspace_context()
-        await pilot.pause(0.1)
-        assert all(
-            "Section Collapse" not in " ".join(text.split())
-            for text in _console_workspace_conversation_texts(console)
-        )
-
-
-@pytest.mark.asyncio
-async def test_console_conversation_browser_starred_section_updates_from_row_action():
-    app = _build_test_app()
-    marks = FakeConversationLocalMarksService()
-    app.conversation_local_marks_service = marks
-    service = _configure_grouped_browser_workspaces(app)
-    service.link_membership(
-        "ws-a",
-        item_type="conversation",
-        item_id="star-target",
-        role="workspace-thread",
-        title="Star Target",
-    )
-    host = ConsoleHarness(app)
-
-    async with host.run_test(size=(160, 48)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(
-            console, pilot, "#console-workspace-conversation-search"
-        )
-        _browser_star_button(console, "star-target").press()
-
-        def _star_target_rows() -> list[str]:
-            return [
-                _widget_text(row)
-                for row in console.query(".console-workspace-conversation-row")
-                if getattr(row, "conversation_id", None) == "star-target"
-            ]
-
-        # task-14920: `pilot.pause(0.1)` was a guess at how long the rail takes
-        # to rebuild into its starred + workspace sections; under whole-file
-        # load it is not long enough and the rows list is still empty.
-        await _wait_for_browser_render(
-            pilot,
-            lambda: len(_star_target_rows()) >= 2,
-            lambda: f"star-target rows never reached 2: {_star_target_rows()!r}",
-        )
-
-        assert marks.is_starred("star-target") is True
-        rows = _star_target_rows()
-        assert len(rows) >= 2
-        assert any("Star Target" in row for row in rows)
-
-
-@pytest.mark.asyncio
-async def test_console_conversation_browser_keeps_starred_row_in_normal_group():
-    app = _build_test_app()
-    app.conversation_local_marks_service = FakeConversationLocalMarksService(
-        ("starred-normal",)
-    )
-    service = _configure_grouped_browser_workspaces(app)
-    service.link_membership(
-        "ws-a",
-        item_type="conversation",
-        item_id="starred-normal",
-        role="workspace-thread",
-        title="Starred Normal",
-    )
-    host = ConsoleHarness(app)
-
-    async with host.run_test(size=(160, 48)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(
-            console, pilot, "#console-workspace-conversation-search"
-        )
-        rows = [
-            _widget_text(row)
-            for row in console.query(".console-workspace-conversation-row")
-            if getattr(row, "conversation_id", None) == "starred-normal"
-        ]
-        assert len(rows) == 2
-        assert all("Starred Normal" in row for row in rows)
-
-
-@pytest.mark.asyncio
-async def test_console_conversation_browser_marks_unavailable_keeps_browsing_enabled():
+async def test_flat_conversations_default_loads_global_and_default_history():
     app = _build_test_app()
     app.conversation_local_marks_service = None
-    service = _configure_grouped_browser_workspaces(app)
-    service.link_membership(
-        "ws-a",
-        item_type="conversation",
-        item_id="marks-unavailable-chat",
-        role="workspace-thread",
-        title="Marks Unavailable Chat",
-    )
-    host = ConsoleHarness(app)
-
-    async with host.run_test(size=(160, 48)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(
-            console, pilot, "#console-workspace-conversation-search"
-        )
-
-        visible_text = _visible_text(console)
-        assert "Starred" in visible_text
-        assert "Workspaces" in visible_text
-        assert "Chats" in visible_text
-        assert "Local stars unavailable" in visible_text
-        assert "Marks Unavailable Chat" in visible_text
-        star = _browser_star_button(console, "marks-unavailable-chat")
-        assert star.disabled is True
-
-
-@pytest.mark.asyncio
-async def test_console_conversation_browser_default_includes_sync_persisted_rows():
-    app = _build_test_app()
-    app.conversation_local_marks_service = None
-    _configure_grouped_browser_workspaces(app)
     app.chat_conversation_scope_service = SyncSearchableConversationService(
         {
             "global-default": {
@@ -7796,9 +7199,9 @@ async def test_console_conversation_browser_default_includes_sync_persisted_rows
             "workspace-default": {
                 "conversation": {
                     "id": "workspace-default",
-                    "title": "Workspace A persisted default",
+                    "title": "Default workspace persisted",
                     "scope_type": "workspace",
-                    "workspace_id": "ws-a",
+                    "workspace_id": DEFAULT_WORKSPACE_ID,
                 },
                 "root_threads": [],
             },
@@ -7808,71 +7211,56 @@ async def test_console_conversation_browser_default_includes_sync_persisted_rows
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(
-            console, pilot, "#console-workspace-conversation-search"
+        await _wait_for_workspace_conversation_text(
+            console, pilot, "Global persisted default"
         )
-        global_row = await _wait_for_browser_conversation_row(
-            console,
-            pilot,
-            "global-default",
-        )
-        workspace_row = await _wait_for_browser_conversation_row(
-            console,
-            pilot,
-            "workspace-default",
+        await _wait_for_workspace_conversation_text(
+            console, pilot, "Default workspace persisted"
         )
 
-        visible_text = _visible_text(console)
-        assert "Starred" in visible_text
-        assert "Workspaces" in visible_text
-        assert "Chats" in visible_text
-        assert "Global persisted" in _normalized_row_text(global_row)
-        assert "Workspace A persi" in _normalized_row_text(workspace_row)
+        calls = app.chat_conversation_scope_service.list_calls
+        assert any(call.get("scope_type") == "global" for call in calls)
         assert any(
-            call.get("scope_type") == "global"
-            for call in app.chat_conversation_scope_service.list_calls
-        )
-        assert any(
-            call.get("scope_type") == "workspace" and call.get("workspace_id") == "ws-b"
-            for call in app.chat_conversation_scope_service.list_calls
+            call.get("scope_type") == "workspace"
+            and call.get("workspace_id") == DEFAULT_WORKSPACE_ID
+            for call in calls
         )
 
 
 @pytest.mark.asyncio
-async def test_console_conversation_browser_default_prefers_sync_local_service():
+async def test_flat_conversations_prefers_sync_local_service():
     app = _build_test_app()
     app.conversation_local_marks_service = None
-    _configure_grouped_browser_workspaces(app)
     app.chat_conversation_scope_service = SearchableConversationService(
         {
-            "async-scope-default": {
+            "async-fallback": {
                 "conversation": {
-                    "id": "async-scope-default",
-                    "title": "Async scope default should not block local rows",
+                    "id": "async-fallback",
+                    "title": "Async fallback",
                     "scope_type": "global",
                     "workspace_id": None,
                 },
                 "root_threads": [],
-            },
+            }
         }
     )
     app.local_chat_conversation_service = SyncSearchableConversationService(
         {
-            "local-global-default": {
+            "local-global": {
                 "conversation": {
-                    "id": "local-global-default",
+                    "id": "local-global",
                     "title": "Local global default",
                     "scope_type": "global",
                     "workspace_id": None,
                 },
                 "root_threads": [],
             },
-            "local-workspace-default": {
+            "local-default": {
                 "conversation": {
-                    "id": "local-workspace-default",
-                    "title": "Local Workspace A default",
+                    "id": "local-default",
+                    "title": "Local workspace default",
                     "scope_type": "workspace",
-                    "workspace_id": "ws-a",
+                    "workspace_id": DEFAULT_WORKSPACE_ID,
                 },
                 "root_threads": [],
             },
@@ -7882,51 +7270,22 @@ async def test_console_conversation_browser_default_prefers_sync_local_service()
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(
-            console, pilot, "#console-workspace-conversation-search"
+        await _wait_for_workspace_conversation_text(
+            console, pilot, "Local global default"
+        )
+        await _wait_for_workspace_conversation_text(
+            console, pilot, "Local workspace default"
         )
 
-        global_row = await _wait_for_browser_conversation_row(
-            console,
-            pilot,
-            "local-global-default",
-        )
-        workspace_row = await _wait_for_browser_conversation_row(
-            console,
-            pilot,
-            "local-workspace-default",
-        )
-
-        assert "Local global default" in _normalized_row_text(global_row)
-        assert "Local Workspace" in _normalized_row_text(workspace_row)
-        assert any(
-            call.get("scope_type") == "global"
-            for call in app.local_chat_conversation_service.list_calls
-        )
-        assert any(
-            call.get("scope_type") == "workspace" and call.get("workspace_id") == "ws-a"
-            for call in app.local_chat_conversation_service.list_calls
-        )
+        assert app.local_chat_conversation_service.list_calls
+        assert app.chat_conversation_scope_service.list_calls == []
 
 
 @pytest.mark.asyncio
-async def test_console_conversation_browser_default_omits_mode_for_local_service():
+async def test_flat_conversations_omits_mode_for_local_service():
     app = _build_test_app()
     app.conversation_local_marks_service = None
-    _configure_grouped_browser_workspaces(app)
-    app.chat_conversation_scope_service = SearchableConversationService(
-        {
-            "async-scope-default": {
-                "conversation": {
-                    "id": "async-scope-default",
-                    "title": "Async scope fallback",
-                    "scope_type": "global",
-                    "workspace_id": None,
-                },
-                "root_threads": [],
-            },
-        }
-    )
+    app.chat_conversation_scope_service = None
     app.local_chat_conversation_service = NoModeSyncSearchableConversationService(
         {
             "local-no-mode-global": {
@@ -7938,12 +7297,12 @@ async def test_console_conversation_browser_default_omits_mode_for_local_service
                 },
                 "root_threads": [],
             },
-            "local-no-mode-workspace": {
+            "local-no-mode-default": {
                 "conversation": {
-                    "id": "local-no-mode-workspace",
-                    "title": "No mode Workspace A",
+                    "id": "local-no-mode-default",
+                    "title": "No mode local default",
                     "scope_type": "workspace",
-                    "workspace_id": "ws-a",
+                    "workspace_id": DEFAULT_WORKSPACE_ID,
                 },
                 "root_threads": [],
             },
@@ -7953,23 +7312,14 @@ async def test_console_conversation_browser_default_omits_mode_for_local_service
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(
-            console, pilot, "#console-workspace-conversation-search"
+        await _wait_for_workspace_conversation_text(
+            console, pilot, "No mode local global"
+        )
+        await _wait_for_workspace_conversation_text(
+            console, pilot, "No mode local default"
         )
 
-        global_row = await _wait_for_browser_conversation_row(
-            console,
-            pilot,
-            "local-no-mode-global",
-        )
-        workspace_row = await _wait_for_browser_conversation_row(
-            console,
-            pilot,
-            "local-no-mode-workspace",
-        )
-
-        assert "No mode local global" in _normalized_row_text(global_row)
-        assert "No mode Workspace" in _normalized_row_text(workspace_row)
+        assert app.local_chat_conversation_service.list_calls
         assert all(
             "mode" not in call
             for call in app.local_chat_conversation_service.list_calls
@@ -7977,10 +7327,9 @@ async def test_console_conversation_browser_default_omits_mode_for_local_service
 
 
 @pytest.mark.asyncio
-async def test_console_conversation_browser_search_omits_mode_for_local_service():
+async def test_flat_conversations_search_omits_mode_for_local_service():
     app = _build_test_app()
     app.conversation_local_marks_service = FakeConversationLocalMarksService()
-    _configure_grouped_browser_workspaces(app)
     app.chat_conversation_scope_service = None
     app.local_chat_conversation_service = NoModeSyncSearchableConversationService(
         {
@@ -7993,12 +7342,12 @@ async def test_console_conversation_browser_search_omits_mode_for_local_service(
                 },
                 "root_threads": [],
             },
-            "local-search-workspace": {
+            "local-search-default": {
                 "conversation": {
-                    "id": "local-search-workspace",
-                    "title": "Needle local Workspace A",
+                    "id": "local-search-default",
+                    "title": "Needle local default",
                     "scope_type": "workspace",
-                    "workspace_id": "ws-a",
+                    "workspace_id": DEFAULT_WORKSPACE_ID,
                 },
                 "root_threads": [],
             },
@@ -8012,32 +7361,14 @@ async def test_console_conversation_browser_search_omits_mode_for_local_service(
             console, pilot, "#console-workspace-conversation-search"
         )
         await _set_console_conversation_browser_search(console, pilot, "needle")
-
-        global_row = await _wait_for_browser_conversation_row(
-            console,
-            pilot,
-            "local-search-global",
+        await _wait_for_workspace_conversation_text(
+            console, pilot, "Needle local global"
         )
-        workspace_row = await _wait_for_browser_conversation_row(
-            console,
-            pilot,
-            "local-search-workspace",
+        await _wait_for_workspace_conversation_text(
+            console, pilot, "Needle local default"
         )
 
-        assert "Needle local global" in _normalized_row_text(global_row)
-        assert "Needle local Wor" in _normalized_row_text(workspace_row)
-        for _ in range(80):
-            if console._console_conversation_browser_total is not None:
-                break
-            await pilot.pause(0.05)
-        else:
-            raise AssertionError("Debounced persisted search did not finish")
-        cached_row_ids = {
-            row.conversation_id for row in console._console_conversation_browser_rows
-        }
         assert console._console_conversation_browser_error == ""
-        assert "local-search-global" in cached_row_ids
-        assert "local-search-workspace" in cached_row_ids
         assert all(
             "mode" not in call
             for call in app.local_chat_conversation_service.list_calls
@@ -8122,73 +7453,6 @@ async def test_console_new_chat_tab_appears_in_workspace_conversation_rail():
 
 
 @pytest.mark.asyncio
-async def test_console_workspace_conversation_search_includes_all_workspace_persisted_results():
-    app = _build_test_app()
-    service = app.workspace_registry_service
-    active_workspace = service.get_active_workspace()
-    other_workspace = service.create_workspace(
-        workspace_id="ws-other-search",
-        name="Other Search",
-    )
-    app.chat_conversation_scope_service = SearchableConversationService(
-        {
-            "persisted-alpha": {
-                "conversation": {
-                    "id": "persisted-alpha",
-                    "title": "Alpha persisted conversation",
-                    "workspace_id": active_workspace.workspace_id,
-                },
-                "root_threads": [],
-            },
-            "other-alpha": {
-                "conversation": {
-                    "id": "other-alpha",
-                    "title": "Alpha other workspace",
-                    "workspace_id": other_workspace.workspace_id,
-                },
-                "root_threads": [],
-            },
-        }
-    )
-    host = ConsoleHarness(app)
-
-    async with host.run_test(size=(160, 48)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(
-            console,
-            pilot,
-            "#console-workspace-conversation-search",
-        )
-
-        await _set_console_conversation_browser_search(console, pilot, "alpha")
-        await _wait_for_workspace_conversation_text(
-            console,
-            pilot,
-            "Alpha persisted",
-            selected=False,
-        )
-        row_texts = _console_workspace_conversation_texts(console)
-        assert any("Alpha persisted" in " ".join(text.split()) for text in row_texts)
-        assert any(
-            getattr(row, "conversation_id", None) == "other-alpha"
-            for row in console.query(".console-workspace-conversation-row")
-        )
-        workspace_calls = [
-            call
-            for call in app.chat_conversation_scope_service.list_calls
-            if call.get("scope_type") == "workspace"
-        ]
-        assert any(
-            call.get("workspace_id") == active_workspace.workspace_id
-            for call in workspace_calls
-        )
-        assert any(
-            call.get("workspace_id") == other_workspace.workspace_id
-            for call in workspace_calls
-        )
-
-
-@pytest.mark.asyncio
 async def test_console_workspace_conversation_search_selection_keeps_query_active():
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -8237,69 +7501,6 @@ async def test_console_workspace_conversation_search_selection_keeps_query_activ
         assert "Select Alpha" in _static_plain_text(
             console.query_one("#console-workspace-selected-conversation", Static)
         )
-
-
-@pytest.mark.asyncio
-async def test_console_workspace_conversation_search_blank_selection_keeps_composer_focus():
-    app = _build_test_app()
-    _configure_native_ready_console(app)
-    service = app.workspace_registry_service
-    active_workspace = service.get_active_workspace()
-    service.link_membership(
-        active_workspace.workspace_id,
-        item_type="conversation",
-        item_id="blank-focus-chat",
-        role="workspace-thread",
-        title="Blank focus chat",
-    )
-    app.chat_conversation_scope_service = StaticConversationTreeService(
-        {
-            "blank-focus-chat": {
-                "conversation": {
-                    "id": "blank-focus-chat",
-                    "title": "Blank focus chat",
-                    "workspace_id": active_workspace.workspace_id,
-                },
-                "root_threads": [
-                    {
-                        "id": "blank-focus-message",
-                        "conversation_id": "blank-focus-chat",
-                        "role": "user",
-                        "sender": "user",
-                        "content": "blank focus prompt",
-                        "children": [],
-                    }
-                ],
-            }
-        }
-    )
-    host = ConsoleHarness(app)
-
-    async with host.run_test(size=(160, 48)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-native-composer")
-        await _wait_for_selector(
-            console, pilot, "#console-workspace-conversation-search"
-        )
-        await _wait_for_workspace_conversation_text(
-            console,
-            pilot,
-            "Blank focus chat",
-            selected=False,
-        )
-
-        await _click_console_workspace_conversation_for_id(
-            console,
-            pilot,
-            "blank-focus-chat",
-        )
-
-        await _wait_for_text(console, pilot, "blank focus prompt")
-        await pilot.pause(0.2)
-        search = console.query_one("#console-workspace-conversation-search", Input)
-        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
-        assert console.app.focused is composer
-        assert console.app.focused is not search
 
 
 @pytest.mark.asyncio
@@ -8365,135 +7566,7 @@ async def test_console_workspace_conversation_search_selection_invalidates_pendi
 
 
 @pytest.mark.asyncio
-async def test_console_workspace_switch_clears_conversation_search_and_restores_collapse_preference():
-    app = _build_test_app()
-    service = app.workspace_registry_service
-    workspace_a = service.get_active_workspace()
-    workspace_b = service.create_workspace(
-        workspace_id="ws-search-reset", name="Search Reset"
-    )
-    host = ConsoleHarness(app)
-
-    async with host.run_test(size=(160, 48)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(
-            console, pilot, "#console-workspace-conversation-search"
-        )
-        await _set_console_conversation_browser_search(console, pilot, "alpha")
-        _browser_group_toggle(console, "section:chats").press()
-        await pilot.pause(0.1)
-        assert len(console.query("#console-workspace-conversation-search")) == 1
-        stale_token = console._console_conversation_browser_search_token
-
-        service.set_active_workspace(workspace_b.workspace_id)
-        console._sync_console_workspace_context()
-        await pilot.pause(0.1)
-        state = console._workspace._build_console_workspace_context_state()
-        assert len(console.query("#console-workspace-conversation-search")) == 1
-        assert console._console_conversation_browser_search_token == stale_token + 1
-        assert console._console_conversation_browser_search_timer is None
-        assert console._console_conversation_browser_query == ""
-        assert state.conversation_browser is not None
-        assert state.conversation_browser.query == ""
-        assert state.conversation_section is not None
-        assert state.conversation_section.query == ""
-        assert (
-            console.query_one("#console-workspace-conversation-search", Input).value
-            == ""
-        )
-
-        service.set_active_workspace(workspace_a.workspace_id)
-        console._sync_console_workspace_context()
-        await pilot.pause(0.1)
-        assert len(console.query("#console-workspace-conversation-search")) == 1
-
-
-@pytest.mark.asyncio
-async def test_console_workspace_conversation_search_shows_cap_and_empty_copy():
-    app = _build_test_app()
-    service = app.workspace_registry_service
-    active_workspace = service.get_active_workspace()
-    conversations = {
-        f"topic-{index}": {
-            "conversation": {
-                "id": f"topic-{index}",
-                "title": f"Topic conversation {index:02d}",
-                "workspace_id": active_workspace.workspace_id,
-            },
-            "root_threads": [],
-        }
-        for index in range(60)
-    }
-    app.chat_conversation_scope_service = SearchableConversationService(conversations)
-    host = ConsoleHarness(app)
-
-    async with host.run_test(size=(160, 48)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(
-            console,
-            pilot,
-            "#console-workspace-conversation-search",
-        )
-
-        await _set_console_conversation_browser_search(console, pilot, "topic")
-        await _wait_for_text(console, pilot, "60 matches")
-        await _wait_for_text(console, pilot, "Showing")
-
-        console.query_one("#console-workspace-conversation-search", Input)
-        await _set_console_conversation_browser_search(console, pilot, "missing")
-        await _wait_for_text(console, pilot, "No workspace conversations.")
-
-
-@pytest.mark.asyncio
-async def test_console_workspace_conversation_search_ignores_stale_workspace_results():
-    app = _build_test_app()
-    service = app.workspace_registry_service
-    active_workspace = service.get_active_workspace()
-    service.create_workspace(workspace_id="ws-stale-b", name="Stale B")
-    slow_service = SlowFirstSearchableConversationService(
-        {
-            "stale-a": {
-                "conversation": {
-                    "id": "stale-a",
-                    "title": "Stale Alpha",
-                    "workspace_id": active_workspace.workspace_id,
-                },
-                "root_threads": [],
-            }
-        }
-    )
-    host = ConsoleHarness(app)
-
-    async with host.run_test(size=(160, 48)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(
-            console,
-            pilot,
-            "#console-workspace-conversation-search",
-        )
-        await pilot.pause()
-        app.chat_conversation_scope_service = slow_service
-        await _set_console_conversation_browser_search(console, pilot, "Alpha")
-        await asyncio.wait_for(
-            slow_service.started.wait(),
-            timeout=_ASYNC_SETTLE_TIMEOUT,
-        )
-        stale_token = console._console_workspace_conversation_search_token
-
-        service.set_active_workspace("ws-stale-b")
-        console._sync_console_workspace_context()
-        assert console._console_workspace_conversation_search_token > stale_token
-
-        slow_service.release.set()
-        await pilot.pause(0.5)
-        assert all(
-            row.title != "Stale Alpha"
-            for row in console._console_conversation_browser_rows
-        )
-
-
-@pytest.mark.asyncio
-async def test_console_workspace_conversation_search_blank_query_clears_error_cache():
+async def test_console_flat_conversation_search_blank_query_clears_error_cache():
     app = _build_test_app()
     app.chat_conversation_scope_service = FailingSearchConversationService()
     host = ConsoleHarness(app)
@@ -8510,7 +7583,7 @@ async def test_console_workspace_conversation_search_blank_query_clears_error_ca
         await _wait_for_text(
             console,
             pilot,
-            "Workspace conversation search is unavailable.",
+            "Conversation search is unavailable.",
         )
 
         search = console.query_one("#console-workspace-conversation-search", Input)
@@ -8521,105 +7594,6 @@ async def test_console_workspace_conversation_search_blank_query_clears_error_ca
         assert console._console_workspace_conversation_search_total is None
         assert console._console_workspace_conversation_search_error == ""
         await pilot.pause(0.3)
-
-
-@pytest.mark.asyncio
-async def test_console_workspace_conversation_search_shows_local_rows_before_slow_persisted_search():
-    app = _build_test_app()
-    service = app.workspace_registry_service
-    active_workspace = service.get_active_workspace()
-    service.link_membership(
-        active_workspace.workspace_id,
-        item_type="conversation",
-        item_id="member-alpha",
-        role="workspace-thread",
-        title="Alpha membership conversation",
-    )
-    app.chat_conversation_scope_service = SlowSearchConversationService()
-    host = ConsoleHarness(app)
-
-    async with host.run_test(size=(160, 48)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(
-            console,
-            pilot,
-            "#console-workspace-conversation-search",
-        )
-
-        await _set_console_conversation_browser_search(console, pilot, "alpha")
-        try:
-            for _ in range(40):
-                if app.chat_conversation_scope_service.started.is_set():
-                    break
-                await pilot.pause(0.05)
-            assert app.chat_conversation_scope_service.started.is_set()
-
-            # task-14920: the local rows land a render pass after the worker
-            # starts, so asserting immediately is a race under whole-file load.
-            # The window is still the one under test -- `release` is only set
-            # in the `finally` below, so the persisted search cannot have
-            # returned while this waits (asserted right after).
-            await _wait_for_browser_render(
-                pilot,
-                lambda: "1 match" in _visible_text(console),
-                lambda: (
-                    "'1 match' never rendered while the persisted search "
-                    f"was still pending: {_visible_text(console)[:400]!r}"
-                ),
-            )
-            assert not app.chat_conversation_scope_service.release.is_set()
-            assert "1 match" in _visible_text(console)
-            row_texts = _console_workspace_conversation_texts(console)
-            assert any(
-                "Alpha membership" in " ".join(text.split()) for text in row_texts
-            )
-        finally:
-            app.chat_conversation_scope_service.release.set()
-            await pilot.pause(0.2)
-
-
-@pytest.mark.asyncio
-async def test_console_workspace_conversation_search_filters_all_workspace_memberships():
-    app = _build_test_app()
-    service = app.workspace_registry_service
-    active_workspace = service.get_active_workspace()
-    other_workspace = service.create_workspace(
-        workspace_id="ws-other-search", name="Other Search"
-    )
-    service.link_membership(
-        active_workspace.workspace_id,
-        item_type="conversation",
-        item_id="member-alpha",
-        role="workspace-thread",
-        title="Alpha membership conversation",
-    )
-    service.link_membership(
-        other_workspace.workspace_id,
-        item_type="conversation",
-        item_id="member-other-alpha",
-        role="workspace-thread",
-        title="Alpha other workspace",
-    )
-    host = ConsoleHarness(app)
-
-    async with host.run_test(size=(160, 48)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(
-            console, pilot, "#console-workspace-conversation-search"
-        )
-
-        await _set_console_conversation_browser_search(console, pilot, "alpha")
-        await _wait_for_text(console, pilot, "matches")
-        await _wait_for_workspace_conversation_text(
-            console, pilot, "Alpha membership", selected=False
-        )
-        row_texts = _console_workspace_conversation_texts(console)
-        assert any("Alpha membership" in " ".join(text.split()) for text in row_texts)
-        assert any(
-            getattr(row, "conversation_id", None) == "member-other-alpha"
-            for row in console.query(".console-workspace-conversation-row")
-        )
-        assert "matches" in _visible_text(console)
 
 
 @pytest.mark.asyncio
@@ -8648,26 +7622,32 @@ async def test_console_workspace_conversation_search_uses_current_workspace_cont
 
 
 @pytest.mark.asyncio
-async def test_console_workspace_conversation_list_reserves_two_line_rows_with_margin():
-    """Verify conversation list height accounts for two-line rows plus margin."""
+async def test_console_workspace_tree_restores_and_persists_disclosure_preferences():
     app = _build_test_app()
-    service = app.workspace_registry_service
-    active_workspace = service.get_active_workspace()
-    for index in range(3):
-        service.link_membership(
-            active_workspace.workspace_id,
-            item_type="conversation",
-            item_id=f"saved-chat-{index}",
-            role="workspace-thread",
-            title=f"Saved Chat {index}",
-        )
+    app.workspace_registry_service.create_workspace(
+        workspace_id="ws-disclosure", name="Disclosure"
+    )
+    console_config = app.app_config.setdefault("console", {})
+    browser_config = console_config.setdefault("conversation_browser", {})
+    browser_config["expanded_workspace_ids"] = []
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-native-transcript")
-        conversation_list = console.query_one("#console-workspace-conversations")
-        assert conversation_list.styles.height.value >= 9
+        await _wait_for_selector(console, pilot, "#console-workspace-tree")
+        tree = console.query_one("#console-workspace-tree", ConsoleWorkspaceTree)
+        for _ in range(40):
+            if "ws-disclosure" in tree.workspace_nodes:
+                break
+            await pilot.pause(0.05)
+
+        node = tree.workspace_nodes["ws-disclosure"]
+        assert node.is_collapsed
+
+        node.expand()
+        await pilot.pause()
+
+        assert browser_config["expanded_workspace_ids"] == ["ws-disclosure"]
 
 
 @pytest.mark.asyncio
@@ -8846,10 +7826,10 @@ async def test_console_workspace_rail_new_conversation_stays_scoped_to_active_wo
             active_title,
             selected=True,
         )
-        assert any(
-            active_title in text
-            for text in _selected_workspace_conversation_texts(console)
-        )
+        tree = console.query_one("#console-workspace-tree", ConsoleWorkspaceTree)
+        active_node = tree.conversation_nodes[f"native:{session_id}"]
+        assert active_node.data is not None
+        assert active_node.data.selected
 
         console.query_one("#console-change-workspace", Button).press()
         modal_screen = await _wait_for_workspace_switcher_modal(host, pilot)
@@ -8863,10 +7843,10 @@ async def test_console_workspace_rail_new_conversation_stays_scoped_to_active_wo
         await _wait_for_selector(console, pilot, "#console-workspace-context")
 
         assert service.get_active_workspace().workspace_id == "ws-b"
-        assert all(
-            active_title not in row_text
-            for row_text in _console_workspace_conversation_texts(console)
-        )
+        active_node = tree.conversation_nodes[f"native:{session_id}"]
+        assert active_title in active_node.label.plain
+        assert active_node.data is not None
+        assert not active_node.data.selected
 
 
 @pytest.mark.asyncio
@@ -8921,12 +7901,13 @@ async def test_console_workspace_conversation_row_resumes_persisted_conversation
         role="workspace-thread",
         title="Saved research chat",
     )
-    app.chat_conversation_scope_service = StaticConversationTreeService(
+    app.chat_conversation_scope_service = SyncSearchableConversationService(
         {
             "persisted-chat-1": {
                 "conversation": {
                     "id": "persisted-chat-1",
                     "title": "Saved research chat",
+                    "scope_type": "workspace",
                     "workspace_id": active_workspace.workspace_id,
                 },
                 "root_threads": [
@@ -9284,12 +8265,13 @@ async def test_console_workspace_conversation_resume_restores_system_prompt():
         role="workspace-thread",
         title="System prompt chat",
     )
-    app.chat_conversation_scope_service = StaticConversationTreeService(
+    app.chat_conversation_scope_service = SyncSearchableConversationService(
         {
             "persisted-chat-system-prompt": {
                 "conversation": {
                     "id": "persisted-chat-system-prompt",
                     "title": "System prompt chat",
+                    "scope_type": "workspace",
                     "workspace_id": active_workspace.workspace_id,
                     "system_prompt": "Answer only in French.",
                 },
@@ -9349,12 +8331,13 @@ async def test_console_workspace_conversation_resume_uses_persisted_workspace():
         role="workspace-thread",
         title="Saved cross workspace",
     )
-    app.chat_conversation_scope_service = StaticConversationTreeService(
+    app.chat_conversation_scope_service = SyncSearchableConversationService(
         {
             "persisted-cross-workspace-chat": {
                 "conversation": {
                     "id": "persisted-cross-workspace-chat",
                     "title": "Saved cross workspace",
+                    "scope_type": "workspace",
                     "workspace_id": target_workspace.workspace_id,
                 },
                 "root_threads": [
@@ -9375,6 +8358,11 @@ async def test_console_workspace_conversation_resume_uses_persisted_workspace():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
+        await _expand_console_workspace_tree(
+            console,
+            pilot,
+            target_workspace.workspace_id,
+        )
         await _wait_for_workspace_conversation_text(
             console,
             pilot,
@@ -9404,7 +8392,10 @@ async def test_console_workspace_conversation_resume_uses_persisted_workspace():
             "Saved cross works",
             selected=True,
         )
-        assert _selected_workspace_conversation_texts(console)
+        tree = console.query_one("#console-workspace-tree", ConsoleWorkspaceTree)
+        selected_node = tree.conversation_nodes["persisted-cross-workspace-chat"]
+        assert selected_node.data is not None
+        assert selected_node.data.selected
 
 
 @pytest.mark.asyncio
@@ -9467,6 +8458,7 @@ async def test_console_workspace_conversation_resume_uses_real_local_services(tm
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
+        await _expand_console_workspace_tree(console, pilot, workspace.workspace_id)
         await _wait_for_workspace_conversation_text(
             console,
             pilot,
@@ -9493,10 +8485,10 @@ async def test_console_workspace_conversation_resume_uses_real_local_services(tm
             "Real saved chat",
             selected=True,
         )
-        assert any(
-            "Real saved chat" in text
-            for text in _selected_workspace_conversation_texts(console)
-        )
+        tree = console.query_one("#console-workspace-tree", ConsoleWorkspaceTree)
+        selected_node = tree.conversation_nodes[conversation_id]
+        assert selected_node.data is not None
+        assert selected_node.data.selected
         left_rail_text = _visible_text(console.query_one("#console-left-rail"))
         console._set_console_rail_preference(right_open=True, notify_on_failure=False)
         await pilot.pause(0.1)

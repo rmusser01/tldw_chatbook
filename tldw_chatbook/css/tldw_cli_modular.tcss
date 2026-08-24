@@ -4991,7 +4991,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
 #console-workspace-grid {
     height: $ds-console-workspace-grid-height;
     min-height: 20;
-    padding: 0 1;
+    padding: 0;
     margin: 0;
     overflow: hidden;
     border-top: solid $ds-grid-line;
@@ -5481,7 +5481,6 @@ with stray left-edge border fragments), and padding 0 1 so the full
 
 #console-left-rail:focus {
     outline: none;
-    border: solid $ds-column-line;
     background: $ds-surface-panel;
 }
 
@@ -5572,10 +5571,13 @@ with stray left-edge border fragments), and padding 0 1 so the full
 #console-session-context,
 #console-workspaces-context,
 #console-workspace-context,
-#console-right-rail,
-#console-run-inspector,
-#console-transcript-region {
+#console-run-inspector {
     border: solid $ds-column-line;
+    background: $ds-surface-panel;
+}
+
+#console-right-rail,
+#console-transcript-region {
     background: $ds-surface-panel;
 }
 
@@ -5607,7 +5609,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
     height: 100%;
     min-height: 20;
     padding: 0;
-    border: solid $ds-grid-line;
+    border: none;
     background: $ds-surface-panel;
 }
 
@@ -5771,6 +5773,14 @@ with stray left-edge border fragments), and padding 0 1 so the full
     margin-bottom: 1;
 }
 
+#console-character-avatar-frame {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 0;
+    align: center middle;
+}
+
 /* Shared direct-section body. The owner applies the measured content-row
    allocation inline; no CSS ceiling may override a smaller Context grant. */
 ConsoleBoundedSection {
@@ -5793,6 +5803,26 @@ ConsoleBoundedSection {
 
 .console-bounded-section-viewport:focus,
 .console-bounded-section-viewport:focus-within {
+    background: $ds-action-focus 12%;
+}
+
+#console-workspace-tree {
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+    scrollbar-size: 1 1;
+    scrollbar-background: $ds-surface-panel;
+    scrollbar-color: $ds-grid-line;
+    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color-active: $ds-action-focus;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
+}
+
+#console-workspace-tree:focus {
     background: $ds-action-focus 12%;
 }
 
@@ -6112,8 +6142,17 @@ ConsoleBoundedSection {
 
 #console-transcript-region {
     padding: 0 1;
-    border: round $ds-column-line;
+    border: none;
     background: $ds-surface-panel;
+}
+
+#console-left-rail.console-edge-region-focused #console-context-rail-collapse,
+#console-context-rail-handle.console-edge-region-focused #console-context-rail-open,
+#console-right-rail.console-edge-region-focused #console-inspector-rail-collapse,
+#console-inspector-rail-handle.console-edge-region-focused #console-inspector-rail-open {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 /* TASK-17651: the composer is a dense-form one-row field (task-1586
@@ -6348,12 +6387,9 @@ ConsoleBoundedSection {
     height: 1fr;
     min-height: 0;
     padding: 0 1;
-    /* TASK-17651: the transcript's own frame is gone at every size (the
-       compact-mode drop from TASK-2154.1 generalized): the region frame
-       still surrounds it, and the workbench closes at the grid's bottom
-       border — the bottom stack's single separator. Keyboard focus is
-       carried by the region's column lines, recolored by the same
-       inline focus painter the rails use (TASK-359). */
+    /* TASK-20937.3: neither the transcript nor its region owns a frame
+       edge. The workbench grid closes the surface at top/bottom, while
+       Context and Inspect own the two interior dividers. */
     border: none;
     background: $ds-surface-panel;
     color: $ds-text-primary;
@@ -6380,6 +6416,12 @@ ConsoleBoundedSection {
     background: $ds-surface-panel;
     color: $ds-text-muted;
     text-style: none;
+}
+
+#console-transcript-region.console-transcript-region-focused #console-transcript-title {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 #console-native-tab-strip,
@@ -6443,7 +6485,8 @@ ConsoleBoundedSection {
 
 #console-native-transcript:focus {
     /* TASK-17651: no border in either state (stable geometry, zero rows).
-       The focused-pane indicator is the region's inline column recolor.
+       TASK-20937.3 puts the non-color pane cue on the stable title row;
+       the scrollbar recolor remains a secondary color cue.
        The global *:focus outline (core/_reset.tcss) would overpaint the
        outermost transcript CONTENT rows now that no border absorbs it —
        the reset's own documented DataTable pattern: opt out, recolor. */
@@ -7256,15 +7299,28 @@ ConsoleCitationSourcesModal {
 }
 
 .console-workspace-action-row {
+    /* The fixed tray reserves one cell for its native-scroll sibling's
+       scrollbar lane; keep the compact strip inside the tray clip. */
+    width: 99%;
+    max-width: 100%;
     height: auto;
     min-height: 1;
     /* TASK-2154.3 (LY-07): the rail IA spec's 12-col left indent (buttons
        aligned under the value column) assumed a ~35-col rail. The real rail
        renders at 24-30 cols, so the indent left only 3-6 cells for the
-       buttons -- Switch clipped to "Switc", RAG Scope to "RAG S"/"RA", and
+       buttons -- Switch clipped to "Switc", the former RAG Scope label to
+       "RAG S"/"RA", and
        New rendered past the rail clip (invisible but clickable). Left-align
-       the rows: Switch + New = 13 cells and RAG Scope = 11 both fit the
+       the rows: Switch + New = 13 cells and RAG = 5 both fit the
        23-cell content width at the rail's 30-col minimum. */
+    margin: 0;
+}
+
+.console-workspace-context-action-row {
+    width: 99%;
+    max-width: 100%;
+    height: 1;
+    min-height: 1;
     margin: 0;
 }
 
@@ -7278,6 +7334,30 @@ ConsoleCitationSourcesModal {
        labels so both fit the row. */
     min-width: 5;
     width: auto;
+}
+
+#console-workspace-search {
+    width: 100%;
+    min-width: 0;
+    height: 3;
+    min-height: 3;
+}
+
+#console-workspace-tree-star {
+    width: 100%;
+    min-width: 6;
+    height: 1;
+    min-height: 1;
+    margin: 0;
+}
+
+#console-workspace-search-status {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
 }
 
 #console-transcript-empty-state,
@@ -7398,10 +7478,8 @@ ChatScreen.-focus #console-workbench-header {
     margin-bottom: 0;
 }
 
-/* TASK-2154.1 (LY-09): the transcript's own frame costs two rows; at 60x18
-   that leaves ZERO content rows, so the empty-state line can never paint.
-   Compact mode drops the inner frame (the region frame still surrounds the
-   transcript) and gives the rows to the content. */
+/* TASK-2154.1 (LY-09): keep the historical compact override explicit so
+   neither focus nor compact mode can resurrect the removed transcript frame. */
 #console-shell.-console-compact #console-native-transcript,
 #console-shell.-console-compact #console-native-transcript:focus {
     border: none;
